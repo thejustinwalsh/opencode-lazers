@@ -1,0 +1,670 @@
+.lazers-radar,
+.lazers-radar * {
+  box-sizing: border-box;
+}
+.lazers-radar {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows:
+    auto
+    minmax(0, var(--radar-visual-fr, 55fr))
+    6px
+    minmax(0, var(--radar-detail-fr, 45fr));
+  overflow: hidden;
+  color: var(--text-strong);
+  background: var(--background-base);
+  font: inherit;
+}
+.lazers-radar button {
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+}
+.lazers-radar-header {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 8px;
+}
+.lazers-radar-heading {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.lazers-radar-heading h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+.lazers-radar-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--icon-success-base);
+}
+.lazers-radar-status-dot[data-stale="true"] {
+  background: var(--icon-warning-base);
+}
+.lazers-radar-heading .lazers-radar-scope {
+  margin-left: auto;
+}
+.lazers-radar-scope button,
+.lazers-radar-picker button {
+  max-width: 100%;
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-weak);
+  font-size: 0.9em;
+}
+.lazers-radar-scope button:hover,
+.lazers-radar-picker button:hover {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
+.lazers-radar-controls {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.lazers-radar-pickers {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex: 1 1 150px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.lazers-radar-picker {
+  min-width: 0;
+  max-width: 100%;
+}
+.lazers-radar-picker button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lazers-radar-tabs {
+  min-width: 0;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-radar-tabs button {
+  position: relative;
+  min-height: 30px;
+  padding: 4px 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.lazers-radar-tabs button[aria-selected="true"] {
+  color: var(--text-strong);
+}
+.lazers-radar-tabs button[aria-selected="true"]::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--border-selected);
+  content: "";
+}
+.lazers-radar-visual,
+.lazers-radar-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: auto;
+}
+.lazers-radar-visual {
+  padding: 8px 16px 12px;
+}
+.lazers-radar-detail {
+  padding: 12px clamp(10px, 4vw, 22px) 16px;
+}
+.lazers-radar-separator {
+  position: relative;
+  cursor: row-resize;
+  touch-action: none;
+  border-top: 1px solid var(--border-base);
+}
+.lazers-radar-separator::after {
+  display: block;
+  width: 20px;
+  height: 2px;
+  margin: 2px auto;
+  background: var(--border-base);
+  content: "";
+}
+.lazers-radar button:focus-visible,
+.lazers-radar-separator:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: -2px;
+}
+.lazers-radar-note {
+  min-width: 0;
+  padding: 8px 0;
+  color: var(--text-weak);
+  font-size: 0.9em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-note[data-error="true"] {
+  color: var(--text-critical-base);
+}
+.lazers-radar-flow {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lazers-radar-state {
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-radar-state-button {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.lazers-radar-state-button:hover,
+.lazers-radar-state-button[aria-pressed="true"] {
+  background: var(--surface-base-hover);
+}
+.lazers-radar-state[data-active="true"] .lazers-radar-state-button {
+  border-color: var(--border-selected);
+  color: var(--text-strong);
+}
+.lazers-radar-state-label {
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-state-flag {
+  color: var(--text-weak);
+  font-size: 0.82em;
+}
+.lazers-radar-edges {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0 14px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--border-base);
+}
+.lazers-radar-edge {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 7px;
+  padding: 4px 0;
+  color: var(--text-weak);
+  font-size: 0.86em;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-edge[data-recorded="true"] {
+  color: var(--text-base);
+  border-left: 2px solid var(--icon-success-base);
+  padding-left: 7px;
+}
+.lazers-radar-edge-event {
+  color: var(--text-base);
+  font-weight: 500;
+}
+.lazers-radar-timeline,
+.lazers-radar-checks {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lazers-radar-timeline li,
+.lazers-radar-checks li {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-radar-timeline button,
+.lazers-radar-checks button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 8px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.lazers-radar-timeline button:hover,
+.lazers-radar-checks button:hover,
+.lazers-radar-timeline button[aria-pressed="true"],
+.lazers-radar-checks button[aria-pressed="true"] {
+  background: var(--surface-base-hover);
+}
+.lazers-radar-timeline strong,
+.lazers-radar-checks strong {
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-time {
+  color: var(--text-weak);
+  font-size: 0.82em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lazers-radar-row-meta {
+  grid-column: 1 / -1;
+  color: var(--text-weak);
+  font-size: 0.84em;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-section-title {
+  margin: 18px 0 6px;
+  color: var(--text-weak);
+  font-size: 0.84em;
+  font-weight: 500;
+}
+.lazers-radar-statechart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.lazers-radar-statechart-edge {
+  fill: none;
+  stroke: var(--text-weak);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+.lazers-radar-statechart-edge[data-recorded="true"] {
+  stroke: var(--icon-success-base);
+  stroke-width: 1.8;
+  stroke-dasharray: none;
+}
+.lazers-radar-statechart-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+}
+.lazers-radar-statechart-edge-hit:focus-visible {
+  stroke: color-mix(in srgb, var(--border-selected) 30%, transparent);
+  outline: none;
+}
+.lazers-radar-statechart-edge-arrow {
+  fill: none;
+  stroke: var(--text-weak);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+.lazers-radar-statechart-edge-arrow[data-recorded="true"] {
+  stroke: var(--icon-success-base);
+  stroke-width: 1.8;
+}
+.lazers-radar-statechart-edge-label {
+  fill: var(--text-weak);
+  font: inherit;
+  font-size: 10px;
+}
+.lazers-radar-statechart-edge-label[data-recorded="true"] {
+  fill: var(--text-base);
+}
+.lazers-radar-statechart-node rect {
+  fill: var(--background-base);
+  stroke: var(--border-base);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.lazers-radar-statechart-node {
+  cursor: pointer;
+}
+.lazers-radar-statechart-node[data-active="true"] rect {
+  stroke: var(--border-selected);
+  stroke-width: 2;
+}
+.lazers-radar-statechart-node[data-selected="true"] rect {
+  fill: var(--surface-base-hover);
+}
+.lazers-radar-statechart-node:focus-visible rect {
+  stroke: var(--border-selected);
+  stroke-width: 2;
+}
+.lazers-radar-statechart-node text {
+  fill: var(--text-base);
+  font-family: inherit;
+}
+.lazers-radar-statechart-node .lazers-radar-statechart-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+.lazers-radar-statechart-node .lazers-radar-statechart-flag {
+  fill: var(--text-weak);
+  font-size: 8px;
+}
+.lazers-radar-statechart-accessible {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-radar-statechart-accessible summary {
+  padding: 8px 0;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.lazers-radar-statechart-accessible ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 8px 18px;
+}
+.lazers-radar-statechart-accessible li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-statechart-accessible button {
+  padding: 4px 6px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-base);
+  cursor: pointer;
+}
+.lazers-radar-statechart-accessible ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  color: var(--text-weak);
+}
+.lazers-radar-chart {
+  min-width: 0;
+}
+.lazers-radar-axis,
+.lazers-radar-lane {
+  display: grid;
+  grid-template-columns: minmax(72px, 30%) minmax(0, 1fr);
+  gap: 8px;
+}
+.lazers-radar-axis {
+  align-items: end;
+  margin: 8px 0 4px;
+}
+.lazers-radar-axis-plot {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-base);
+  color: var(--text-weak);
+  font-size: 0.78em;
+  font-variant-numeric: tabular-nums;
+}
+.lazers-radar-lane {
+  min-width: 0;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-radar-lane-label {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 0;
+  color: var(--text-base);
+  font-size: 0.86em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-lane-plot {
+  position: relative;
+  min-width: 0;
+  background-image: linear-gradient(to right, var(--border-weak-base) 1px, transparent 1px);
+  background-size: 50% 100%;
+}
+.lazers-radar-mark {
+  position: absolute;
+  min-width: 4px;
+  max-width: calc(100% - 4px);
+  height: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--text-weak);
+  color: var(--background-base);
+  font-size: 0.68em;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.lazers-radar-mark[data-kind="execution"] {
+  background: var(--border-selected);
+}
+.lazers-radar-mark[data-kind="execution"][data-open="true"] {
+  border-right: 2px solid var(--border-selected);
+  border-radius: 3px 0 0 3px;
+}
+.lazers-radar-mark[data-kind="check"] {
+  border: 1px dashed var(--icon-warning-base);
+  background: color-mix(in srgb, var(--icon-warning-base) 30%, var(--background-base));
+  color: var(--text-strong);
+}
+.lazers-radar-mark[data-kind="transition"] {
+  min-width: 8px;
+  width: 8px;
+  padding: 0;
+  border: 2px solid var(--text-strong);
+  border-radius: 50%;
+  background: var(--background-base);
+}
+.lazers-radar-mark[aria-pressed="true"] {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 1px;
+}
+.lazers-radar-mark[data-reversed="true"] {
+  border-style: dotted;
+}
+.lazers-radar-mark-point {
+  position: absolute;
+  min-width: 0;
+  max-width: min(180px, calc(100% - 4px));
+  height: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--background-base);
+  color: var(--text-base);
+  font-size: 0.68em;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.lazers-radar-mark-point-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border: 1.5px solid var(--text-strong);
+  border-radius: 50%;
+  background: var(--background-base);
+}
+.lazers-radar-mark-point-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lazers-radar-mark-point[data-kind="check"] .lazers-radar-mark-point-dot {
+  border-color: var(--icon-warning-base);
+}
+.lazers-radar-mark-point[data-kind="execution"] .lazers-radar-mark-point-dot {
+  border-color: var(--border-selected);
+}
+.lazers-radar-mark-point[data-kind="attempt"] .lazers-radar-mark-point-dot {
+  border-color: var(--text-weak);
+}
+.lazers-radar-mark-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lazers-radar-mark-point[aria-pressed="true"] {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 2px;
+}
+.lazers-radar-mark-unknown {
+  position: absolute;
+  left: 4px;
+  max-width: calc(100% - 8px);
+  height: 14px;
+  padding: 0 3px;
+  border: 1px dashed var(--border-base);
+  border-radius: 3px;
+  background: var(--background-base);
+  color: var(--text-weak);
+  font-size: 0.68em;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lazers-radar-mark-unknown[data-kind="check"] {
+  border-color: var(--icon-warning-base);
+}
+.lazers-radar-timeline-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  color: var(--text-weak);
+  font-size: 0.78em;
+}
+.lazers-radar-timeline-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.lazers-radar-timeline-key i {
+  width: 14px;
+  height: 3px;
+  background: var(--border-selected);
+}
+.lazers-radar-timeline-key [data-kind="check"] i {
+  height: 0;
+  border-top: 1px dashed var(--icon-warning-base);
+  background: transparent;
+}
+.lazers-radar-timeline-key [data-kind="transition"] i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--text-strong);
+  border-radius: 50%;
+  background: var(--background-base);
+}
+.lazers-radar-detail h3 {
+  margin: 4px 0 8px;
+  font-size: 1.08em;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-detail p {
+  margin: 6px 0 12px;
+  color: var(--text-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-detail dl {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 12px 0;
+  font-size: 0.9em;
+}
+.lazers-radar-detail dt {
+  color: var(--text-weak);
+}
+.lazers-radar-detail dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-code {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.86em;
+  line-height: 1.5;
+}
+.lazers-radar-disclosure {
+  margin-top: 10px;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-radar-disclosure summary {
+  padding: 8px 0;
+  color: var(--text-base);
+  cursor: pointer;
+}
+@media (max-width: 360px) {
+  .lazers-radar-header {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+  .lazers-radar-visual {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lazers-radar * {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
