@@ -10,6 +10,7 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { registerModelTools } from "./tools.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
+import { ModelEvidenceReadStore } from "./source-store.ts"
 import { registerModelsServer } from "./server.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
@@ -18,6 +19,7 @@ type ModelRPC = {
   configure(input: unknown): Effect.Effect<unknown, unknown>
   catalog(input: unknown): Effect.Effect<unknown, unknown>
   sourceEvidence(input: unknown): Effect.Effect<unknown, unknown>
+  comparison(input: unknown): Effect.Effect<unknown, unknown>
   refreshSources(input: unknown): Effect.Effect<unknown, unknown>
 }
 type NativeSession = {
@@ -99,6 +101,7 @@ function modelContext(options: {
     configure: () => Effect.die(new Error("RPC not registered")),
     catalog: () => Effect.die(new Error("RPC not registered")),
     sourceEvidence: () => Effect.die(new Error("RPC not registered")),
+    comparison: () => Effect.die(new Error("RPC not registered")),
     refreshSources: () => Effect.die(new Error("RPC not registered")),
   }
   let registered: ModelRPC | undefined
@@ -161,14 +164,22 @@ function modelContext(options: {
 
 async function register(
   repository: TaskRepository,
-  options: Parameters<typeof modelContext>[0] & { fetcher?: ModelEvidenceFetcher } = {},
+  options: Parameters<typeof modelContext>[0] & {
+    fetcher?: ModelEvidenceFetcher
+    evidenceReadStoreFactory?: Parameters<typeof registerModelsServer>[3]
+  } = {},
 ) {
   const native = modelContext(options)
   const { tools, editor } = registeredEditor()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        yield* registerModelsServer(native.context as never, repository, options.fetcher)
+        yield* registerModelsServer(
+          native.context as never,
+          repository,
+          options.fetcher,
+          options.evidenceReadStoreFactory,
+        )
         yield* registerModelTools(
           {
             permission: native.context.permission,
@@ -656,6 +667,151 @@ test("Models evidence denial, foreign and archived sessions do not initialize or
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
     expect(permissionCalls).toHaveLength(2)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models comparison is an authorized read-only projection with honest missing-source state", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const permissionCalls: unknown[] = []
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const harness = await register(repository, { permissionCalls, sourceAccessCalls })
+  repository.close()
+  const methods = harness.methods()
+  try {
+    const output = (await Effect.runPromise(
+      methods.comparison({
+        sessionID: "ses-native",
+        filters: { providerID: "openrouter" },
+        limit: 1,
+      }),
+    )) as {
+      filters: { providerID?: string }
+      sources: Array<{
+        storage: string
+        snapshotState: string
+        refresh: unknown
+        snapshot: unknown
+      }>
+      candidates: unknown[]
+      nextCursor: string | null
+    }
+    expect(output).toMatchObject({
+      filters: { providerID: "openrouter" },
+      candidates: [],
+      nextCursor: null,
+    })
+    expect(output.sources).toHaveLength(3)
+    expect(output.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          storage: "missing-both-tables",
+          snapshotState: "missing-table",
+          refresh: null,
+          snapshot: null,
+        }),
+      ]),
+    )
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+    expect(permissionCalls).toEqual([
+      expect.objectContaining({
+        action: "lz-read-model-comparison",
+        resources: [projectDirectory],
+      }),
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models comparison denial, foreign or archived sessions and cancellation avoid source reads", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let denied = false
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const harness = await register(repository, {
+    denied: () => denied,
+    sourceAccessCalls,
+  })
+  repository.close()
+  const methods = harness.methods()
+  try {
+    for (const actor of [
+      null,
+      { id: "ses-native", projectID: "foreign-project", agent: "desktop-settings-user", time: {} },
+      { id: "ses-native", projectID, agent: "desktop-settings-user", time: { archived: 20 } },
+    ]) {
+      harness.setActor(actor)
+      expect(await rejects(methods.comparison({ sessionID: "ses-native" }))).toBeInstanceOf(Error)
+    }
+    harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
+    denied = true
+    expect(await rejects(methods.comparison({ sessionID: "ses-native" }))).toMatchObject({
+      message: "native permission denied",
+    })
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models comparison cancellation after permission but before source access does not open evidence storage", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const controller = new AbortController()
+  const harness = await register(repository, {
+    permissionWait: () => Effect.sync(() => controller.abort()),
+  })
+  repository.close()
+  try {
+    const exit = await Effect.runPromiseExit(
+      harness.methods().comparison({ sessionID: "ses-native" }),
+      { signal: controller.signal },
+    )
+    expect(exit._tag).toBe("Failure")
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models comparison cancellation after source reads cannot publish a successful result", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const controller = new AbortController()
+  const harness = await register(repository, {
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      const reader = new ModelEvidenceReadStore(databasePath, directory)
+      return {
+        readComparisonSources: (selection) => {
+          const sources = reader.readComparisonSources(selection)
+          controller.abort()
+          return sources
+        },
+        close: () => reader.close(),
+      }
+    },
+  })
+  repository.close()
+  try {
+    const exit = await Effect.runPromiseExit(
+      harness.methods().comparison({ sessionID: "ses-native" }),
+      { signal: controller.signal },
+    )
+    expect(exit._tag).toBe("Failure")
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -6,6 +6,7 @@ import { nativeWorkerOptions } from "../runner/catalog.ts"
 import { TaskRepository } from "../storage.ts"
 import {
   ModelCatalogOutputSchema,
+  ModelComparisonRPCInputSchema,
   ModelConfigureRPCInputSchema,
   ModelEvidenceRPCInputSchema,
   ModelMappingWriteOutputSchema,
@@ -15,16 +16,20 @@ import {
   ModelCatalogRPCInputSchema,
   Models,
 } from "./contract.ts"
+import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
 import { ModelEvidenceRefresher } from "./source-refresh.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
-import { ModelEvidenceStore } from "./source-store.ts"
+import { readModelComparison } from "./comparison-read.ts"
+import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelSettingsService } from "./service.ts"
 
 type ModelsContext = Pick<
   Plugin.Context,
   "agent" | "integration" | "location" | "model" | "permission" | "rpc" | "session"
 >
+type EvidenceReadStore = Pick<ModelEvidenceReadStore, "close" | "readComparisonSources">
+type EvidenceReadStoreFactory = (path: string, projectDirectory: string) => EvidenceReadStore
 
 function isSessionNotFound(error: unknown): boolean {
   return (
@@ -80,6 +85,8 @@ export function registerModelsServer(
   ctx: ModelsContext,
   repository: TaskRepository,
   fetcher?: ModelEvidenceFetcher,
+  evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
+    new ModelEvidenceReadStore(databasePath, directory),
 ) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
@@ -106,6 +113,14 @@ export function registerModelsServer(
     const store = new ModelEvidenceStore(path, projectDirectory)
     try {
       return await run(store)
+    } finally {
+      store.close()
+    }
+  }
+  const withEvidenceReadStore = <T>(run: (store: EvidenceReadStore) => T): T => {
+    const store = evidenceReadStoreFactory(path, projectDirectory)
+    try {
+      return run(store)
     } finally {
       store.close()
     }
@@ -198,6 +213,33 @@ export function registerModelsServer(
                 }),
               ),
             )
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      comparison: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelComparisonRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-comparison",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const result = withEvidenceReadStore((store) =>
+              readModelComparison(store, {
+                cursor: request.cursor,
+                filters: request.filters,
+                limit: request.limit,
+              }),
+            )
+            signal.throwIfAborted()
+            const output = ModelComparisonOutputSchema.parse(result)
+            signal.throwIfAborted()
+            return output
           },
           catch: failure,
         }).pipe(Effect.orDie),

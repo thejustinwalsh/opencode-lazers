@@ -1,6 +1,7 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { WorkerPersona } from "../runner/schema.ts"
+import { ModelComparisonOutputSchema, ModelComparisonReadInputSchema } from "./comparison-schema.ts"
 import {
   ModelMappingRecordSchema,
   ModelMappingResolutionSchema,
@@ -31,6 +32,10 @@ export const ModelEvidenceRPCInputSchema = z.strictObject({
   ...ModelEvidenceReadInputSchema.shape,
 })
 export const ModelSourceRefreshRPCInputSchema = z.strictObject({ sessionID: SessionID })
+export const ModelComparisonRPCInputSchema = z.strictObject({
+  sessionID: SessionID,
+  ...ModelComparisonReadInputSchema.shape,
+})
 
 export const ModelPersonaSettingsSchema = z.strictObject({
   persona: WorkerPersona,
@@ -113,5 +118,6 @@ export const Models = Rpc.define({
     catalog: { input: ModelCatalogRPCInputSchema, output: ModelCatalogOutputSchema },
     sourceEvidence: { input: ModelEvidenceRPCInputSchema, output: ModelEvidenceOutputSchema },
     refreshSources: { input: ModelSourceRefreshRPCInputSchema, output: ModelEvidenceOutputSchema },
+    comparison: { input: ModelComparisonRPCInputSchema, output: ModelComparisonOutputSchema },
   },
 })
