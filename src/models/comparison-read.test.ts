@@ -7,6 +7,7 @@ import {
   MODEL_EVIDENCE_SOURCE_URLS,
   ModelEvidenceSnapshotSchema,
 } from "./source-schema.ts"
+import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
 import { readModelComparison } from "./comparison-read.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
@@ -221,11 +222,47 @@ test("comparison preserves exact route identity, dated evidence, original prices
         modelPermaslug: "vendor/model-20261102",
         effort: "high",
         codingIndex: 77,
-        prices: { unit: "USD per token", prompt: "0" },
+        prices: { unit: "USD per token", prompt: "0", completion: null },
       },
-      effortApplicability: { status: "exact" },
-      native: { prices: { unit: "USD per million tokens", tiers: [{ input: 0, output: 0 }] } },
+      effortApplicability: { status: "unknown" },
+      native: {
+        prices: {
+          unit: "USD per million tokens",
+          tiers: [
+            {
+              contextTierTokens: null,
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: null,
+            },
+          ],
+        },
+      },
     })
+    expect(exact.effortApplicability.evidence.records).toEqual([
+      {
+        source: "native-catalog",
+        snapshotID: native.snapshotID,
+        generation: generations["native-catalog"],
+        recordIndex: 0,
+        recordID: "vendor/model",
+      },
+      {
+        source: "openrouter-models",
+        snapshotID: models.snapshotID,
+        generation: generations["openrouter-models"],
+        recordIndex: 0,
+        recordID: "vendor/model",
+      },
+      {
+        source: "openrouter-benchmarks",
+        snapshotID: benchmarks.snapshotID,
+        generation: generations["openrouter-benchmarks"],
+        recordIndex: 0,
+        recordID: "vendor/model-20261102",
+      },
+    ])
     expect(exact.correspondence.evidence.records.map(({ source }) => source)).toContain(
       "openrouter-models",
     )
@@ -315,6 +352,133 @@ test("comparison pages bind filters and source snapshots across concurrent refre
       filters: { providerID: "openrouter", search: "brand-new" },
     })
     expect(filtered.candidates.map(({ identity }) => identity.modelID)).toEqual(["brand-new"])
+  } finally {
+    reader.close()
+    writer.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("comparison bounds duplicate-record variants while paging every candidate deterministically", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const writer = new ModelEvidenceStore(path, projectDirectory)
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    const generations = writer.beginRefresh()
+    const variants = Array.from(
+      { length: 100 },
+      (_, index) => `variant-${String(index).padStart(3, "0")}`,
+    )
+    variants.push("variant-100")
+    const native = snapshot("native-catalog", projectDirectory, generations["native-catalog"], [
+      nativeRecord({
+        providerID: "openrouter",
+        id: "duplicate-model",
+        variants: variants.slice(0, 100),
+        price: 0,
+      }),
+      nativeRecord({
+        providerID: "openrouter",
+        id: "duplicate-model",
+        variants: variants.slice(100),
+        price: 0,
+      }),
+    ])
+    writer.saveSnapshot(native)
+
+    const first = readModelComparison(reader, { limit: 1 })
+    expect(first.candidates).toHaveLength(1)
+    expect(first.totalCandidates).toBe(101)
+    expect(first).toEqual(readModelComparison(reader, { limit: 1 }))
+
+    const candidates = [...first.candidates]
+    let page = first
+    while (page.nextCursor) {
+      page = readModelComparison(reader, { cursor: page.nextCursor, limit: 1 })
+      expect(page.candidates).toHaveLength(1)
+      expect(page.totalCandidates).toBe(101)
+      ModelComparisonOutputSchema.parse(page)
+      candidates.push(...page.candidates)
+      expect(candidates.length).toBeLessThanOrEqual(101)
+    }
+
+    expect(candidates.map(({ identity }) => identity.variant)).toEqual(variants)
+    expect(new Set(candidates.map(({ candidateID }) => candidateID)).size).toBe(101)
+    expect(candidates[0]?.native.availableVariants).toEqual(variants.slice(0, 100))
+    expect(candidates[0]?.native.variantCoverage).toEqual({
+      status: "truncated",
+      totalVariants: 101,
+      omittedVariants: 1,
+    })
+    expect(candidates[0]?.native.prices).toMatchObject({
+      unit: "USD per million tokens",
+      tiers: [{ input: 0, output: 0, cacheRead: 0, cacheWrite: null }],
+    })
+    expect(candidates[100]?.native.evidence.records).toEqual([
+      {
+        source: "native-catalog",
+        snapshotID: native.snapshotID,
+        generation: generations["native-catalog"],
+        recordIndex: 1,
+        recordID: "duplicate-model",
+      },
+    ])
+  } finally {
+    reader.close()
+    writer.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("comparison cursor rejects same-project source IDs swapped across source pins", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const writer = new ModelEvidenceStore(path, projectDirectory)
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    const generations = writer.beginRefresh()
+    const native = snapshot("native-catalog", projectDirectory, generations["native-catalog"], [
+      nativeRecord({ providerID: "openrouter", id: "model", variants: ["high", "low"], price: 0 }),
+    ])
+    const models = snapshot(
+      "openrouter-models",
+      projectDirectory,
+      generations["openrouter-models"],
+      [modelRecord("model", "model-slug")],
+    )
+    const benchmarks = snapshot(
+      "openrouter-benchmarks",
+      projectDirectory,
+      generations["openrouter-benchmarks"],
+      [benchmarkRecord("model-slug", "high", 1)],
+    )
+    writer.saveSnapshot(native)
+    writer.saveSnapshot(models)
+    writer.saveSnapshot(benchmarks)
+
+    const first = readModelComparison(reader, { limit: 1 })
+    expect(first.nextCursor).not.toBeNull()
+    const payload = JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString("utf8")) as {
+      version: number
+      offset: number
+      filters: unknown
+      snapshots: Record<string, string | null>
+    }
+    const cursor = Buffer.from(
+      JSON.stringify({
+        ...payload,
+        snapshots: {
+          "native-catalog": models.snapshotID,
+          "openrouter-models": benchmarks.snapshotID,
+          "openrouter-benchmarks": native.snapshotID,
+        },
+      }),
+    ).toString("base64url")
+
+    expect(() => readModelComparison(reader, { cursor, limit: 1 })).toThrow(
+      "Model evidence snapshot source does not match its selection",
+    )
   } finally {
     reader.close()
     writer.close()
