@@ -51,3 +51,33 @@ Updated combined checks: **206 tests / 2,067 expectations**; focused runner chec
 
 The temporary native driver script's manual `--queue` path was not used: prefer
 the real reconciled-plan outcomes for native actionable wake-up evidence.
+
+Both exact-artifact native worktrees were created successfully, but initially
+lacked installed dependencies. Their failing checks remain conclusive evidence,
+not implementation failure or acceptance. Driver ran `bun install
+--frozen-lockfile` in each idle verification worktree; both stayed Git-clean.
+Explicit reconciliation now records a verification epoch, allowing a new combined
+check run after environment repair without overwriting completed failures or
+replaying uncertain effects. Ordinary ticks and exact command replay do not
+create another check run. No implementation worker is replaced.
+
+Scheduler plan `6ed421e4`, native-route plan `db24c4b4` and title plan `5074d494`
+reached runtime `integrated`, respectively versions 9, 13 and 9. Native cleanup
+removed accepted scheduler/title checkouts without force. All three clean merged
+driver review worktrees were also removed through native worktree APIs.
+
+A location reload initially reported a removed scheduler worktree; native loaded
+location inspection then showed that entry absent. A subsequent supported reload
+completed, and a fresh project-scoped agent read confirmed reviewed guidance,
+worker catalog access and unchanged Luna Max. No service restart, configuration
+change or forced worktree removal was used. Native integration/wake verification
+must still distinguish an outbox delivery receipt and queued inbox entry from an
+actually resumed Architect turn.
+
+The explicit-reconcile recovery changes passed **70 runner tests / 1,109
+expectations**, **207 full tests / 2,083 expectations**, and format/lint/typecheck.
+Native inbox inspection observed real concise actionable blocked notices
+`msg_b6a81e4524b442418c977c4996b3fca2` and
+`msg_77066bcdddcc4880bb8765abb99a23e7` with `delivery:"queue"`; the corresponding
+runtime outcomes request resume. They remain queued while this Architect is busy;
+that is not yet proof of an idle-to-running wake.

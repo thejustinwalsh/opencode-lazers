@@ -43,6 +43,7 @@ function fixture(
     wrongFirstA?: boolean
     allowScopeOverlap?: boolean
     taskFiles?: { name: string; path: string; scope?: string[] }[]
+    requireVerifierPreparation?: boolean
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -277,7 +278,7 @@ function fixture(
       verification: [
         {
           id: "combined",
-          command: `test "$(cat ${files.map((file) => file.path).join(" ")})" = "${files.map((file) => file.name).join("")}"`,
+          command: `${options.requireVerifierPreparation ? `test -f '${join(stateDirectory, "verifier-ready")}' && ` : ""}test "$(cat ${files.map((file) => file.path).join(" ")})" = "${files.map((file) => file.name).join("")}"`,
           timeoutMs: 1000,
         },
       ],
@@ -1394,6 +1395,42 @@ test("reconciliation retains legacy advanced-checkout receipts and verifies the 
   expect(fresh.cwd).not.toBe(f.root)
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(readFileSync(join(f.root, "later.txt"), "utf8")).toBe("preserve\n")
+})
+
+test("explicit reconcile retries conclusive combined checks after environment repair without erasing evidence", async () => {
+  const f = fixture({
+    shared: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    requireVerifierPreparation: true,
+  })
+  await runPlan(f)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  const checks = () =>
+    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "graph-verify:combined")
+  expect(checks()).toHaveLength(1)
+  const failed = checks()[0]!
+  expect(JSON.parse(failed.receipt!).check.exitCode).toBe(1)
+  await drive(f.runtime)
+  expect(checks()).toHaveLength(1)
+  writeFileSync(join(dirname(f.repository.path), "verifier-ready"), "prepared\n")
+  const command = {
+    requestID: "reconcile-prepared-verifier",
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "reconcile",
+    reason: "Repair verifier prerequisites, not implementation",
+  }
+  const receipt = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(receipt)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(checks()).toHaveLength(2)
+  expect(checks().find((effect) => effect.id === failed.id)?.receipt).toBe(failed.receipt)
+  const fresh = checks().find((effect) => effect.id !== failed.id)!
+  expect(JSON.parse(fresh.payload).verificationEpoch).toBeGreaterThan(0)
+  expect(JSON.parse(fresh.receipt!).check).toMatchObject({ exitCode: 0, unchanged: true })
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
 
 test("uncertain prompt cannot prevent cancellation of an admitted sibling", async () => {

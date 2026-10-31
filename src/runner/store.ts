@@ -395,12 +395,12 @@ export class RunnerStore {
       this.repository.changed()
     })
   }
-  latestTransition<T>(planID: string, taskID: string, event: string): T | undefined {
+  latestTransition<T>(planID: string, taskID: string | null, event: string): T | undefined {
     if (!this.plan(planID)) throw new Error("Plan not found")
     const row = this.atomic((db) =>
       db
-        .query<{ payload: string }, [string, string, string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id=? AND event=? ORDER BY id DESC LIMIT 1",
+        .query<{ payload: string }, [string, string | null, string]>(
+          "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
         )
         .get(planID, taskID, event),
     )

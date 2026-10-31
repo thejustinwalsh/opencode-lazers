@@ -278,7 +278,10 @@ export class TaskRuntime {
             )
               this.store.move(plan.id, node.task_id, "RECONCILE")
         }
-        this.store.record(plan.id, null, "RECONCILE_REQUESTED", { caller })
+        this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+          caller,
+          verificationEpoch: this.store.plan(plan.id)!.version,
+        })
         return { status: "reconciling", version: this.store.plan(plan.id)!.version }
       }
       if (plan.state !== "draft" && plan.state !== "blocked")
@@ -1434,6 +1437,15 @@ export class TaskRuntime {
         }
       }
     }
+    // Explicit reconciliation may follow a conclusive verifier/environment
+    // failure. Keep prior effects and give the requested check run its own ID;
+    // never replay uncertain effects or silently retry on ordinary ticks.
+    const verificationEpoch =
+      this.store.latestTransition<{ verificationEpoch?: number }>(
+        plan.id,
+        null,
+        "RECONCILE_REQUESTED",
+      )?.verificationEpoch ?? 0
     const receipts: CheckReceipt[] = []
     for (const check of input.verification) {
       if (this.store.plan(plan.id)?.state !== "running") return
@@ -1444,6 +1456,7 @@ export class TaskRuntime {
             e.kind === `graph-verify:${check.id}` &&
             JSON.parse(e.payload).artifact === artifact &&
             JSON.parse(e.payload).workspace === workspace &&
+            (JSON.parse(e.payload).verificationEpoch ?? 0) === verificationEpoch &&
             fingerprint(JSON.parse(e.payload).check) === fingerprint(check),
         )
       if (existing?.state === "completed") {
@@ -1454,14 +1467,21 @@ export class TaskRuntime {
         this.dataDirectory,
         "receipts",
         plan.id,
-        `${check.id}-${artifact}.json`,
+        `${check.id}-${artifact}${verificationEpoch ? `-${verificationEpoch}` : ""}.json`,
       )
       const effect = this.effect(
         plan.id,
         null,
         null,
         `graph-verify:${check.id}`,
-        { workspace, artifact, identity: artifact, check, receiptPath },
+        {
+          workspace,
+          artifact,
+          identity: artifact,
+          check,
+          receiptPath,
+          ...(verificationEpoch ? { verificationEpoch } : {}),
+        },
         fence,
       )
       try {
