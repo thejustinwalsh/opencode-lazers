@@ -51,3 +51,23 @@ restored Auto off afterward. See the scoped
 [speech evidence](../024-final-prose-speech/replay-repair.md); this establishes
 real-final automatic generation, not perceptual audio quality or behavior on
 every provider. No speech setting or diagnostic code was changed by this review.
+
+## Preserve concurrent Root runtime repairs at integration
+
+Root's canonical `a07377c` makes unchanged blocked waits idempotent; Root
+reports 60 runtime/recovery tests passing, all nine native locations reloaded
+with unchanged service PID, and context plan version 318 remaining stable
+across ticks. Root is separately repairing the existing `human-evidence`
+command's missing plan-level lane with declared-assertion/current combined
+accepted-artifact binding and tests. Do not duplicate that work or overwrite it
+when merging the wake-coalescing artifact. Review against the latest canonical
+runtime and retain both fixes and their regressions.
+
+The active wake worker received native instruction entry
+`lazers-root-runtime-integration-preservation` without interruption. This is a
+merge-preservation watchpoint, not an expansion of its immutable task scope.
+Context's real native observation remains committed in `c1ced6f`; task acceptance
+and the separate plan-command gap are documented in `12e5ae4`. Preserve the
+existing plan/task and evidence; do not retire the work, force acceptance or
+insert graph evidence through SQL. No duplicate context or runtime repair task
+was submitted by this driver.
