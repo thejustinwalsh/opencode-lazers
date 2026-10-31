@@ -72,3 +72,13 @@ projection and speech work for actual native fan-out, not a demo graph. Retain
 and non-forced owned cleanup are recorded. Preserve active shared work before
 merging this review into main and recording runtime integration; a branch receipt
 alone does not establish integration.
+
+At the final merge-readiness check, Repomix had committed `c787af3` and left main
+clean, but the runtime had already dispatched `fc88ccc0` in the same main checkout
+from that baseline. Its execution was still running, with runner files in its
+write scope. The reviewed merge is committed as `98637b4` in the isolated native
+worktree and retained; it was not merged over that active shared worker, and no
+runtime integration or cleanup is claimed. Finish at a quiescent shared boundary,
+reload the committed runner through the supported location API, then record the
+existing scheduler plan's integration after its combined acceptance. Preserve
+the original accepted artifact/attempt and the review commit as separate facts.
