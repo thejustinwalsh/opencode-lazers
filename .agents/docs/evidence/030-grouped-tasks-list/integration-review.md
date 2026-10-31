@@ -47,3 +47,10 @@ checks do not establish real Desktop copy/paste/rendered-link navigation, mounte
 chain/fork/join/cross-edge interaction, persisted search/disclosure, paging,
 filters, keyboard or narrow layout. Whole-plan integration and cleanup must not
 silently substitute for those observations.
+
+Source merge is `0b880a8`; review repairs are `d974597`. Normal task-level command
+`grouping-reviewed-source-landed-dcba900-d974597-v1` recorded the accepted task's
+landing at references/grouping plan v17 → v18, observed HEAD `d974597`. It did not
+finalize the plan or clean its owned worktrees. The local GUI rebuild uses the
+documented bundle watcher reload boundary; actual mounted observation belongs to
+the subsequent Root/Terra report, not this build receipt.
