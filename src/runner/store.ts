@@ -311,7 +311,7 @@ export class RunnerStore {
           `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence FROM runner_outbox o
            JOIN runner_plans p ON p.id=o.plan_id
            WHERE p.project_directory=?
-             AND (o.state IN ('pending','sending','uncertain','admitted','unknown','delivered')
+              AND (o.state IN ('pending','sending','uncertain','admitted','delivered')
                OR o.rowid=(SELECT latest.rowid FROM runner_outbox latest
                  WHERE latest.plan_id=o.plan_id
                  ORDER BY CAST(json_extract(latest.payload,'$.version') AS INTEGER) DESC,latest.rowid DESC

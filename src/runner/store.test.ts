@@ -51,6 +51,33 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
+test("delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown", () => {
+  const f = fixture("bounded-outbox")
+  const plan = f.store.submit(f.input, "owner")
+  f.store.atomic((db) => {
+    for (const [id, version, state] of [
+      ["old-unknown", 1, "unknown"],
+      ["old-admitted", 2, "admitted"],
+      ["latest-unknown", 3, "unknown"],
+    ] as const)
+      db.query(
+        "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,?,1)",
+      ).run(
+        id,
+        plan.planID,
+        "owner",
+        `msg_${id}`,
+        JSON.stringify({ planID: plan.planID, version, status: "blocked" }),
+        state,
+      )
+  })
+  expect(f.store.outboxForDelivery().map((row) => row.id)).toEqual([
+    "old-admitted",
+    "latest-unknown",
+  ])
+  expect(f.store.detail(plan.planID).delivery as unknown[]).toHaveLength(3)
+})
+
 test("legacy delivered outbox schema migrates across an actual close and reopen with unknown consumption", () => {
   const f = fixture("legacy-outbox")
   const plan = f.store.submit(f.input, "owner")
