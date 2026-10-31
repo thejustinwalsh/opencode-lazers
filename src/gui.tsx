@@ -17,6 +17,8 @@ import { audioFilePCM16 } from "./webgpu/audio.ts"
 import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
+import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
+import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { LocalInference } from "./webgpu/rpc.ts"
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
@@ -26,6 +28,8 @@ const formatBytes = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(2)} GB
 export default Plugin.define({
   stores: {
     ...taskStores,
+    ...radarStores,
+    ...trajectoryStores,
     voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
       selected: DEFAULT_VOICE,
     }),
@@ -44,6 +48,8 @@ export default Plugin.define({
   },
   setup(ctx) {
     setupTaskPanel(ctx)
+    setupRadarPanel(ctx)
+    setupTrajectoryPanel(ctx)
     const Ui = ctx.ui
     const pageID = "lazers"
     const Overview = bindPlugin(() => (
