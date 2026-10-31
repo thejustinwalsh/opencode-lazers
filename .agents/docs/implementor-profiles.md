@@ -2,8 +2,8 @@
 
 Research snapshot: 2026-10-31. Four research lanes covered UI, systems,
 refactoring and model value. These are task classifications and candidate tests,
-not established model rankings or extra primary agents. The current runtime has
-one hidden implementor; profile selection is not wired into dispatch yet.
+not established model rankings or extra primary agents. The runtime has one
+hidden implementor with optional short per-task persona overlays.
 
 ## Three profiles
 
@@ -20,7 +20,7 @@ coherent change solely to create more agents.
 
 The common implementor retains normal coding tools, Code Mode and available
 diagnostics. Scheduler owns dispatch and parallelism; workers do not delegate.
-Any eventual profile overlay should supply only its distinct execution emphasis:
+The optional per-task overlay supplies only its distinct execution emphasis:
 
 - Small task / refactoring: preserve behavior outside the requested change;
   inspect the closest pattern and demonstrate the intended difference.
@@ -30,6 +30,13 @@ Any eventual profile overlay should supply only its distinct execution emphasis:
 
 These are concise design candidates, not three additional instruction manuals.
 Do not inject every profile into every task.
+
+The runtime exposes these as optional per-node choices (`ui`, `systems`, and
+`small-refactoring`), with at most one short overlay on an attempt. A persona is
+independent of provider/model/effort; it neither assigns a model nor restricts
+normal tools. The live native catalog and the user's preferences can inform a
+route question, but no capability field or missing catalog entry is a LAZERS
+route veto. Preserve explicit provider/model/variant values for native execution.
 
 ## What the research supports
 
@@ -66,9 +73,10 @@ evidence. The four linked research notes retain positive and negative reports.
 
 [OpenCode Go](https://opencode.ai/v2/docs/console/go/) includes Luna, GLM Flash,
 Qwen and other candidate families. Sonnet is an external comparator, **not in the
-documented Go pool**. Confirm exact native route, model, effort and capabilities
-before dispatch. A Qwen checkpoint benchmark does not establish the behavior of
-another Qwen Go endpoint.
+documented Go pool**. Current native route, model, effort and capability metadata
+can inform advice, but native OpenCode governs whether a route is available; LAZERS
+must not veto a selection from catalog metadata. A Qwen checkpoint benchmark does
+not establish the behavior of another Qwen Go endpoint.
 
 | Sample                                | Why include it                                                                    | What remains to prove here                                    |
 | ------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -78,7 +86,8 @@ another Qwen Go endpoint.
 | DeepSeek V4.1 Flash / MiMo V2.6 Flash | Value comparators with direct Search-SWE entries                                  | Correctness and total effort on our task mix                  |
 | Sonnet, external                      | Useful reference for difficult systems/UI work                                    | Whether a quality/rework gain offsets total cost              |
 
-Do not infer a global ranking from these priors. [Vals](https://www.vals.ai/benchmarks/swebench)
+Do not bind any of these candidates to a persona or infer a global ranking from
+these priors. [Vals](https://www.vals.ai/benchmarks/swebench)
 is an archived September SWE-bench table; [SWE-rebench](https://swe-rebench.com/)
 uses another task window/harness. [Search-SWE](https://search-swe.github.io/leaderboard/)
 directly compares Luna Max and Flash candidates on search-engine construction,

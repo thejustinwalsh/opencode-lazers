@@ -10,6 +10,7 @@ import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
+import type { WorkerPersona } from "./schema.ts"
 import { TaskReads } from "../tasks/read.ts"
 
 const cleanup: (() => void)[] = []
@@ -27,6 +28,7 @@ function fixture(
     wrongFirstB?: boolean
     skillSuggestions?: string[]
     workerModel?: { providerID: string; id: string; variant?: string }
+    personas?: (WorkerPersona | undefined)[]
     startOnly?: boolean
   } = {},
 ) {
@@ -215,7 +217,14 @@ function fixture(
     workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
     baseCommit: base,
     ...(options.workerModel ? { workerModel: options.workerModel } : {}),
-    nodes: tasks.map((t) => ({ taskID: t.id, revision: 1 as const })),
+    nodes: tasks.map((t, index) => {
+      const persona = options.personas?.[index]
+      return {
+        taskID: t.id,
+        revision: 1 as const,
+        ...(persona ? { persona } : {}),
+      }
+    }),
     dependencies: [{ prerequisite: tasks[0]!.id, successor: tasks[1]!.id }],
     integrationOrder: tasks.map((t) => t.id),
     verification: [
@@ -605,6 +614,100 @@ test("Start admits the configured route independently of the Architect model", a
   ).rejects.toThrow("Select an implementor model")
   expect(noModel.store.plans()).toHaveLength(0)
   expect(noModel.events).toEqual([])
+})
+
+test("Go and configured routes reach native execution unchanged alongside independent personas", async () => {
+  const choices: { persona: WorkerPersona; model: NonNullable<PlanInput["workerModel"]> }[] = [
+    {
+      persona: "ui",
+      model: { providerID: "opencode-go", id: "qwen3.8-flash", variant: "xhigh" },
+    },
+    {
+      persona: "ui",
+      model: { providerID: "custom-provider", id: "configured-model", variant: "careful" },
+    },
+    {
+      persona: "systems",
+      model: { providerID: "custom-provider", id: "configured-model", variant: "careful" },
+    },
+    {
+      persona: "systems",
+      model: { providerID: "private-provider", id: "unlisted-model", variant: "medium" },
+    },
+    {
+      persona: "small-refactoring",
+      model: { providerID: "private-provider", id: "unlisted-model", variant: "medium" },
+    },
+    {
+      persona: "small-refactoring",
+      model: { providerID: "opencode-go", id: "qwen3.8-flash", variant: "xhigh" },
+    },
+  ]
+  const overlayText: Record<WorkerPersona, string> = {
+    ui: "Use the existing UI primitives and tokens.",
+    systems: "Trace the existing contract before editing.",
+    "small-refactoring": "Preserve behavior outside the request.",
+  }
+
+  for (const choice of choices) {
+    const f = fixture({
+      shared: true,
+      workerModel: choice.model,
+      personas: [choice.persona],
+    })
+    const nativeModels: NonNullable<PlanInput["workerModel"]>[] = []
+    const create = f.host.create
+    f.host.create = async (input) => {
+      nativeModels.push(input.model)
+      await create(input)
+    }
+
+    await f.runtime.command(
+      { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+      "owner",
+    )
+    await f.runtime.tick()
+
+    const plan = f.store.plan(f.receipt.planID)!
+    const attempt = f.store.attempts(plan.id)[0]!
+    const prompt = f.sessions.get(attempt.session_id)!.messages[0]!.text
+    expect(JSON.parse(plan.model!)).toEqual(choice.model)
+    expect(JSON.parse(plan.body).nodes[0].persona).toBe(choice.persona)
+    expect(JSON.parse(attempt.policy)).toMatchObject({
+      model: choice.model,
+      persona: choice.persona,
+    })
+    expect(nativeModels).toEqual([choice.model])
+    expect(prompt).toContain(
+      `Selected ${choice.persona === "ui" ? "UI" : choice.persona === "systems" ? "Systems" : "Small task / refactoring"} persona`,
+    )
+    expect(prompt).toContain(overlayText[choice.persona])
+    expect(prompt.match(/Selected .* persona/g)).toHaveLength(1)
+  }
+})
+
+test("a native route failure stays visible and is never retried with a substitute", async () => {
+  const selected = { providerID: "custom-provider", id: "selected-model", variant: "max" }
+  const f = fixture({ shared: true, workerModel: selected })
+  const nativeAttempts: NonNullable<PlanInput["workerModel"]>[] = []
+  f.host.create = async (input) => {
+    nativeAttempts.push(input.model)
+    throw new Error("Native provider rejected selected route")
+  }
+
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await f.runtime.tick()
+  await f.runtime.tick()
+
+  expect(nativeAttempts).toEqual([selected])
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({
+    state: "blocked",
+    reason: expect.stringContaining("Native provider rejected selected route"),
+  })
+  expect(JSON.parse(f.store.attempts(f.receipt.planID)[0]!.policy).model).toEqual(selected)
 })
 
 test("Start rejects stale, foreign and ended work without changing runtime state", async () => {

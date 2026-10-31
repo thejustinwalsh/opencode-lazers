@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { z } from "zod"
+import { nativeWorkerOptions } from "./catalog.ts"
 import { CommandInput, PlanInput } from "./schema.ts"
 import type { TaskRuntime } from "./runtime.ts"
 
@@ -11,7 +12,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lazers_submit_plan",
         description:
-          "Persist a versioned task dependency plan referencing existing exact task revisions. Resolve audit overlap candidates with explicit distinct/duplicate/supplement rationales. Does not run until lazers_plan_command action run. Stable requestID is mandatory for safe retries.",
+          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Resolve audit overlap candidates with explicit distinct/duplicate/supplement rationales. Does not run until lazers_plan_command action run. Stable requestID is mandatory for safe retries.",
         schema: PlanInput,
         run: (input: unknown, sessionID: string) => runtime.store.submit(input, sessionID),
       },
@@ -33,6 +34,13 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
             ? runtime.store.detail(planID)
             : { plans: runtime.store.plans(), audit: runtime.store.audit() }
         },
+      },
+      {
+        name: "lazers_worker_catalog",
+        description:
+          "Read the live native OpenCode model catalog, current implementor selection, listed prices, variants and capability metadata to advise the user. Informational only: does not infer a ranking, validate or change a route, or launch model inference.",
+        schema: z.strictObject({}),
+        run: (_input: unknown, _sessionID: string) => nativeWorkerOptions(ctx),
       },
     ]) {
       editor.add({

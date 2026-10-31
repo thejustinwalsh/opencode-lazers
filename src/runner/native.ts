@@ -106,10 +106,14 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
       }
     },
     async create(input) {
+      // Preserve the admitted native ref verbatim. Catalog metadata is advisory;
+      // session.create decides whether OpenCode can use this provider/model/variant.
       const model = {
         id: Model.ID.make(input.model.id),
         providerID: Provider.ID.make(input.model.providerID),
-        ...(input.model.variant ? { variant: Model.VariantID.make(input.model.variant) } : {}),
+        ...(input.model.variant !== undefined
+          ? { variant: Model.VariantID.make(input.model.variant) }
+          : {}),
       }
       await Effect.runPromise(
         ctx.session.create({

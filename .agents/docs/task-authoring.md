@@ -40,9 +40,14 @@ Architect self-review through `lazers_verify_task` stays. It checks both missing
 behavior and unsupported or repeated obligations. It must preserve necessary
 requirements while removing needless instructions. No word-count approval gate.
 
-Use the explicitly selected implementor model through plan `workerModel`; for
-current dogfood this is `openai/gpt-6-luna`, variant `max`. Architect can use its
-own stronger model. Old plans without a selection retain owner inheritance.
+Use an explicit user-selected native implementor route through plan `workerModel`
+with the exact `providerID`, model `id`, and optional native `variant`/effort.
+Otherwise omit it and inherit the native implementor configuration. The native
+session API governs route availability and errors; live catalog prices, variants,
+and capability metadata inform advice but do not gate or rewrite a selection.
+Missing prices remain unknown. Each plan node may independently name at most one
+model-independent persona (`ui`, `systems`, or `small-refactoring`); do not map
+personas to models. Old plans without a route or persona retain their behavior.
 
 Grade real work by acceptance correctness, regressions, scope, maintainability
 and necessary rework. Retain visible trajectories and failed attempts. Compare

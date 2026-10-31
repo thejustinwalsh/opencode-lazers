@@ -187,8 +187,15 @@ test("a host that fails to move the child cannot receive its work prompt", async
 
 test("native worker selection survives role registration and reaches native creation unchanged", async () => {
   const model = { providerID: "custom-provider", id: "native-selected", variant: "deep" }
+  const routes = [
+    model,
+    { providerID: "opencode-go", id: "qwen3.8-flash", variant: "xhigh" },
+    { providerID: "private-provider", id: "missing-capability-metadata", variant: "max" },
+    { providerID: "custom-provider", id: "empty-variant-route", variant: "" },
+  ]
   const agent = { model, permissions: [] }
-  let created: { model: unknown } | undefined
+  const created: { model: unknown }[] = []
+  let catalogReads = 0
   let fail = false
   const ctx = {
     agent: {
@@ -200,30 +207,55 @@ test("native worker selection survives role registration and reaches native crea
           }),
         ),
     },
+    model: {
+      list: () =>
+        Effect.sync(() => {
+          catalogReads++
+          return {
+            data: [
+              {
+                providerID: "opencode-go",
+                id: "qwen3.8-flash",
+                enabled: false,
+                capabilities: { tools: false, input: ["text"], output: ["text"] },
+              },
+              {
+                providerID: "private-provider",
+                id: "missing-capability-metadata",
+                enabled: true,
+              },
+            ],
+          }
+        }),
+    },
     session: {
       hook: () => Effect.void,
       create: (input: { model: unknown }) =>
         Effect.sync(() => {
           if (fail) throw new Error("Native route error")
-          created = input
+          created.push(input)
         }),
     },
     tool: { hook: () => Effect.void },
   } as unknown as Plugin.Context
   await Effect.runPromise(Effect.scoped(registerWorker(ctx, {} as RunnerStore)))
   const host = nativeHost(ctx, {} as TaskRepository)
-  expect(await host.workerModel!()).toEqual(model)
-  await host.create({
-    id: "ses_child",
-    parentID: "ses_owner",
-    agent: "lazers-implementor",
-    model,
-    directory: "/work",
-    title: "task",
-    attemptID: "attempt",
-  })
-  expect(created?.model).toEqual(model)
-  // No model catalog, enabled flag or plugin provider whitelist participates.
+  for (const [index, route] of routes.entries()) {
+    agent.model = route
+    expect(await host.workerModel!()).toEqual(route)
+    await host.create({
+      id: `ses_child_${index}`,
+      parentID: "ses_owner",
+      agent: "lazers-implementor",
+      model: route,
+      directory: "/work",
+      title: "task",
+      attemptID: "attempt",
+    })
+  }
+  expect(created.map(({ model: selected }) => selected)).toEqual(routes)
+  // Catalog metadata is advice; native create forwards each selected route directly.
+  expect(catalogReads).toBe(0)
   fail = true
   await expect(
     host.create({
@@ -236,4 +268,5 @@ test("native worker selection survives role registration and reaches native crea
       attemptID: "attempt",
     }),
   ).rejects.toThrow("Native route error")
+  expect(created).toHaveLength(routes.length)
 })

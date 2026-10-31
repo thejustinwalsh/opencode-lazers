@@ -70,6 +70,12 @@ The worker returns an artifact reference, changed files, evidence references, an
 
 Architect can request bounded code investigation or current-web research from internal specialist roles. Runtime admission resolves the approved agent/model/variant and reserves resources before dispatching the native child. Specialists are subagent profiles, not extra human-facing primary agents. They do not recursively delegate. Research and implementation use the same admitted-dispatch boundary; unrestricted native child spawning is not a cost-control substitute.
 
+### Worker route and persona choice
+
+Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. The native host decides whether it is configured and usable: catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lazers_worker_catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
+
+Each plan node may independently select one optional persona: `ui`, `systems`, or `small-refactoring`. A persona contributes one short overlay to the shared implementor core and is independent of provider/model/effort. It does not remove normal coding tools or permit worker delegation. Existing plans without a persona or explicit `workerModel` keep their prior behavior; there is no separate persona/model settings engine.
+
 ### 4 Verification and completion
 
 The runtime owns this lifecycle:
@@ -160,6 +166,8 @@ The optional [task-hardening tool](.agents/docs/task-hardening.md), `lazers_veri
 src/index.ts                         Effect server plugin adapter
 src/architect.md                     Packaged Architect definition
 src/architect.ts                     Validated definition and native agent registration
+src/runner/catalog.ts                Read-only native model-selection advice
+src/personas/                         Short model-independent worker overlays
 src/task.ts                          Zod proposal/specification and generated JSON Schema
 src/storage.ts                       Plugin-owned SQLite repository
 src/submission.ts                    Validation and runtime-owned task identity/provenance
@@ -171,7 +179,7 @@ package.json and bun.lock            Package entry point and pinned dependencies
 tsconfig.json                       Strict typechecking
 ```
 
-The scaffold targets the installed OpenCode CLI and Desktop 2.2.5 with `@opencode/plugin` 2.2.5. It exports TypeScript source directly; the server plugin needs no bundle step. Effect setup opens the task repository, registers native tools and Architect, writes a persistent `loaded` marker, and logs the host version/database path. The package includes its agent definition and registers it through `agent.transform().update()`, which creates missing agents in the pinned host. A packed artifact loaded and registered Architect in a clean project without an agent file. Desktop trials verify structured interviewing and persisted task submission; see the [capability and definition audit](.agents/docs/architect-validation.md) and [evaluation evidence](.agents/docs/spikes/006-architect-interview.md). Task execution and scheduling remain unimplemented.
+The scaffold targets the installed OpenCode CLI and Desktop 2.2.5 with `@opencode/plugin` 2.2.5. It exports TypeScript source directly; the server plugin needs no bundle step. Effect setup opens the task repository, registers native tools and Architect, writes a persistent `loaded` marker, and logs the host version/database path. The package includes its agent definition and registers it through `agent.transform().update()`, which creates missing agents in the pinned host. A packed artifact loaded and registered Architect in a clean project without an agent file. Desktop trials verify structured interviewing and persisted task submission; see the [capability and definition audit](.agents/docs/architect-validation.md) and [evaluation evidence](.agents/docs/spikes/006-architect-interview.md). Task execution and scheduling have since been added incrementally; current worker selection is described in [spike 016](.agents/docs/spikes/016-native-worker-selection.md).
 
 Use the Bun version pinned in `package.json`, then run `bun install --frozen-lockfile`. The selected canary package is `1.4.4-canary.20261030.1`, verified as binary revision `1.4.4-canary.1+da867c60b`. Run native `bun fmt` to format, `bun fmt --check` to check formatting, `bun lint` to lint, and `bun check` to typecheck. `bun run verify` runs the non-mutating checks together.
 
@@ -284,7 +292,7 @@ The first useful slice is an Architect we can use inside OpenCode Desktop to spe
 
 During stage 4, choose the next spike from observed friction: skill admission, worker dispatch, trajectory instrumentation, verification, bounded repair, measurement, recovery, dependency scheduling, or desktop controls. The Architect specifies that increment before implementation. A custom desktop panel and a complete execution engine are not prerequisites for using the native Desktop agent.
 
-The target Architect flow above guides these increments: enable current web research and, where useful, bounded investigation/research specialists; support feature plans with task dependencies and overall acceptance; add admitted dispatch; then deliver durable outcomes and validated repair/reschedule/replan decisions. Keep each addition independently usable and verified in Desktop. Select specialist models through execution policy according to cost and fit rather than hard-coding one model for every role.
+The target Architect flow above guides these increments: enable current web research and, where useful, bounded investigation/research specialists; support feature plans with task dependencies and overall acceptance; add admitted dispatch; then deliver durable outcomes and validated repair/reschedule/replan decisions. Keep each addition independently usable and verified in Desktop. Use current native catalog and user preferences as route-selection advice; do not hard-code model assignments to task personas or infer a global ranking.
 
 Model routing, cache affinity, parallel workers, bounded memory, hashline editing, and selective compound learning remain separate experiments. Each needs a stated hypothesis, a fixed comparison, and a retention criterion.
 

@@ -14,10 +14,12 @@ export const TaskState = z.enum([
   "incorporated",
 ])
 export type TaskState = z.infer<typeof TaskState>
+export const WorkerPersona = z.enum(["ui", "systems", "small-refactoring"])
+export type WorkerPersona = z.infer<typeof WorkerPersona>
 export const ModelPolicy = z.strictObject({
-  providerID: z.string().min(1),
-  id: z.string().min(1),
-  variant: z.string().optional(),
+  providerID: z.string().min(1).describe("Native OpenCode provider ID, passed through unchanged."),
+  id: z.string().min(1).describe("Native OpenCode model ID, passed through unchanged."),
+  variant: z.string().optional().describe("Optional native variant or reasoning-effort ID."),
 })
 export type ModelPolicy = z.infer<typeof ModelPolicy>
 export const PlanInput = z
@@ -27,10 +29,18 @@ export const PlanInput = z
     baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
     workspaceMode: z.enum(["shared", "isolated"]).default("shared"),
     workerModel: ModelPolicy.optional().describe(
-      "Explicit user-authorized implementor model and reasoning variant; otherwise inherit the owner. No automatic provider fallback.",
+      "Exact user-authorized native provider, model and optional variant/effort; otherwise inherit the configured implementor. LAZERS does not catalog-validate or substitute the selected route.",
     ),
     nodes: z
-      .array(z.strictObject({ taskID: z.uuid(), revision: z.literal(1) }))
+      .array(
+        z.strictObject({
+          taskID: z.uuid(),
+          revision: z.literal(1),
+          persona: WorkerPersona.optional().describe(
+            "Optional model-independent worker guidance for this task.",
+          ),
+        }),
+      )
       .min(1)
       .max(100),
     dependencies: z.array(z.strictObject({ prerequisite: z.uuid(), successor: z.uuid() })).max(500),

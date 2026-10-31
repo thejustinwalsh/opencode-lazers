@@ -5,10 +5,11 @@ import type { TaskProposal } from "../task.ts"
 import { artifactExists, commitArtifact, artifactUnchanged, git, runCheck } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
-import { CommandInput, ModelPolicy, PlanInput } from "./schema.ts"
+import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
 import type { PlanRow, NodeRow, AttemptRow, EffectRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
+import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 
 const terminal = new Set([
   "accepted",
@@ -747,6 +748,7 @@ export class TaskRuntime {
     const input = PlanInput.parse(JSON.parse(plan.body))
     if (JSON.parse(plan.body).workspaceMode === undefined && attempts.length)
       input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
+    const persona = input.nodes.find((candidate) => candidate.taskID === task.id)?.persona
     const id = crypto.randomUUID()
     // Isolated serial work inherits accepted prior artifacts. A new shared node
     // starts at the actual reviewed checkout, so intervening integrated repairs
@@ -784,6 +786,7 @@ export class TaskRuntime {
       agent: "lazers-implementor",
       workspaceMode: input.workspaceMode,
       model: ModelPolicy.parse(JSON.parse(plan.model!)),
+      ...(persona ? { persona } : {}),
       source: base,
       context: text,
       packet: {
@@ -826,6 +829,7 @@ export class TaskRuntime {
     this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {
       attemptID: id,
       packet: policy.packet,
+      ...(persona ? { persona } : {}),
     })
     if (input.workspaceMode === "shared") {
       await this.prepareWorker(plan, attempt, fence)
@@ -895,11 +899,15 @@ export class TaskRuntime {
         fence,
       )
       try {
+        const selectedPersona = WorkerPersona.safeParse(JSON.parse(attempt.policy).persona)
+        const personaGuidance = selectedPersona.success
+          ? `\n\nSelected ${workerPersonaLabels[selectedPersona.data]} persona (advisory, independent of model/provider):\n${workerPersonaOverlay(selectedPersona.data)}`
+          : ""
         await this.host.prompt({
           sessionID: attempt.session_id,
           id: attempt.message_id,
           directory: attempt.workspace,
-          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lazers_get_task_instructions before editing. Use lazers_get_task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.`,
+          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lazers_get_task_instructions before editing. Use lazers_get_task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
         })
         this.receipt(
           effect,
