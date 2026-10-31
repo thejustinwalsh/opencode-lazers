@@ -190,6 +190,31 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         }),
       )
     },
+    async updateInstruction(input) {
+      const sessionID = Session.ID.make(input.sessionID)
+      const session = await Effect.runPromise(ctx.session.get({ sessionID }))
+      if (
+        session.id !== input.sessionID ||
+        session.agent !== "lazers-implementor" ||
+        input.projectID !== ctx.location.project.id ||
+        session.projectID !== input.projectID ||
+        session.location.directory !== input.directory ||
+        session.metadata?.lazersAttemptID !== input.attemptID ||
+        session.time.archived !== undefined
+      )
+        throw new Error("Scope instruction target is not the owned worker attempt")
+      const matches = async () =>
+        (await Effect.runPromise(ctx.session.instructions.entry.list({ sessionID }))).some(
+          (entry) => entry.key === input.key && entry.value === input.text,
+        )
+      // A lost put response is recovered from the durable entry, not another
+      // model message. An absent entry may safely repeat the same keyed upsert.
+      if (await matches()) return
+      await Effect.runPromise(
+        ctx.session.instructions.entry.put({ sessionID, key: input.key, value: input.text }),
+      )
+      if (!(await matches())) throw new Error("Scope instruction update has no native readback")
+    },
     async interrupt(id) {
       await Effect.runPromise(ctx.session.interrupt({ sessionID: Session.ID.make(id) }))
     },

@@ -91,6 +91,164 @@ test("child prompt uses native move and verifies location before any model work"
   expect(calls).toEqual(["move", "wait", "prompt", "prompt"])
 })
 
+test("scope instructions use native durable keyed entries with lost-reply recovery and no model work", async () => {
+  const entries = new Map<string, unknown>([["other-plugin", "preserve"]])
+  let puts = 0
+  let loseReply = true
+  const host = nativeHost(
+    {
+      location: { project: { id: "project" } },
+      session: {
+        get: () =>
+          Effect.succeed({
+            id: "ses_worker",
+            agent: "lazers-implementor",
+            projectID: "project",
+            location: { directory: "/worker" },
+            metadata: { lazersAttemptID: "attempt" },
+            time: {},
+          }),
+        instructions: {
+          entry: {
+            list: () => Effect.sync(() => [...entries].map(([key, value]) => ({ key, value }))),
+            put: (input: { sessionID: string; key: string; value: unknown }) =>
+              Effect.sync(() => {
+                expect(input.sessionID).toBe("ses_worker")
+                puts++
+                entries.set(input.key, input.value)
+                if (loseReply) throw new Error("Lost native put response")
+              }),
+          },
+        },
+        prompt: () => {
+          throw new Error("Must not prompt")
+        },
+        synthetic: () => {
+          throw new Error("Must not enqueue input")
+        },
+        move: () => {
+          throw new Error("Must not move")
+        },
+        interrupt: () => {
+          throw new Error("Must not interrupt")
+        },
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  const input = {
+    sessionID: "ses_worker",
+    projectID: "project",
+    directory: "/worker",
+    attemptID: "attempt",
+    key: "lazers-scope-attempt-authorization",
+    text: "Reviewed additive execution scope; original checks still apply.",
+  }
+  await expect(host.updateInstruction(input)).rejects.toThrow("Lost native put response")
+  loseReply = false
+  await host.updateInstruction(input)
+  await host.updateInstruction(input)
+  expect(puts).toBe(1)
+  expect(entries.get("other-plugin")).toBe("preserve")
+  expect(entries.get(input.key)).toBe(input.text)
+})
+
+test("scope instruction ownership rejects foreign, moved, replaced and archived targets before native mutation", async () => {
+  for (const mismatch of [
+    "session",
+    "agent",
+    "project",
+    "directory",
+    "attempt",
+    "archived",
+    "host-project",
+  ]) {
+    let instructionCalls = 0
+    const host = nativeHost(
+      {
+        location: { project: { id: mismatch === "host-project" ? "foreign" : "project" } },
+        session: {
+          get: () =>
+            Effect.succeed({
+              id: mismatch === "session" ? "ses_foreign" : "ses_worker",
+              agent: mismatch === "agent" ? "architect" : "lazers-implementor",
+              projectID: mismatch === "project" ? "foreign" : "project",
+              location: { directory: mismatch === "directory" ? "/elsewhere" : "/worker" },
+              metadata: { lazersAttemptID: mismatch === "attempt" ? "replaced" : "attempt" },
+              time: mismatch === "archived" ? { archived: DateTime.nowUnsafe() } : {},
+            }),
+          instructions: {
+            entry: {
+              list: () =>
+                Effect.sync(() => {
+                  instructionCalls++
+                  return []
+                }),
+              put: () =>
+                Effect.sync(() => {
+                  instructionCalls++
+                }),
+            },
+          },
+        },
+      } as unknown as Plugin.Context,
+      {} as TaskRepository,
+    )
+    await expect(
+      host.updateInstruction({
+        sessionID: "ses_worker",
+        projectID: "project",
+        directory: "/worker",
+        attemptID: "attempt",
+        key: "scope",
+        text: "Allow test",
+      }),
+    ).rejects.toThrow("owned worker attempt")
+    expect(instructionCalls).toBe(0)
+  }
+})
+
+test("scope instructions require matching readback rather than trusting a successful native reply", async () => {
+  let puts = 0
+  const host = nativeHost(
+    {
+      location: { project: { id: "project" } },
+      session: {
+        get: () =>
+          Effect.succeed({
+            id: "ses_worker",
+            agent: "lazers-implementor",
+            projectID: "project",
+            location: { directory: "/worker" },
+            metadata: { lazersAttemptID: "attempt" },
+            time: {},
+          }),
+        instructions: {
+          entry: {
+            list: () => Effect.succeed([{ key: "scope", value: "old value" }]),
+            put: () =>
+              Effect.sync(() => {
+                puts++
+              }),
+          },
+        },
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  await expect(
+    host.updateInstruction({
+      sessionID: "ses_worker",
+      projectID: "project",
+      directory: "/worker",
+      attemptID: "attempt",
+      key: "scope",
+      text: "Allow test",
+    }),
+  ).rejects.toThrow("no native readback")
+  expect(puts).toBe(1)
+})
+
 test("worker guidance teaches focused LAZERS discovery and optional progressive skill use", () => {
   expect(workerInstructions).toContain("lazers_project_index")
   expect(workerInstructions).toContain("lazers_project_read")

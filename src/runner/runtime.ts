@@ -13,7 +13,7 @@ import {
   scopePatternsConflict,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import type { HostSession, RunnerHost } from "./host.ts"
+import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
 import type { PlanRow, NodeRow, AttemptRow, EffectRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
@@ -124,8 +124,63 @@ export class TaskRuntime {
           caller,
           taskRevision: this.store.repository.get(node.task_id)!.revision,
         })
+        const instructionUpdates: string[] = []
+        for (const attempt of this.store
+          .attempts(plan.id)
+          .filter(
+            (item) =>
+              item.task_id === node.task_id &&
+              (["running", "verifying"].includes(item.state) ||
+                (item.state === "preparing" &&
+                  this.store
+                    .effects(plan.id)
+                    .some(
+                      (effect) =>
+                        effect.attempt_id === item.id &&
+                        effect.kind === "prompt" &&
+                        effect.state !== "failed",
+                    ))),
+          )) {
+          const payload: WorkerInstruction = {
+            sessionID: attempt.session_id,
+            attemptID: attempt.id,
+            projectID: this.projectID,
+            directory: attempt.workspace,
+            key: `lazers-scope-${attempt.id}-${fingerprint(writeScope)}`,
+            text: `Architect-authorized additive execution scope for task ${node.task_id}, revision 1, attempt ${attempt.id}. The immutable specification is unchanged.\nAdded paths: ${JSON.stringify(additions)}\nAuthorized cumulative write scope: ${JSON.stringify(writeScope)}\nReason: ${command.reason}\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance.`,
+          }
+          const kind = "scope-instruction"
+          const id = fingerprint({
+            planID: plan.id,
+            taskID: node.task_id,
+            attemptID: attempt.id,
+            kind,
+            payload,
+          })
+          // Command authorization and native-update intent commit atomically.
+          // The fenced runtime owns delivery and recovery, including lost replies.
+          db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)").run(
+            id,
+            plan.id,
+            node.task_id,
+            attempt.id,
+            kind,
+            JSON.stringify(payload),
+          )
+          this.store.record(plan.id, node.task_id, "EFFECT_INTENDED", {
+            effectID: id,
+            kind,
+            attemptID: attempt.id,
+          })
+          instructionUpdates.push(id)
+        }
         db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-        return { status: "scope-amended", version: plan.version + 1, writeScope }
+        return {
+          status: "scope-amended",
+          version: plan.version + 1,
+          writeScope,
+          instructionUpdates,
+        }
       }
       if (command.action === "integrated") {
         if (command.taskID) {
@@ -1758,7 +1813,51 @@ export class TaskRuntime {
   private async reconcileEffect(effect: EffectRow, fence: number) {
     const payload = JSON.parse(effect.payload)
     try {
-      if (effect.kind === "session") {
+      if (effect.kind === "scope-instruction") {
+        const update = payload as WorkerInstruction
+        const attempt = this.store
+          .attempts(effect.plan_id)
+          .find((item) => item.id === effect.attempt_id)
+        const plan = this.store.plan(effect.plan_id)!
+        if (
+          !attempt ||
+          attempt.task_id !== effect.task_id ||
+          update.attemptID !== attempt.id ||
+          update.sessionID !== attempt.session_id ||
+          update.directory !== attempt.workspace ||
+          update.projectID !== this.projectID
+        )
+          throw new Error("Scope instruction no longer matches its owned attempt")
+        if (
+          plan.state === "cancelling" ||
+          terminal.has(plan.state) ||
+          !["preparing", "running", "verifying"].includes(attempt.state)
+        ) {
+          this.receipt(
+            effect,
+            {
+              skipped: true,
+              reason: "Attempt no longer executing",
+              sessionID: update.sessionID,
+              key: update.key,
+            },
+            fence,
+          )
+          return
+        }
+        await this.host.updateInstruction(update)
+        this.receipt(
+          effect,
+          {
+            sessionID: update.sessionID,
+            key: update.key,
+            nativeEntryConfirmed: true,
+            modelConsumption: "unknown",
+          },
+          fence,
+        )
+        return
+      } else if (effect.kind === "session") {
         const session = await this.host.session(payload.sessionID)
         if (session) {
           this.receipt(effect, { sessionID: session.id, reconciled: true }, fence)

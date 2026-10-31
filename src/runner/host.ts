@@ -16,6 +16,14 @@ export type HostSession = {
   cost: number | null
   messages: { id: string; text: string }[]
 }
+export type WorkerInstruction = {
+  sessionID: string
+  attemptID: string
+  projectID: string
+  directory: string
+  key: string
+  text: string
+}
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
   /** Current native implementor-agent selection; never inferred from Architect identity. */
@@ -48,6 +56,8 @@ export interface RunnerHost {
     sourceSessionID: string
   }): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
+  /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
+  updateInstruction(input: WorkerInstruction): Promise<void>
   notify(input: { sessionID: string; id: string; text: string; resume: boolean }): Promise<void>
   interrupt(id: string): Promise<void>
 }

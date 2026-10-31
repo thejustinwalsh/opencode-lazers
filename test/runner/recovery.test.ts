@@ -145,6 +145,38 @@ test("fresh processes recover accepted session/prompt effects without replay", a
   }
 }, 20000)
 
+test("scope instruction intent survives process death before and after native keyed delivery", async () => {
+  for (const fault of ["before-instruction", "after-instruction"]) {
+    const f = fixture()
+    writeFileSync(
+      join(f.root, "fixture.json"),
+      JSON.stringify({ planID: f.plan.planID, scopeUpdate: true }),
+    )
+    expect((await run(f.root, fault)).code).not.toBe(0)
+    const intended = f.store
+      .effects(f.plan.planID)
+      .find((effect) => effect.kind === "scope-instruction")!
+    expect(intended.state).toBe("intended")
+    f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+    const resumed = await run(f.root, "none")
+    expect(resumed.code, resumed.stderr).toBe(0)
+    expect(f.store.plan(f.plan.planID)!.state).toBe("accepted")
+    const effect = f.store.effects(f.plan.planID).find((item) => item.id === intended.id)!
+    expect(effect.state).toBe("completed")
+    const state = JSON.parse(readFileSync(join(f.root, "host.json"), "utf8")) as {
+      calls: { kind: string; id: string }[]
+      instructions: Record<string, Record<string, string>>
+    }
+    expect(state.calls.filter((item) => item.kind === "instruction")).toHaveLength(1)
+    expect(state.calls.filter((item) => item.kind === "create")).toHaveLength(1)
+    expect(state.calls.filter((item) => item.kind === "prompt")).toHaveLength(1)
+    const payload = JSON.parse(effect.payload)
+    expect(state.instructions[payload.sessionID]![payload.key]).toBe(payload.text)
+    expect(f.repository.get(f.task.id)!.proposal.writeScope).toEqual(["result.txt"])
+    expect(f.store.attempts(f.plan.planID)).toHaveLength(1)
+  }
+}, 20000)
+
 test("uncertain dispatch or verifier crash stays blocked without repeating its effect", async () => {
   for (const fault of ["before-session", "before-prompt", "verifier"]) {
     const f = fixture(fault === "verifier")

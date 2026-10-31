@@ -134,6 +134,7 @@ function fixture(
     messages: [],
   })
   const events: string[] = []
+  const instructions = new Map<string, Map<string, string>>()
   const host: RunnerHost = {
     workerModel: async () => options.workerModel ?? { providerID: "openai", id: "test-model" },
     worktree: async ({ directory, base }) => {
@@ -158,6 +159,7 @@ function fixture(
         directory: input.directory,
         agent: input.agent,
         model: input.model,
+        metadata: { lazersAttemptID: input.attemptID },
         archived: false,
         busy: false,
         tokens: 100,
@@ -233,6 +235,28 @@ function fixture(
         session.busy = true
         events.push(`start:${session.id}`)
       } else session.outcome = "succeeded"
+    },
+    updateInstruction: async (input) => {
+      const effect = store
+        .effects(store.execution(tasks[0]!.id)!.planID)
+        .find(
+          (item) => item.kind === "scope-instruction" && JSON.parse(item.payload).key === input.key,
+        )
+      expect(effect?.state).toMatch(/intended|uncertain/)
+      const target = sessions.get(input.sessionID)
+      if (
+        !target ||
+        target.archived ||
+        target.projectID !== input.projectID ||
+        target.directory !== input.directory ||
+        target.metadata?.lazersAttemptID !== input.attemptID
+      )
+        throw new Error("Scope instruction target is not the owned worker attempt")
+      const entries = instructions.get(input.sessionID) ?? new Map<string, string>()
+      if (entries.get(input.key) === input.text) return
+      entries.set(input.key, input.text)
+      instructions.set(input.sessionID, entries)
+      events.push(`instruction:${input.key}`)
     },
     notify: async (input) => {
       events.push(`notify:${input.id}`)
@@ -329,6 +353,7 @@ function fixture(
     tasks,
     sessions,
     events,
+    instructions,
     host,
     runtime,
     input,
@@ -342,6 +367,176 @@ function fixture(
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
+
+test("active scope amendments durably update the same worker after it fetched old instructions and survive reopen", async () => {
+  const f = fixture({
+    delayed: true,
+    outside: true,
+    repair: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(planID)[0]!
+  const original = f.repository.get(attempt.task_id)
+  const fetched = taskInstructions(new TaskReads(f.repository).get({ taskID: attempt.task_id }))
+  expect(fetched).not.toContain("escape.txt")
+  const command = {
+    requestID: "allow-test",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "amend-scope",
+    taskID: attempt.task_id,
+    scopeAdditions: ["escape.txt"],
+    reason: "Keep the reviewed legitimate dependency test.",
+  }
+  const result = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(result)
+  const effects = f.store.effects(planID).filter((effect) => effect.kind === "scope-instruction")
+  expect(effects).toHaveLength(1)
+  expect(effects[0]!.state).toBe("intended")
+  expect(f.instructions.size).toBe(0)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  await f.runtime.stop()
+  const repository = new TaskRepository(f.repository.path, f.root)
+  const store = new RunnerStore(repository)
+  store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const runtime = new TaskRuntime(store, f.host, "project")
+  try {
+    await drive(runtime, 3)
+    const effect = store.effects(planID).find((item) => item.id === effects[0]!.id)!
+    expect(effect.state).toBe("completed")
+    expect(JSON.parse(effect.receipt!)).toMatchObject({
+      nativeEntryConfirmed: true,
+      modelConsumption: "unknown",
+    })
+    const entries = [...f.instructions.get(attempt.session_id)!.values()]
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toContain(attempt.task_id)
+    expect(entries[0]).toContain(attempt.id)
+    expect(entries[0]).toContain('["a.txt","escape.txt"]')
+    expect(entries[0]).toContain("original acceptance and verification")
+    expect(f.sessions.get(attempt.session_id)!.busy).toBe(true)
+    expect(
+      f.events.filter(
+        (event) =>
+          event.startsWith("create:") || event.startsWith("prompt:") || event.startsWith("stop:"),
+      ),
+    ).toHaveLength(2)
+    expect(store.attempts(planID)).toHaveLength(1)
+    expect(repository.get(attempt.task_id)).toEqual(original)
+    f.completeWorker(attempt.session_id)
+    await drive(runtime, 5)
+    expect(store.plan(planID)!.state).toBe("accepted")
+    expect(store.attempts(planID)).toHaveLength(1)
+  } finally {
+    await runtime.stop()
+    repository.close()
+  }
+})
+
+test("failed and lost scope-update replies recover keyed delivery without workers, repairs or wait churn", async () => {
+  for (const lostResponse of [false, true]) {
+    const f = fixture({ delayed: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const planID = f.receipt.planID
+    await f.runtime.command(
+      { requestID: "run", planID, expectedVersion: 1, action: "run" },
+      "owner",
+    )
+    await drive(f.runtime, 2)
+    const attempt = f.store.attempts(planID)[0]!
+    const originalUpdate = f.host.updateInstruction
+    let unavailable = true
+    f.host.updateInstruction = async (input) => {
+      if (!unavailable || lostResponse) await originalUpdate(input)
+      if (unavailable) throw new Error("Native update response unavailable")
+    }
+    await f.runtime.command(
+      {
+        requestID: "allow-test",
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "amend-scope",
+        taskID: attempt.task_id,
+        scopeAdditions: ["dependency.test.ts"],
+        reason: "Reviewed test.",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+    const blocked = f.store.plan(planID)!
+    expect(blocked.state).toBe("blocked")
+    expect(f.store.effects(planID).at(-1)!.state).toBe("uncertain")
+    expect(f.instructions.size).toBe(Number(lostResponse))
+    await drive(f.runtime, 3)
+    expect(f.store.plan(planID)!.version).toBe(blocked.version)
+    unavailable = false
+    await f.runtime.stop()
+    f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+    const reopened = new TaskRuntime(f.store, f.host, "project")
+    try {
+      await drive(reopened, 2)
+      expect(f.store.effects(planID).at(-1)!.state).toBe("completed")
+      expect(f.events.filter((event) => event.startsWith("instruction:"))).toHaveLength(1)
+      await reopened.command(
+        {
+          requestID: "resume-after-receipt",
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "reconcile",
+        },
+        "owner",
+      )
+      expect(f.store.plan(planID)!.state).toBe("running")
+      expect(f.store.attempts(planID)).toHaveLength(1)
+      expect(f.store.attempts(planID)[0]!.id).toBe(attempt.id)
+      expect(
+        f.events.filter((event) => event.startsWith("create:") || event.startsWith("prompt:")),
+      ).toHaveLength(2)
+      expect(
+        f.store.activity(planID, attempt.task_id).filter((event) => event.event === "REPAIR"),
+      ).toHaveLength(0)
+      expect(f.sessions.get(attempt.session_id)!.busy).toBe(true)
+    } finally {
+      await reopened.stop()
+    }
+  }
+})
+
+test("cancellation suppresses a pending scope instruction rather than waking a stopped worker", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  await f.runtime.command(
+    {
+      requestID: "allow-test",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "amend-scope",
+      taskID: f.tasks[0]!.id,
+      scopeAdditions: ["dependency.test.ts"],
+      reason: "Reviewed test.",
+    },
+    "owner",
+  )
+  await f.runtime.command(
+    {
+      requestID: "cancel",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 4)
+  expect(f.instructions.size).toBe(0)
+  const effect = f.store.effects(planID).find((item) => item.kind === "scope-instruction")!
+  expect(effect.state).toBe("completed")
+  expect(JSON.parse(effect.receipt!).skipped).toBe(true)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+})
 
 test("task integration records a reviewed landing without finalizing the plan or disturbing active dependencies", async () => {
   const f = fixture({ delayed: true })

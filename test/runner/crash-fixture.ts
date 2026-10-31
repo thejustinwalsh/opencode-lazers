@@ -8,10 +8,17 @@ import type { HostSession, RunnerHost } from "../../src/runner/host.ts"
 
 const root = process.argv[2]!,
   fault = process.argv[3]!
-const config = JSON.parse(readFileSync(join(root, "fixture.json"), "utf8")) as { planID: string }
+const config = JSON.parse(readFileSync(join(root, "fixture.json"), "utf8")) as {
+  planID: string
+  scopeUpdate?: boolean
+}
 const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
 const store = new RunnerStore(repository)
-type State = { sessions: Record<string, HostSession>; calls: { kind: string; id: string }[] }
+type State = {
+  sessions: Record<string, HostSession>
+  calls: { kind: string; id: string }[]
+  instructions?: Record<string, Record<string, string>>
+}
 const load = () => JSON.parse(readFileSync(join(root, "host.json"), "utf8")) as State
 const save = (value: State) => writeFileSync(join(root, "host.json"), JSON.stringify(value))
 function cut(boundary: string) {
@@ -47,6 +54,7 @@ const host: RunnerHost = {
       archived: false,
       busy: false,
       model: input.model,
+      metadata: { lazersAttemptID: input.attemptID },
       tokens: 20,
       tools: 1,
       cost: null,
@@ -90,6 +98,18 @@ const host: RunnerHost = {
     save(state)
     cut("after-prompt")
   },
+  updateInstruction: async (input) => {
+    cut("before-instruction")
+    const state = load()
+    const instructions = (state.instructions ??= {})
+    const entries = (instructions[input.sessionID] ??= {})
+    if (entries[input.key] !== input.text) {
+      entries[input.key] = input.text
+      state.calls.push({ kind: "instruction", id: input.key })
+      save(state)
+    }
+    cut("after-instruction")
+  },
   notify: async (input) => {
     // This is external host behavior: inspect the committed outbox before accepting delivery.
     const persisted = store.atomic((db) =>
@@ -120,7 +140,28 @@ if (store.plan(config.planID)!.state === "draft")
     { requestID: "run", planID: config.planID, expectedVersion: 1, action: "run" },
     "owner",
   )
-for (let n = 0; n < 12; n++) await runtime.tick()
+for (let n = 0; n < 12; n++) {
+  await runtime.tick()
+  if (config.scopeUpdate) {
+    const attempt = store.attempts(config.planID)[0]!
+    if (
+      attempt.state === "running" &&
+      !store.latestTransition(config.planID, attempt.task_id, "SCOPE_AMENDED")
+    )
+      await runtime.command(
+        {
+          requestID: "authorize-dependency",
+          planID: config.planID,
+          expectedVersion: store.plan(config.planID)!.version,
+          action: "amend-scope",
+          taskID: attempt.task_id,
+          scopeAdditions: ["dependency.test.ts"],
+          reason: "Reviewed dependency test.",
+        },
+        "owner",
+      )
+  }
+}
 console.log(
   JSON.stringify({ state: store.plan(config.planID)!.state, detail: store.detail(config.planID) }),
 )
