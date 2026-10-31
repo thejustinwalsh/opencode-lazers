@@ -50,7 +50,9 @@ boundary. A later renderer freeze is documented in [trace evidence](evidence/034
 specified and admitted by Architect as plan `caa8c80c`, task `430e08d8`;
 current workers have separate empty cache roots. Native diagnostics are active:
 a Desktop decision check recorded 33 input tokens, ORT run/readback and completion
-in the main-process log. The earlier freeze cause remains unresolved.
+in the main-process log. The earlier freeze cause remains unresolved. Next-freeze local Electron CPU
+profiling is armed (500 ms profile / 2 s inspector deadline); capture artifacts
+are saved under the plugin data diagnostics directory without changing inference.
 
 Architect renewal must use provider/model/options-sensitive cache policy with user
 override and fallback; do not treat a universal timeout as a provider guarantee.
@@ -76,5 +78,5 @@ Preserve handoff, pending input, model and ownership before native archival.
 - Load Portless skill before launching a project listening server. None is needed
   for native Desktop maintenance or one-shot checks.
 
-Current verified tree: 229 tests / 2,303 assertions, formatting, lint and strict
+Current verified tree: 241 tests / 2,357 assertions, formatting, lint and strict
 TypeScript pass. Consult the audit for the boundary between tests and native proof.

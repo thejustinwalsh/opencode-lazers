@@ -121,9 +121,26 @@ const traceEvent = {
 test("main persists the last trace and annotates renderer lifecycle events", async () => {
   const logs: LogEntry[] = []
   const fixture = makeMainFixture((entry) => logs.push(entry))
+  expect(
+    logs.find((entry) => entry.message === "LAZERS WebGPU cache available")?.data,
+  ).toMatchObject({
+    diagnosticsDirectory: expect.any(String),
+    rendererDebugProfileMs: 500,
+    rendererDebugTimeoutMs: 2_000,
+  })
   fixture.implementation.trace(traceEvent, { window: 17 })
   fixture.window.emit("unresponsive")
+  fixture.window.emit("unresponsive")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(logs.filter((entry) => entry.message === "LAZERS renderer debugger capture")).toHaveLength(
+    1,
+  )
   fixture.window.emit("responsive")
+  fixture.window.emit("unresponsive")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(logs.filter((entry) => entry.message === "LAZERS renderer debugger capture")).toHaveLength(
+    2,
+  )
   fixture.window.webContents.emit("render-process-gone", {}, { reason: "oom" })
   fixture.window.webContents.emit("did-navigate", {}, "https://opencode.local")
 

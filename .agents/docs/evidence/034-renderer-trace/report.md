@@ -83,3 +83,37 @@ This verifies that the new metadata reaches the independent persistent log throu
 a real native inference request. It is a diagnostics smoke check, not a model
 benchmark or reproduction/fix of the earlier freeze. Main Architect and original
 worker sessions remain active; the native task-menu worker reached verification.
+
+## Next-freeze debugger capture
+
+Prepared automatic, local capture using Electron's public
+[webContents debugger transport](https://www.electronjs.org/docs/latest/api/debugger).
+On the first unresponsive event in a freeze period, the main process attaches,
+starts a **500 ms CPU profile**, and detaches in cleanup. CDP commands have a
+**2 s total deadline**. A responsive event permits capture of a later freeze.
+Existing DevTools or another attached debugger is left untouched. No listening
+port, continuous profiler, renderer pause, runtime evaluation or inference setting
+change is introduced.
+
+Successful captures save a standalone `.cpuprofile` and a small correlation JSON
+under `~/.local/share/opencode/plugins/lazers/diagnostics/`. Main logs name the
+artifact and retain window/PID/request/job/last-stage correlation. CPU profile
+nodes retain call-tree links, sampled node IDs, timing, script IDs and source
+locations; unknown line/column remain -1. Invalid or oversized profiles are
+reported rather than silently truncating samples and corrupting timing. Local
+variables, scope objects, script bodies, prompts, audio and model output are not
+requested; source URL query/hash and data URLs are excluded.
+
+Native activation was observed in the main-process log at **17:05:48 EDT**,
+including the diagnostic directory, 500 ms duration and 2,000 ms deadline. A
+subsequent GUI build carries the final profile validation/error cleanup. No
+production hang was deliberately induced while workers were active. Capturing
+the next actual hang remains an observation, not a completed diagnosis. If the
+inspector cannot answer during a deep native hang, the failure/timeout is logged
+and native process sampling remains the fallback.
+
+Validation: **241 tests passed, 0 failed, 2,357 assertions** across 50 files;
+focused debugger/lifecycle tests, native formatter, lint, strict typecheck and
+GUI build pass. Tests include profile graph/sample consistency, preserving -1
+locations, existing-inspector skips, stop timeout, active abort, failed artifact
+writes and once-per-freeze hookup.

@@ -5,6 +5,11 @@ import { DECISION_FILES, DECISION_REVISION, decisionURL } from "./manifest.ts"
 import { dirname, join } from "node:path"
 import { ModelLease } from "./lease.ts"
 import type { InferenceTraceEvent } from "./inference-trace.ts"
+import {
+  captureRendererDebug,
+  RENDERER_DEBUG_PROFILE_MS,
+  RENDERER_DEBUG_TIMEOUT_MS,
+} from "./renderer-debug.ts"
 
 const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) => {
   try {
@@ -30,6 +35,8 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     await Promise.all([cache.stop(), decisions.stop()])
   })
   const lastTrace = new Map<number, InferenceTraceEvent>()
+  const freezeCaptures = new Set<number>()
+  const diagnosticsDirectory = join(dirname(dirname(cache.directory)), "diagnostics")
   const writeLog = (
     level: "debug" | "info" | "warn" | "error",
     message: string,
@@ -62,10 +69,42 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
   }
   const watch = (window: NonNullable<ReturnType<typeof ctx.windows.get>>) => {
     const disconnected = () => lost(window.id)
-    const unresponsive = () =>
-      writeLog("warn", "LAZERS WebGPU renderer unresponsive", lifecycleData(window))
-    const responsive = () =>
+    const unresponsive = () => {
+      const correlation = lifecycleData(window)
+      writeLog("warn", "LAZERS WebGPU renderer unresponsive", correlation)
+      if (freezeCaptures.has(window.id)) return
+      freezeCaptures.add(window.id)
+      void captureRendererDebug({
+        renderer: window.webContents,
+        correlation,
+        directory: diagnosticsDirectory,
+        signal: ctx.signal,
+      })
+        .then((result) => {
+          writeLog(result.captured ? "info" : "warn", "LAZERS renderer debugger capture", {
+            windowID: result.windowID,
+            ...(result.rendererPID === undefined ? {} : { rendererPID: result.rendererPID }),
+            lastStage: result.lastStage,
+            ...(result.lastRequestID ? { lastRequestID: result.lastRequestID } : {}),
+            ...(result.lastJobID ? { lastJobID: result.lastJobID } : {}),
+            captured: result.captured,
+            ...(result.reason ? { reason: result.reason } : {}),
+            ...(result.path ? { path: result.path } : {}),
+            profileCaptured: Boolean(result.profile),
+          })
+        })
+        .catch(() => {
+          writeLog("warn", "LAZERS renderer debugger capture", {
+            ...correlation,
+            captured: false,
+            reason: "error",
+          })
+        })
+    }
+    const responsive = () => {
+      freezeCaptures.delete(window.id)
       writeLog("info", "LAZERS WebGPU renderer responsive", lifecycleData(window))
+    }
     const rendererGone = (_event: unknown, details: { reason?: string }) =>
       writeLog("error", "LAZERS WebGPU renderer process gone", {
         ...lifecycleData(window),
@@ -93,6 +132,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
   ctx.windows.on("open", watch)
   ctx.windows.on("close", (window) => {
     lastTrace.delete(window.id)
+    freezeCaptures.delete(window.id)
     lost(window.id)
   })
   ctx.provide(ModelFiles, {
@@ -137,7 +177,12 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
       })
     },
   })
-  writeLog("info", "LAZERS WebGPU cache available", { directory: cache.directory })
+  writeLog("info", "LAZERS WebGPU cache available", {
+    directory: cache.directory,
+    diagnosticsDirectory,
+    rendererDebugProfileMs: RENDERER_DEBUG_PROFILE_MS,
+    rendererDebugTimeoutMs: RENDERER_DEBUG_TIMEOUT_MS,
+  })
   return async () => {
     await Promise.all([cache.stop(), decisions.stop()])
   }
