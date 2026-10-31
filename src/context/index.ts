@@ -35,7 +35,18 @@ type Snapshot = {
   files: FileRecord[]
 }
 type Principal = { sessionID: string; agent: string }
-type Permission = (path: string, principal: Principal) => Promise<boolean>
+type Permission = (path: string, principal: Principal, workspace: string) => Promise<boolean>
+export type ContextSession = {
+  id: string
+  parentID?: string
+  projectID: string
+  directory: string
+  agent?: string
+}
+export type ContextHost = {
+  projectID: string
+  session: (id: string) => Promise<ContextSession | null>
+}
 type Packed = { files: { path: string; content: string }[]; denied: string[]; tokens: number }
 export type Focus = {
   paths?: string[]
@@ -119,18 +130,23 @@ function readSource(root: string, path: string): string {
 
 export class ProjectIndex {
   private readonly cacheID: string
+  private readonly projectID: string
+  private readonly projectDirectory: string
   private counter?: import("repomix").TokenCounter
   constructor(
     readonly root: string,
     readonly cacheDirectory: string,
     readonly repository: TaskRepository,
     readonly allow: Permission,
+    private readonly host?: ContextHost,
   ) {
     this.root = realpathSync(root)
+    this.projectID = host?.projectID ?? repository.projectDirectory
+    this.projectDirectory = repository.projectDirectory
     mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 })
     repository.atomic((db) =>
       db.exec(
-        `CREATE TABLE IF NOT EXISTS context_workspaces(workspace TEXT PRIMARY KEY,id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_cache(workspace TEXT NOT NULL,selection TEXT NOT NULL,stamp TEXT NOT NULL,file TEXT NOT NULL,PRIMARY KEY(workspace,selection));`,
+        `CREATE TABLE IF NOT EXISTS context_workspaces(workspace TEXT PRIMARY KEY,id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_cache(workspace TEXT NOT NULL,selection TEXT NOT NULL,stamp TEXT NOT NULL,file TEXT NOT NULL,PRIMARY KEY(workspace,selection)); CREATE TABLE IF NOT EXISTS context_publications(project_id TEXT NOT NULL,project_directory TEXT NOT NULL,owner_session TEXT NOT NULL,workspace TEXT NOT NULL,snapshot_id TEXT NOT NULL,PRIMARY KEY(project_id,project_directory,owner_session));`,
       ),
     )
     this.cacheID = repository.atomic((db) => {
@@ -155,12 +171,19 @@ export class ProjectIndex {
     // Coordinate with readers across processes. Age alone cannot prove that a
     // superseded immutable file is no longer selected by a reader.
     this.repository.atomic((db) => {
-      const active = new Set(
-        db
+      const active = new Set([
+        ...db
           .query<{ file: string }, [string]>("SELECT file FROM context_cache WHERE selection=?")
           .all(workspaceSelection)
           .map(({ file }) => file),
-      )
+        ...db
+          .query<{ file: string }, []>(
+            `SELECT w.id || '-' || p.snapshot_id || '.json' AS file
+               FROM context_publications p JOIN context_workspaces w ON w.workspace=p.workspace`,
+          )
+          .all()
+          .map(({ file }) => file),
+      ])
       const now = Date.now()
       const orphans = readdirSync(this.cacheDirectory).filter((name) => {
         if (!name.endsWith(".json") || active.has(name)) return false
@@ -182,6 +205,11 @@ export class ProjectIndex {
   async refresh(principal: Principal): Promise<Snapshot> {
     if (principal.agent !== "architect")
       throw new Error("Only Architect may refresh the workspace index")
+    if (this.host) {
+      const publisher = await this.host.session(principal.sessionID)
+      if (!this.sameSession(publisher, principal.sessionID, "architect", this.root))
+        throw new Error("Only the Architect session for this workspace may refresh the index")
+    }
     const previous = this.activeRefresh
     const promise = (async () => {
       if (previous) await previous.catch(() => {})
@@ -221,6 +249,19 @@ export class ProjectIndex {
           JSON.stringify(snapshot.files.map(({ path, stamp }) => [path, stamp])),
           filename,
         )
+        if (this.host)
+          db.query(
+            `INSERT INTO context_publications(project_id,project_directory,owner_session,workspace,snapshot_id)
+             VALUES(?,?,?,?,?)
+             ON CONFLICT(project_id,project_directory,owner_session) DO UPDATE SET
+             workspace=excluded.workspace,snapshot_id=excluded.snapshot_id`,
+          ).run(
+            this.projectID,
+            this.projectDirectory,
+            principal.sessionID,
+            snapshot.workspace,
+            snapshot.id,
+          )
       })
     } catch (error) {
       try {
@@ -255,7 +296,7 @@ export class ProjectIndex {
       for (const control of [".ignore", ".repomixignore"]) {
         const name = path ? `${path}/${control}` : control
         if (existsSync(join(this.root, name))) {
-          if (!(await this.allow(name, principal)))
+          if (!(await this.allow(name, principal, this.root)))
             throw new Error("Cannot establish permitted project ignore policy")
           rules.push({
             base: path ? `${path}/` : "",
@@ -297,7 +338,7 @@ export class ProjectIndex {
             await walk(name, rules)
             continue
           }
-          if (!entry.isFile() || !(await this.allow(name, principal))) continue
+          if (!entry.isFile() || !(await this.allow(name, principal, this.root))) continue
           let content: string
           try {
             content = readSource(this.root, name)
@@ -384,28 +425,51 @@ export class ProjectIndex {
     })
   }
 
-  private loadSnapshot(): Snapshot {
+  private loadSnapshot(publication?: { ownerSessionID: string; workspace: string }): Snapshot {
     // The immediate transaction is a lock, not a snapshot write. Hold it until
     // the immutable bytes are read so another process cannot evict that file.
-    const { row, text } = this.repository.atomic((db) => {
-      const row = db
-        .query<{ file: string }, [string, string]>(
-          "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
-        )
-        .get(this.root, workspaceSelection)
-      if (!row) throw new WorkspaceIndexUnavailable()
-      if (!snapshotFilename.test(row.file)) throw new Error("Invalid cached snapshot path")
-      const cache = join(this.cacheDirectory, row.file)
+    const { file, workspace, cacheID, expectedSnapshotID, text } = this.repository.atomic((db) => {
+      let file: string,
+        workspace = this.root,
+        cacheID = this.cacheID,
+        expectedSnapshotID: string | undefined
+      if (publication) {
+        const row = db
+          .query<{ workspace: string; snapshot_id: string }, [string, string, string]>(
+            "SELECT workspace,snapshot_id FROM context_publications WHERE project_id=? AND project_directory=? AND owner_session=?",
+          )
+          .get(this.projectID, this.projectDirectory, publication.ownerSessionID)
+        if (!row || row.workspace !== publication.workspace) throw new WorkspaceIndexUnavailable()
+        workspace = row.workspace
+        expectedSnapshotID = row.snapshot_id
+        const identity = db
+          .query<{ id: string }, [string]>("SELECT id FROM context_workspaces WHERE workspace=?")
+          .get(workspace)
+        if (!identity) throw new WorkspaceIndexUnavailable()
+        cacheID = identity.id
+        file = `${identity.id}-${expectedSnapshotID}.json`
+      } else {
+        const row = db
+          .query<{ file: string }, [string, string]>(
+            "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
+          )
+          .get(this.root, workspaceSelection)
+        if (!row) throw new WorkspaceIndexUnavailable()
+        file = row.file
+      }
+      if (!snapshotFilename.test(file)) throw new Error("Invalid cached snapshot path")
+      const cache = join(this.cacheDirectory, file)
       if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
       if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
-      return { row, text: readFileSync(cache, "utf8") }
+      return { file, workspace, cacheID, expectedSnapshotID, text: readFileSync(cache, "utf8") }
     })
     const stored = JSON.parse(text) as Snapshot
     if (
       stored.version !== 2 ||
       !uuidPattern.test(stored.id) ||
-      row.file !== `${this.cacheID}-${stored.id}.json` ||
-      stored.workspace !== this.root ||
+      file !== `${cacheID}-${stored.id}.json` ||
+      (expectedSnapshotID !== undefined && stored.id !== expectedSnapshotID) ||
+      stored.workspace !== workspace ||
       !Number.isInteger(stored.createdAt) ||
       stored.repomix !== "1.18.1" ||
       stored.encoding !== "o200k_base" ||
@@ -426,15 +490,75 @@ export class ProjectIndex {
     return stored
   }
 
+  private sameSession(
+    session: ContextSession | null,
+    id: string,
+    agent: string,
+    directory?: string,
+  ) {
+    // Session.Info.agent is optional; the authenticated tool principal supplies
+    // the effective agent, while a conflicting persisted role is rejected.
+    if (
+      !session ||
+      session.id !== id ||
+      session.projectID !== this.projectID ||
+      (session.agent !== undefined && session.agent !== agent)
+    )
+      return false
+    try {
+      const actual = realpathSync(session.directory)
+      return directory === undefined || actual === directory
+    } catch {
+      return false
+    }
+  }
+
+  private async publicationFor(principal: Principal) {
+    if (!this.host || principal.agent !== "lazers-implementor") return undefined
+    try {
+      const worker = await this.host.session(principal.sessionID)
+      if (
+        !worker ||
+        !this.sameSession(worker, principal.sessionID, "lazers-implementor", this.root) ||
+        !worker.parentID
+      )
+        return undefined
+      const architect = await this.host.session(worker.parentID)
+      if (!architect || !this.sameSession(architect, worker.parentID, "architect")) return undefined
+      const workspace = realpathSync(architect.directory)
+      return { ownerSessionID: architect.id, workspace }
+    } catch {
+      // Published context is optional; native session lookup failures must not
+      // prevent ordinary workspace reads or cause an implicit refresh.
+      return undefined
+    }
+  }
+
+  private async snapshotFor(principal: Principal) {
+    const publication = await this.publicationFor(principal)
+    if (publication) {
+      try {
+        return this.loadSnapshot(publication)
+      } catch (error) {
+        if (!(error instanceof WorkspaceIndexUnavailable)) throw error
+      }
+    }
+    return this.loadSnapshot()
+  }
+
   private async permittedFiles(snapshot: Snapshot, principal: Principal) {
     const files: FileRecord[] = []
     for (const file of snapshot.files)
-      if (validSourcePath(file.path) && (await this.allow(file.path, principal))) files.push(file)
+      if (
+        validSourcePath(file.path) &&
+        (await this.allow(file.path, principal, snapshot.workspace))
+      )
+        files.push(file)
     return files
   }
 
   async manifest(principal: Principal, paths: string[] = []) {
-    const snapshot = this.loadSnapshot()
+    const snapshot = await this.snapshotFor(principal)
     const visible = await this.permittedFiles(snapshot, principal)
     const allMatches = visible.filter(
       (f) => !paths.length || paths.some((p) => matchesPath(p, f.path)),
@@ -444,7 +568,7 @@ export class ProjectIndex {
       snapshotID: snapshot.id,
       freshness: "as-of-refresh" as const,
       refreshedAt: snapshot.createdAt,
-      workspace: this.root,
+      workspace: snapshot.workspace,
       repomix: snapshot.repomix,
       encoding: snapshot.encoding,
       totalFiles: visible.length,
@@ -454,7 +578,7 @@ export class ProjectIndex {
     }
   }
   async evidence(principal: Principal, focus: Focus) {
-    const snapshot = this.loadSnapshot()
+    const snapshot = await this.snapshotFor(principal)
     const paths = focus.paths ?? []
     const visible = await this.permittedFiles(snapshot, principal)
     const allMatches = visible.filter(
@@ -485,6 +609,7 @@ export class ProjectIndex {
       snapshotID: snapshot.id,
       freshness: "as-of-refresh" as const,
       refreshedAt: snapshot.createdAt,
+      workspace: snapshot.workspace,
       encoding: snapshot.encoding,
       sources,
       truncated: allMatches.length > matches.length,
