@@ -446,7 +446,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     group?: ExecutionPlanGroup,
     depth = 0,
   ): JSX.Element => {
-    const expanded = Boolean(group && taskRow.fork && forkExpanded(group, taskRow))
+    const expanded = () => Boolean(group && taskRow.fork && forkExpanded(group, taskRow))
     const relationshipCount = new Set([...taskRow.prerequisites, ...taskRow.successors]).size
     return (
       <div class="lazers-tasks-entry" data-context-only={taskRow.contextOnly}>
@@ -455,14 +455,14 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
             <button
               type="button"
               class="lazers-tasks-disclosure"
-              aria-label={`${expanded ? "Collapse" : "Expand"} parallel work under ${taskTitle(taskRow.title)}`}
-              aria-expanded={expanded}
+              aria-label={`${expanded() ? "Collapse" : "Expand"} parallel work under ${taskTitle(taskRow.title)}`}
+              aria-expanded={expanded()}
               onClick={(event) => {
                 event.stopPropagation()
                 if (group) toggleFork(group, taskRow)
               }}
             >
-              <Ui.Icon name={expanded ? "chevron-down" : "chevron-right"} size="small" />
+              <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
             </button>
           </Show>
           <Show when={!taskRow.fork || !group}>
@@ -491,7 +491,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
             </Show>
           </button>
         </div>
-        <Show when={taskRow.fork && group && expanded}>
+        <Show when={taskRow.fork && group && expanded()}>
           <div class="lazers-tasks-branches">
             <For each={taskRow.fork?.branches ?? []}>
               {(branch) => (

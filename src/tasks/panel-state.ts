@@ -85,6 +85,8 @@ export class TaskPanelState {
     const generation = this.generation
     const signal = this.controller.signal
     void this.watch(generation, transport, signal)
+    // Restored/native-link detail is independent of optional topology or list failures.
+    if (selectedID) void this.select(selectedID)
     void this.refresh()
     this.timer = setInterval(() => {
       void this.refresh()
@@ -113,6 +115,8 @@ export class TaskPanelState {
         if (transport.snapshot) {
           try {
             const observed = await transport.snapshot(signal)
+            if (signal.aborted || generation !== this.generation || request !== this.listRequest)
+              return
             if (observed.boundary.repositoryVersion !== first.snapshot) {
               if (attempt < 2) continue
               topologyError =
@@ -149,6 +153,7 @@ export class TaskPanelState {
         break
       }
       if (!page) throw new Error("Could not read a stable task snapshot")
+      if (signal.aborted || generation !== this.generation || request !== this.listRequest) return
       this.update({
         tasks,
         page,

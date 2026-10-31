@@ -285,3 +285,70 @@ test("linked dependency details use the transport's same-scope authorization pat
     state.close()
   }
 })
+
+test("late optional topology cannot publish old tasks into a newly connected scope", async () => {
+  const state = new TaskPanelState(() => {})
+  const pending = deferred<SnapshotResponse>()
+  const old = page("/old")
+  const current = page("/new")
+  const oldTransport = transport(async () => old)
+  oldTransport.snapshot = () => pending.promise // Deliberately ignores abort, like a late RPC.
+  try {
+    state.connect("old-view", "/old", oldTransport, {})
+    await tick()
+    state.connect(
+      "new-view",
+      "/new",
+      transport(async () => current),
+      {},
+    )
+    await tick()
+    pending.resolve({
+      boundary: { repositoryVersion: old.snapshot },
+      plans: [],
+    } as unknown as SnapshotResponse)
+    await tick()
+    expect(state.data.key).toBe("new-view")
+    expect(state.data.tasks).toEqual(current.tasks)
+    expect(state.data.page?.projectDirectory).toBe("/new")
+    expect(state.data.topology).toBeUndefined()
+    expect(state.data.selectedID).toBe(current.tasks[0]?.taskID)
+  } finally {
+    state.close()
+  }
+})
+
+test("restored inspectors load while topology is pending or the list fails", async () => {
+  for (const failList of [false, true]) {
+    const state = new TaskPanelState(() => {})
+    const pending = deferred<SnapshotResponse>()
+    const selectedID = crypto.randomUUID()
+    const requested: string[] = []
+    const api = transport(
+      async () => {
+        if (failList) throw new Error("list unavailable")
+        return page("/project", selectedID)
+      },
+      async (id) => {
+        requested.push(id)
+        return { status: "not_found" }
+      },
+    )
+    api.snapshot = () => pending.promise
+    try {
+      state.connect("saved-view", "/project", api, {}, selectedID)
+      await tick()
+      expect(requested).toEqual([selectedID])
+      expect(state.data.selectedID).toBe(selectedID)
+      expect(state.data.detail).toEqual({ status: "not_found" })
+      if (failList) expect(state.data.error).toContain("list unavailable")
+      else expect(state.data.loading).toBe(true)
+    } finally {
+      state.close()
+      pending.resolve({
+        boundary: { repositoryVersion: 1 },
+        plans: [],
+      } as unknown as SnapshotResponse)
+    }
+  }
+})

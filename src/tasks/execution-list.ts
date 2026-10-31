@@ -201,6 +201,7 @@ function relationMap(topology: SnapshotResponse) {
 }
 
 function row(
+  plan: Plan,
   node: Node,
   summary: TaskSummary | undefined,
   contextOnly: boolean,
@@ -209,8 +210,12 @@ function row(
   return {
     taskID: node.taskID,
     title: summary?.objective ?? node.objective,
-    status: node.state,
-    reason: node.reason ?? summary?.reason ?? null,
+    status:
+      summary?.status ??
+      (plan.state === "blocked" && ["queued", "ready"].includes(node.state)
+        ? "blocked"
+        : node.state),
+    reason: summary?.reason ?? node.reason ?? (plan.state === "blocked" ? plan.reason : null),
     ordinal: node.ordinal,
     ...(summary?.reference ? { reference: summary.reference } : {}),
     contextOnly,
@@ -293,7 +298,7 @@ export function buildExecutionList(input: {
       rendered.add(node.taskID)
       planRows.set(
         node.taskID,
-        row(node, summaryByID.get(node.taskID), contextual.has(node.taskID), relations),
+        row(plan, node, summaryByID.get(node.taskID), contextual.has(node.taskID), relations),
       )
     }
 
@@ -346,6 +351,7 @@ export function buildExecutionList(input: {
     const summary = summaryByID.get(taskID)
     const projected = unplannedByID.get(taskID)
     if (!summary && !projected) return []
+    rendered.add(taskID)
     return [
       {
         taskID,

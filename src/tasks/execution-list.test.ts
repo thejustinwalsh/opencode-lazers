@@ -359,3 +359,53 @@ test("planless and unavailable topology remain honest ungrouped task rows", () =
   expect(unavailable.topologyAvailable).toBe(false)
   expect(unavailable.unplanned).toMatchObject([{ taskID: task.taskID, prerequisites: [] }])
 })
+
+test("selecting an already visible planless task emits its canonical row once", () => {
+  const task = summaries([id(50)])[0]!
+  const observed = topology([], [])
+  observed.unplannedTasks.push({
+    taskID: task.taskID,
+    revision: 1,
+    status: "submitted",
+    title: task.title,
+  })
+  const result = buildExecutionList({
+    topology: observed,
+    tasks: [task],
+    revealTaskIDs: new Set([task.taskID]),
+  })
+  expect(result.unplanned.map((row) => row.taskID)).toEqual([task.taskID])
+  expect(result.unplanned[0]?.contextOnly).toBe(false)
+})
+
+test("grouped and context-only rows preserve the effective plan-blocked state", () => {
+  const [root, left, right, join] = [id(1), id(2), id(3), id(4)]
+  const observed = topology(
+    [root, left, right, join].map((taskID, ordinal) => ({ taskID, ordinal })),
+    [
+      [root, left],
+      [root, right],
+      [left, join],
+      [right, join],
+    ],
+  )
+  observed.plans[0]!.state = "blocked"
+  observed.plans[0]!.reason = "Plan awaits human evidence"
+  const tasks = summaries([left])
+  tasks[0]!.status = "blocked"
+  tasks[0]!.reason = "Plan awaits human evidence"
+  const result = buildExecutionList({ topology: observed, tasks })
+  const contextualRoot = result.plans[0]?.rows[0]
+  expect(contextualRoot).toMatchObject({
+    taskID: root,
+    contextOnly: true,
+    status: "blocked",
+    reason: "Plan awaits human evidence",
+  })
+  expect(contextualRoot?.fork?.branches[0]?.rows[0]).toMatchObject({
+    taskID: left,
+    contextOnly: false,
+    status: "blocked",
+    reason: "Plan awaits human evidence",
+  })
+})
