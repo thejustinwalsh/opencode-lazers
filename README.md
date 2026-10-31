@@ -6,6 +6,8 @@
 
 The user owns intent. Architect turns it into a verified plan and makes orchestration decisions when judgment is needed. The runtime owns execution policy and task state. Workers implement the change.
 
+LAZERS ships as one plugin package. Its scheduler and storage run inside OpenCode’s service; panels and local inference run inside OpenCode Desktop. Workers are native OpenCode sessions. There is no separate LAZERS daemon, scheduler service or inference server to install. Git, verification and builds use ordinary subprocesses through the host.
+
 ## Architect experience and authority
 
 The user selects **Architect** from the Desktop agent dropdown before starting a session and describes the feature they want. Architect carries that request through planning, dispatch requests, and any decisions needed to reach acceptance:
@@ -18,7 +20,7 @@ The user selects **Architect** from the Desktop agent dropdown before starting a
 
 Architect does not run or maintain the task state machine. Deterministic runtime rules handle state transitions, dependencies, concurrency, verification, configured repair/retry behavior, cancellation, and usage accounting. Routine progress and completions that merely unblock an already-defined task do not require a model call. Wake Architect when a decision is needed, a task group needs synthesis, or the feature needs its final user-facing result. Architect's decisions return through validated runtime commands; it cannot directly mark a task accepted or erase attempt history.
 
-This is the required product flow. Nine plans with eleven accepted tasks have been integrated through native worker execution, runtime verification and review. The durable graph runner, dispatch, outcome delivery, resume/retry, scheduling and cleanup are implemented. Native parallel completion, specialist dispatch and general specification revision retain explicit gaps in the [completed-task audit](.agents/docs/completed-task-audit.md); active product work is exercising those boundaries.
+This is the required product flow. The durable graph runner, dispatch, outcome delivery, resume/retry, scheduling and cleanup are implemented. Real product work has exercised native parallel return, combined checks, review/merge and non-forced cleanup. The [completed-task audit](.agents/docs/completed-task-audit.md) records current delivery, active work and remaining observation gaps without treating source landing as whole-plan acceptance.
 
 ## Operating principles
 
@@ -84,7 +86,7 @@ Each plan node may independently select one optional persona: `ui`, `systems`, o
 
 ### 4 Verification and completion
 
-**Status:** Runtime verification, evidence, repair, retry, delivery, integration and cleanup are implemented; native multi-task acceptance remains an observation boundary.
+**Status:** Runtime verification, evidence, repair, retry, delivery, integration and cleanup are implemented. The product-panel plan demonstrated native multi-task acceptance and removal of all five owned worktrees; each further feature still needs its own relevant checks and observations.
 
 The runtime owns this lifecycle:
 
@@ -106,7 +108,7 @@ Serial tasks default to native child sessions in the shared checkout; parallel w
 
 ### 5 Context and memory
 
-**Status:** The reusable Repomix workspace index and focused read tools are implemented; native Architect refresh/read dogfood remains an acceptance observation.
+**Status:** The reusable Repomix workspace index and focused read tools are implemented. Native publication reuse across an isolated worker is observed in the [context evidence](.agents/docs/evidence/isolated-context-reuse/native.md); comparative token/cost savings are not yet established.
 
 A `ContextPacket` supplies concise repository rules, the specification and its optional skill suggestions, relevant interfaces and findings, and their source references. Reuse useful findings. Workers can progressively load a useful native skill when needed and permitted; skill bodies are not eagerly attached to task context.
 

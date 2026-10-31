@@ -1,0 +1,60 @@
+{
+  "observedAt": "2026-10-31T23:37:53.249Z",
+  "source": "b4fcd61",
+  "locations": 5,
+  "pidBefore": 16786,
+  "pidAfter": 16786,
+  "before": [
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    },
+    {
+      "id": "ses_043f3b7202dd41b8bd9bbb7c0b69c805",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d543a0f7-670a-46eb-8a91-0ca590a0f848",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "attemptID": "d543a0f7-670a-46eb-8a91-0ca590a0f848",
+      "busy": 1793489489894,
+      "idle": 1793489489431
+    }
+  ],
+  "after": [
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    },
+    {
+      "id": "ses_043f3b7202dd41b8bd9bbb7c0b69c805",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d543a0f7-670a-46eb-8a91-0ca590a0f848",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "attemptID": "d543a0f7-670a-46eb-8a91-0ca590a0f848",
+      "busy": 1793489489894,
+      "idle": 1793489489431
+    }
+  ],
+  "activeWorkersUnchanged": true
+}

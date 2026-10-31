@@ -1,0 +1,25 @@
+{
+  "observedAt": "2026-10-31T23:39:00.986Z",
+  "results": [
+    {
+      "directory": "/Users/tjw/.local/share/opencode/worktree/b5da4c/driver-projection-review",
+      "head": "bf5a8b0af8286e6ecde4cd5093edc528f0386e10",
+      "native": true,
+      "force": false,
+      "active": false,
+      "clean": true,
+      "merged": true,
+      "removed": true
+    },
+    {
+      "directory": "/Users/tjw/.local/share/opencode/worktree/b5da4c/driver-speech-review",
+      "head": "f85e2cc9ebadf83295bf8f5f3a0c1ca4a38cc601",
+      "native": true,
+      "force": false,
+      "active": false,
+      "clean": true,
+      "merged": true,
+      "removed": true
+    }
+  ]
+}

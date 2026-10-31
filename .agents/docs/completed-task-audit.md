@@ -1,123 +1,104 @@
-# Completed-task audit and recovery plan
+# Completed-task audit and current delivery
 
-2026-10-31. Audited every accepted task against its contract, current source,
-recorded checks and native observations. Twelve accepted tasks now belong to ten
-integrated plans. Integration records do not erase missing acceptance observations.
-Two further accepted nodes belong to the active product plan; speech and the
-observation API are merged, with native registered reads observed. See the [live audit](evidence/033-completed-task-audit/live-update.md)
-and [durable snapshot](evidence/033-completed-task-audit/live-state.json) for current work.
-The historical [full matrix](evidence/033-completed-task-audit/matrix.json) retains task IDs,
-acceptance assertions, verification commands, artifacts, findings and sources.
+2026-10-31. The [timestamped durable snapshot](evidence/033-completed-task-audit/live-state-latest.json)
+records plan/node counts, exact IDs, priorities, prerequisites and active attempts.
+The [handoff](handoff.md) identifies the native sessions to continue. Source landing,
+runtime acceptance, native observation and completed integration are separate facts.
+The original [task matrix](evidence/033-completed-task-audit/matrix.json) and Git
+history retain earlier checks and findings; their old pending statements are not
+current blockers.
 
-## Delivered work
+## Accepted work reviewed against current source
 
-| Task                                         | Delivered and checked                                                                                                 | Remaining observation or limitation                                                                                   |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `5f5743c3` Retry-safe submission             | Durable logical identity, fresh-process replay, concurrency, validation, rollback, isolation; native worker and merge | Equivalent cost does not establish an efficiency comparison                                                           |
-| `71e53745` Trajectory inspection             | Redaction, usage categories, pagination, project/permission boundaries; native report                                 | Legacy target identity mismatch still needs an authorized native read of a valid target                               |
-| `8a2c9ed1` Readable task fetch               | Prose instructions plus typed structured reads; native Code Mode smoke                                                | No scoped functional gap identified                                                                                   |
-| `970b0feb` Progressive worker guidance       | Optional skills, focused source discovery, no eager skill bodies; repair history retained                             | Live worker use of nonempty optional skill guidance remains unobserved                                                |
-| `b9d649d7` Permission-based trajectory reads | Removed agent-name veto; permission-first private reads and regression coverage                                       | Live authorized implementor trajectory read after reload remains to be recorded                                       |
-| `f55e7013` Shared Repomix snapshot           | Durable refresh/reuse, permission rechecks, rollback and cross-process races; integrated                              | Production Desktop refresh/index/read reuse needs an explicit observation                                             |
-| `6edcc32f` Retry baseline                    | Explicit baseline survives reopen; old attempts, usage and checks retained                                            | No comparative cost or model-quality conclusion                                                                       |
-| `fc88ccc0` Native model routes and personas  | Exact route forwarding, no fallback/veto, three optional overlays                                                     | Current native Go/Qwen and OpenAI/Luna workers demonstrate route use; persona quality is not established              |
-| `2958fa32` Parallel dispatch                 | Real-Git tests cover conflicts, dependencies, combined checks, recovery, cancellation and cleanup                     | Three native workers now overlap; actual returned artifacts, combined UI acceptance and cleanup still need completion |
-| `08e3d569` Tasks Start and continuation      | Native Start, running child, narrow layout, split resize, scroll and restoration; reconciled and integrated           | Full theme/font and broader recovery matrix remains partial                                                           |
-| `7548e7f8` Tasks menu/tab affordances        | Native menu order, themed tab icon, close/reopen, canonical merge, Terra screenshot review and native cleanup passed  | First Qwen Go sample; cost/category attribution is incomplete, no comparative quality/cost claim                      |
-| `1532ce08` Authored plan title               | Optional verbatim title, persistence, replay and legacy omission                                                      | UI title consumers belong to the grouping increment                                                                   |
+| Task                                             | Capability and present result                                                                                                 | Remaining observation or limit                                                                                                         |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-1 (`5f5743c3`)                                | Durable retry-safe submission; fresh-process replay, concurrency, validation and repository isolation; integrated             | No comparative efficiency claim                                                                                                        |
+| LZ-7 (`71e53745`)                                | Redacted attempt trajectories, usage categories, paging and private/project boundaries; integrated and native report observed | Broader target/session navigation remains partial                                                                                      |
+| LZ-8 (`8a2c9ed1`)                                | Readable instructions plus structured task reads; integrated, native Code Mode use                                            | No current scoped functional defect identified                                                                                         |
+| LZ-9 (`970b0feb`)                                | Optional guidance/skills and progressive source discovery; integrated                                                         | A worker loading nonempty optional guidance is not yet separately observed                                                             |
+| LZ-10 (`b9d649d7`)                               | Permission-first trajectory reads; agent-name veto removed; integrated                                                        | Authorized implementor read after reload still needs a concrete native observation                                                     |
+| LZ-12 (`f55e7013`)                               | Persisted Repomix snapshot and bounded permission-aware reads; integrated                                                     | Comparative context/cost benefit not established                                                                                       |
+| LZ-15 (`fc88ccc0`)                               | Exact native routes and three optional personas; integrated                                                                   | Native Qwen/Go and Luna/OpenAI use is observed, not a model ranking                                                                    |
+| LZ-16 (`6edcc32f`)                               | Explicit retry baseline with retained attempts/usage; integrated                                                              | No comparative cost or model-quality conclusion                                                                                        |
+| LZ-17 (`08e3d569`)                               | Native Tasks Start/continuation, running state, split/scroll restoration; integrated                                          | Broader recovery/font matrix remains partial                                                                                           |
+| LZ-18 (`2958fa32`)                               | Parallel dispatch and combined acceptance; integrated                                                                         | Real product b50 now demonstrates concurrent return, combined checks, merge and cleanup                                                |
+| LZ-19 (`efd8459f`)                               | Scoped observation projection and cheap metadata reads; integrated                                                            | No claim of universal performance improvement                                                                                          |
+| LZ-20 (`3af64c61`)                               | Last-final replay and optional final-prose auto-speech; integrated                                                            | Native replay/Stop and auto generation observed; no subjective audio-quality claim                                                     |
+| LZ-21/22/23 (`c1cc0d39`, `f1b1a687`, `8db1b281`) | Radar, Trajectory and shipped GUI assembly; integrated; all five product-plan worktrees cleaned                               | Native current data, selection, resize, narrow width and light theme observed; custom fonts/reconnect matrix remain partial            |
+| LZ-24 (`7548e7f8`)                               | Tasks extra-panel order, themed icon and closable tab; integrated; Terra native review                                        | One Go/Qwen sample, no comparative ranking                                                                                             |
+| LZ-25 (`7207e67f`)                               | Project task references, copy links, resolution/search and scoped native handler; accepted/source-landed                      | Real rendered-message link click still needs observation; grouping plan remains active                                                 |
+| LZ-26 (`f09ad402`)                               | Grouped task list artifact returned; source review/integration underway                                                       | External-prerequisite join behavior, isolated tab-test harness and fallback labels need review repairs before native visual acceptance |
+| LZ-27 (`1532ce08`)                               | Optional authored plan title and persistence; integrated                                                                      | Grouping consumes it; legacy fallback should use the actual short plan reference                                                       |
+| LZ-29 (`430e08d8`)                               | Architect publication reused by isolated implementor; integrated, native reuse observed                                       | No recollection occurred; comparative savings remain unknown                                                                           |
+| LZ-30 (`44fb4817`)                               | Outcome coalescing and useful partial review; integrated; actual native queue cancellation observed                           | Consumption remains unknown unless transcript evidence proves it                                                                       |
 
-Delivered means code and checks exist. Observed means the relevant native or real
-runtime behavior was exercised. A fixture cannot substitute for a native criterion.
-No repository hashing or model approval is completion evidence.
+[Panel observations](evidence/027-observation-panels/native-root-review.md),
+[context reuse](evidence/isolated-context-reuse/native.md),
+[speech repair](evidence/024-final-prose-speech/replay-repair.md),
+[reference source review](evidence/029-task-references-links/source-review.md), and
+[real outcome proof](evidence/035-outcome-inbox/root-native-review.md) state exact
+source/check/native boundaries. No source hashing or model approval is completion
+evidence. `lazers_verify_task` remains Architect self-review; schema checks remain.
 
-## State machine assessment
+## Execution now
 
-XState 5.33.3 genuinely computes task-node transitions and persisted snapshots.
-`RunnerStore.move` enforces the machine version, updates the node transactionally,
-and journals the transition. The runtime and SQLite own graph readiness, effects,
-leases, verification, native sessions, integration and cleanup. The whole scheduler
-is not an XState actor system. This separation is sufficient for the current product;
-a rewrite would not close the observed operational gaps.
+- Grouping plan `58146c54` follows its accepted references task. Finish the small
+  source-review repairs, then mount and drive the real Tasks view with Terra
+  6.1 High screenshot review. Verify the native copied-link route in that pass.
+- Progress plan `b9e55d09` is running as original attempt `d543a0f7`, Luna Max,
+  in its OpenCode-managed worktree. Its transient startup failure was recovered
+  through native APIs and the existing attempt resumed.
+- Lifecycle plan `8253ff59` waits for progress integration. It must preserve
+  durable handoff, pending input, ownership and exact model; cache policy depends
+  on provider/model/options, with override and fallback before native archival.
 
-The small maintenance repair uses the supported pure `initialTransition` and
-`transition` APIs and directly checks lifecycle edges, terminal rejection, snapshots
-and version propagation. A future machine-definition change still needs an explicit
-compatibility/migration decision for existing records.
+Priority and dependencies are durable runtime inputs. Active compatible workers
+run in separate native worktrees; scope conflicts serialize. Models do not own the
+state machine or poll a custom scheduler daemon.
 
-This follows the distinction between deterministic transitions, persisted state and
-external effects in [Stately's transition](https://stately.ai/docs/transitions) and
-[persistence guidance](https://stately.ai/docs/persistence), and the determinism
-boundary in [Temporal's workflow contract](https://docs.temporal.io/workflow-definition).
-The installed XState version, not the current v6-alpha documentation surface,
-determines the APIs used here.
+## Operational repairs and cleanup
 
-## Repairs landed during the audit
+XState 5.33.3 computes and persists task-node transitions. SQLite and the runtime
+own readiness, effects, leases, verification, native sessions, integration and
+cleanup. The scheduler is not a separate XState actor service. Current failures
+were fixed at that boundary rather than replacing the execution architecture.
 
-- Added durable, project-scoped retirement for superseded, duplicate, rejected or
-  reviewed fulfilled legacy tasks. Immutable specifications and history remain.
-- Added versioned `schedule` commands, explicit priority and cross-plan integration
-  prerequisites. Higher priority wins the next conflicting dispatch; active work
-  continues. Dependent plans start from the integrated code.
-- Scope overlap now informs serialization rather than rejecting admission. Exact
-  duplicate candidates still require a recorded disposition.
-- Reload cleanup waits for an in-flight scheduler operation before database close.
-- Shortened Architect and implementor definitions while preserving research,
-  source findings, focused questions, self-review, readable tasks and normal tools.
-  Task submission precedes plan submission; users receive a compact task summary.
-- Reconciled the permission, Repomix and Tasks plans through production commands;
-  all three now record integration and native cleanup.
+- Stable blocked waits no longer grow versions/notices every heartbeat.
+- Scope omissions hold the stopped candidate for an additive Architect amendment;
+  amendment authorization and an owned native instruction update are durable.
+  Scope-only repair does not start another model worker. Reviewed main ancestry
+  is excluded from isolated worker scope attribution; shared checkout stays strict.
+- Accepted task source landings can be recorded without finalizing a running plan.
+- Current outcome metadata and cumulative accepted-artifact review preserve useful
+  partial results. Native queue cancellation retains the original row/history,
+  handles lost replies and does not conflate admission with model consumption.
+- `b4fcd61` prevents cancellation of a reserved worker after its own startup
+  uncertainty has been conclusively recovered. Unrelated blocked reasons still
+  stop execution. Empty host errors no longer produce blank reasons.
 
-`9b0ab5e` contains the recovery/scheduling/prompt repairs. The reviewed tree including
-machine API maintenance passes **222 tests / 2,276 assertions**, formatting, lint
-and strict typecheck. These checks do not complete the native observations above.
+The b50 product plan is integrated and all five owned worktrees are removed.
+The wake plan is integrated and its original/repaired worktrees reconciled.
+Superseded first-attempt changes were fully recovered before ancestry bookkeeping;
+[the review](evidence/035-outcome-inbox/recovered-attempts.md) states why no obsolete
+code was reapplied. Two old driver-review worktrees were preserved in Git and
+removed through native SDK APIs without force; [cleanup proof](evidence/033-completed-task-audit/driver-review-cleanup.json).
+No SQL state transitions, dirty-work deletion or force acceptance were used.
 
-## Executable order and remaining holes
+## Evidence and unresolved limits
 
-All five product plans are admitted. The [persisted schedule](evidence/033-completed-task-audit/schedule.json)
-records their priority, models and dependencies; no prose HOLD controls execution.
+Fresh merged checkpoint `0c5de84` passed **339 tests / 3,214 assertions**, formatter,
+lint and strict TypeScript. The later startup repair passed 84 runtime/artifact/
+process-recovery tests / 1,490 assertions; final positive/negative checks and
+quality checks passed after helper reuse. Native activation retained PID 16786,
+both workers' identities/directories/routes and busy/idle timestamps.
 
-| Order                      | Existing work                                                                        | How the findings compound                                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Now                        | Go Tasks menu/tab plus Luna observation API and speech, in separate native worktrees | Complete actual parallel return/review/merge/cleanup proof using requested product changes                                   |
-| After observation API      | Radar and Trajectory panels, then GUI assembly                                       | Use approved mockups and Terra screenshot review; check live state and narrow-panel behavior                                 |
-| After product integration  | Task references/grouping and durable progress                                        | Copy usable task references; expose waiting/running state; hook automatic facts and concise progress into one log            |
-| After progress integration | Architect renewal                                                                    | Preserve decisions/questions/model, use provider/model/options cache policy, transfer ownership durably, archive predecessor |
+Inference remains enabled. Bounded logs and next-freeze Electron CPU capture are
+armed; the earlier renderer freeze cause remains unresolved. The separately fixed
+Radar browser-method receiver error was not evidence of that freeze's cause.
+OpenCode's public ComposerPill API has no fixed-right alignment or modifier-click
+callback; the supported pill, menu and shortcut are used.
 
-Two further audit repairs are implemented and checked: native heartbeat now reads
-session metadata, requesting history for final usage or message reconciliation;
-plan inspection returns compact state by default with explicit `full: true` retrieval.
-A real sample was 678 bytes of metadata versus 2,304,994 bytes / 184 transcript
-messages. Lost-response, final-count and busy-again race regressions pass. These
-changes were activated through supported location reload with the same worker
-sessions and attempts. Active tools observed the reload boundary; no live performance
-gain is claimed yet. A subsequent renderer hang and added diagnostics are recorded
-in [renderer trace evidence](evidence/034-renderer-trace/report.md).
-
-Cross-worktree Repomix delivery remains a concrete hole: native location moves
-create separate context roots, and the three current worker roots have no published
-cache. They have used ordinary source tools. Architect has a queued narrow repair
-request to make a selected project snapshot readable in isolated worktrees, preserve
-permission/project checks and as-of-refresh attribution, and demonstrate one refresh
-plus isolated read without recollection. Unavailable optional context falls back to
-normal reads/LSP. This supplements workspace-local reuse rather than repeating it.
-
-Close the trajectory permission, Repomix reuse and optional-guidance observations
-while these real workers run. Keep missing observations in this matrix; create a
-small repair only when an actual failure needs code. Do not rerun broad historical
-specifications or turn every observation into another approval gate.
-
-Durable progress and small handoffs are consistent with
-[Anthropic's long-running harness findings](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents).
-We apply those findings to current failures rather than copying a large prompt or
-adding another orchestration layer. Completed work per hour and accepted-task cost
-remain the product measures; this run does not yet prove a cost improvement.
-
-## Observed wake churn
-
-The completed Tasks affordance generated separate resumable task-accepted and
-plan-accepted outcomes. Architect subsequently answered obsolete notices with
-“already handled” even after integration. [The outbox/inbox audit](evidence/033-completed-task-audit/wake-churn.md)
-identifies exact outcomes and the public native inbox APIs. A narrow repair must
-retain durable history and lost-response recovery while suppressing obsolete
-queued outcomes and waking Architect only for actionable orchestration. This is
-not covered by the progress or session-renewal tasks.
+Still unproven: broad specialist dispatch quality, general specification revision,
+complete custom-font/reconnect/navigation coverage, comparative accepted-task cost
+and the remaining progress/lifecycle outcomes. These are explicit limits, not a
+reason to rerun broad completed tasks or invent extra approval gates.

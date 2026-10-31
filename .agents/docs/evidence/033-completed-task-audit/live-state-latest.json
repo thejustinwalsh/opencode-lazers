@@ -1,0 +1,597 @@
+{
+  "observedAt": "2026-10-31T23:40:16.951Z",
+  "head": "c957446fb43d431deca6c86159330a5400af2d3a",
+  "counts": {
+    "plans": [
+      {
+        "state": "cancelled",
+        "count": 2
+      },
+      {
+        "state": "integrated",
+        "count": 13
+      },
+      {
+        "state": "running",
+        "count": 3
+      }
+    ],
+    "nodes": [
+      {
+        "state": "accepted",
+        "count": 20
+      },
+      {
+        "state": "cancelled",
+        "count": 1
+      },
+      {
+        "state": "failed",
+        "count": 1
+      },
+      {
+        "state": "queued",
+        "count": 1
+      },
+      {
+        "state": "running",
+        "count": 1
+      },
+      {
+        "state": "verifying",
+        "count": 1
+      }
+    ]
+  },
+  "plans": [
+    {
+      "id": "6d1d3afe-f236-4a33-a5a2-86328e838249",
+      "owner": "ses_e6eb29584ffe8HLfTVz6CBw5qI",
+      "state": "integrated",
+      "version": 22,
+      "reason": null,
+      "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "1b03c03423ac4e0bd1082018c897ebd36da70755",
+      "workerModel": null
+    },
+    {
+      "id": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 9,
+      "reason": null,
+      "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "28c4e67f0585d3892e64c1538bb2f8cb920092fe",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 32,
+      "reason": null,
+      "artifact": "dade430d964f677f364969d6e94a384f328c07ca",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "5b41706d4d0fc03c05d35106c36bd96a8fe78ce5",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "e07cea4d-1f61-4f3d-92cd-215e63e4cb45",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 13,
+      "reason": null,
+      "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "b22f1f04-8856-4dd3-a7a7-6b9d2bc256d4",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "cancelled",
+      "version": 4,
+      "reason": "Cancellation requested",
+      "artifact": null,
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "aa71e2c0-3f4c-4cff-82f2-b3afc8b661a8",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 13,
+      "reason": null,
+      "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "running",
+      "version": 10,
+      "reason": null,
+      "artifact": null,
+      "title": null,
+      "priority": 5,
+      "afterPlans": [],
+      "baseCommit": "9ab588fd1e022474be381ac1bbea1346a1fa8ead",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "519b8e3c-2997-4455-9cde-09835dc0acda",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "cancelled",
+      "version": 8,
+      "reason": "Cancellation requested",
+      "artifact": null,
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "fd80616b486895be2dad60b67911f5b8ad478b2a",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 13,
+      "reason": null,
+      "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "286975751b492d672eceddb5cb95062233feca1d",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "7b602667-38d8-4350-9e20-46c09b75b934",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 13,
+      "reason": null,
+      "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "2fe4fc1262da111ac9a3510b75b78af4887fda2d",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "6ed421e4-88cc-4324-b521-8f9a32d5de43",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 9,
+      "reason": null,
+      "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "134f5c3d38ee128867427b7756d11b755480821b",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 27,
+      "reason": null,
+      "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+      "title": null,
+      "priority": 20,
+      "afterPlans": [],
+      "baseCommit": "9b0ab5efec71fa5935695b92bacf9592a745ef86",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "8d505ab3-e279-4c54-bd0f-dc5169f228e9",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 10,
+      "reason": null,
+      "artifact": "5a7bb9984bb2a2b50d23b2f39a31b51856055a65",
+      "title": null,
+      "priority": 30,
+      "afterPlans": [],
+      "baseCommit": "9b0ab5efec71fa5935695b92bacf9592a745ef86",
+      "workerModel": {
+        "providerID": "opencode-go",
+        "id": "qwen3.8-flash",
+        "variant": "medium"
+      }
+    },
+    {
+      "id": "58146c54-d236-4235-9704-630ad550c084",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "running",
+      "version": 15,
+      "reason": null,
+      "artifact": null,
+      "title": null,
+      "priority": 10,
+      "afterPlans": [],
+      "baseCommit": "9ab588fd1e022474be381ac1bbea1346a1fa8ead",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 9,
+      "reason": null,
+      "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca",
+      "title": null,
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "69290a81d60b31c3d89eac711b7bfe28ed40562b",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "8253ff59-57a5-45fd-8847-acd971438af8",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "running",
+      "version": 3,
+      "reason": null,
+      "artifact": null,
+      "title": null,
+      "priority": 5,
+      "afterPlans": [
+        "b9e55d09-7f0d-446a-9a13-fe24133bea70"
+      ],
+      "baseCommit": "9b0ab5efec71fa5935695b92bacf9592a745ef86",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "caa8c80c-130f-45fd-bd64-a446a59bfd65",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 322,
+      "reason": null,
+      "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+      "title": "Share Architect context with isolated workers",
+      "priority": 0,
+      "afterPlans": [],
+      "baseCommit": "6e0fc1097b7667628949cc55daa75cf9ccf75182",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    },
+    {
+      "id": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "state": "integrated",
+      "version": 19,
+      "reason": null,
+      "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094",
+      "title": "Coalesce obsolete Architect inbox wakes",
+      "priority": 1,
+      "afterPlans": [],
+      "baseCommit": "c6b3384444675ee07eda5a4359a007e7723d589f",
+      "workerModel": {
+        "providerID": "openai",
+        "id": "gpt-6-luna",
+        "variant": "max"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "plan_id": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "task_id": "44fb4817-4826-481f-acac-7840caf14341",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 8,
+      "reason": null,
+      "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094"
+    },
+    {
+      "plan_id": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
+      "task_id": "1532ce08-7aac-434f-a8e1-a92e5d7e3cb3",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca"
+    },
+    {
+      "plan_id": "519b8e3c-2997-4455-9cde-09835dc0acda",
+      "task_id": "c0ef9f9d-7e16-48b7-9a04-f98d9a45a8cf",
+      "ordinal": 0,
+      "state": "failed",
+      "version": 4,
+      "reason": "Worker interrupted",
+      "artifact": null
+    },
+    {
+      "plan_id": "58146c54-d236-4235-9704-630ad550c084",
+      "task_id": "7207e67f-927e-41a2-b382-a3a8904ee54f",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 8,
+      "reason": null,
+      "artifact": "d1f58b48c0f34615c8c7d1ed9226cce96cd07efc"
+    },
+    {
+      "plan_id": "58146c54-d236-4235-9704-630ad550c084",
+      "task_id": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
+      "ordinal": 1,
+      "state": "verifying",
+      "version": 4,
+      "reason": null,
+      "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8"
+    },
+    {
+      "plan_id": "6d1d3afe-f236-4a33-a5a2-86328e838249",
+      "task_id": "5f5743c3-1bd0-4a53-a86b-a347dd961e1a",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 9,
+      "reason": null,
+      "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb"
+    },
+    {
+      "plan_id": "6ed421e4-88cc-4324-b521-8f9a32d5de43",
+      "task_id": "2958fa32-9f7a-43d9-9252-3d30f2d4dca1",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e"
+    },
+    {
+      "plan_id": "7b602667-38d8-4350-9e20-46c09b75b934",
+      "task_id": "08e3d569-5081-4eb4-b79a-e4ac9dc42176",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021"
+    },
+    {
+      "plan_id": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+      "task_id": "71e53745-0ce8-4798-b453-17f260d03aa0",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a"
+    },
+    {
+      "plan_id": "8253ff59-57a5-45fd-8847-acd971438af8",
+      "task_id": "239f45a9-3247-4cba-b339-19c8267d0800",
+      "ordinal": 0,
+      "state": "queued",
+      "version": 1,
+      "reason": null,
+      "artifact": null
+    },
+    {
+      "plan_id": "8d505ab3-e279-4c54-bd0f-dc5169f228e9",
+      "task_id": "7548e7f8-d33b-4768-b8a1-9c81222da176",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "5a7bb9984bb2a2b50d23b2f39a31b51856055a65"
+    },
+    {
+      "plan_id": "aa71e2c0-3f4c-4cff-82f2-b3afc8b661a8",
+      "task_id": "f55e7013-630e-4b3e-ab3c-407e61c75ccc",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e"
+    },
+    {
+      "plan_id": "b22f1f04-8856-4dd3-a7a7-6b9d2bc256d4",
+      "task_id": "81b77d5b-f376-4431-88ff-80862e595f33",
+      "ordinal": 0,
+      "state": "cancelled",
+      "version": 2,
+      "reason": null,
+      "artifact": null
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "efd8459f-1dbe-4472-968b-f26f59504291",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "3af64c61-ff16-43a9-8983-a11763ccf415",
+      "ordinal": 1,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "c1cc0d39-42d7-4845-bcce-8d91aee4935b",
+      "ordinal": 2,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd",
+      "ordinal": 3,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "8db1b281-c288-4c2e-abaa-f846dd642246",
+      "ordinal": 4,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1"
+    },
+    {
+      "plan_id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
+      "task_id": "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
+      "ordinal": 0,
+      "state": "running",
+      "version": 5,
+      "reason": "The original worktree effect is conclusively completed on original attempt d543a0f7-670a-46eb-8a91-0ca590a0f848; no native worker/session/prompt had been created. Runtime cancelled only the unsent reservation while its plan remained blocked. Resume that same attempt/worktree/session identity, not retry or a replacement task/worker. Before dispatch, its clean native-created checkout was fast-forwarded from recorded9ab588f to reviewed canonical5c407e8 so existing GUI, references, scope recovery/coalescer and native proof repairs are already present. Preserve original source provenance and effective scope; Root2332abb ancestry-aware isolated verification excludes reviewed inherited main changes. Keep exact Luna Max route and lifecycle's actual progress integration prerequisite.",
+      "artifact": null
+    },
+    {
+      "plan_id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "task_id": "8a2c9ed1-ff42-427f-9fb2-8583b1e81d97",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "4267db97bfbea7659b9897aaff8079c07b0a5376"
+    },
+    {
+      "plan_id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "task_id": "970b0feb-1fd3-40bb-a61d-f8decccb8a9f",
+      "ordinal": 1,
+      "state": "accepted",
+      "version": 17,
+      "reason": null,
+      "artifact": "dade430d964f677f364969d6e94a384f328c07ca"
+    },
+    {
+      "plan_id": "caa8c80c-130f-45fd-bd64-a446a59bfd65",
+      "task_id": "430e08d8-ce98-45db-811f-4362a45174b6",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f"
+    },
+    {
+      "plan_id": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "task_id": "6edcc32f-bac1-45c6-b785-2087fb75a93c",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "134f5c3d38ee128867427b7756d11b755480821b"
+    },
+    {
+      "plan_id": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "task_id": "fc88ccc0-0265-4f71-a688-c19f99c76a58",
+      "ordinal": 1,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a"
+    },
+    {
+      "plan_id": "e07cea4d-1f61-4f3d-92cd-215e63e4cb45",
+      "task_id": "b9d649d7-5d15-4406-824b-6681865072d4",
+      "ordinal": 0,
+      "state": "accepted",
+      "version": 5,
+      "reason": null,
+      "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc"
+    }
+  ],
+  "activeAttempts": [
+    {
+      "id": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "plan_id": "58146c54-d236-4235-9704-630ad550c084",
+      "task_id": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
+      "state": "verifying",
+      "session_id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8"
+    },
+    {
+      "id": "d543a0f7-670a-46eb-8a91-0ca590a0f848",
+      "plan_id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
+      "task_id": "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
+      "state": "running",
+      "session_id": "ses_043f3b7202dd41b8bd9bbb7c0b69c805",
+      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d543a0f7-670a-46eb-8a91-0ca590a0f848"
+    }
+  ]
+}
