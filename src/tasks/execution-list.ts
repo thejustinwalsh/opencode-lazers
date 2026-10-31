@@ -144,11 +144,9 @@ function forkBlocks(plan: Plan): ForkBlock[] {
       continue
     const branchTails = new Set(branches.map((path) => path[path.length - 1]!))
     const joinPrerequisites = new Set(incoming.get(joinID) ?? [])
-    if (
-      joinPrerequisites.size !== branchTails.size ||
-      [...branchTails].some((id) => !joinPrerequisites.has(id))
-    )
-      continue
+    // A root-lane join may also wait on work outside this fork. Those edges stay
+    // dependency references; they do not make the two linear branches overlap.
+    if ([...branchTails].some((id) => !joinPrerequisites.has(id))) continue
     if (
       heads.some(
         (head) =>
@@ -330,7 +328,7 @@ export function buildExecutionList(input: {
       planID: plan.id,
       planVersion: plan.version,
       planRevision: plan.revision,
-      title: plan.title ?? "Recorded plan",
+      title: plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
       hasRecordedTitle: plan.title !== null,
       activeCount,
       totalCount: nodes.length,

@@ -1,48 +1,26 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, afterEach, describe, expect, test } from "bun:test"
+import { createComponent, createRoot } from "solid-js"
+import { renderToString } from "solid-js/web"
+import * as gui from "@opencode/plugin/gui"
+import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/internal.js"
+import { createServer } from "vite"
 
-// Bun has no Solid DOM host, so the JSX runtime is mocked into inspectable records and the
-// gui barrel is mocked to stable registry tokens with an identity `bindPlugin` (the real
-// `bindPlugin` reads a host context that only exists inside a plugin contribution).
-type VNode = {
-  tag?: unknown
-  component?: unknown
-  props: Record<string, unknown>
-}
-
-const jsxRecord = (type: unknown, props: Record<string, unknown>): VNode =>
-  typeof type === "function" ? { component: type, props } : { tag: type, props }
-
-const Icon = (props: { name: string; size?: string }) => ({ icon: props.name })
-const gui = {
-  Command: { name: "Command" },
-  LinkHandler: { name: "LinkHandler" },
-  MenuItem: { name: "MenuItem" },
-  Panel: { name: "Panel" },
-  Style: { name: "Style" },
-  Store: { session: () => ({}) },
-  bindPlugin: (component: unknown) => component,
-  createLatest: () => ({}),
-  createKeyed: () => undefined,
-  usePanel: () => ({ visible: () => true }),
-}
-
-// `solid-js/jsx-runtime` and `solid-js/jsx-dev-runtime` resolve to the same file and
-// `mock.module` replaces the whole mock per resolved file, so both carry the full export
-// set and the dev entry (which Bun's test transform imports) is registered last.
-mock.module("@opencode/plugin/gui", () => gui)
-mock.module("solid-js/jsx-runtime", () => ({
-  jsx: jsxRecord,
-  jsxs: jsxRecord,
-  Fragment: "Fragment",
-}))
-mock.module("solid-js/jsx-dev-runtime", () => ({
-  jsxDEV: jsxRecord,
-  jsx: jsxRecord,
-  jsxs: jsxRecord,
-  Fragment: "Fragment",
-}))
-
-const { setupTaskPanel } = await import("../../src/tasks/panel.tsx")
+// Compile with the shipped Solid/Vite boundary rather than a mirrored JSX fake.
+// Middleware-only with websockets disabled has no listening socket.
+const vite = await createServer({
+  configFile: "./vite.config.ts",
+  server: { middlewareMode: true, ws: false },
+  appType: "custom",
+})
+afterAll(() => vite.close())
+const { setupTaskPanel } = (await vite.ssrLoadModule(
+  "/src/tasks/panel.tsx",
+)) as typeof import("../../src/tasks/panel.tsx")
+const disposers: Array<() => void> = []
+afterEach(() => {
+  for (const dispose of disposers.splice(0)) dispose()
+})
+const Icon = (props: { name: string; size?: string }) => `icon:${props.name}:${props.size}`
 
 type Contribution = { registry: unknown; value: Record<string, unknown> }
 type FakeSession = { id: string; location?: { directory: string } }
@@ -63,7 +41,20 @@ function install(session: FakeSession | undefined) {
       },
     },
   }
-  setupTaskPanel(ctx as unknown as Parameters<typeof setupTaskPanel>[0])
+  disposers.push(
+    createRoot((dispose) => {
+      createComponent(PluginContext.Provider, {
+        value: ctx as never,
+        get children() {
+          return createComponent(() => {
+            setupTaskPanel(ctx as unknown as Parameters<typeof setupTaskPanel>[0])
+            return null
+          }, {})
+        },
+      })
+      return dispose
+    }),
+  )
   const find = (registry: unknown) => added.find((entry) => entry.registry === registry)?.value
   return { added, find, opened }
 }
@@ -108,21 +99,10 @@ describe("tasks native affordances", () => {
     expect(tab.closable).toBe("hover")
     const label = tab.label
     expect(typeof label).toBe("function")
-    const node = (label as (state: unknown) => VNode)({
-      active: true,
-      preview: false,
-      session: { key: "ses_1" },
-    })
-    expect(node.tag).toBe("div")
-    const children = node.props.children as VNode[]
-    expect(children).toBeArrayOfSize(2)
-    const icon = children[0]!
-    expect(icon.component).toBe(Icon)
-    expect(icon.props.name).toBe("task")
-    expect(icon.props.size).toBe("small")
-    const title = children[1]!
-    expect(title.tag).toBe("span")
-    expect(title.props.children).toBe("Tasks")
+    const rendered = renderToString(() => (label as () => string)())
+    expect(rendered).toContain("icon:task:small")
+    expect(rendered).toContain("<span>Tasks</span>")
+    expect(rendered).toStartWith("<div ")
   })
 
   test("tab object stays stable while listed", () => {

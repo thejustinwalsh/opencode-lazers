@@ -765,10 +765,10 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                       {(group) => (
                         <section
                           class="lazers-tasks-plan"
-                          aria-label={`${group.hasRecordedTitle ? group.title : "Recorded plan"}, ${group.activeCount} active of ${group.totalCount} tasks`}
+                          aria-label={`${group.title}, ${group.activeCount} active of ${group.totalCount} tasks`}
                         >
                           <div class="lazers-tasks-plan-heading">
-                            <span>{group.hasRecordedTitle ? group.title : "Recorded plan"}</span>
+                            <span>{group.title}</span>
                             <span>
                               {group.activeCount}/{group.totalCount}
                             </span>

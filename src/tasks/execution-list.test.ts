@@ -235,7 +235,79 @@ test("disjoint forks remain separate and an overlapping cross-edge is never forc
     a2,
     b1,
   ])
+})
 
+test("real b50-shaped branches fold while external speech remains a join dependency", () => {
+  const projection = "efd8459f-1dbe-4472-968b-f26f59504291"
+  const speech = "3af64c61-ff16-43a9-8983-a11763ccf415"
+  const radar = "c1cc0d39-42d7-4845-bcce-8d91aee4935b"
+  const trajectory = "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd"
+  const assembly = "8db1b281-c288-4c2e-abaa-f846dd642246"
+  const ids = [projection, speech, radar, trajectory, assembly]
+  const observed = topology(
+    ids.map((taskID, ordinal) => ({ taskID, ordinal })),
+    [
+      [projection, radar],
+      [projection, trajectory],
+      [radar, assembly],
+      [trajectory, assembly],
+      [speech, assembly],
+    ],
+  )
+  observed.plans[0]!.id = "b50a1a71-1a54-4d89-8ef2-0644bcccc327"
+  const result = buildExecutionList({ topology: observed, tasks: summaries(ids) })
+  const group = result.plans[0]!
+  expect(group.title).toBe("Plan b50a1a71")
+  expect(group.rows.map((row) => row.taskID)).toEqual([projection, speech, assembly])
+  expect(group.rows.filter((row) => row.fork)).toHaveLength(1)
+  expect(group.rows[0]?.fork?.joinID).toBe(assembly)
+  expect(group.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([
+    [radar],
+    [trajectory],
+  ])
+  expect(group.rows.find((row) => row.taskID === assembly)?.prerequisites).toEqual([
+    radar,
+    trajectory,
+    speech,
+  ])
+  expect(renderedIDs(result)).toHaveLength(5)
+  expect(new Set(renderedIDs(result)).size).toBe(5)
+
+  observed.plans[0]!.title = "Observation panels"
+  expect(buildExecutionList({ topology: observed, tasks: summaries(ids) }).plans[0]?.title).toBe(
+    "Observation panels",
+  )
+})
+
+test("extra edges into branch heads and interiors and nonlinear branches remain flat", () => {
+  const [root, left, interior, right, join, external] = [id(1), id(2), id(3), id(4), id(5), id(6)]
+  const ids = [root, left, interior, right, join, external]
+  const base: Array<[string, string]> = [
+    [root, left],
+    [root, right],
+    [left, interior],
+    [interior, join],
+    [right, join],
+  ]
+  for (const extra of [
+    [external, left],
+    [external, interior],
+    [left, right],
+  ] as Array<[string, string]>) {
+    const result = buildExecutionList({
+      topology: topology(
+        ids.map((taskID, ordinal) => ({ taskID, ordinal })),
+        [...base, extra],
+      ),
+      tasks: summaries(ids),
+    })
+    expect(result.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
+    expect(new Set(renderedIDs(result)).size).toBe(ids.length)
+  }
+})
+
+test("an external join prerequisite stays on the root lane with both branches folded", () => {
+  const [rootA, a1, a2, joinA, rootB] = [id(1), id(2), id(3), id(4), id(5)]
   const joinCrossEdge = buildExecutionList({
     topology: topology(
       [rootA, a1, a2, joinA, rootB].map((taskID, ordinal) => ({ taskID, ordinal })),
@@ -249,7 +321,11 @@ test("disjoint forks remain separate and an overlapping cross-edge is never forc
     ),
     tasks: summaries([rootA, a1, a2, joinA, rootB]),
   })
-  expect(joinCrossEdge.plans[0]?.rows.every((row) => !row.fork)).toBe(true)
+  expect(joinCrossEdge.plans[0]?.rows.map((row) => row.taskID)).toEqual([rootA, joinA, rootB])
+  expect(joinCrossEdge.plans[0]?.rows[0]?.fork?.branches.map((branch) => branch.taskIDs)).toEqual([
+    [a1],
+    [a2],
+  ])
   expect(joinCrossEdge.plans[0]?.rows.find((row) => row.taskID === joinA)?.prerequisites).toEqual([
     a1,
     a2,
