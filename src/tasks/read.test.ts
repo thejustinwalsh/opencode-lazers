@@ -7,6 +7,7 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { TaskReads } from "./read.ts"
 import { Schema } from "effect"
+import { AssociationTaskReads } from "../observability/task-reads.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -201,16 +202,19 @@ test("open tasks exclude cancelled plans while failed work remains actionable an
     })
     return task
   })
-  const open = reads.query({})
-  expect(open.count).toBe(4)
-  expect(new Set(open.tasks.map((task) => task.taskID))).toEqual(
-    new Set(tasks.slice(1).map((task) => task.id)),
-  )
-  const history = reads.query({ includeCompleted: true })
-  expect(history.count).toBe(5)
-  expect(history.tasks.find((task) => task.taskID === tasks[0]!.id)).toMatchObject({
-    status: "failed",
-    reason: "Worker interrupted",
-  })
+  for (const reader of [reads, new AssociationTaskReads(repository)])
+    for (const sessionID of [undefined, "session-a"]) {
+      const open = reader.query({ sessionID })
+      expect(open.count).toBe(4)
+      expect(new Set(open.tasks.map((task) => task.taskID))).toEqual(
+        new Set(tasks.slice(1).map((task) => task.id)),
+      )
+      const history = reader.query({ sessionID, includeCompleted: true })
+      expect(history.count).toBe(5)
+      expect(history.tasks.find((task) => task.taskID === tasks[0]!.id)).toMatchObject({
+        status: "failed",
+        reason: "Worker interrupted",
+      })
+    }
   expect(reads.get({ taskID: tasks[0]!.id })).toMatchObject({ status: "found" })
 })

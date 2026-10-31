@@ -127,6 +127,7 @@ export class AssociationTaskReads extends TaskReads {
       if (!query.includeCompleted)
         clauses.push(
           "NOT EXISTS (SELECT 1 FROM runner_nodes n WHERE n.task_id=t.id AND n.state IN ('accepted','incorporated','cancelled'))",
+          "NOT EXISTS (SELECT 1 FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE n.task_id=t.id AND p.project_directory=t.project_directory AND p.state='cancelled')",
         )
       if (!query.includeRetired)
         clauses.push(
