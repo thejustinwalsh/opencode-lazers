@@ -255,6 +255,7 @@ export class TaskRepository {
       if (input.includeCompleted === false)
         clauses.push(
           "NOT EXISTS (SELECT 1 FROM runner_nodes n WHERE n.task_id=tasks.id AND n.state IN ('accepted','incorporated','cancelled'))",
+          "NOT EXISTS (SELECT 1 FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE n.task_id=tasks.id AND p.project_directory=tasks.project_directory AND p.state='cancelled')",
         )
       if (input.includeRetired !== true)
         clauses.push(

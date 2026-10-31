@@ -50,4 +50,3 @@ Retired legacy records remain immutable and intentionally out of open work: `2d9
 ## Audit maintenance
 
 The checked-in `.agents/docs/evidence/033-completed-task-audit/{matrix.json,schedule.json}` snapshot predates this database state (it reports 9 integrated plans and 11 accepted nodes). Retain those historical snapshots and use the adjacent live-state.json for this observation; refresh it after integration. No source-hash or fingerprint evidence is used.
-

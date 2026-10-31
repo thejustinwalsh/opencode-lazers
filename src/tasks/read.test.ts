@@ -172,3 +172,45 @@ test("retired tasks disappear from open queries but direct detail preserves disp
   const detail = reads.get({ taskID: task.id })
   expect(detail).toMatchObject({ status: "found", disposition: { disposition: "superseded" } })
 })
+
+test("open tasks exclude cancelled plans while failed work remains actionable and history survives", () => {
+  const repository = fixture().open()
+  const reads = new TaskReads(repository)
+  const tasks = ["cancelled", "running", "failed", "exhausted", "cleanup-blocked"].map((state) => {
+    const task = insert(repository, `Failed worker in ${state} plan`)
+    const proposal = validProposal()
+    const plan = reads.runner.submit(
+      {
+        requestID: `plan-${state}`,
+        objective: task.proposal.objective,
+        baseCommit: "a".repeat(40),
+        nodes: [{ taskID: task.id, revision: 1 }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: proposal.verification,
+        acceptance: proposal.acceptance,
+      },
+      "architect",
+    )
+    // Seed the recorded worker-interruption states, without dispatching a worker.
+    repository.atomic((db) => {
+      db.query("UPDATE runner_plans SET state=? WHERE id=?").run(state, plan.planID)
+      db.query(
+        "UPDATE runner_nodes SET state='failed',reason='Worker interrupted' WHERE plan_id=?",
+      ).run(plan.planID)
+    })
+    return task
+  })
+  const open = reads.query({})
+  expect(open.count).toBe(4)
+  expect(new Set(open.tasks.map((task) => task.taskID))).toEqual(
+    new Set(tasks.slice(1).map((task) => task.id)),
+  )
+  const history = reads.query({ includeCompleted: true })
+  expect(history.count).toBe(5)
+  expect(history.tasks.find((task) => task.taskID === tasks[0]!.id)).toMatchObject({
+    status: "failed",
+    reason: "Worker interrupted",
+  })
+  expect(reads.get({ taskID: tasks[0]!.id })).toMatchObject({ status: "found" })
+})
