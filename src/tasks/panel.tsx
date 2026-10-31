@@ -16,6 +16,7 @@ import type { JSX } from "solid-js"
 import { Tasks } from "./contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import type { PanelData } from "./panel-state.ts"
+import { clampSplit, splitFromPointer } from "./panel-layout.ts"
 import { taskTitle } from "./presentation.ts"
 import css from "./panel.css?inline"
 
@@ -54,11 +55,13 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     error: "",
   })
   const [searchOpen, setSearchOpen] = createSignal(false)
-  const [objectiveOpen, setObjectiveOpen] = createSignal(false)
-  const [allCriteria, setAllCriteria] = createSignal(false)
   const [split, setSplit] = createSignal(48)
+  const [startingID, setStartingID] = createSignal("")
+  const [startError, setStartError] = createSignal("")
   let root: HTMLDivElement | undefined
+  let header: HTMLElement | undefined
   let list: HTMLDivElement | undefined
+  let separator: HTMLDivElement | undefined
   let detail: HTMLDivElement | undefined
   let restoring = false
   let restoredKey = ""
@@ -144,6 +147,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
             rpc().query(input, { location: { directory: value.directory }, signal }),
           get: (taskID, signal) =>
             rpc().get({ taskID, sessionID }, { location: { directory: value.directory }, signal }),
+          start: (input, signal) =>
+            rpc().start(input, { location: { directory: value.directory }, signal }),
           changes: (signal) =>
             (async function* () {
               for await (const event of rpc().events.subscribe("changed", { signal }))
@@ -192,14 +197,23 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     const detail = visible()?.detail
     return detail?.status === "found" ? detail.execution : undefined
   }
-  let expandedTask: string | undefined
-  createEffect(() => {
-    const id = selectedTask()?.id
-    if (id === expandedTask) return
-    expandedTask = id
-    setObjectiveOpen(false)
-    setAllCriteria(false)
-  })
+  const selectedDetail = () => {
+    const result = visible()?.detail
+    return result?.status === "found" ? result : undefined
+  }
+  const startTask = async (taskID: string, revision: 1) => {
+    const value = current()
+    if (!value || startingID()) return
+    setStartingID(taskID)
+    setStartError("")
+    try {
+      await state.start({ taskID, revision, sessionID: props.session.id })
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setStartingID("")
+    }
+  }
   const rowKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
     event.preventDefault()
@@ -215,7 +229,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     const id = rows[next]?.dataset.taskId
     if (id) void state.select(id)
   }
-  const resize = (next: number) => setSplit(Math.max(20, Math.min(75, next)))
+  const resize = (next: number) => setSplit(clampSplit(next))
   const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
     endDrag?.()
     const key = expectedKey()
@@ -223,7 +237,17 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     const element = event.currentTarget
     const move = (moveEvent: PointerEvent) => {
       const rect = root?.getBoundingClientRect()
-      if (rect) resize(((moveEvent.clientY - rect.top - 50) / (rect.height - 50)) * 100)
+      if (rect)
+        resize(
+          splitFromPointer(
+            split(),
+            rect.top,
+            rect.height,
+            header?.getBoundingClientRect().height ?? 0,
+            separator?.getBoundingClientRect().height ?? 0,
+            moveEvent.clientY,
+          ),
+        )
     }
     const end = () => {
       element.removeEventListener("pointermove", move)
@@ -244,13 +268,16 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         root = element
       }}
       style={{
-        "--task-list-height":
-          split() === initial.split
-            ? `min(48%, ${Math.max(112, Math.min(320, (visible()?.tasks.length ?? 0) * 36 + 44))}px)`
-            : `${split()}%`,
+        "--task-list-fr": `${split()}fr`,
+        "--task-detail-fr": `${100 - split()}fr`,
       }}
     >
-      <header class="lazers-tasks-header">
+      <header
+        class="lazers-tasks-header"
+        ref={(element) => {
+          header = element
+        }}
+      >
         <h2>Tasks</h2>
         <span
           class="lazers-tasks-dot"
@@ -384,7 +411,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                           class="lazers-tasks-row"
                           data-task-id={task.taskID}
                           aria-pressed={task.taskID === value().selectedID}
-                          aria-label={`${taskTitle(task.objective)}, ${task.status}`}
+                          aria-label={`${taskTitle(task.objective)}, ${task.status}${task.reason ? `: ${task.reason}` : ""}`}
                           tabIndex={
                             task.taskID === value().selectedID ||
                             (!value().selectedID && index() === 0)
@@ -395,7 +422,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                           onClick={() => void state.select(task.taskID)}
                         >
                           <span
-                            class="lazers-tasks-submitted"
+                            class="lazers-tasks-state"
                             data-state={task.status}
                             aria-hidden="true"
                           />
@@ -417,6 +444,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
       </div>
       <div
         class="lazers-tasks-separator"
+        ref={(element) => {
+          separator = element
+        }}
         role="separator"
         aria-label="Resize task list"
         aria-orientation="horizontal"
@@ -461,84 +491,74 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         >
           {(task) => (
             <>
-              <div
-                class="lazers-tasks-reference"
-                style={{ "font-family": ctx.appearance.font("mono") }}
-              >
-                <Ui.Tooltip value={task().id}>
-                  <span>{task().id.slice(0, 8)}</span>
-                </Ui.Tooltip>
-              </div>
-              <h3>{taskTitle(task().proposal.objective)}</h3>
-              <Show when={selectedExecution()}>
-                {(execution) => (
-                  <div class="lazers-tasks-note">
-                    <span>{execution().state}</span>
-                    <Show when={execution().reason}>
-                      <p>{execution().reason}</p>
-                    </Show>
-                    <Show when={execution().waitingOn.length}>
-                      <p>
-                        Waiting on{" "}
-                        {execution()
-                          .waitingOn.map((id) => id.slice(0, 8))
-                          .join(", ")}
-                      </p>
-                    </Show>
-                  </div>
-                )}
-              </Show>
-              <div class="lazers-tasks-objective" classList={{ "is-collapsed": !objectiveOpen() }}>
-                <Ui.Markdown text={task().proposal.objective} />
-              </div>
-              <Show when={task().proposal.objective.length > 180}>
-                <Ui.Button
-                  size="small"
-                  variant="ghost-muted"
-                  class="lazers-tasks-expand"
-                  onClick={() => setObjectiveOpen(!objectiveOpen())}
+              <div class="lazers-tasks-reference-row">
+                <span
+                  class="lazers-tasks-reference"
+                  style={{ "font-family": ctx.appearance.font("mono") }}
+                  aria-label={`Task ID ${task().id}`}
                 >
-                  {objectiveOpen() ? "Less" : "Read full objective"}
-                </Ui.Button>
-              </Show>
-              <h4>Done when</h4>
-              <ul class="lazers-tasks-assertions">
-                <For
-                  each={
-                    allCriteria()
-                      ? task().proposal.acceptance
-                      : task().proposal.acceptance.slice(0, 3)
+                  <Ui.Tooltip value={task().id}>{task().id.slice(0, 8)}</Ui.Tooltip>
+                </span>
+                <span
+                  class="lazers-tasks-inspector-state"
+                  data-state={selectedExecution()?.state ?? task().status}
+                  aria-label={`${selectedExecution()?.state ?? task().status}${selectedExecution()?.reason ? `: ${selectedExecution()!.reason}` : ""}`}
+                >
+                  {selectedExecution()?.state ?? task().status}
+                </span>
+                <Show
+                  when={
+                    !selectedExecution() &&
+                    visible()?.tasks.find((item) => item.taskID === task().id)?.status ===
+                      "submitted"
                   }
                 >
+                  <Ui.Button
+                    size="small"
+                    variant="ghost-muted"
+                    class="lazers-tasks-start"
+                    busy={startingID() === task().id}
+                    disabled={Boolean(startingID())}
+                    aria-label={`Start ${taskTitle(task().proposal.objective)}`}
+                    onClick={() => void startTask(task().id, task().revision)}
+                  >
+                    Start
+                  </Ui.Button>
+                </Show>
+              </div>
+              <Show when={selectedExecution()?.reason}>
+                {(reason) => (
+                  <p class="lazers-tasks-reason" role="status">
+                    {reason()}
+                  </p>
+                )}
+              </Show>
+              <Show when={selectedExecution()?.waitingOn.length}>
+                <p class="lazers-tasks-reason">
+                  Waiting on{" "}
+                  {selectedExecution()!
+                    .waitingOn.map((id) => id.slice(0, 8))
+                    .join(", ")}
+                </p>
+              </Show>
+              <Show when={startError()}>
+                <p class="lazers-tasks-error" role="alert">
+                  {startError()}
+                </p>
+              </Show>
+              <div class="lazers-tasks-objective">
+                <Ui.Markdown text={task().proposal.objective} />
+              </div>
+              <h4>Done when</h4>
+              <ul class="lazers-tasks-assertions">
+                <For each={task().proposal.acceptance}>
                   {(assertion) => (
                     <li>
-                      <Show
-                        when={assertion.assertion.length > 160}
-                        fallback={<Ui.Markdown text={assertion.assertion} />}
-                      >
-                        <details class="lazers-tasks-criterion">
-                          <summary>
-                            <Ui.Markdown text={assertion.assertion} />
-                          </summary>
-                          <Ui.Markdown text={assertion.assertion} />
-                        </details>
-                      </Show>
+                      <Ui.Markdown text={assertion.assertion} />
                     </li>
                   )}
                 </For>
               </ul>
-              <Show when={task().proposal.acceptance.length > 3}>
-                <Ui.Button
-                  size="small"
-                  variant="ghost-muted"
-                  class="lazers-tasks-expand"
-                  onClick={() => setAllCriteria(!allCriteria())}
-                >
-                  {allCriteria()
-                    ? "Show fewer"
-                    : `Show all ${task().proposal.acceptance.length} criteria`}
-                </Ui.Button>
-              </Show>
               <details class="lazers-tasks-section">
                 <summary>
                   <Ui.Icon name="chevron-right" size="small" />
@@ -572,14 +592,53 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                   <dd style={{ "font-family": ctx.appearance.font("mono") }}>{task().id}</dd>
                   <dt>Status</dt>
                   <dd>
-                    Submitted · specification revision {task().revision}. Execution and acceptance
-                    evidence have not been recorded.
+                    {selectedExecution()?.state ?? task().status} · specification revision{" "}
+                    {task().revision}
+                    <Show when={selectedExecution()?.reason}>{(reason) => <p>{reason()}</p>}</Show>
                   </dd>
                   <dt>Session association</dt>
                   <dd>
-                    Filtered by the original submitting session; plan and worker ownership are not
-                    yet recorded.
+                    <span style={{ "font-family": ctx.appearance.font("mono") }}>
+                      {task().provenance.sessionID}
+                    </span>
                   </dd>
+                  <Show when={selectedExecution()}>
+                    {(execution) => (
+                      <>
+                        <dt>Plan</dt>
+                        <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                          {execution().planID}
+                        </dd>
+                        <Show when={selectedDetail()?.attempts?.length}>
+                          <dt>Attempts</dt>
+                          <dd>
+                            <For each={selectedDetail()?.attempts}>
+                              {(attempt) => (
+                                <p>
+                                  {attempt.number} · {attempt.state} ·{" "}
+                                  <span style={{ "font-family": ctx.appearance.font("mono") }}>
+                                    {attempt.id.slice(0, 8)}
+                                  </span>
+                                  <Show when={attempt.artifact}>
+                                    {(artifact) => (
+                                      <>
+                                        {" · "}
+                                        <span
+                                          style={{ "font-family": ctx.appearance.font("mono") }}
+                                        >
+                                          {artifact().slice(0, 8)}
+                                        </span>
+                                      </>
+                                    )}
+                                  </Show>
+                                </p>
+                              )}
+                            </For>
+                          </dd>
+                        </Show>
+                      </>
+                    )}
+                  </Show>
                   <dt>Repository</dt>
                   <dd style={{ "font-family": ctx.appearance.font("mono") }}>
                     {task().provenance.projectDirectory}
@@ -719,13 +778,24 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                   Activity
                 </summary>
                 <p>
-                  Submitted {new Date(task().createdAt).toLocaleString()} from{" "}
+                  Submitted {new Date(task().createdAt).toLocaleString()} ·{" "}
                   <span style={{ "font-family": ctx.appearance.font("mono") }}>
                     {task().provenance.sessionID}
                   </span>
-                  .
                 </p>
-                <p>Further lifecycle history has not been recorded.</p>
+                <For each={selectedDetail()?.activity ?? []}>
+                  {(event) => (
+                    <div class="lazers-tasks-event">
+                      <div>
+                        <strong>{event.event}</strong>
+                        <time dateTime={new Date(event.createdAt).toISOString()}>
+                          {new Date(event.createdAt).toLocaleString()}
+                        </time>
+                      </div>
+                      <Ui.Code content={event.payload} language="json" />
+                    </div>
+                  )}
+                </For>
               </details>
             </>
           )}

@@ -63,6 +63,8 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         parentID: session.parentID,
         projectID: session.projectID,
         directory: session.location.directory,
+        agent: session.agent,
+        metadata: session.metadata,
         archived: session.time.archived !== undefined,
         busy: busy > idle,
         outcome: session.outcome,
@@ -122,6 +124,31 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         }),
       )
     },
+    async createArchitect(input) {
+      const model = input.model
+        ? {
+            id: Model.ID.make(input.model.id),
+            providerID: Provider.ID.make(input.model.providerID),
+            ...(input.model.variant ? { variant: Model.VariantID.make(input.model.variant) } : {}),
+          }
+        : undefined
+      await Effect.runPromise(
+        ctx.session.create({
+          id: Session.ID.make(input.id),
+          ...(input.parentID
+            ? { parentID: Session.ID.make(input.parentID) }
+            : { location: { directory: AbsolutePath.make(input.directory) } }),
+          agent: Agent.ID.make("architect"),
+          ...(model ? { model } : {}),
+          title: input.title,
+          metadata: {
+            lazersContinuation: true,
+            lazersPlanID: input.planID,
+            lazersSourceSessionID: input.sourceSessionID,
+          },
+        }),
+      )
+    },
     async prompt(input) {
       const id = Session.ID.make(input.sessionID)
       const before = await Effect.runPromise(ctx.session.get({ sessionID: id }))
@@ -153,6 +180,7 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
           id: SessionMessage.ID.make(input.id),
           text: input.text,
           resume: input.resume,
+          delivery: "queue",
           description: "LAZERS task outcome",
         }),
       )

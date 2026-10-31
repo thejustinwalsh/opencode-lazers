@@ -56,6 +56,14 @@ export type EffectRow = {
   receipt: string | null
   fence: number
 }
+export type ContinuationRow = {
+  plan_id: string
+  session_id: string
+  parent_id: string | null
+  directory: string
+  model: string | null
+  generation: number
+}
 
 export class RunnerStore {
   constructor(readonly repository: TaskRepository) {
@@ -118,6 +126,10 @@ export class RunnerStore {
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL,
         message_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, state TEXT NOT NULL, resume INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS runner_continuations (
+        plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
+        parent_id TEXT, directory TEXT NOT NULL, model TEXT, generation INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS runner_audits (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
@@ -153,11 +165,102 @@ export class RunnerStore {
         .all(this.repository.projectDirectory),
     )
   }
+  continuation(planID: string) {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    return this.atomic((db) =>
+      db
+        .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
+        .get(planID),
+    )
+  }
+  ensureContinuation(planID: string, input: Omit<ContinuationRow, "plan_id" | "generation">) {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    return this.atomic((db) => {
+      db.query("INSERT OR IGNORE INTO runner_continuations VALUES(?,?,?,?,?,1)").run(
+        planID,
+        input.session_id,
+        input.parent_id,
+        input.directory,
+        input.model,
+      )
+      return db
+        .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
+        .get(planID)!
+    })
+  }
+  replaceContinuation(
+    planID: string,
+    expectedSessionID: string,
+    input: Omit<ContinuationRow, "plan_id" | "generation">,
+  ) {
+    return this.atomic((db) => {
+      const existing = db
+        .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
+        .get(planID)
+      if (!existing) throw new Error("Continuation not found")
+      if (existing.session_id !== expectedSessionID) return existing
+      db.query(
+        "UPDATE runner_continuations SET session_id=?,parent_id=?,directory=?,model=?,generation=generation+1 WHERE plan_id=? AND session_id=?",
+      ).run(
+        input.session_id,
+        input.parent_id,
+        input.directory,
+        input.model,
+        planID,
+        expectedSessionID,
+      )
+      return db
+        .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
+        .get(planID)!
+    })
+  }
+  updatePlanOwner(planID: string, expectedOwner: string, nextOwner: string) {
+    const changed = this.atomic(
+      (db) =>
+        db
+          .query(
+            "UPDATE runner_plans SET owner=?,version=version+1 WHERE id=? AND project_directory=? AND owner=?",
+          )
+          .run(nextOwner, planID, this.repository.projectDirectory, expectedOwner).changes === 1,
+    )
+    if (changed)
+      this.record(planID, null, "OWNER_CONTINUED", { from: expectedOwner, to: nextOwner })
+    return changed
+  }
+  retargetOutbox(id: string, sessionID: string, messageID: string) {
+    return this.atomic(
+      (db) =>
+        db
+          .query(
+            "UPDATE runner_outbox SET session_id=?,message_id=?,state='pending' WHERE id=? AND state!='delivered'",
+          )
+          .run(sessionID, messageID, id).changes === 1,
+    )
+  }
+  activity(planID: string, taskID: string) {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    return this.atomic((db) =>
+      db
+        .query<
+          {
+            id: number
+            task_id: string | null
+            event: string
+            payload: string
+            created_at: number
+          },
+          [string, string]
+        >(
+          "SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id",
+        )
+        .all(planID, taskID),
+    )
+  }
   execution(taskID: string): Execution | undefined {
     const node = this.atomic((db) =>
       db
-        .query<NodeRow, [string, string]>(
-          "SELECT n.* FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=? AND n.task_id=?",
+        .query<NodeRow & { plan_state: string; plan_reason: string | null }, [string, string]>(
+          "SELECT n.*,p.state AS plan_state,p.reason AS plan_reason FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=? AND n.task_id=?",
         )
         .get(this.repository.projectDirectory, taskID),
     )
@@ -173,9 +276,12 @@ export class RunnerStore {
     return {
       planID: node.plan_id,
       taskID,
-      state: node.state,
+      state:
+        node.plan_state === "blocked" && ["queued", "ready"].includes(node.state)
+          ? "blocked"
+          : node.state,
       version: node.version,
-      reason: node.reason,
+      reason: node.reason ?? (node.plan_state === "blocked" ? node.plan_reason : null),
       waitingOn,
     }
   }

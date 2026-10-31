@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { TaskPanelState } from "./panel-state.ts"
 import type { TaskTransport } from "./panel-state.ts"
-import type { TaskDetail, TaskPage } from "./contract.ts"
+import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -21,6 +21,7 @@ const page = (project: string, id = crypto.randomUUID(), snapshot = 1): TaskPage
       taskID: id,
       revision: 1,
       status: "submitted",
+      reason: null,
       title: id,
       objective: id,
       sessionID: "session",
@@ -32,10 +33,16 @@ const page = (project: string, id = crypto.randomUUID(), snapshot = 1): TaskPage
 function transport(
   query: TaskTransport["query"],
   get: TaskTransport["get"] = async () => ({ status: "not_found" }),
+  start: TaskTransport["start"] = async () => ({
+    status: "started",
+    planID: crypto.randomUUID(),
+    state: "running",
+  }),
 ): TaskTransport {
   return {
     query,
     get,
+    start,
     online: () => true,
     changes: (signal) =>
       (async function* () {
@@ -90,6 +97,63 @@ test("old session/project/server/filter responses and old detail selections cann
     freshDetail.resolve({ status: "not_found" })
     await tick()
     expect(state.data.detail).toEqual({ status: "not_found" })
+  } finally {
+    state.close()
+  }
+})
+
+test("duplicate Start clicks share a request, while reconnect retries through the new transport", async () => {
+  const pending = deferred<StartTaskResult>()
+  const id = crypto.randomUUID()
+  const reconnectedResult: StartTaskResult = {
+    status: "existing",
+    planID: crypto.randomUUID(),
+    state: "running",
+  }
+  let starts = 0
+  const state = new TaskPanelState(() => {})
+  const input: StartTaskInput = { taskID: id, revision: 1, sessionID: "architect-session" }
+  try {
+    state.connect(
+      "first",
+      "/project",
+      transport(
+        async () => page("/project", id),
+        undefined,
+        async () => {
+          starts++
+          return pending.promise
+        },
+      ),
+      {},
+    )
+    const first = state.start(input)
+    const second = state.start(input)
+    expect(starts).toBe(1)
+    state.connect(
+      "reconnected",
+      "/project",
+      transport(
+        async () => page("/project", id),
+        undefined,
+        async () => {
+          starts++
+          return reconnectedResult
+        },
+      ),
+      {},
+    )
+    const third = state.start(input)
+    expect(starts).toBe(2)
+    expect(await third).toEqual(reconnectedResult)
+    const result = {
+      status: "started" as const,
+      planID: crypto.randomUUID(),
+      state: "running" as const,
+    }
+    pending.resolve(result)
+    expect(await Promise.all([first, second])).toEqual([result, result])
+    expect(starts).toBe(2)
   } finally {
     state.close()
   }

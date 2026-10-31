@@ -61,13 +61,13 @@ export default Plugin.define({
       )
       yield* registerContextTools(ctx, projectIndex)
       yield* registerTaskTools(ctx, repository)
-      yield* registerTaskReads(ctx, new TaskReads(repository)).pipe(Effect.orDie)
       yield* registerArchitect(ctx)
       const runtime = new TaskRuntime(
         new RunnerStore(repository),
         nativeHost(ctx, repository),
         ctx.location.project.id,
       )
+      yield* registerTaskReads(ctx, new TaskReads(repository), runtime).pipe(Effect.orDie)
       yield* registerWorker(ctx, runtime.store)
       yield* registerRunnerTools(ctx, runtime)
       yield* registerTrajectoryTools(

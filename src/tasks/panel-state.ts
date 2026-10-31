@@ -1,8 +1,16 @@
-import type { TaskDetail, TaskPage, TaskQuery, TaskSummary } from "./contract.ts"
+import type {
+  StartTaskInput,
+  StartTaskResult,
+  TaskDetail,
+  TaskPage,
+  TaskQuery,
+  TaskSummary,
+} from "./contract.ts"
 
 export interface TaskTransport {
   query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
+  start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
   changes(signal: AbortSignal): AsyncIterable<{ projectDirectory: string; version: number }>
   online(): boolean
 }
@@ -32,6 +40,7 @@ export class TaskPanelState {
   private timer?: ReturnType<typeof setInterval>
   private pendingVersion = 0
   private refreshing = false
+  private starts = new Map<string, Promise<StartTaskResult>>()
 
   constructor(
     private readonly changed: (data: PanelData) => void,
@@ -157,6 +166,26 @@ export class TaskPanelState {
     }
   }
 
+  async start(input: StartTaskInput): Promise<StartTaskResult> {
+    const key = `${input.taskID}:${input.revision}`
+    const pending = this.starts.get(key)
+    if (pending) return pending
+    const transport = this.transport
+    if (!transport || this.controller.signal.aborted) throw new Error("Task view is disconnected")
+    const generation = this.generation
+    const promise = (async () => {
+      const result = await transport.start(input, this.controller.signal)
+      if (generation === this.generation && !this.controller.signal.aborted) await this.refresh()
+      return result
+    })()
+    this.starts.set(key, promise)
+    try {
+      return await promise
+    } finally {
+      if (this.starts.get(key) === promise) this.starts.delete(key)
+    }
+  }
+
   private async watch(generation: number, transport: TaskTransport, signal: AbortSignal) {
     while (!signal.aborted) {
       try {
@@ -193,6 +222,7 @@ export class TaskPanelState {
     this.detailRequest++
     this.controller.abort()
     this.detailController.abort()
+    this.starts.clear()
     if (this.timer) clearInterval(this.timer)
     this.transport = undefined
     this.refreshing = false

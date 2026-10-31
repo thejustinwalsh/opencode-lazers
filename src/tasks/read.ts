@@ -45,6 +45,7 @@ function summarize(task: TaskSpec, search: string, scopePath?: string): TaskSumm
     taskID: task.id,
     revision: task.revision,
     status: task.status,
+    reason: null,
     title: taskTitle(task.proposal.objective),
     objective: task.proposal.objective.slice(0, 400),
     createdAt: task.createdAt,
@@ -100,10 +101,14 @@ export class TaskReads {
       projectDirectory: this.repository.projectDirectory,
       snapshot: page.version,
       count: page.count,
-      tasks: visible.map(({ task }) => ({
-        ...summarize(task, query.search, query.scopePath),
-        status: this.runner.execution(task.id)?.state ?? task.status,
-      })),
+      tasks: visible.map(({ task }) => {
+        const execution = this.runner.execution(task.id)
+        return {
+          ...summarize(task, query.search, query.scopePath),
+          status: execution?.state ?? task.status,
+          reason: execution?.reason ?? null,
+        }
+      }),
       nextCursor,
       serverTime: new Date().toISOString(),
     })
@@ -119,6 +124,26 @@ export class TaskReads {
       return GetOutput.parse({ status: "revision_unavailable", revision: task.revision })
     }
     const execution = this.runner.execution(task.id)
-    return GetOutput.parse({ status: "found", task, ...(execution ? { execution } : {}) })
+    if (!execution) return GetOutput.parse({ status: "found", task })
+    const attempts = this.runner
+      .attempts(execution.planID)
+      .filter((attempt) => attempt.task_id === task.id)
+      .map((attempt) => ({
+        id: attempt.id,
+        number: attempt.number,
+        state: attempt.state,
+        startedAt: attempt.started_at,
+        artifact: attempt.artifact,
+        tokenCount: attempt.token_count,
+        toolCount: attempt.tool_count,
+      }))
+    const activity = this.runner.activity(execution.planID, task.id).map((event) => ({
+      id: event.id,
+      taskID: event.task_id,
+      event: event.event,
+      payload: event.payload,
+      createdAt: event.created_at,
+    }))
+    return GetOutput.parse({ status: "found", task, execution, attempts, activity })
   }
 }

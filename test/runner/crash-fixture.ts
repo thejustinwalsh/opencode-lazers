@@ -43,6 +43,7 @@ const host: RunnerHost = {
       parentID: input.parentID,
       projectID: "fixture",
       directory: input.directory,
+      agent: input.agent,
       archived: false,
       busy: false,
       model: input.model,
@@ -53,6 +54,30 @@ const host: RunnerHost = {
     }
     save(state)
     cut("after-session")
+  },
+  createArchitect: async (input) => {
+    const state = load()
+    state.calls.push({ kind: "create-architect", id: input.id })
+    state.sessions[input.id] = {
+      id: input.id,
+      parentID: input.parentID,
+      projectID: "fixture",
+      directory: input.directory,
+      agent: "architect",
+      metadata: {
+        lazersContinuation: true,
+        lazersPlanID: input.planID,
+        lazersSourceSessionID: input.sourceSessionID,
+      },
+      archived: false,
+      busy: false,
+      model: input.model,
+      tokens: 0,
+      tools: 0,
+      cost: null,
+      messages: [],
+    }
+    save(state)
   },
   prompt: async (input) => {
     cut("before-prompt")
@@ -73,8 +98,11 @@ const host: RunnerHost = {
     if (!persisted) throw new Error("Notification preceded its durable outbox")
     cut("before-notify")
     const state = load()
-    state.calls.push({ kind: "notify", id: input.id })
-    state.sessions[input.sessionID]!.messages.push({ id: input.id, text: input.text })
+    const messages = state.sessions[input.sessionID]!.messages
+    if (!messages.some((message) => message.id === input.id)) {
+      state.calls.push({ kind: "notify", id: input.id })
+      messages.push({ id: input.id, text: input.text })
+    }
     save(state)
     cut("after-notify")
   },

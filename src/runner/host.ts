@@ -5,6 +5,8 @@ export type HostSession = {
   parentID?: string
   projectID: string
   directory: string
+  agent?: string
+  metadata?: Record<string, unknown>
   archived: boolean
   busy: boolean
   outcome?: "succeeded" | "failed" | "interrupted"
@@ -28,6 +30,15 @@ export interface RunnerHost {
     directory: string
     title: string
     attemptID: string
+  }): Promise<void>
+  createArchitect(input: {
+    id: string
+    parentID?: string
+    directory: string
+    model?: ModelPolicy
+    title: string
+    planID: string
+    sourceSessionID: string
   }): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   notify(input: { sessionID: string; id: string; text: string; resume: boolean }): Promise<void>

@@ -10,6 +10,7 @@ import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
+import { TaskReads } from "../tasks/read.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -26,6 +27,7 @@ function fixture(
     wrongFirstB?: boolean
     skillSuggestions?: string[]
     workerModel?: { providerID: string; id: string; variant?: string }
+    startOnly?: boolean
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -92,6 +94,7 @@ function fixture(
     id: "owner",
     projectID: "project",
     directory: root,
+    agent: "architect",
     archived: false,
     busy: false,
     model: { providerID: "openai", id: "subscription", variant: "high" },
@@ -122,11 +125,34 @@ function fixture(
         parentID: input.parentID,
         projectID: "project",
         directory: input.directory,
+        agent: input.agent,
         model: input.model,
         archived: false,
         busy: false,
         tokens: 100,
         tools: 1,
+        cost: null,
+        messages: [],
+      })
+    },
+    createArchitect: async (input) => {
+      events.push(`create-architect:${input.id}`)
+      sessions.set(input.id, {
+        id: input.id,
+        parentID: input.parentID,
+        projectID: "project",
+        directory: input.directory,
+        agent: "architect",
+        metadata: {
+          lazersContinuation: true,
+          lazersPlanID: input.planID,
+          lazersSourceSessionID: input.sourceSessionID,
+        },
+        model: input.model,
+        archived: false,
+        busy: false,
+        tokens: 0,
+        tools: 0,
         cost: null,
         messages: [],
       })
@@ -141,7 +167,8 @@ function fixture(
       const session = sessions.get(input.sessionID)!
       session.messages.push({ id: input.id, text: input.text })
       const assigned = store
-        .attempts(receipt.planID)
+        .plans()
+        .flatMap((plan) => store.attempts(plan.id))
         .find((attempt) => attempt.session_id === input.sessionID)!
       const path = repository.get(assigned.task_id)!.proposal.writeScope[0]!
       if (path === "b.txt") expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
@@ -171,7 +198,9 @@ function fixture(
     },
     notify: async (input) => {
       events.push(`notify:${input.id}`)
-      sessions.get(input.sessionID)!.messages.push({ id: input.id, text: input.text })
+      const messages = sessions.get(input.sessionID)!.messages
+      if (!messages.some((message) => message.id === input.id))
+        messages.push({ id: input.id, text: input.text })
     },
     interrupt: async (id) => {
       sessions.get(id)!.busy = false
@@ -199,18 +228,298 @@ function fixture(
       },
     ],
   }
-  const receipt = store.submit(input, "owner")
+  const receipt = options.startOnly ? undefined : store.submit(input, "owner")
   cleanup.push(() => {
     runtime.stop()
     repository.close()
     rmSync(root, { recursive: true, force: true })
     if (options.shared) rmSync(stateDirectory, { recursive: true, force: true })
   })
-  return { root, repository, store, tasks, sessions, events, host, runtime, input, receipt, base }
+  return {
+    root,
+    repository,
+    store,
+    tasks,
+    sessions,
+    events,
+    host,
+    runtime,
+    input,
+    receipt: receipt!,
+    base,
+  }
 }
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
+
+test("inspector Start admits one real runtime plan and returns record-backed task state", async () => {
+  const f = fixture({ shared: true, commit: true, startOnly: true })
+  const task = f.tasks[0]!
+  const input = { taskID: task.id, revision: 1 as const, sessionID: "owner" }
+  const [first, concurrent] = await Promise.all([
+    f.runtime.startTask(input),
+    f.runtime.startTask(input),
+  ])
+  expect(first).toMatchObject({ status: "started", state: "running" })
+  expect(concurrent.planID).toBe(first.planID)
+  const second = await f.runtime.startTask(input)
+  expect(second).toMatchObject({ status: "existing", planID: first.planID })
+  expect(f.store.plans()).toHaveLength(1)
+  expect(f.store.attempts(first.planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+
+  await drive(f.runtime)
+  expect(f.store.execution(task.id)?.state).toBe("accepted")
+  expect(
+    new TaskReads(f.repository)
+      .query({ includeCompleted: true })
+      .tasks.find((item) => item.taskID === task.id),
+  ).toMatchObject({ status: "accepted", reason: null })
+  const detail = new TaskReads(f.repository).get({ taskID: task.id })
+  expect(detail).toMatchObject({
+    status: "found",
+    execution: { planID: first.planID, state: "accepted" },
+    attempts: [{ state: "accepted" }],
+  })
+  if (detail.status === "found")
+    expect(detail.activity?.map((event) => event.event)).toContain("ACCEPT")
+})
+
+test("Start recovers a lost native continuation-create response after restart", async () => {
+  const f = fixture({ shared: true, commit: true, startOnly: true })
+  f.sessions.get("owner")!.agent = "build"
+  const create = f.host.createArchitect
+  let calls = 0
+  f.host.createArchitect = async (input) => {
+    calls++
+    if (calls === 1) throw new Error("native create interrupted before commit")
+    await create(input)
+  }
+  const input = { taskID: f.tasks[0]!.id, revision: 1 as const, sessionID: "owner" }
+  await expect(f.runtime.startTask(input)).rejects.toThrow(
+    "native create interrupted before commit",
+  )
+  const draft = f.store.plans()[0]!
+  const continuation = f.store.continuation(draft.id)!
+  expect(draft.state).toBe("draft")
+  expect(f.sessions.get(continuation.session_id)).toBeUndefined()
+
+  f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  await drive(reopened)
+  expect(f.store.plan(draft.id)?.state).toBe("accepted")
+  expect(f.store.plan(draft.id)?.owner).toBe(continuation.session_id)
+  expect(calls).toBe(2)
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+  expect(f.store.attempts(draft.id)[0]?.session_id).toBeTruthy()
+  expect(f.sessions.get(f.store.attempts(draft.id)[0]!.session_id)?.parentID).toBe(
+    continuation.session_id,
+  )
+})
+
+test("a lost continuation-create response is reconciled by stable native session ID", async () => {
+  const f = fixture({ shared: true, commit: true, startOnly: true })
+  f.sessions.get("owner")!.agent = "build"
+  const create = f.host.createArchitect
+  let calls = 0
+  f.host.createArchitect = async (input) => {
+    calls++
+    await create(input)
+    if (calls === 1) throw new Error("create response lost")
+  }
+  const result = await f.runtime.startTask({
+    taskID: f.tasks[0]!.id,
+    revision: 1,
+    sessionID: "owner",
+  })
+  const plan = f.store.plan(result.planID)!
+  const continuation = f.store.continuation(plan.id)!
+  expect(result).toMatchObject({ status: "started", state: "running" })
+  expect(plan.owner).toBe(continuation.session_id)
+  expect(calls).toBe(1)
+
+  f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  await drive(reopened)
+  expect(f.store.plan(plan.id)?.state).toBe("accepted")
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+})
+
+test("a missing task owner gets a same-project continuation without foreign parent context", async () => {
+  const f = fixture({ shared: true, commit: true, startOnly: true })
+  const originalOwner = f.sessions.get("owner")!
+  f.sessions.delete("owner")
+  f.sessions.set("ses_starter", {
+    ...originalOwner,
+    id: "ses_starter",
+    agent: "build",
+  })
+  const create = f.host.createArchitect
+  let nativeInput: Parameters<RunnerHost["createArchitect"]>[0] | undefined
+  f.host.createArchitect = async (input) => {
+    nativeInput = input
+    await create({ ...input, model: input.model ?? originalOwner.model })
+  }
+
+  const result = await f.runtime.startTask({
+    taskID: f.tasks[0]!.id,
+    revision: 1,
+    sessionID: "ses_starter",
+  })
+  const plan = f.store.plan(result.planID)!
+  const continuation = f.store.continuation(plan.id)!
+  const owner = f.sessions.get(continuation.session_id)!
+  expect(result).toMatchObject({ status: "started", state: "running" })
+  expect(nativeInput?.parentID).toBeUndefined()
+  expect(nativeInput?.model).toBeUndefined()
+  expect(continuation.parent_id).toBeNull()
+  expect(owner).toMatchObject({
+    projectID: "project",
+    directory: f.root,
+    agent: "architect",
+    parentID: undefined,
+    model: originalOwner.model,
+  })
+  expect(owner.metadata?.lazersSourceSessionID).toBe("owner")
+  await drive(f.runtime)
+  expect(f.store.plan(plan.id)?.state).toBe("accepted")
+})
+
+test("Start exposes recorded admission blocks with their reason", async () => {
+  const f = fixture({
+    shared: true,
+    commit: true,
+    startOnly: true,
+  })
+  f.sessions.get("owner")!.model = { providerID: "anthropic", id: "foreign-provider" }
+  const task = f.tasks[0]!
+  const result = await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
+  expect(result).toMatchObject({ status: "started", state: "blocked" })
+  expect(f.store.execution(task.id)).toMatchObject({
+    state: "blocked",
+    reason:
+      "Execution requires an authorized OpenAI subscription or OpenCode model; no provider fallback",
+  })
+  expect(
+    new TaskReads(f.repository)
+      .query({ includeCompleted: true })
+      .tasks.find((item) => item.taskID === task.id),
+  ).toMatchObject({
+    status: "blocked",
+    reason:
+      "Execution requires an authorized OpenAI subscription or OpenCode model; no provider fallback",
+  })
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(0)
+
+  const noModel = fixture({ shared: true, commit: true, startOnly: true })
+  noModel.sessions.get("owner")!.model = undefined
+  const noModelTask = noModel.tasks[0]!
+  const noModelResult = await noModel.runtime.startTask({
+    taskID: noModelTask.id,
+    revision: 1,
+    sessionID: "owner",
+  })
+  expect(noModelResult.state).toBe("blocked")
+  expect(noModel.store.execution(noModelTask.id)?.reason).toBe(
+    "No authorized execution model is available in this Architect session",
+  )
+})
+
+test("Start rejects stale, foreign and ended work without changing runtime state", async () => {
+  const f = fixture()
+  const task = f.tasks[0]!
+  f.sessions.set("ses_foreign", {
+    ...f.sessions.get("owner")!,
+    id: "ses_foreign",
+    projectID: "other-project",
+    directory: "/other-project",
+  })
+  await expect(
+    f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "missing-session" }),
+  ).rejects.toThrow("live session")
+  await expect(
+    f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "ses_foreign" }),
+  ).rejects.toThrow("live session")
+  await expect(
+    f.runtime.startTask({ taskID: crypto.randomUUID(), revision: 1, sessionID: "owner" }),
+  ).rejects.toThrow("not available")
+  await expect(
+    f.runtime.startTask({ taskID: task.id, revision: 2, sessionID: "owner" } as never),
+  ).rejects.toThrow("Stale task revision")
+  const foreignTask = f.repository.insert({
+    ...task,
+    id: crypto.randomUUID(),
+    provenance: { ...task.provenance, projectID: "other-project" },
+  })
+  await expect(
+    f.runtime.startTask({ taskID: foreignTask.id, revision: 1, sessionID: "owner" }),
+  ).rejects.toThrow("not available in this project")
+
+  await f.runtime.command(
+    {
+      requestID: "cancel-before-start",
+      planID: f.receipt.planID,
+      expectedVersion: 1,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const cancelled = await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
+  expect(cancelled).toMatchObject({ status: "existing", state: "cancelled" })
+  expect(f.store.execution(task.id)?.state).toBe("cancelled")
+  expect(f.store.plans()).toHaveLength(1) // the fixture plan only
+})
+
+test("an archived Architect is replaced by one linked owner and uncertain delivery reuses its message ID", async () => {
+  const f = fixture({ shared: true, commit: true })
+  f.sessions.get("owner")!.archived = true
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.owner).not.toBe("owner")
+  expect(f.sessions.get(plan.owner)?.parentID).toBe("owner")
+  expect(f.sessions.get(plan.owner)?.agent).toBe("architect")
+
+  const original = f.host.notify
+  let calls = 0
+  f.host.notify = async (input) => {
+    calls++
+    if (calls === 1) throw new Error("delivery response lost before admission")
+    await original(input)
+  }
+  for (let index = 0; index < 20 && calls === 0; index++) await f.runtime.tick()
+  const deliveries = () =>
+    f.store.detail(plan.id).delivery as { id: string; message_id: string; state: string }[]
+  const uncertain = deliveries().find((item) => item.state === "uncertain")!
+  const messageIDBeforeRestart = uncertain.message_id
+
+  f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  await drive(reopened)
+  const delivery = deliveries().find((item) => item.id === uncertain.id)!
+  expect(delivery.state).toBe("delivered")
+  expect(delivery.message_id).toBe(messageIDBeforeRestart)
+  expect(calls).toBeGreaterThanOrEqual(2)
+  const received = f.sessions
+    .get(plan.owner)!
+    .messages.filter((message) => message.id === messageIDBeforeRestart)
+  expect(received).toHaveLength(1)
+  expect(
+    f.store.attempts(plan.id).filter((attempt) => attempt.task_id === f.tasks[0]!.id),
+  ).toHaveLength(1)
+})
 async function failSecondSharedTask(f: ReturnType<typeof fixture>) {
   await f.runtime.command(
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },

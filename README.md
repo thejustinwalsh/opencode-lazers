@@ -222,23 +222,25 @@ it does not execute it.
 
 Record the Desktop/host versions, selected subscription model and reasoning setting, task UUID, restart/retrieval result, and any tool/permission failures. This is the acceptance evidence for [spike 004](.agents/docs/spikes/004-desktop-architect.md); CLI discovery alone does not complete it. No paid OpenRouter verification is authorized. Equivalent API costs can later be estimated from measured tokens and dated OpenRouter prices for the same model; distinguish cached/uncached input, output, and unknown usage. A displayed subscription charge of zero is not an equivalent cost estimate.
 
-## Tasks panel — retained first pass
+## Tasks panel — runtime-backed
 
 Open **Tasks** from the session's extra-panel list or `/tasks`. It is an optional,
 closable native tab. The default view shows tasks submitted from that session;
 the quiet scope menu switches to the current canonical project's tasks. Search
 and selection use the same bounded project-scoped read service as task tools.
-Done when remains visible; Details and Activity start closed. Descriptions use
-native Markdown, and the full JSON specification has a collapsed, height-limited
-scroll area with native highlighting and copy support.
+An unstarted submitted task can be explicitly started from its inspector. The
+RPC checks native permission and the runtime validates project ownership,
+revision, and a committed baseline before creating an idempotent plan. Once
+admitted, the scheduler dispatches without another manual click and resumes an
+interrupted Start plan after restart.
 
-This first pass displays real immutable `submitted` records. Dependency/waiting
-reasons, grouping, execution state and measured evidence will come from the
-durable runner. Typed Code Mode read adapters exist, but normal Architect
-activation awaits native confinement/overlap verification. See the
-[first-pass outcome and deferred gates](.agents/docs/spikes/008-focused-tasks-panel.md).
-The next increment should advance the actual durable runner and its Architect
-decision loop, with panel refinements alongside that work.
+The inspector renders the complete Markdown objective and acceptance criteria
+once, real record-backed task states/reasons, and recorded plan/attempt/activity
+data. Done when remains visible; Details, Activity, and the full JSON
+specification start closed. The split uses current pane geometry and persists
+explicit resize choices. See [spike 021](.agents/docs/spikes/021-tasks-start-continuation.md)
+and its [native observation record](.agents/docs/evidence/021-tasks-start-continuation/native.md)
+for implementation checks and the still-pending Desktop/Terra review.
 
 ## How we build each spike
 

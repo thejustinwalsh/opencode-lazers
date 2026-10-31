@@ -8,6 +8,7 @@ import type { HostSession, RunnerHost } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput } from "./schema.ts"
 import type { PlanRow, NodeRow, AttemptRow, EffectRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
+import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 
 const terminal = new Set([
   "accepted",
@@ -20,6 +21,7 @@ const terminal = new Set([
 ])
 const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`
 const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
+const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 export class TaskRuntime {
@@ -38,7 +40,7 @@ export class TaskRuntime {
     return join(dirname(this.store.repository.path), "runner")
   }
 
-  async command(input: unknown, caller: string) {
+  async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
     if (prior !== undefined) return prior
@@ -50,6 +52,11 @@ export class TaskRuntime {
     if (["run", "reassign", "reconcile", "resume", "retry"].includes(command.action)) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
+    }
+    if (command.action === "run" && !this.validArchitect(ownerSession)) {
+      const owner = await this.ensureArchitectOwner(old, ownerSession)
+      const current = this.store.plan(old.id)!
+      return this.command({ ...command, expectedVersion: current.version }, owner.id)
     }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
@@ -258,8 +265,16 @@ export class TaskRuntime {
       if (!ownerSession || ownerSession.archived)
         return this.hold(plan, "Owner is missing or archived")
       if (ownerSession.projectID !== this.projectID) throw new Error("Foreign owner session")
+      if (command.action === "run" && ownerSession.agent !== "architect")
+        throw new Error("Only an Architect session can own execution")
       const proposal = PlanInput.parse(JSON.parse(plan.body))
-      const model = ModelPolicy.parse(proposal.workerModel ?? ownerSession.model)
+      const selectedModel = proposal.workerModel ?? ownerSession.model
+      if (!selectedModel)
+        return this.hold(
+          plan,
+          "No authorized execution model is available in this Architect session",
+        )
+      const model = ModelPolicy.parse(selectedModel)
       if (!["openai", "opencode"].includes(model.providerID))
         return this.hold(
           plan,
@@ -305,6 +320,188 @@ export class TaskRuntime {
       return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
     })
     return result
+  }
+
+  async startTask(input: StartTaskInput): Promise<StartTaskResult> {
+    const actor = await this.host.session(input.sessionID)
+    if (!actor || actor.archived || actor.projectID !== this.projectID)
+      throw new Error("Start requires a live session in this project")
+
+    const task = this.store.repository.get(input.taskID)
+    if (
+      !task ||
+      task.provenance.projectDirectory !== this.directory ||
+      task.provenance.projectID !== this.projectID
+    )
+      throw new Error("Task is not available in this project")
+    if (task.revision !== input.revision) throw new Error("Stale task revision")
+
+    const existing = this.store.execution(task.id)
+    let plan: PlanRow
+    let created = false
+    if (existing) {
+      plan = this.store.plan(existing.planID)!
+      if (this.taskStartID(plan) !== task.id || plan.state !== "draft")
+        return { status: "existing", planID: plan.id, state: existing.state }
+    } else {
+      if (task.status !== "submitted") throw new Error("Task cannot be started")
+      if (task.provenance.startingRevision.kind !== "git")
+        throw new Error("Task has no committed starting revision")
+      const proposal = task.proposal
+      const receipt = this.store.submit(
+        {
+          requestID: taskStartRequestID(task.id),
+          objective: proposal.objective,
+          baseCommit: task.provenance.startingRevision.commit,
+          workspaceMode: "shared",
+          nodes: [{ taskID: task.id, revision: task.revision }],
+          dependencies: [],
+          integrationOrder: [task.id],
+          verification: proposal.verification,
+          acceptance: proposal.acceptance,
+          dispositions: [],
+        },
+        task.provenance.sessionID,
+      )
+      plan = this.store.plan(receipt.planID)!
+      created = true
+    }
+
+    const currentOwner = await this.host.session(plan.owner)
+    const owner = await this.ensureArchitectOwner(plan, currentOwner)
+    plan = this.store.plan(plan.id)!
+    if (plan.state === "draft")
+      await this.command(
+        {
+          requestID: `task-start-run:${task.id}:1`,
+          planID: plan.id,
+          expectedVersion: plan.version,
+          action: "run",
+        },
+        owner.id,
+      )
+    await this.tick()
+    const execution = this.store.execution(task.id)
+    if (!execution) throw new Error("Runtime did not record task execution")
+    return {
+      status: created ? "started" : "existing",
+      planID: execution.planID,
+      state: execution.state,
+    }
+  }
+
+  private taskStartID(plan: PlanRow): string | undefined {
+    try {
+      const body = PlanInput.parse(JSON.parse(plan.body))
+      const taskID = body.nodes.length === 1 ? body.nodes[0]?.taskID : undefined
+      return taskID && body.requestID === taskStartRequestID(taskID) ? taskID : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private validArchitect(session: HostSession | null | undefined): session is HostSession {
+    return Boolean(
+      session &&
+      !session.archived &&
+      session.agent === "architect" &&
+      session.projectID === this.projectID,
+    )
+  }
+
+  private async ensureArchitectOwner(
+    plan: PlanRow,
+    previous: HostSession | null | undefined,
+  ): Promise<HostSession> {
+    const current = await this.host.session(plan.owner)
+    if (this.validArchitect(current)) return current
+
+    let continuation = this.store.continuation(plan.id)
+    let priorContinuation: HostSession | null = null
+    if (continuation) {
+      priorContinuation = await this.host.session(continuation.session_id)
+      if (
+        this.validArchitect(priorContinuation) &&
+        this.matchesContinuation(priorContinuation, plan.id)
+      ) {
+        this.store.updatePlanOwner(plan.id, plan.owner, priorContinuation.id)
+        return priorContinuation
+      }
+    }
+
+    let next:
+      | { session_id: string; parent_id: string | null; directory: string; model: string | null }
+      | undefined
+    if (!continuation || priorContinuation) {
+      const source = previous?.projectID === this.projectID ? previous : current
+      const parentID =
+        source?.projectID === this.projectID && source.directory === this.directory
+          ? source.id
+          : null
+      const model = source?.projectID === this.projectID ? source.model : undefined
+      next = {
+        session_id: sessionID(),
+        parent_id: parentID,
+        directory: this.directory,
+        model: model ? JSON.stringify(model) : (continuation?.model ?? null),
+      }
+      continuation = continuation
+        ? this.store.replaceContinuation(plan.id, continuation.session_id, next)
+        : this.store.ensureContinuation(plan.id, next)
+    }
+
+    // A concurrent scheduler may already have selected a different stable ID.
+    if (next && continuation.session_id !== next.session_id && continuation.generation > 1) {
+      const adopted = await this.host.session(continuation.session_id)
+      if (this.validArchitect(adopted) && this.matchesContinuation(adopted, plan.id)) {
+        this.store.updatePlanOwner(plan.id, plan.owner, adopted.id)
+        return adopted
+      }
+    }
+
+    let session = await this.host.session(continuation.session_id)
+    if (session && !this.matchesContinuation(session, plan.id))
+      throw new Error("Native Architect continuation ID belongs to another session")
+    if (!session) {
+      try {
+        await this.host.createArchitect({
+          id: continuation.session_id,
+          ...(continuation.parent_id ? { parentID: continuation.parent_id } : {}),
+          directory: continuation.directory,
+          ...(continuation.model ? { model: JSON.parse(continuation.model) } : {}),
+          title: `LAZERS · continue ${plan.id.slice(0, 8)}`,
+          planID: plan.id,
+          sourceSessionID: plan.owner,
+        })
+      } catch (error) {
+        const recovered = await this.host.session(continuation.session_id)
+        if (!this.matchesContinuation(recovered, plan.id)) throw error
+        session = recovered
+      }
+      session ??= await this.host.session(continuation.session_id)
+    }
+    if (!this.validArchitect(session) || !this.matchesContinuation(session, plan.id))
+      throw new Error("Native Architect continuation is unavailable or foreign")
+    this.store.record(plan.id, null, "ARCHITECT_CONTINUATION_READY", {
+      sessionID: session.id,
+      parentID: continuation.parent_id,
+      generation: continuation.generation,
+    })
+    this.store.updatePlanOwner(plan.id, plan.owner, session.id)
+    return session
+  }
+
+  private matchesContinuation(session: HostSession | null | undefined, planID: string) {
+    const continuation = this.store.continuation(planID)
+    return (
+      Boolean(continuation) &&
+      session?.agent === "architect" &&
+      session.projectID === this.projectID &&
+      session.directory === this.directory &&
+      session.parentID === (continuation?.parent_id ?? undefined) &&
+      session.metadata?.lazersContinuation === true &&
+      session.metadata.lazersPlanID === planID
+    )
   }
 
   private hold(plan: PlanRow, reason: string) {
@@ -408,9 +605,22 @@ export class TaskRuntime {
     }, 10000)
     try {
       // A lease only selects a reconciler; it never proves an old side effect stopped.
-      for (const plan of this.store
+      for (let plan of this.store
         .plans()
-        .filter((p) => !terminal.has(p.state) && p.state !== "draft")) {
+        .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))) {
+        if (plan.state === "draft") {
+          const taskID = this.taskStartID(plan)!
+          await this.command(
+            {
+              requestID: `task-start-run:${taskID}:1`,
+              planID: plan.id,
+              expectedVersion: plan.version,
+              action: "run",
+            },
+            plan.owner,
+          )
+          plan = this.store.plan(plan.id)!
+        }
         await this.step(plan, fence)
       }
       await this.deliver(fence)
@@ -429,10 +639,9 @@ export class TaskRuntime {
       return
     }
     const owner = await this.host.session(plan.owner)
-    if (!owner || owner.archived) {
-      if (plan.reason !== "Owner is missing or archived")
-        this.hold(plan, "Owner is missing or archived")
-      return
+    if (!this.validArchitect(owner)) {
+      await this.ensureArchitectOwner(plan, owner)
+      plan = this.store.plan(plan.id)!
     }
     const pending = this.store
       .effects(plan.id)
@@ -465,11 +674,11 @@ export class TaskRuntime {
       this.outcome(plan.id, { status: "cancelled" }, true)
       return
     }
-    if (plan.state === "blocked") return
     if (active) {
       await this.advanceAttempt(plan, active, fence)
       return
     }
+    if (plan.state === "blocked") return
     // Across all plans: one active implementation/repair slot per canonical project.
     if (
       this.store
@@ -1145,14 +1354,37 @@ export class TaskRuntime {
         .all(this.directory),
     )
     for (const message of messages) {
-      const session = await this.host.session(message.session_id)
-      if (!session || session.archived) continue
-      if (message.state !== "pending") {
-        if (session.messages.some((m) => m.id === message.message_id))
-          this.store.fenced(this.owner, fence, (db) => {
-            db.query("UPDATE runner_outbox SET state='delivered' WHERE id=?").run(message.id)
-            this.store.repository.changed()
-          })
+      const plan = this.store.plan(message.plan_id)
+      if (!plan) continue
+      let target = await this.host.session(message.session_id)
+      let targetMessageID = message.message_id
+      let state = message.state
+      if (
+        this.validArchitect(target) &&
+        target.id === plan.owner &&
+        state !== "pending" &&
+        target.messages.some((entry) => entry.id === targetMessageID)
+      ) {
+        this.store.fenced(this.owner, fence, (db) => {
+          db.query("UPDATE runner_outbox SET state='delivered' WHERE id=?").run(message.id)
+          this.store.repository.changed()
+        })
+        continue
+      }
+      if (!this.validArchitect(target) || target.id !== plan.owner) {
+        const owner = await this.ensureArchitectOwner(plan, target)
+        target = owner
+        targetMessageID = messageID()
+        if (!this.store.retargetOutbox(message.id, target.id, targetMessageID)) continue
+        state = "pending"
+      }
+      if (!this.validArchitect(target)) continue
+
+      if (state !== "pending" && target.messages.some((entry) => entry.id === targetMessageID)) {
+        this.store.fenced(this.owner, fence, (db) => {
+          db.query("UPDATE runner_outbox SET state='delivered' WHERE id=?").run(message.id)
+          this.store.repository.changed()
+        })
         continue
       }
       this.store.fenced(this.owner, fence, (db) =>
@@ -1160,8 +1392,8 @@ export class TaskRuntime {
       )
       try {
         await this.host.notify({
-          sessionID: message.session_id,
-          id: message.message_id,
+          sessionID: target.id,
+          id: targetMessageID,
           text: `LAZERS outcome\n${message.payload}`,
           resume: Boolean(message.resume),
         })

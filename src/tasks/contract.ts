@@ -22,6 +22,7 @@ export const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   revision: z.literal(1),
   status: z.union([z.literal("submitted"), TaskState]),
+  reason: z.string().nullable(),
   title: z.string().max(120),
   objective: z.string().max(400),
   createdAt: z.iso.datetime(),
@@ -46,16 +47,46 @@ export const Execution = z.strictObject({
   reason: z.string().nullable(),
   waitingOn: z.array(z.uuid()),
 })
+export const TaskActivity = z.strictObject({
+  id: z.int().positive(),
+  taskID: z.string().nullable(),
+  event: z.string(),
+  payload: z.string(),
+  createdAt: z.number(),
+})
+export const TaskAttempt = z.strictObject({
+  id: z.uuid(),
+  number: z.int().positive(),
+  state: z.string(),
+  startedAt: z.number(),
+  artifact: z.string().nullable(),
+  tokenCount: z.number().nullable(),
+  toolCount: z.int().nonnegative(),
+})
 export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
     task: TaskSpecSchema,
     execution: Execution.optional(),
+    attempts: z.array(TaskAttempt).optional(),
+    activity: z.array(TaskActivity).optional(),
   }),
   z.strictObject({ status: z.literal("not_found") }),
   z.strictObject({ status: z.literal("revision_unavailable"), revision: z.literal(1) }),
 ])
 export type TaskDetail = z.infer<typeof GetOutput>
+export const StartInput = z.strictObject({
+  taskID: z.uuid(),
+  revision: z.literal(1),
+  sessionID: z.string().min(1).max(200),
+})
+export const StartOutput = z.strictObject({
+  status: z.enum(["started", "existing"]),
+  planID: z.uuid(),
+  state: TaskState,
+})
+export type StartTaskInput = z.infer<typeof StartInput>
+export type StartTaskResult = z.infer<typeof StartOutput>
 export const Changed = z.strictObject({
   projectDirectory: z.string(),
   version: z.int().nonnegative(),
@@ -66,6 +97,7 @@ export const Tasks = Rpc.define({
   methods: {
     query: { input: QueryInput, output: QueryOutput },
     get: { input: GetInput, output: GetOutput },
+    start: { input: StartInput, output: StartOutput },
   },
   events: { changed: { schema: Changed } },
 })

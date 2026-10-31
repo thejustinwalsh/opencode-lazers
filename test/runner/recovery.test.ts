@@ -93,6 +93,7 @@ function fixture(crashVerifier = false) {
           id: "owner",
           projectID: "fixture",
           directory: root,
+          agent: "architect",
           archived: false,
           busy: false,
           model: { providerID: "openai", id: "subscription", variant: "high" },
@@ -184,7 +185,7 @@ test("durable outbox survives process death before/after host delivery without d
         )
         .get(f.plan.planID),
     )
-    expect(delivered?.state).toBe(fault === "after-notify" ? "delivered" : "sending")
+    expect(delivered?.state).toBe("delivered")
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
 }, 20000)
