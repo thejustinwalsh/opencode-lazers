@@ -1,0 +1,123 @@
+{
+  "host": "OpenCode 2.2.5",
+  "snapshots": [
+    {
+      "name": "master_off",
+      "settings": {
+        "enabled": false,
+        "questions": true,
+        "decisions": false,
+        "review": true,
+        "dictation": false,
+        "readAloud": false
+      },
+      "architectPresent": true,
+      "hasReviewInstruction": false,
+      "localPermissions": []
+    },
+    {
+      "name": "questions_only",
+      "settings": {
+        "enabled": true,
+        "questions": true,
+        "decisions": false,
+        "review": true,
+        "dictation": false,
+        "readAloud": false
+      },
+      "architectPresent": true,
+      "hasReviewInstruction": false,
+      "localPermissions": [
+        {
+          "action": "lazers_local_ask",
+          "resource": "*",
+          "effect": "allow"
+        }
+      ]
+    },
+    {
+      "name": "decisions_only_no_review",
+      "settings": {
+        "enabled": true,
+        "questions": false,
+        "decisions": true,
+        "review": false,
+        "dictation": false,
+        "readAloud": false
+      },
+      "architectPresent": true,
+      "hasReviewInstruction": false,
+      "localPermissions": [
+        {
+          "action": "lazers_local_decide",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "lazers_local_system_one",
+          "resource": "*",
+          "effect": "allow"
+        }
+      ]
+    },
+    {
+      "name": "master_disabled_during_speech_via_settings_rpc",
+      "settings": {
+        "enabled": false,
+        "questions": false,
+        "decisions": true,
+        "review": false,
+        "dictation": false,
+        "readAloud": true
+      }
+    },
+    {
+      "name": "original_choices_restored",
+      "settings": {
+        "enabled": true,
+        "questions": true,
+        "decisions": true,
+        "review": true,
+        "dictation": true,
+        "readAloud": true
+      },
+      "architectPresent": true,
+      "hasReviewInstruction": true,
+      "localPermissions": [
+        {
+          "action": "lazers_local_ask",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "lazers_local_decide",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "lazers_local_system_one",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "lazers_verify_task",
+          "resource": "*",
+          "effect": "allow"
+        }
+      ]
+    }
+  ],
+  "desktopChecks": {
+    "masterOffPersistsAcrossRendererReload": true,
+    "settingsPageAvailableWhileOff": true,
+    "microphoneAndSpeakerAbsentWhenOff": true,
+    "disabledShortcutDidNotRecord": true,
+    "allChildrenOffReleasedRuntime": true,
+    "decisionOnlyAutoloadReachedReady": true,
+    "reviewCanBeOffWhileDecisionsRemainAllowed": true,
+    "masterOffDuringSpeechRemovedControlsAndStoppedPlayback": true,
+    "activeOffTestUsed": "Typed settings configure RPC while Desktop speaker was visibly playing",
+    "voiceAndIdlePreferencesPreserved": "British English · Female; Never",
+    "cacheDisplayPreserved": "3.19 GB / 3.19 GB"
+  }
+}

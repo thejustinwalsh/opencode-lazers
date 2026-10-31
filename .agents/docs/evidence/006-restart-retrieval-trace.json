@@ -1,0 +1,102 @@
+{
+  "source": "OpenCode Desktop native Export",
+  "sessionID": "ses_e6f8b17b2ffephRSXoiFZNyE3A",
+  "title": "Retry-safe LAZERS task submission (fork #1)",
+  "notes": [
+    "Only post-restart retrieval turn retained. Reasoning and metadata omitted.",
+    "Background service run changed from 2d5c474b to 999efc5b before this request. Normal plugin database reloaded at 2026-10-31T06:14:17.589Z."
+  ],
+  "messages": [
+    {
+      "id": "msg_190987980001ZPU70W85Gxqe98",
+      "type": "user",
+      "time": {
+        "created": 1793427274138
+      },
+      "text": "Retrieve task 5f5743c3-1bd0-4a53-a86b-a347dd961e1a and report its stored status."
+    },
+    {
+      "id": "msg_1909879a10018umfNZYpHsyoSJ",
+      "type": "assistant",
+      "agent": "architect",
+      "model": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "high"
+      },
+      "time": {
+        "created": 1793427274147,
+        "streamed": 1793427278859,
+        "completed": 1793427278872
+      },
+      "tokens": {
+        "input": 34812,
+        "output": 44,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "content": [
+        {
+          "type": "tool",
+          "name": "lazers_get_task",
+          "status": "completed",
+          "input": {
+            "taskID": "5f5743c3-1bd0-4a53-a86b-a347dd961e1a"
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "{\"status\":\"found\",\"task\":{\"schemaVersion\":1,\"id\":\"5f5743c3-1bd0-4a53-a86b-a347dd961e1a\",\"revision\":1,\"status\":\"submitted\",\"createdAt\":\"2026-10-31T05:38:32.769Z\",\"provenance\":{\"projectID\":\"global\",\"projectDirectory\":\"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\"workspaceDirectory\":\"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\"sessionID\":\"ses_e6f8b17b2ffephRSXoiFZNyE3A\",\"startingRevision\":{\"kind\":\"git\",\"commit\":\"b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df\"}},\"proposal\":{\"objective\":\"Make LAZERS task submission durably idempotent using an explicit caller-supplied idempotency key: retrying the same key and validated task content in the same canonical repository returns the original task ID after a lost response or host restart, without creating duplicate tasks.\",\"exclusions\":[\"Workers, admission, dispatch, scheduling, task graphs, task execution, and budget enforcement.\",\"GUI changes, new network transports, automatic retry orchestration, and changes to OpenCode private storage.\",\"Deduplicating submissions with different keys by content, retroactively assigning keys to existing tasks, key expiration, and task mutation.\",\"Model/provider evaluation, paid OpenRouter calls, dependency upgrades, and changing Architect permissions.\"],\"constraints\":[\"Implement one bounded submission increment in the existing reusable plugin package; preserve strict TypeScript, Bun-native fmt/lint/check, pinned OpenCode V2 2.2.5, and plugin-owned SQLite.\",\"Require a top-level idempotencyKey for new tool submissions, separate from the task proposal stored in TaskSpec. Validate it as a bounded non-whitespace string and compare keys exactly; document the bound and do not silently trim or normalize keys. Keep existing stored TaskSpec/proposal records readable without keys.\",\"Define identical content as structural equality of the validated proposal: object property order is irrelevant, array order and field values are significant. Runtime-generated IDs, timestamps, session/worktree/revision provenance, and the key are not proposal content.\",\"Scope identity by canonical projectDirectory plus idempotencyKey, not session, worktree, tool-call ID, or HEAD. Same key in another repository is independent; a new key intentionally creates another task even for identical content.\",\"Use SQLite-enforced uniqueness and atomic task/key association persistence, not an in-memory cache or unprotected check-then-insert. A committed mapping must not point to a missing task; a failed write must not leave an orphan task or reserve a key. Concurrent callers must resolve to one committed task.\",\"For matching retries preserve the submitted receipt shape and return the original taskID and revision. Do not mutate or replace the original proposal, createdAt, or provenance; resolve an existing match without recollecting Git provenance.\",\"Return a documented structured conflict outcome for reuse of a key with different valid proposal content, without revealing another repository's data or modifying the original task.\",\"Preserve permission assertions before any task/key lookup or write on every native tool invocation, including replay and conflict paths. Preserve validation guidance and validate before provenance collection or persistence.\",\"Provide a transactional migration from the current version-1 database; preserve existing task bodies and get/list behavior, support repeated reopening, and continue rejecting unsupported future database versions without resetting metadata.\",\"Preserve the read-only Architect boundary. Update submission guidance to choose a key before the first call, reuse the same key and content after an ambiguous/lost response, and use a new key only for a new logical submission. Do not claim that submission executes work.\",\"Follow README.md's spike record and completion boundary. No listening server is required; if one becomes necessary, first follow the repository Portless skill and stable HTTPS .localhost requirements. Do not use CLI/service model prompts as a substitute for Desktop evaluation.\"],\"assumptions\":[\"The user selected explicit caller-supplied idempotency keys and requested validation, repository isolation, and submission-only scope.\",\"Required keys apply to new calls after this change; old stored tasks remain readable but cannot be recovered by an idempotency key they never had.\",\"Keys and committed associations remain durable for the lifetime of the stored tasks; no retention/cleanup policy is added.\",\"A host restart is covered deterministically by fresh-process reconstruction of the submission stack against the same SQLite file; a new Desktop UI feature or model evaluation is not necessary for this increment.\",\"The observed HEAD is b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df. Inspected scaffold source is working-tree context, not asserted to be committed at that empty initial commit. Preserve existing source and record the actual implementation starting/resulting revision or diff artifact.\"],\"writeScope\":[\"src/task.ts\",\"src/submission.ts\",\"src/storage.ts\",\"src/tools.ts\",\"src/task.test.ts\",\"src/storage.test.ts\",\"src/tools.test.ts\",\"src/submission.test.ts\",\"src/architect.md\",\"test/proposal.ts\",\"test/retry-process.ts\",\"README.md\",\".agents/docs/spikes/007-retry-safe-submission.md\"],\"context\":[{\"reference\":\".git/refs/heads/main: observed starting HEAD; inspected source may be uncommitted working-tree content.\",\"revision\":\"b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df\"},{\"reference\":\"src/submission.ts:21-45: current validation creates a new random UUID on every success, with no retry identity.\",\"revision\":null},{\"reference\":\"src/storage.ts:21-88: version-1 SQLite schema, project-scoped get/list, WAL and busy timeout, plain task insertion.\",\"revision\":null},{\"reference\":\"src/task.ts:17-121: strict proposal schema, generated JSON Schema, immutable version-1 submitted envelopes; keep transport key separate to preserve legacy readability.\",\"revision\":null},{\"reference\":\"src/tools.ts:32-111: native submit/get/list adapters, explicit permission assertions before submission, structured operational errors.\",\"revision\":null},{\"reference\":\"src/storage.test.ts and src/tools.test.ts: existing persistence/reopen, project isolation, invalid-input, Git provenance, future-version rejection, and permission-denial tests.\",\"revision\":null},{\"reference\":\"src/task.test.ts and test/proposal.ts: proposal/schema contract and shared valid fixture; expand coverage for required transport key without breaking stored proposals.\",\"revision\":null},{\"reference\":\"src/architect.md: packaged Architect submission instructions and read-only permission boundary.\",\"revision\":null},{\"reference\":\"README.md:103-164: package layout, pinned tooling, persistence contract, known duplicate retry limitation, and spike record requirements; AGENTS.md: repository quality/server rules.\",\"revision\":null},{\"reference\":\".agents/docs/opencode-api.md:23-64: pinned public V2 tool, permission, and storage boundaries; source authority is OpenCode v2.2.5 commit 9bbb8ce. Consult linked exact definitions if adapter signatures change.\",\"revision\":null},{\"reference\":\"package.json: Bun 1.4.4-canary.20261030.1, pinned SDK/effect/zod, bun run verify runs fmt --check, lint, and check.\",\"revision\":null}],\"acceptance\":[{\"id\":\"submission-contract\",\"assertion\":\"New submissions require a valid bounded idempotencyKey in native tool JSON Schema and runtime validation. Missing/invalid keys and invalid proposals return field guidance without collecting provenance, writing tasks, or reserving keys. Existing stored proposal/envelope schemas still accept legacy tasks.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"schema-tests\"},{\"kind\":\"verification\",\"verificationID\":\"submission-tests\"}]},{\"id\":\"lost-response-replay\",\"assertion\":\"Commit a submission, discard its receipt, then retry identical content and key. The receipt identifies the originally persisted UUID/revision, the database contains exactly one task, and original timestamps/provenance/content are unchanged. Reordered JSON object keys replay identically; a retry succeeds even if a fresh provenance callback would throw.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"submission-tests\"}]},{\"id\":\"restart-durability\",\"assertion\":\"A one-shot subprocess submits through the registered native tool against a temporary file-backed database and exits without delivering the receipt to the simulated caller. A fresh subprocess reconstructs repository/tool registration and retries with the same key/content; it returns the persisted original UUID, and get/list show exactly one unchanged task. Use changed session/worktree provenance inputs on retry to prove they do not redefine identity.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"submission-tests\"}]},{\"id\":\"conflicts-and-isolation\",\"assertion\":\"Same key plus changed valid content returns structured conflict with no new task or original mutation. Same content with a different key creates a distinct task. The same key in another canonical repository is independent, and cross-repository get/list never expose the first repository's task. Worktrees sharing a canonical repository share the key namespace.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"submission-tests\"}]},{\"id\":\"atomic-concurrent-persistence\",\"assertion\":\"Tests race at least two independent subprocess/database connections for the same repository/key/content and obtain the same UUID with one task and one committed association. Racing changed payloads for one key produces one winner and a conflict for the other. An injected failure between persistence steps rolls back both task and association; retry can subsequently succeed. Provenance failure before commit likewise saves nothing and leaves the key reusable.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"submission-tests\"}]},{\"id\":\"migration-and-permissions\",\"assertion\":\"A genuine pre-change version-1 SQLite fixture containing a legacy task migrates and reopens without altering its body or get/list results; keyed submissions and retry mappings survive reopening. Unsupported future versions still fail without metadata changes. Permission denial blocks first submission, matching replay, and conflicting reuse before repository lookup/write and does not disclose or change stored data.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"submission-tests\"}]},{\"id\":\"quality-and-record\",\"assertion\":\"Full behavior tests and native formatting/lint/type checks pass. README/tool/Architect guidance explains key lifecycle, conflicts, repository scope, and submitted-not-executed semantics without expanding permissions. A spike outcome records the question, scope, actual starting/resulting revision or diff artifact, exact checks/results, and unresolved issues; it does not claim unperformed Desktop verification.\",\"evidence\":[{\"kind\":\"verification\",\"verificationID\":\"all-tests\"},{\"kind\":\"verification\",\"verificationID\":\"quality\"},{\"kind\":\"artifact\",\"reference\":\".agents/docs/spikes/007-retry-safe-submission.md\"}]}],\"requirements\":{\"capabilities\":[\"One implementation worker with repository edit access within writeScope.\",\"Bun-native SQLite, native tool/schema/permission testing against the pinned OpenCode V2 types.\",\"Run one-shot Bun tests and subprocesses using temporary file-backed databases, with bounded waits and cleanup; no network or provider access required.\",\"Read-only inspection of existing source and repository state; preserve unrelated working-tree changes.\"],\"skills\":[],\"risk\":\"medium\",\"policyReference\":\"AGENTS.md and README.md core contracts, progressive dogfood order, and 'How we build each spike'; one submission increment, one worker, at most one bounded repair.\"},\"verification\":[{\"id\":\"schema-tests\",\"command\":\"bun test src/task.test.ts\",\"timeoutMs\":60000},{\"id\":\"submission-tests\",\"command\":\"bun test src/storage.test.ts src/tools.test.ts src/submission.test.ts\",\"timeoutMs\":120000},{\"id\":\"all-tests\",\"command\":\"bun test\",\"timeoutMs\":180000},{\"id\":\"quality\",\"command\":\"bun run verify\",\"timeoutMs\":120000}],\"limits\":{\"maxTokens\":32000,\"maxEstimatedCostUsd\":25,\"maxElapsedMs\":5400000,\"maxToolCalls\":120,\"maxProviderRetries\":1,\"maxRepairAttempts\":1}}}}"
+            }
+          ],
+          "time": {
+            "created": 1793427277807,
+            "ran": 1793427278832,
+            "completed": 1793427278837
+          }
+        }
+      ]
+    },
+    {
+      "id": "msg_190988c1e001RBJaYa49U1V2Jy",
+      "type": "assistant",
+      "agent": "architect",
+      "model": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "high"
+      },
+      "time": {
+        "created": 1793427278880,
+        "streamed": 1793427283599,
+        "completed": 1793427283611
+      },
+      "tokens": {
+        "input": 2632,
+        "output": 53,
+        "reasoning": 0,
+        "cache": {
+          "read": 34688,
+          "write": 0
+        }
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Task `5f5743c3-1bd0-4a53-a86b-a347dd961e1a` has stored status **`submitted`**, revision **1**. This records persistence, not execution or completion."
+        }
+      ]
+    },
+    {
+      "id": "msg_190989e9c00206KuxKRfAWhaDF",
+      "type": "idle",
+      "time": {
+        "created": 1793427283612
+      },
+      "outcome": "succeeded"
+    }
+  ]
+}

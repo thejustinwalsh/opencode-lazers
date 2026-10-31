@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.opencode/plugins/lazers/gui-experimental.cjs
+.cache/
+coverage/
+.DS_Store
+.env
+.env.*
+!.env.example

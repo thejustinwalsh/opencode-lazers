@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 1,
+  "id": "313174d7-8358-4911-b006-1a1f25ca779c",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T08:52:38.137Z",
+  "provenance": {
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6edbea90ffd9ylQrwEaEtxWVQ",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Add the smallest usable Repomix-backed investigation increment to Architect in the existing LAZERS package: build and reuse a bounded index of the active worktree, retrieve focused original-source/test evidence, and optionally delegate bounded foreground questions to named read-only code-investigator and web-researcher subagents. Architect must establish repository facts before asking avoidable questions, retain material user-intent/authorization questions, and submit tasks with current source-grounded context. Research reports cite dated primary sources or state a precise capability failure. Inherit the current authorized subscription model unless explicitly configured otherwise; do not select a paid provider. Specify and verify this increment independently of durable runner task 94298112-1c6c-44ba-87f6-a06533eafa59.",
+    "exclusions": [
+      "Implementing, revising, executing, or merging the durable runner task 94298112-1c6c-44ba-87f6-a06533eafa59: no XState, task graphs, implementation-worker dispatch, lifecycle/scheduler, durable completion delivery, polling supervisor, runner UI, or execution-policy engine.",
+      "Repomix CLI subprocess integration, MCP servers, another daemon/package/database for task state, semantic/vector search, embeddings, persistent conversational memory, automatic whole-repository prompt injection, background crawling/watchers, remote-repository ingestion, or compression presented as behavioral evidence.",
+      "General-purpose subagent dispatch, arbitrary child agent/session/model/provider inputs, recursive delegation, background research, parallel research orchestration, specialist edits/shell/task submission, new paid search subscriptions/credentials, paid provider fallback, and model-routing optimization.",
+      "Broad task schema/storage migration, full submission idempotency work, task-panel or GUI changes, Code Mode enablement, WebGPU/inference changes, unrelated dependency upgrades, source cleanup, shared-host restarts without authorization, and automatic commits/publishing."
+    ],
+    "constraints": [
+      "Use one implementation worker and one reusable plugin package, strict TypeScript, pinned OpenCode V2 2.2.5 public contracts and Bun-native fmt/lint/check/test. Add an exact production Repomix dependency pinned to a verified release compatible with the pinned Bun runtime. Inspect that release's exported types/source and .agents/docs/repomix-research.md, including its primary links, before selecting the minimal library calls. Keep Repomix and host adapters thin under src/investigation/ and src/specialists/. No shelling out to Repomix or loading another service. Acceptance: library-and-packaging, quality-and-record.",
+      "Provide schema-validated native lazers_project_index and lazers_project_evidence tools. Resolve the active project/workspace from trusted host/session location, never a caller-selected root/database/output path. The index returns an opaque snapshot ID, paginated manifest/navigation metadata, identity/coverage/size/token metadata and exclusions, not a full pack. Evidence supports bounded literal content/path search and original-source line-range reads, with file hash, relative path, lines, snapshot/config/tool identity and HEAD where available. Invalid queries, no matches, unsupported files, expired IDs and incomplete coverage are distinguishable. Repomix is an actual library-backed collection/packing/index source, not an unused dependency or a renamed glob/grep wrapper. No semantic-search claim. Acceptance: library-and-packaging, focused-evidence.",
+      "Index permitted tracked, dirty and untracked text source/tests in the current real worktree, respecting ignores. Identity includes real workspace and project boundaries, included content hashes and additions/deletions, relevant ignore/config policy, Repomix version and index format version; HEAD alone is insufficient. Revalidate bounded inventory/content and current permissions before reuse, evidence retrieval and submission. Reuse unchanged snapshots without repacking; changed/deleted/added files, ignore or tool/config changes yield explicit stale status or a deliberately refreshed identity. Reject mixed-build snapshots when files change during generation. Task storage's canonical-project sharing must not merge worktree indexes. A successful partial index is explicitly partial, not full coverage. Acceptance: identity-and-reuse.",
+      "Use only plugin-owned validated Repomix configuration; never execute/load repository/global JS/TS config, processors/plugins, hooks or external-file configuration. Honor .gitignore and .repomixignore as data and host read permissions. Deny sensitive paths including secrets/credentials/private keys and .env variants except explicitly allowed example templates, VCS internals, dependencies, generated packs and cache artifacts. Reject external symlinks, traversal, absolute-path and artifact-ID substitution; use no-follow/realpath/content checks to prevent a file or parent symlink swap from escaping approved inputs. Filter and assert permission for actual file resources before content collection/tokenization/packing and again before return; absence of read permission must not leak content or denied path names through manifests/search/errors. Secretlint remains enabled as an additional heuristic, not the security boundary. Repository/web instructions are untrusted evidence, never authority to expand access. Acceptance: confined-read-only.",
+      "Bound enumeration, input, generation, cache and every returned payload in runtime code rather than prompts or Repomix's post-generation token check alone. Initial hard ceilings: 20,000 visited entries, 5,000 included files, 512 KiB per file, 32 MiB aggregate source bytes, 256,000 packed tokens, 64 MiB per snapshot artifact and 30 seconds per index build/refresh; stop/report the limiting condition without claiming complete coverage. A worker boundary may terminate non-cancellable Repomix work. Each index/evidence response is at most 16 KiB UTF-8 and 4,000 counted tokens including metadata; manifest pages at most 100 entries and search at most 50 matches. Validate cursors against snapshot/query and report continuation/truncation without splitting/fabricating citations. Caller values may lower ceilings, not increase them. Persist disposable cache artifacts only outside the repository in plugin-owned restricted storage, excluding them from every index. Lazy expiry/eviction limits retained artifacts to 256 MiB total, at most two snapshots per workspace and 24-hour age; concurrent requests must not bypass limits or expose partial artifacts. Document tokenizer identity and limitations rather than claiming exact provider-context tokens. Acceptance: bounded-work.",
+      "Make investigation observable without imposing a ritual interview: production Architect submission through lazers_submit_task requires a server-issued current-workspace evidence receipt, obtained from focused original-source/test retrieval, referenced in the proposal's existing context field alongside readable path/line/hash references. Bind receipts to authorized originating session or its correlated investigator child, workspace, snapshot and retrieved evidence; validate server state/current content/permissions before insertion, not model-supplied hash strings. Missing, fabricated, stale, foreign or failed receipts return actionable investigation-required/stale feedback with no task write. Getting only a manifest or empty search is not sufficient evidence for a repository-behavior claim. Preserve invalid-proposal validation feedback and existing non-Architect submission/read APIs; no broad TaskSpec migration. A receipt proves provenance/retrieval, not semantic relevance or correctness, which Desktop evaluation must assess. Do not enforce a universal ban on question calls: material intent/authorization may need clarification first. Acceptance: submission-evidence, planning-behavior.",
+      "Revise the concise Architect definition to investigate relevant code/tests before asking about repository-establishable facts, use the index for navigation and focused originals for conclusions, reconcile specialist findings, cite known hashes/revisions honestly, and state coverage gaps/remaining unknowns. Ask the host structured question only for missing choices that change intent, scope, behavior, authorization or verification; wait for those answers before submission. Do not fabricate readiness after tool/research failures or ask the user to rediscover repository facts. Existing get/list/retrieval requests must not trigger an index build or new submission. Delegation is optional and should earn its cost. Keep all existing runtime-authority and submitted-versus-executed distinctions. Acceptance: planning-behavior, compatibility.",
+      "Register two packaged native subagent profiles, lazers-code-investigator and lazers-web-researcher, through the existing agent transform pattern with fresh replay-isolated definitions. Expose one narrowly schema-validated lazers_research tool taking only the named role, bounded question and reduced limits/evidence references. Use the pinned native foreground child-session/subagent path via a thin adapter; consult authoritative signatures/source, and correlate parent/child/result explicitly rather than assuming programmatic children inherit background notices. No caller-selected existing child session, arbitrary agent, directory, model, provider or background flag. Only one active research child per originating session; default/max 120 seconds, 8 model steps, 12 tool calls and one provider retry per assignment, with cancellation on timeout/parent cancellation and no automatic redispatch after uncertain host acceptance or reload. Do not build a durable research scheduler. Enforce bounds at host hooks/tool boundaries, report unconfirmed interruption or in-flight overshoot honestly, and stop further calls at exhaustion. Acceptance: specialists-and-bounds.",
+      "Code-investigator may use only the bounded current-workspace index/evidence read tools; web-researcher may use only native websearch/webfetch for the assigned public-source question. Both default deny edits/write, shell/execute, task submit/mutations, broad filesystem/network/MCP tools, questions to the user and all delegation. Architect gets narrow research/index permissions, not broad worker dispatch or shell/edit authority; do not expose an unbounded native-subagent bypass. Every adapter explicitly asserts its permission before data access/cache hits/child creation and preserves host denials. Reports use a validated bounded envelope: assigned question, findings, source references, checks performed versus suggested, unknowns/coverage/capability failures, completion status, and resolved model provenance. Malformed, oversized or incomplete child output cannot be passed off as successful validated evidence. Acceptance: confined-read-only, specialists-and-bounds.",
+      "Leave packaged role models unset by default and prove actual child inheritance of the originating session's connected authorized provider/model and reasoning variant in native Desktop. Respect an explicit host role model preference only if already authorized; record inherited versus explicit selection and actual resolved provider/model/variant. No hard-coded model, automatic paid provider choice, fallback or model-price optimization. If host inheritance/preferences cannot be resolved safely, report a blocked research result before an unauthorized inference request. The numeric equivalent-cost execution cap is not paid-inference authorization. Acceptance: model-authorization.",
+      "For external questions web-researcher discovers available native search capability and uses current relevant primary documentation/source/releases, opens the cited source where possible and records URL, accessed date, version/revision/publication date when available, supporting finding and uncertainty. Do not treat search snippets, secondary summaries or tool invocation itself as primary evidence. Bound web tool calls, source text delivered into child context and final reports; apply the same 16 KiB/4,000-token returned-text ceiling, with explicit truncation and native cancellation/timeouts. Do not send repository contents/secrets to search services. Use existing configured search/provider access only: unavailable search, denied fetch, timeout or no authoritative answer yields a precise incomplete/capability-failure report, not fabricated citations or a request to buy/configure a paid fallback. Architect may continue only if missing external facts are non-material and disclosed. Acceptance: current-web-evidence.",
+      "Before edits capture actual HEAD and a hashed inventory/source baseline for affected working-tree files; inspected HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df is the initial commit, not the inspected source revision. Preserve concurrent WebGPU and runner changes and tool receipt/connection repairs. Shared-file changes must be additive and coordinated; no reset/stash, task-record mutation, unrelated formatting or implicit source-baseline commit. Use isolated fixture projects/databases/cache and a safe host for tests; do not mutate normal tasks for negative tests or restart shared services without authorization. Load $portless-dev-servers before any listening verification server; one-shot tests/embedded non-listening hosts are exempt. Acceptance: compatibility, quality-and-record."
+    ],
+    "assumptions": [
+      "This is one independently usable read-only investigation increment, not a prerequisite implementation of the durable runner. The existing runner was retrieved as revision 1/status submitted; that does not establish execution or completion, and it is not resubmitted.",
+      "The supplied research dated 2026-10-31 is integration context, not proof that a Repomix version, native delegation path or subscription-model inheritance has passed acceptance. Implementation must verify the pinned library and host contracts and retain honest unresolved operational gates.",
+      "The bounded numeric defaults are conservative implementation policy for this increment, reducible by callers and enforced in code. Broader repository coverage, higher limits, semantic indexing and background research are deferred rather than silently enabled.",
+      "The existing proposal context field can carry investigation references without changing the immutable TaskSpec format. Disposable index caches are separate from task state; readable path/hash references remain meaningful when a cache ID expires."
+    ],
+    "writeScope": [
+      "src/investigation/**",
+      "src/specialists/**",
+      "src/architect.ts",
+      "src/architect.md",
+      "src/architect.test.ts",
+      "src/index.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+      "test/investigation/**",
+      "package.json",
+      "bun.lock",
+      "README.md",
+      ".agents/docs/handoff.md",
+      ".agents/docs/repomix-research.md",
+      ".agents/docs/opencode-api.md",
+      ".agents/docs/spikes/010-architect-investigation.md",
+      ".agents/docs/evidence/010-architect-investigation/**"
+    ],
+    "context": [
+      {
+        "reference": "User request in this session: integrate Repomix as a library for bounded reusable current-project indexing/focused evidence; prevent avoidable repository-fact questions while preserving intent questions; named read-only investigator/web-researcher with current primary references; inherit authorized subscription model; specify only, no implementation; keep runner 94298112-1c6c-44ba-87f6-a06533eafa59 separate.",
+        "revision": null
+      },
+      {
+        "reference": "README.md:9-30 Architect evidence/material questions, optional bounded specialists and runtime authority; 85-101 context/provenance and subscription platform boundary; 124-149 existing immutable submitted-only slice; 169-203 one-increment spike contracts and progressive dogfooding. AGENTS.md strict TypeScript/Bun/public V2/server safety/concurrent-work rules.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/repomix-research.md:1-31 source-linked research and proposed usable boundary, checked 2026-10-31. Primary references: https://repomix.com/guide/development/using-repomix-as-a-library ; https://repomix.com/guide/configuration ; https://repomix.com/guide/security ; https://repomix.com/guide/code-compress ; https://repomix.com/guide/mcp-server . Verify pinned package signatures and safe configuration rather than importing pseudocode.",
+        "revision": "Research checked 2026-10-31; working-tree document, not implementation evidence"
+      },
+      {
+        "reference": ".agents/docs/opencode-api.md:23-64 public agent/tool/permission/session hooks and restricted ctx surface; 203-211 feature boundaries and public adapter lookup. Source authority https://github.com/anomalyco/opencode/tree/9bbb8ce18c80f099e0e448775f59d965ead40a21 . Consult linked definitions for actual signatures.",
+        "revision": "OpenCode v2.2.5 / 9bbb8ce18c80f099e0e448775f59d965ead40a21"
+      },
+      {
+        "reference": "src/architect.md:1-40 deny-by-default read/glob/grep/question/submit/get/list permissions, 12 steps and no model; 42-52 current planning/submission instructions. src/architect.ts:13-26 native schema decode and agent transform.update creating missing IDs. src/architect.test.ts:8-49 tests registration, unset model and replay isolation, not behavior or inheritance.",
+        "revision": null
+      },
+      {
+        "reference": "src/tools.ts:12-27 preserves text-only receipts where no output schema exists; 36-49 per-execution repository connection ownership; 51-79 permission assertion then submission; 81-153 project-scoped task reads. Add a production Architect evidence precondition without losing these repairs, breaking validation feedback, enabling Code Mode or changing non-Architect contracts.",
+        "revision": null
+      },
+      {
+        "reference": "src/tools.test.ts:75-108 receipt formats and denial-before-write; 110-135 retained callbacks after setup connection disposal; 137-168 invalid proposal and query permissions. src/submission.ts:21-45 validates before provenance/insert; src/task.ts:17-64 existing strict proposal, context references, evidence and limits; immutable revision-1 envelope at 107-121. No task-schema/storage rewrite needed.",
+        "revision": null
+      },
+      {
+        "reference": "src/index.ts:10-30 Effect-scoped registrations of task repository/tools/reads, Architect and independent WebGPU service. Add investigation registrations without importing/reworking concurrent src/webgpu/** or the GUI.",
+        "revision": null
+      },
+      {
+        "reference": "package.json:18-42 unshadowed native Bun checks, pinned bun@1.4.4-canary.20261030.1/OpenCode 2.2.5/Effect 4.0.6, runtime dependencies currently tokenizers/onnx/zod, no Repomix. files includes src/dist. .gitignore excludes .cache, dependencies, dist and .env except example; preserve ignores.",
+        "revision": null
+      },
+      {
+        "reference": "node_modules/@opencode/plugin/dist/effect/agent.d.ts:5-15 agent registry/update/reload; effect/tool.d.ts:20-55 execute.before/after hooks, cancellation/error integration and transform registrations; effect/permission.d.ts:9-30 evaluate/assert takes actual session/agent/resources; effect/session.d.ts:13-39 context identity and 134-188 native child/background distinction plus restricted public operations. Read installed signatures before implementation.",
+        "revision": "Installed @opencode/plugin 2.2.5 declarations"
+      },
+      {
+        "reference": "node_modules/@opencode/schema/dist/agent.d.ts:55-116 optional model/variant, permissions, subagent mode and steps; node_modules/@opencode/client/dist/effect/api/api.d.ts:198-316 session get/switchModel/prompt/context public inputs; node_modules/@opencode/plugin/dist/effect/websearch.d.ts:5-20 native provider registry/query. These shapes alone do not prove runtime inheritance, cancellation or search availability.",
+        "revision": "Installed @opencode/schema and @opencode/client 2.2.5 declarations"
+      },
+      {
+        "reference": ".agents/docs/architect-validation.md:18-27 primary links for native question/subagent/session capabilities, websearch availability independent of ChatGPT, explicit correlation for programmatic children and enforcement limits. Native subagent source: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/tool/plugin/subagent.ts ; https://opencode.ai/v2/docs/tools/#subagent ; https://opencode.ai/v2/docs/agents/ ; https://opencode.ai/v2/docs/websearch/ . test/host-probe.ts:21-65 existing isolated no-model permission/registration probe pattern.",
+        "revision": "OpenCode v2.2.5 pinned source; local documents are working-tree context"
+      },
+      {
+        "reference": ".agents/docs/handoff.md:3-29 runner remains unimplemented, tool receipt/connection repair and initial-commit baseline caveat; 54-89 target research/subagents and authorized ChatGPT model; 101-119 semantic Desktop evaluation versus schema tests and server guidance. Existing task list was inspected before submission; no investigation task was present among the three current records.",
+        "revision": null
+      },
+      {
+        "reference": ".git/HEAD -> refs/heads/main and .git/refs/heads/main observed directly. Do not attribute working-tree implementation contents to this initial commit; capture fresh file hashes before edits and record resulting artifact.",
+        "revision": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "Existing durable runner task 94298112-1c6c-44ba-87f6-a06533eafa59 retrieved during this turn. It explicitly excludes investigator/researcher delegation, owns graph/worker/runtime state, and overlaps src/index.ts, tools and Architect definitions. Preserve its record, coordinate additive shared-file integration, do not claim or implement its execution.",
+        "revision": "Task revision 1, actual stored status submitted"
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "library-and-packaging",
+        "assertion": "Production index/evidence traces call the exactly pinned Repomix library on real fixture files and retrieve original content indexed through it; removing/stubbing the library to no-op makes the integration tests fail. The library uses only plugin-owned safe config and no CLI/MCP/daemon. Frozen install, packed-plugin clean-project load and a first index build work on the pinned Bun/OpenCode versions without repository agent/config files. Record exact library/version/export contract and cold plugin-load/first-build/reuse timings and memory observations versus current baseline; registration does not eagerly pack or append repository content to prompts.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "investigation-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "frozen-install"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/package-and-performance.md"
+          }
+        ]
+      },
+      {
+        "id": "identity-and-reuse",
+        "assertion": "Real temporary Git/worktree fixtures prove indexing of permitted untracked source, dirty changes and tests even when HEAD has no implementation; repeated unchanged index requests reuse identity without Repomix repacking, including fresh plugin/cache reopen. Edit content while preserving size/mtime, add/delete/rename a file, change ignore/config/tool identity, revoke read permission and mutate during generation: stale evidence is rejected or deliberately refreshed, not silently returned under the previous identity. Two worktrees sharing a canonical project and two separate projects cannot exchange IDs, cursors or evidence. Old findings cite their exact old hashes rather than pretending to be current.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "investigation-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "focused-evidence",
+        "assertion": "Index responses contain bounded manifest/navigation metadata and opaque identity, never full repository packs. Pagination and literal search/read tests find a relevant implementation and its tests among irrelevant files, return correct original lines/hash/source refs, and reject malformed/mismatched cursors/ranges/IDs. No-match, expiry, unsupported file and partial coverage outcomes are explicit. A fixture with implementation details absent from a structural summary cannot be correctly answered by returning only that summary: original behavior/test evidence must be retrieved and cited. Trace/context inspection shows no hidden complete-pack system prompt or duplicate automatic repository injection.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "investigation-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "confined-read-only",
+        "assertion": "Adversarial fixtures and real host permission probes deny foreign-project/worktree IDs, traversal/absolute paths, external file/parent symlinks and swaps, sensitive files, ignored/generated/cache paths and revoked/denied reads before content collection or disclosure. A malicious executable Repomix config/processor marker never executes; secret fixtures do not appear in artifacts/results/logs. Permission denial is checked on cache hits and replay, not just creation. Prompt-injection repository/web text cannot enable edits/shell/MCP/arbitrary agents/task mutation. Native specialist permission tests prove investigator cannot fetch web/write/submit/delegate and researcher cannot read local files/write/submit/delegate; Architect gains no generic worker-dispatch or shell/edit authority. No broad unbounded native-tool bypass exists.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "investigation-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "specialist-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/permissions-and-safety.md"
+          }
+        ]
+      },
+      {
+        "id": "bounded-work",
+        "assertion": "Tests using injected tiny ceilings independently exceed visited-entry/file/per-file/aggregate byte/pack-token/artifact-byte/deadline limits and assert bounded work/output, explicit coverage failure/truncation and no ready receipt for failed builds. Oversized Unicode and metadata-heavy results remain within both byte and tokenizer limits; pagination/continuation preserves valid citations. A deliberately stalled library operation is terminated at the enforced boundary and leaves no readable partial snapshot. Concurrent build/reuse requests, disk/write errors, lazy age expiry and cache-pressure eviction cannot exceed the declared retained-cache ceilings or disclose partial artifacts. Actual native traces record configured caps, observed sizes/times and incomplete coverage rather than only testing constants.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "investigation-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/package-and-performance.md"
+          }
+        ]
+      },
+      {
+        "id": "submission-evidence",
+        "assertion": "Call the production Architect submission adapter directly, without following its prompt: missing, fabricated, stale, cross-session/project/worktree, permission-revoked, manifest-only, empty-search-only and failed-build receipts persist no task and return specific recovery guidance. After genuine current focused original-source/test retrieval, a schema-valid task with corresponding context refs persists once through the normal adapter; mutate its source before submission and that same receipt no longer authorizes insertion. A correlated code-investigator receipt is usable only by its actual parent, not another session. Invalid proposal guidance still works, task get/list does not build an index, and non-Architect existing API/immutable records remain compatible. Tests distinguish this mechanical provenance check from semantic relevance, which is separately evaluated.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "specialists-and-bounds",
+        "assertion": "Both packaged native profiles register/replay cleanly and Architect successfully delegates one bounded code question and one bounded external question through lazers_research. Retain actual parent/child/session/result identity, question, evidence report and limits, not mocked text attributed to a subagent. Tests reject arbitrary role/session/root/model/provider/background inputs, duplicate active children and recursive dispatch; tiny step/tool/time/retry budgets prevent further calls, cancel/timeout interrupts the owned child, and malformed/oversized reports are incomplete rather than successful evidence. Parent cancellation, plugin disposal and ambiguous host acceptance never start a replacement child automatically; unconfirmed stops and overshoot are exposed. Ordinary simple repository planning is also possible without delegation.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "specialist-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "model-authorization",
+        "assertion": "Default role definitions leave model unset. Native Desktop trace shows each actual specialist resolves to the initiating authorized subscription provider/model/reasoning variant, not a global default or a hidden paid choice, and records inherited versus explicit provenance. Adapter tests with a different parent selection, an explicit authorized role preference, unavailable selection and an unauthorized/paid candidate prove correct inheritance/preference handling and fail-closed behavior without fallback. Provider-call capture confirms no paid-provider selection or unauthorized inference was attempted. Tests and native evidence record actual resolved model rather than inferring inheritance from an absent config field.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "specialist-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "current-web-evidence",
+        "assertion": "A real web-researcher child answers a version-sensitive question using opened current primary documentation/source, with dated URLs/version/revision and supporting findings, within text/time/tool caps; a human checks that the citations actually support the answer and facts are distinguished from assumptions. Search availability is tested separately from model availability. If native search/fetch is unavailable, retain the real child and exact capability/error evidence and explicitly mark research incomplete instead of claiming a researched answer. Deterministic fixtures cover search unavailable, denied fetch, stale/secondary-only snippets, redirects/oversized responses, timeout and malicious source instructions: no fabricated primary citation, repository-content search payload, paid fallback or successful-current-research claim results. Either real supported research or precise real capability failure is acceptable for the host availability boundary, not silent omission.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "specialist-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/web-sources.md"
+          },
+          {
+            "kind": "human",
+            "decision": "Review native researcher report against opened primary sources; approve supported dated findings, or confirm the precisely recorded native capability failure remains an unresolved research result."
+          }
+        ]
+      },
+      {
+        "id": "planning-behavior",
+        "assertion": "On the candidate in native Desktop, use an unseen clear request where a relevant implementation/test resolves an apparent ambiguity: actual Repomix index and focused evidence retrieval precede any avoidable user question, the submitted task cites correct code/tests/hashes and meaningful verification, and no user is asked for a repository fact. Also use an unseen materially ambiguous intent/authorization request: Architect asks a focused structured question, waits, and only then submits grounded work preserving the answer. Include an irrelevant-but-valid receipt and failed/stale-evidence scenario to grade substance, not tool invocation: Architect must not treat irrelevant evidence or failed research as readiness. A simple task succeeds without mandatory specialists, and an existing-task retrieval returns the same record without a build/new task. Retain prompts, traces, questions, submitted UUIDs/specifications and a brief human evidence-quality review; automated prompt-wording tests or persisted receipts alone do not establish this behavior.",
+        "evidence": [
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/native-trace.json"
+          },
+          {
+            "kind": "human",
+            "decision": "Review unseen Desktop trials for source/test relevance, absence of avoidable repository-fact questions, preservation of material user choices, honest failures, and acceptance checks grounded in the inspected behavior."
+          }
+        ]
+      },
+      {
+        "id": "compatibility",
+        "assertion": "Existing task persistence/read behavior, declared-schema output formatting and retained-callback-after-connection-disposal regressions pass with the new registration/gate. The existing runner record 94298112-1c6c-44ba-87f6-a06533eafa59 remains unchanged/submitted unless separately acted on; this increment does not start any stored task or own runner state. Full existing tests including WebGPU pass, no GUI changes are required, and captured baseline/final scope inventory shows only permitted edits with concurrent shared-file work preserved. The actual source baseline/result is named; initial HEAD is not misrepresented as containing inspected untracked code.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/scope-review.md"
+          }
+        ]
+      },
+      {
+        "id": "quality-and-record",
+        "assertion": "Frozen dependency installation, complete Bun behavior tests and native formatting/lint/typecheck pass against the recorded resulting artifact. The spike record captures the question/increment/scope/exclusions, exact Repomix/host contracts, enforced limits, receipt/provenance boundary, specialist/model/source evidence, baseline/result hashes, checks/results, startup/reuse/elapsed/tool/token measurements or explicit unavailability, unresolved host/capability gates and retain/revise/discard outcome. Documentation distinguishes this investigation capability from the still-separate durable runner and does not claim acceptance from submission, model prose, mocked children or unperformed Desktop trials. Stop with precise unresolved evidence if native access or authorization is unavailable.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "frozen-install"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "quality"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/spikes/010-architect-investigation.md"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": [
+        "One strict-TypeScript/Bun implementation worker with read/edit access limited to writeScope, package-registry/primary-source reads for verifying and exactly pinning Repomix, and no authority to implement the separate durable runner.",
+        "Bun file/hash/tokenizer/SQLite-compatible test environment, isolated temporary Git projects/worktrees/cache/database fixtures, controlled library stalls/concurrency/fault injection and native host permission/cancellation checks.",
+        "Pinned OpenCode 2.2.5 public agent, native tool, permission, session/child, context/retry/event and websearch/webfetch integration; thin adapters and actual native specialist/result/model evidence rather than private host state.",
+        "Safe native Desktop access for unseen planning trials and foreground specialist questions using the already authorized connected subscription model; record selected provider/model/variant before inference. No paid inference/search provider selection, new credential setup or shared-host restart authorization is implied.",
+        "Preserve source concurrency and tool-adapter repairs; capture source baseline/result and evidence artifacts. Treat unperformed host, source-quality or inheritance checks as unresolved and do not equate persistence with completion."
+      ],
+      "skills": [],
+      "risk": "high",
+      "policyReference": "AGENTS.md; README.md Architect/evidence, context/provenance, native subscription, runtime-authority and spike contracts; .agents/docs/repomix-research.md (2026-10-31 primary-source research); .agents/docs/opencode-api.md (OpenCode V2 2.2.5 pinned public boundary). User authorizes this investigation specification, not runner implementation or paid provider selection. Load browser/server skills when needed; use Portless before any listening verification server."
+    },
+    "verification": [
+      {
+        "id": "investigation-tests",
+        "command": "bun test src/investigation",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "specialist-tests",
+        "command": "bun test src/specialists",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "submission-tests",
+        "command": "bun test src/tools.test.ts src/architect.test.ts src/task.test.ts src/storage.test.ts",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "native-contract-tests",
+        "command": "bun test test/investigation",
+        "timeoutMs": 300000
+      },
+      {
+        "id": "frozen-install",
+        "command": "bun install --frozen-lockfile",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "all-tests",
+        "command": "bun test",
+        "timeoutMs": 600000
+      },
+      {
+        "id": "quality",
+        "command": "bun run verify",
+        "timeoutMs": 180000
+      }
+    ],
+    "limits": {
+      "maxTokens": 100000,
+      "maxEstimatedCostUsd": 100,
+      "maxElapsedMs": 21600000,
+      "maxToolCalls": 400,
+      "maxProviderRetries": 1,
+      "maxRepairAttempts": 1
+    }
+  }
+}

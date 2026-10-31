@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "id": "bb651358-173b-44f7-b714-3d7386875f44",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T05:58:45.570Z",
+  "provenance": {
+    "projectID": "global",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6f7c1126ffeD0EW9XDnYLQIZb",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Make `lazers_submit_task` safe to retry using a caller-supplied, repository-scoped `idempotencyKey`. For the same canonical repository, key, and validated task proposal, return the original task UUID even when the retry occurs in another session after a host restart; create no duplicate and keep the original recorded provenance. For the same key with a different valid proposal, return an explicit conflict without changing the original task. A different key may create a distinct task with identical proposal content.",
+    "exclusions": [
+      "Do not add workers, task execution, dispatch, scheduling, task graphs, or GUI changes.",
+      "Do not change the OpenCode host/API or introduce a network service, new database, or new dependency.",
+      "Do not deduplicate different keys merely because their proposals are identical."
+    ],
+    "constraints": [
+      "Require a caller-supplied top-level `idempotencyKey` in the native `lazers_submit_task` input. Document that a caller must reuse the same key for retries of one logical submission and use a different key for an intentionally separate task.",
+      "Persist the key-to-task mapping in the existing SQLite repository, scoped by the canonical project directory and durable across sessions/host restarts. Enforce uniqueness and task/mapping writes atomically in SQLite, not only in process memory.",
+      "Compare the same key against the entire validated `TaskProposal`; runtime provenance such as session, workspace, or starting revision must not make an otherwise-identical retry conflict. Keep the first task and its provenance unchanged on replay.",
+      "For a valid changed proposal with an already-used key, return an observable `conflict` result and create/update no task. Preserve validation behavior: invalid input remains invalid and writes/reserves nothing; permission denial still precedes writes.",
+      "Migrate existing version-1 databases without losing tasks; retain project isolation and existing task/get/list behavior.",
+      "Update the Architect instructions and relevant README submission/restart guidance so the caller reuses a stable key. Keep changes to the submission feature only."
+    ],
+    "assumptions": [],
+    "writeScope": [
+      "src/task.ts",
+      "src/task.test.ts",
+      "src/submission.ts",
+      "src/storage.ts",
+      "src/storage.test.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+      "src/architect.md",
+      "src/architect.test.ts",
+      "README.md"
+    ],
+    "context": [
+      {
+        "reference": "`src/submission.ts`: `submitTask` validates a proposal and currently inserts a fresh UUID for every valid call. `src/storage.ts`: SQLite schema is version 1; tasks are partitioned by `project_directory`, keyed only by task UUID, and the database is persistent. `src/storage.test.ts` already covers reopen, invalid submissions, and project isolation.",
+        "revision": "Working-tree contents inspected at repository HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df; README.md reports scaffold files remain untracked at this baseline."
+      },
+      {
+        "reference": "`src/task.ts` defines strict `TaskProposalSchema` and the JSON Schema used by the submit tool. `src/tools.ts` currently registers `lazers_submit_task` with the proposal schema directly and collects runtime provenance; `src/tools.test.ts` covers registered submit/get/list behavior, invalid input, and permission denial before writes.",
+        "revision": "Working-tree contents inspected at repository HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df; README.md reports scaffold files remain untracked at this baseline."
+      },
+      {
+        "reference": "`src/architect.md` gives the Architect submission instructions and `src/architect.test.ts` checks agent registration. `README.md` lines 136 and 141 document SQLite persistence and the current duplicate-on-retry limitation; revise those relevant instructions for the new key contract.",
+        "revision": "Working-tree contents inspected at repository HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df; README.md reports scaffold files remain untracked at this baseline."
+      },
+      {
+        "reference": "`.agents/docs/opencode-api.md` was consulted for the pinned OpenCode 2.2.5 native tool/permission boundary (document checked 2026-10-31; source commit 9bbb8ce). Keep the host adapter small; this feature uses the existing native tool and SQLite persistence.",
+        "revision": "Working-tree contents inspected at repository HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df."
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "retry-after-restart",
+        "assertion": "A test submits a valid proposal with a key, discards the first response to simulate a lost receipt, closes and reopens the same SQLite database, then retries the same key and proposal from different session provenance. The replay returns the exact original task UUID, only one task exists, and the original stored task/provenance are unchanged.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "behavior-tests"
+          }
+        ]
+      },
+      {
+        "id": "changed-content-conflict",
+        "assertion": "A second valid proposal with an already-used key returns an explicit `conflict` result, leaves the original task unchanged, and does not create another task. Invalid input still returns validation guidance and persists or reserves nothing.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "behavior-tests"
+          }
+        ]
+      },
+      {
+        "id": "separate-keys-and-repositories",
+        "assertion": "The same proposal with a different key in one repository creates a distinct task. Reusing a key in a different canonical project is isolated and creates/returns that project's task without exposing or conflicting with the first project's task.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "behavior-tests"
+          }
+        ]
+      },
+      {
+        "id": "migration-preserves-tasks",
+        "assertion": "A version-1 database containing existing tasks migrates to the idempotency-capable schema without losing or changing those tasks, and can accept a new keyed submission afterward.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "behavior-tests"
+          }
+        ]
+      },
+      {
+        "id": "native-tool-and-guidance",
+        "assertion": "Tests prove the native submit tool requires `idempotencyKey`, returns the original task ID on replay, and still denies writes on permission denial. Architect instructions explain key reuse for retries and a distinct key for intentionally separate tasks; README guidance covers restart replay and the conflict/distinct-key behavior.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "behavior-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": "`src/architect.md` submission instructions and the relevant `README.md` persistence/Desktop tryout guidance."
+          }
+        ]
+      },
+      {
+        "id": "quality-gates",
+        "assertion": "Native formatting, lint, and strict typechecking pass for the completed change.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "quality-checks"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": [
+        "Durable SQLite idempotency records and backward-compatible schema migration.",
+        "Validated, repository-scoped retry behavior through the existing native submission tool."
+      ],
+      "skills": [],
+      "risk": "medium",
+      "policyReference": "Follow AGENTS.md and README.md: strict TypeScript, Bun-native formatter/linter/typechecker, and `bun test` for behavior. Keep OpenCode integration on the pinned V2 API documented in `.agents/docs/opencode-api.md`; preserve the existing read-only Architect boundary."
+    },
+    "verification": [
+      {
+        "id": "behavior-tests",
+        "command": "bun test",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "quality-checks",
+        "command": "bun run verify",
+        "timeoutMs": 120000
+      }
+    ],
+    "limits": {
+      "maxTokens": 18000,
+      "maxEstimatedCostUsd": 1,
+      "maxElapsedMs": 1500000,
+      "maxToolCalls": 60,
+      "maxProviderRetries": 2,
+      "maxRepairAttempts": 1
+    }
+  }
+}

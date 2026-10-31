@@ -1,0 +1,70 @@
+[
+  {
+    "role": "user",
+    "text": "The database lifecycle repair is now in place: each task-tool execution opens its own connection before operating and closes it afterward, so retained callbacks survive plugin reloads. A regression test disposes the original connection and verifies submit/get/list/query still work with exactly one persisted task. WAL and the busy timeout remain enabled. The normal project database was checked read-only again and still contains only the two prior tasks, with no runner task. Continue from your finalized specification and the decisions already resolved here. Inspect existing tasks first, then submit the finalized runner specification once and retrieve its saved record. Preserve the agreed scope; do not restart the interview or implement the runner in this step."
+  },
+  {
+    "role": "assistant",
+    "parts": [
+      {
+        "type": "tool",
+        "name": "lazers_list_tasks",
+        "status": "completed",
+        "input": {
+          "limit": 20
+        },
+        "result": [
+          {
+            "type": "text",
+            "text": "{\"tasks\":[{\"taskID\":\"2d955ffa-8b58-48c7-b34b-494b2af0d7fc\",\"revision\":1,\"status\":\"submitted\",\"title\":\"Implement one focused, live, read-only native Tasks side-panel…\",\"objective\":\"Implement one focused, live, read-only native Tasks side-panel increment for OpenCode Desktop over LAZERS' real immutable submitted records, following design/task-panel/tasks-focus-v2.png and interaction-spec.json. Share a canonical-project-scoped bounded query/detail service between GUI RPC and permission-checked Architect Code Mode tools, with post-commit change notifications and reliable resync\",\"createdAt\":\"2026-10-31T06:50:17.081Z\",\"sessionID\":\"ses_e6f4c43aeffeIl3rnBXgpq5Cbe\",\"matches\":[]},{\"taskID\":\"5f5743c3-1bd0-4a53-a86b-a347dd961e1a\",\"revision\":1,\"status\":\"submitted\",\"title\":\"Make LAZERS task submission durably idempotent using an explicit…\",\"objective\":\"Make LAZERS task submission durably idempotent using an explicit caller-supplied idempotency key: retrying the same key and validated task content in the same canonical repository returns the original task ID after a lost response or host restart, without creating duplicate tasks.\",\"createdAt\":\"2026-10-31T05:38:32.769Z\",\"sessionID\":\"ses_e6f8b17b2ffephRSXoiFZNyE3A\",\"matches\":[]}]}"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "parts": [
+      {
+        "type": "text",
+        "text": "Inspection still shows only the two prior tasks. I also confirmed the per-execution connection repair in the adapter. I’ll submit the finalized specification once, then retrieve the saved record—without changing scope or implementing the runner."
+      },
+      {
+        "type": "tool",
+        "name": "lazers_submit_task",
+        "status": "completed",
+        "input": "See task.json proposal",
+        "result": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"submitted\",\"taskID\":\"94298112-1c6c-44ba-87f6-a06533eafa59\",\"revision\":1}"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "parts": [
+      {
+        "type": "tool",
+        "name": "lazers_get_task",
+        "status": "completed",
+        "input": {
+          "taskID": "94298112-1c6c-44ba-87f6-a06533eafa59",
+          "revision": 1
+        },
+        "result": "Full revision-1 task returned; matches task.json"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "parts": [
+      {
+        "type": "text",
+        "text": "Submitted once and retrieved successfully:\n\n**Task:** `94298112-1c6c-44ba-87f6-a06533eafa59` · revision 1  \n**Status:** `submitted` — not dispatched or implemented.\n\nThe agreed scope is preserved, with 15 acceptance assertions mapped to automated tests, real crash/restart trials, native Architect delivery, and Tasks-panel audit evidence. Those implementation checks have not yet run."
+      }
+    ]
+  }
+]

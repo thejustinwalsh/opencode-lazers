@@ -1,0 +1,500 @@
+{
+  "schemaVersion": 1,
+  "id": "94298112-1c6c-44ba-87f6-a06533eafa59",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T08:42:24.718Z",
+  "provenance": {
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6f007c15ffe1HH5nmeqvV4UEA",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Implement LAZERS' first usable XState-backed durable task runner: Architect submits a versioned dependency graph, deterministic runtime tooling admits and serially executes eligible tasks through real OpenCode workers in isolated worktrees, runs verification, persists outcomes/evidence, and delivers results or focused decision requests to the originating Architect. Recover recorded progress across process crashes without silently repeating uncertain side effects. Store graph relationships in the existing plugin-owned SQLite database, automatically audit readiness/overlap/session ownership, and expose real status, evidence, audit findings, and validated manual controls in the existing Tasks panel. This increment includes dependency graphs, not merely single-task plans; it excludes System Flow and Timeline.",
+    "exclusions": [
+      "Parallel implementation workers, distributed scheduling beyond coordinating local plugin processes sharing the same SQLite database, timed/recurring user jobs, investigator/researcher delegation, model-routing optimization, and a general workflow framework.",
+      "System Flow, Timeline, graph-canvas visualizations, a new dashboard, a full visual plan editor, bulk actions, drag reordering, and unrelated Tasks-panel polish.",
+      "Automatic merging/publishing into the originating workspace or default branch, automatic inclusion of uncommitted source, automatic ownership reassignment, and automatic replay when a side effect's outcome is uncertain.",
+      "An LLM deciding routine readiness, polling for ordinary progress, running the lifecycle, certifying its own completion, silently merging semantic duplicates, or bypassing verification through either agent tools or GUI controls.",
+      "Reimplementing the entire separately specified legacy task-submission idempotency increment 5f5743c3-1bd0-4a53-a86b-a347dd961e1a. This runner must nevertheless deduplicate its graph intake, dispatch, decisions, and commands durably and must not blindly execute duplicate legacy task records.",
+      "A second package/GUI entry/database, arbitrary SQL or caller-selected project/database access, OpenCode private-table access, changes to src/webgpu/**, engine assets or inference behavior, broad Architect shell/edit/delegation permissions, unrelated dependency upgrades, paid OpenRouter model calls, and disruptive restart of the shared host without authorization.",
+      "An exactly-once guarantee for arbitrary external commands, a claim that XState snapshots alone make side effects durable, or a claim that an isolated Git worktree is an operating-system security sandbox."
+    ],
+    "constraints": [
+      "Preserve the original brief and README.md contracts: Architect specifies dependencies, strategy, acceptance and verification and returns for decisions; runtime owns admission, resource policy, transitions, scheduling, verification, bounded repair, cancellation and accounting. One implementation worker for this increment, and at most one active implementation/repair worker per canonical project across sessions, worktrees, plugin instances and processes. A sufficiently specified authorized graph proceeds without an extra approval ceremony. Assertions: graph-admission, execution-policy, runtime-authority.",
+      "Use strict TypeScript, Bun-native SQLite, the pinned OpenCode V2 2.2.5 public API, and an exactly pinned stable XState v5 dependency. Keep host adapters thin and testable; lifecycle and policy code belongs under src/runner/. Use one authoritative server-side machine definition with a recorded machine version. The GUI reads durable projections and never starts/restores an execution actor or replays historical events. Assertions: durable-model, recovery, shared-audit-panel.",
+      "Extend the existing SQLite repository transactionally with relational identities/foreign keys/indexes for versioned plans, task membership, dependency edges, ownership/session/worker links, attempts, verification/evidence bindings, ordered transitions, effect intents, command receipts, decision requests and outcome delivery. JSON remains appropriate for immutable specs, snapshots and payloads, but graph edges and associations must be queryable relationships, not relationships inferred from prose or an opaque graph JSON blob alone. Enforce canonical-project boundaries and uniqueness in storage as well as validation. Preserve existing immutable task envelopes/provenance and migration compatibility; keep their submitted-specification status distinct from authoritative execution status. Assertions: durable-model, compatibility.",
+      "Provide bounded schema-validated native tools and typed RPC over the same runtime services for graph submission/revision and execution request, graph/task audit and attention reads, and validated decisions/actions. Support one-node and multi-node plans referencing exact task IDs/specification revisions, explicit directed dependencies, deterministic tie-breaking/integration order, overall graph acceptance/checks, and a recorded owner session. Associate every open session task with a plan or an explicit unplanned/not-admitted reason; listing a session is not proof its open work is runnable. Validate duplicate nodes, missing/foreign nodes, cycles, stale revisions, unsupported requirements and undefined integration order before admission. A successor is eligible only when its predecessors have accepted compatible artifacts; blocked/failed/cancelled predecessors prevent dispatch. Accept the graph only after its combined artifact meets overall acceptance. Assertions: graph-admission, combined-artifact.",
+      "Runtime must automatically run a deterministic project-scoped audit on intake, admission, relevant state/spec/ownership changes, dispatch and recovery; do not rely on Architect remembering to search or assess readiness. Return structured findings with stable finding IDs, reason codes, affected task/plan/revisions, evidence, audit watermark, and allowed next actions. Cover exact retry identity, tasks already assigned/running, literal content/scope overlap candidates across sessions, unresolved dependencies, prerequisites and archived/missing ownership. A stale audit cannot authorize dispatch after a concurrent change. Scope overlap is a possible conflict/duplicate, not proof of semantic equivalence; conservative unresolved candidates require an explicit recorded reuse/link, defer, or distinct-work rationale through a validated command. Runtime still enforces structural and concurrency invariants after that judgment. Do not require a user question merely because a candidate exists. Search/audit must cover older-than-100 open records using bounded pagination, not newest-list heuristics. Assertions: deterministic-audits, command-integrity.",
+      "Use project-scoped caller request IDs and canonical validated-payload fingerprints for new graph-intake and mutating commands, stored atomically with their effects/receipts. Identical retries return the same identity/result after lost responses and restarts; reusing a key for changed content conflicts. Distinct keys do not prove semantic distinction. Prevent one task revision from being dispatched twice via different graphs/sessions or repeated notifications. Existing unkeyed legacy submissions remain readable and require explicit graph review/admission; startup must not blindly run the stored backlog. Keep tasks 5f5743c3-1bd0-4a53-a86b-a347dd961e1a and 2d955ffa-8b58-48c7-b34b-494b2af0d7fc intact and coordinate overlapping source integration rather than treating submitted as implemented. Assertions: command-integrity, deterministic-audits, compatibility.",
+      "Persist admitted execution policy before dispatch: worker agent, resolved provider/model/variant, permissions/tools, required skill sources/versions, context/spec revisions, workspace/base artifact, checks and numerical budgets. For initial dogfooding use the originating session's authorized connected ChatGPT subscription model/variant rather than pinning a different execution provider; resolve and record it before the real trial. Missing/denied skills, unavailable models, absent executable source baseline or unsupported policy requirements produce a concrete blocked result, never a silent fallback. Deliver required context/guidance through the supported worker path. Workers may implement and report artifacts/issues but cannot accept tasks, create unbudgeted workers or mutate runtime storage. Assertions: execution-policy, runtime-authority, native-end-to-end.",
+      "Create isolated task/attempt worktrees from recorded committed bases and accepted prerequisite artifacts. Record dependency composition and integration order/provenance; do not silently copy dirty/untracked originating edits. Detect conflicts or unavailable bases and request a decision. Return immutable artifact/revision and changed-path references without merging into the origin. Runtime checks actual additions/modifications/deletions/renames, including untracked output, against the task write scope; a worker's summary is not scope evidence. Combined graph verification runs against the exact privately integrated result, not unrelated independently green branches. Assertions: combined-artifact, verification-boundary.",
+      "The runtime runs the declared verification commands with recorded cwd, exact artifact/content identity, inputs/environment identity, timeout, start/end, exit/error and bounded-output evidence. Acceptance requires every required verification, artifact binding and explicit human decision, plus scope compliance and no unresolved issues invalidating acceptance. Missing or unsupported evidence stays blocked; a worker saying done or exiting successfully cannot accept work. Human-evidence submission is an audited decision tied to the assertion/artifact, not a generic force-accept button. Reuse results only for identical relevant inputs; repairs or integration invalidate affected checks. Honor configured maxRepairAttempts 0 or 1 deterministically within remaining budgets; otherwise return a precise failure/decision request. Assertions: verification-boundary, execution-policy.",
+      "Use transactionally durable checkpoints/ordered records with expected-version checks and scheduler ownership/fencing. Commit transition/snapshot, effect intent and causal identities before external work. On restore reconcile recorded OpenCode session/message/execution/worktree and verifier identities via public APIs and retained evidence before taking another effect. Reconnect to confirmed in-flight work; consume confirmed completion once; never simply restart invoked actors/entry actions. An expired lease is not proof a worker stopped. When dispatch, verification, integration or notification outcome cannot be proved, persist recovery-uncertain/blocked with causal evidence and permitted next actions; do not automatically repeat it. Unsupported machine/snapshot versions stop explicitly without discarding state. Assertions: recovery, command-integrity.",
+      "Persist outcomes, evidence and a delivery outbox before notifying Architect. Durable messages carry task/plan/spec/attempt and state versions, immutable outcome/evidence references, failure or wait reason, budgets remaining or explicitly unavailable, decision ID and allowed commands when relevant. Track persisted, host-delivered and decision-resolved as different facts. Use stable notification identities and reconcile host delivery after a lost response; uncertain delivery remains visible rather than silently claiming success. Ordinary dependency unblocking and configured repair/retry consume no Architect model call. Deliver routine task outcomes without waking a supervisor; wake the originating/current explicitly reassigned Architect for required decisions and final graph synthesis. If no deliverable owner exists retain project attention; do not invent a new owner. Assertions: durable-delivery, native-end-to-end.",
+      "Commands from Architect and panel use the same authorization, expected plan/task/attempt version, decision ID, idempotency and allowed-action validation. Include execution request/admission, overlap disposition, reconcile, cancellation, recording required human evidence and explicit orphan reassignment; a graph revision can replace future strategy but not rewrite attempts or evidence. Unsupported actions return typed reasons/next actions. Do not expose setters for accepted/state/budget/attempt counters. Ended attempts are not silently reopened: any supported retry is an explicit newly admitted attempt preserving history and cumulative usage, and uncertain prior activity must first be reconciled or left blocked. Keep direct, narrowly permissioned native tools available without requiring unverified broad Code Mode activation. Preserve the repaired text-only receipts for tools without an output schema and structured results only where output schemas exist. Preserve per-execution repository connection ownership so retained tool callbacks remain usable after plugin reload/disposal. Assertions: runtime-authority, command-integrity, compatibility.",
+      "Perform bounded deterministic session reconciliation at startup, on authoritative archive/delete/unarchive events, and periodically (default once per 60 seconds with bounded pages and retained progress). Inspect definitive public session archive/existence facts, not last-viewed time or a disconnected client. Idle/unarchived sessions keep ownership. Archived or definitively missing owners cause an orphan attention record and hold further dispatch for review; preserve/reconcile in-flight work and all progress. Host lookup failures mean unknown, not deleted. Deduplicate unresolved notices. Surface orphans to an active Architect's project-attention query and panel without automatic transfer or periodic LLM polling. Explicit authorized reassignment targets an unarchived session in the same canonical project, retains original provenance/ownership history, rechecks readiness, and routes future decisions there. Assertions: orphan-reconciliation, shared-audit-panel.",
+      "Enforce supported elapsed/verification timeouts, tool/verification-call counts, provider-retry and repair limits; observe cumulative tokens and dated API-equivalent cost estimates at the host's enforceable boundaries and prevent further dispatch once limits are exhausted. Reserve capacity for worker, repair and final graph verification before dispatch; do not silently reset on restart, revision or reassignment. Record in-flight overshoot, missing/cache usage and unavailable pricing explicitly rather than treating them as zero or subscription charges as API estimates. If a requested enforcement guarantee is unsupported, admission must explain/block it rather than promise a hard cap. Runtime cancellation must interrupt/reconcile owned work and suppress new effects without falsely claiming an unconfirmed process has stopped. Assertions: execution-policy, recovery.",
+      "Extend existing Tasks query/detail/RPC projections with real execution state, plan/dependency membership and one concise wait/attention reason. Show an inspectable audit/attempt/activity/evidence/delivery/ownership history, required versus obtained evidence, and current allowed actions. Offer minimal manual audit refresh/reconcile, cancel, overlap disposition, required human-evidence recording and explicit orphan-reassignment controls where allowed; use existing disclosures/quiet menus rather than a dashboard toolbar. Do not include a force-accept control. The default remains routed-session scope with explicit current-project scope; linked worker work belongs with its plan, not a global feed. Preserve native theme/fonts, Done when visibility, optional closable panel, independent scrolling and selection. Assertions: shared-audit-panel, runtime-authority.",
+      "Replace the immutable-insert-only rowid watermark where necessary with a durable monotonic change/version mechanism covering state, evidence, audit, decision, ownership and delivery changes. Snapshot/count/page/detail semantics must be consistent or explicitly reject an invalidated cursor. Notifications are hints: missed events, cross-process commits and reconnect converge by authoritative resnapshot, including refreshing the selected detail (not only its list row). Label stale data and last observation honestly; ignore old-scope and duplicate/out-of-order updates and clean up all watchers/actors/timers on scope changes/disposal. Durable transition data is retained for future Flow/Timeline; no replay UI or topology visualization is required now. Assertions: shared-audit-panel, compatibility.",
+      "Before edits capture actual HEAD, relevant working-tree hashes/inventory and source artifact; observed b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df is an initial commit, not proof the inspected source is committed there. Preserve unrelated/concurrent source, especially WebGPU and repaired tool receipts/connections. No reset/stash or unrelated commits/formatting. Use isolated temporary projects/databases and a safe isolated host for destructive crash tests; do not mutate the normal database or restart shared services without authorization. Load the repository Portless skill before any listening verification/development server; one-shot tests/embedded hosts without listeners are exempt. Record real starting/result artifact, exact checks and unresolved operational gates in the spike outcome. Assertions: compatibility, native-end-to-end, quality-and-record."
+    ],
+    "assumptions": [
+      "The user explicitly selected dependency graphs in this increment, isolated worktrees without automatic origin merging, stop-on-uncertain recovery, and orphan flagging with explicit reassignment rather than automatic transfer.",
+      "The user requires deterministic tools and messages to assist Architect, with manual audit views/controls in the existing Tasks panel, and explicitly permits SQLite relationships for the graph. These are runtime-enforced behaviors, not prompt-only recommendations.",
+      "The smallest graph execution policy is serial: one active implementation/repair worker per canonical project, deterministic ready-node order and explicit dependency/integration relationships. Parallel execution and the System visualizations are deferred.",
+      "Current production source has immutable revision-1 submitted specifications, SQLite schema version 1, live read projections, and no installed XState runner. New execution records may be stored separately without rewriting historical envelopes.",
+      "Fresh inspection returned exactly the retained panel task 2d955ffa-8b58-48c7-b34b-494b2af0d7fc and separate submission-idempotency task 5f5743c3-1bd0-4a53-a86b-a347dd961e1a, both submitted. Neither receipt establishes execution/completion; neither is resubmitted here. The user confirmed the interrupted and closed-database runner submissions did not persist.",
+      "The task-tool receipt and connection-lifecycle adapters were repaired before this submission. Existing-task inspection now succeeds. Inspected src/tools.ts opens/closes a connection per invocation and retains text-only receipts without output schemas; src/tools.test.ts includes retained-callback disposal regression coverage. Preserve both repairs."
+    ],
+    "writeScope": [
+      "src/runner/**",
+      "src/task.ts",
+      "src/task.test.ts",
+      "src/storage.ts",
+      "src/storage.test.ts",
+      "src/submission.ts",
+      "src/submission.test.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+      "src/architect.ts",
+      "src/architect.md",
+      "src/architect.test.ts",
+      "src/index.ts",
+      "src/gui.tsx",
+      "src/tasks/**",
+      "test/runner/**",
+      "test/proposal.ts",
+      "package.json",
+      "bun.lock",
+      "dist/gui-experimental.cjs",
+      "README.md",
+      ".agents/docs/handoff.md",
+      ".agents/docs/opencode-api.md",
+      ".agents/docs/spikes/009-durable-runner.md",
+      ".agents/docs/evidence/009-durable-runner/**"
+    ],
+    "context": [
+      {
+        "reference": "Original request and answered decisions in this session: first durable XState runner; OpenCode worker, runtime verification, durable outcome/evidence to originating Architect, crash/restart safety, dependency graphs now, isolated worktrees, stop on uncertainty, orphan review/reassignment, deterministic tools/messages and panel auditing; SQLite graph relationships. No repeated interview or visualization implementation.",
+        "revision": null
+      },
+      {
+        "reference": "README.md:1-101 original intent, Architect/runtime authority, TaskGraph, execution-policy, verification/completion and measurement contracts; 151-203 retained Tasks panel, spike boundary and progressive dogfooding.",
+        "revision": null
+      },
+      {
+        "reference": "AGENTS.md; package.json; bun.lock: strict TypeScript, Bun-native fmt/lint/check/test, one reusable plugin, pinned OpenCode 2.2.5, server safety and concurrent-work rules. XState is not installed at specification time.",
+        "revision": null
+      },
+      {
+        "reference": ".git/HEAD and .git/refs/heads/main observed HEAD only; source is working-tree context, not asserted to exist in this initial commit. Capture a current source baseline before implementation.",
+        "revision": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "src/task.ts:17-124 strict TaskProposal, evidence references, limits and immutable submitted envelope; src/task.test.ts and test/proposal.ts exercise existing compatibility.",
+        "revision": null
+      },
+      {
+        "reference": "src/storage.ts:21-164 SQLite v1 tasks table/body JSON, WAL/busy timeout, canonical-project partition, insertion rowid watermark and local listeners. src/storage.test.ts covers reopen, invalid writes, worktree sharing, future-version rejection and Git provenance.",
+        "revision": null
+      },
+      {
+        "reference": "src/submission.ts validates before provenance then inserts a fresh UUID; no execution admission or submission retry identity. src/tools.ts:12-27 result(run, structured=false) emits text-only receipts for submit/list and structured output for declared get/query schemas; 36-49 captures repository path/project and opens/closes each invocation's connection. Preserve these live repairs.",
+        "revision": null
+      },
+      {
+        "reference": "src/tools.test.ts:110 retained tool callbacks survive disposal of registration connection; other tests cover native registration/permission assertions. src/architect.test.ts covers registration replay isolation, not execution/recovery. src/architect.md currently defaults to inspection/submission only; introduce narrowly scoped runtime tools rather than giving Architect direct lifecycle authority.",
+        "revision": null
+      },
+      {
+        "reference": "src/index.ts Effect-scoped TaskRepository/tool/read/Architect registration; src/gui.tsx single optional GUI entry. Preserve src/webgpu/** and additive shared-entry coexistence.",
+        "revision": null
+      },
+      {
+        "reference": "src/tasks/contract.ts and read.ts expose literal submitted-only summaries/details; storage rowids currently represent immutable insert snapshots. src/tasks/rpc.ts publishes best-effort change hints with durable polling. These must account for mutable runtime projections without changing original specifications.",
+        "revision": null
+      },
+      {
+        "reference": "src/tasks/panel-state.ts:70-105 refreshes list but currently does not refresh an already selected detail; 157-184 handles event resubscription. src/tasks/panel-state.test.ts tests stale/cross-scope/event races. Add mutation, selected-detail and independent-process recovery checks.",
+        "revision": null
+      },
+      {
+        "reference": "src/tasks/panel.tsx:393 submitted glyph, 478 visible Done when, 516 collapsed Details, 549 hardcoded submitted status and submitting-session-only association; extend with real runtime data while preserving focused native hierarchy.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/opencode-api.md:23-64 and 199-211; public V2 sessions, tool/permission/retry hooks, worktrees, events, thin adapters and recovery boundary. Exact source authority is OpenCode v2.2.5; consult linked signatures before integration, not private host tables.",
+        "revision": "OpenCode v2.2.5 / 9bbb8ce18c80f099e0e448775f59d965ead40a21"
+      },
+      {
+        "reference": "node_modules/@opencode/plugin/dist/effect/session.d.ts:134-188: session-context API subset, idle/background caveats, hooks. node_modules/@opencode/client/dist/effect/api/api.d.ts:198-340: session get/update/context, prompt/synthetic stable message ID inputs and inbox APIs; not all client methods are on plugin ctx. node_modules/@opencode/schema/dist/session.d.ts:139-149: execution outcome/busy/idle/archive facts. Verify actual deduplication/reconciliation behavior, not just type shape.",
+        "revision": "@opencode/plugin, @opencode/client and @opencode/schema 2.2.5 installed declarations"
+      },
+      {
+        "reference": ".agents/docs/handoff.md:24-32 and 93-173; .agents/docs/spikes/008-focused-tasks-panel.md:98-124: retained panel, unperformed native Code Mode/read/scope gates and next runner boundary. Do not silently claim those gates are passed.",
+        "revision": null
+      },
+      {
+        "reference": "design/task-panel/visual-contract.md and design/task-panel/interaction-spec.json: focused Tasks native UI. design/system-panel/implementation-plan.md:31-46: runtime-first durable data and no frontend execution actor; Flow/Timeline are later increments.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/evidence/008-task-panel/first-pass-inventory.json: historical working-tree hashes/initial-commit caveat; refresh baseline rather than treating that inventory as current source revision.",
+        "revision": null
+      },
+      {
+        "reference": "Existing task 5f5743c3-1bd0-4a53-a86b-a347dd961e1a retrieved: separate submission-idempotency scope, atomic key mappings/concurrency/process tests. Retain its record; coordinate any shared identity primitive and source paths, do not duplicate its full work or assume it executed.",
+        "revision": "Task revision 1, status submitted; existing-task inspection reconfirmed before runner submission"
+      },
+      {
+        "reference": "Existing task 2d955ffa-8b58-48c7-b34b-494b2af0d7fc retrieved: retained read-only Tasks-panel specification, explicitly excluded runner/graphs. Its implementation evidence/deferred gates are in spike 008; this is a distinct subsequent runtime increment.",
+        "revision": "Task revision 1, status submitted; existing-task inspection reconfirmed before runner submission"
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "durable-model",
+        "assertion": "The production runner uses a versioned XState machine and the existing plugin-owned SQLite database, with queryable relational plan revisions/membership/dependency edges and linked attempt/evidence/decision/delivery records. SQL-backed integrity tests reject dangling/cross-project edges, duplicate membership/active dispatch and inconsistent commits; transaction fault injection leaves neither partial graph admission nor a state snapshot without its causal event/effect intent. Machine snapshots and ordered records agree after reopening; an incompatible machine/database version blocks without clearing progress. The GUI contains no execution actor.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/storage-machine-contract.md"
+          }
+        ]
+      },
+      {
+        "id": "graph-admission",
+        "assertion": "Native tools can submit/revise/request execution of both one-node and multi-task versioned graphs. Tests reject cycles, missing/foreign/duplicate tasks, stale specifications, missing skills/model/baseline and undefined integration order without dispatch. A diamond/multi-root fixture proves deterministic ready ordering with one worker per canonical project, a shared dependent executes once only after all prerequisites are accepted, and a failed/blocked predecessor prevents its successor. Open legacy/unplanned tasks are visibly non-runnable, not dispatched from a list query. Changing a graph while an attempt runs preserves its exact spec/attempt binding and revalidates future eligibility.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          }
+        ]
+      },
+      {
+        "id": "deterministic-audits",
+        "assertion": "Bypass any Architect search/prompt convention and call intake/admission/dispatch directly: runtime still produces and enforces dependency, duplicate-membership, overlap/prerequisite and ownership findings with evidence, watermark and allowed actions. Fixtures include two sessions, changed same-key payload, a copied legacy proposal with another UUID, distinct overlapping work, and more than 100 older open tasks. A concurrent insert/revision after audit invalidates stale authorization. Reuse/link and reasoned distinct-work dispositions are recorded and revalidated; lexical/scope candidates are never silently merged or certified semantically identical. Repeating an audit does not create another unresolved decision or worker.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          }
+        ]
+      },
+      {
+        "id": "command-integrity",
+        "assertion": "Race independent processes/connections on graph-intake keys, execution requests and task claims: identical key/content returns one durable identity/receipt, changed key-content conflicts, and different graphs cannot launch the same task twice. Fresh-process replay after a deliberately discarded response returns the committed result without another side effect. Stale expected versions, decision IDs, replayed resolved decisions, foreign-project targets and disallowed actions fail before dispatch or mutation. Fault injection proves receipt/state/effect atomicity. Replayed notifications never authorize work. Permission denial precedes data access on both initial and replay/conflict paths.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          }
+        ]
+      },
+      {
+        "id": "runtime-authority",
+        "assertion": "The same validated runtime command handlers back Architect tools and panel controls. Tests with missing agent checklist steps, forged worker success, direct accepted/state/budget setters, stale commands, unauthorized human evidence and reassignment all fail without bypassing checks. Authorized overlap disposition, reconcile, cancel and explicit human-evidence commands retain actor/reason/version/provenance. Any supported new attempt is explicit and retains history/consumed limits; no control resets counters. Native host trials show Architect can use narrowly permissioned tools while workers/Architect cannot certify acceptance or spawn unbudgeted workers; broad Code Mode, shell and edit authority are not required for Architect.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "execution-policy",
+        "assertion": "Tests prove deterministic policy resolution, prerequisite/skill-version delivery, project-wide single-worker reservation and persisted budgets. Deliberately tiny elapsed/token/tool/cost/retry/repair fixtures exhaust without dispatching further work; restart/reassignment does not restore spent capacity. Verification timeout and cancellation suppress downstream dispatch and reconcile actual host termination. Test maxRepairAttempts=0 and 1, provider retry limits, failed repair and repair-invalidated evidence. Unknown usage/pricing and in-flight overshoot are recorded honestly, and unsupported requested hard enforcement blocks admission. Native evidence records the actual connected subscription provider/model/variant and measured cancellation/accounting limits.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "combined-artifact",
+        "assertion": "A committed temporary Git fixture executes at least two dependent tasks in isolated worktrees, consuming recorded accepted prerequisite artifacts in deterministic integration order. The originating workspace, dirty sentinel and branch remain unchanged. Tests cover unavailable base, divergent prerequisites and integration conflict without silent fallback/copy/merge. Each result names an immutable artifact and changed paths. The graph is not accepted merely because individual branches pass: an intentionally incompatible combination fails final integrated verification; a compatible combined result passes overall assertions on its exact final artifact. Integration invalidates affected prior evidence.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "verification-boundary",
+        "assertion": "Runtime—not worker text—executes required checks and records artifact/input/environment/command identity, cwd, timeouts, exit status and bounded evidence. Fixtures independently force nonzero exit, timeout, missing artifact, unresolved human assertion, out-of-scope modified/deleted/renamed/untracked paths, a worker claiming done, and edits after a passing result; none becomes accepted. Required human evidence binds to the current assertion/artifact. Reusing identical valid inputs is permitted, changed inputs invalidate results, and every accepted task/graph has a complete evidence map and exact resulting artifact. Verifier process-crash ambiguity blocks rather than reruns an arbitrary command.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          }
+        ]
+      },
+      {
+        "id": "recovery",
+        "assertion": "Kill and restart real runner subprocesses against file-backed SQLite at controlled boundaries: before/after claim/effect-intent commit, during a confirmed worker, after host acceptance but before response persistence, during verification, after verification evidence commit, after outcome commit before notification, and after notification acceptance before acknowledgement. A durable fake-host side-effect counter exposes duplicates across fresh processes; confirmed in-flight/completed work is reconciled once, recorded progress/evidence/counters are preserved, and ambiguous outcomes remain blocked with a decision instead of repeating. Race a surviving old owner against recovery and prove fencing prevents two dispatchers; lease expiry alone never starts another worker. Include a real isolated OpenCode-host restart trial, not just mocked APIs or database close/reopen.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/recovery-trace.json"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "durable-delivery",
+        "assertion": "Tests demonstrate outcomes/evidence/outbox are committed before any notification. Lost responses, duplicate/out-of-order host events, missing listeners and restart cannot lose an outcome or trigger another worker/repair. Notifications identify exact task/plan/attempt/version, evidence, reason, budgets and allowed decision commands. Persisted, host-delivered, awaiting decision and resolved are independently inspectable; uncertain delivery is not reported as delivered. Ordinary progress/dependency advancement/configured repair invokes no Architect reasoning; a failure needing judgment and final graph synthesis reach the correct originating or explicitly reassigned Architect. Native transcripts prove receipt in the actual Architect session.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "orphan-reconciliation",
+        "assertion": "Fake-clock and persisted-cursor tests cover startup/event/periodic reconciliation across more than 100 unfinished tasks. An idle/disconnected but unarchived owner is never orphaned; archived and definitively missing owners produce one retained attention finding and hold further dispatch. Host lookup errors produce unknown status, not deletion. Repeated sweeps use no LLM and do not duplicate notices; in-flight work is reconciled without losing progress. Explicit authorized same-project reassignment to an unarchived Architect retains original provenance/history, rejects stale/foreign/archived targets, reaudits readiness and routes subsequent decisions to the new owner. No active Architect means durable pending project attention, not automatic transfer.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "runner-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "recovery-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          }
+        ]
+      },
+      {
+        "id": "shared-audit-panel",
+        "assertion": "Shared query/detail/RPC and the real native Tasks panel show authoritative running/verifying/accepted/failed/blocked/cancelled/exhausted states as applicable, graph dependencies, concise wait/attention reasons, obtained versus required evidence, attempts, ownership and separate delivery/decision status. Audit refresh/reconcile, cancel, overlap disposition, required human evidence and explicit orphan reassignment use the same validated backend and expose failures; no force-accept path exists. Tests mutate state/evidence/delivery without inserting a new task and prove durable invalidation/polling refreshes both list and selected detail across connections, missed events and restart. Pagination is consistent or explicitly invalidated. Native session A→B→A, explicit project view and reconnect checks preserve selection/scope/scroll and show stale data honestly. Keep the optional closable focused layout, visible Done when and native appearance; no Flow/Timeline or frontend actor is added.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "read-panel-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/tasks-running.png"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/tasks-attention.png"
+          }
+        ]
+      },
+      {
+        "id": "compatibility",
+        "assertion": "A genuine SQLite v1 fixture with existing task JSON migrates transactionally, preserves legacy UUID/revision/proposal/timestamps/provenance and task reads, and survives fresh-process reopening; unsupported future versions fail without resetting metadata. Existing native text-receipt submit/list and structured-schema get/query behavior work in the real host, including retained callbacks after disposal of their registration connection with exactly one persisted submission. Startup does not execute the two existing stored tasks automatically. Full existing tests including WebGPU pass and Tasks remains available without WebGPU initialization. Baseline/final inventory confirms only permitted files changed and shared-entry/tool-receipt/connection-lifecycle concurrent edits were preserved; old Code Mode/Desktop gates are not silently reported passed.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "adapter-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "read-panel-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/scope-review.md"
+          }
+        ]
+      },
+      {
+        "id": "native-end-to-end",
+        "assertion": "On OpenCode 2.2.5 with an isolated fixture repository/database and recorded authorized ChatGPT subscription model/variant, use native Desktop Architect to submit and request a two-task dependency plan. Observe actual worker sessions/isolated artifacts, runtime-run checks, automatic successor dispatch, final integrated acceptance and evidence/result delivery back to that Architect, with real Tasks-panel status. Also exercise a failed verification/decision message, a safe isolated host/process restart, and one manual audit action. Retain task/plan/session/attempt IDs, exact candidate artifact, host/plugin versions, native tool/message transcript, check outputs, restart observations and screenshots. Mock tests, persisted receipts and CLI-only model prompts do not satisfy this boundary; missing access/authorization is explicitly unresolved, not replaced by a claim of success.",
+        "evidence": [
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/native-trace.json"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/recovery-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "quality-and-record",
+        "assertion": "Full Bun behavior tests, native formatter/linter/typechecker and GUI build pass on the recorded resulting artifact. The spike record documents the original brief and answered scope decisions, SQLite relationship/machine/host contracts, one-worker serial strategy, effect/recovery/delivery guarantees and limits, exact checks/results, usage/cost/elapsed measurements or explicit unavailability, actual source baseline/result, changes, known operational gaps and retain/revise/discard outcome. Documentation describes deterministic tools/manual controls and does not claim task acceptance from submission or unperformed Desktop evidence. Any invalidated checks are rerun and out-of-scope concurrent failures remain reported rather than overwritten.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "quality"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "gui-build"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/spikes/009-durable-runner.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/009-durable-runner/storage-machine-contract.md"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": [
+        "One implementation worker with strict-TypeScript/Bun edit access limited to writeScope and ability to add an exactly pinned XState v5 dependency to this existing package.",
+        "Bun SQLite transactions/foreign keys/migrations and relational graph queries; deterministic XState actor/effect tests, injected clocks/faults and independent subprocess/connection race tests using isolated file-backed databases.",
+        "Public pinned OpenCode V2 session, worker/model/skill/permission/retry, worktree, event and notification adapters, with real host verification of dispatch, cancellation, reconciliation and delivery—not reliance on private tables or type signatures alone.",
+        "Isolated temporary Git repositories/worktrees and a safe isolated native Desktop/host context for real subscription-backed two-task execution, failure delivery, Tasks-panel auditing and restart evidence. Record the connected subscription model/variant before inference; do not use paid OpenRouter calls.",
+        "Shared schema-validated native agent tools and typed GUI RPC with backend authorization and revision/idempotency checks; manual controls must invoke the same services. Ordinary progress/recovery/orphan sweeps run deterministically without model reasoning.",
+        "Preserve existing working-tree and concurrent WebGPU changes, repaired tool receipts/connections and old task records. Existing idempotency/panel tasks remain separate historical specifications; coordinate shared implementation boundaries instead of resubmitting them.",
+        "Capture exact baseline/result artifacts and all acceptance evidence; stop with a concrete unresolved outcome when host safety, required skills, execution policy, verification or access cannot be established."
+      ],
+      "skills": [],
+      "risk": "high",
+      "policyReference": "AGENTS.md; README.md original intent, Architect/runtime authority, TaskGraph, execution-policy, verification/completion and spike contracts; .agents/docs/opencode-api.md pinned V2 boundary. Decisions in this session require dependency graphs, isolated worktrees, stop-on-uncertain recovery, explicit orphan reassignment, SQLite relationships and deterministic tools/messages/audit controls. Load repository server/browser skills when their operations are needed; no unapproved networked server, shared-host restart or paid inference."
+    },
+    "verification": [
+      {
+        "id": "runner-tests",
+        "command": "bun test src/runner",
+        "timeoutMs": 240000
+      },
+      {
+        "id": "recovery-tests",
+        "command": "bun test test/runner/recovery.test.ts",
+        "timeoutMs": 300000
+      },
+      {
+        "id": "adapter-tests",
+        "command": "bun test src/tools.test.ts src/architect.test.ts src/task.test.ts src/storage.test.ts test/runner/adapter.test.ts",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "read-panel-tests",
+        "command": "bun test src/tasks",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "all-tests",
+        "command": "bun test",
+        "timeoutMs": 600000
+      },
+      {
+        "id": "quality",
+        "command": "bun run verify",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "gui-build",
+        "command": "bun run build:gui",
+        "timeoutMs": 240000
+      }
+    ],
+    "limits": {
+      "maxTokens": 128000,
+      "maxEstimatedCostUsd": 150,
+      "maxElapsedMs": 28800000,
+      "maxToolCalls": 600,
+      "maxProviderRetries": 1,
+      "maxRepairAttempts": 1
+    }
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "id": "30a98786-0cda-4d74-8bb1-d869ab599590",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T06:01:30.658Z",
+  "provenance": {
+    "projectID": "global",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6f7e4ee1ffekc65Oa6u26f5nK",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Make LAZERS task submission safely retryable after a successful write with a lost response. Add a required caller-supplied idempotency key, scoped to canonical repository identity and durable across host restarts. Same key plus same validated proposal returns the original task ID; same key with changed proposal reports a conflict without creating a task; a different key may create an identical task.",
+    "exclusions": [
+      "Worker execution, dispatch, scheduling, and GUI changes.",
+      "Deduplication of identical proposals submitted under different keys.",
+      "Changes to task lifecycle or task mutability."
+    ],
+    "constraints": [
+      "Preserve existing task proposal validation and ensure invalid submissions do not collect provenance or persist data.",
+      "Preserve canonical repository isolation and ensure keys do not expose or retrieve tasks belonging to another repository.",
+      "Persist the key-to-task association atomically with task creation so a crash/restart cannot leave a successful task without its deduplication record.",
+      "Keep the existing submit response shape for successful first submissions and retries unless a documented conflict response requires otherwise."
+    ],
+    "assumptions": [],
+    "writeScope": [
+      "src/submission.ts",
+      "src/storage.ts",
+      "src/tools.ts",
+      "src/storage.test.ts",
+      "src/tools.test.ts"
+    ],
+    "context": [
+      {
+        "reference": "src/submission.ts submitTask currently validates proposal and unconditionally inserts a UUID task; key-aware result mapping belongs here.",
+        "revision": null
+      },
+      {
+        "reference": "src/storage.ts TaskRepository persists tasks in SQLite, partitions by canonical project_directory, and has schema user_version 1; implement durable, atomic key association/migration here.",
+        "revision": null
+      },
+      {
+        "reference": "src/tools.ts lazers_submit_task exposes generated proposal JSON schema and calls submitTask; extend tool input to require idempotency key.",
+        "revision": null
+      },
+      {
+        "reference": "src/storage.test.ts covers SQLite reopen durability, validation, repository isolation, and migration version behavior.",
+        "revision": null
+      },
+      {
+        "reference": "src/tools.test.ts covers native tool submission, retrieval, list, permissions, and invalid input.",
+        "revision": null
+      },
+      {
+        "reference": "README.md lines 136 and 141 document current task persistence and retry duplicate limitation; no documentation change requested for this bounded code increment.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/opencode-api.md lines 23-64, pinned OpenCode V2 2.2.5 API lookup; current native tool transform is the supported integration surface.",
+        "revision": "OpenCode 2.2.5 / source commit 9bbb8ce"
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "durable-idempotency",
+        "assertion": "Submitting a valid proposal with an idempotency key, closing and reopening the repository, then retrying that same key and proposal returns the original task ID and leaves exactly one task.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "tests"
+          }
+        ]
+      },
+      {
+        "id": "key-conflict",
+        "assertion": "Reusing an existing key with a different validated proposal returns an explicit conflict result and does not create a second task; the original task remains retrievable.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "tests"
+          }
+        ]
+      },
+      {
+        "id": "key-isolation",
+        "assertion": "Keys are scoped to canonical repository identity: an identical key can independently create tasks in another project repository without exposing or conflicting with the first project's task.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "tests"
+          }
+        ]
+      },
+      {
+        "id": "input-and-permission",
+        "assertion": "The native submission tool requires the key, retains existing proposal validation behavior, and permission denial or invalid submission causes no task write.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "tests"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": ["Persist idempotency keys atomically with submitted tasks in SQLite."],
+      "skills": [],
+      "risk": "medium",
+      "policyReference": "Follow repository AGENTS.md, README.md spike/task acceptance boundary, and .agents/docs/opencode-api.md pinned V2 tool API; preserve validation and repository authorization/isolation."
+    },
+    "verification": [
+      {
+        "id": "tests",
+        "command": "bun test src/storage.test.ts src/tools.test.ts",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "checks",
+        "command": "bun fmt --check && bun lint && bun check",
+        "timeoutMs": 120000
+      }
+    ],
+    "limits": {
+      "maxTokens": 10000,
+      "maxEstimatedCostUsd": 2,
+      "maxElapsedMs": 1200000,
+      "maxToolCalls": 20,
+      "maxProviderRetries": 1,
+      "maxRepairAttempts": 1
+    }
+  }
+}

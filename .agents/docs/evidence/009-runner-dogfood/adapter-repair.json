@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-31",
+  "sessionID": "ses_e6f007c15ffe1HH5nmeqvV4UEA",
+  "observedErrors": [
+    {
+      "tool": "lazers_list_tasks",
+      "count": 2,
+      "message": "Tool result declared output without an output schema",
+      "cause": "The shared result helper introduced by the task-panel pass added Result.output to submit/list tools that declare no Tool.Info.output schema."
+    },
+    {
+      "tool": "lazers_submit_task",
+      "message": "Tool execution interrupted",
+      "cause": "The supervising agent paused the current model turn to prevent a potential write followed by rejected receipt. Export shows the tool input was empty when interrupted."
+    }
+  ],
+  "receiptRisk": "The same adapter error on a valid submit could reject a receipt after commit. This is distinct from the separately specified lost-response/idempotency feature.",
+  "beforeRetryCheck": {
+    "method": "Read-only SQLite query of the existing project task table",
+    "normalProjectTaskIDs": [
+      "2d955ffa-8b58-48c7-b34b-494b2af0d7fc",
+      "5f5743c3-1bd0-4a53-a86b-a347dd961e1a"
+    ],
+    "runnerTaskPersisted": false
+  },
+  "repair": "Return structured output only for get/query, which declare matching output schemas; preserve direct text-only receipts for submit/list.",
+  "regressionCoverage": "Exercise real registered submit/list/get adapters; assert submit/list have neither declared schema nor structured result, and get declares a schema with matching structured content. Existing query output/permission coverage retained.",
+  "initialChecks": "4 tool tests / 24 assertions pass; native lint and typecheck pass.",
+  "desktopResume": "Continued the same Architect session through Desktop, requiring existing-task inspection before any new submission. Preserved the user's answered graph, worktree, uncertain recovery, orphan and deterministic audit requirements.",
+  "definitionChanged": false,
+  "stepLimitChanged": false,
+  "liveRepairVerification": "Confirmed in the same Desktop session: lazers_list_tasks and lazers_get_task completed successfully after the receipt repair. Submission then exposed a separate closed-connection failure; no runner row persisted.",
+  "connectionRepair": {
+    "observedError": "Cannot use a closed database",
+    "lifecycleRisk": "A tool callback retained across plugin reload can outlive the registration-scoped SQLite connection. Concurrent source reloads occurred during the multi-minute model turn; this is consistent with the failure, not proof of every host-internal lifecycle step.",
+    "change": "Acquire a new TaskRepository connection after permission assertion for each tool execution, using the captured database path and canonical project. Close it after the synchronous operation. Do not retry a write after an ambiguous error.",
+    "regression": "Dispose the registration connection, then invoke the retained submit/get/list/query callbacks. Verify all succeed and exactly one task persists with correct provenance.",
+    "checks": "5 tool tests / 30 assertions; full suite 65 tests / 386 assertions; full native formatter/linter/typechecker pass.",
+    "desktopVerification": "Confirmed in the same native Desktop session: one submission completed with taskID 94298112-1c6c-44ba-87f6-a06533eafa59, then lazers_get_task returned revision 1. Exported retrieval exactly matches the read-only SQLite envelope and production TaskSpecSchema. Exactly one row belongs to this session. The native session-scoped Tasks panel displays the submitted task and all 15 criteria.",
+    "storageDecision": "WAL and the existing 5000ms busy timeout remain enabled. Share backend domain services between native tools and GUI RPC; a single RPC transport is unnecessary. Future runner writes still require transactional claims, durable command receipts and fencing across local processes. Reopen before operating, rather than replaying a possibly committed write."
+  }
+}

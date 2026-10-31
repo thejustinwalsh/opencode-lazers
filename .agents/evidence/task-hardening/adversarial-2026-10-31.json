@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-31",
+  "host": "OpenCode Desktop 2.2.5, isolated test profile, Apple WebGPU",
+  "bundleSHA256": "4f6c33c5d8527d790bbee41d9b2e111d6ca4c534743e5239be144fc0a9c3bdef",
+  "sessionID": "ses_e6eba6bf0ffePuEu3VBg9j5NN2",
+  "calls": [
+    {
+      "name": "lazers_local_system_one",
+      "status": "completed",
+      "input": {
+        "model": "d1-omni-2b",
+        "state": {
+          "request_status": "approved",
+          "urgency": "can wait"
+        },
+        "questions": {
+          "approval": {
+            "type": "noul",
+            "instructions": "Is request_status approved?"
+          },
+          "route": {
+            "type": "choice",
+            "instructions": "Which status is recorded?",
+            "criteria": {
+              "approved": "The status is approved",
+              "rejected": "The status is rejected"
+            }
+          },
+          "urgency": {
+            "type": "score",
+            "instructions": "How urgent is the request?",
+            "criteria": ["Can wait", "Needs attention today", "Immediate emergency"]
+          }
+        },
+        "timeoutMs": 60000
+      },
+      "output": [
+        "{\"model\":\"d1-omni-2b\",\"answers\":{\"approval\":{\"type\":\"noul\",\"noul\":0.9403665011762699},\"route\":{\"type\":\"choice\",\"choice\":\"approved\",\"probabilities\":{\"approved\":0.9790095440022992,\"rejected\":0.020990455997700747},\"confidence\":0.9790095440022992},\"urgency\":{\"type\":\"score\",\"score\":0.031240095040105574,\"probabilities\":{\"0\":0.9770425815064749,\"1\":0.014674741946944262,\"2\":0.008282676546580657},\"legend\":{\"0\":\"Can wait\",\"1\":\"Needs attention today\",\"2\":\"Immediate emergency\"},\"confidence\":0.9770425815064749}},\"usage\":{\"input_tokens\":119,\"output_tokens\":0}}"
+      ],
+      "time": {
+        "created": 1793438621201,
+        "ran": 1793438621239,
+        "completed": 1793438629255
+      }
+    }
+  ],
+  "final": "The model scored approval at 0.94, chose \"approved\" with 0.98 confidence, and rated urgency 0.03 (essentially \"can wait,\" p=0.98).",
+  "restoredFeatures": {
+    "enabled": true,
+    "questions": true,
+    "decisions": true,
+    "review": true,
+    "dictation": true,
+    "readAloud": true
+  },
+  "observations": {
+    "startup": "Automatic verified-cache load reached Ready",
+    "initialHardenedBuild": {
+      "chat": "local GPU ready.",
+      "usage": {
+        "input": 19,
+        "output": 4
+      },
+      "decisionPositive": true,
+      "actualDeviceLoss": "Loading from cache, then decision Ready",
+      "decisionAfterRecovery": false
+    },
+    "finalBundle": {
+      "nativeSystemOne": "One completed native tool call with noul, choice and score",
+      "speech": "Observed preparing, GPU busy, and return to idle; audible content not independently transcribed",
+      "microphone": "Recording state observed; Escape returned idle; synthetic draft unchanged and not sent; draft cleared afterward",
+      "masterOff": "Local inference is off; child choices retained; 3.19 GB cache retained",
+      "preferences": "All original capability choices restored; Never idle; British English female"
+    }
+  },
+  "limitations": [
+    "No all-day soak or Windows/Linux driver matrix",
+    "Native ONNX GPU work cannot be forcibly preempted mid-forward-pass",
+    "Advisory model/reporting quality evaluation remains separate",
+    "Host glob/minimatch advisories remain unresolved under pinned OpenCode 2.2.5"
+  ],
+  "cleanup": {
+    "testApp": "ai.opencode.desktop.lazers-webgpu-test closed; absent from running-app inventory",
+    "otherOpenCode": "ai.opencode.desktop remained running",
+    "testServer": "Portless-owned test service stopped; exec exited 130 after SIGINT",
+    "restoredBeforeClose": "Runtime Ready; all original features on; Never idle; British English female; 3.19 GB cache retained"
+  }
+}

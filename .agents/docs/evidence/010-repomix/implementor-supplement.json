@@ -1,0 +1,283 @@
+{
+  "schemaVersion": 1,
+  "id": "9dde2941-541a-43cd-b426-283854bcf403",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T08:56:07.162Z",
+  "provenance": {
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6edbea90ffd9ylQrwEaEtxWVQ",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Record and implement the user's clarified implementor boundary as a linked supplement to Repomix investigation task 313174d7-8358-4911-b006-1a1f25ca779c revision 1: the same bounded Repomix index/evidence service must supply focused, source-versioned ContextPacket material to implementors as well as Architect/research specialists. Register a reusable implementor role that inherits normal OpenCode/user/project capabilities, including available LSP/diagnostics, editing, shell and Code Mode, but cannot launch subagents. LAZERS owns implementation parallelism; runtime owns model/skill admission, write-scope enforcement, budgets, verification and acceptance. This is the supplemental context/role contract and tooling only, not implementation of durable runner 94298112-1c6c-44ba-87f6-a06533eafa59.",
+    "exclusions": [
+      "Reimplementing or resubmitting original investigation task 313174d7-8358-4911-b006-1a1f25ca779c; do not create a second index/cache, duplicate research agents or expand its specialist authority. This supplement adds implementor context/role behavior and governs any interpretation that would apply read-only specialist restrictions to implementors.",
+      "Implementing, revising or executing durable runner 94298112-1c6c-44ba-87f6-a06533eafa59: no scheduler/graphs, admitted production worker dispatch, lifecycle/storage/outbox, runtime budget accounting, verification runner or acceptance transitions. Do not start stored tasks or claim these guarantees are already enforced.",
+      "Copying Architect/researcher deny-all permission allowlists or research-specific step/time/tool budgets onto implementors; globally disabling or enabling Code Mode; narrowing worker reads to task write scope; granting blanket permissions that override user/project denials.",
+      "An LSP service/domain invented on plugin ctx, replacing native tools, worker-owned delegation/parallelism, whole-repository prompt dumping, semantic indexing, provider routing/paid fallback, required-skill auto-installation, GUI/WebGPU changes, unrelated dependency upgrades or task-schema/storage migrations."
+    ],
+    "constraints": [
+      "This supplement is linked to original task 313174d7-8358-4911-b006-1a1f25ca779c revision 1, retrieved as submitted. Stored revision-1 tasks are immutable and no revision tool is available; this is not a replacement submission of that work or evidence either task ran. Treat both records and the user's clarification together when implementing the research increment. Implement the original shared index service first and then this context/role integration, with one worker and serialized shared-path edits, not independent competing implementations. If that service is unavailable, stop with a concrete prerequisite rather than build a duplicate. Acceptance: integration-boundary.",
+      "Reread README.md:7-30, 57-65 and 85-99. Roles stay distinct: Architect specifies/reconciles, investigators/researchers are narrowly read-only, implementors implement and report artifacts/evidence/issues, runtime selects/admit resources and enforces scope/budgets/verification/acceptance. No implementor or research tool may mark tasks accepted, reset counters or schedule implementation children. Read-only describes the index tool's operation and specialist role, not every consumer's capabilities. Acceptance: role-separation, integration-boundary.",
+      "Expose a reusable typed context-contribution interface under src/investigation/ and a schema-validated native context operation accessible to an authorized implementor using the original project's index/evidence service. It supplies focused original implementation/interface/test excerpts and findings, source path/lines/content hash/revision, snapshot/tool/config identity, coverage/truncation/unknowns and a bounded manifest identifying relevant repository rules, exact task/specification and selected skill references/provenance supplied by the caller's authorized host/runtime context. This is the evidence component/composition boundary for README's ContextPacket, not a new admission service. Required specification/rules/skills must remain explicitly identified and required delivery cannot be certified merely because references exist. If mandatory material cannot fit or resolve, return an actionable incomplete result rather than silently dropping it. No prompt injection of complete packs. Acceptance: implementor-context, context-policy-provenance.",
+      "Index/evidence/context access uses trusted active session/workspace location and per-caller current read permission; never accept a caller-selected foreign root, session or arbitrary context artifact. Reuse permitted content/index work, not another role's authority. An index created by Architect can serve a separately authorized implementor in the same actual workspace after independent permission checks, but Architect submission receipts remain parent/session-bound and are not transferable worker credentials. Separate implementation worktrees must build/validate their own content identity; canonical-project sharing cannot substitute another worktree's snapshot. Apply original task's confinement, ignore/secret policy, output/input/cache ceilings and explicit stale/partial outcomes unchanged. Acceptance: implementor-context, scope-versus-read.",
+      "Do not restrict index/context read selection to task writeScope: a worker may need permitted cross-module interfaces, tests and repository rules outside allowed writes. Reads remain bounded/relevant and subject to host read policy; writing those files is not authorized by context retrieval. The context manifest carries exact permitted write scope, task identity and verification/acceptance references as instructions/data, not proof that runtime enforced them. Document the runner integration contract: resolve the actual worker worktree, validate context/source and required guidance, admit policy/budgets, then dispatch; verify real changed paths and acceptance at runtime. Do not implement these runner steps here. Acceptance: scope-versus-read, integration-boundary.",
+      "Register a packaged lazers-implementor role using the pinned public agent registry, with a concise implementation/reporting prompt and replay-isolated configuration. Inherit normal host capabilities and user/project policy rather than the Architect's or researcher's deny-all profile. Preserve available native LSP/editor/diagnostic access, editing, shell, and Code Mode without forcing them through the read-only research tool. Apply only narrowly scoped delegation denials: native subagent invocation, lazers_research and any LAZERS worker-dispatch path must not be callable by implementors, directly or through Code Mode. Do not override existing host denials with blanket allow. Prove merged effective policy in the real host; registration metadata alone is insufficient. This is a reusable role, not authorization to start production workers in this increment. Acceptance: role-separation, no-worker-delegation.",
+      "Default implementor model remains unset and inherits the authorized session/policy selection unless explicitly configured otherwise. Context/index tooling must not select models, providers, tools or skills as a substitute for runtime policy. Carry already selected model/variant and required skill source/version provenance where supplied; distinguish requested, resolved and actually delivered guidance. Missing/denied required skills remain an explicit admission prerequisite, not successful delivery, and no paid-provider fallback or silent skill substitution is permitted. Packet assembly must not duplicate repository rules/skill instructions on repeated use; source changes invalidate relevant findings. The separate runner remains responsible for delivery to admitted, delegated, resumed/synthetic/compacted workers as those paths are supported. Acceptance: context-policy-provenance.",
+      "Use strict TypeScript, pinned OpenCode V2 2.2.5 and Bun-native formatter/linter/typechecker/tests. Consult .agents/docs/opencode-api.md and exact host definitions: there is no standalone public LSP domain on pinned plugin ctx. Verify actual available native LSP/diagnostic tooling and preserve it; a host feature gap is recorded precisely, not replaced by an invented API or broad edit/shell denial. Read .agents/docs/repomix-research.md:5-13, whose updated clarification/probe is now present, and preserve concurrent changes. The existing Repomix service and package pin are owned by the original task; verify any probe evidence independently before claiming acceptance. Acceptance: role-separation, quality-and-record.",
+      "Before edits capture HEAD plus hashes of actual affected working-tree files, since initial commit b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df does not contain the inspected implementation. Use isolated projects/cache/databases and a safe host for negative tests/native role probes; no task execution, shared-host restart or source reset/stash. Preserve WebGPU, runner and tool receipt/connection repairs; do not change out-of-scope files to make checks pass. Load $portless-dev-servers before any listening verification server. Acceptance: integration-boundary, quality-and-record."
+    ],
+    "assumptions": [
+      "The user's clarification is authoritative for the joint investigation/context increment: implementors keep ordinary native capabilities, may read relevant permitted context outside write scope, cannot launch subagents, and do not own runtime policy or acceptance.",
+      "This persisted supplement links to the already submitted immutable investigation record rather than pretending to revise it. The original and supplement should be integrated serially by one worker; their overlapping paths are not authorization for parallel execution.",
+      "The smallest useful integration now is a context contribution/tool plus reusable role and executable host-policy checks. Actual admitted worker dispatch, production ContextPacket delivery guarantees, cumulative budget enforcement and final artifact acceptance remain the separate runner's responsibility."
+    ],
+    "writeScope": [
+      "src/investigation/**",
+      "src/implementor/**",
+      "src/specialists/**",
+      "src/index.ts",
+      "src/architect.md",
+      "src/architect.test.ts",
+      "test/investigation/**",
+      "README.md",
+      ".agents/docs/handoff.md",
+      ".agents/docs/repomix-research.md",
+      ".agents/docs/opencode-api.md",
+      ".agents/docs/spikes/010-architect-investigation.md",
+      ".agents/docs/evidence/010-architect-investigation/**"
+    ],
+    "context": [
+      {
+        "reference": "Additional user clarification in this session: Repomix also supplies focused implementor context; normal OpenCode capabilities including LSP/edit/shell/Code Mode retained; no worker-launched subagents; runtime owns implementation parallelism, write scope, budgets, verification and acceptance; record boundary now, do not implement runner.",
+        "revision": null
+      },
+      {
+        "reference": "Original investigation task 313174d7-8358-4911-b006-1a1f25ca779c retrieved after clarification. This supplement adds implementor consumers/ContextPacket and role semantics; all original index safety/bounds/primary-source research and planning requirements still apply. Its Code Mode exclusion means no broad Architect/researcher Code Mode enablement, not removal of ordinary implementor Code Mode.",
+        "revision": "Task revision 1, stored status submitted"
+      },
+      {
+        "reference": "README.md reread:7-30 role ownership and bounded runtime policy; 49 revised requirements; 53-55 shared write-scope serialization; 57-65 model/permissions/skills/context admission and worker reporting authority; 77-89 runtime acceptance, ContextPacket, source validity and no duplicate guidance; 97-101 native subscription/public API boundary.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/repomix-research.md reread:5-9 user implementation-worker clarification now present, native LSP limitation and inherit-policy-plus-specific-denial rule; 11-13 newly documented Repomix 1.18.1 package probe; 31-41 original bounded indexing/specialists acceptance. This document changed since the original task was submitted; preserve and record its fresh hash.",
+        "revision": "Working-tree document observed after clarification; research checked 2026-10-31, probe not independently executed in this turn"
+      },
+      {
+        "reference": "src/architect.md:6-39 explicit deny-all/read-only allowlist must NOT be used as implementor base. src/architect.ts:13-26 native decode/transform/update pattern; src/architect.test.ts:8-49 isolated transform replay and model-unset tests. Current src/ inventory contains no worker/context/runner implementation, so do not claim existing ContextPacket runtime enforcement.",
+        "revision": null
+      },
+      {
+        "reference": "src/tools.ts:51-79 task submission and 81-153 bounded project reads; preserve receipt formats and per-call connection repair. src/task.ts:17-64 existing proposal carries writeScope, context references, acceptance/verification and capability/skill requirements; 107-121 immutable revision-1 schema. No revision mutation/API is present in available tools.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/opencode-api.md reread:23-64 public agent/tool/permission/session/skill and hooks; pinned ctx lacks an LSP domain. node_modules/@opencode/plugin/dist/effect/permission.d.ts:9-30 native evaluate/assert has session/agent/action/resources. Validate effective inherited host policy and native Code Mode execution routes, not just permission strings.",
+        "revision": "OpenCode v2.2.5 / 9bbb8ce18c80f099e0e448775f59d965ead40a21; installed plugin 2.2.5"
+      },
+      {
+        "reference": "Durable runner task 94298112-1c6c-44ba-87f6-a06533eafa59 revision 1 previously retrieved in this session: separate runtime model/skill/context admission, isolated workers, scope checks, budgets, verification and acceptance. No record or implementation modification is authorized by this supplement.",
+        "revision": "Task revision 1, retrieved status submitted"
+      },
+      {
+        "reference": ".git/refs/heads/main reread; actual affected source remains working-tree context requiring fresh baseline hashes before implementation.",
+        "revision": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "implementor-context",
+        "assertion": "A real implementor-role native session obtains focused implementation/interface/test excerpts through the same Repomix-backed index/evidence service used by Architect, without a second cache or full-pack injection. Fixture and native checks prove correct path/line/hash/task/workspace provenance, bounded output and explicit partial coverage. An unchanged authorized same-workspace consumer reuses indexed content after its own read checks; a foreign consumer, revoked permission, mismatched implementation worktree or source edit yields denial/stale/refreshed identity, not blindly reused context. Retain the actual request/result and context manifest with source refs.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "context-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-context-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/implementor-context-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "scope-versus-read",
+        "assertion": "Use a fixture whose permitted writeScope is src/feature.ts while required interfaces/tests lie elsewhere. The implementor can retrieve those permitted out-of-write-scope reads, and a host read denial still blocks a different file. Packet metadata retains exact write scope and does not add read files to it. No test or documentation treats obtaining context as authorizing broader writes or accepting an artifact; runtime scope/verification/acceptance ownership is explicit. Cross-worktree identity and Architect receipt-parent binding remain intact.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "context-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-context-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/implementor-boundary.md"
+          }
+        ]
+      },
+      {
+        "id": "role-separation",
+        "assertion": "Register/replay the implementor profile without copying the Architect/researcher deny-all rules, hard-coding a model or replacing host tool selection. In a native isolated fixture where normal user/project policy permits them, implementor editing, shell and Code Mode execute harmless test operations and available native LSP/diagnostic access is demonstrated. A separate user/project deny still denies the corresponding implementor operation; no blanket allow overrides it. Architect/investigator/researcher remain narrowly permissioned. Record actual native tool identities and any genuine LSP availability gap; absent host LSP is an explicit unresolved capability, not an invented plugin API or reason to disable normal tools.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "role-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-context-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/implementor-boundary.md"
+          }
+        ]
+      },
+      {
+        "id": "no-worker-delegation",
+        "assertion": "Native effective-policy tests attempt implementation-role subagent launch directly and through Code Mode, lazers_research, and any exposed LAZERS dispatch operation; every path fails before creating a child and child-session count remains unchanged. Legitimate editing/shell/Code Mode operations still work under otherwise allowing host policy. Denial is mechanically enforced on known host/tool dispatch paths, not prompt-only advice or hiding tool descriptions. This does not claim an operating-system sandbox for arbitrary shell commands, and no general scheduler/worker dispatch is introduced by the test harness.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "role-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-context-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/implementor-boundary.md"
+          }
+        ]
+      },
+      {
+        "id": "context-policy-provenance",
+        "assertion": "Context assembly tests include repository rules, exact task/spec refs, relevant source/test evidence and selected-skill source/version refs supplied by an authorized policy context, without duplicate instructions on reuse. Requested-but-unresolved, denied/missing skill, changed skill/source, oversized mandatory material and unconfirmed delivery remain explicitly incomplete/prerequisite, never successful delivered/admitted status. Model/skill selections are not silently changed by context tooling; unset default and explicit authorized selection provenance are retained, with no paid fallback. Packet tests distinguish source retrieval from host skill attachment/delivery and document the runner-owned delivery/admission boundary, including future resumed/compacted paths.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "context-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "role-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/implementor-boundary.md"
+          }
+        ]
+      },
+      {
+        "id": "integration-boundary",
+        "assertion": "The spike/handoff and shared-tool contracts link both investigation specifications and explicitly state this clarified role/context boundary; the original task is not silently revised or duplicated. Scope review confirms no durable runner, dispatch/state/budget/verification/acceptance engine or GUI changes, no stored task started, and runner task record is untouched. Existing specialist and task receipt/retained-callback tests pass, shared-path edits preserve concurrent work, and original index budgets/security remain enforced for the new implementor consumer. Actual initial/final source hashes identify the integrated artifact rather than attributing working-tree source to initial HEAD.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "original-regressions"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/scope-review.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/spikes/010-architect-investigation.md"
+          }
+        ]
+      },
+      {
+        "id": "quality-and-record",
+        "assertion": "Bun behavior tests and native formatter/linter/typechecker pass against the named artifact. The record includes effective role-policy matrix, ContextPacket contribution/delivery boundary, exact native tools and model/skill provenance, real context/delegation-denial traces, test outputs, measured or unavailable usage, linked task IDs and unresolved operational gates. Do not claim runner enforcement or acceptance from context retrieval, mocked role config, a persisted receipt or unperformed native checks.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "quality"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/010-architect-investigation/implementor-boundary.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/spikes/010-architect-investigation.md"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": [
+        "One implementation worker integrating this supplement serially with original investigation task 313174d7-8358-4911-b006-1a1f25ca779c, using the existing Repomix service and no duplicate indexing implementation.",
+        "Strict TypeScript/Bun and pinned OpenCode V2 agent/tool/permission/context contracts; isolated host sessions and fixture projects for effective inherited permissions, harmless editing/shell/Code Mode and no-subagent probes.",
+        "Native available LSP/diagnostic-tool discovery without invented ctx APIs; honest recording of host capability gaps and unresolved acceptance.",
+        "Normal implementor host capabilities under user/project authorization, with narrow mechanically enforced host delegation denials; no paid-provider selection, production worker dispatch or runner implementation authority.",
+        "Fresh source baseline/scope checks preserving concurrent WebGPU/runner/tool repairs. Required runtime model/skill/scope/budget/verification/acceptance enforcement stays explicitly external to this supplement."
+      ],
+      "skills": [],
+      "risk": "medium",
+      "policyReference": "User clarification in this session; README.md:7-30,57-65,77-99 original role, runtime policy and ContextPacket contracts; AGENTS.md; .agents/docs/repomix-research.md:5-13 updated implementor boundary; .agents/docs/opencode-api.md pinned OpenCode V2 2.2.5. Linked supplement to investigation task 313174d7-8358-4911-b006-1a1f25ca779c, not revision/implementation of durable runner 94298112-1c6c-44ba-87f6-a06533eafa59."
+    },
+    "verification": [
+      {
+        "id": "context-tests",
+        "command": "bun test src/investigation/context.test.ts",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "role-tests",
+        "command": "bun test src/implementor",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "native-context-tests",
+        "command": "bun test test/investigation/implementor-context.test.ts",
+        "timeoutMs": 240000
+      },
+      {
+        "id": "original-regressions",
+        "command": "bun test src/investigation src/specialists src/tools.test.ts src/architect.test.ts",
+        "timeoutMs": 240000
+      },
+      {
+        "id": "all-tests",
+        "command": "bun test",
+        "timeoutMs": 600000
+      },
+      {
+        "id": "quality",
+        "command": "bun run verify",
+        "timeoutMs": 180000
+      }
+    ],
+    "limits": {
+      "maxTokens": 40000,
+      "maxEstimatedCostUsd": 35,
+      "maxElapsedMs": 7200000,
+      "maxToolCalls": 160,
+      "maxProviderRetries": 1,
+      "maxRepairAttempts": 1
+    }
+  }
+}

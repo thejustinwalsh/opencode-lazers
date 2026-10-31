@@ -1,0 +1,290 @@
+{
+  "host": "OpenCode 2.2.5",
+  "session": "ses_e6f6a5776ffdT8KbLFk8WJNM3u",
+  "fixture": "Synthetic cancellation proposal; no submission or execution",
+  "calls": [
+    {
+      "messageID": "msg_190ed29d30018TtZ1F0ST5dxU8",
+      "name": "lazers_verify_task",
+      "time": {
+        "created": 1793432841378,
+        "ran": 1793432842808,
+        "completed": 1793432849271
+      },
+      "state": {
+        "status": "completed",
+        "input": {
+          "task": {
+            "objective": "Cancelling dictation releases microphone tracks and preserves the existing composer draft.",
+            "exclusions": ["Do not send the composer draft automatically"],
+            "constraints": ["Use the native OpenCode composer"],
+            "assumptions": [],
+            "writeScope": ["src/webgpu/**"],
+            "context": [
+              {
+                "reference": ".agents/docs/opencode-api.md",
+                "revision": null
+              }
+            ],
+            "acceptance": [
+              {
+                "id": "microphone",
+                "assertion": "A microphone icon is visible above the composer.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ]
+              }
+            ],
+            "requirements": {
+              "capabilities": ["microphone"],
+              "skills": [],
+              "risk": "low",
+              "policyReference": "AGENTS.md"
+            },
+            "verification": [
+              {
+                "id": "tests",
+                "command": "bun test src/webgpu/dictation.test.ts",
+                "timeoutMs": 60000
+              }
+            ],
+            "limits": {
+              "maxTokens": 20000,
+              "maxEstimatedCostUsd": 2,
+              "maxElapsedMs": 1200000,
+              "maxToolCalls": 40,
+              "maxProviderRetries": 0,
+              "maxRepairAttempts": 1
+            }
+          },
+          "request": "When dictation is cancelled, stop every microphone track and preserve all existing composer text. Do not send the draft automatically.",
+          "evidence": [
+            "This is a proposed implementation, not an executed test. The proposed test currently checks only that the microphone icon is visible. No track cleanup or draft preservation assertions are planned yet."
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"feedback\",\"reviewID\":\"ecaf84ff-e4f5-41e1-8fe8-76146fa28046\",\"version\":\"task-hardening-v1\",\"round\":1,\"maxRounds\":3,\"fingerprint\":\"04079aa593a8678db65b4e4c65ea7f33d21e0dc68c7f046c4e156401e09eacb8\",\"model\":{\"id\":\"d1-omni-2b\",\"revision\":\"2552a495cd0fc6d82f7911110f07bca7a05c11c6\"},\"answers\":{\"cancellation_requested\":{\"type\":\"noul\",\"noul\":0.9429297247940782},\"performance_requested\":{\"type\":\"noul\",\"noul\":0.04142986316362289},\"q_7542adde29d31c04\":{\"type\":\"noul\",\"noul\":0.04196623445017255},\"q_f2e499ec231974d8\":{\"type\":\"noul\",\"noul\":0.04816848123667688},\"q_8e929585ab14594a\":{\"type\":\"noul\",\"noul\":0.1394615213677361},\"q_f8cf378fe643ae57\":{\"type\":\"noul\",\"noul\":0.21336097171563229},\"q_daf8ba6eb0c8c7a5\":{\"type\":\"noul\",\"noul\":0.25379613436539994},\"q_c4926157a8f04a94\":{\"type\":\"noul\",\"noul\":0.15360375747845922},\"q_36590b3d001837f6\":{\"type\":\"noul\",\"noul\":0.10628879583528943}},\"findings\":[{\"id\":\"q_7542adde29d31c04\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"question\":\"Does task.acceptance explicitly cover the behavior requested in intent.request?\",\"guidance\":\"Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear.\",\"probability\":0.04196623445017255,\"score\":0.04196623445017255,\"disposition\":\"pending\"},{\"id\":\"q_f2e499ec231974d8\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"cancellation_requested\",\"question\":\"Does task.acceptance explicitly cover cancellation?\",\"guidance\":\"Specify the observable cancellation outcome in acceptance, or clarify what cancellation should do.\",\"probability\":0.04816848123667688,\"score\":0.04816848123667688,\"disposition\":\"pending\"},{\"id\":\"q_8e929585ab14594a\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"performance_requested\",\"question\":\"Does task.acceptance state a measurable performance target?\",\"guidance\":\"State the requested measurable performance target. Ask the user for a target if choosing it would invent a requirement.\",\"probability\":0.1394615213677361,\"score\":0.1394615213677361,\"disposition\":\"not_applicable\"},{\"id\":\"q_f8cf378fe643ae57\",\"family\":\"verification\",\"path\":\"acceptance.microphone\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"A microphone icon is visible above the composer.\\\"?\",\"guidance\":\"Harden verification for acceptance microphone: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.21336097171563229,\"score\":0.7866390282843677,\"disposition\":\"resolved\"},{\"id\":\"q_daf8ba6eb0c8c7a5\",\"family\":\"conflicts\",\"path\":\"exclusions.0\",\"goodWhen\":\"no\",\"question\":\"Does implementing task.objective conflict with this exclusion: \\\"Do not send the composer draft automatically\\\"?\",\"guidance\":\"Resolve this objective/exclusion conflict. Clarify intent when changing either side would change the authorized scope.\",\"probability\":0.25379613436539994,\"score\":0.7462038656346001,\"disposition\":\"resolved\"},{\"id\":\"q_c4926157a8f04a94\",\"family\":\"conflicts\",\"path\":\"constraints.0\",\"goodWhen\":\"no\",\"question\":\"Does implementing task.objective conflict with this constraint: \\\"Use the native OpenCode composer\\\"?\",\"guidance\":\"Reconcile the objective with this constraint using the recorded intent and repository evidence.\",\"probability\":0.15360375747845922,\"score\":0.8463962425215408,\"disposition\":\"resolved\"},{\"id\":\"q_36590b3d001837f6\",\"family\":\"scope\",\"path\":\"acceptance.microphone\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"A microphone icon is visible above the composer.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance microphone. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.10628879583528943,\"score\":0.8937112041647106,\"disposition\":\"resolved\"}],\"focus\":{\"id\":\"q_7542adde29d31c04\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"question\":\"Does task.acceptance explicitly cover the behavior requested in intent.request?\",\"guidance\":\"Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear.\",\"probability\":0.04196623445017255,\"score\":0.04196623445017255,\"disposition\":\"pending\"},\"errors\":[],\"usage\":{\"input_tokens\":709,\"output_tokens\":0},\"next\":{\"action\":\"revise_or_clarify\",\"tool\":\"lazers_verify_task\",\"instruction\":\"Address only the focused concern: Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear. Then call lazers_verify_task with the revised task/evidence and this reviewID. Use the native question tool for a material missing user decision.\"}}"
+          }
+        ],
+        "metadata": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "messageID": "msg_190ed8b81001VxRPWO4PD5g4uJ",
+      "name": "lazers_verify_task",
+      "time": {
+        "created": 1793432865201,
+        "ran": 1793432867977,
+        "completed": 1793432870757
+      },
+      "state": {
+        "status": "completed",
+        "input": {
+          "reviewID": "ecaf84ff-e4f5-41e1-8fe8-76146fa28046",
+          "task": {
+            "objective": "Cancelling dictation releases microphone tracks and preserves the existing composer draft.",
+            "exclusions": ["Do not send the composer draft automatically"],
+            "constraints": ["Use the native OpenCode composer"],
+            "assumptions": [],
+            "writeScope": ["src/webgpu/**"],
+            "context": [
+              {
+                "reference": ".agents/docs/opencode-api.md",
+                "revision": null
+              }
+            ],
+            "acceptance": [
+              {
+                "id": "microphone",
+                "assertion": "A microphone icon is visible above the composer.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ]
+              },
+              {
+                "id": "tracks-stopped",
+                "assertion": "After dictation is cancelled, every microphone track has readyState 'ended' (no live tracks remain).",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ]
+              },
+              {
+                "id": "draft-preserved",
+                "assertion": "After dictation is cancelled, the composer retains the exact draft text that was present before dictation.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ]
+              },
+              {
+                "id": "no-auto-send",
+                "assertion": "After dictation is cancelled, no draft is sent and the text remains in the composer.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ]
+              }
+            ],
+            "requirements": {
+              "capabilities": ["microphone"],
+              "skills": [],
+              "risk": "low",
+              "policyReference": "AGENTS.md"
+            },
+            "verification": [
+              {
+                "id": "tests",
+                "command": "bun test src/webgpu/dictation.test.ts",
+                "timeoutMs": 60000
+              }
+            ],
+            "limits": {
+              "maxTokens": 20000,
+              "maxEstimatedCostUsd": 2,
+              "maxElapsedMs": 1200000,
+              "maxToolCalls": 40,
+              "maxProviderRetries": 0,
+              "maxRepairAttempts": 1
+            }
+          },
+          "request": "When dictation is cancelled, stop every microphone track and preserve all existing composer text. Do not send the draft automatically.",
+          "evidence": [
+            "Round 2 revision. Proposed test plan (NOT executed) for src/webgpu/dictation.test.ts now asserts: (a) microphone icon visible, (b) after cancel every mic track readyState is 'ended', (c) composer draft text is unchanged, (d) no send is invoked. This changes the prior proposed plan that checked only icon visibility. No tests have been run.",
+            "The requested behaviors are derived verbatim from the request: stop every microphone track on cancel; preserve all existing composer text; do not send the draft automatically."
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"feedback\",\"reviewID\":\"ecaf84ff-e4f5-41e1-8fe8-76146fa28046\",\"version\":\"task-hardening-v1\",\"round\":2,\"maxRounds\":3,\"fingerprint\":\"9a2a2ac757cb7f28c881c6077fe3a6b0648cd5e94b64a18fabc37a0047ef20a8\",\"model\":{\"id\":\"d1-omni-2b\",\"revision\":\"2552a495cd0fc6d82f7911110f07bca7a05c11c6\"},\"answers\":{\"cancellation_requested\":{\"type\":\"noul\",\"noul\":0.9352094794404279},\"performance_requested\":{\"type\":\"noul\",\"noul\":0.04274485290419898},\"q_7542adde29d31c04\":{\"type\":\"noul\",\"noul\":0.8103955784918282},\"q_f2e499ec231974d8\":{\"type\":\"noul\",\"noul\":0.2927277708175266},\"q_8e929585ab14594a\":{\"type\":\"noul\",\"noul\":0.3186947052169447},\"q_f8cf378fe643ae57\":{\"type\":\"noul\",\"noul\":0.18503439745100606},\"q_43a7b1c8881954c2\":{\"type\":\"noul\",\"noul\":0.1846864080888752},\"q_cda0916092e85ec9\":{\"type\":\"noul\",\"noul\":0.24514893098782825},\"q_bef58a0aca211fdf\":{\"type\":\"noul\",\"noul\":0.36648722727734856},\"q_daf8ba6eb0c8c7a5\":{\"type\":\"noul\",\"noul\":0.11409784372076008},\"q_c4926157a8f04a94\":{\"type\":\"noul\",\"noul\":0.13135280648903894},\"q_36590b3d001837f6\":{\"type\":\"noul\",\"noul\":0.14197461272454054},\"q_2398f503fe614adc\":{\"type\":\"noul\",\"noul\":0.4159370634912064},\"q_bd2b1b91e68b604f\":{\"type\":\"noul\",\"noul\":0.38654219337986817},\"q_2eac0fba1dfad3ca\":{\"type\":\"noul\",\"noul\":0.2951241003502448}},\"findings\":[{\"id\":\"q_7542adde29d31c04\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"question\":\"Does task.acceptance explicitly cover the behavior requested in intent.request?\",\"guidance\":\"Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear.\",\"probability\":0.8103955784918282,\"score\":0.8103955784918282,\"disposition\":\"resolved\"},{\"id\":\"q_f2e499ec231974d8\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"cancellation_requested\",\"question\":\"Does task.acceptance explicitly cover cancellation?\",\"guidance\":\"Specify the observable cancellation outcome in acceptance, or clarify what cancellation should do.\",\"probability\":0.2927277708175266,\"score\":0.2927277708175266,\"disposition\":\"pending\"},{\"id\":\"q_8e929585ab14594a\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"performance_requested\",\"question\":\"Does task.acceptance state a measurable performance target?\",\"guidance\":\"State the requested measurable performance target. Ask the user for a target if choosing it would invent a requirement.\",\"probability\":0.3186947052169447,\"score\":0.3186947052169447,\"disposition\":\"not_applicable\"},{\"id\":\"q_f8cf378fe643ae57\",\"family\":\"verification\",\"path\":\"acceptance.microphone\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"A microphone icon is visible above the composer.\\\"?\",\"guidance\":\"Harden verification for acceptance microphone: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.18503439745100606,\"score\":0.814965602548994,\"disposition\":\"resolved\"},{\"id\":\"q_43a7b1c8881954c2\",\"family\":\"verification\",\"path\":\"acceptance.tracks-stopped\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"After dictation is cancelled, every microphone track has readyState 'ended' (no live tracks remain).\\\"?\",\"guidance\":\"Harden verification for acceptance tracks-stopped: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.1846864080888752,\"score\":0.8153135919111247,\"disposition\":\"resolved\"},{\"id\":\"q_cda0916092e85ec9\",\"family\":\"verification\",\"path\":\"acceptance.draft-preserved\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"After dictation is cancelled, the composer retains the exact draft text that was present before dictation.\\\"?\",\"guidance\":\"Harden verification for acceptance draft-preserved: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.24514893098782825,\"score\":0.7548510690121717,\"disposition\":\"resolved\"},{\"id\":\"q_bef58a0aca211fdf\",\"family\":\"verification\",\"path\":\"acceptance.no-auto-send\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"After dictation is cancelled, no draft is sent and the text remains in the composer.\\\"?\",\"guidance\":\"Harden verification for acceptance no-auto-send: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.36648722727734856,\"score\":0.6335127727226515,\"disposition\":\"pending\"},{\"id\":\"q_daf8ba6eb0c8c7a5\",\"family\":\"conflicts\",\"path\":\"exclusions.0\",\"goodWhen\":\"no\",\"question\":\"Does implementing task.objective conflict with this exclusion: \\\"Do not send the composer draft automatically\\\"?\",\"guidance\":\"Resolve this objective/exclusion conflict. Clarify intent when changing either side would change the authorized scope.\",\"probability\":0.11409784372076008,\"score\":0.88590215627924,\"disposition\":\"resolved\"},{\"id\":\"q_c4926157a8f04a94\",\"family\":\"conflicts\",\"path\":\"constraints.0\",\"goodWhen\":\"no\",\"question\":\"Does implementing task.objective conflict with this constraint: \\\"Use the native OpenCode composer\\\"?\",\"guidance\":\"Reconcile the objective with this constraint using the recorded intent and repository evidence.\",\"probability\":0.13135280648903894,\"score\":0.8686471935109611,\"disposition\":\"resolved\"},{\"id\":\"q_36590b3d001837f6\",\"family\":\"scope\",\"path\":\"acceptance.microphone\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"A microphone icon is visible above the composer.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance microphone. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.14197461272454054,\"score\":0.8580253872754595,\"disposition\":\"resolved\"},{\"id\":\"q_2398f503fe614adc\",\"family\":\"scope\",\"path\":\"acceptance.tracks-stopped\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"After dictation is cancelled, every microphone track has readyState 'ended' (no live tracks remain).\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance tracks-stopped. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.4159370634912064,\"score\":0.5840629365087936,\"disposition\":\"pending\"},{\"id\":\"q_bd2b1b91e68b604f\",\"family\":\"scope\",\"path\":\"acceptance.draft-preserved\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"After dictation is cancelled, the composer retains the exact draft text that was present before dictation.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance draft-preserved. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.38654219337986817,\"score\":0.6134578066201318,\"disposition\":\"pending\"},{\"id\":\"q_2eac0fba1dfad3ca\",\"family\":\"scope\",\"path\":\"acceptance.no-auto-send\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"After dictation is cancelled, no draft is sent and the text remains in the composer.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance no-auto-send. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.2951241003502448,\"score\":0.7048758996497553,\"disposition\":\"resolved\"}],\"focus\":{\"id\":\"q_f2e499ec231974d8\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"cancellation_requested\",\"question\":\"Does task.acceptance explicitly cover cancellation?\",\"guidance\":\"Specify the observable cancellation outcome in acceptance, or clarify what cancellation should do.\",\"probability\":0.2927277708175266,\"score\":0.2927277708175266,\"disposition\":\"pending\"},\"errors\":[],\"usage\":{\"input_tokens\":1287,\"output_tokens\":0},\"next\":{\"action\":\"revise_or_clarify\",\"tool\":\"lazers_verify_task\",\"instruction\":\"Address only the focused concern: Specify the observable cancellation outcome in acceptance, or clarify what cancellation should do. Then call lazers_verify_task with the revised task/evidence and this reviewID. Use the native question tool for a material missing user decision.\"}}"
+          }
+        ],
+        "metadata": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "messageID": "msg_190eddf6d0011OuGG13Orm4y46",
+      "name": "lazers_verify_task",
+      "time": {
+        "created": 1793432887174,
+        "ran": 1793432890593,
+        "completed": 1793432893714
+      },
+      "state": {
+        "status": "completed",
+        "input": {
+          "request": "When dictation is cancelled, stop every microphone track and preserve all existing composer text. Do not send the draft automatically.",
+          "reviewID": "ecaf84ff-e4f5-41e1-8fe8-76146fa28046",
+          "task": {
+            "acceptance": [
+              {
+                "assertion": "A microphone icon is visible above the composer.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ],
+                "id": "microphone"
+              },
+              {
+                "assertion": "Cancelling dictation immediately ends the active dictation session and stops every microphone track (all tracks report readyState 'ended').",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ],
+                "id": "cancellation"
+              },
+              {
+                "assertion": "After dictation is cancelled, the composer retains the exact draft text that was present before dictation.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ],
+                "id": "draft-preserved"
+              },
+              {
+                "assertion": "After dictation is cancelled, no draft is sent and the text remains in the composer.",
+                "evidence": [
+                  {
+                    "kind": "verification",
+                    "verificationID": "tests"
+                  }
+                ],
+                "id": "no-auto-send"
+              }
+            ],
+            "assumptions": [],
+            "constraints": ["Use the native OpenCode composer"],
+            "context": [
+              {
+                "reference": ".agents/docs/opencode-api.md",
+                "revision": null
+              }
+            ],
+            "exclusions": ["Do not send the composer draft automatically"],
+            "limits": {
+              "maxEstimatedCostUsd": 2,
+              "maxElapsedMs": 1200000,
+              "maxProviderRetries": 0,
+              "maxRepairAttempts": 1,
+              "maxTokens": 20000,
+              "maxToolCalls": 40
+            },
+            "objective": "Cancelling dictation releases microphone tracks and preserves the existing composer draft.",
+            "requirements": {
+              "capabilities": ["microphone"],
+              "policyReference": "AGENTS.md",
+              "risk": "low",
+              "skills": []
+            },
+            "verification": [
+              {
+                "command": "bun test src/webgpu/dictation.test.ts",
+                "id": "tests",
+                "timeoutMs": 60000
+              }
+            ],
+            "writeScope": ["src/webgpu/**"]
+          },
+          "evidence": [
+            "Round 3 revision. Proposed test plan (NOT executed) for src/webgpu/dictation.test.ts: (a) assert mic icon visible; (b) start dictation then invoke cancel and assert every mic track readyState is 'ended'; (c) assert composer draft text is unchanged; (d) assert no send is invoked. This changes the prior proposed plans. No tests have been run.",
+            "Cancellation acceptance is now explicit: cancelling dictation ends the active session and stops every track. Draft preservation and no-auto-send remain separate assertions."
+          ]
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"status\":\"completed_with_concerns\",\"reviewID\":\"ecaf84ff-e4f5-41e1-8fe8-76146fa28046\",\"version\":\"task-hardening-v1\",\"round\":3,\"maxRounds\":3,\"fingerprint\":\"cfcc2b987b55ec2a2fd5ce0365a80a1bed2bfe69e9c8ba1aa52164a860f9f446\",\"model\":{\"id\":\"d1-omni-2b\",\"revision\":\"2552a495cd0fc6d82f7911110f07bca7a05c11c6\"},\"answers\":{\"cancellation_requested\":{\"type\":\"noul\",\"noul\":0.9387207675468371},\"performance_requested\":{\"type\":\"noul\",\"noul\":0.04120689058451488},\"q_7542adde29d31c04\":{\"type\":\"noul\",\"noul\":0.7954180413340788},\"q_f2e499ec231974d8\":{\"type\":\"noul\",\"noul\":0.7522779370555539},\"q_8e929585ab14594a\":{\"type\":\"noul\",\"noul\":0.44252141568830283},\"q_f8cf378fe643ae57\":{\"type\":\"noul\",\"noul\":0.1383566090744389},\"q_98584365be6f27c0\":{\"type\":\"noul\",\"noul\":0.16792835294938402},\"q_cda0916092e85ec9\":{\"type\":\"noul\",\"noul\":0.2874962316942025},\"q_bef58a0aca211fdf\":{\"type\":\"noul\",\"noul\":0.34219074300595304},\"q_daf8ba6eb0c8c7a5\":{\"type\":\"noul\",\"noul\":0.10683846575578848},\"q_c4926157a8f04a94\":{\"type\":\"noul\",\"noul\":0.1048171181836769},\"q_36590b3d001837f6\":{\"type\":\"noul\",\"noul\":0.12566368613824086},\"q_436585c0f18beb49\":{\"type\":\"noul\",\"noul\":0.21726259739538145},\"q_bd2b1b91e68b604f\":{\"type\":\"noul\",\"noul\":0.2856077414651116},\"q_2eac0fba1dfad3ca\":{\"type\":\"noul\",\"noul\":0.171179965584287}},\"findings\":[{\"id\":\"q_7542adde29d31c04\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"question\":\"Does task.acceptance explicitly cover the behavior requested in intent.request?\",\"guidance\":\"Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear.\",\"probability\":0.7954180413340788,\"score\":0.7954180413340788,\"disposition\":\"resolved\"},{\"id\":\"q_f2e499ec231974d8\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"cancellation_requested\",\"question\":\"Does task.acceptance explicitly cover cancellation?\",\"guidance\":\"Specify the observable cancellation outcome in acceptance, or clarify what cancellation should do.\",\"probability\":0.7522779370555539,\"score\":0.7522779370555539,\"disposition\":\"resolved\"},{\"id\":\"q_8e929585ab14594a\",\"family\":\"coverage\",\"path\":\"acceptance\",\"goodWhen\":\"yes\",\"appliesWhen\":\"performance_requested\",\"question\":\"Does task.acceptance state a measurable performance target?\",\"guidance\":\"State the requested measurable performance target. Ask the user for a target if choosing it would invent a requirement.\",\"probability\":0.44252141568830283,\"score\":0.44252141568830283,\"disposition\":\"not_applicable\"},{\"id\":\"q_f8cf378fe643ae57\",\"family\":\"verification\",\"path\":\"acceptance.microphone\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"A microphone icon is visible above the composer.\\\"?\",\"guidance\":\"Harden verification for acceptance microphone: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.1383566090744389,\"score\":0.8616433909255611,\"disposition\":\"resolved\"},{\"id\":\"q_98584365be6f27c0\",\"family\":\"verification\",\"path\":\"acceptance.cancellation\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"Cancelling dictation immediately ends the active dictation session and stops every microphone track (all tracks report readyState 'ended').\\\"?\",\"guidance\":\"Harden verification for acceptance cancellation: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.16792835294938402,\"score\":0.832071647050616,\"disposition\":\"resolved\"},{\"id\":\"q_cda0916092e85ec9\",\"family\":\"verification\",\"path\":\"acceptance.draft-preserved\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"After dictation is cancelled, the composer retains the exact draft text that was present before dictation.\\\"?\",\"guidance\":\"Harden verification for acceptance draft-preserved: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.2874962316942025,\"score\":0.7125037683057975,\"disposition\":\"resolved\"},{\"id\":\"q_bef58a0aca211fdf\",\"family\":\"verification\",\"path\":\"acceptance.no-auto-send\",\"goodWhen\":\"no\",\"question\":\"Could the proposed verification pass while this assertion is false: \\\"After dictation is cancelled, no draft is sent and the text remains in the composer.\\\"?\",\"guidance\":\"Harden verification for acceptance no-auto-send: name a check that would fail for a plausible broken implementation. Supply the test procedure or source in evidence when a command alone cannot show coverage.\",\"probability\":0.34219074300595304,\"score\":0.657809256994047,\"disposition\":\"limit\"},{\"id\":\"q_daf8ba6eb0c8c7a5\",\"family\":\"conflicts\",\"path\":\"exclusions.0\",\"goodWhen\":\"no\",\"question\":\"Does implementing task.objective conflict with this exclusion: \\\"Do not send the composer draft automatically\\\"?\",\"guidance\":\"Resolve this objective/exclusion conflict. Clarify intent when changing either side would change the authorized scope.\",\"probability\":0.10683846575578848,\"score\":0.8931615342442115,\"disposition\":\"resolved\"},{\"id\":\"q_c4926157a8f04a94\",\"family\":\"conflicts\",\"path\":\"constraints.0\",\"goodWhen\":\"no\",\"question\":\"Does implementing task.objective conflict with this constraint: \\\"Use the native OpenCode composer\\\"?\",\"guidance\":\"Reconcile the objective with this constraint using the recorded intent and repository evidence.\",\"probability\":0.1048171181836769,\"score\":0.8951828818163231,\"disposition\":\"resolved\"},{\"id\":\"q_36590b3d001837f6\",\"family\":\"scope\",\"path\":\"acceptance.microphone\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"A microphone icon is visible above the composer.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance microphone. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.12566368613824086,\"score\":0.8743363138617591,\"disposition\":\"resolved\"},{\"id\":\"q_436585c0f18beb49\",\"family\":\"scope\",\"path\":\"acceptance.cancellation\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"Cancelling dictation immediately ends the active dictation session and stops every microphone track (all tracks report readyState 'ended').\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance cancellation. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.21726259739538145,\"score\":0.7827374026046185,\"disposition\":\"resolved\"},{\"id\":\"q_bd2b1b91e68b604f\",\"family\":\"scope\",\"path\":\"acceptance.draft-preserved\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"After dictation is cancelled, the composer retains the exact draft text that was present before dictation.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance draft-preserved. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.2856077414651116,\"score\":0.7143922585348884,\"disposition\":\"resolved\"},{\"id\":\"q_2eac0fba1dfad3ca\",\"family\":\"scope\",\"path\":\"acceptance.no-auto-send\",\"goodWhen\":\"no\",\"question\":\"Does delivering this assertion require work outside task.writeScope: \\\"After dictation is cancelled, no draft is sent and the text remains in the composer.\\\"?\",\"guidance\":\"Check the permitted paths against work needed for acceptance no-auto-send. Supply relevant repository facts in evidence; clarify scope if the needed work is unauthorized.\",\"probability\":0.171179965584287,\"score\":0.8288200344157131,\"disposition\":\"resolved\"}],\"focus\":null,\"errors\":[],\"usage\":{\"input_tokens\":1300,\"output_tokens\":0},\"next\":{\"action\":\"submit\",\"tool\":\"lazers_submit_task\",\"instruction\":\"Advisory hardening is complete. Submit the structurally valid task through lazers_submit_task; retain unresolved concerns. This result does not authorize work or certify correctness.\"}}"
+          }
+        ],
+        "metadata": {
+          "truncated": false
+        }
+      }
+    }
+  ]
+}

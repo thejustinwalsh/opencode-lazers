@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-31T08:59:32.822Z",
+  "version": "1.18.1",
+  "runtime": "1.4.4",
+  "runtimeRevision": "da867c60bf0bcbf9d6d36994f8ca0efa42075115",
+  "executable": "/Users/tjw/.bun/bin/bun",
+  "purpose": "Local context-size feasibility probe for the task-submission boundary; not an accepted-task quality or cost benchmark",
+  "tokenizer": "o200k_base",
+  "importMs": 63,
+  "elapsedMs": 541,
+  "compressionMs": 59,
+  "excludedSuspicious": 0,
+  "skippedFiles": [],
+  "fullSourceAndTests": {
+    "files": 68,
+    "bytes": 349679,
+    "tokens": 80702,
+    "sourceHash": "105680ebe399a92215645316b29b4d9e098f85c1fe6579584acdd9ce766abf86"
+  },
+  "selectedSubmissionSourceAndTests": {
+    "files": 7,
+    "bytes": 29145,
+    "tokens": 6807,
+    "sourceHash": "d097e5f922bfe42e38c1c93f5f08c8ea462b000a34deb2115b5d17813feafeed"
+  },
+  "selectedStructuralOutline": {
+    "files": 7,
+    "bytes": 4473,
+    "tokens": 1081,
+    "sourceHash": "81b3a401326116db2973b1745c0faad15a889fbd54798db571331af5db2da060"
+  },
+  "selectionReduction": 0.91565264801368,
+  "compressionReductionOnSelection": 0.841192889672396,
+  "limitation": "Original snippets and structural outlines convey different evidence. Smaller inputs do not establish equivalent task quality, lower total usage, provider cache hits, accepted-task throughput or dollar savings.",
+  "sources": [
+    {
+      "path": "src/storage.test.ts",
+      "sha256": "1c7719e738fd852493e476c79f76378b5bda87443516593d5de9f74a124b5827"
+    },
+    {
+      "path": "src/storage.ts",
+      "sha256": "2e465547e9b31e0e660b1216e673ffe89124977fb09699942e5fc686a252f5d1"
+    },
+    {
+      "path": "src/submission.ts",
+      "sha256": "8bb9ba3e4ef4991feac8065a4ccdd5ebbedc7114ee131110b1e1a535e5b3e8e4"
+    },
+    {
+      "path": "src/task.ts",
+      "sha256": "854c18f578dbdebda2ad8c85e5d18643e777a96b51b768dd4db97bc8846579b7"
+    },
+    {
+      "path": "src/tools.test.ts",
+      "sha256": "16941e266572661559b65d12b4386fa79b8e2c78709c4ece14345521b9dcdf65"
+    },
+    {
+      "path": "src/tools.ts",
+      "sha256": "3e7187567f6187d3882c0dcd6ced958f80b417b1a798fee7fe78b75a8e9587d5"
+    },
+    {
+      "path": "test/proposal.ts",
+      "sha256": "b7baabbe91623ec125fd14bbaaf95ed0919e551988f9d054fa9d9160d44d6057"
+    }
+  ]
+}

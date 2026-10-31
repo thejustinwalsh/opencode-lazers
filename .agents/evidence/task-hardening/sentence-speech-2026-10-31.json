@@ -1,0 +1,21 @@
+{
+  "host": "OpenCode 2.2.5",
+  "session": "ses_e6f02ff73ffelF1xSBmp4zMi5L",
+  "finalMessageID": "msg_190fe86ce001UxnGAvun773VeS",
+  "sourceText": "The proposal now drops the unsupported microphone-icon criterion, narrows scope to the adapter and its test file, and strengthens cancellation acceptance to require per-track stop/readyState checks across one- and three-track sessions plus negative controls. The remaining concern is that the verification is still proposed rather than executed, so it does not yet demonstrate the implementation passes.",
+  "previousSegmentCount": 4,
+  "sentenceSegments": [
+    "The proposal now drops the unsupported microphone-icon criterion, narrows scope to the adapter and its test file, and strengthens cancellation acceptance to require per-track stop/readyState checks across one- and three-track sessions plus negative controls.",
+    "The remaining concern is that the verification is still proposed rather than executed, so it does not yet demonstrate the implementation passes."
+  ],
+  "chunkCharacterLimit": 320,
+  "chunkWordLimit": 48,
+  "prefetchChunks": 1,
+  "desktopVerification": {
+    "selection": "Final visible assistant answer only",
+    "observedPlaybackStates": ["preparing speech", "reading response", "read latest response"],
+    "reloadAttempt": "Initial request immediately after development reload failed explicitly: Desktop renderer heartbeat was lost. Runtime became ready; manual retry reached playback and returned idle.",
+    "mode": "Complete sentence WAVs, one decoded chunk ahead; not raw PCM event streaming",
+    "cancelTest": "Observed reading-response state while GPU status was busy (prefetch). Clicked speaker again; both speaker and GPU immediately returned to idle/ready."
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "kind": "LAZERS future System panel concepts",
+  "date": "2026-10-31",
+  "status": "User approved visual family and narrow split; Flow requires statechart redesign; design only, no runner implemented",
+  "references": {
+    "inspiration": "https://awesome-copilot.github.com/extension/agent-radar/",
+    "flow": "system-flow-v1.png",
+    "timeline": "system-timeline-v3-narrow.png",
+    "historical": ["system-timeline-v1.png", "system-timeline-v2-wide.png"],
+    "prompts": ["prompts-v1.json", "prompts-v2.json"]
+  },
+  "purpose": "Observe the selected real runner state machine and its recorded execution history, including verification, waits, failures and durable decision delivery.",
+  "placement": {
+    "panel": "Separate optional, closable System panel in the native extra-panel list",
+    "defaultScope": "Routed session and its explicit plan/worker links",
+    "broaderScope": "Current canonical project only when explicitly selected",
+    "layout": "Narrow side panel: visualization above selected-run detail; full-width horizontal resizable divider; independent scrolling. Never a right-hand inspector column.",
+    "appearance": "Host UI font, reactive mono font, semantic theme tokens and native controls; image colors and type sizes are illustrative."
+  },
+  "views": {
+    "flow": "Actual runner statechart for a selected run/attempt: definition states and transitions, active snapshot, recorded transition history and selectable reasons; Architect appears only at recorded decision boundaries. The dependency-flow image is visual family only and must be redesigned.",
+    "timeline": "Compact task/attempt lanes sharing an observed time axis with recorded execution and verification spans, waits and decision events where available; selected detail below the timeline.",
+    "sharedInspector": [
+      "Selected run, task and attempt or state/transition identity",
+      "Recorded failure or wait reason and evidence",
+      "Next decision and responsible actor when recorded",
+      "Outcome persistence and delivery state when recorded",
+      "Collapsed attempt details and activity"
+    ]
+  },
+  "principles": [
+    "Flow uses the actual authoritative runtime machine definition and snapshot; XState adoption is a future choice and prerequisite to an XState-backed slice, not an existing integration. Task dependency edges are not state transitions.",
+    "The GUI reads versioned topology and persisted state/transition projections; it never starts a second actor, replays side effects, or sends historical events to a live actor. Guard labels alone do not prove a transition is enabled.",
+    "Runtime owns state transitions; visualizations observe durable facts, never infer acceptance from agent narration.",
+    "Architect is woken for decisions, not represented as a continuously running scheduler.",
+    "Show dependency, resource and scope waits only when recorded with causal references.",
+    "Render real machine, run and attempt identities, recorded transitions, timing and delivery from a consistent scoped snapshot/replay contract.",
+    "Use stable node/row placement, keyboard selection, reduced-motion support and preserved session scope/selection.",
+    "Report stale/disconnected snapshots honestly and resync after gaps; last known data is not current live evidence.",
+    "No completion-time forecast or invented percentage progress; generated bar positions and example timings are not an exact data specification.",
+    "Build after actual runner/attempt/outcome data exists, via an Architect-specified increment; no production mock telemetry."
+  ],
+  "nonGoals": [
+    "Replace the focused Tasks panel with a graph",
+    "Global all-project monitoring",
+    "Task transition or acceptance authority in the visualization",
+    "Runner implementation in this design pass",
+    "Treat the dependency-flow mockup as a statechart or invent machine transitions from task nodes"
+  ]
+}

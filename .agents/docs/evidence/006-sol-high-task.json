@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "id": "1b774b28-c1a4-4df4-900f-fea015ea84bc",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T06:12:48.606Z",
+  "provenance": {
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6f6bc616ffeFYf6Spvd4pRHpn",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Make LAZERS task submission safe to retry after a successful commit whose response is lost. Require a caller-supplied repository-scoped idempotency key. The same key and validated task content must return the original task ID across sessions, worktrees of the same canonical project, concurrent host instances, and host restarts, without creating duplicate tasks. Reusing the key with changed validated content must return a conflict; a different key may intentionally create an identical task. Implement only this submission increment.",
+    "exclusions": [
+      "No workers, dispatch, scheduling, execution lifecycle, automatic retry orchestration, task graphs, or GUI changes.",
+      "No content-only deduplication, fuzzy semantic matching, task mutation/revision, key expiry, key deletion, or retroactive key assignment to existing tasks.",
+      "No changes to OpenCode private tables, dependency upgrades, additional persistence services, paid model verification, or unrelated WebGPU work.",
+      "Do not claim Desktop interaction or a real host restart was verified solely from unit tests or repository reopen tests."
+    ],
+    "constraints": [
+      "User decisions: the idempotency key is mandatory on every new submission, scoped to the canonical repository/project directory, reusable across sessions and restarts. Same key plus validated task content returns the original task ID; changed content returns a conflict; different keys allow identical tasks. Preserve validation and repository isolation.",
+      "Keep one reusable plugin package, plugin-owned Bun SQLite, strict TypeScript, and the pinned OpenCode 2.2.5 Effect V2 adapter. Keep host adapters small. Follow AGENTS.md and .agents/docs/opencode-api.md. Preserve Architect's existing read/question/submit/get/list permission boundary.",
+      "Add a required top-level idempotencyKey to the existing flat submit-tool input, separate from task proposal content and runtime-owned task identity/provenance. Use a bounded non-whitespace opaque string (maximum 256 characters); compare accepted keys exactly without silently trimming or normalizing them. Continue rejecting unknown input fields and invalid proposal cross-references. Expose the requirement in generated tool JSON Schema as well as runtime validation.",
+      "Compare validated proposal values, not raw JSON serialization order or runtime metadata: object-property ordering is immaterial recursively; array order and string contents remain significant. All validated proposal fields participate. Exclude the idempotency key and runtime-generated task ID, timestamp, revision, provenance/session/worktree/starting revision from content comparison.",
+      "Return the existing submitted receipt shape (status submitted, original taskID and revision) on both first submission and successful replay. Return a machine-readable status conflict for same-key/different-content, without overwriting the existing task or creating a new one. Invalid requests continue returning status invalid with field guidance before writes or provenance collection.",
+      "Persist the project/key binding and task atomically with SQLite-enforced uniqueness per canonical project and key. Do not rely on an in-memory cache or an unprotected read-then-insert. On a failed transaction neither orphan task nor reserved key may remain. Concurrent successful same-key/same-content requests must all resolve to one receipt; a competing changed-content request must conflict once another content value wins.",
+      "Preserve original immutable task body and provenance on replay. Resolve a valid existing binding without recomputing Git provenance: changed HEAD, a new session, or an unavailable provenance supplier must not prevent an otherwise valid replay. Permission assertion must still run before any lookup or write for every native tool invocation, including replays/conflicts.",
+      "Migrate existing version-1 SQLite databases without changing existing task IDs, bodies, provenance, or get/list visibility. Legacy tasks without a key remain readable; do not weaken new-submission requirements to accommodate legacy stored envelopes. Fail closed on unsupported future database versions without resetting migration metadata.",
+      "No new listening server is required for this task. Use one-shot tests; if a listening verification server becomes necessary, first load and follow the repository's Portless skill and use stable HTTPS .localhost routing. Do not touch unrelated working-tree files."
+    ],
+    "assumptions": [
+      "Repository identity continues to mean the canonical projectDirectory used by TaskRepository, not session ID, workspace directory, or starting Git revision.",
+      "The durable task repository remains available on local disk across host restart. Loss or deletion of the SQLite database is outside the retry guarantee.",
+      "Baseline HEAD is b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df. Implementation inputs are the working-tree files inspected on 2026-10-31, not a claim that those files are committed at that HEAD; .agents/docs/handoff.md notes the scaffold may be untracked."
+    ],
+    "writeScope": [
+      "src/task.ts",
+      "src/task.test.ts",
+      "src/submission.ts",
+      "src/submission.test.ts",
+      "src/storage.ts",
+      "src/storage.test.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+      "src/architect.md",
+      "src/architect.test.ts",
+      "test/proposal.ts",
+      "test/submission-retry-worker.ts",
+      "README.md",
+      ".agents/docs/spikes/submission-idempotency.md"
+    ],
+    "context": [
+      {
+        "reference": "src/submission.ts:21-46: validates proposal then generates a fresh UUID and inserts on every call; current duplicate-creation boundary.",
+        "revision": "Working-tree snapshot inspected 2026-10-31; base HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "src/storage.ts:21-88 and src/storage.test.ts:38-90: SQLite version-1 schema, immutable task insertion, project partitioning, reopen and future-version checks.",
+        "revision": "Working-tree snapshot inspected 2026-10-31; base HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "src/task.ts and src/task.test.ts: strict proposal and schemaVersion-1 stored envelopes; generated JSON Schema, cross-field evidence validation, runtime-owned metadata.",
+        "revision": "Working-tree snapshot inspected 2026-10-31; base HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "src/tools.ts and src/tools.test.ts: native Effect submit/get/list adapter and explicit permission assertion before execution; test fixture exposes session/message/call identifiers.",
+        "revision": "Working-tree snapshot inspected 2026-10-31; base HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "src/index.ts:16-23: repository created with canonical project directory and scoped cleanup; test/proposal.ts supplies existing valid proposal fixture.",
+        "revision": "Working-tree snapshot inspected 2026-10-31; base HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "src/architect.md, src/architect.test.ts, README.md: task submission contract, read-only Architect authority, progressive dogfood spike record, native Bun verification commands.",
+        "revision": "Working-tree snapshot inspected 2026-10-31; base HEAD b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": ".agents/docs/opencode-api.md: pinned V2 tool/permission/storage surfaces; consult installed public tool declarations if adapter signatures need changing. .agents/docs/handoff.md records known untracked baseline and incomplete scheduler.",
+        "revision": "Inspected 2026-10-31; API lookup pins OpenCode v2.2.5 source 9bbb8ce"
+      },
+      {
+        "reference": "User decisions in this task's Architect conversation: mandatory caller-supplied repository-scoped key; replay original ID for same validated content; conflict on changed content; different keys permit identical tasks; preserve isolation/validation; submission-only scope.",
+        "revision": null
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "required-key-validation",
+        "assertion": "New submissions require idempotencyKey in both runtime and registered JSON Schema. Missing, empty, whitespace-only, overlong, or non-string keys, invalid proposals/cross-references, and unknown fields return validation guidance without creating a task or consuming a key or collecting provenance. A corrected request can subsequently use that key successfully. Legacy stored TaskSpec envelopes remain readable.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-contract-tests"
+          }
+        ]
+      },
+      {
+        "id": "replay-and-conflict",
+        "assertion": "Sequential same-project/same-key/same-validated-content calls return the same submitted taskID and revision and leave exactly one unchanged stored task. Recursively reordered object keys replay successfully; changed proposal fields (including nested acceptance/limits) or array ordering cause status conflict with no mutation or new row. A different key with identical content creates a distinct task. A valid replay succeeds even if its provenance supplier throws, retaining the original timestamp, provenance, and body.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-contract-tests"
+          }
+        ]
+      },
+      {
+        "id": "lost-response-restart",
+        "assertion": "A file-backed subprocess test commits a submission and deliberately drops its receipt, exits, then a fresh process resubmits the retained key/content and returns the original stored task ID. Establish the original ID independently from the committed database or a test-only observation, not the discarded client receipt. Verify get/list and task/binding row counts show exactly one task/binding and original provenance after the second process. No in-process cache may satisfy this check.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-contract-tests"
+          }
+        ]
+      },
+      {
+        "id": "atomic-concurrent-storage",
+        "assertion": "SQLite enforces project/key uniqueness and atomic task/binding creation. Tests using at least two separately opened connections and synchronized competing subprocesses against one file verify same-key/same-content produces one task and identical successful receipts; competing same-key/different-content requests produce exactly one winner and a conflict without extra tasks. Inject a failure after an initial database write but before transaction completion and verify rollback leaves no task or binding and permits a clean retry with that key.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-contract-tests"
+          }
+        ]
+      },
+      {
+        "id": "repository-and-permission-boundary",
+        "assertion": "A retry through the registered native submit tool with different call/message/session identifiers and workspace directory but the same canonical project returns the original ID. The same key in a different canonical project creates an independent task; get/list do not leak the other project's records. Permission denial on a new submission and on an already-existing replay prevents lookup/results/writes, and each permitted native invocation asserts its submit action before accessing storage. Tool tests assert conflict and invalid receipts as well as success.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-contract-tests"
+          }
+        ]
+      },
+      {
+        "id": "migration-compatibility",
+        "assertion": "A fixture built using the original version-1 SQL schema and a pre-key stored task migrates successfully; compare its original serialized body, ID, provenance, and get/list results unchanged, then exercise new keyed replay before and after reopen. Reopening the migration is harmless. A database version above the newly supported version is rejected without rewriting version metadata or existing data.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "submission-contract-tests"
+          }
+        ]
+      },
+      {
+        "id": "documented-verified-increment",
+        "assertion": "All repository behavior tests and native formatter/linter/typechecker checks pass. Architect guidance and tool description instruct choosing a key once per logical submission, retaining/reusing it after uncertain outcomes, and using a new key for intentional new tasks, without changing permissions. README replaces the known retry-duplication limitation with the implemented contract and legacy-read behavior. The spike record identifies starting/resulting revision or exact diff artifact, changed paths, test commands/results, budgets/measurements where available, and unresolved limits; distinguish subprocess/repository restart evidence from unperformed Desktop verification.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "native-quality"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/spikes/submission-idempotency.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": "Implementation diff for permitted writeScope, including README.md and src/architect.md"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": [
+        "One implementation worker with repository read/write access restricted to writeScope.",
+        "Bun pinned by package.json, Bun native SQLite/test/format/lint/typecheck, and local subprocess execution for process-restart and race tests.",
+        "Ability to inspect pinned @opencode/plugin public V2 declarations without using private host APIs."
+      ],
+      "skills": [],
+      "risk": "medium",
+      "policyReference": "AGENTS.md; README.md core contracts and 'How we build each spike'; .agents/docs/opencode-api.md. One bounded submission-only implementation; preserve original working-tree work; no paid provider verification."
+    },
+    "verification": [
+      {
+        "id": "submission-contract-tests",
+        "command": "bun test src/task.test.ts src/storage.test.ts src/submission.test.ts src/tools.test.ts src/architect.test.ts",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "all-tests",
+        "command": "bun test",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "native-quality",
+        "command": "bun run verify",
+        "timeoutMs": 180000
+      }
+    ],
+    "limits": {
+      "maxTokens": 30000,
+      "maxEstimatedCostUsd": 8,
+      "maxElapsedMs": 3600000,
+      "maxToolCalls": 90,
+      "maxProviderRetries": 1,
+      "maxRepairAttempts": 1
+    }
+  }
+}

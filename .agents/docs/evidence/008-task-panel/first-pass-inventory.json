@@ -1,0 +1,84 @@
+{
+  "capturedAt": "2026-10-31T07:39:01.506479+00:00",
+  "head": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+  "baselineCapturedAt": "2026-10-31T06:51:24.731246+00:00",
+  "taskID": "2d955ffa-8b58-48c7-b34b-494b2af0d7fc",
+  "outcome": "Retained first UI/read-service pass; user approved direction; original full acceptance not claimed",
+  "sha256": {
+    "src/tasks/assets.d.ts": "2d895a793d0ec20bef81295c121490fe2a23a8b13afe8fa694204d03843032f9",
+    "src/tasks/contract.ts": "0383d82813d64a7f46982524cda59a998837e3af5f4da58b1954bd2b5261223a",
+    "src/tasks/panel-state.test.ts": "3195bf469080f0412445e393dffa7303d65f182f38fd40663d4d25b41bf964ae",
+    "src/tasks/panel-state.ts": "7ff72db3a71336aef901658ed68dcced49d4fcb44afbd854a86adc7d0dbece7a",
+    "src/tasks/panel.css": "ef282a8ae6bf2018f038557b2b4d326ab89f7c0dd0832696c2b7d1bb58b401be",
+    "src/tasks/panel.tsx": "dbbd885f221291ee8d2a187cad2f1f923e6848adcb166b5110f682edd4012278",
+    "src/tasks/presentation.ts": "5977b5236b47bde2d9ea223cf6c5aa533570613ae99697a634b610e4f08a405f",
+    "src/tasks/read.test.ts": "d6fae2733c45847ee54fde66688864da004d64919e82314b038b51f5c0c7e57f",
+    "src/tasks/read.ts": "b9f4ef4fcb17e8dad5f501680f75057214b1ecf9beb277fcf85cdd1e55c99d2a",
+    "src/tasks/rpc.test.ts": "89f51265431194d93d1d334b07b5449314d392167b536bcf671c3e23302d28cc",
+    "src/tasks/rpc.ts": "8779f227f26fd068bae0671ae0b8aa956a80566de1c5197ffc4ca10d965134c9",
+    "src/storage.ts": "2e465547e9b31e0e660b1216e673ffe89124977fb09699942e5fc686a252f5d1",
+    "src/index.ts": "9f980be1d873b3fd08c0b44cb3a349f7062ace0ac2c8e0a506026c58a583ba0b",
+    "src/gui.tsx": "52de34cc1203b972220407d6fb6f9069d88f54e6bb97f03577edbc659aafdf8b",
+    "src/tools.ts": "08d5187b5b0af7c9f3f73f4980a4d861b13c35319db535682f022a121349568d",
+    "src/tools.test.ts": "1d56675b46a1a62172e4ee1fd7c798b4a9fad15ab6f7ba5a015b616d2c926bae",
+    "src/architect.md": "ecf2251fc6cff121da67d60cfa4d2571dc8f04f460655efb6c0f1eb9e94f0aab",
+    "src/task.ts": "854c18f578dbdebda2ad8c85e5d18643e777a96b51b768dd4db97bc8846579b7",
+    "dist/gui-experimental.cjs": "2bc33943a98c74d49c5ce93952f42905924a6d81f49de0e53e08dd5d784adc92",
+    "design/task-panel/tasks-focus-v2.png": "2c5156abd12613cbb25abac11e74610608b0a05075d99a8e3ba688d19a52772d",
+    "design/task-panel/current-panel.png": "57fefc0d4dc4f6cea494622ad6c91fe084ead1052dbba1e08822339933c28849",
+    "design/task-panel/panel-after-review.png": "8666e06dc66ae1348205365b0a19e3c0d70a46cdfa552e62ee0671844297a4d2",
+    "design/task-panel/full-specification.png": "51960acb573f4e4bbb4c615be091273aedf63c3dd7d8d70338a4570d04bcf36c"
+  },
+  "baselineChangesIncludingConcurrentWork": {
+    "src/storage.ts": {
+      "baseline": "2b22d1fceabc5f69ea4160ef3d54ac2cb6ab9533d78d23daa14ac89a2638d0d4",
+      "current": "2e465547e9b31e0e660b1216e673ffe89124977fb09699942e5fc686a252f5d1"
+    },
+    "src/gui.tsx": {
+      "baseline": "7fe6f9d64a81cc4b33e30b9c59ae5baf21fe2bc658bf95151573ef810d8b314c",
+      "current": "52de34cc1203b972220407d6fb6f9069d88f54e6bb97f03577edbc659aafdf8b"
+    },
+    "src/tools.ts": {
+      "baseline": "f3cced737057c0d983f9f6b2064ccbba60e133a9cc1d883de5917dd71f0bf1f3",
+      "current": "08d5187b5b0af7c9f3f73f4980a4d861b13c35319db535682f022a121349568d"
+    },
+    "src/tools.test.ts": {
+      "baseline": "265523754c388428c9d225518e92aaabe8515e98d8094e6e23300af182e107a9",
+      "current": "1d56675b46a1a62172e4ee1fd7c798b4a9fad15ab6f7ba5a015b616d2c926bae"
+    },
+    "src/index.ts": {
+      "baseline": "c6c7732cf864fc451a1f36f16ccf97aacdb3a9693a4b501d463c1d5806d20da7",
+      "current": "9f980be1d873b3fd08c0b44cb3a349f7062ace0ac2c8e0a506026c58a583ba0b"
+    },
+    "src/webgpu/broker.ts": {
+      "baseline": "854011ce30a1493bf3492d7b3bab8af45ffd291317f424067d3d192b87e77602",
+      "current": "579786a9997e98b038d9c8e573b7c76553aa804bc42a1fb381d3f8fd5fe2c09b"
+    },
+    "src/webgpu/audio.ts": {
+      "baseline": "653118565a2a5d77d393b5bfdaf5979758852f59aef9152b9ad923c7ba3ea1b1",
+      "current": "7f35e1f58545aeb50f06ea6afc507d1b6d2d65a9c2232626281e96349a10e0c4"
+    },
+    "src/webgpu/engine.d.ts": {
+      "baseline": "b40b9facd2642ae49d753eafb7bb381b1f29ed506af055d60c47426be15658ff",
+      "current": "f3509939b7b23942186391fb7acf150048ba93665b4fbabb2fdab481ccbbeda3"
+    },
+    "src/webgpu/rpc.ts": {
+      "baseline": "bf0b12de7d0c658aafd652d84ee24ffeebc05853b235c6a6622ac6798bfefb43",
+      "current": "28d8a338ed3ec1e50bd6c913d127cf000455a133c79cba9b2670eaf63b6cb0a3"
+    },
+    "src/webgpu/runtime.ts": {
+      "baseline": "2dee8f74e2ea18373b08cdba62d1d36ca4b072d8bdcaf34624f26d625d74124d",
+      "current": "02156ac5ed85380a0f8f0c2a922ae3a0abd312694ed77ae6d5f0a78faf88fa80"
+    },
+    "src/webgpu/server.ts": {
+      "baseline": "2dfc3307a874b236b8dc3f4edc68a6a2c0914dec92817b251df881cdad14c180",
+      "current": "3290727b87fc10bae14bb2c4b99751a100f015123dca9d7678e9081a63ec7073"
+    },
+    "src/webgpu/decision-runtime.ts": {
+      "baseline": "9f1187afd7ac53b6c4bddf155c9ceffdb891239051acb6f18564f3c7d1584947",
+      "current": "dd9cd231b6b16f2d14f4ad01d623b3ba3e19b671f68c67f17e4b429f6259fd02"
+    }
+  },
+  "attributionNote": "WebGPU and shared-entry concurrent changes are not attributed to this pass. This inventory is a boundary snapshot, not proof of exclusive ownership.",
+  "loaderSymlink": "../../../dist/gui-experimental.cjs"
+}

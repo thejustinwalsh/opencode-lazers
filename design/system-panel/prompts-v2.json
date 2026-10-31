@@ -1,0 +1,21 @@
+{
+  "tool": "Built-in image_gen",
+  "date": "2026-10-31",
+  "edits": [
+    {
+      "input": "system-timeline-v1.png",
+      "output": "system-timeline-v2-wide.png",
+      "prompt": "Edit this scheduler Timeline mockup with ONE precise semantic correction. Keep all typography, layout, colors, text, borders, icons, right inspector, other bars, dependency connectors and dimensions unchanged. The 'Document retry contract' violet running bar must BEGIN at the SAME horizontal position as the 'Test restart recovery' bar begins, about 1:40 on the time axis (just after Persist submission identity completes). Remove the violet portion before 1:40, leaving that earlier area empty. Keep its live end at Now 4:20. This makes the documentation and restart test execute in parallel after the accepted identity task, consistent with the companion flow diagram. Do not shift any other timeline element. No other additions."
+    },
+    {
+      "input": "system-timeline-v2-wide.png",
+      "output": "system-timeline-v3-narrow.png",
+      "prompt": "Edit the supplied LAZERS System timeline concept to fit its actual product surface: a NARROW native Desktop SIDE PANEL. Produce a portrait screenshot approximately 1000 by 1500. Keep the existing calm charcoal native typography, restrained colors, exact illustrative task/story, minimal style. The user approves this style and functionality; change the composition and responsive layout.\nCRITICAL: NO right inspector column, NO vertical split. There is ONE horizontal resizable divider across the full panel near the middle. Upper 55% holds the compact timeline. Lower 45% holds the selected run detail, full width, with 24px equivalent side insets. All additional information that previously sat on the right must now appear BELOW the timeline.\nTop header \"System\" small live dot, compact \"Session\" chevron and tiny expand icon. Subtle feature label \"Retry-safe submission\". Quiet \"Flow   Timeline\" switch, Timeline selected. Compact time-window control \"5 minutes\" at right, do not crowd header. The timeline fits the panel width without requiring a giant label column. Task labels occupy about 30% and can wrap onto two lines; time plot occupies 70%. Simplify axis labels to \"0:00\", \"2:00\", \"4:00\" and a small distinct Now marker, with enough spacing that text never overlaps. Real observed history only, no future forecast.\nFour compact task rows, thin unobtrusive separators:\nPersist submission identity: muted green accepted bar from 0:00 to 1:40.\nDocument retry contract: restrained violet running bar from 1:40 to Now at4:20.\nTest restart recovery: selected subtle row, violet execution from1:40to3:00, amber dashed verification3:00to3:50 ending tiny failure mark.\nVerify native tool replay: no execution bar, tiny link and short muted \"Waiting on restart recovery\", wrapped neatly.\nShow only necessary subtle dependency connectors: accepted identity gates the restart test, failed restart test gates replay. Below task rows one quiet Architect lane, a single amber marker at3:50 and short \"Decision pending\". No running supervisor bar.\nA single horizontal hairline with a tiny centered resize grip separates the timeline from the lower detail. Bottom detail:\nsmall muted \"Test restart recovery\"\nheading \"Verification failed\"\nbody \"A fresh process returned a new task ID.\"\nsmall subheading \"Next\"\n\"Architect chooses repair or replan.\"\nthree small clear rows with icons: \"Outcome persisted\", \"Notification delivered\", \"Decision pending\".\nThen collapsed disclosures \"Attempt details\" and \"Activity\".\nTiny muted footer \"Concept · example runtime data\".\nNo metric cards, no sidebar, no app chrome, no glowing graph, no giant controls. Maintain compact high quality typography, legible exact labels and generous clarity. The timeline and lower detail are independently scrollable in implementation; depict a focused static screenshot. Preserve the semantic meaning of all bars and task states while adapting to portrait."
+    }
+  ],
+  "selected": {
+    "flow": "system-flow-v1.png",
+    "timeline": "system-timeline-v3-narrow.png"
+  },
+  "userDirection": "Both concepts look good; timeline must fit a narrow native side panel with details below a horizontal divider, never in a right-hand column."
+}

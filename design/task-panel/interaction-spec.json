@@ -1,0 +1,318 @@
+{
+  "kind": "LAZERS task panel design concept",
+  "date": "2026-10-31",
+  "status": "Focused v2 guides a retained native Desktop first pass; runner/dependency examples remain future behavior. See .agents/docs/spikes/008-focused-tasks-panel.md for observed acceptance and deferred gates.",
+  "intent": {
+    "user": "Developer supervising Architect and implementation work inside OpenCode Desktop",
+    "primaryAction": "Immediately understand current-session work, its next dependency, and what done means",
+    "feel": "Quiet, dense native workbench; Linear-like task rows; no graph in the task view"
+  },
+  "domain": [
+    "versioned specification",
+    "acceptance evidence",
+    "dependency readiness",
+    "admission policy",
+    "attempt ledger",
+    "bounded repair",
+    "feature-level acceptance",
+    "scope conflict"
+  ],
+  "visualDirection": {
+    "source": "Host OpenCode appearance and native controls",
+    "colorWorld": [
+      "host base surface",
+      "host elevated surface",
+      "primary text",
+      "muted metadata",
+      "selection accent",
+      "running information color",
+      "attention/repair warning color"
+    ],
+    "signature": "A quiet list of task titles and lifecycle glyphs above one selected task's objective, dependency and done criteria.",
+    "alternativesRejected": [
+      "Dependency canvas as the primary task view",
+      "Kanban columns that conceal dependencies and attempt history",
+      "Large metric cards above everyday task work",
+      "Metadata columns, relation chips, counters, prominent tabs and controls spread across the default view"
+    ],
+    "typography": "Inherit host UI font and ctx.appearance.font('mono') for identifiers, commands, paths and tabular measurements.",
+    "density": {
+      "spacingBasePx": 4,
+      "rowHeightPx": 36,
+      "panelPaddingPx": 20
+    },
+    "depth": "Flat host surfaces with quiet dividers and a tinted selected row",
+    "screens": [
+      {
+        "file": "tasks-focus-v2.png",
+        "view": "Focused default task inspector",
+        "theme": "Inherit host appearance; dark example"
+      }
+    ],
+    "mockupLimits": [
+      "Application chrome is illustrative, not a pixel-exact OpenCode reproduction.",
+      "Short LZ identifiers are proposed display aliases; canonical persisted task IDs remain UUIDs.",
+      "Running/graph/revision/evidence states shown are illustrative target capabilities; current storage contains immutable submitted tasks.",
+      "The focused v2 shows only plugin panel contents. The actual OpenCode session provides ambient context; do not duplicate its sidebar or conversation."
+    ],
+    "previousScreens": {
+      "files": ["tasks-dark.png", "tasks-light.png"],
+      "status": "Rejected by user: too complicated and information scattered. Do not implement these layouts."
+    },
+    "hierarchy": [
+      "Task title is the only primary information in each list row",
+      "Subtle feature labels organize the list",
+      "Selected task title, one dependency line, one objective, and concise done criteria appear below",
+      "Details and Activity remain collapsed until requested"
+    ]
+  },
+  "layout": {
+    "host": "OpenCode native side-region Panel contribution, coexisting with conversation and existing LAZERS WebGPU GUI entry",
+    "tabs": ["Tasks"],
+    "tasks": {
+      "upper": "Searchable grouped task list",
+      "lower": "Full selected-task inspector",
+      "divider": "User-resizable horizontal splitter; list and inspector scroll independently",
+      "scopeDefault": "Current routed session, including tasks owned by its plan and linked worker/subagent work",
+      "scopeControls": [
+        "Current session (default)",
+        "Current canonical project (explicit alternate view)"
+      ],
+      "groupBy": ["Feature", "State", "Execution batch", "Worker", "None"],
+      "selectionKey": "Canonical task ID, with explicit specification revision and attempt",
+      "narrow": "Keep list above details; collapse secondary columns into a second line; allow detail expansion without replacing task state",
+      "scopePresentation": "Session scope is inherited from the host. Put the project-view choice in the quiet view menu; no global scope or permanent scope toolbar.",
+      "stateKey": "Server identity + canonical project identity + owning session ID. Preserve selection/filter/splitter state independently for each session.",
+      "sessionSwitch": "Read reactive PanelProps.session/host context. Cancel old loads/subscriptions and reject late results; show only the new session's task data. The native panel render may remain mounted across a route switch.",
+      "membership": "Use task/plan ownership and explicit links to worker sessions; do not move ownership when another session retries or views a task. Creator provenance alone is not a future ownership/graph model."
+    },
+    "system": {
+      "purpose": "Explain scheduler operation and health",
+      "content": [
+        "Active runs and specialist sessions",
+        "Dependency/resource/write-scope wait reasons",
+        "Verification and repair transitions",
+        "Durable outcome inbox/outbox",
+        "Budget reservations and measured usage",
+        "Timeline of state transitions and pending Architect decisions",
+        "Local inference status through the existing WebGPU contract when enabled"
+      ],
+      "reference": "Agent Radar live activity and drill-down, with runtime-owned task state as the source of truth",
+      "status": "Future concepts saved under design/system-panel; user approved direction with narrow timeline correction. No scheduler implementation claimed.",
+      "layout": "Narrow side panel with visualization above selected-run detail, separated by a horizontal resizable divider. No right-hand inspector column.",
+      "placement": "Separate panel/command; do not add a prominent System tab to the focused task panel"
+    }
+  },
+  "list": {
+    "columns": ["Lifecycle glyph", "Task title"],
+    "activeDefault": {
+      "hide": ["accepted", "cancelled"],
+      "retainUntilResolvedOrAcknowledged": ["failed", "exhausted", "blocked"],
+      "history": "Explicit history filter can retrieve all states; show hidden accepted count",
+      "selectedTaskFinishes": "Keep its inspector and a completion notice until the user changes selection; update list counts without stealing focus"
+    },
+    "groups": "Feature grouping is presentation. Parallel eligibility and dependency ordering are runtime facts, not inferred from list order.",
+    "sequential": "Selected-task dependency line names the next unmet prerequisite; further predecessor/successor relations are in Details.",
+    "parallel": "Concurrent work is visible through the same running glyph on multiple rows. Execution batches and parallel eligibility are available in Details rather than repeated badges.",
+    "writeConflicts": "Explain serialization caused by overlapping write scopes even when there is no dependency edge",
+    "readiness": "Default list uses a lifecycle glyph. Selected details explain its wait reason in one plain line; recorded lifecycle and other scheduling reasons are available in Details.",
+    "ordering": "Stable feature groups and task order; avoid event-driven resorting while the user reads.",
+    "controls": ["Active view menu, including project-scope and history options", "Search icon"],
+    "bulk": "Bulk selection acts through runtime-validated commands with partial-failure reporting. Visual reordering never edits dependency edges."
+  },
+  "inspector": {
+    "header": ["Task reference", "Title"],
+    "overview": [
+      "Objective",
+      "Exclusions",
+      "Constraints",
+      "Assumptions",
+      "Repository and starting revision",
+      "Context references",
+      "Permitted write scope",
+      "Requirements/capabilities/skills",
+      "Policy reference",
+      "Dependency and downstream relations",
+      "Execution plan when admitted"
+    ],
+    "acceptance": [
+      "Each assertion",
+      "Required evidence or named human decision",
+      "Verification command and timeout",
+      "Exact revision/artifact validated",
+      "Pending/passed/failed/invalidated evidence state",
+      "Overall feature acceptance separate from individual task acceptance"
+    ],
+    "activity": [
+      "Append-only specification/attempt history",
+      "State transitions and reasons",
+      "Tool/verification summaries",
+      "Repair/replan/reschedule decisions",
+      "Durable outcome delivery status",
+      "Consumed and remaining budgets with unavailable measurements shown as unknown"
+    ],
+    "actions": [
+      "Open full specification",
+      "Open worker session or result diff",
+      "Ask Architect with this task/revision attached",
+      "Respond to an actual user question",
+      "Cancel current attempt when supported",
+      "Request a new attempt, reschedule, repair, or revised plan through runtime commands when allowed"
+    ],
+    "authority": "Display only allowed actions returned by runtime capabilities. A UI action does not directly change lifecycle state. Acceptance is determined from evidence and policy; approval appears only for an actual unresolved human decision.",
+    "defaultVisible": [
+      "Task reference",
+      "Title",
+      "One dependency/wait reason when relevant",
+      "One concise objective",
+      "Done when assertions"
+    ],
+    "disclosures": {
+      "Details": [
+        "Full specification",
+        "Lifecycle state and specification revision",
+        "Scope/context/exclusions/constraints/assumptions",
+        "Dependencies and downstream work",
+        "Execution plan, worker/model/session",
+        "Attempts, budgets and evidence"
+      ],
+      "Activity": [
+        "State transitions and explanations",
+        "Verification results",
+        "Repair/replan/reschedule decisions",
+        "Durable outcome delivery and budget accounting"
+      ]
+    },
+    "presentation": "One continuous surface. No metadata grid, cards, inspector tabs, repeated status chips, or action toolbar by default. Runtime actions live in the selected task's overflow menu."
+  },
+  "liveData": {
+    "source": "One canonical-project server read service shared by GUI RPC and Architect tools. The GUI request narrows to the routed session by default or explicitly selected current project; never an all-project/global query.",
+    "snapshot": "Return task summaries, counts, graph relations, snapshot version/cursor, and server timestamp; detail loads by canonical ID/revision.",
+    "events": "Publish plugin-owned task/graph/attempt/evidence changes after commit. Exact RPC method and event names are proposed implementation work.",
+    "raceHandling": "Subscribe and buffer events around snapshot acquisition; apply only newer revisions; resync on gaps or reconnect. A live-only host stream is insufficient as a durable task ledger.",
+    "connection": "Use only a small live indicator by default. Show a concise explicit stale/error message when disconnected; no routine timestamp/status footer.",
+    "continuity": "Keep selected ID, keyboard focus, scroll anchor, filters and splitter ratio stable across updates. Cancel old project/detail requests so late responses cannot replace the current selection.",
+    "verification": [
+      "Submit in another Desktop session and observe the same project panel update without refresh.",
+      "Disconnect/restart the host and verify stale indication, resubscription, full resync and no duplicate rows.",
+      "Accepted rows leave Active while selected details stay readable.",
+      "A graph dependency remains inspectable when its accepted predecessor is hidden.",
+      "A failed verification and bounded repair display distinct attempts and retained budget usage.",
+      "Switch sessions and projects while requests are pending; no late response, stale selection or event from the old scope may appear in the new view.",
+      "Project scope includes related sessions only in the current canonical project. No global task feed exists."
+    ]
+  },
+  "theme": {
+    "requirement": "The accepted focused panel must use OpenCode's current fonts and theme. The raster mockup is a layout reference, not a source of hardcoded colors or font choices.",
+    "publicAPI": "ctx.ui components follow the user's theme/fonts/language; ctx.appearance.mode() and font('mono') are reactive.",
+    "components": "Prefer ctx.ui controls and icons so native focus, theme, font, and interaction behavior are retained.",
+    "fonts": {
+      "interface": "Inherit the host UI font; custom buttons and inputs inherit typography too. Do not bundle fonts, hardcode Inter/system font stacks, or copy the image's typeface.",
+      "monospace": "Use ctx.appearance.font('mono') reactively for task references, code, paths and commands. The public appearance getter exposes the mono font; use normal CSS inheritance for UI text.",
+      "scale": "Keep the host's normal panel text scale and compact row density. The generated image's large pixel dimensions are not literal CSS font sizes."
+    },
+    "customStyles": "Use inherited semantic host CSS variables for custom rows/surfaces. Do not freeze computed colors or maintain an independent light/dark palette.",
+    "exampleTokens": [
+      "--background-base",
+      "--background-strong",
+      "--surface-base",
+      "--surface-base-hover",
+      "--surface-base-interactive-active",
+      "--text-strong",
+      "--text-base",
+      "--text-weak",
+      "--border-base",
+      "--border-selected"
+    ],
+    "compatibility": "CSS token names are verified against the pinned release's source, not a stable public theme-object guarantee. Isolate mappings and check on upgrades.",
+    "acceptance": [
+      "Switch dark/light while Tasks is open; preserve selection, scroll, filters and splitter.",
+      "Switch between two named themes in the same mode; custom task rows and native controls both update.",
+      "Change OpenCode's monospace font with Tasks open; task references, code and paths update without reopening. UI labels continue inheriting host typography.",
+      "Text plus icons convey state in every theme; honor reduced motion and visible keyboard focus."
+    ]
+  },
+  "architectQueries": {
+    "decision": "Enable confined Code Mode for task investigation; the previous blanket execute restriction is not the intended final authority boundary.",
+    "current": "lazers_list_tasks and lazers_get_task already exist as direct tools. List is limited to the newest 100 summaries and is not a complete overlap-search API. All three task tools currently set codemode:false, and Architect currently denies execute.",
+    "proposal": "Expose typed, bounded query/get operations in Code Mode, with structured output and project-scoped permissions. Architect can query the current project across sessions for overlap while its default panel stays session-scoped. GUI and agent share the read service, without a shadow task store.",
+    "queryFields": [
+      "Text/ID",
+      "Feature/group",
+      "Lifecycle/attention state",
+      "Session/worker",
+      "Dependency",
+      "Scope path",
+      "Acceptance/context content",
+      "Include history",
+      "Stable cursor and bounded limit"
+    ],
+    "results": [
+      "Canonical task ID and revision",
+      "Objective",
+      "State/readiness",
+      "Scope overlap and relevant acceptance snippets",
+      "Exact-match or lexical candidate reason",
+      "Next cursor and snapshot version"
+    ],
+    "duplicateFlow": [
+      "Query relevant existing tasks, including accepted history, before a genuinely new submission.",
+      "Retrieve promising candidates and compare intent, scope, acceptance and repository context.",
+      "Reuse the existing ID when the user is requesting the same known work.",
+      "When overlap is materially ambiguous, ask a focused question identifying the existing task and the differences.",
+      "Create separate work when the intent is distinct; revising existing scope uses an explicit versioned operation once implemented.",
+      "Submission idempotency still handles repeated logical calls; semantic overlap search does not establish exactly-once submission."
+    ],
+    "authority": "Code Mode composes permitted tools and processes results. Runtime APIs continue to own admission, transitions, dependency validity, cancellation and budgets. Per-tool permission checks still run.",
+    "hostEvidence": "Pinned Code Mode is an interpreter without direct process/filesystem/import access. OpenCode adds permission-checked fetch and routes inner tool calls through its normal executor. Support must be verified through Desktop before the live agent policy is changed.",
+    "noNewApprovalCeremony": "Ask only when overlapping work creates a material intent/scope decision; a query result alone does not require user approval."
+  },
+  "implementationBoundary": {
+    "nextIncrement": "A live task read API and native Tasks panel over persisted task records, including Code Mode query access and a concise overlap-investigation instruction. Extend the same contract as the real scheduler adds states/graphs/attempts.",
+    "currentState": "Current records must appear as submitted with their real TaskSpec and context. Do not show fake runtime events, fabricate running states, or introduce a manual handoff workflow to compensate for the missing scheduler.",
+    "taskMethod": "Have the Desktop Architect inspect this design and define the bounded implementation task before implementation. Mockup generation does not dispatch or implement it.",
+    "parallelWork": "Preserve the other session's WebGPU implementation and integrate into the one existing GUI entry rather than creating another plugin package."
+  },
+  "sources": [
+    {
+      "title": "Agent Radar",
+      "url": "https://awesome-copilot.github.com/extension/agent-radar/"
+    },
+    {
+      "title": "GUI plugins",
+      "url": "https://opencode.ai/v2/docs/build/plugins/gui/"
+    },
+    {
+      "title": "Pinned GUI host APIs",
+      "url": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/host-apis.ts"
+    },
+    {
+      "title": "Pinned GUI panel registry",
+      "url": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/gui/registries.ts"
+    },
+    {
+      "title": "Pinned theme application",
+      "url": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/ui/src/theme/context.tsx"
+    },
+    {
+      "title": "Pinned Code Mode interpreter",
+      "url": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/codemode/README.md"
+    },
+    {
+      "title": "Pinned Code Mode tool executor",
+      "url": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/codemode/tool.ts"
+    },
+    {
+      "title": "Pinned fetch permission",
+      "url": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/codemode/fetch.ts"
+    },
+    {
+      "title": "Linear UI hierarchy and restraint",
+      "url": "https://linear.app/now/how-we-redesigned-the-linear-ui"
+    },
+    {
+      "title": "Linear display options",
+      "url": "https://linear.app/docs/display-options"
+    }
+  ]
+}

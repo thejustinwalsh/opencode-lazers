@@ -1,0 +1,180 @@
+import type { Plugin } from "@opencode/plugin/effect"
+import { Agent } from "@opencode/schema/agent"
+import { Model } from "@opencode/schema/model"
+import { Provider } from "@opencode/schema/provider"
+import { Session } from "@opencode/schema/session"
+import { SessionMessage } from "@opencode/schema/session-message"
+import { AbsolutePath } from "@opencode/schema/schema"
+import { DateTime, Effect } from "effect"
+import { fingerprint } from "../identity.ts"
+import type { RunnerHost } from "./host.ts"
+import type { TaskRepository } from "../storage.ts"
+import { ProjectIndex } from "../context/index.ts"
+import { dirname, join } from "node:path"
+
+export function nativeHost(ctx: Plugin.Context, repository: TaskRepository): RunnerHost {
+  return {
+    async session(id) {
+      const session = await Effect.runPromise(
+        ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(
+          Effect.catch((error) => {
+            if (
+              typeof error === "object" &&
+              error !== null &&
+              "_tag" in error &&
+              error._tag === "SessionNotFoundError"
+            )
+              return Effect.succeed(null)
+            return Effect.fail(error)
+          }),
+        ),
+      )
+      if (!session) return null
+      const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+      const busy = session.time.busy ? DateTime.toEpochMillis(session.time.busy) : 0
+      const idle = session.time.idle ? DateTime.toEpochMillis(session.time.idle) : 0
+      return {
+        id: session.id,
+        parentID: session.parentID,
+        projectID: session.projectID,
+        directory: session.location.directory,
+        archived: session.time.archived !== undefined,
+        busy: busy > idle,
+        outcome: session.outcome,
+        model: session.model,
+        tokens:
+          session.tokens.input +
+          session.tokens.output +
+          session.tokens.reasoning +
+          session.tokens.cache.read +
+          session.tokens.cache.write,
+        tools: messages.reduce(
+          (sum, message) =>
+            sum +
+            (message.type === "assistant"
+              ? message.content.filter((part) => part.type === "tool").length
+              : 0),
+          0,
+        ),
+        // Subscription billing is not a dated equivalent API estimate.
+        cost: null,
+        messages: messages.map((message) => ({
+          id: message.id,
+          text:
+            message.type === "user" || message.type === "synthetic"
+              ? message.text
+              : message.type === "assistant"
+                ? message.content
+                    .filter((part) => part.type === "text")
+                    .map((part) => part.text)
+                    .join("\n")
+                : "",
+        })),
+      }
+    },
+    async skills(sessionID, ids) {
+      if (!ids.length) return []
+      const available = await Effect.runPromise(ctx.skill.list())
+      const selected = []
+      for (const id of ids) {
+        const skill = available.data.find((s) => s.id === id)
+        if (!skill) throw new Error(`Required skill unavailable: ${id}`)
+        await Effect.runPromise(
+          ctx.permission.assert({
+            sessionID: Session.ID.make(sessionID),
+            agent: Agent.ID.make("architect"),
+            action: "skill",
+            resources: [id],
+          }),
+        )
+        selected.push({
+          id: skill.id,
+          path: skill.path,
+          content: skill.content,
+          revision: fingerprint({ path: skill.path, content: skill.content }),
+        })
+      }
+      return selected
+    },
+    async assemble(input) {
+      const index = new ProjectIndex(
+        input.directory,
+        join(dirname(repository.path), "context"),
+        repository,
+        async (path) => {
+          try {
+            await Effect.runPromise(
+              ctx.permission.assert({
+                sessionID: Session.ID.make(input.sessionID),
+                agent: Agent.ID.make("lazers-implementor"),
+                action: "read",
+                resources: [join(input.directory, path)],
+              }),
+            )
+            return true
+          } catch {
+            return false
+          }
+        },
+      )
+      try {
+        return await index.packet(
+          { sessionID: input.sessionID, agent: "lazers-implementor" },
+          input.proposal,
+          input.skills,
+          input.source,
+        )
+      } finally {
+        index.close()
+      }
+    },
+    async create(input) {
+      const model = {
+        id: Model.ID.make(input.model.id),
+        providerID: Provider.ID.make(input.model.providerID),
+        ...(input.model.variant ? { variant: Model.VariantID.make(input.model.variant) } : {}),
+      }
+      const catalog = await Effect.runPromise(ctx.model.list())
+      if (
+        !catalog.data.some(
+          (m) => m.id === model.id && m.providerID === model.providerID && m.enabled,
+        )
+      )
+        throw new Error("Admitted worker model is unavailable; no fallback")
+      await Effect.runPromise(
+        ctx.session.create({
+          id: Session.ID.make(input.id),
+          parentID: Session.ID.make(input.parentID),
+          agent: Agent.ID.make(input.agent),
+          model,
+          location: { directory: AbsolutePath.make(input.directory) },
+          title: input.title,
+          metadata: { lazersAttemptID: input.attemptID },
+        }),
+      )
+    },
+    async prompt(input) {
+      await Effect.runPromise(
+        ctx.session.prompt({
+          sessionID: Session.ID.make(input.sessionID),
+          id: SessionMessage.ID.make(input.id),
+          text: input.text,
+        }),
+      )
+    },
+    async notify(input) {
+      await Effect.runPromise(
+        ctx.session.synthetic({
+          sessionID: Session.ID.make(input.sessionID),
+          id: SessionMessage.ID.make(input.id),
+          text: input.text,
+          resume: input.resume,
+          description: "LAZERS task outcome",
+        }),
+      )
+    },
+    async interrupt(id) {
+      await Effect.runPromise(ctx.session.interrupt({ sessionID: Session.ID.make(id) }))
+    },
+  }
+}

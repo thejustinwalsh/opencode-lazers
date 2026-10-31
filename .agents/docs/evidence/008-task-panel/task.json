@@ -1,0 +1,417 @@
+{
+  "schemaVersion": 1,
+  "id": "2d955ffa-8b58-48c7-b34b-494b2af0d7fc",
+  "revision": 1,
+  "status": "submitted",
+  "createdAt": "2026-10-31T06:50:17.081Z",
+  "provenance": {
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "workspaceDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "sessionID": "ses_e6f4c43aeffeIl3rnBXgpq5Cbe",
+    "startingRevision": {
+      "kind": "git",
+      "commit": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+    }
+  },
+  "proposal": {
+    "objective": "Implement one focused, live, read-only native Tasks side-panel increment for OpenCode Desktop over LAZERS' real immutable submitted records, following design/task-panel/tasks-focus-v2.png and interaction-spec.json. Share a canonical-project-scoped bounded query/detail service between GUI RPC and permission-checked Architect Code Mode tools, with post-commit change notifications and reliable resync. Enable evidence-based overlap investigation without implementing scheduling, execution, graphs, or task mutation; preserve the single GUI entry and concurrent WebGPU work.",
+    "exclusions": [
+      "Admission, workers, dispatch, execution service, scheduler, task graphs, ownership/link schemas, attempts, verification execution, lifecycle transitions, budget enforcement, and runtime mutation commands.",
+      "Invented running/readiness/dependency states, feature memberships, worker links, scheduler activity, evidence results, measured usage, or generated LZ identities. The mockup's execution examples are not fixtures to display as real data.",
+      "System dashboard, graph canvas, Kanban, bulk operations, drag reordering, metrics cards, inspector tabs, permanent scope toolbar, and the rejected dense v1 layouts.",
+      "Submission idempotency or semantic uniqueness enforcement. Existing task 5f5743c3-1bd0-4a53-a86b-a347dd961e1a covers retry identity separately; overlap queries do not provide exactly-once submission.",
+      "Global/all-project task feeds, user-supplied arbitrary project/database selectors, arbitrary SQL/query evaluation, semantic embedding infrastructure, task editing, and revised-specification operations.",
+      "A second plugin package/GUI entry, dependency upgrades, unrelated refactors, changes under src/webgpu/**, engine/cache/model modifications, paid OpenRouter calls, or CLI/service-driven model evaluation replacing native Desktop trials."
+    ],
+    "constraints": [
+      "Treat this as one independently usable read-observability increment with one worker. Follow AGENTS.md, README.md's spike boundary, and the pinned OpenCode 2.2.5 V2 public APIs in .agents/docs/opencode-api.md. Use strict TypeScript, SolidJS, native ctx.ui controls/icons where available, existing Bun-native quality tooling and bun test; do not shadow native command names or add a UI framework.",
+      "Starting observed HEAD is b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df, an initial commit, not a source baseline for the inspected working-tree scaffold. Before edits capture actual HEAD, working-tree inventory and relevant content hashes/diff, including shared GUI/server entry points. Recheck before integration. Preserve all concurrent changes; do not reset, stash, overwrite, format, or commit unrelated files. Conflicting shared-file edits require coordination, not replacement.",
+      "Put new task read contracts/service/RPC/panel/controller/tests under src/tasks/. Keep host adapters small: register task reads/RPC from src/index.ts, and contribute Tasks from src/gui.tsx before its WebGPU-only early return. Retain one existing GUI export/bundle and WebGPU main/store/runtime/disposal behavior. Tasks must work when options.webgpu is false and must not initialize/download a model as a prerequisite. Limit edits in shared entry files to additive registration and necessary cleanup composition.",
+      "Use the existing plugin-owned SQLite database and canonical projectDirectory partition, not OpenCode private tables, a browser database, a shadow task store, or the projectID string alone (existing provenance can have projectID 'global'). GUI requests resolve the routed session's live server/location client, never the default-service WebGPU worker route. Do not accept an arbitrary project path from a caller. Worktrees sharing the canonical project share records; other projects and servers remain isolated.",
+      "Implement a single validated read contract used by RPC and agent adapters: bounded query and get by canonical UUID/explicit specification revision. Query supports text/ID, submitting sessionID, scope-path candidate filtering, and acceptance/context content search over all persisted records in the current canonical project, not just repository.list's newest 100. Use documented deterministic literal/lexical semantics and bounded snippets; scope matches are possible-overlap evidence, not proof of glob intersection or runtime conflict. Reject unsupported feature/graph/worker/dependency filters rather than manufacturing fields.",
+      "Bound query text and cursor size; page limit is 1..100 with a bounded default. Return stable ordered summaries containing canonical ID/revision, real status, concise objective, creation/session provenance and match reasons/snippets, filtered count, next cursor, durable snapshot/version marker and server time. Detail returns the unchanged full stored TaskSpec or a typed not-found/revision-unavailable result. Support historical inclusion without inventing history: current records are all submitted, so Active/history are equivalent and must not imply completed records or hidden accepted counts.",
+      "Use a stable deterministic order and snapshot-bound keyset pagination, with an ID tiebreaker. Concurrent inserts cannot duplicate, skip, or leak rows into an existing snapshot's pages. Bind cursors to project/filter/session/snapshot; reject malformed or mismatched cursors without exposing another scope. Reads and filtered counts must agree at the reported snapshot. Choose the simplest durable watermark compatible with immutable insert-only records, not a speculative general event engine.",
+      "Publish plugin-owned read invalidations only for successfully committed task inserts. Carry canonical scope and a durable change/snapshot marker; rollback/invalid/denied writes produce no task-created event. Notifications are not lifecycle events or an execution ledger. Delivery failure must not turn a successful committed submission into a false failure; catch-up/resync repairs missed notifications. Preserve submitted receipts, original envelopes and provenance.",
+      "Cover submissions through separate location/plugin instances, worktrees and independent SQLite connections, not only the repository object that owns a subscriber. Use a bounded, cleaned-up catch-up mechanism where public RPC live-only events cannot deliver another instance's changes. A healthy open panel must converge within five seconds in the local verification fixture. Do not depend solely on in-process callbacks or an unreplayed host stream.",
+      "Subscribe/buffer around snapshot acquisition, discard obsolete/duplicate invalidations, and resync on gaps, failed streams, reconnect and host restart. Reacquire live server/client references after reconnect. Show a small connection indicator; on loss/error keep previously displayed data explicitly stale (or show scoped error/empty state), never represent stale data as current. No routine timestamp/footer or model calls for progress.",
+      "Implement one native side-region Tasks Panel with a normal host launcher/command, quiet task-title rows and a subtle selected row above the inspector. Derive any row title deterministically from the objective without a model or stored-schema change; show full objective in the inspector. Do not infer feature groups from creator sessions, text similarity or list order; omit unavailable grouping controls and dependency lines. Use a non-running glyph/accessibility label for submitted.",
+      "Keep list and inspector vertically stacked at narrow widths, independently scrollable, with a user-resizable horizontal separator, sensible minimum sizes, visible keyboard focus and keyboard resizing/row selection. Selected default content is canonical reference, concise title, objective and all done assertions. Details and Activity start collapsed. Details exposes every proposal field, provenance, revision, evidence requirements/verification commands/timeouts and recorded limits. Evidence requirements are not passed evidence; limits are not measured usage. Activity may show the factual submission timestamp/provenance only, or an explicit unavailable-history explanation. No speculative progress animation, acceptance checkbox mutation, or runtime action toolbar.",
+      "Default to the current routed session. In this storage slice use the recorded submitting session as the only available session association and label/document that limitation; do not claim future plan/worker ownership or move ownership when another session views a record. Offer only an explicit current canonical-project alternate view in the quiet view menu, plus search as appropriate. No routed session/location means no global/default-project fallback.",
+      "Read reactive PanelProps.session/host getters rather than capturing/destructuring a session once; the host can keep the render mounted across route changes. Key selection/search/view/splitter/scroll state by server identity + canonical project identity + session ID. On session, project, server, filter or selected-ID change, abort old requests/subscriptions and reject late responses/events with scope/generation checks. Restore each session's independent state when returning without leaking old data into a new view. Live updates preserve selected ID, focus, scroll anchor and splitter; do not resort underneath the reader or auto-select newly arriving tasks.",
+      "Inherit host UI typography for all custom text/buttons/inputs. Read ctx.appearance.font('mono') reactively for IDs, code, commands, paths and relevant tabular values. Use isolated, pinned-source-checked semantic CSS-variable mappings for surfaces/text/dividers/selection/focus; no bundled fonts, hardcoded font stacks, captured computed palette, independent light/dark palette or raster-derived font sizes/colors. Honor reduced motion and communicate submitted/stale/error states with text/icons, not color alone.",
+      "Expose typed structured query/get results to confined Code Mode (including Tool.Info.output/Result.output, not only JSON strings), preserving compatible direct task retrieval/list behavior through the same service. Keep submission as its permission-checked direct tool and codemode:false. Enable only the required execute/query permissions in Architect after native isolated Desktop verification of the candidate. Every inner task query/get/list invocation must still assert its own permission before repository access; execute permission alone cannot authorize an inner tool.",
+      "Do not grant shell/edit/subagent, direct process/filesystem/import access, arbitrary network fetch or broad new tool authority through Code Mode. Retain existing read/glob/grep/question permissions and .env restrictions; preserve optional WebGPU tool registrations. Verify the pinned interpreter and normal inner-tool executor behavior rather than trusting prompt prose or a mocked permission test. A failed confinement/native verification leaves activation blocked, not silently broadened.",
+      "Add concise Architect overlap guidance: query relevant current-project records across sessions, including history, before a genuinely new submission; retrieve promising candidates and compare objective/scope/acceptance/context. Reuse/retrieve a known same-work ID; ask only when a difference creates material intent/scope ambiguity; distinct work may proceed without a new approval ceremony. Never mutate existing immutable records or claim lexical search guarantees uniqueness. Keep lifecycle/acceptance authority with runtime APIs.",
+      "Render stored objective/specification content as text or through the native safe Markdown/Code components, never raw injected HTML. Provide truthful loading, empty, not-found and error states. Clean up streams, timers, abort controllers, subscriptions and Solid owners on scope changes, panel close/unmount and plugin disposal.",
+      "Use isolated temporary fixture databases/projects and native Desktop prompts for integration evidence. Do not change normal user task data, other sessions' configuration or WebGPU state. Use an isolated host for restart tests; a shared-host/service restart or disruptive configuration change requires explicit coordination/authorization. Restore temporary appearance settings/configuration after checks. If real Desktop access or a safe isolation mechanism is unavailable, report the acceptance gate unresolved instead of substituting CLI checks.",
+      "No server is needed for one-shot Bun checks/build. Before starting any development/networked verification server, load and follow the repository's portless-dev-servers skill and use a stable HTTPS .localhost URL, never numbered HTTP fallback. Record the exact tested candidate revision/diff and rerun invalidated evidence after integration changes; do not fix unrelated concurrent failures outside writeScope."
+    ],
+    "assumptions": [
+      "The supplied focused v2 image and interaction spec are approved layout/interaction authority; their running/graph/evidence illustrations are explicitly future capabilities, not requirements to fabricate now.",
+      "The inspected TaskSpecSchema has revision 1 and status 'submitted' only, with immutable stored proposals and submitting-session provenance. No ownership graph or execution service exists. Unsupported design fields/actions are intentionally deferred for this increment.",
+      "The one currently listed durable project task is the separate retry-idempotency specification 5f5743c3-1bd0-4a53-a86b-a347dd961e1a, status submitted. This task neither assumes it has executed nor resubmits its work."
+    ],
+    "writeScope": [
+      "src/tasks/**",
+      "src/storage.ts",
+      "src/storage.test.ts",
+      "src/submission.ts",
+      "src/index.ts",
+      "src/tools.ts",
+      "src/tools.test.ts",
+      "src/architect.md",
+      "src/architect.test.ts",
+      "src/gui.tsx",
+      "test/task-panel/**",
+      "dist/gui-experimental.cjs",
+      "README.md",
+      ".agents/docs/handoff.md",
+      ".agents/docs/opencode-api.md",
+      ".agents/docs/spikes/008-focused-tasks-panel.md",
+      ".agents/docs/evidence/008-task-panel/**"
+    ],
+    "context": [
+      {
+        "reference": "AGENTS.md and README.md: progressive dogfood order, native tooling, task/acceptance contracts, runtime authority, single reusable package and concurrent WebGPU experiment.",
+        "revision": null
+      },
+      {
+        "reference": ".git/HEAD and .git/refs/heads/main: observed HEAD only. Inspected source is working-tree context; do not assert it exists at this initial commit.",
+        "revision": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"
+      },
+      {
+        "reference": "design/task-panel/tasks-focus-v2.png: approved quiet list above selected inspector; raster is layout authority, not fonts/colors or implemented runtime data.",
+        "revision": null
+      },
+      {
+        "reference": "design/task-panel/interaction-spec.json: focused hierarchy, current submitted-only implementation boundary, routed-session scope/late-result handling, shared queries, Code Mode, native fonts/theme, WebGPU preservation. Future graph/runtime sections remain excluded.",
+        "revision": null
+      },
+      {
+        "reference": "src/task.ts: immutable strict TaskSpec revision 1, status submitted; objective, all acceptance/evidence requirements, proposal fields and provenance. src/task.test.ts and test/proposal.ts: existing envelope/schema boundaries and fixture.",
+        "revision": null
+      },
+      {
+        "reference": "src/storage.ts and src/storage.test.ts: SQLite v1 tasks table with body JSON; projectDirectory-scoped get/list, newest-100 maximum, worktree partition tests, persistence and future-version rejection. Extend without rewriting legacy envelopes.",
+        "revision": null
+      },
+      {
+        "reference": "src/submission.ts and src/tools.ts: submitTask inserts then returns submitted receipt; tools explicitly assert permissions and currently use codemode:false and string content. src/tools.test.ts covers registration/permissions but not read-denial spies or Code Mode.",
+        "revision": null
+      },
+      {
+        "reference": "src/architect.md, src/architect.ts and src/architect.test.ts: packaged validated 12-step primary agent, default-deny permissions currently exclude execute; native transform replay isolation. Add concise overlap guidance without restoring an approval ceremony.",
+        "revision": null
+      },
+      {
+        "reference": "src/index.ts: Effect setup opens scoped TaskRepository, registers task tools/Architect, and independently registers optional WebGPU service. src/gui.tsx: sole GUI entry; currently returns early unless webgpu desktop, then registers runtime/settings/header contributions and disposal.",
+        "revision": null
+      },
+      {
+        "reference": "src/webgpu/server.ts, src/webgpu/rpc.ts, src/webgpu/runtime.ts and src/webgpu/tools.ts: concurrent implementation to preserve, not permitted write scope. WebGPU default-service routing is not a template for location/project Tasks reads.",
+        "revision": null
+      },
+      {
+        "reference": "package.json, bun.lock, tsconfig.json and vite.config.ts: pinned Bun 1.4.4-canary.20261030.1, Solid 1.9.18, OpenCode 2.2.5; existing gui() Vite preset/build:gui and one ./gui-experimental export. No dependency or package-entry change is required.",
+        "revision": null
+      },
+      {
+        "reference": ".agents/docs/opencode-api.md: read before integration; public Panel registry, ctx.ui/appearance, reactive session/server APIs, RPC registration and live-only event/no-replay caveats. Exact host source authority linked there.",
+        "revision": "OpenCode v2.2.5 / 9bbb8ce18c80f099e0e448775f59d965ead40a21"
+      },
+      {
+        "reference": "node_modules/@opencode/plugin/dist/gui/registries.d.ts:223-349 explicitly says PanelProps session/tab getters remain reactive across mounted route switches; host-apis.d.ts:660-730 and 1076-1095 define MountedSession and reactive mono font/mode. Consult pinned public source equivalents for implementation.",
+        "revision": "@opencode/plugin 2.2.5 installed declarations"
+      },
+      {
+        "reference": "node_modules/@opencode/schema/dist/tool.d.ts:25-32 and 66-78 define codemode options and typed output/Result.output; node_modules/@opencode/plugin/dist/effect/rpc.d.ts defines scoped RPC handlers/events. Preserve normal inner-tool permission execution.",
+        "revision": "@opencode/schema and @opencode/plugin 2.2.5 installed declarations"
+      },
+      {
+        "reference": ".agents/docs/handoff.md:93-105 records user-approved v2, explicit project alternative, Code Mode direction and truthful submitted-only boundary. .agents/docs/spikes/006-architect-interview.md and test/host-probe.ts establish prior native Desktop evidence conventions and permission probes, not this panel's acceptance.",
+        "revision": null
+      },
+      {
+        "reference": "Existing durable task 5f5743c3-1bd0-4a53-a86b-a347dd961e1a retrieved during specification: retry-safe submission with caller keys; distinct work, overlapping storage/tool paths require serialized/coordinated integration if it is later implemented.",
+        "revision": "Task revision 1, status submitted"
+      }
+    ],
+    "acceptance": [
+      {
+        "id": "bounded-shared-reads",
+        "assertion": "One project-scoped validated service backs GUI RPC and Architect query/get/list adapters, with documented supported filters, structured outputs, real UUID/revision/status/provenance, bounded match snippets, counts and snapshot-bound cursors. Fixtures with more than 100 records prove an older task is found by objective, ID, scope path, acceptance and context; Unicode/literal wildcard-like text does not become SQL syntax. Limits, malformed inputs, unsupported fields/revisions and not-found are explicit. Traversing every page, including equal timestamps and concurrent inserts, returns exactly the original filtered snapshot once; a fresh snapshot sees the inserts. No unbounded scan/output masquerades as pagination.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "read-contract-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/read-contract.md"
+          }
+        ]
+      },
+      {
+        "id": "scope-isolation",
+        "assertion": "Tests use two canonical projects sharing a database, two worktrees/connections in one project, and distinct server identities. Query/get/count/cursor/events cannot cross the bound project/server. Session filters isolate submitting sessions; explicit project queries include the other sessions in that project only. Mismatched/tampered cursors are rejected. Native Desktop routed-session A/B and project-switch checks confirm the same boundaries, with no global or default-service fallback on draft/Home/unavailable location.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "read-contract-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "panel-controller-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "durable-live-resync",
+        "assertion": "Separate connections/location instances submit committed records and subscribers converge within five seconds while connected. Invalid/denied/rolled-back submissions emit no task-created invalidation. Tests force commit during initial snapshot, duplicate/out-of-order events, a missed event/version gap, subscription failure, notification failure after commit, and a fresh-process restart; final query results equal durable SQLite records with no duplicate/missing rows. Reconnect resubscribes/resyncs using the current client, and all watchers/timers are disposed. A real Desktop trial submits from another session, observes the explicit project view update without refresh, then performs an isolated host disconnect/restart and demonstrates stale indication and full recovery.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "read-contract-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "panel-controller-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/live-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "truthful-focused-panel",
+        "assertion": "The native Tasks side panel follows focused v2: task titles/non-running submitted glyphs in a quiet upper list, selected objective/all done assertions below, collapsed Details/Activity and no dense dashboard/control bar. Canonical UUID/revision remain accessible; full stored proposal and provenance, evidence requirements/commands/timeouts and recorded limits are inspectable without data loss. Only factual submission activity is shown. No graph labels, inferred membership, fake wait reasons, execution events, passed evidence, spent budgets, mutable acceptance checkboxes or unsupported actions appear. Long/multiline/HTML-like stored content renders safely, and loading/empty/error/not-found states are usable.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "panel-controller-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/focused-panel.png"
+          },
+          {
+            "kind": "human",
+            "decision": "Repository owner reviews the actual Desktop focused-panel screenshot against tasks-focus-v2.png and confirms quiet native hierarchy and truthful submitted-only content; unresolved review remains an acceptance gate."
+          }
+        ]
+      },
+      {
+        "id": "routing-and-continuity",
+        "assertion": "Deterministic controller tests deliberately delay old list/detail loads and dispatch old-scope events after switching session, project, server, filter and selected task; none can replace the new view or selection. Native Desktop A→B→A checks confirm independent selection/search/view/splitter/scroll keyed by server+canonical project+session while the panel remains mounted. Returning restores A's state; incoming submissions preserve focus/scroll/selection and do not reorder existing rows. Resizable separator works by pointer and keyboard with independent list/inspector scrolling and usable narrow-width stacking. Closing/unmounting cleans up requests/subscriptions.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "panel-controller-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "native-theme-font-accessibility",
+        "assertion": "With Tasks open and a selected, scrolled, filtered view and nondefault splitter ratio, native Desktop switches dark→light, switches between two recorded named themes in the same mode, and changes between two recorded monospace fonts. Custom rows/surfaces/selection and native controls update immediately; IDs/paths/commands/code use the reactive mono font while UI text inherits host typography. Scope, selection, filters, focus, scroll and splitter persist. Record screenshots plus before/after computed font/token evidence. Keyboard navigation/disclosures/resizing, visible focus, text/icon state labels and reduced-motion behavior are checked. No new hardcoded palette/font stack or captured computed theme values are used.",
+        "evidence": [
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/appearance-switches.json"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/theme-dark.png"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/theme-light.png"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/theme-alternate.png"
+          }
+        ]
+      },
+      {
+        "id": "permission-checked-code-mode",
+        "assertion": "Read tools expose schema-validated structured Code Mode results through the shared service, and inner permission assertions run before any storage read. Denial tests cover get/query/list via direct adapters and the real nested executor; execute allowed plus query denied still fails without data disclosure. In isolated native Desktop, Architect successfully composes bounded current-project queries and detail retrieval; shell/edit/subagent, imports, direct process/filesystem access, protected .env reads and arbitrary fetch remain unavailable/denied. Submit remains direct, permission-checked and not Code Mode-exposed. Candidate activation in normal Architect policy occurs only after pinned native confinement checks pass; mocks/typechecks alone do not satisfy this gate.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "read-contract-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "architect-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/codemode-permissions.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/architect-native-trace.json"
+          }
+        ]
+      },
+      {
+        "id": "architect-overlap-behavior",
+        "assertion": "Retained native Desktop transcripts on isolated fixtures exercise three cases: requesting known identical work retrieves/reuses its UUID with no new task; a candidate differing in a material scope/acceptance point triggers one focused question identifying the task and difference before submission; clearly distinct work receives relevant query/detail investigation and one new valid submission without unnecessary approval. Record before/after task IDs/counts, selected ChatGPT subscription model/variant, actual tool calls and outcomes. The instructions distinguish lexical candidates from uniqueness/idempotency and retain runtime lifecycle authority.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "architect-tests"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/architect-native-trace.json"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          }
+        ]
+      },
+      {
+        "id": "legacy-storage-compatibility",
+        "assertion": "A genuine pre-change v1 database fixture with immutable submitted tasks remains readable after opening/migration and fresh-process reopen; original envelopes/proposals/UUIDs/revisions/status/timestamps/provenance are byte-equivalent or structurally unchanged as appropriate, and submit/get/list continue working. Unsupported future database versions still fail without rewriting metadata. New read/watermark infrastructure is not an execution or mutation API.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "read-contract-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          }
+        ]
+      },
+      {
+        "id": "single-entry-webgpu-preservation",
+        "assertion": "One GUI package/export/bundle still loads. Native Desktop checks show Tasks with webgpu disabled and no model initialization/download; with webgpu enabled, existing LAZERS settings/header/dictation/runtime contract remain registered and usable without duplicate registrations or broken cleanup. Full existing WebGPU tests pass. Baseline/final inventory confirms src/webgpu/**, scripts, engine assets and unrelated concurrent changes were not overwritten; shared index/gui changes are minimal and reviewed against the latest concurrent state. Any disruptive shared-host check requires prior authorization and is not silently performed.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "gui-build"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/desktop-checks.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/scope-review.md"
+          }
+        ]
+      },
+      {
+        "id": "quality-and-evidence-boundary",
+        "assertion": "Full Bun tests, native fmt/lint/check and existing GUI build pass on the exact candidate used for Desktop acceptance. Documentation records the read contract, supported versus deferred design fields, session-association limitation, Code Mode authority and live resync behavior. The spike outcome records starting HEAD plus working-tree baseline, final revision/diff and hashes, changed paths, exact checks/results, Desktop/host versions, permission/theme/font/scope/live evidence, elapsed/usage when available, and unresolved issues. Out-of-scope concurrent failures are reported, not repaired or represented as passing; missing Desktop or human evidence keeps acceptance unresolved. No execution/completion claim follows merely from persisting this specification.",
+        "evidence": [
+          {
+            "kind": "verification",
+            "verificationID": "all-tests"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "quality"
+          },
+          {
+            "kind": "verification",
+            "verificationID": "gui-build"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/spikes/008-focused-tasks-panel.md"
+          },
+          {
+            "kind": "artifact",
+            "reference": ".agents/docs/evidence/008-task-panel/scope-review.md"
+          }
+        ]
+      }
+    ],
+    "requirements": {
+      "capabilities": [
+        "One implementation worker with strict-TypeScript/SolidJS edit access limited to writeScope; read access to pinned public host source/types and approved design artifacts.",
+        "Bun SQLite unit/integration tests, isolated temporary project/database fixtures, independent bounded subprocesses/connections, deterministic async/event race tests and cleanup assertions.",
+        "Pinned OpenCode 2.2.5 native Desktop access for candidate installation, routed-session/project panel interaction, real Code Mode and permission probes, screenshots/native trace export, theme/font switching and isolated host restart/resync; no CLI/service model-prompt substitution.",
+        "Use the connected ChatGPT subscription for bounded Architect trials after recording the selected model/variant; no paid OpenRouter access and no model inference/download required for panel behavior.",
+        "Preserve another session's concurrent WebGPU work and coordinate shared-file changes; capture baseline/final scope evidence and leave operational integration gaps unresolved rather than broadening scope.",
+        "Read-only GUI RPC via host-authenticated current location; no new arbitrary project selector or lifecycle authority. Ability to temporarily exercise/restore appearance in an isolated Desktop context without changing normal project data."
+      ],
+      "skills": [
+        "browser: load before browser tooling used for inspection/evidence; use actual native Desktop for the required Desktop gates, not an independently hosted mock panel.",
+        "portless-dev-servers: resolve and load before launching any development or networked verification server; one-shot Bun checks are exempt. Missing required skill when a server is necessary is a blocker."
+      ],
+      "risk": "high",
+      "policyReference": "AGENTS.md; README.md task specification, runtime authority, verification/completion and spike-record contracts; design/task-panel/interaction-spec.json focused-v2 current-record implementation boundary. One worker, one bounded repair; native confinement verification precedes live Architect permission activation."
+    },
+    "verification": [
+      {
+        "id": "read-contract-tests",
+        "command": "bun test src/tasks/read.test.ts src/tasks/rpc.test.ts src/storage.test.ts src/tools.test.ts",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "panel-controller-tests",
+        "command": "bun test src/tasks/panel-state.test.ts",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "architect-tests",
+        "command": "bun test src/architect.test.ts",
+        "timeoutMs": 60000
+      },
+      {
+        "id": "all-tests",
+        "command": "bun test",
+        "timeoutMs": 240000
+      },
+      {
+        "id": "quality",
+        "command": "bun run verify",
+        "timeoutMs": 180000
+      },
+      {
+        "id": "gui-build",
+        "command": "bun run build:gui",
+        "timeoutMs": 240000
+      }
+    ],
+    "limits": {
+      "maxTokens": 64000,
+      "maxEstimatedCostUsd": 60,
+      "maxElapsedMs": 21600000,
+      "maxToolCalls": 260,
+      "maxProviderRetries": 1,
+      "maxRepairAttempts": 1
+    }
+  }
+}
