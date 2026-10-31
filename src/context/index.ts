@@ -44,7 +44,6 @@ export type Focus = {
   endLine?: number
 }
 const maxFile = 512 * 1024
-const maxResponse = 16 * 1024
 const matchesPath = (pattern: string, path: string) =>
   new Bun.Glob(pattern).match(path) || path.startsWith(`${pattern.replace(/\/$/, "")}/`)
 const secret = (path: string) =>
@@ -130,12 +129,6 @@ export class ProjectIndex {
       await this.counter.init()
     }
     return this.counter
-  }
-  private async bounded<T>(value: T): Promise<T> {
-    const text = JSON.stringify(value)
-    if (Buffer.byteLength(text) > maxResponse || (await this.tokenizer()).countTokens(text) > 4000)
-      throw new Error("Response exceeds 16 KiB/4,000 tokens; narrow paths or line range")
-    return value
   }
   private evict() {
     const snapshots = readdirSync(this.cacheDirectory)
@@ -346,7 +339,7 @@ export class ProjectIndex {
     const matches = snapshot.files
       .filter((f) => !paths.length || paths.some((p) => matchesPath(p, f.path)))
       .slice(0, 100)
-    return this.bounded({
+    return {
       snapshotID: snapshot.id,
       workspace: this.root,
       repomix: snapshot.repomix,
@@ -355,7 +348,7 @@ export class ProjectIndex {
       packedTokens: snapshot.tokens,
       files: matches.map(({ path, bytes }) => ({ path, bytes })),
       truncated: snapshot.files.length > matches.length,
-    })
+    }
   }
   async evidence(principal: Principal, focus: Focus) {
     const snapshot = await this.snapshot(principal, focus.paths ?? [])
@@ -385,12 +378,12 @@ export class ProjectIndex {
               : lines.slice(start - 1, end).join("\n"),
       }
     })
-    return this.bounded({
+    return {
       snapshotID: snapshot.id,
       encoding: snapshot.encoding,
       sources,
       truncated: matches.length === 50,
-    })
+    }
   }
 
   async packet(
