@@ -3,7 +3,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import type { TaskReads } from "./read.ts"
-import { Tasks } from "./contract.ts"
+import { GetInput, GetOutput, QueryOutput, Tasks } from "./contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 
 export function registerTaskReads(
@@ -13,8 +13,25 @@ export function registerTaskReads(
 ) {
   return Effect.gen(function* () {
     const rpc = yield* ctx.rpc.register(Tasks, {
-      query: (input) => Effect.sync(() => reads.query(input)),
-      get: (input) => Effect.sync(() => reads.get(input)),
+      query: (input) =>
+        Effect.sync(() => {
+          const page = reads.query(input)
+          return QueryOutput.parse({
+            ...page,
+            tasks: page.tasks.map((task) => {
+              const reference = reads.repository.referenceFor(task.taskID)
+              if (!reference) throw new Error("Task reference is missing from this repository")
+              return { ...task, reference }
+            }),
+          })
+        }),
+      get: (input) =>
+        Effect.sync(() => {
+          const query = GetInput.parse(input)
+          const taskID = reads.repository.resolveTaskID(query.taskID)
+          if (!taskID) return GetOutput.parse({ status: "not_found" })
+          return reads.get({ ...query, taskID })
+        }),
       start: (input) =>
         Effect.tryPromise({
           try: async () => {

@@ -5,6 +5,7 @@ import { taskInstructions } from "./instructions.ts"
 
 const detail = GetOutput.parse({
   status: "found",
+  reference: "LZ-1",
   task: {
     schemaVersion: 1,
     id: "11111111-1111-4111-8111-111111111111",
@@ -39,7 +40,9 @@ const detail = GetOutput.parse({
 test("task instructions preserve goal, acceptance, boundaries, guidance, verification, and sources", () => {
   const instructions = taskInstructions(detail)
 
-  expect(instructions).toStartWith(`# Task ${detail.status === "found" ? detail.task.id : ""}`)
+  expect(instructions).toStartWith(
+    `# Task ${detail.status === "found" ? detail.task.id : ""} (LZ-1)`,
+  )
   expect(instructions).toContain("Keep submitted tasks after the plugin restarts")
   expect(instructions).toContain("## Done when\n- reopen: A task can be retrieved")
   expect(instructions).toContain("Evidence: tests")

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { z } from "zod"
 import { Tool } from "@opencode/schema/tool"
 import { TaskRepository } from "./storage.ts"
-import { startingRevision, submitTask } from "./submission.ts"
+import { startingRevision, submitTask, taskSubmissionSummary } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
 import {
   GetInput,
@@ -88,15 +88,23 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
                         })),
                       }),
                     }
-                  const receipt = withRepository((connection) =>
-                    submitTask(connection, parsed.data, () => ({
+                  const receipt = withRepository((connection) => {
+                    const submitted = submitTask(connection, parsed.data, () => ({
                       projectID: ctx.location.project.id,
                       projectDirectory: ctx.location.project.canonical,
                       workspaceDirectory: ctx.location.directory,
                       sessionID: context.sessionID,
                       startingRevision: startingRevision(ctx.location.directory),
-                    })),
-                  )
+                    }))
+                    if (submitted.status !== "submitted") return submitted
+                    const detail = new TaskReads(connection).get({ taskID: submitted.taskID })
+                    if (detail.status !== "found") return submitted
+                    return taskSubmissionSummary(
+                      submitted,
+                      detail.task,
+                      detail.execution?.state ?? detail.task.status,
+                    )
+                  })
                   return { content: JSON.stringify(receipt) }
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),
@@ -146,7 +154,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_get_task",
       description:
-        "Retrieve a LAZERS task by UUID as structured task and execution data. Implementors should use lazers_get_task_instructions for readable instructions.",
+        "Retrieve a LAZERS task by its project-local LZ reference or legacy UUID as structured task and execution data. Implementors should use lazers_get_task_instructions for readable instructions.",
       input: GetInput,
       output: GetOutput,
       options: { codemode: true, pinned: true, permission: "lazers_get_task" },
@@ -171,7 +179,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_get_task_instructions",
       description:
-        "Retrieve readable implementation instructions as a string, including the goal, acceptance, boundaries, advisory guidance, verification and sources. Use lazers_get_task when structured task and execution fields are needed.",
+        "Retrieve readable implementation instructions by project-local LZ reference or legacy UUID, including the goal, acceptance, boundaries, advisory guidance, verification and sources. Use lazers_get_task when structured task and execution fields are needed.",
       input: GetInput,
       output: GetInstructionsOutput,
       options: {
@@ -203,7 +211,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_list_tasks",
       description:
-        "List recent open submitted tasks in this repository. Retired records stay available through lazers_get_task or lazers_query_tasks with includeRetired; use the latter for the full specification list.",
+        "List recent open submitted tasks in this repository, including each stable project-local LZ reference and UUID. Retired records stay available through lazers_get_task or lazers_query_tasks with includeRetired; use the latter for the full specification list.",
       input: listInput,
       options: { codemode: false, permission: "lazers_list_tasks" },
       execute: (input, context) =>
@@ -228,7 +236,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_query_tasks",
       description:
-        "Search this project's persisted open tasks across sessions, including older records. Literal text/ID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
+        "Search this project's persisted open tasks across sessions, including older records. Literal text, LZ reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
       input: QueryInput,
       output: QueryOutput,
       options: { codemode: true, pinned: true, permission: "lazers_query_tasks" },

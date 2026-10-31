@@ -1,5 +1,6 @@
 import {
   Command,
+  LinkHandler,
   MenuItem,
   Panel,
   Store,
@@ -18,6 +19,7 @@ import { TaskPanelState } from "./panel-state.ts"
 import type { PanelData } from "./panel-state.ts"
 import { clampSplit, splitFromPointer } from "./panel-layout.ts"
 import { taskTitle } from "./presentation.ts"
+import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
 import css from "./panel.css?inline"
 
@@ -58,6 +60,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [split, setSplit] = createSignal(48)
   const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
+  const [copyStatus, setCopyStatus] = createSignal("")
   const feedback = new StartFeedback(setStartFeedback)
   const listRestore = new ScrollRestoration()
   const detailRestore = new ScrollRestoration()
@@ -191,6 +194,17 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     )
   })
   createEffect(() => feedback.reset(selectionKey()))
+  createEffect(() => {
+    const value = current()
+    if (!value || !frame.visible() || !ctx.stores.taskView(props.session).ready()) return
+    const selectedID = prefs().selectedID ?? undefined
+    if (data().key !== expectedKey() || data().selectedID === selectedID || !selectedID) return
+    void state.select(selectedID)
+  })
+  createEffect(() => {
+    selectionKey()
+    setCopyStatus("")
+  })
   const selectedTask = () => {
     const result = visible()?.detail
     return result?.status === "found" ? result.task : undefined
@@ -202,6 +216,17 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   const selectedDetail = () => {
     const result = visible()?.detail
     return result?.status === "found" ? result : undefined
+  }
+  const copyTaskLink = async () => {
+    const task = selectedTask()
+    const detail = selectedDetail()
+    if (!task || !detail) return
+    try {
+      await ctx.system.copy(taskMarkdownLink(detail.reference, task.provenance.projectID))
+      setCopyStatus("Task link copied.")
+    } catch {
+      setCopyStatus("Could not copy task link.")
+    }
   }
   const startTask = async (taskID: string, revision: 1) => {
     const value = current()
@@ -500,9 +525,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                 <span
                   class="lazers-tasks-reference"
                   style={{ "font-family": ctx.appearance.font("mono") }}
-                  aria-label={`Task ID ${task().id}`}
+                  aria-label={`Task reference ${selectedDetail()?.reference ?? "unknown"}`}
                 >
-                  <Ui.Tooltip value={task().id}>{task().id.slice(0, 8)}</Ui.Tooltip>
+                  <Ui.Tooltip value={task().id}>{selectedDetail()?.reference ?? "Task"}</Ui.Tooltip>
                 </span>
                 <span
                   class="lazers-tasks-inspector-state"
@@ -524,7 +549,21 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                     Start
                   </Ui.Button>
                 </Show>
+                <Ui.Button
+                  size="small"
+                  variant="ghost-muted"
+                  aria-label="Copy task link"
+                  disabled={!selectedDetail()?.reference}
+                  onClick={() => void copyTaskLink()}
+                >
+                  Copy task link
+                </Ui.Button>
               </div>
+              <Show when={copyStatus()}>
+                <p class="lazers-tasks-reason" role="status">
+                  {copyStatus()}
+                </p>
+              </Show>
               <Show when={selectedExecution()?.reason}>
                 {(reason) => (
                   <p class="lazers-tasks-reason" role="status">
@@ -806,6 +845,56 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
 
 export function setupTaskPanel(ctx: TaskContext) {
   const Ui = ctx.ui
+  ctx.add(
+    LinkHandler,
+    createTaskLinkHandler({
+      session(source) {
+        return ctx.sessions
+          .list()
+          .find((session) => session.id === source.id && session.server.id === source.server.id)
+      },
+      async project(session, signal) {
+        const server = ctx.servers.get(session.server.id)
+        if (!server?.connected || !session.location) throw new Error("Task link session is offline")
+        const location = await server.client.location.get(
+          { location: session.location },
+          { signal },
+        )
+        return location.project
+      },
+      get(session, reference, signal) {
+        const server = ctx.servers.get(session.server.id)
+        if (!server?.connected || !session.location) throw new Error("Task link session is offline")
+        return server.client
+          .rpc(Tasks)
+          .get({ taskID: reference }, { location: session.location, signal })
+      },
+      signal: () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)]),
+      open(target) {
+        const session = ctx.sessions
+          .list()
+          .find(
+            (candidate) =>
+              candidate.id === target.session.id &&
+              candidate.server.id === target.session.server.id &&
+              candidate.location?.directory === target.sessionDirectory,
+          )
+        if (!session) return
+        const store = ctx.stores.taskView(session)
+        store.update((draft) => {
+          const view = draft.projects[target.projectDirectory] ?? initial
+          draft.projects[target.projectDirectory] = {
+            ...view,
+            scope: "project",
+            search: "",
+            selectedID: target.taskID,
+            detailScroll: 0,
+          }
+        })
+        ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
+      },
+    }),
+  )
   // One stable tab object, like the host tabs: a session switch never renders its label again.
   // The tab keeps `title` as its accessible name and closable hover button; the label adds the
   // themed native icon so the strip reads like the review, browser, terminal, and file tabs.

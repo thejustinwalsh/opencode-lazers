@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode/plugin/effect"
 import { validProposal } from "../../test/proposal.ts"
+import { AssociationTaskReads } from "../observability/task-reads.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 import { TaskRepository } from "../storage.ts"
 import type { StartTaskInput, StartTaskResult } from "./contract.ts"
@@ -77,6 +78,80 @@ test("RPC invalidations catch independent connections and survive a failed deliv
     expect(attempts).toBe(after)
   } finally {
     other.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("Tasks RPC restores persisted references on association-aware query summaries", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-reference-rpc-"))
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/project")
+  const taskID = crypto.randomUUID()
+  let query: ((input: unknown) => Effect.Effect<unknown, never>) | undefined
+  let get: ((input: unknown) => Effect.Effect<unknown, never>) | undefined
+  const ctx = {
+    rpc: {
+      register: (
+        _contract: unknown,
+        methods: {
+          query: (input: unknown) => Effect.Effect<unknown, never>
+          get: (input: unknown) => Effect.Effect<unknown, never>
+        },
+      ) => {
+        query = methods.query
+        get = methods.get
+        return Effect.succeed({
+          dispose: Effect.void,
+          events: { emit: () => Effect.void },
+        })
+      },
+    },
+    permission: { assert: () => Effect.void },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission">
+  const runtime = {
+    host: { session: async () => null },
+    projectID: "project",
+    startTask: async () => ({ status: "started", planID: crypto.randomUUID(), state: "running" }),
+  } as unknown as TaskRuntime
+
+  try {
+    repository.insert({
+      schemaVersion: 1,
+      id: taskID,
+      revision: 1,
+      status: "submitted",
+      createdAt: new Date().toISOString(),
+      proposal: validProposal(),
+      provenance: {
+        projectID: "project",
+        projectDirectory: "/project",
+        workspaceDirectory: "/project",
+        sessionID: "owner-session",
+        startingRevision: { kind: "unborn" },
+      },
+    })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime)
+          const page = yield* query!({ sessionID: "owner-session" })
+          expect(page).toMatchObject({
+            tasks: [{ taskID, reference: "LZ-1" }],
+          })
+          const byReference = yield* get!({ taskID: "LZ-1", sessionID: "owner-session" })
+          const byUUID = yield* get!({ taskID, sessionID: "owner-session" })
+          const foreign = yield* get!({ taskID: "LZ-1", sessionID: "other-session" })
+          expect(byReference).toMatchObject({
+            status: "found",
+            reference: "LZ-1",
+            task: { id: taskID },
+          })
+          expect(byUUID).toEqual(byReference)
+          expect(foreign).toEqual({ status: "not_found" })
+        }),
+      ),
+    )
+  } finally {
+    repository.close()
     rmSync(directory, { recursive: true, force: true })
   }
 })

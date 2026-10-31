@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
 import { nativeTools } from "../test/retry-process.ts"
 import { TaskRepository } from "./storage.ts"
+import { RunnerStore } from "./runner/store.ts"
 import { GetInstructionsOutput } from "./tasks/contract.ts"
 import { registerTaskTools } from "./tools.ts"
 
@@ -120,20 +121,75 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   expect(tools.get("lazers_submit_task")!.output).toBeUndefined()
   expect(submit).not.toHaveProperty("output")
   expect(submitted.status).toBe("submitted")
+  expect(submitted).toMatchObject({
+    reference: "LZ-1",
+    title: "Keep submitted tasks after the plugin restarts",
+    goal: "Keep submitted tasks after the plugin restarts",
+    doneWhen: [{ id: "reopen", assertion: "A task can be retrieved after reopening the database" }],
+    boundaries: {
+      writeScope: ["src/**", "README.md"],
+      exclusions: ["Do not dispatch workers"],
+      constraints: ["Use plugin-owned SQLite storage"],
+    },
+    state: "submitted",
+  })
+  expect(submitted.note).toContain("does not start execution")
   const get = await Effect.runPromise(
     tools.get("lazers_get_task")!.execute({ taskID: submitted.taskID }, context),
   )
   expect(JSON.parse(String(get.content)).task.provenance.sessionID).toBe("session")
+  const byReference = await Effect.runPromise(
+    tools.get("lazers_get_task")!.execute({ taskID: submitted.reference }, context),
+  )
+  expect(JSON.parse(String(byReference.content))).toMatchObject({
+    status: "found",
+    reference: submitted.reference,
+    task: { id: submitted.taskID },
+  })
   const list = await Effect.runPromise(
     tools.get("lazers_list_tasks")!.execute({ limit: 5 }, context),
   )
   expect(JSON.parse(String(list.content)).tasks[0].taskID).toBe(submitted.taskID)
+  expect(JSON.parse(String(list.content)).tasks[0].reference).toBe(submitted.reference)
   expect(tools.get("lazers_list_tasks")!.output).toBeUndefined()
   expect(list).not.toHaveProperty("output")
   expect(tools.get("lazers_get_task")!.output).toBeDefined()
   expect(get.output).toEqual(JSON.parse(String(get.content)))
   expect(repository.list()).toHaveLength(1)
-  expect(assertions).toEqual(["lazers_submit_task", "lazers_get_task", "lazers_list_tasks"])
+  expect(assertions).toEqual([
+    "lazers_submit_task",
+    "lazers_get_task",
+    "lazers_get_task",
+    "lazers_list_tasks",
+  ])
+})
+
+test("a replayed submission receipt reports current queued state without claiming execution", async () => {
+  const { tools, repository } = await setup()
+  const input = keyedProposal()
+  const first = await Effect.runPromise(tools.get("lazers_submit_task")!.execute(input, context))
+  const receipt = JSON.parse(String(first.content))
+  const task = repository.get(receipt.taskID)!
+  new RunnerStore(repository).submit(
+    {
+      requestID: "queued-summary",
+      objective: task.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: task.id, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [task.id],
+      verification: task.proposal.verification,
+      acceptance: task.proposal.acceptance,
+    },
+    "architect",
+  )
+  const replay = await Effect.runPromise(tools.get("lazers_submit_task")!.execute(input, context))
+  expect(JSON.parse(String(replay.content))).toMatchObject({
+    taskID: receipt.taskID,
+    reference: receipt.reference,
+    state: "queued",
+    note: "Submission records the task; it does not start execution.",
+  })
 })
 
 test("Architect can durably retire a legacy task and replay the same disposition", async () => {

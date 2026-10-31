@@ -1,6 +1,6 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
-import { TaskSpecSchema } from "../task.ts"
+import { TaskReferenceSchema, TaskSpecSchema } from "../task.ts"
 import { TaskState } from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
 
@@ -15,13 +15,15 @@ export const QueryInput = z.strictObject({
 })
 export type TaskQuery = z.input<typeof QueryInput>
 export const GetInput = z.strictObject({
-  taskID: z.uuid(),
+  taskID: z.union([z.uuid(), TaskReferenceSchema]),
   revision: z.int().positive().optional(),
   sessionID: z.string().min(1).max(200).optional(),
 })
 export const GetInstructionsOutput = z.string()
 export const TaskSummary = z.strictObject({
   taskID: z.uuid(),
+  // The association-aware RPC adapter fills this from the canonical relation before returning pages.
+  reference: TaskReferenceSchema.optional(),
   revision: z.literal(1),
   status: z.union([z.literal("submitted"), TaskState]),
   reason: z.string().nullable(),
@@ -70,6 +72,7 @@ export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
     task: TaskSpecSchema,
+    reference: TaskReferenceSchema,
     disposition: TaskDispositionRecord.optional(),
     execution: Execution.optional(),
     attempts: z.array(TaskAttempt).optional(),
