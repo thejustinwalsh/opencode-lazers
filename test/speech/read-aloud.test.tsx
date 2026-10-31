@@ -276,3 +276,41 @@ test("native menu and command enable final-only auto speech, deduplicate parts, 
     globalThis.AudioContext = original
   }
 })
+
+test("a disconnected text stream cannot speak an unseen code tail", async () => {
+  const original = globalThis.AudioContext
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const harness = setup()
+  try {
+    required(harness.autoCommand).run?.()
+    await harness.channel.waitForSubscription(1)
+    harness.channel.publish(event("session.execution.started", {}))
+    harness.channel.endStream()
+    await harness.channel.waitForSubscription(2)
+    harness.channel.publish(
+      event("session.text.ended", {
+        assistantMessageID: "lost-opening-fence",
+        ordinal: 1,
+        text: "CODE_TAIL_CANARY\n",
+        native: { phase: "final_answer" },
+      }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(harness.calls).toEqual([])
+    harness.channel.publish(event("session.execution.started", {}))
+    harness.channel.publish(
+      event("session.text.ended", {
+        assistantMessageID: "next-execution",
+        ordinal: 0,
+        text: "Safe new answer.\n",
+        native: { phase: "final_answer" },
+      }),
+    )
+    await audioStarted.promise
+    expect(harness.calls.map((call) => call.text)).toEqual(["Safe new answer."])
+  } finally {
+    harness.abort.abort()
+    harness.dispose()
+    globalThis.AudioContext = original
+  }
+})

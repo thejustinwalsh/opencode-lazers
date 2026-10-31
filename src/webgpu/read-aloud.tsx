@@ -242,6 +242,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     order: 21,
     show(input) {
       if (!runtime.enabled("readAloud")) return
+      const phase = state()
       const active = operation?.visit === input.session.visit
       const response = latestCompletedResponse(
         input.session.server.data.session.message.list(input.session.id),
@@ -249,7 +250,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       if (!speechSegments(response).length && !active) return
       return {
         label: "",
-        title: `LAZERS speaker: ${active ? (state() === "loading" ? "preparing speech; click to stop" : state() === "playing" ? "reading response; click to stop" : "stop speech") : "read latest completed response"}`,
+        title: `LAZERS speaker: ${active ? (phase === "loading" ? "preparing speech; click to stop" : phase === "playing" ? "reading response; click to stop" : "stop speech") : "read latest completed response"}`,
         run() {
           if (!runtime.enabled("readAloud")) return
           if (operation) {
@@ -336,6 +337,9 @@ async function followSpeechEvents(
       if (signal.aborted) return
       failure++
     }
+    // A lost text boundary can hide an opening fence. Resume speech on the next
+    // known execution start; the completed reply remains available for manual replay.
+    coordinator.suppressCurrent()
     await delay(signal, Math.min(250 * 2 ** Math.min(failure, 6), 15_000))
   }
 }
