@@ -14,12 +14,21 @@ export const TaskState = z.enum([
   "incorporated",
 ])
 export type TaskState = z.infer<typeof TaskState>
+export const ModelPolicy = z.strictObject({
+  providerID: z.string().min(1),
+  id: z.string().min(1),
+  variant: z.string().optional(),
+})
+export type ModelPolicy = z.infer<typeof ModelPolicy>
 export const PlanInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),
     objective: z.string().trim().min(1).max(8000),
     baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
     workspaceMode: z.enum(["shared", "isolated"]).default("shared"),
+    workerModel: ModelPolicy.optional().describe(
+      "Explicit user-authorized implementor model and reasoning variant; otherwise inherit the owner. No automatic provider fallback.",
+    ),
     nodes: z
       .array(z.strictObject({ taskID: z.uuid(), revision: z.literal(1) }))
       .min(1)
@@ -82,12 +91,6 @@ export const PlanInput = z
   })
 export type PlanInput = z.infer<typeof PlanInput>
 
-export const ModelPolicy = z.strictObject({
-  providerID: z.string().min(1),
-  id: z.string().min(1),
-  variant: z.string().optional(),
-})
-export type ModelPolicy = z.infer<typeof ModelPolicy>
 export const CommandInput = z.strictObject({
   requestID: z.string().trim().min(1).max(200),
   planID: z.uuid(),

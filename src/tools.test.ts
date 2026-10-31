@@ -172,8 +172,13 @@ test("task reads expose structured Code Mode outputs and require their own permi
 
 test("implementors fetch prose instructions through the existing task tool with typed data intact", async () => {
   const { tools } = await setup()
+  const proposal = {
+    ...keyedProposal(),
+    guidance:
+      "Reuse `TaskRepository` in src/storage.ts. Keep advice separate from required outcomes.",
+  }
   const receipt = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+    tools.get("lazers_submit_task")!.execute(proposal, context),
   )
   const { taskID } = JSON.parse(String(receipt.content))
   const result = await Effect.runPromise(
@@ -184,9 +189,14 @@ test("implementors fetch prose instructions through the existing task tool with 
   expect(result.content).toContain(`# Task ${taskID}`)
   expect(result.content).toContain("## Done when")
   expect(result.content).toContain("## Verification")
+  const prose = String(result.content)
+  expect(prose.indexOf("## Done when")).toBeLessThan(prose.indexOf("## Constraints"))
+  expect(prose).toContain("## Implementation guidance (advisory)")
+  expect(prose).toContain(proposal.guidance)
   expect(result.content).not.toContain('"proposal"')
   expect(result.output).toHaveProperty("task.id", taskID)
   expect(result.output).toHaveProperty("task.proposal.objective", validProposal().objective)
+  expect(result.output).toHaveProperty("task.proposal.guidance", proposal.guidance)
 })
 
 test("native schema/runtime require keys, validate before database access, and leave rejected keys reusable", async () => {

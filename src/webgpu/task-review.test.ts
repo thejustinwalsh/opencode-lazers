@@ -11,6 +11,15 @@ const draft = (): ReviewInput => ({
   request: "Keep submitted tasks after the plugin restarts",
   evidence: [],
 })
+
+test("self-review questions cover unnecessary requirements and repetition as well as completeness", () => {
+  const checks = reviewChecks(validProposal())
+  expect(checks.some((c) => c.question.includes("unsupported by the recorded intent"))).toBe(true)
+  expect(checks.some((c) => c.question.includes("repeat instructions"))).toBe(true)
+  expect(checks.find((c) => c.question.includes("repeat instructions"))!.guidance).toContain(
+    "preserving necessary requirements",
+  )
+})
 const memory = () => {
   const data = new Map<string, unknown>()
   return {

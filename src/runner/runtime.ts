@@ -265,13 +265,13 @@ export class TaskRuntime {
       if (!ownerSession || ownerSession.archived)
         return this.hold(plan, "Owner is missing or archived")
       if (ownerSession.projectID !== this.projectID) throw new Error("Foreign owner session")
-      const model = ModelPolicy.parse(ownerSession.model)
-      if (model.providerID !== "openai")
+      const proposal = PlanInput.parse(JSON.parse(plan.body))
+      const model = ModelPolicy.parse(proposal.workerModel ?? ownerSession.model)
+      if (!["openai", "opencode"].includes(model.providerID))
         return this.hold(
           plan,
-          "Initial execution requires the authorized connected OpenAI subscription model; no provider fallback",
+          "Execution requires an authorized OpenAI subscription or OpenCode model; no provider fallback",
         )
-      const proposal = PlanInput.parse(JSON.parse(plan.body))
       try {
         if (
           git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
@@ -307,6 +307,7 @@ export class TaskRuntime {
       ).run(JSON.stringify(model), plan.id)
       this.store.record(plan.id, null, "ADMITTED", {
         model,
+        modelSource: proposal.workerModel ? "explicit-plan-selection" : "owner-session",
         skills: skills.map(({ content: _content, ...source }) => source),
         auditWatermark: audit.watermark,
         source: proposal.baseCommit,
@@ -690,7 +691,8 @@ export class TaskRuntime {
           sessionID: attempt.session_id,
           id: attempt.message_id,
           directory: attempt.workspace,
-          text: `Implement LAZERS task ${attempt.task_id} in ${attempt.workspace}. Fetch revision 1 with lazers_get_task before editing. The tool returns your objective, write scope, acceptance criteria, checks and repository references. Read the local AGENTS.md and relevant source; use focused repository reads as needed. Preserve existing task edits, finish the implementation, run the specified checks, commit your changes, and report the result and unresolved issues in prose. Do not print the task JSON or delegate. This is a continuation when earlier messages exist; the assigned worktree is authoritative.`,
+          skills: JSON.parse(policy.context).skills,
+          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch revision 1 with lazers_get_task before editing. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.`,
         })
         this.receipt(
           effect,
@@ -698,6 +700,7 @@ export class TaskRuntime {
             messageID: attempt.message_id,
             taskID: attempt.task_id,
             instructions: "prose; lazers_get_task",
+            skills: JSON.parse(policy.context).skills.map((skill: { id: string }) => skill.id),
           },
           fence,
         )

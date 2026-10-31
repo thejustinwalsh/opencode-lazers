@@ -31,7 +31,13 @@ export interface RunnerHost {
     title: string
     attemptID: string
   }): Promise<void>
-  prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
+  prompt(input: {
+    sessionID: string
+    id: string
+    text: string
+    directory: string
+    skills?: SkillSource[]
+  }): Promise<void>
   notify(input: { sessionID: string; id: string; text: string; resume: boolean }): Promise<void>
   interrupt(id: string): Promise<void>
 }

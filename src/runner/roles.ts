@@ -26,8 +26,10 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
           { action: "lazers_research", resource: "*", effect: "deny" },
           { action: "lazers_submit_plan", resource: "*", effect: "deny" },
           { action: "lazers_plan_command", resource: "*", effect: "deny" },
+          { action: "lazers_submit_task", resource: "*", effect: "deny" },
         ]
         delete agent.model
+        delete agent.steps
       }),
     )
     const attempt = (sessionID: string) =>

@@ -159,6 +159,17 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
       const located = await Effect.runPromise(ctx.session.get({ sessionID: id }))
       if (located.location.directory !== input.directory)
         throw new Error("Worker session is not in its assigned worktree")
+      if (input.skills?.length) {
+        await Effect.runPromise(
+          ctx.session.instructions.entry.put({
+            sessionID: id,
+            key: "lazers-required-skills",
+            value: input.skills
+              .map((skill) => `# ${skill.id}\nSource: ${skill.path}\n\n${skill.content}`)
+              .join("\n\n"),
+          }),
+        )
+      }
       await Effect.runPromise(
         ctx.session.prompt({
           sessionID: Session.ID.make(input.sessionID),

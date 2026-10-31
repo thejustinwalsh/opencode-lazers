@@ -87,6 +87,57 @@ test("child prompt uses native move and verifies location before any model work"
   expect(calls).toEqual(["move", "wait", "prompt", "prompt"])
 })
 
+test("required skill content reaches a stable native instruction entry before prompting", async () => {
+  const entries = new Map<string, unknown>()
+  let prompts = 0
+  let fail = false
+  const host = nativeHost(
+    {
+      session: {
+        get: () => Effect.succeed({ location: { directory: "/worker" } }),
+        instructions: {
+          entry: {
+            put: (input: { key: string; value: unknown }) =>
+              Effect.sync(() => {
+                if (fail) throw new Error("Native attachment failed")
+                entries.set(input.key, input.value)
+              }),
+          },
+        },
+        prompt: () =>
+          Effect.sync(() => {
+            expect(entries.get("lazers-required-skills")).toContain(
+              "Use the existing transaction helper",
+            )
+            prompts++
+          }),
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  const input = {
+    sessionID: "ses_worker",
+    id: "msg_worker",
+    directory: "/worker",
+    text: "Implement the task",
+    skills: [
+      {
+        id: "sqlite",
+        path: "/repo/skills/sqlite/SKILL.md",
+        revision: "v1",
+        content: "Use the existing transaction helper",
+      },
+    ],
+  }
+  await host.prompt(input)
+  await host.prompt(input)
+  expect(entries.size).toBe(1)
+  expect(prompts).toBe(2)
+  fail = true
+  await expect(host.prompt(input)).rejects.toThrow("Native attachment failed")
+  expect(prompts).toBe(2)
+})
+
 test("a host that fails to move the child cannot receive its work prompt", async () => {
   let prompted = false
   const host = nativeHost(

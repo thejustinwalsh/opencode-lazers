@@ -613,6 +613,12 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                       </Show>
                     )}
                   </For>
+                  <Show when={task().proposal.guidance}>
+                    <dt>Implementation guidance (advisory)</dt>
+                    <dd>
+                      <Ui.Markdown text={task().proposal.guidance!} />
+                    </dd>
+                  </Show>
                   <dt>Write scope</dt>
                   <dd>
                     <ul

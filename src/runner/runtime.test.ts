@@ -21,6 +21,7 @@ function fixture(
     outside?: boolean
     shared?: boolean
     commit?: boolean
+    workerModel?: { providerID: string; id: string; variant?: string }
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -117,6 +118,7 @@ function fixture(
         parentID: input.parentID,
         projectID: "project",
         directory: input.directory,
+        model: input.model,
         archived: false,
         busy: false,
         tokens: 100,
@@ -170,6 +172,7 @@ function fixture(
     objective: "Two dependent exact-content files",
     workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
     baseCommit: base,
+    ...(options.workerModel ? { workerModel: options.workerModel } : {}),
     nodes: tasks.map((t) => ({ taskID: t.id, revision: 1 as const })),
     dependencies: [{ prerequisite: tasks[0]!.id, successor: tasks[1]!.id }],
     integrationOrder: tasks.map((t) => t.id),
@@ -494,6 +497,23 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(await f.host.worktrees()).toEqual([f.root])
   expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance", async () => {
+  const model = { providerID: "openai", id: "gpt-6-luna", variant: "max" }
+  const f = fixture({ shared: true, workerModel: model })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.model!)).toEqual(model)
+  for (const attempt of f.store.attempts(f.receipt.planID)) {
+    expect(f.sessions.get(attempt.session_id)!.model).toEqual(model)
+    expect(JSON.parse(attempt.policy).model).toEqual(model)
+  }
+  expect(f.sessions.get("owner")!.model!.id).toBe("subscription")
 })
 
 test("cleanup preserves clean worktrees with commits outside the reviewed integration", async () => {

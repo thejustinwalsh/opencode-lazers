@@ -16,9 +16,16 @@ const writePath = z
 
 export const TaskProposalSchema = z
   .strictObject({
-    objective: text,
-    exclusions: texts,
-    constraints: texts,
+    objective: text.describe("The observable change and its purpose, stated directly."),
+    exclusions: texts.describe("Only material work excluded from this increment; may be empty."),
+    constraints: texts.describe(
+      "Necessary compatibility or design requirements. Do not repeat repository policy or prescribe routine implementation choices.",
+    ),
+    guidance: text
+      .optional()
+      .describe(
+        "Optional implementation advice grounded in code: reuse points, pitfalls and best practices with source references. Advisory; required outcomes belong in acceptance or constraints.",
+      ),
     assumptions: texts,
     writeScope: z.array(writePath).max(100),
     context: z.array(z.strictObject({ reference: text, revision: text.nullable() })).max(100),
@@ -26,7 +33,9 @@ export const TaskProposalSchema = z
       .array(
         z.strictObject({
           id: identifier,
-          assertion: text,
+          assertion: text.describe(
+            "An observable done condition. State behavior, not implementation steps or reporting ceremony.",
+          ),
           evidence: z
             .array(
               z.discriminatedUnion("kind", [
@@ -40,7 +49,10 @@ export const TaskProposalSchema = z
         }),
       )
       .min(1)
-      .max(100),
+      .max(100)
+      .describe(
+        "Done conditions with evidence links. Cover required behavior without repeating constraints or prescribing the implementation.",
+      ),
     requirements: z.strictObject({
       capabilities: texts,
       skills: texts,
@@ -67,7 +79,7 @@ export const TaskProposalSchema = z
       })
       .optional()
       .describe(
-        "Legacy proposed limits. Execution budgets must come from resolved model policy; omit when no policy is configured.",
+        "Legacy compatibility metadata. Omit guessed token, cost, time and tool limits; runtime tracks actual usage.",
       ),
   })
   .superRefine((proposal, ctx) => {

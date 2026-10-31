@@ -9,10 +9,6 @@ export function taskInstructions(detail: TaskDetail): string {
     items.length ? `\n\n## ${name}\n${items.map((item) => `- ${item}`).join("\n")}` : ""
   return (
     `# Task ${task.id}, revision ${task.revision}\n\n${proposal.objective}` +
-    section("Write scope", proposal.writeScope) +
-    section("Exclusions", proposal.exclusions) +
-    section("Constraints", proposal.constraints) +
-    section("Assumptions", proposal.assumptions) +
     section(
       "Done when",
       proposal.acceptance.map(
@@ -20,6 +16,11 @@ export function taskInstructions(detail: TaskDetail): string {
           `${item.id}: ${item.assertion}\n  Evidence: ${item.evidence.map((e) => (e.kind === "verification" ? e.verificationID : e.kind === "artifact" ? e.reference : e.decision)).join("; ")}`,
       ),
     ) +
+    section("Write scope", proposal.writeScope) +
+    section("Exclusions", proposal.exclusions) +
+    section("Constraints", proposal.constraints) +
+    section("Assumptions", proposal.assumptions) +
+    (proposal.guidance ? `\n\n## Implementation guidance (advisory)\n${proposal.guidance}` : "") +
     section(
       "Verification",
       proposal.verification.map(

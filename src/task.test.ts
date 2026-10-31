@@ -46,6 +46,10 @@ describe("task proposals", () => {
     expect(taskProposalJSONSchema.type).toBe("object")
     expect(taskProposalJSONSchema.additionalProperties).toBe(false)
     expect(taskProposalJSONSchema.required).not.toContain("limits")
+    expect(taskProposalJSONSchema.required).not.toContain("guidance")
+    expect(
+      TaskProposalSchema.parse({ ...validProposal(), guidance: "Reuse src/storage.ts." }).guidance,
+    ).toBe("Reuse src/storage.ts.")
   })
 
   test("rejects drafts, unknown fields, empty intent, and missing evidence", () => {

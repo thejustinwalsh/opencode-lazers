@@ -46,6 +46,12 @@ The compiler returns either a valid `TaskSpec` or focused questions identifying 
 | Acceptance   | Identified behavioral assertions, each mapped to required evidence or an explicit human decision |
 | Requirements | Required capabilities and skills, verification procedures, risk, and policy reference            |
 
+Optional `guidance` carries scoped implementation advice: existing code to reuse,
+known pitfalls and useful practices with source references. It is distinct from
+mandatory constraints and acceptance. Workers see the goal and done conditions
+first. Keep repository policy in repository guidance; do not repeat it in each
+task. See the [task authoring template](.agents/docs/task-authoring.md).
+
 Unresolved material ambiguity prevents admission. A worker cannot silently expand scope or redefine acceptance. New evidence that changes the work produces a revised specification.
 
 ### 2 Work decomposition

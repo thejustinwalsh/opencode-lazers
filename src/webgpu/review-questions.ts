@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import type { TaskProposal } from "../task.ts"
 import type { SystemOneQuestion } from "./system-one.ts"
 
-export const REVIEW_VERSION = "task-hardening-v1"
+export const REVIEW_VERSION = "task-hardening-v2"
 export const REVIEW_ROUNDS = 3
 export const REVIEW_THRESHOLD = 0.7
 
@@ -30,6 +30,24 @@ export function reviewChecks(task: TaskProposal): ReviewCheck[] {
     question: "Does task.acceptance explicitly cover the behavior requested in intent.request?",
     guidance:
       "Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear.",
+  })
+  add({
+    family: "scope",
+    path: "constraints",
+    goodWhen: "no",
+    question:
+      "Does the task impose requirements unsupported by the recorded intent, repository contracts or evidence?",
+    guidance:
+      "Remove unsupported requirements. Keep useful implementation suggestions as advisory guidance rather than obligations.",
+  })
+  add({
+    family: "scope",
+    path: "constraints",
+    goodWhen: "no",
+    question:
+      "Does the task repeat instructions that can be removed without changing its required behavior, boundaries or verification?",
+    guidance:
+      "Remove repetition while preserving necessary requirements and useful code-grounded advice. Do not replace it with a length limit.",
   })
   add({
     family: "coverage",
