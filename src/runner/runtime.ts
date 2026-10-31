@@ -169,29 +169,42 @@ export class TaskRuntime {
         return { status: "cancelling", version: this.store.plan(plan.id)!.version }
       }
       if (command.action === "human-evidence") {
-        if (!command.taskID || !command.assertionID || !command.artifact || !command.reason)
-          throw new Error("Human evidence requires task, assertion, exact artifact and decision")
-        const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
-        const assertion = this.store.repository
-          .get(command.taskID)
-          ?.proposal.acceptance.find((a) => a.id === command.assertionID)
-        if (
-          !node ||
-          node.artifact !== command.artifact ||
-          !assertion?.evidence.some((e) => e.kind === "human")
-        )
+        if (!command.assertionID || !command.artifact || !command.reason)
+          throw new Error("Human evidence requires assertion, exact artifact and decision")
+        const nodes = this.store.nodes(plan.id)
+        let assertions: TaskProposal["acceptance"]
+        let artifact: string | null
+        if (command.taskID) {
+          artifact = nodes.find((node) => node.task_id === command.taskID)?.artifact ?? null
+          assertions = this.store.repository.get(command.taskID)?.proposal.acceptance ?? []
+        } else {
+          const input = PlanInput.parse(JSON.parse(plan.body))
+          const ordered = input.integrationOrder.map((id) =>
+            nodes.find((node) => node.task_id === id),
+          )
+          if (ordered.some((node) => node?.state !== "accepted" || !node.artifact))
+            throw new Error("Plan evidence requires all accepted task artifacts")
+          artifact = combineArtifacts(
+            this.directory,
+            input.baseCommit,
+            ordered.map((node) => node!.artifact!),
+          )
+          assertions = input.acceptance
+        }
+        const assertion = assertions.find((item) => item.id === command.assertionID)
+        if (artifact !== command.artifact || !assertion?.evidence.some((e) => e.kind === "human"))
           throw new Error("Human evidence does not bind to the current assertion/artifact")
         db.query("INSERT INTO runner_evidence VALUES(?,?,?,?,?,'human',?,?,?)").run(
           crypto.randomUUID(),
           plan.id,
-          node.task_id,
+          command.taskID ?? null,
           null,
           assertion.id,
           command.artifact,
           JSON.stringify({ decision: command.reason, caller }),
           Date.now(),
         )
-        this.store.record(plan.id, node.task_id, "HUMAN_EVIDENCE", {
+        this.store.record(plan.id, command.taskID ?? null, "HUMAN_EVIDENCE", {
           assertionID: assertion.id,
           artifact: command.artifact,
         })

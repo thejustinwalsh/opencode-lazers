@@ -20,7 +20,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lazers_plan_command",
         description:
-          "Schedule priority/afterPlans and an unstarted plan baseline with reason; request execution, cancel, audit, reconcile, explicitly reassign, retry an ended task in a fresh child or resume an exhausted or cancelled stopped task with taskID/reason (workspaceMode shared selects the current checkout), or record assertion-bound human evidence. Requires current expectedVersion and a stable requestID. After review/merge, integrated records artifact/targetBranch/reason and requests native non-forced worktree cleanup. Fix cleanup failures before retrying. No force-accept; history remains.",
+          "Schedule priority/afterPlans and an unstarted plan baseline with reason; request execution, cancel, audit, reconcile, explicitly reassign, retry an ended task in a fresh child or resume an exhausted or cancelled stopped task with taskID/reason (workspaceMode shared selects the current checkout), or record assertion/artifact-bound human evidence (omit taskID for combined-plan acceptance). Requires current expectedVersion and a stable requestID. After review/merge, integrated records artifact/targetBranch/reason and requests native non-forced worktree cleanup. Fix cleanup failures before retrying. No force-accept; history remains.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },

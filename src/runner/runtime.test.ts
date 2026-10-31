@@ -1902,6 +1902,79 @@ test("an unchanged evidence wait keeps its version and notification stable until
   expect(f.store.plan(planID)!.state).toBe("accepted")
 })
 
+test("plan evidence binds to the accepted combination and remains separate from task evidence", async () => {
+  const f = fixture({ commit: true, startOnly: true })
+  const plan = f.store.submit(
+    {
+      ...f.input,
+      acceptance: [
+        ...f.input.acceptance,
+        {
+          id: "native",
+          assertion: "Observed the combined behavior",
+          evidence: [{ kind: "human", decision: "Observe the app" }],
+        },
+      ],
+    },
+    "owner",
+  )
+  const evidence = {
+    requestID: "graph-observed",
+    planID: plan.planID,
+    expectedVersion: 1,
+    action: "human-evidence" as const,
+    assertionID: "native",
+    artifact: f.base,
+    reason: "Observed the combined acceptance condition.",
+  }
+  await expect(f.runtime.command(evidence, "owner")).rejects.toThrow("all accepted task artifacts")
+  await f.runtime.command(
+    { requestID: "run", planID: plan.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime, 10)
+  expect(f.store.plan(plan.planID)!.reason).toContain("native:human")
+  expect(f.store.nodes(plan.planID).every((node) => node.state === "accepted")).toBe(true)
+  const artifact = combineArtifacts(
+    f.root,
+    f.base,
+    f.input.integrationOrder.map(
+      (id) => f.store.nodes(plan.planID).find((node) => node.task_id === id)!.artifact!,
+    ),
+  )
+  const current = { ...evidence, expectedVersion: f.store.plan(plan.planID)!.version, artifact }
+  await expect(
+    f.runtime.command({ ...current, requestID: "wrong-artifact", artifact: f.base }, "owner"),
+  ).rejects.toThrow("current assertion/artifact")
+  await expect(
+    f.runtime.command({ ...current, requestID: "wrong-scope", taskID: f.tasks[0]!.id }, "owner"),
+  ).rejects.toThrow("current assertion/artifact")
+  const receipt = await f.runtime.command(current, "owner")
+  expect(f.store.plan(plan.planID)!.state).toBe("blocked")
+  const recorded = () =>
+    f.store.atomic((db) =>
+      db
+        .query(
+          "SELECT task_id,artifact FROM runner_evidence WHERE plan_id=? AND assertion_id='native' AND kind='human'",
+        )
+        .all(plan.planID),
+    )
+  expect(recorded()).toEqual([{ task_id: null, artifact }])
+  await f.runtime.command(
+    {
+      requestID: "continue-graph",
+      planID: plan.planID,
+      expectedVersion: f.store.plan(plan.planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 4)
+  expect(f.store.plan(plan.planID)!.state).toBe("accepted")
+  expect(await f.runtime.command(current, "owner")).toEqual(receipt)
+  expect(recorded()).toHaveLength(1)
+})
+
 test("lost host response reconciles a real accepted prompt without creating another worker", async () => {
   const f = fixture()
   const original = f.host.prompt
