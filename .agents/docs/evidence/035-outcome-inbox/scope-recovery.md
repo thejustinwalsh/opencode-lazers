@@ -155,6 +155,21 @@ it is not a retry, replacement task, or duplicate implementation. The native
 creation error's underlying cause remains unestablished. Lifecycle retains its
 real progress-integration prerequisite; no schedule barrier was removed.
 
+## Closure
+
+Wake reached normal combined acceptance at v17. Command
+`wake-reviewed-native-integrated-1356ce3-v1` requested integration at v17 → v18;
+runtime completed native non-forced cleanup and reached `integrated` v19 with
+no pending effects. Both the first preserved wake directory (`ebee90d2`) and
+accepted repair directory (`7513f29c`) were removed only after Root's reviewed
+ancestry recovery made their HEADs ancestors. All attempts and receipts remain.
+
+Progress is running at v10 on original attempt `d543a0f7` (one attempt, three
+completed startup effects). Native owned-session readback confirmed its Luna Max
+route and a keyed preservation handoff without changing busy/idle timestamps.
+Lifecycle remains queued behind progress plan integration. Root owns the narrow
+startup-recovery guard repair and final handoff refresh; neither was edited here.
+
 ## Radar source landing
 
 Task `c1cc0d39-42d7-4845-bcce-8d91aee4935b` (`LZ-21`) accepted artifact
