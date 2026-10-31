@@ -118,6 +118,7 @@ export class TaskReads {
     if (query.revision !== undefined && query.revision !== task.revision) {
       return GetOutput.parse({ status: "revision_unavailable", revision: task.revision })
     }
-    return GetOutput.parse({ status: "found", task, execution: this.runner.execution(task.id) })
+    const execution = this.runner.execution(task.id)
+    return GetOutput.parse({ status: "found", task, ...(execution ? { execution } : {}) })
   }
 }

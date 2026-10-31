@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { TaskReads } from "./read.ts"
+import { Schema } from "effect"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -137,4 +138,13 @@ test("read observers cannot invalidate a committed receipt and a fresh process p
   expect(called).toBe(1)
   expect(() => repository.insert({})).toThrow()
   expect(called).toBe(1)
+})
+
+test("unplanned detail is encodable by the native JSON RPC boundary", () => {
+  const { open } = fixture()
+  const repository = open()
+  const task = insert(repository)
+  const detail = new TaskReads(repository).get({ taskID: task.id })
+  expect(Schema.is(Schema.Json)(detail)).toBe(true)
+  expect(Object.hasOwn(detail, "execution")).toBe(false)
 })
