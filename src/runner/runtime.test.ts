@@ -47,6 +47,7 @@ function fixture(
     allowScopeOverlap?: boolean
     taskFiles?: { name: string; path: string; scope?: string[] }[]
     requireVerifierPreparation?: boolean
+    loseWorktreeResponse?: boolean | "empty-error"
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -143,6 +144,11 @@ function fixture(
     workerModel: async () => options.workerModel ?? { providerID: "openai", id: "test-model" },
     worktree: async ({ directory, base }) => {
       git(root, ["worktree", "add", "--detach", directory, base])
+      if (options.loseWorktreeResponse) {
+        const emptyError = options.loseWorktreeResponse === "empty-error"
+        options.loseWorktreeResponse = false
+        throw new Error(emptyError ? "" : "worktree response lost")
+      }
       return directory
     },
     worktrees: async () =>
@@ -2595,46 +2601,89 @@ test("conflicting accepted branches hold integration and preserve both real Git 
   )
 })
 
-test("lost worktree creation response reconciles without dispatching a blocked worker", async () => {
-  const f = fixture({ independent: true, delayed: true })
-  const create = f.host.worktree
-  let loseFirstResponse = true
-  let createCalls = 0
-  f.host.worktree = async (input) => {
-    createCalls++
-    const directory = await create(input)
-    if (loseFirstResponse) {
-      loseFirstResponse = false
-      throw new Error("native worktree response lost")
+test("lost worktree creation response resumes its own blocked startup after reconciliation", async () => {
+  for (const response of [true, "empty-error"] as const) {
+    const f = fixture({
+      independent: true,
+      delayed: true,
+      loseWorktreeResponse: response,
+    })
+    await runPlan(f)
+    await f.runtime.tick()
+    const effect = f.store.effects(f.receipt.planID).find((item) => item.kind === "worktree")!
+    expect(effect.state).toBe("uncertain")
+    expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+    expect(f.store.plan(f.receipt.planID)!.reason).toContain(
+      response === "empty-error" ? ": Error" : ": worktree response lost",
+    )
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+    expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "preparing")).toBe(
+      true,
+    )
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
+
+    f.runtime.stop()
+    f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+    const reopened = new TaskRuntime(f.store, f.host, "project")
+    try {
+      await reopened.tick()
+      expect(f.store.effects(f.receipt.planID).find((item) => item.id === effect.id)?.state).toBe(
+        "completed",
+      )
+      expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+      expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "preparing")).toBe(
+        true,
+      )
+
+      await reopened.tick()
+      expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "running")).toBe(
+        true,
+      )
+      expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+      expect(await f.host.worktrees()).toHaveLength(3)
+      expect(
+        f.store.latestTransition<{ effectID: string }>(
+          f.receipt.planID,
+          null,
+          "WORKTREE_RECOVERY_RESUMED",
+        ),
+      ).toMatchObject({ effectID: effect.id })
+      for (const worker of f.store.attempts(f.receipt.planID)) f.completeWorker(worker.session_id)
+      await drive(reopened)
+      expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+    } finally {
+      reopened.stop()
     }
-    return directory
   }
+})
+
+test("a different block reason keeps a reconciled worktree startup blocked", async () => {
+  const f = fixture({
+    delayed: true,
+    loseWorktreeResponse: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
   await runPlan(f)
   await f.runtime.tick()
-  expect(createCalls).toBe(2)
-  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
-  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
-  expect(
-    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "worktree"),
-  ).toHaveLength(2)
+  const planID = f.receipt.planID
+  const effect = f.store.effects(planID).find((item) => item.kind === "worktree")!
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET reason=? WHERE id=?").run("Unrelated blocked reason", planID),
+  )
 
   f.runtime.stop()
   f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
   const reopened = new TaskRuntime(f.store, f.host, "project")
   try {
     await reopened.tick()
-    expect(
-      f.store
-        .effects(f.receipt.planID)
-        .find((effect) => effect.state === "completed" && effect.kind === "worktree"),
-    ).toBeTruthy()
+    expect(f.store.effects(planID).find((item) => item.id === effect.id)?.state).toBe("completed")
+    expect(f.store.plan(planID)).toMatchObject({
+      state: "blocked",
+      reason: "Unrelated blocked reason",
+    })
     await reopened.tick()
-    expect(
-      f.store.attempts(f.receipt.planID).every((attempt) => attempt.state === "cancelled"),
-    ).toBe(true)
+    expect(f.store.attempts(planID).every((item) => item.state === "cancelled")).toBe(true)
     expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
-    expect(await f.host.worktrees()).toHaveLength(3)
-    expect(createCalls).toBe(2)
   } finally {
     reopened.stop()
   }

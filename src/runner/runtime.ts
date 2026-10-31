@@ -35,7 +35,8 @@ const terminal = new Set([
 const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`
 const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message || String(error) : String(error)
 
 export class TaskRuntime {
   readonly owner = crypto.randomUUID()
@@ -1943,6 +1944,18 @@ export class TaskRuntime {
           return
         }
       } else if (effect.kind === "worktree" || effect.kind === "graph-worktree") {
+        const startupRecoveryReason = (() => {
+          if (effect.kind !== "worktree" || effect.state !== "uncertain" || !effect.receipt)
+            return undefined
+          try {
+            const receipt = JSON.parse(effect.receipt) as { error?: unknown }
+            return typeof receipt.error === "string"
+              ? `Recovery uncertain for worktree ${effect.id}: ${receipt.error}`
+              : undefined
+          } catch {
+            return undefined
+          }
+        })()
         const candidates = (await this.host.worktrees())
           .filter(
             (directory) =>
@@ -1963,6 +1976,28 @@ export class TaskRuntime {
                 .run(workspace, effect.attempt_id!),
             )
           this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
+          if (startupRecoveryReason && effect.attempt_id) {
+            const plan = this.store.plan(effect.plan_id)
+            const attempt = plan
+              ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
+              : undefined
+            if (plan?.state === "blocked" && attempt?.state === "preparing") {
+              this.store.fenced(this.owner, fence, (db) => {
+                const changed =
+                  db
+                    .query(
+                      "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+                    )
+                    .run(plan.id, startupRecoveryReason).changes === 1
+                if (!changed) return
+                this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
+                  effectID: effect.id,
+                  attemptID: effect.attempt_id,
+                  workspace,
+                })
+              })
+            }
+          }
           return
         }
       } else if (effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:")) {
