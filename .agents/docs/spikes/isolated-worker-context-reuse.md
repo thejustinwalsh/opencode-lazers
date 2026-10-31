@@ -84,3 +84,30 @@ delegation boundary. No service restart or existing worker interruption.
 
 Polling, compact plan inspection, scheduler/storage/prompt repairs, the five
 admitted product schedules and canceled inference work are outside this repair.
+
+## Repair implementation
+
+The publishing Architect's native session ID and exact snapshot ID are persisted
+with the source workspace, native project ID, and canonical project directory.
+The canonical directory matters because OpenCode can share a remote-derived
+project ID between distinct clones. An implementor in another
+worktree can select only the publication attached to its immediate native
+Architect parent, after both native sessions are checked against the current
+project, roles and actual worktree directories. Caller input and session metadata
+do not select a source. The selected immutable file is read under the existing
+repository transaction; publication references are included in eviction's active
+set. Source-file permission checks use the published workspace, and both index
+and read responses identify that workspace and `as-of-refresh` time.
+
+If native identity lookup or the optional parent publication is unavailable, the
+read path uses only the current worktree's own publication. An absent local
+publication remains an explicit unavailable-context result; it never refreshes,
+blocks dispatch, or prevents ordinary repository/LSP reads. The legacy mandatory
+packet remains outside dispatch. `test/context/isolated-reuse.test.ts` exercises
+two real Git worktrees, separate SQLite connections and a reopened worker context,
+source-root labeling/permissions, unchanged cache state, denial/revocation,
+foreign-project and unrelated-parent isolation, and optional-context fallback.
+
+Native Desktop dogfood is tracked separately in
+`.agents/docs/evidence/isolated-context-reuse/native.md`; fixture coverage does
+not claim that acceptance observation.

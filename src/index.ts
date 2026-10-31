@@ -12,6 +12,7 @@ import { nativeHost } from "./runner/native.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
 import { ProjectIndex } from "./context/index.ts"
+import type { ContextHost } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { nativeTrajectoryHost } from "./trajectory/native.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
@@ -34,29 +35,55 @@ export default Plugin.define({
         (repository) => Effect.sync(() => repository.close()),
       )
       const projectIndex = yield* Effect.acquireRelease(
-        Effect.sync(
-          () =>
-            new ProjectIndex(
-              ctx.location.directory,
-              join(dirname(repository.path), "context"),
-              repository,
-              async (path, principal) => {
-                try {
-                  await Effect.runPromise(
-                    ctx.permission.assert({
-                      sessionID: Session.ID.make(principal.sessionID),
-                      agent: Agent.ID.make(principal.agent),
-                      action: "read",
-                      resources: [join(ctx.location.directory, path)],
-                    }),
-                  )
-                  return true
-                } catch {
-                  return false
+        Effect.sync(() => {
+          const contextHost: ContextHost = {
+            projectID: ctx.location.project.id,
+            session: async (id) => {
+              try {
+                const session = await Effect.runPromise(
+                  ctx.session.get({ sessionID: Session.ID.make(id) }),
+                )
+                return {
+                  id: session.id,
+                  ...(session.parentID ? { parentID: session.parentID } : {}),
+                  projectID: session.projectID,
+                  directory: session.location.directory,
+                  agent: session.agent,
                 }
-              },
-            ),
-        ),
+              } catch (error) {
+                if (
+                  typeof error === "object" &&
+                  error !== null &&
+                  "_tag" in error &&
+                  error._tag === "SessionNotFoundError"
+                )
+                  return null
+                throw error
+              }
+            },
+          }
+          return new ProjectIndex(
+            ctx.location.directory,
+            join(dirname(repository.path), "context"),
+            repository,
+            async (path, principal, workspace) => {
+              try {
+                await Effect.runPromise(
+                  ctx.permission.assert({
+                    sessionID: Session.ID.make(principal.sessionID),
+                    agent: Agent.ID.make(principal.agent),
+                    action: "read",
+                    resources: [join(workspace, path)],
+                  }),
+                )
+                return true
+              } catch {
+                return false
+              }
+            },
+            contextHost,
+          )
+        }),
         (index) => Effect.sync(() => index.close()),
       )
       yield* registerContextTools(ctx, projectIndex)

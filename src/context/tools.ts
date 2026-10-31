@@ -43,6 +43,7 @@ const RefreshOutput = z.strictObject({
 })
 const EvidenceOutput = z.strictObject({
   ...base,
+  workspace: z.string(),
   sources: z
     .array(
       z.strictObject({
@@ -62,7 +63,7 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
     editor.add({
       name: "lazers_project_index",
       description:
-        "Read the latest Architect-built workspace snapshot. Returns up to 100 permitted file paths and structural metrics; path selections reuse the same snapshot. Freshness is stated as-of its explicit refresh.",
+        "Read the Architect-selected workspace snapshot for this owned implementor, or this workspace's snapshot when no owned publication is available. Returns up to 100 currently permitted file paths and structural metrics. The response identifies the source workspace and is as-of-refresh, not a live view of the worker tree.",
       input: IndexInput,
       output: IndexOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_index" },
@@ -137,7 +138,7 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
     editor.add({
       name: "lazers_project_read",
       description:
-        "Read selected source, Repomix outline, or file structure from the latest Architect-built snapshot, with source paths and line ranges. Filter paths/search and lines; these selections do not recollect or repack the workspace. Freshness is stated as-of its explicit refresh.",
+        "Read selected source, Repomix outline, or file structure from the Architect-selected publication for this owned implementor, or this workspace's snapshot when none is available. The response identifies the source workspace and is as-of-refresh, not a live view of the worker tree. Filter paths/search and lines; selections never recollect or repack the workspace.",
       input: EvidenceInput,
       output: EvidenceOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_read" },
