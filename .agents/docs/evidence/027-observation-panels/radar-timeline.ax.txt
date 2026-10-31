@@ -1,0 +1,345 @@
+Window: "LAZERS attempt trajectory and usage · OpenCode", App: OpenCode.
+0 standard window LAZERS attempt trajectory and usage · OpenCode, Secondary Actions: Raise
+	1 container LAZERS attempt trajectory and usage · OpenCode
+		2 container
+			3 HTML content LAZERS attempt trajectory and usage · OpenCode, URL: oc://renderer/index.html
+				4 container
+					5 container
+						6 button Toggle sidebar
+						7 toggle button Description: Home, Value: 0
+						8 button Search sessions
+						9 button New session
+						10 button O opencode 7h Global OpenCode language server setup
+							11 text O
+							12 text opencode
+							13 text 7h
+							14 text Global OpenCode language server setup
+						15 button O opencode-lazers 10h LAZERS task reconciliation and planning main
+							16 text O
+							17 text opencode-lazers
+							18 text 10h
+							19 text LAZERS task reconciliation and planning
+							20 text main
+						21 button O opencode-lazers 13h Repomix integration for Architect main
+							22 text O
+							23 text opencode-lazers
+							24 text 13h
+							25 text Repomix integration for Architect
+							26 text main
+						27 button O opencode-lazers 14h LAZERS’ durable XState task runner main
+							28 text O
+							29 text opencode-lazers
+							30 text 14h
+							31 text LAZERS’ durable XState task runner
+							32 text main
+						33 text Archived
+						34 button O opencode-lazers 16h LAZERS focused Tasks panel main
+							35 text O
+							36 text opencode-lazers
+							37 text 16h
+							38 text LAZERS focused Tasks panel
+							39 text main
+						40 button O opencode-lazers 16h Retry-safe LAZERS task submission (fork #1) main
+							41 text O
+							42 text opencode-lazers
+							43 text 16h
+							44 text Retry-safe LAZERS task submission (fork #1)
+							45 text main
+						46 button O opencode-lazers 16h Architect eval — Sol High final main
+							47 text O
+							48 text opencode-lazers
+							49 text 16h
+							50 text Architect eval — Sol High final
+							51 text main
+						52 button O opencode-lazers 17h Architect eval — Luna Low main
+							53 text O
+							54 text opencode-lazers
+							55 text 17h
+							56 text Architect eval — Luna Low
+							57 text main
+						58 button O opencode-lazers 17h Architect eval — Luna Max main
+							59 text O
+							60 text opencode-lazers
+							61 text 17h
+							62 text Architect eval — Luna Max
+							63 text main
+						64 button O opencode-lazers 17h Retry-safe LAZERS task submission (fork #2) main
+							65 text O
+							66 text opencode-lazers
+							67 text 17h
+							68 text Retry-safe LAZERS task submission (fork #2)
+							69 text main
+						70 button O opencode-lazers 17h LFM3-Omni-2B WebGPU inference spike main
+							71 text O
+							72 text opencode-lazers
+							73 text 17h
+							74 text LFM3-Omni-2B WebGPU inference spike
+							75 text main
+						76 button O opencode-lazers 17h Retry-safe LAZERS task submission (fork #2) main
+							77 text O
+							78 text opencode-lazers
+							79 text 17h
+							80 text Retry-safe LAZERS task submission (fork #2)
+							81 text main
+						82 button O opencode-lazers 17h Retry-safe LAZERS task submission main
+							83 text O
+							84 text opencode-lazers
+							85 text 17h
+							86 text Retry-safe LAZERS task submission
+							87 text main
+						88 button Working 1
+							89 text Working
+							90 text 1
+						91 button O opencode-lazers LAZERS attempt trajectory and usage main
+							92 text O
+							93 text opencode-lazers
+							94 text Working
+							95 text LAZERS attempt trajectory and usage
+							96 text main
+					97 container
+						98 button Toggle review
+						99 container
+							100 container
+								101 button Jump to latest
+								102 container scrollable content
+									103 container
+										104 pop up button opencode-lazers
+										105 heading LAZERS attempt trajectory and usage, Value: 1
+											106 text LAZERS attempt trajectory and usage
+										107 pop up button More options
+										108 button Local model settings — ready
+										109 button Toggle session context
+											110 image
+											111 text 180k
+										112 pop up button Session details
+							113 container
+								114 pop up button 2 subagents · 1 shell
+									115 text 2 subagents
+									116 text ·
+									117 text 1 shell
+								118 button LAZERS microphone: start dictation. Hold ⌃+⇧+Space to talk; Escape cancels.
+								119 button LAZERS speaker: read latest completed response
+								120 pop up button LAZERS automatic read aloud off; shortcut ⌃+⌥+⇧+S
+								121 container
+									122 text entry area (settable) Description: Prompt, Value: ​
+									123 text Add follow-up, / for commands, @ for context…
+									124 pop up button Add images and files
+									125 pop up button Choose agent
+									126 button OpenAI / GPT-6.1 Sol
+										127 text OpenAI
+										128 text /
+										129 text GPT-6.1 Sol
+									130 pop up button Choose model variant
+									131 button Stop
+						132 container Review and files
+							133 container
+								134 tab group
+									135 container
+										136 tab (settable, integer) Tasks, Value: 0
+										137 button Close tab
+									138 container
+										139 tab (selected) Radar, Value: 1
+										140 button Close tab
+									141 container
+										142 tab (settable, integer) Trajectory, Value: 0
+										143 button Close tab
+									144 button Add tab
+								145 button Open in Finder
+								146 pop up button Open options
+								147 container
+									148 heading Radar, Value: 2
+										149 text Radar
+									150 image Observation is current
+									151 pop up button Session
+									152 pop up button b50a1a71
+									153 pop up button accepted · efd8459f
+									154 tab group Radar view
+										155 tab (settable, integer) Flow, Value: 0
+										156 tab (selected) Timeline, Value: 1
+								157 container Recorded timeline
+									158 container Observed time axis
+										159 text 10/31/2026, 12:06:00 PM
+										160 text 10/31/2026, 7:04:00 PM
+									161 container b50a1a71-1a54-4d89-8ef2-0644bcccc327
+										162 text b50a1a71
+										163 container
+											164 toggle button Description: sequence 220, PLAN_SUBMITTED; start 10/31/2026, 12:06:00 PM; end unavailable, Value: 0
+											165 toggle button Description: sequence 443, SCHEDULE_UPDATED; start 10/31/2026, 4:20:44 PM; end unavailable, Value: 0
+											166 toggle button Description: sequence 453, ADMITTED; start 10/31/2026, 4:20:45 PM; end unavailable, Value: 0
+									167 container Expose shared scoped read-only GUI projections for live Radar state and Trajectory review without conflating machine snapshots and historical events. · attempt 1
+										168 text Expose shared scoped read-only GUI projections for live Radar state… · 1
+										169 container
+											170 toggle button Description: attempt 1, accepted; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											171 toggle button Description: attempt 1, accepted; start 10/31/2026, 4:20:50 PM; end 10/31/2026, 5:26:31 PM, Value: 0
+											172 toggle button Description: focused, completed; start 10/31/2026, 5:26:31 PM; end 10/31/2026, 5:26:35 PM, Value: 0
+											173 toggle button Description: all, completed; start 10/31/2026, 5:26:35 PM; end 10/31/2026, 5:27:15 PM, Value: 0
+											174 toggle button Description: quality, completed; start 10/31/2026, 5:27:15 PM; end 10/31/2026, 5:27:15 PM, Value: 0
+											175 toggle button Description: sequence 468, CONTEXT_RESOLVED; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											176 toggle button Description: sequence 469, EFFECT_INTENDED; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											177 toggle button Description: sequence 477, EFFECT_INTENDED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											178 toggle button Description: sequence 479, EFFECT_INTENDED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											179 toggle button Description: sequence 485, WORKER_STARTED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											180 toggle button Description: sequence 531, WORKER_STOPPED; start 10/31/2026, 5:26:31 PM; end unavailable, Value: 0
+											181 toggle button Description: sequence 533, EFFECT_INTENDED; start 10/31/2026, 5:26:31 PM; end unavailable, Value: 0
+											182 toggle button Description: sequence 535, EFFECT_INTENDED; start 10/31/2026, 5:26:35 PM; end unavailable, Value: 0
+											183 toggle button Description: sequence 537, EFFECT_INTENDED; start 10/31/2026, 5:27:15 PM; end unavailable, Value: 0
+									184 container Keep last completed final prose speakable during new work and add deduplicated optional auto-speech using supported speaker controls. · attempt 1
+										185 text Keep last completed final prose speakable during new work and add… · 1
+										186 container
+											187 toggle button Description: attempt 1, accepted; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											188 toggle button Description: attempt 1, accepted; start 10/31/2026, 4:20:50 PM; end 10/31/2026, 5:10:42 PM, Value: 0
+											189 toggle button Description: focused, completed; start 10/31/2026, 5:10:42 PM; end 10/31/2026, 5:10:42 PM, Value: 0
+											190 toggle button Description: all, completed; start 10/31/2026, 5:10:42 PM; end 10/31/2026, 5:11:22 PM, Value: 0
+											191 toggle button Description: quality, completed; start 10/31/2026, 5:11:22 PM; end 10/31/2026, 5:11:22 PM, Value: 0
+											192 toggle button Description: sequence 472, CONTEXT_RESOLVED; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											193 toggle button Description: sequence 473, EFFECT_INTENDED; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											194 toggle button Description: sequence 475, EFFECT_INTENDED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											195 toggle button Description: sequence 481, EFFECT_INTENDED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											196 toggle button Description: sequence 483, WORKER_STARTED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											197 toggle button Description: sequence 509, WORKER_STOPPED; start 10/31/2026, 5:10:42 PM; end unavailable, Value: 0
+											198 toggle button Description: sequence 511, EFFECT_INTENDED; start 10/31/2026, 5:10:42 PM; end unavailable, Value: 0
+											199 toggle button Description: sequence 513, EFFECT_INTENDED; start 10/31/2026, 5:10:42 PM; end unavailable, Value: 0
+											200 toggle button Description: sequence 515, EFFECT_INTENDED; start 10/31/2026, 5:11:22 PM; end unavailable, Value: 0
+									201 container Render live Radar Flow and Timeline over the actual runner machine and recorded transitions in a native closable panel. · attempt 1
+										202 text Render live Radar Flow and Timeline over the actual runner machine and… · 1
+										203 container
+											204 toggle button Description: attempt 1, accepted; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											205 toggle button Description: attempt 1, accepted; start 10/31/2026, 5:27:16 PM; end 10/31/2026, 6:37:29 PM, Value: 0
+											206 toggle button Description: focused, completed; start 10/31/2026, 6:37:29 PM; end 10/31/2026, 6:37:30 PM, Value: 0
+											207 toggle button Description: all, completed; start 10/31/2026, 6:37:30 PM; end 10/31/2026, 6:38:17 PM, Value: 0
+											208 toggle button Description: quality, completed; start 10/31/2026, 6:38:17 PM; end 10/31/2026, 6:38:17 PM, Value: 0
+											209 toggle button Description: sequence 543, CONTEXT_RESOLVED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											210 toggle button Description: sequence 544, EFFECT_INTENDED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											211 toggle button Description: sequence 552, EFFECT_INTENDED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											212 toggle button Description: sequence 556, EFFECT_INTENDED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											213 toggle button Description: sequence 560, WORKER_STARTED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											214 toggle button Description: sequence 959, WORKER_STOPPED; start 10/31/2026, 6:37:29 PM; end unavailable, Value: 0
+											215 toggle button Description: sequence 961, EFFECT_INTENDED; start 10/31/2026, 6:37:29 PM; end unavailable, Value: 0
+											216 toggle button Description: sequence 963, EFFECT_INTENDED; start 10/31/2026, 6:37:30 PM; end unavailable, Value: 0
+											217 toggle button Description: sequence 965, EFFECT_INTENDED; start 10/31/2026, 6:38:17 PM; end unavailable, Value: 0
+									218 container Render approved native Trajectory review with real attempt timing above a horizontal inspector and scoped check/token details below. · attempt 1
+										219 text Render approved native Trajectory review with real attempt timing… · 1
+										220 container
+											221 toggle button Description: attempt 1, accepted; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											222 toggle button Description: attempt 1, accepted; start 10/31/2026, 5:27:16 PM; end 10/31/2026, 6:24:21 PM, Value: 0
+											223 toggle button Description: focused, completed; start 10/31/2026, 6:24:21 PM; end 10/31/2026, 6:24:21 PM, Value: 0
+											224 toggle button Description: all, completed; start 10/31/2026, 6:24:21 PM; end 10/31/2026, 6:25:05 PM, Value: 0
+											225 toggle button Description: quality, completed; start 10/31/2026, 6:25:05 PM; end 10/31/2026, 6:25:05 PM, Value: 0
+											226 toggle button Description: sequence 547, CONTEXT_RESOLVED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											227 toggle button Description: sequence 548, EFFECT_INTENDED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											228 toggle button Description: sequence 550, EFFECT_INTENDED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											229 toggle button Description: sequence 554, EFFECT_INTENDED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											230 toggle button Description: sequence 558, WORKER_STARTED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											231 toggle button Description: sequence 949, WORKER_STOPPED; start 10/31/2026, 6:24:21 PM; end unavailable, Value: 0
+											232 toggle button Description: sequence 951, EFFECT_INTENDED; start 10/31/2026, 6:24:21 PM; end unavailable, Value: 0
+											233 toggle button Description: sequence 953, EFFECT_INTENDED; start 10/31/2026, 6:24:21 PM; end unavailable, Value: 0
+											234 toggle button Description: sequence 955, EFFECT_INTENDED; start 10/31/2026, 6:25:05 PM; end unavailable, Value: 0
+									235 container Connect Radar and Trajectory to the shipped native GUI and verify their live behavior on actual scheduler work. · attempt 1
+										236 text Connect Radar and Trajectory to the shipped native GUI and verify… · 1
+										237 container
+											238 toggle button Description: attempt 1, running; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											239 toggle button Value: 0, Description: attempt 1, running; start 10/31/2026, 6:45:31 PM; end 10/31/2026, 7:04:00 PM; open through observed time
+											240 toggle button Description: sequence 991, CONTEXT_RESOLVED; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											241 toggle button Description: sequence 992, EFFECT_INTENDED; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											242 toggle button Description: sequence 994, EFFECT_INTENDED; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											243 toggle button Description: sequence 996, EFFECT_INTENDED; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											244 toggle button Description: sequence 998, WORKER_STARTED; start 10/31/2026, 6:45:31 PM; end unavailable, Value: 0
+									245 container Expose shared scoped read-only GUI projections for live Radar state and Trajectory review without conflating machine snapshots and historical events.
+										246 text Expose shared scoped read-only GUI projections for live Radar state…
+										247 container
+											248 toggle button Description: sequence 466, READY; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											249 toggle button Description: sequence 467, DISPATCH; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											250 toggle button Description: sequence 476, EFFECT_COMPLETED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											251 toggle button Description: sequence 478, EFFECT_COMPLETED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											252 toggle button Description: sequence 484, EFFECT_COMPLETED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											253 toggle button Description: sequence 532, VERIFY; start 10/31/2026, 5:26:31 PM; end unavailable, Value: 0
+											254 toggle button Description: sequence 534, EFFECT_COMPLETED; start 10/31/2026, 5:26:35 PM; end unavailable, Value: 0
+											255 toggle button Description: sequence 536, EFFECT_COMPLETED; start 10/31/2026, 5:27:15 PM; end unavailable, Value: 0
+											256 toggle button Description: sequence 538, EFFECT_COMPLETED; start 10/31/2026, 5:27:15 PM; end unavailable, Value: 0
+											257 toggle button Description: sequence 539, ACCEPT; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											258 toggle button Description: sequence 540, ARTIFACT_ACCEPTED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+									259 container Keep last completed final prose speakable during new work and add deduplicated optional auto-speech using supported speaker controls.
+										260 text Keep last completed final prose speakable during new work and add…
+										261 container
+											262 toggle button Description: sequence 470, READY; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											263 toggle button Description: sequence 471, DISPATCH; start 10/31/2026, 4:20:49 PM; end unavailable, Value: 0
+											264 toggle button Description: sequence 474, EFFECT_COMPLETED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											265 toggle button Description: sequence 480, EFFECT_COMPLETED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											266 toggle button Description: sequence 482, EFFECT_COMPLETED; start 10/31/2026, 4:20:50 PM; end unavailable, Value: 0
+											267 toggle button Description: sequence 510, VERIFY; start 10/31/2026, 5:10:42 PM; end unavailable, Value: 0
+											268 toggle button Description: sequence 512, EFFECT_COMPLETED; start 10/31/2026, 5:10:42 PM; end unavailable, Value: 0
+											269 toggle button Description: sequence 514, EFFECT_COMPLETED; start 10/31/2026, 5:11:22 PM; end unavailable, Value: 0
+											270 toggle button Description: sequence 516, EFFECT_COMPLETED; start 10/31/2026, 5:11:22 PM; end unavailable, Value: 0
+											271 toggle button Description: sequence 517, ACCEPT; start 10/31/2026, 5:11:22 PM; end unavailable, Value: 0
+											272 toggle button Description: sequence 518, ARTIFACT_ACCEPTED; start 10/31/2026, 5:11:22 PM; end unavailable, Value: 0
+									273 container Render live Radar Flow and Timeline over the actual runner machine and recorded transitions in a native closable panel.
+										274 text Render live Radar Flow and Timeline over the actual runner machine and…
+										275 container
+											276 toggle button Description: sequence 541, READY; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											277 toggle button Description: sequence 542, DISPATCH; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											278 toggle button Description: sequence 551, EFFECT_COMPLETED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											279 toggle button Description: sequence 555, EFFECT_COMPLETED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											280 toggle button Description: sequence 559, EFFECT_COMPLETED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											281 toggle button Description: sequence 960, VERIFY; start 10/31/2026, 6:37:29 PM; end unavailable, Value: 0
+											282 toggle button Description: sequence 962, EFFECT_COMPLETED; start 10/31/2026, 6:37:30 PM; end unavailable, Value: 0
+											283 toggle button Description: sequence 964, EFFECT_COMPLETED; start 10/31/2026, 6:38:17 PM; end unavailable, Value: 0
+											284 toggle button Description: sequence 966, EFFECT_COMPLETED; start 10/31/2026, 6:38:17 PM; end unavailable, Value: 0
+											285 toggle button Description: sequence 967, ACCEPT; start 10/31/2026, 6:38:17 PM; end unavailable, Value: 0
+											286 toggle button Description: sequence 968, ARTIFACT_ACCEPTED; start 10/31/2026, 6:38:17 PM; end unavailable, Value: 0
+									287 container Render approved native Trajectory review with real attempt timing above a horizontal inspector and scoped check/token details below.
+										288 text Render approved native Trajectory review with real attempt timing…
+										289 container
+											290 toggle button Description: sequence 545, READY; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											291 toggle button Description: sequence 546, DISPATCH; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											292 toggle button Description: sequence 549, EFFECT_COMPLETED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											293 toggle button Description: sequence 553, EFFECT_COMPLETED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											294 toggle button Description: sequence 557, EFFECT_COMPLETED; start 10/31/2026, 5:27:16 PM; end unavailable, Value: 0
+											295 toggle button Description: sequence 950, VERIFY; start 10/31/2026, 6:24:21 PM; end unavailable, Value: 0
+											296 toggle button Description: sequence 952, EFFECT_COMPLETED; start 10/31/2026, 6:24:21 PM; end unavailable, Value: 0
+											297 toggle button Description: sequence 954, EFFECT_COMPLETED; start 10/31/2026, 6:25:05 PM; end unavailable, Value: 0
+											298 toggle button Description: sequence 956, EFFECT_COMPLETED; start 10/31/2026, 6:25:05 PM; end unavailable, Value: 0
+											299 toggle button Description: sequence 957, ACCEPT; start 10/31/2026, 6:25:05 PM; end unavailable, Value: 0
+											300 toggle button Description: sequence 958, ARTIFACT_ACCEPTED; start 10/31/2026, 6:25:05 PM; end unavailable, Value: 0
+									301 container Connect Radar and Trajectory to the shipped native GUI and verify their live behavior on actual scheduler work.
+										302 text Connect Radar and Trajectory to the shipped native GUI and verify…
+										303 container
+											304 toggle button Description: sequence 989, READY; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											305 toggle button Description: sequence 990, DISPATCH; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											306 toggle button Description: sequence 993, EFFECT_COMPLETED; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											307 toggle button Description: sequence 995, EFFECT_COMPLETED; start 10/31/2026, 6:45:30 PM; end unavailable, Value: 0
+											308 toggle button Description: sequence 997, EFFECT_COMPLETED; start 10/31/2026, 6:45:31 PM; end unavailable, Value: 0
+									309 container Timeline record kinds
+										310 text Execution Check Transition
+								311 splitter Description: Resize visualization and details, Value: 55
+								312 heading running, Value: 3
+									313 text running
+								314 definition list
+									315 container Type
+										316 text Type
+									317 text atomic
+									318 container Initial
+										319 text Initial
+									320 text No
+									321 container Current
+										322 text Current
+									323 text No
+									324 container Machine
+										325 text Machine
+									326 text lazers-task/1
+									327 container Task
+										328 text Task
+									329 text efd8459f-1dbe-4472-968b-f26f59504291
+				330 container Notifications alt+T
+	331 close button
+	332 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	333 minimize button
+334 menu bar
+	335 OpenCode
+	336 File
+	337 Edit
+	338 View
+	339 Go
+	340 Window
+	341 Help
+
+The focused UI element is 139 tab (selected) Radar, Value: 1
