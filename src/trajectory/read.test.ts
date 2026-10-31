@@ -214,6 +214,21 @@ test("visible export redacts nested credentials before truncation and fails clos
 test("attempt lookup rejects foreign IDs and session identity mismatches without exporting data", async () => {
   const fixture = makeFixture()
   try {
+    const foreignTask = fixture.repository.insert({
+      ...fixture.task,
+      id: crypto.randomUUID(),
+      provenance: { ...fixture.task.provenance, projectID: "foreign-project" },
+    })
+    await expect(
+      inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        parse({ taskID: foreignTask.id }),
+        cursorSecret,
+      ),
+    ).rejects.toThrow("Task is not owned by this project")
+
     let sessionReads = 0
     const countingHost = {
       session: async (id: string) => {
@@ -243,6 +258,34 @@ test("attempt lookup rejects foreign IDs and session identity mismatches without
     ).rejects.toThrow("outside this project")
   } finally {
     fixture.close()
+  }
+})
+
+test("continuation cursors are bound to the project-owned source snapshot", async () => {
+  const fixture = makeFixture()
+  const otherProject = makeFixture()
+  try {
+    const first = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 2 }),
+      cursorSecret,
+    )
+    expect(first.trajectory.nextCursor).not.toBeNull()
+
+    await expect(
+      inspectTrajectory(
+        otherProject.store,
+        otherProject.host,
+        "project",
+        parse({ taskID, limit: 2, cursor: first.trajectory.nextCursor! }),
+        cursorSecret,
+      ),
+    ).rejects.toThrow("Stale trajectory cursor")
+  } finally {
+    fixture.close()
+    otherProject.close()
   }
 })
 

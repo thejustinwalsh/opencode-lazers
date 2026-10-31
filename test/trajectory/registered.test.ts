@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { renameSync } from "node:fs"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
@@ -6,7 +7,7 @@ import { Effect, Schema } from "effect"
 import { registerTrajectoryTools } from "../../src/trajectory/tools.ts"
 import type { TrajectoryHost } from "../../src/trajectory/native.ts"
 import { TaskRepository } from "../../src/storage.ts"
-import { makeFixture, taskID } from "./fixture.ts"
+import { firstAttemptID, makeFixture, taskID } from "./fixture.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -54,7 +55,7 @@ async function setup(options: { deny?: boolean; host?: TrajectoryHost } = {}) {
   return { ...fixture, tools, permissionOrder }
 }
 
-test("registered Architect tool is permission-first, structured, and pages exact stable events", async () => {
+test("registered trajectory tool is permission-first, structured, and pages exact stable events", async () => {
   const fixture = await setup()
   try {
     const tool = fixture.tools.get("lazers_inspect_trajectory")!
@@ -101,40 +102,56 @@ test("permission denial precedes input validation, database reopen, and native s
       },
     },
   })
+  fixture.repository.close()
+  renameSync(fixture.repository.path, `${fixture.repository.path}.unavailable`)
   try {
-    await expect(
-      Effect.runPromise(
-        fixture.tools.get("lazers_inspect_trajectory")!.execute({ invalid: true }, context),
-      ),
-    ).rejects.toThrow("Permission denied")
-    expect(fixture.permissionOrder).toEqual(["lazers_inspect_trajectory"])
+    const tool = fixture.tools.get("lazers_inspect_trajectory")!
+    for (const input of [{ invalid: true }, { taskID }])
+      await expect(Effect.runPromise(tool.execute(input, context))).rejects.toThrow(
+        "Permission denied",
+      )
+    expect(fixture.permissionOrder).toEqual([
+      "lazers_inspect_trajectory",
+      "lazers_inspect_trajectory",
+    ])
     expect(sessionReads).toBe(0)
-    expect(fixture.repository.list()).toHaveLength(1)
   } finally {
     fixture.close()
   }
 })
 
-test("only Architect can inspect trajectories, before any native session read", async () => {
-  let sessionReads = 0
-  const fixture = await setup({
-    host: {
-      session: async () => {
-        sessionReads++
-        return null
-      },
-    },
-  })
+test("Architect, implementor, and another permitted agent can read owned reports", async () => {
+  const fixture = await setup()
   try {
-    await expect(
-      Effect.runPromise(
-        fixture.tools
-          .get("lazers_inspect_trajectory")!
-          .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
-      ),
-    ).rejects.toThrow("restricted to Architect")
-    expect(fixture.permissionOrder).toEqual(["lazers_inspect_trajectory"])
-    expect(sessionReads).toBe(0)
+    const tool = fixture.tools.get("lazers_inspect_trajectory")!
+    const callers = [
+      { agent: Agent.ID.make("architect"), input: { taskID } },
+      { agent: Agent.ID.make("lazers-implementor"), input: { attemptID: firstAttemptID } },
+      { agent: Agent.ID.make("lazers-reviewer"), input: { taskID } },
+    ]
+    for (const caller of callers) {
+      const result = await Effect.runPromise(
+        tool.execute(caller.input, { ...context, agent: caller.agent }),
+      )
+      const report = result.output as {
+        task: { id: string }
+        focusedAttemptID: string | null
+        attempts: Array<{ id: string; state: string }>
+      }
+      expect(report.task.id).toBe(taskID)
+      expect(report).toEqual(JSON.parse(String(result.content)))
+      if (caller.agent === "lazers-implementor") {
+        expect(report.focusedAttemptID).toBe(firstAttemptID)
+        expect(report.attempts.map(({ id, state }) => ({ id, state }))).toEqual([
+          { id: firstAttemptID, state: "failed" },
+        ])
+      }
+    }
+    expect(fixture.permissionOrder).toEqual([
+      "lazers_inspect_trajectory",
+      "lazers_inspect_trajectory",
+      "lazers_inspect_trajectory",
+    ])
   } finally {
     fixture.close()
   }

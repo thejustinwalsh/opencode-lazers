@@ -112,14 +112,22 @@ The transcript's API examples, model prices, and performance targets are researc
 
 ## Read-only worker trajectory
 
-Architect can call `lazers_inspect_trajectory` with one project-owned `taskID` or
-`attemptID`. The tool combines LAZERS attempt/check records with the native
-`session.get` and `session.context` APIs and opens its project database read-only;
+Any caller allowed by native permission can call `lazers_inspect_trajectory`
+with one project-owned `taskID` or `attemptID`. The tool checks permission before
+input validation or project/session access. It then combines LAZERS attempt/check
+records with the native `session.get` and `session.context` APIs, and opens its
+project database read-only;
 it does not use `detail()` because that method writes an audit row. A bounded,
 stable cursor pages ordered visible prose,
 tool inputs/results/status, runner events, and checks. Changing underlying runner
 or returned session context invalidates continuation. Each task report includes
 all attempts, even failures, cancellations, retries and resumes.
+
+Read access is controlled by OpenCode's native permission decision, not an
+Architect-name restriction. Project/task/attempt/session ownership, redaction,
+bounded pagination, and read-only database access remain enforced. See [spike
+015](.agents/docs/spikes/015-trajectory-read-access.md) for the correction and
+verification evidence.
 
 Exports are allowlisted and redacted before truncation: reasoning, system/skill
 instructions, native/encrypted/replay data, metadata, attachments/file bodies,

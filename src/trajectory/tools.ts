@@ -44,8 +44,6 @@ export function registerTrajectoryTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  if (call.agent !== "architect")
-                    throw new Error("Trajectory inspection is restricted to Architect")
                   const parsed = InspectTrajectoryInput.parse(input)
                   const connection = openReadOnlyTrajectoryStore(path, projectDirectory)
                   try {
