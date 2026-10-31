@@ -29,6 +29,8 @@ function snapshot(projectID: string, targetScope: ObservationScope, eventSequenc
     plans: [],
     unplannedTasks: [],
     transitions: [],
+    attempts: [],
+    checks: [],
   } as SnapshotResponse
 }
 

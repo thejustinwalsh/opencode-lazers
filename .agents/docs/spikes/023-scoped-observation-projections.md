@@ -85,3 +85,20 @@ were exercised with test doubles, not a live `session.get`/`session.context` cal
 Accordingly the retained measurement's native cumulative token fields have not
 been independently re-read through the new registered RPC; the recorded design
 data remains historical evidence, not claimed live output.
+
+## Driver corrections
+
+Native durable sequence jumps are not loss signals on a type-filtered
+subscription: omitted native event types can own those sequence numbers.
+Monotonic jumps now invalidate normally; explicit disconnect and gaps in the
+projection's own emitted sequence still require resnapshot.
+
+`SnapshotOutput` now includes task `revision`/sanitized `objective` on every
+planned node plus top-level `attempts` and `checks` for Timeline. These arrays
+come only from scoped runner records and receipt endpoint columns, without
+native session/context reads. Attempt reservation starts, recorded worker
+activity segments and verification intervals have separate explicit timing
+bases; absent ends stay null and resumed segments stay separate. Rich transcript
+and native usage remain available through selected `trajectory` reads, not
+mandatory fanout for every Timeline lane. See the
+[driver review](../evidence/023-scoped-observation-projections/driver-review.md).

@@ -35,6 +35,8 @@ const NodeSnapshot = z.strictObject({
 
 const ObservationNode = z.strictObject({
   taskID: z.uuid(),
+  revision: z.literal(1),
+  objective: z.string(),
   ordinal: z.int().nonnegative(),
   state: TaskState,
   version: z.int().positive(),
@@ -79,6 +81,40 @@ const RecordedTransition = z.strictObject({
   recordedAt: z.number().finite(),
 })
 
+const RecordedExecution = z.strictObject({
+  startedAt: z.number().finite().nullable(),
+  endedAt: z.number().finite().nullable(),
+  startSequence: z.int().positive().nullable(),
+  endSequence: z.int().positive().nullable(),
+  timingBasis: z.string(),
+})
+
+const TimelineAttempt = z.strictObject({
+  id: z.uuid(),
+  planID: z.uuid(),
+  taskID: z.uuid(),
+  number: z.int().positive(),
+  state: z.string(),
+  startedAt: z.number().finite(),
+  endedAt: z.null(),
+  timingBasis: z.string(),
+  executions: z.array(RecordedExecution),
+})
+
+const TimelineCheck = z.strictObject({
+  id: z.string(),
+  planID: z.uuid(),
+  taskID: z.uuid().nullable(),
+  attemptID: z.uuid().nullable(),
+  checkID: z.string(),
+  scope: z.enum(["attempt", "plan"]),
+  state: z.string(),
+  startedAt: z.number().finite().nullable(),
+  endedAt: z.number().finite().nullable(),
+  exitCode: z.number().finite().nullable(),
+  timingBasis: z.string(),
+})
+
 export const SnapshotInput = z.strictObject({ scope: ObservationScope })
 export const SnapshotOutput = z.strictObject({
   schemaVersion: z.literal(1),
@@ -95,6 +131,8 @@ export const SnapshotOutput = z.strictObject({
   plans: z.array(ObservationPlan).max(1000),
   unplannedTasks: z.array(UnplannedTask),
   transitions: z.array(RecordedTransition).max(10_000),
+  attempts: z.array(TimelineAttempt).max(10_000),
+  checks: z.array(TimelineCheck).max(10_000),
 })
 
 export const TrajectoryInput = z

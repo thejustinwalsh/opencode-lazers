@@ -170,15 +170,16 @@ export class ObservationChangeTracker {
     const durable = object(info?.durable)
     const aggregateID = typeof durable?.aggregateID === "string" ? durable.aggregateID : null
     const sequence = typeof durable?.seq === "number" ? durable.seq : null
-    let gap = false
     if (aggregateID && sequence !== null && Number.isInteger(sequence)) {
       const previous = this.durableSequences.get(aggregateID)
       if (previous !== undefined && sequence <= previous) return
-      gap = previous !== undefined && sequence !== previous + 1
+      // The native subscription filters event types. Missing sequence numbers
+      // may belong to omitted events, not transport loss. Disconnects and the
+      // projection's own contiguous event sequence provide real gap signals.
       this.durableSequences.set(aggregateID, sequence)
     }
     this.nativeRevision++
-    this.emit(gap ? "gap" : "native", gap)
+    this.emit("native", false)
   }
 
   streamGap() {

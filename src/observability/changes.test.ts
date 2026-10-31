@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "./changes.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 
-test("native usage and tool events invalidate, deduplicate, and require resnapshot on gaps", () => {
+test("filtered native sequences deduplicate without inventing gaps; disconnect requires resnapshot", () => {
   const fixture = makeFixture()
   try {
     const tracker = new ObservationChangeTracker(
@@ -36,10 +36,16 @@ test("native usage and tool events invalidate, deduplicate, and require resnapsh
     expect(changes).toHaveLength(3)
     expect(changes).toMatchObject([
       { cause: "native", resnapshotRequired: false, nativeRevision: 1 },
-      { cause: "gap", resnapshotRequired: true, nativeRevision: 2 },
+      { cause: "native", resnapshotRequired: false, nativeRevision: 2 },
       { cause: "native", resnapshotRequired: false, nativeRevision: 3 },
     ])
     expect(JSON.stringify(changes)).not.toContain("tokens")
+    tracker.streamGap()
+    expect(changes.at(-1)).toMatchObject({
+      cause: "gap",
+      resnapshotRequired: true,
+      nativeRevision: 4,
+    })
   } finally {
     fixture.close()
   }

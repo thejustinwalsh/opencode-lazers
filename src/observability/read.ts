@@ -48,7 +48,25 @@ type TransitionRecord = {
 }
 type TaskRecord = { id: string; body: string }
 type DependencyRecord = { plan_id: string; prerequisite: string; successor: string }
-type AttemptIdentity = { id: string; task_id: string; plan_id: string }
+type AttemptIdentity = {
+  id: string
+  task_id: string
+  plan_id: string
+  number: number
+  state: string
+  started_at: number
+}
+type CheckRecord = {
+  id: string
+  plan_id: string
+  task_id: string | null
+  attempt_id: string | null
+  kind: string
+  state: string
+  started_at: unknown
+  ended_at: unknown
+  exit_code: unknown
+}
 type JsonObject = Record<string, unknown>
 
 function object(value: unknown): JsonObject | null {
@@ -199,13 +217,77 @@ function loadProjectionSource(
   const attempts = planIDs.length
     ? db
         .query<AttemptIdentity, string[]>(
-          `SELECT id,task_id,plan_id FROM runner_attempts WHERE plan_id IN (${placeholders})`,
+          `SELECT id,task_id,plan_id,number,state,started_at FROM runner_attempts WHERE plan_id IN (${placeholders}) ORDER BY started_at,number,id`,
         )
         .all(...planIDs)
     : []
-  if (plans.length > 1000 || transitions.length > 10_000)
+  const checks = planIDs.length
+    ? db
+        .query<CheckRecord, string[]>(
+          `SELECT id,plan_id,task_id,attempt_id,kind,state,
+          json_extract(receipt,'$.check.startedAt') AS started_at,
+          json_extract(receipt,'$.check.endedAt') AS ended_at,
+          json_extract(receipt,'$.check.exitCode') AS exit_code
+         FROM runner_effects WHERE plan_id IN (${placeholders})
+          AND (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%') ORDER BY rowid`,
+        )
+        .all(...planIDs)
+    : []
+  if (
+    plans.length > 1000 ||
+    transitions.length > 10_000 ||
+    attempts.length > 10_000 ||
+    checks.length > 10_000
+  )
     throw new Error("Observation scope is too large; narrow it")
-  return { stamp, associations, tasks, plans, nodes, dependencies, transitions, attempts }
+  return { stamp, associations, tasks, plans, nodes, dependencies, transitions, attempts, checks }
+}
+
+const finiteTime = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+
+function recordedExecutions(attempt: AttemptIdentity, transitions: TransitionRecord[]) {
+  const intervals: Array<{
+    startedAt: number | null
+    endedAt: number | null
+    startSequence: number | null
+    endSequence: number | null
+    timingBasis: string
+  }> = []
+  let open: (typeof intervals)[number] | undefined
+  for (const row of transitions) {
+    if (row.plan_id !== attempt.plan_id || row.task_id !== attempt.task_id) continue
+    if (row.event !== "WORKER_STARTED" && row.event !== "WORKER_STOPPED") continue
+    const payload = jsonObject(row.payload)
+    if (payload?.attemptID !== attempt.id) continue
+    const time = finiteTime(payload.observedAt)
+    if (row.event === "WORKER_STARTED") {
+      open = {
+        startedAt: time,
+        endedAt: null,
+        startSequence: row.id,
+        endSequence: null,
+        timingBasis:
+          "Recorded WORKER_STARTED/WORKER_STOPPED observedAt; worker activity, not task acceptance",
+      }
+      intervals.push(open)
+    } else {
+      if (!open) {
+        open = {
+          startedAt: null,
+          endedAt: null,
+          startSequence: null,
+          endSequence: null,
+          timingBasis: "Recorded WORKER_STOPPED observedAt; worker start is unavailable",
+        }
+        intervals.push(open)
+      }
+      open.endedAt = time
+      open.endSequence = row.id
+      open = undefined
+    }
+  }
+  return intervals
 }
 
 function safeSnapshot(node: NodeRecord) {
@@ -250,6 +332,7 @@ export class ObservationReads {
         loadProjectionSource(db, this.store.repository.projectDirectory, scope, this.secret),
       )
       const visibleTaskIDs = new Set(projection.tasks.map((task) => task.id))
+      const taskSpecs = new Map(projection.tasks.map((task) => [task.id, task]))
       const states = new Map(projection.nodes.map((node) => [node.task_id, node.state]))
       const waitingOn = new Map<string, string[]>()
       for (const edge of projection.dependencies) {
@@ -273,10 +356,14 @@ export class ObservationReads {
             projection.associations.planIDs.has(id),
           ),
           nodes: nodes.map((node) => {
+            const task = taskSpecs.get(node.task_id)
+            if (!task) throw new Error("Observation task specification is unavailable")
             const state = TaskState.parse(node.state)
             const machineSnapshot = safeSnapshot(node)
             return {
               taskID: node.task_id,
+              revision: task.revision,
+              objective: safeText(task.proposal.objective, stats, 8000),
               ordinal: node.ordinal,
               state,
               version: node.version,
@@ -309,6 +396,40 @@ export class ObservationReads {
       if (unplannedTasks.length > 1000) throw new Error("Observation scope is too large; narrow it")
 
       const attemptIDs = new Set(projection.attempts.map((attempt) => attempt.id))
+      const attempts = projection.attempts
+        .filter((attempt) => visibleTaskIDs.has(attempt.task_id))
+        .map((attempt) => ({
+          id: attempt.id,
+          planID: attempt.plan_id,
+          taskID: attempt.task_id,
+          number: attempt.number,
+          state: safeText(attempt.state, stats, 80),
+          startedAt: attempt.started_at,
+          endedAt: null,
+          timingBasis:
+            "runner_attempt.started_at is dispatch reservation; attempt end is unavailable",
+          executions: recordedExecutions(attempt, projection.transitions),
+        }))
+      const checks = projection.checks
+        .filter(
+          (check) =>
+            (check.task_id === null || visibleTaskIDs.has(check.task_id)) &&
+            (check.attempt_id === null || attemptIDs.has(check.attempt_id)),
+        )
+        .map((check) => ({
+          id: check.id,
+          planID: check.plan_id,
+          taskID: check.task_id,
+          attemptID: check.attempt_id,
+          checkID: safeText(check.kind.slice(check.kind.indexOf(":") + 1), stats, 120),
+          scope: check.attempt_id === null ? ("plan" as const) : ("attempt" as const),
+          state: safeText(check.state, stats, 80),
+          startedAt: finiteTime(check.started_at),
+          endedAt: finiteTime(check.ended_at),
+          exitCode: finiteTime(check.exit_code),
+          timingBasis:
+            "Verification receipt check.startedAt/check.endedAt; absent endpoints remain unknown",
+        }))
       const transitions = projection.transitions.map((row) => {
         const payload = jsonObject(row.payload)
         const from = TaskState.safeParse(payload?.from)
@@ -357,6 +478,8 @@ export class ObservationReads {
         plans,
         unplannedTasks,
         transitions,
+        attempts,
+        checks,
       }
     } finally {
       connection.close()
