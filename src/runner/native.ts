@@ -12,6 +12,12 @@ import { basename, dirname } from "node:path"
 
 export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): RunnerHost {
   return {
+    async workerModel() {
+      const agent = await Effect.runPromise(
+        ctx.agent.get({ agentID: Agent.ID.make("lazers-implementor") }),
+      )
+      return agent.data.model
+    },
     async worktree(input) {
       const result = await Effect.runPromise(
         ctx.worktree.create({
@@ -105,13 +111,6 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         providerID: Provider.ID.make(input.model.providerID),
         ...(input.model.variant ? { variant: Model.VariantID.make(input.model.variant) } : {}),
       }
-      const catalog = await Effect.runPromise(ctx.model.list())
-      if (
-        !catalog.data.some(
-          (m) => m.id === model.id && m.providerID === model.providerID && m.enabled,
-        )
-      )
-        throw new Error("Admitted worker model is unavailable; no fallback")
       await Effect.runPromise(
         ctx.session.create({
           id: Session.ID.make(input.id),

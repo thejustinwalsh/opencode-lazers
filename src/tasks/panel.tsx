@@ -18,6 +18,7 @@ import { TaskPanelState } from "./panel-state.ts"
 import type { PanelData } from "./panel-state.ts"
 import { clampSplit, splitFromPointer } from "./panel-layout.ts"
 import { taskTitle } from "./presentation.ts"
+import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
 import css from "./panel.css?inline"
 
 const View = Schema.Struct({
@@ -56,15 +57,15 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   })
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [split, setSplit] = createSignal(48)
-  const [startingID, setStartingID] = createSignal("")
-  const [startError, setStartError] = createSignal("")
+  const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
+  const feedback = new StartFeedback(setStartFeedback)
+  const listRestore = new ScrollRestoration()
+  const detailRestore = new ScrollRestoration()
   let root: HTMLDivElement | undefined
   let header: HTMLElement | undefined
   let list: HTMLDivElement | undefined
   let separator: HTMLDivElement | undefined
   let detail: HTMLDivElement | undefined
-  let restoring = false
-  let restoredKey = ""
   let endDrag: (() => void) | undefined
   const scope = createLatest(
     () => {
@@ -117,6 +118,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   )
   onCleanup(() => {
     state.close()
+    feedback.reset("")
+    listRestore.restore("", false, undefined, 0)
+    detailRestore.restore("", false, undefined, 0)
     endDrag?.()
   })
   createKeyed(
@@ -174,21 +178,19 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
       : ""
   }
   const visible = () => (data().key === expectedKey() ? data() : undefined)
+  const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
   createEffect(() => {
     const value = visible()
-    if (!value || value.loading || value.key === restoredKey) return
-    const key = value.key
     const view = prefs()
-    restoring = true
-    queueMicrotask(() => {
-      if (expectedKey() === key) {
-        if (list) list.scrollTop = view.listScroll
-        if (detail) detail.scrollTop = view.detailScroll
-        restoredKey = key
-      }
-      restoring = false
-    })
+    listRestore.restore(expectedKey(), Boolean(value && !value.loading), list, view.listScroll)
+    detailRestore.restore(
+      selectionKey(),
+      value?.detail?.status === "found",
+      detail,
+      view.detailScroll,
+    )
   })
+  createEffect(() => feedback.reset(selectionKey()))
   const selectedTask = () => {
     const result = visible()?.detail
     return result?.status === "found" ? result.task : undefined
@@ -203,15 +205,16 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   }
   const startTask = async (taskID: string, revision: 1) => {
     const value = current()
-    if (!value || startingID()) return
-    setStartingID(taskID)
-    setStartError("")
+    if (!value) return
+    feedback.reset(selectionKey())
+    const ticket = feedback.begin(taskID)
+    if (!ticket) return
     try {
       await state.start({ taskID, revision, sessionID: props.session.id })
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : String(error))
+      feedback.fail(ticket, error)
     } finally {
-      setStartingID("")
+      feedback.finish(ticket)
     }
   }
   const rowKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
@@ -283,7 +286,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
           class="lazers-tasks-dot"
           data-stale={visible()?.stale || !props.session.server.connected}
           role="img"
-          aria-label={visible()?.stale ? "Task data is stale" : "Task updates connected"}
+          aria-label={connectionLabel(Boolean(visible()?.stale), props.session.server.connected)}
         />
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">
@@ -353,7 +356,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
           list = element
         }}
         onScroll={(event) => {
-          if (!restoring) save({ listScroll: event.currentTarget.scrollTop })
+          if (listRestore.restored(expectedKey()))
+            save({ listScroll: event.currentTarget.scrollTop })
         }}
       >
         <Show when={scope.error || visible()?.error}>
@@ -474,7 +478,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
           detail = element
         }}
         onScroll={(event) => {
-          if (!restoring) save({ detailScroll: event.currentTarget.scrollTop })
+          if (detailRestore.restored(selectionKey()))
+            save({ detailScroll: event.currentTarget.scrollTop })
         }}
       >
         <Show
@@ -506,19 +511,13 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                 >
                   {selectedExecution()?.state ?? task().status}
                 </span>
-                <Show
-                  when={
-                    !selectedExecution() &&
-                    visible()?.tasks.find((item) => item.taskID === task().id)?.status ===
-                      "submitted"
-                  }
-                >
+                <Show when={canStart(selectedExecution()?.state ?? task().status)}>
                   <Ui.Button
                     size="small"
                     variant="ghost-muted"
                     class="lazers-tasks-start"
-                    busy={startingID() === task().id}
-                    disabled={Boolean(startingID())}
+                    busy={startFeedback().taskID === task().id}
+                    disabled={Boolean(startFeedback().taskID)}
                     aria-label={`Start ${taskTitle(task().proposal.objective)}`}
                     onClick={() => void startTask(task().id, task().revision)}
                   >
@@ -541,9 +540,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                     .join(", ")}
                 </p>
               </Show>
-              <Show when={startError()}>
+              <Show when={startFeedback().error}>
                 <p class="lazers-tasks-error" role="alert">
-                  {startError()}
+                  {startFeedback().error}
                 </p>
               </Show>
               <div class="lazers-tasks-objective">

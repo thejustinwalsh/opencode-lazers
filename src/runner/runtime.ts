@@ -47,6 +47,18 @@ export class TaskRuntime {
     // Resolve host facts before the transaction, then recheck durable versions within it.
     const old = this.store.plan(command.planID)
     if (!old) throw new Error("Plan not found")
+    // Reject stale/foreign requests before any asynchronous owner recovery effect.
+    // Receipts above remain bound to the ORIGINAL command and caller, even when
+    // a valid owner is durably continued to a different native session.
+    if (old.version !== command.expectedVersion)
+      throw new Error(`Stale plan version; current ${old.version}`)
+    if (caller !== old.owner && !["audit", "reassign"].includes(command.action))
+      throw new Error("Only the plan owner may change execution")
+    let continuedOwner: string | undefined
+    const configuredWorker =
+      command.action === "run" && !JSON.parse(old.body).workerModel
+        ? await this.host.workerModel?.()
+        : undefined
     const target = command.action === "reassign" ? command.targetSessionID : old.owner
     let ownerSession: HostSession | null | undefined
     if (["run", "reassign", "reconcile", "resume", "retry"].includes(command.action)) {
@@ -54,9 +66,8 @@ export class TaskRuntime {
       ownerSession = await this.host.session(target)
     }
     if (command.action === "run" && !this.validArchitect(ownerSession)) {
-      const owner = await this.ensureArchitectOwner(old, ownerSession)
-      const current = this.store.plan(old.id)!
-      return this.command({ ...command, expectedVersion: current.version }, owner.id)
+      ownerSession = await this.ensureArchitectOwner(old, ownerSession, false)
+      continuedOwner = ownerSession.id
     }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
@@ -64,6 +75,10 @@ export class TaskRuntime {
         throw new Error(`Stale plan version; current ${plan.version}`)
       if (caller !== plan.owner && !["audit", "reassign"].includes(command.action))
         throw new Error("Only the plan owner may change execution")
+      // Commit owner adoption with the original request receipt. If native
+      // creation succeeds but this command fails, exact replay can recover it
+      // without granting an old owner authority over a reassigned plan.
+      if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
       if (command.action === "integrated") {
         if (!["accepted", "cleanup-blocked"].includes(plan.state) || !plan.artifact)
           throw new Error("Only an accepted result can be integrated")
@@ -268,18 +283,10 @@ export class TaskRuntime {
       if (command.action === "run" && ownerSession.agent !== "architect")
         throw new Error("Only an Architect session can own execution")
       const proposal = PlanInput.parse(JSON.parse(plan.body))
-      const selectedModel = proposal.workerModel ?? ownerSession.model
+      const selectedModel = proposal.workerModel ?? configuredWorker
       if (!selectedModel)
-        return this.hold(
-          plan,
-          "No authorized execution model is available in this Architect session",
-        )
+        return this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
       const model = ModelPolicy.parse(selectedModel)
-      if (!["openai", "opencode"].includes(model.providerID))
-        return this.hold(
-          plan,
-          "Execution requires an authorized OpenAI subscription or OpenCode model; no provider fallback",
-        )
       try {
         if (
           git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
@@ -306,7 +313,7 @@ export class TaskRuntime {
       ).run(JSON.stringify(model), plan.id)
       this.store.record(plan.id, null, "ADMITTED", {
         model,
-        modelSource: proposal.workerModel ? "explicit-plan-selection" : "owner-session",
+        modelSource: proposal.workerModel ? "explicit-plan-selection" : "native-agent-selection",
         auditWatermark: audit.watermark,
         source: proposal.baseCommit,
         enforcement: {
@@ -336,13 +343,25 @@ export class TaskRuntime {
       throw new Error("Task is not available in this project")
     if (task.revision !== input.revision) throw new Error("Stale task revision")
 
-    const existing = this.store.execution(task.id)
+    let existing = this.store.execution(task.id)
+    // Read the native implementor selection, not the Architect's model. A plan
+    // already carrying an explicit route keeps that route unchanged.
+    let workerModel: ModelPolicy | undefined
+    if (!existing) {
+      workerModel = await this.host.workerModel?.()
+      existing = this.store.execution(task.id)
+      if (!existing && !workerModel)
+        throw new Error("Select an implementor model in native OpenCode agent configuration")
+    }
     let plan: PlanRow
     let created = false
     if (existing) {
       plan = this.store.plan(existing.planID)!
-      if (this.taskStartID(plan) !== task.id || plan.state !== "draft")
-        return { status: "existing", planID: plan.id, state: existing.state }
+      if (plan.state !== "draft" || !["queued", "ready"].includes(existing.state)) {
+        if (plan.state === "running" && ["queued", "ready"].includes(existing.state))
+          await this.tick()
+        return { status: "existing", planID: plan.id, state: this.store.execution(task.id)!.state }
+      }
     } else {
       if (task.status !== "submitted") throw new Error("Task cannot be started")
       if (task.provenance.startingRevision.kind !== "git")
@@ -354,6 +373,7 @@ export class TaskRuntime {
           objective: proposal.objective,
           baseCommit: task.provenance.startingRevision.commit,
           workspaceMode: "shared",
+          workerModel,
           nodes: [{ taskID: task.id, revision: task.revision }],
           dependencies: [],
           integrationOrder: [task.id],
@@ -412,6 +432,7 @@ export class TaskRuntime {
   private async ensureArchitectOwner(
     plan: PlanRow,
     previous: HostSession | null | undefined,
+    adopt = true,
   ): Promise<HostSession> {
     const current = await this.host.session(plan.owner)
     if (this.validArchitect(current)) return current
@@ -424,7 +445,7 @@ export class TaskRuntime {
         this.validArchitect(priorContinuation) &&
         this.matchesContinuation(priorContinuation, plan.id)
       ) {
-        this.store.updatePlanOwner(plan.id, plan.owner, priorContinuation.id)
+        if (adopt) this.store.updatePlanOwner(plan.id, plan.owner, priorContinuation.id)
         return priorContinuation
       }
     }
@@ -454,7 +475,7 @@ export class TaskRuntime {
     if (next && continuation.session_id !== next.session_id && continuation.generation > 1) {
       const adopted = await this.host.session(continuation.session_id)
       if (this.validArchitect(adopted) && this.matchesContinuation(adopted, plan.id)) {
-        this.store.updatePlanOwner(plan.id, plan.owner, adopted.id)
+        if (adopt) this.store.updatePlanOwner(plan.id, plan.owner, adopted.id)
         return adopted
       }
     }
@@ -487,7 +508,7 @@ export class TaskRuntime {
       parentID: continuation.parent_id,
       generation: continuation.generation,
     })
-    this.store.updatePlanOwner(plan.id, plan.owner, session.id)
+    if (adopt) this.store.updatePlanOwner(plan.id, plan.owner, session.id)
     return session
   }
 

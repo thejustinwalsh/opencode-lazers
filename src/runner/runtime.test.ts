@@ -105,6 +105,7 @@ function fixture(
   })
   const events: string[] = []
   const host: RunnerHost = {
+    workerModel: async () => options.workerModel ?? { providerID: "openai", id: "test-model" },
     worktree: async ({ directory, base }) => {
       git(root, ["worktree", "add", "--detach", directory, base])
       return directory
@@ -321,6 +322,144 @@ test("Start recovers a lost native continuation-create response after restart", 
   )
 })
 
+test("run authorizes and validates the original command before creating a continuation", async () => {
+  for (const kind of ["foreign", "stale"] as const) {
+    const f = fixture({ shared: true })
+    f.sessions.get("owner")!.agent = "build"
+    const before = f.store.plan(f.receipt.planID)!
+    await expect(
+      f.runtime.command(
+        {
+          requestID: "denied-run",
+          planID: before.id,
+          expectedVersion: kind === "stale" ? 99 : 1,
+          action: "run",
+        },
+        kind === "foreign" ? "not-the-owner" : "owner",
+      ),
+    ).rejects.toThrow(kind === "foreign" ? "Only the plan owner" : "Stale plan version")
+    expect(f.store.plan(before.id)).toEqual(before)
+    expect(f.store.continuation(before.id)).toBeNull()
+    expect(f.events).toEqual([])
+    expect(f.store.attempts(before.id)).toHaveLength(0)
+  }
+})
+
+test("continued run retains original caller/version replay identity across concurrent calls and restart", async () => {
+  const f = fixture({ shared: true })
+  f.sessions.get("owner")!.agent = "build"
+  const input = {
+    requestID: "continued-run",
+    planID: f.receipt.planID,
+    expectedVersion: 1,
+    action: "run",
+  }
+  const results = await Promise.all([
+    f.runtime.command(input, "owner"),
+    f.runtime.command(input, "owner"),
+  ])
+  expect(results[0]).toEqual(results[1])
+  expect(await f.runtime.command(input, "owner")).toEqual(results[0])
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  expect(await reopened.command(input, "owner")).toEqual(results[0])
+  await expect(reopened.command(input, "not-the-owner")).rejects.toThrow("identity conflict")
+  await expect(reopened.command({ ...input, reason: "changed" }, "owner")).rejects.toThrow(
+    "identity conflict",
+  )
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+})
+
+test("Start admits an existing queued plan, keeps its selected worker route and respects dependencies", async () => {
+  const selected = { providerID: "openai", id: "gpt-6-luna", variant: "max" }
+  const f = fixture({ shared: true, workerModel: selected })
+  f.sessions.get("owner")!.model = { providerID: "openai", id: "gpt-6.1-sol", variant: "high" }
+  const result = await f.runtime.startTask({
+    taskID: f.tasks[1]!.id,
+    revision: 1,
+    sessionID: "owner",
+  })
+  expect(result.planID).toBe(f.receipt.planID)
+  expect(f.store.plans()).toHaveLength(1)
+  expect(f.store.plan(result.planID)!.state).toBe("running")
+  expect(JSON.parse(f.store.plan(result.planID)!.model!)).toEqual(selected)
+  expect(f.store.attempts(result.planID).map((attempt) => attempt.task_id)).toEqual([
+    f.tasks[0]!.id,
+  ])
+  const again = await f.runtime.startTask({
+    taskID: f.tasks[1]!.id,
+    revision: 1,
+    sessionID: "owner",
+  })
+  expect(again.planID).toBe(result.planID)
+  expect(f.store.attempts(result.planID)).toHaveLength(1)
+})
+
+test("continued run recovers a crash before its receipt without changing caller identity", async () => {
+  const f = fixture({ shared: true })
+  f.sessions.get("owner")!.agent = "build"
+  const input = {
+    requestID: "crashed-run",
+    planID: f.receipt.planID,
+    expectedVersion: 1,
+    action: "run",
+  }
+  const command = f.store.command.bind(f.store)
+  f.store.command = () => {
+    throw new Error("Injected pre-receipt crash")
+  }
+  await expect(f.runtime.command(input, "owner")).rejects.toThrow("Injected")
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({
+    owner: "owner",
+    version: 1,
+    state: "draft",
+  })
+  f.store.command = command
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  const result = await reopened.command(input, "owner")
+  expect(result).toMatchObject({ status: "running" })
+  expect(await reopened.command(input, "owner")).toEqual(result)
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+})
+
+test("a concurrent reassignment cannot be overwritten by continuation completion", async () => {
+  const f = fixture({ shared: true })
+  f.sessions.get("owner")!.agent = "build"
+  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner", agent: "architect" })
+  const create = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    await create(input)
+    await f.runtime.command(
+      {
+        requestID: "reassign-during-create",
+        planID: f.receipt.planID,
+        expectedVersion: 1,
+        action: "reassign",
+        targetSessionID: "new-owner",
+        reason: "Explicit ownership change",
+      },
+      "owner",
+    )
+  }
+  const input = {
+    requestID: "racing-run",
+    planID: f.receipt.planID,
+    expectedVersion: 1,
+    action: "run",
+  }
+  await expect(f.runtime.command(input, "owner")).rejects.toThrow("Stale plan version")
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({
+    owner: "new-owner",
+    version: 2,
+    state: "draft",
+  })
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  await expect(f.runtime.command({ ...input, expectedVersion: 2 }, "owner")).rejects.toThrow(
+    "Only the plan owner",
+  )
+})
+
 test("a lost continuation-create response is reconciled by stable native session ID", async () => {
   const f = fixture({ shared: true, commit: true, startOnly: true })
   f.sessions.get("owner")!.agent = "build"
@@ -392,44 +531,34 @@ test("a missing task owner gets a same-project continuation without foreign pare
   expect(f.store.plan(plan.id)?.state).toBe("accepted")
 })
 
-test("Start exposes recorded admission blocks with their reason", async () => {
+test("Start admits the configured route independently of the Architect model", async () => {
   const f = fixture({
     shared: true,
     commit: true,
     startOnly: true,
   })
-  f.sessions.get("owner")!.model = { providerID: "anthropic", id: "foreign-provider" }
+  const selected = { providerID: "custom-provider", id: "selected-model", variant: "careful" }
+  f.host.workerModel = async () => selected
+  f.sessions.get("owner")!.model = { providerID: "openai", id: "gpt-6.1-sol", variant: "high" }
   const task = f.tasks[0]!
   const result = await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
-  expect(result).toMatchObject({ status: "started", state: "blocked" })
-  expect(f.store.execution(task.id)).toMatchObject({
-    state: "blocked",
-    reason:
-      "Execution requires an authorized OpenAI subscription or OpenCode model; no provider fallback",
-  })
-  expect(
-    new TaskReads(f.repository)
-      .query({ includeCompleted: true })
-      .tasks.find((item) => item.taskID === task.id),
-  ).toMatchObject({
-    status: "blocked",
-    reason:
-      "Execution requires an authorized OpenAI subscription or OpenCode model; no provider fallback",
-  })
-  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(0)
+  expect(result).toMatchObject({ status: "started", state: "running" })
+  expect(JSON.parse(f.store.plan(result.planID)!.model!)).toEqual(selected)
+  const attempt = f.store.attempts(result.planID)[0]!
+  expect(f.sessions.get(attempt.session_id)?.model).toEqual(selected)
 
   const noModel = fixture({ shared: true, commit: true, startOnly: true })
-  noModel.sessions.get("owner")!.model = undefined
+  noModel.host.workerModel = async () => undefined
   const noModelTask = noModel.tasks[0]!
-  const noModelResult = await noModel.runtime.startTask({
-    taskID: noModelTask.id,
-    revision: 1,
-    sessionID: "owner",
-  })
-  expect(noModelResult.state).toBe("blocked")
-  expect(noModel.store.execution(noModelTask.id)?.reason).toBe(
-    "No authorized execution model is available in this Architect session",
-  )
+  await expect(
+    noModel.runtime.startTask({
+      taskID: noModelTask.id,
+      revision: 1,
+      sessionID: "owner",
+    }),
+  ).rejects.toThrow("Select an implementor model")
+  expect(noModel.store.plans()).toHaveLength(0)
+  expect(noModel.events).toEqual([])
 })
 
 test("Start rejects stale, foreign and ended work without changing runtime state", async () => {

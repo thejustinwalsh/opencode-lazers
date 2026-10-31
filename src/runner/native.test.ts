@@ -4,6 +4,8 @@ import type { Plugin } from "@opencode/plugin/effect"
 import type { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
 import { nativeHost } from "./native.ts"
+import { registerWorker } from "./roles.ts"
+import type { RunnerStore } from "./store.ts"
 
 test("native worktrees use the host lifecycle with the admitted ref and returned directory", async () => {
   let removed: unknown
@@ -181,4 +183,57 @@ test("a host that fails to move the child cannot receive its work prompt", async
     }),
   ).rejects.toThrow("assigned worktree")
   expect(prompted).toBe(false)
+})
+
+test("native worker selection survives role registration and reaches native creation unchanged", async () => {
+  const model = { providerID: "custom-provider", id: "native-selected", variant: "deep" }
+  const agent = { model, permissions: [] }
+  let created: { model: unknown } | undefined
+  let fail = false
+  const ctx = {
+    agent: {
+      get: () => Effect.succeed({ data: agent }),
+      transform: (transform: (editor: unknown) => void) =>
+        Effect.sync(() =>
+          transform({
+            update: (_id: string, update: (value: typeof agent) => void) => update(agent),
+          }),
+        ),
+    },
+    session: {
+      hook: () => Effect.void,
+      create: (input: { model: unknown }) =>
+        Effect.sync(() => {
+          if (fail) throw new Error("Native route error")
+          created = input
+        }),
+    },
+    tool: { hook: () => Effect.void },
+  } as unknown as Plugin.Context
+  await Effect.runPromise(Effect.scoped(registerWorker(ctx, {} as RunnerStore)))
+  const host = nativeHost(ctx, {} as TaskRepository)
+  expect(await host.workerModel!()).toEqual(model)
+  await host.create({
+    id: "ses_child",
+    parentID: "ses_owner",
+    agent: "lazers-implementor",
+    model,
+    directory: "/work",
+    title: "task",
+    attemptID: "attempt",
+  })
+  expect(created?.model).toEqual(model)
+  // No model catalog, enabled flag or plugin provider whitelist participates.
+  fail = true
+  await expect(
+    host.create({
+      id: "ses_child",
+      parentID: "ses_owner",
+      agent: "lazers-implementor",
+      model,
+      directory: "/work",
+      title: "task",
+      attemptID: "attempt",
+    }),
+  ).rejects.toThrow("Native route error")
 })

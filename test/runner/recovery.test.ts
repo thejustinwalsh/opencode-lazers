@@ -68,6 +68,7 @@ function fixture(crashVerifier = false) {
       objective: "Crash-recover one real artifact",
       baseCommit: base,
       workspaceMode: "isolated",
+      workerModel: { providerID: "openai", id: "subscription", variant: "high" },
       nodes: [{ taskID: task.id, revision: 1 }],
       dependencies: [],
       integrationOrder: [task.id],

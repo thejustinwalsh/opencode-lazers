@@ -18,6 +18,8 @@ export type HostSession = {
 }
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
+  /** Current native implementor-agent selection; never inferred from Architect identity. */
+  workerModel?(): Promise<ModelPolicy | undefined>
   worktree(input: { directory: string; base: string }): Promise<string>
   worktrees(): Promise<string[]>
   removeWorktree(directory: string): Promise<void>

@@ -28,7 +28,7 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
           { action: "lazers_plan_command", resource: "*", effect: "deny" },
           { action: "lazers_submit_task", resource: "*", effect: "deny" },
         ]
-        delete agent.model
+        // Preserve the model/effort selected in native OpenCode configuration.
         delete agent.steps
       }),
     )
