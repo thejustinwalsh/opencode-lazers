@@ -167,3 +167,22 @@ test("task reads expose structured Code Mode outputs and require their own permi
     ).rejects.toThrow("Permission denied")
   }
 })
+
+test("implementors fetch prose instructions through the existing task tool with typed data intact", async () => {
+  const { tools } = await setup()
+  const receipt = await Effect.runPromise(
+    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+  )
+  const { taskID } = JSON.parse(String(receipt.content))
+  const result = await Effect.runPromise(
+    tools
+      .get("lazers_get_task")!
+      .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
+  )
+  expect(result.content).toContain(`# Task ${taskID}`)
+  expect(result.content).toContain("## Done when")
+  expect(result.content).toContain("## Verification")
+  expect(result.content).not.toContain('"proposal"')
+  expect(result.output).toHaveProperty("task.id", taskID)
+  expect(result.output).toHaveProperty("task.proposal.objective", validProposal().objective)
+})

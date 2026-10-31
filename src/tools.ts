@@ -7,16 +7,19 @@ import { startingRevision, submitTask } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./tasks/contract.ts"
 import { TaskReads } from "./tasks/read.ts"
+import { taskInstructions } from "./tasks/instructions.ts"
 
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
-function result<T>(run: () => T, structured = false) {
+function result<T>(
+  run: () => T,
+  structured = false,
+  render: (output: T) => string = JSON.stringify,
+) {
   return Effect.sync(() => {
     try {
       const output = run()
-      return structured
-        ? { content: JSON.stringify(output), output }
-        : { content: JSON.stringify(output) }
+      return structured ? { content: render(output), output } : { content: JSON.stringify(output) }
     } catch (error) {
       return {
         content: JSON.stringify({
@@ -106,7 +109,8 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     })
     editor.add({
       name: "lazers_get_task",
-      description: "Retrieve a submitted LAZERS task by its durable UUID in this repository.",
+      description:
+        "Retrieve a LAZERS task by UUID. Implementors receive readable instructions; typed structured output remains available.",
       input: GetInput,
       output: GetOutput,
       options: { codemode: true, pinned: true, permission: "lazers_get_task" },
@@ -123,6 +127,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
               result(
                 () => withRepository((connection) => new TaskReads(connection).get(input)),
                 true,
+                context.agent === "lazers-implementor" ? taskInstructions : JSON.stringify,
               ),
             ),
           ),

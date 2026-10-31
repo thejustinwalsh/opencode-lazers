@@ -96,14 +96,6 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
         .map((line) => line.slice(9)),
     session: async (id) => structuredClone(sessions.get(id) ?? null),
     skills: async () => [],
-    assemble: async (input) => ({
-      text: JSON.stringify({
-        specification: input.proposal,
-        source: input.source,
-        skills: input.skills,
-      }),
-      metadata: { source: input.source },
-    }),
     create: async (input) => {
       events.push(`create:${input.id}`)
       sessions.set(input.id, {
@@ -121,10 +113,15 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
     },
     prompt: async (input) => {
       events.push(`prompt:${input.id}`)
+      expect(input.text).toContain("lazers_get_task")
+      expect(input.text).not.toContain('"specification"')
+      expect(input.text.length).toBeLessThan(1200)
       const session = sessions.get(input.sessionID)!
       session.messages.push({ id: input.id, text: input.text })
-      const spec = JSON.parse(input.text)
-      const path = spec.specification.writeScope[0] as string
+      const assigned = store
+        .attempts(receipt.planID)
+        .find((attempt) => attempt.session_id === input.sessionID)!
+      const path = repository.get(assigned.task_id)!.proposal.writeScope[0]!
       if (path === "b.txt") expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
       writeFileSync(join(session.directory, path), path[0]!)
       if (options.outside) writeFileSync(join(session.directory, "escape.txt"), "bad")
@@ -332,4 +329,41 @@ test("runtime retains the actual directory returned by the host worktree strateg
     .effects(f.receipt.planID)
     .find((effect) => effect.kind === "graph-worktree")!
   expect(JSON.parse(graph.receipt!).workspace.endsWith("-2")).toBe(true)
+})
+
+test("an explicitly cancelled worker can continue through its owner without replacing its worktree", async () => {
+  const f = fixture()
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  await f.runtime.command(
+    {
+      requestID: "cancel",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("cancelled")
+  await f.runtime.command(
+    {
+      requestID: "continue",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      reason: "Host location corrected",
+    },
+    "owner",
+  )
+  // Cancellation also stopped the queued successor; verify this task's continuation independently.
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)[0]!.workspace).toBe(attempt.workspace)
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
 })

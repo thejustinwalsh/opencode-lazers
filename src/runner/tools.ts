@@ -18,7 +18,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lazers_plan_command",
         description:
-          "Request execution, cancel, audit, reconcile, explicitly reassign, resume an exhausted stopped task with taskID/reason, or record assertion-bound human evidence. Requires current expectedVersion and a stable requestID. No force-accept; resume retains measured usage and history.",
+          "Request execution, cancel, audit, reconcile, explicitly reassign, resume an exhausted or cancelled stopped task with taskID/reason, or record assertion-bound human evidence. Requires current expectedVersion and a stable requestID. No force-accept; resume retains measured usage and history.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },

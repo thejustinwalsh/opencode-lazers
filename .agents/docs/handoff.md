@@ -2,6 +2,21 @@
 
 ## Latest execution corrections
 
+Read [workspace policy](workspace-policy.md). Serial tasks should default to
+native children in the shared checkout; parallel tasks use native worktrees.
+Owned worktrees require recorded integration, reconciliation and cleanup after
+merge. Those selection/cleanup behaviors remain implementation work, not a claim
+that native creation alone completes the lifecycle.
+
+The first worker was misrouted because native child creation ignores `location`
+when `parentID` is supplied. It was cancelled through Architect. Six edited files
+were preserved in its assigned worktree; a backup patch is at
+`/private/tmp/lazers-misrouted-worker.patch`. Main was restored from its committed
+checkpoint. Use native `session.move` before prompting isolated workers.
+Workers now receive prose directions to the existing `lazers_get_task`, whose
+implementor response renders instructions and retains typed output. Do not inject
+or repeatedly send raw JSON ContextPackets as user messages.
+
 The user rejected guessed execution budgets. There is no configured model-based
 budget policy. Preserve measured usage; do not enforce historical task token,
 time, tool-call or spend numbers or invent replacements. New tasks may omit

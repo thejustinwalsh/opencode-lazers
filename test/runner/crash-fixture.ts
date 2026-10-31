@@ -32,10 +32,6 @@ const host: RunnerHost = {
       .map((line) => line.slice(9)),
   session: async (id) => load().sessions[id] ?? null,
   skills: async () => [],
-  assemble: async (input) => ({
-    text: JSON.stringify({ specification: input.proposal }),
-    metadata: { source: input.source },
-  }),
   create: async (input) => {
     cut("before-session")
     const state = load()

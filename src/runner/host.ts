@@ -1,5 +1,4 @@
 import type { ModelPolicy } from "./schema.ts"
-import type { TaskProposal } from "../task.ts"
 
 export type HostSession = {
   id: string
@@ -22,13 +21,6 @@ export interface RunnerHost {
   worktrees(): Promise<string[]>
   session(id: string): Promise<HostSession | null>
   skills(sessionID: string, ids: string[]): Promise<SkillSource[]>
-  assemble(input: {
-    sessionID: string
-    directory: string
-    proposal: TaskProposal
-    skills: SkillSource[]
-    source: string
-  }): Promise<{ text: string; metadata: unknown }>
   create(input: {
     id: string
     parentID: string
@@ -38,7 +30,7 @@ export interface RunnerHost {
     title: string
     attemptID: string
   }): Promise<void>
-  prompt(input: { sessionID: string; id: string; text: string }): Promise<void>
+  prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   notify(input: { sessionID: string; id: string; text: string; resume: boolean }): Promise<void>
   interrupt(id: string): Promise<void>
 }

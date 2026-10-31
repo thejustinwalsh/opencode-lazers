@@ -125,11 +125,13 @@ export class TaskRuntime {
           .filter((a) => a.task_id === command.taskID)
           .at(-1)
         if (
-          plan.state !== "blocked" ||
-          node?.state !== "exhausted" ||
-          attempt?.state !== "exhausted"
+          !["blocked", "cancelled"].includes(plan.state) ||
+          !node ||
+          !["exhausted", "cancelled"].includes(node.state) ||
+          !attempt ||
+          !["exhausted", "cancelled"].includes(attempt.state)
         )
-          throw new Error("Only an exhausted, stopped attempt can resume")
+          throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
         if (this.store.effects(plan.id).some((effect) => effect.state !== "completed"))
           throw new Error("Reconcile uncertain effects first")
         this.store.move(plan.id, node.task_id, "RESUME", command.reason)
@@ -478,7 +480,6 @@ export class TaskRuntime {
       agent: "lazers-implementor",
       model: ModelPolicy.parse(JSON.parse(plan.model!)),
       source: base,
-      contextHash: fingerprint(text),
       context: text,
       skills: skills.map(({ content: _content, ...s }) => s),
       budget: null,
@@ -558,33 +559,17 @@ export class TaskRuntime {
       )
     ) {
       if (!policy.packet) {
-        const draft = JSON.parse(policy.context)
-        try {
-          const packet = await this.host.assemble({
-            sessionID: attempt.session_id,
-            directory: attempt.workspace,
-            proposal: this.store.repository.get(attempt.task_id)!.proposal,
-            skills: draft.skills,
-            source: attempt.base_commit,
+        policy.packet = { recipe: "task-tool/1", taskID: attempt.task_id, tool: "lazers_get_task" }
+        this.store.fenced(this.owner, fence, (db) => {
+          db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
+            JSON.stringify(policy),
+            attempt.id,
+          )
+          this.store.record(plan.id, attempt.task_id, "CONTEXT_RESOLVED", {
+            attemptID: attempt.id,
+            packet: policy.packet,
           })
-          policy.context = packet.text
-          policy.contextHash = fingerprint(packet.text)
-          policy.packet = packet.metadata
-          this.store.fenced(this.owner, fence, (db) => {
-            db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
-              JSON.stringify(policy),
-              attempt.id,
-            )
-            this.store.record(plan.id, attempt.task_id, "CONTEXT_RESOLVED", {
-              attemptID: attempt.id,
-              contextHash: policy.contextHash,
-              packet: packet.metadata,
-            })
-          })
-        } catch (error) {
-          this.hold(plan, `Context admission failed: ${errorText(error)}`)
-          return
-        }
+        })
       }
       const effect = this.effect(
         plan.id,
@@ -594,7 +579,7 @@ export class TaskRuntime {
         {
           sessionID: attempt.session_id,
           messageID: attempt.message_id,
-          contextHash: policy.contextHash,
+          workspace: attempt.workspace,
         },
         fence,
       )
@@ -602,11 +587,16 @@ export class TaskRuntime {
         await this.host.prompt({
           sessionID: attempt.session_id,
           id: attempt.message_id,
-          text: policy.context,
+          directory: attempt.workspace,
+          text: `Implement LAZERS task ${attempt.task_id} in ${attempt.workspace}. Fetch revision 1 with lazers_get_task before editing. The tool returns your objective, write scope, acceptance criteria, checks and repository references. Read the local AGENTS.md and relevant source; use focused repository reads as needed. Preserve existing task edits, finish the implementation, run the specified checks, commit your changes, and report the result and unresolved issues in prose. Do not print the task JSON or delegate. This is a continuation when earlier messages exist; the assigned worktree is authoritative.`,
         })
         this.receipt(
           effect,
-          { messageID: attempt.message_id, deliveredContextHash: policy.contextHash },
+          {
+            messageID: attempt.message_id,
+            taskID: attempt.task_id,
+            instructions: "prose; lazers_get_task",
+          },
           fence,
         )
       } catch (error) {
@@ -901,7 +891,6 @@ export class TaskRuntime {
             {
               messageID: payload.messageID,
               reconciled: true,
-              deliveredContextHash: payload.contextHash,
             },
             fence,
           )

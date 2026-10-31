@@ -9,10 +9,9 @@ import { DateTime, Effect } from "effect"
 import { fingerprint } from "../identity.ts"
 import type { RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
-import { ProjectIndex } from "../context/index.ts"
-import { basename, dirname, join } from "node:path"
+import { basename, dirname } from "node:path"
 
-export function nativeHost(ctx: Plugin.Context, repository: TaskRepository): RunnerHost {
+export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): RunnerHost {
   return {
     async worktree(input) {
       const result = await Effect.runPromise(
@@ -114,38 +113,6 @@ export function nativeHost(ctx: Plugin.Context, repository: TaskRepository): Run
       }
       return selected
     },
-    async assemble(input) {
-      const index = new ProjectIndex(
-        input.directory,
-        join(dirname(repository.path), "context"),
-        repository,
-        async (path) => {
-          try {
-            await Effect.runPromise(
-              ctx.permission.assert({
-                sessionID: Session.ID.make(input.sessionID),
-                agent: Agent.ID.make("lazers-implementor"),
-                action: "read",
-                resources: [join(input.directory, path)],
-              }),
-            )
-            return true
-          } catch {
-            return false
-          }
-        },
-      )
-      try {
-        return await index.packet(
-          { sessionID: input.sessionID, agent: "lazers-implementor" },
-          input.proposal,
-          input.skills,
-          input.source,
-        )
-      } finally {
-        index.close()
-      }
-    },
     async create(input) {
       const model = {
         id: Model.ID.make(input.model.id),
@@ -172,6 +139,15 @@ export function nativeHost(ctx: Plugin.Context, repository: TaskRepository): Run
       )
     },
     async prompt(input) {
+      const id = Session.ID.make(input.sessionID)
+      const before = await Effect.runPromise(ctx.session.get({ sessionID: id }))
+      if (before.location.directory !== input.directory)
+        await Effect.runPromise(
+          ctx.session.move({ sessionID: id, directory: AbsolutePath.make(input.directory) }),
+        )
+      const located = await Effect.runPromise(ctx.session.get({ sessionID: id }))
+      if (located.location.directory !== input.directory)
+        throw new Error("Worker session is not in its assigned worktree")
       await Effect.runPromise(
         ctx.session.prompt({
           sessionID: Session.ID.make(input.sessionID),
