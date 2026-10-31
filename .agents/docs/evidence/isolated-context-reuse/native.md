@@ -64,6 +64,42 @@ comparisons. This closes the scoped native assertion for exact artifact
 `7913a14170e7b2b3318c3b25b2bfc19505a4b38f`, not arbitrary future permissions,
 providers or workspace changes. It is driver evidence, not a user approval.
 
+## Runtime evidence attachment and remaining plan-command gap
+
+The normal evidence tool was permission-admitted but repeatedly rejected stale
+versions (227 → 235, 246 → 252, 282 → 287) while unchanged missing-evidence waits
+produced fresh BLOCKED transitions. The driver used the existing
+`TaskRuntime.command` implementation locally with a freshly read version **315**,
+the real native Architect identity and exact node artifact/assertion. No runtime
+tick, custom SQL evidence/state update, fake host fact or acceptance override was
+used. Command ID `context-native-c1ced6f-local-runtime-v1` recorded the evidence;
+the normal running scheduler accepted task `430e08d8` at version **316**.
+Root subsequently committed blocked-wait stability repair `a07377c` separately.
+
+Normal tool command `context-reconcile-after-native-c1ced6f-v1` then reconciled
+the existing plan at version **317**. All combined focused/full/quality checks
+completed with exit **0**, no timeout and `unchanged:true`. The existing task
+remains accepted with no active attempt; it is not redispatched.
+
+Whole-plan integration is **not yet recorded**. Plan `caa8c80c` is blocked at
+version **318** with `Combined artifact evidence missing: native:human`.
+This is a separate command-surface defect: `human-evidence` currently requires
+a task ID, validates only task assertions, and writes task-scoped evidence;
+`finish` deliberately requires a distinct `task_id IS NULL` record for each
+plan-level human assertion. There is no supported command to record that row.
+The combined native assertion has genuine proof above, but task evidence must
+not be silently promoted to plan evidence or the plan forced accepted.
+
+A narrow runtime command repair must allow declared plan assertions to bind
+the exact current combined artifact, preserving owner/version/idempotency and
+normal verification gates. The plan's artifact is still null until acceptance,
+so derive/validate the candidate from its accepted node artifacts and integration
+order, as `finish` already does. Preserve the existing context task/plan and its
+native proof; no second context implementation, retry, or user approval is needed.
+Active wake repair overlaps the runtime source; do not edit its worker checkout
+or silently expand its immutable specification. No duplicate task has been
+submitted for the completed context work.
+
 ## Original implementation context (retained history)
 
 - Task: `430e08d8-ce98-45db-811f-4362a45174b6`, revision 1.
@@ -85,7 +121,7 @@ providers or workspace changes. It is driver evidence, not a user approval.
   queried in this attempt; the source session above is the task provenance, not
   a substitute for verifying the live parent relation.
 
-## Tool observations
+## Original tool observations (at implementation return)
 
 - Before implementing the repair, an actual `lazers_project_index` call in the
   isolated implementor returned:
@@ -95,7 +131,7 @@ providers or workspace changes. It is driver evidence, not a user approval.
 - No post-repair worker index/read output, matching snapshot ID/time, or native
   source-workspace permission result is available yet.
 
-## Required follow-up
+## Original required follow-up (now fulfilled above)
 
 After the repaired artifact is available to the pinned OpenCode 2.2.5 host,
 Architect must record the exact code artifact/commit, the live parent and worker
