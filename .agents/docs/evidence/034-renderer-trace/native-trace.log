@@ -1,0 +1,202 @@
+[2026-10-31 16:53:24.007] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'renderer:cef839d7-3aa2-4075-840f-f511cf098270',
+  stage: 'session-create',
+  elapsedMs: 4321,
+  deltaMs: 0,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown'
+}
+[2026-10-31 16:53:26.805] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'renderer:cef839d7-3aa2-4075-840f-f511cf098270',
+  stage: 'session-ready',
+  elapsedMs: 7108,
+  deltaMs: 0,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown'
+}
+[2026-10-31 16:55:30.691] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'queued',
+  elapsedMs: 0,
+  deltaMs: 0,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1
+}
+[2026-10-31 16:55:30.691] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'polled',
+  elapsedMs: 0,
+  deltaMs: 0,
+  active: true,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1,
+  inputChars: 182,
+  jsHeapBytes: 358369958,
+  heapLimitBytes: 4395630592
+}
+[2026-10-31 16:55:30.692] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'loading',
+  elapsedMs: 1,
+  deltaMs: 1,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1
+}
+[2026-10-31 16:55:32.789] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'session-create',
+  elapsedMs: 2072,
+  deltaMs: 2071,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1
+}
+[2026-10-31 16:55:36.506] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'session-ready',
+  elapsedMs: 5814,
+  deltaMs: 3741,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1
+}
+[2026-10-31 16:55:36.513] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'tokenize',
+  elapsedMs: 5822,
+  deltaMs: 8,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1,
+  questionCount: 1
+}
+[2026-10-31 16:55:36.560] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  stage: 'renderer-lag',
+  elapsedMs: 136831,
+  deltaMs: 1131,
+  active: true,
+  configuredEP: 'unknown',
+  observedEP: 'unknown',
+  rendererLagMs: 1131,
+  jsHeapBytes: 1925435467,
+  heapLimitBytes: 4395630592
+}
+[2026-10-31 16:55:36.582] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'inputs-ready',
+  elapsedMs: 5868,
+  deltaMs: 45,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1,
+  questionCount: 1,
+  actualInputTokens: 33,
+  inputShape: [ 1, 33 ]
+}
+[2026-10-31 16:55:36.596] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'run',
+  elapsedMs: 5905,
+  deltaMs: 37,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1,
+  actualInputTokens: 33,
+  inputShape: [ 1, 33 ]
+}
+[2026-10-31 16:55:37.066] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'readback',
+  elapsedMs: 6375,
+  deltaMs: 470,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1,
+  outputShape: [ 1, 128000 ]
+}
+[2026-10-31 16:55:37.067] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'dispose',
+  elapsedMs: 6376,
+  deltaMs: 1,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1
+}
+[2026-10-31 16:55:37.068] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  jobID: 'a4d21319-f60d-4ac8-ab2b-807315b62a99',
+  mode: 'systemone',
+  feature: 'decisions',
+  stage: 'complete',
+  elapsedMs: 6377,
+  deltaMs: 0,
+  active: false,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 8192,
+  configuredMaxTokens: 1,
+  actualInputTokens: 33,
+  outputGeneratedTokens: 0,
+  jsHeapBytes: 1928067229,
+  heapLimitBytes: 4395630592
+}

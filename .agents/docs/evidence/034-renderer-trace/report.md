@@ -44,8 +44,7 @@ unless actually observed. This change does not disable inference, change provide
 selection, alter context limits, move inference, or claim a freeze fix.
 
 Validation: full suite 229 pass, 0 fail, 2,303 assertions; native formatter, lint,
-strict typecheck and GUI build pass. Native activation and actual trace capture
-are a separate observation, recorded below when exercised.
+strict typecheck and GUI build pass. Native activation and actual trace capture are recorded below.
 
 ## Runtime interpretation
 
@@ -63,3 +62,24 @@ Primary sources:
 - [ORT WebGPU](https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html)
 - [ORT performance diagnosis](https://onnxruntime.ai/docs/tutorials/web/performance-diagnosis.html)
 - [Native WebGPU migration](https://github.com/microsoft/onnxruntime/blob/main/docs/design/onnxruntime_web_jsep_to_webgpu_ep_migration.md)
+
+## Native trace observation
+
+Used OpenCode's native Relaunch action after preserving the hang sample. Desktop
+recovered and loaded the built plugin. The main-process log recorded chat model
+`session-create` and `session-ready`, then a single built-in typed-decision check
+through Desktop's LAZERS settings. All feature toggles remained enabled.
+
+Request `a4d21319-f60d-4ac8-ab2b-807315b62a99` recorded **33 input tokens** against
+the existing **8,192-token** decision limit, input shape `[1,33]`, ORT run/readback,
+output shape `[1,128000]`, disposal and successful completion. Run-to-readback took
+about **470 ms**; total request time including switching/loading was **6.377 s**.
+One **1.131 s** renderer-lag event was captured during the request. Completion
+reported approximately **1.93 GB JS heap** against a **4.40 GB heap limit**.
+Configured provider is WebGPU; operator attribution remains unknown.
+
+[Content-free native trace](native-trace.log) · [Desktop result](native-decision.png).
+This verifies that the new metadata reaches the independent persistent log through
+a real native inference request. It is a diagnostics smoke check, not a model
+benchmark or reproduction/fix of the earlier freeze. Main Architect and original
+worker sessions remain active; the native task-menu worker reached verification.

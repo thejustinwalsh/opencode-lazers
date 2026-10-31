@@ -47,7 +47,10 @@ refresh/index/read reuse, optional guidance, complete parallel return/merge/clea
 and relevant theme/font coverage. Cheap heartbeat and compact inspection (`3623d50`) were activated with supported
 location reload; existing attempts/sessions remained, and active tools saw the reload
 boundary. A later renderer freeze is documented in [trace evidence](evidence/034-renderer-trace/report.md). Cross-worktree context delivery is
-queued for Architect specification; current workers have separate empty cache roots.
+specified and admitted by Architect as plan `caa8c80c`, task `430e08d8`;
+current workers have separate empty cache roots. Native diagnostics are active:
+a Desktop decision check recorded 33 input tokens, ORT run/readback and completion
+in the main-process log. The earlier freeze cause remains unresolved.
 
 Architect renewal must use provider/model/options-sensitive cache policy with user
 override and fallback; do not treat a universal timeout as a provider guarantee.
