@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
@@ -23,7 +23,7 @@ function fixture(
     commit?: boolean
   } = {},
 ) {
-  const root = mkdtempSync(join(tmpdir(), "lazers-runner-"))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "seed.txt"), "baseline\n")
   git(root, ["add", "seed.txt"])
@@ -489,6 +489,7 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   rmSync(join(worktree, "unreviewed.txt"))
   await f.runtime.command(request("retry-cleanup"), "owner")
   await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.reason).toBeNull()
   expect(f.store.plan(f.receipt.planID)!.state).toBe("integrated")
   expect(await f.host.worktrees()).toEqual([f.root])
   expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
