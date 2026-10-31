@@ -66,6 +66,47 @@ export function latestResponse(messages: readonly SessionMessageInfo[]): string 
     .trim()
 }
 
+/** The last successful final reply, even after a newer prompt or failed turn has started. */
+export function latestCompletedResponse(messages: readonly SessionMessageInfo[]): string {
+  let end = messages.findLastIndex((message) => message.type === "idle")
+  while (end >= 0) {
+    const idle = messages[end]
+    if (idle?.type === "idle" && idle.outcome === "succeeded") {
+      const start = messages.slice(0, end).findLastIndex((message) => message.type === "idle")
+      const reply = completedTurnResponse(messages.slice(start + 1, end))
+      if (reply && speechSegments(reply).length) return reply
+    }
+    end = messages.slice(0, end).findLastIndex((message) => message.type === "idle")
+  }
+  return ""
+}
+
+function completedTurnResponse(messages: readonly SessionMessageInfo[]): string {
+  const message = messages.findLast((item) => item.type === "assistant")
+  if (
+    message?.type !== "assistant" ||
+    !message.time.completed ||
+    message.error ||
+    message.finish !== "stop"
+  )
+    return ""
+  const finalPhase = message.content.some(
+    (part) => part.type === "text" && part.native?.phase === "final_answer",
+  )
+  const lastTool = message.content.findLastIndex((part) => part.type === "tool")
+  return message.content
+    .flatMap((part, index) =>
+      part.type === "text" &&
+      (finalPhase
+        ? part.native?.phase === "final_answer"
+        : part.native?.phase !== "commentary" && index > lastTool)
+        ? [part.text]
+        : [],
+    )
+    .join("\n")
+    .trim()
+}
+
 export const SPEECH_CHUNK_CHARS = 320
 const SPEECH_CHUNK_WORDS = 48
 
