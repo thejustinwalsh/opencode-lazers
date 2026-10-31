@@ -456,14 +456,19 @@
   font-size: 0.86em;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+.lazers-radar-lane-label > span {
+  min-width: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  max-height: 2.7em;
 }
 .lazers-radar-lane-plot {
   position: relative;
   min-width: 0;
+  height: 64px;
   background-image: linear-gradient(to right, var(--border-weak-base) 1px, transparent 1px);
   background-size: 50% 100%;
 }
@@ -508,8 +513,13 @@
   background: var(--background-base);
 }
 .lazers-radar-mark[aria-pressed="true"] {
+  z-index: 2;
   outline: 2px solid var(--border-selected);
   outline-offset: 1px;
+}
+.lazers-radar-mark:focus-visible,
+.lazers-radar-mark-unknown:focus-visible {
+  z-index: 3;
 }
 .lazers-radar-mark[data-reversed="true"] {
   border-style: dotted;

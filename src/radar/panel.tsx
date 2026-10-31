@@ -658,32 +658,20 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                                 </div>
                                 <For each={chart().lanes}>
                                   {(lane) => {
-                                    const transitionCount = lane.marks.filter(
-                                      (mark) => mark.kind === "transition",
-                                    ).length
-                                    const markerHeight = Math.min(transitionCount, 3) * 18
                                     const markTop = (index: number) => {
                                       const mark = lane.marks[index]!
-                                      if (mark.kind === "transition") {
-                                        const prior = lane.marks
-                                          .slice(0, index)
-                                          .filter((item) => item.kind === "transition").length
-                                        return 6 + (prior % 3) * 18
-                                      }
-                                      const prior = lane.marks
-                                        .slice(0, index)
-                                        .filter((item) => item.kind !== "transition").length
-                                      return 6 + markerHeight + prior * 18
+                                      return mark.kind === "execution"
+                                        ? 6
+                                        : mark.kind === "check"
+                                          ? 24
+                                          : 42
                                     }
                                     return (
                                       <div class="lazers-radar-lane" title={lane.label}>
-                                        <div class="lazers-radar-lane-label">{laneLabel(lane)}</div>
-                                        <div
-                                          class="lazers-radar-lane-plot"
-                                          style={{
-                                            height: `${Math.max(34, markerHeight + (lane.marks.length - transitionCount) * 18 + 12)}px`,
-                                          }}
-                                        >
+                                        <div class="lazers-radar-lane-label">
+                                          <span>{laneLabel(lane)}</span>
+                                        </div>
+                                        <div class="lazers-radar-lane-plot">
                                           <For each={lane.marks}>
                                             {(mark, index) => {
                                               const start = () => markStart(mark)
