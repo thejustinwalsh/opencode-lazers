@@ -1,0 +1,123 @@
+[2026-10-31 17:49:28.061] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'queued',
+  elapsedMs: 0,
+  deltaMs: 0,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512
+}
+[2026-10-31 17:49:28.062] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'polled',
+  elapsedMs: 0,
+  deltaMs: 0,
+  active: true,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512,
+  inputChars: 137,
+  jsHeapBytes: 1038738409,
+  heapLimitBytes: 4395630592
+}
+[2026-10-31 17:49:28.062] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'loading',
+  elapsedMs: 1,
+  deltaMs: 1,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512
+}
+[2026-10-31 17:49:28.063] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'session-create',
+  elapsedMs: 2,
+  deltaMs: 1,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512
+}
+[2026-10-31 17:49:28.064] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'session-ready',
+  elapsedMs: 3,
+  deltaMs: 0,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512
+}
+[2026-10-31 17:49:28.064] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'generate',
+  elapsedMs: 3,
+  deltaMs: 0,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512,
+  jsHeapBytes: 1038738409,
+  heapLimitBytes: 4395630592
+}
+[2026-10-31 17:49:31.107] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'dispose',
+  elapsedMs: 3045,
+  deltaMs: 3042,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512
+}
+[2026-10-31 17:49:31.109] [info]  (main)  LAZERS WebGPU inference trace {
+  windowID: 1,
+  requestID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  jobID: '3c9d909f-d801-4b0c-abaf-860ac0aa4609',
+  mode: 'speak',
+  feature: 'readAloud',
+  stage: 'complete',
+  elapsedMs: 3048,
+  deltaMs: 2,
+  active: false,
+  configuredEP: 'webgpu',
+  observedEP: 'unknown',
+  contextCapacityTokens: 4096,
+  configuredMaxTokens: 512,
+  actualInputTokens: 58,
+  outputGeneratedTokens: 122,
+  jsHeapBytes: 1026115318,
+  heapLimitBytes: 4395630592
+}

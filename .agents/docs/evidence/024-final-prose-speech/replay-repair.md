@@ -29,3 +29,18 @@ so an unseen continuation cannot safely be spoken. A known subsequent execution
 start resumes automatic speech; manual completed-response replay remains usable.
 The registered event-path regression demonstrates both suppression and next-turn
 recovery. This does not claim replay of events that the host stream did not retain.
+
+Automatic final-response observation completed at 17:49 EDT on 2026-10-31.
+After native Auto was enabled, Architect's real final reply about the reproduced
+Trajectory attribution bug triggered read-aloud generation without a speaker
+click. Native trace request `3c9d909f-d801-4b0c-abaf-860ac0aa4609` completed in
+3,048 ms with 58 input tokens and 122 generated tokens. The adjacent screenshot
+shows that final reply and Auto on; the trace contains stage/dimension metadata,
+not prose. This establishes automatic generation for a real final turn, not
+perceptual sound quality or a guarantee about every provider's phase metadata.
+The supported native shortcut toggled Auto back off after observation.
+
+GUI/plugin reload resets the current in-memory Auto choice to off; this happened
+during this development run and required re-enabling it before the observed turn.
+No restart persistence is claimed by this increment. Manual replay and Stop were
+observed separately above, and event/parser regressions cover code exclusion.
