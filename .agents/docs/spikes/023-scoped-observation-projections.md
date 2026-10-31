@@ -26,8 +26,10 @@ necessary; do not silently broaden the immutable task record.
 ## Current design authority
 
 Use the design lineage culminating in
-`69290a81d60b31c3d89eac711b7bfe28ed40562b`, currently in the native design
-worktree `/private/tmp/lazers-trajectory-design`, until integrated. It supersedes
+`69290a81d60b31c3d89eac711b7bfe28ed40562b`, now merged on main. Read
+`design/trajectory-panel/{design.json,recorded-task-data.json}` and
+`design/task-panel/execution-list.json`; the clean merged native design worktree
+was removed through the host without force. This authority supersedes
 objective-as-heading guidance: optional concise Architect-authored `PlanInput.title`,
 short plan-reference fallback for legacy records, full objective only in Details.
 Do not generate titles or rewrite historical plans.
