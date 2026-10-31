@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "status": "not-performed",
+  "retainedAttemptID": "3ceef8dc-c679-4eb7-b1fe-04cc0951f672",
+  "reason": "The production tool requires call.agent === architect. This execution is the implementor and no Architect-authorized invocation was available. No attempt or session data was read or inferred.",
+  "authorization": {
+    "requiredAgent": "architect",
+    "source": "src/trajectory/tools.ts",
+    "result": "not available in this execution context"
+  },
+  "nativeRead": {
+    "sessionGet": null,
+    "sessionContext": null,
+    "report": null
+  },
+  "observations": {
+    "usage": null,
+    "checks": null,
+    "sessionOutcome": null,
+    "retainedSessionCoverage": null
+  },
+  "implementationCoverage": {
+    "adapter": "src/trajectory/native.ts calls session.get, validates project identity, then calls session.context",
+    "pinnedAPI": "SessionDomain exposes context but not client.message.list; see .agents/docs/opencode-api.md and node_modules/@opencode/plugin/dist/effect/session.d.ts",
+    "liveCoverage": "not observed for the retained attempt"
+  },
+  "unresolved": "Complete and preserve a sanitized report, usage/check observations, and actual API coverage from an Architect-authorized production read."
+}

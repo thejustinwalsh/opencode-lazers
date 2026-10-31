@@ -1,0 +1,186 @@
+import { expect, test } from "bun:test"
+import type { Plugin } from "@opencode/plugin/effect"
+import { Agent } from "@opencode/plugin/effect"
+import type { ToolEditor } from "@opencode/plugin/effect/tool"
+import { Effect, Schema } from "effect"
+import { registerTrajectoryTools } from "../../src/trajectory/tools.ts"
+import type { TrajectoryHost } from "../../src/trajectory/native.ts"
+import { TaskRepository } from "../../src/storage.ts"
+import { makeFixture, taskID } from "./fixture.ts"
+
+type RegisteredTool = Parameters<ToolEditor["add"]>[0]
+
+const context = {
+  sessionID: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("SessionID")))("ses-owner"),
+  agent: Agent.ID.make("architect"),
+  messageID: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("Session.Message.ID")))(
+    "msg-inspect",
+  ),
+  id: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("Tool.CallID")))("call-inspect"),
+  progress: () => Effect.void,
+} satisfies Parameters<RegisteredTool["execute"]>[1]
+
+async function setup(options: { deny?: boolean; host?: TrajectoryHost } = {}) {
+  const fixture = makeFixture()
+  const tools = new Map<string, RegisteredTool>()
+  const editor: ToolEditor = {
+    add: (tool) => tools.set(tool.name, tool),
+    list: () => [],
+    get: () => undefined,
+    namespace: () => {},
+    update: () => {},
+    remove: () => {},
+  }
+  const permissionOrder: string[] = []
+  const transform = ((callback: Parameters<Plugin.Context["tool"]["transform"]>[0]) =>
+    Effect.sync(() => {
+      callback(editor)
+      return { dispose: Effect.void }
+    })) as Plugin.Context["tool"]["transform"]
+  const fakeContext = {
+    permission: {
+      assert: (input: Parameters<Plugin.Context["permission"]["assert"]>[0]) => {
+        permissionOrder.push(String(input.action))
+        return options.deny ? Effect.die(new Error("Permission denied")) : Effect.void
+      },
+    },
+    tool: { transform },
+  } as unknown as Pick<Plugin.Context, "permission" | "tool">
+  await Effect.runPromise(
+    Effect.scoped(
+      registerTrajectoryTools(fakeContext, fixture.store, options.host ?? fixture.host, "project"),
+    ),
+  )
+  return { ...fixture, tools, permissionOrder }
+}
+
+test("registered Architect tool is permission-first, structured, and pages exact stable events", async () => {
+  const fixture = await setup()
+  try {
+    const tool = fixture.tools.get("lazers_inspect_trajectory")!
+    expect(tool.options?.codemode).toBe(true)
+    expect(tool.options?.pinned).toBe(true)
+    expect(tool.options?.permission).toBe("lazers_inspect_trajectory")
+    const firstResult = await Effect.runPromise(tool.execute({ taskID, limit: 2 }, context))
+    expect(fixture.permissionOrder).toEqual(["lazers_inspect_trajectory"])
+    const first = firstResult.output as {
+      trajectory: { events: Array<Record<string, unknown>>; nextCursor: string | null }
+    }
+    expect(firstResult.output).toEqual(JSON.parse(String(firstResult.content)))
+    expect(first.trajectory.events).toHaveLength(2)
+    const events = [...first.trajectory.events]
+    let cursor = first.trajectory.nextCursor
+    while (cursor) {
+      const result = await Effect.runPromise(tool.execute({ taskID, limit: 2, cursor }, context))
+      const page = result.output as {
+        trajectory: { events: Array<Record<string, unknown>>; nextCursor: string | null }
+      }
+      expect(page).toEqual(JSON.parse(String(result.content)))
+      events.push(...page.trajectory.events)
+      cursor = page.trajectory.nextCursor
+    }
+    const completeResult = await Effect.runPromise(tool.execute({ taskID, limit: 50 }, context))
+    const complete = completeResult.output as {
+      trajectory: { events: Array<Record<string, unknown>> }
+    }
+    expect(events).toEqual(complete.trajectory.events)
+    expect(fixture.permissionOrder).toHaveLength(Math.ceil(events.length / 2) + 1)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("permission denial precedes input validation, database reopen, and native session reads", async () => {
+  let sessionReads = 0
+  const fixture = await setup({
+    deny: true,
+    host: {
+      session: async () => {
+        sessionReads++
+        return null
+      },
+    },
+  })
+  try {
+    await expect(
+      Effect.runPromise(
+        fixture.tools.get("lazers_inspect_trajectory")!.execute({ invalid: true }, context),
+      ),
+    ).rejects.toThrow("Permission denied")
+    expect(fixture.permissionOrder).toEqual(["lazers_inspect_trajectory"])
+    expect(sessionReads).toBe(0)
+    expect(fixture.repository.list()).toHaveLength(1)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("only Architect can inspect trajectories, before any native session read", async () => {
+  let sessionReads = 0
+  const fixture = await setup({
+    host: {
+      session: async () => {
+        sessionReads++
+        return null
+      },
+    },
+  })
+  try {
+    await expect(
+      Effect.runPromise(
+        fixture.tools
+          .get("lazers_inspect_trajectory")!
+          .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
+      ),
+    ).rejects.toThrow("restricted to Architect")
+    expect(fixture.permissionOrder).toEqual(["lazers_inspect_trajectory"])
+    expect(sessionReads).toBe(0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("retained callback survives setup connection disposal without changing durable read state", async () => {
+  const fixture = await setup()
+  const before = fixture.repository.atomic((db) => ({
+    watermark: fixture.repository.version(),
+    audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
+      .count,
+    attempts: db
+      .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
+      .get()!.count,
+    transitions: db
+      .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_transitions")
+      .get()!.count,
+  }))
+  try {
+    fixture.repository.close()
+    const result = await Effect.runPromise(
+      fixture.tools.get("lazers_inspect_trajectory")!.execute({ taskID }, context),
+    )
+    expect(JSON.parse(String(result.content)).task.id).toBe(taskID)
+    const reopened = new TaskRepository(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    try {
+      const after = reopened.atomic((db) => ({
+        watermark: reopened.version(),
+        audits: db
+          .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits")
+          .get()!.count,
+        attempts: db
+          .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
+          .get()!.count,
+        transitions: db
+          .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_transitions")
+          .get()!.count,
+      }))
+      expect(after).toEqual(before)
+    } finally {
+      reopened.close()
+    }
+  } finally {
+    fixture.close()
+  }
+})

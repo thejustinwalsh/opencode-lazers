@@ -37,6 +37,11 @@ test("the packaged definition registers a missing primary agent and isolates tra
   expect(first.steps).toBeUndefined()
   expect(first.model).toBeUndefined()
   expect(first.permissions).toEqual(architect.permissions.map((rule) => ({ ...rule })))
+  expect(first.permissions).toContainEqual({
+    action: "lazers_inspect_trajectory",
+    resource: "*",
+    effect: "allow",
+  })
 
   first.permissions.push({ action: "edit", resource: "*", effect: "allow" })
   first.request.body.changed = true

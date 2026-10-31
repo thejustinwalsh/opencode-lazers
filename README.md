@@ -112,6 +112,36 @@ Build on OpenCode and its native provider access. Use the user's ChatGPT subscri
 
 The transcript's API examples, model prices, and performance targets are research leads. Pin and test the actual host and SDK before depending on specific hooks or desktop extension points. Unsupported enforcement paths must be exposed before enabling them.
 
+## Read-only worker trajectory
+
+Architect can call `lazers_inspect_trajectory` with one project-owned `taskID` or
+`attemptID`. The tool combines LAZERS attempt/check records with the native
+`session.get` and `session.context` APIs and opens its project database read-only;
+it does not use `detail()` because that method writes an audit row. A bounded,
+stable cursor pages ordered visible prose,
+tool inputs/results/status, runner events, and checks. Changing underlying runner
+or returned session context invalidates continuation. Each task report includes
+all attempts, even failures, cancellations, retries and resumes.
+
+Exports are allowlisted and redacted before truncation: reasoning, system/skill
+instructions, native/encrypted/replay data, metadata, attachments/file bodies,
+authorization material and raw response bodies are excluded. Common credentials,
+credential-bearing URLs, and nested sensitive keys are redacted from visible
+strings, tool data, and errors. Pattern detection cannot guarantee discovery of
+arbitrary secrets embedded in prose. The pinned plugin context exposes
+`session.context` but not `client.message.list`; reports therefore identify
+context coverage, compaction, missing/ongoing records, and unknown data instead
+of claiming a complete transcript.
+
+Token totals use one cumulative session snapshot per unique worker session and
+separate uncached input, cache read/write, output, and reasoning. Legacy scalar
+counts are not added again; pages and individual messages never contribute to
+totals. Recorded costs retain worker-attempt scope and available provenance. If
+any contribution or pricing basis is missing, the API-equivalent total remains
+unknown; a subscription-reported zero is not an API cost estimate. See
+[spike 012](.agents/docs/spikes/012-worker-inspection.md) and its [native read
+evidence](.agents/docs/evidence/012-worker-inspection/native-report.json).
+
 ## Development scaffold
 
 An optional parallel [WebGPU experiment](.agents/docs/webgpu-api.md) adds a Desktop model cache, queued local questions and typed decisions, and native agent tools in this same package. Settings → LAZERS covers the whole plugin and provides a local-inference master switch plus independent capability switches; `options.webgpu: true` seeds the initial master preference. The core task workflow works with local inference off. This experiment is independent of the main Architect dogfooding sequence. Build its Desktop entry with `bun run build:gui`. The API document records the native voice integration gap in OpenCode 2.2.5; the experiment does not replace the built-in voice controls.

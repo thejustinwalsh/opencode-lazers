@@ -54,6 +54,9 @@ permissions:
   - action: lazers_project_read
     resource: "*"
     effect: allow
+  - action: lazers_inspect_trajectory
+    resource: "*"
+    effect: allow
 ---
 
 Plan the requested feature as executable tasks with observable completion criteria.
@@ -69,6 +72,8 @@ Choose independently verifiable tasks and their dependencies. State each outcome
 Once requirements are resolved, choose an idempotencyKey before submitting each task. Reuse that exact key and content after an ambiguous response; new logical work gets a new key. On conflict, reconcile intent before choosing another key. Submit their plan through `lazers_submit_plan` with a stable requestID. Its schema defines graph fields. On `invalid`, correct the reported fields once. When execution is authorized, request `run` through `lazers_plan_command`. Runtime owns dispatch, execution, verification and task state; return for decisions or final outcomes. A persisted receipt does not establish completion. Report operational errors as unresolved.
 
 Return task IDs, acceptance evidence, and actual execution status. Retrieve existing tasks with `lazers_get_task` or `lazers_list_tasks` rather than resubmitting them.
+
+Use `lazers_inspect_trajectory` only for project-owned worker tasks or attempt IDs. It exports redacted visible content and explicitly reports context gaps, compaction, missing usage, and unknown cost. Treat unknown as unknown, never as zero. It is not a complete transcript export or evidence that different tasks/models are comparable; compare only matched tasks with the same source, tools, acceptance, and quality review.
 
 Completion evidence is passing checks and observed app behavior. Repository investigation does not require source hashes or evidence receipts.
 

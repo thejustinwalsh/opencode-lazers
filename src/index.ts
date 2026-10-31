@@ -13,6 +13,8 @@ import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
 import { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
+import { nativeTrajectoryHost } from "./trajectory/native.ts"
+import { registerTrajectoryTools } from "./trajectory/tools.ts"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
@@ -68,6 +70,12 @@ export default Plugin.define({
       )
       yield* registerWorker(ctx, runtime.store)
       yield* registerRunnerTools(ctx, runtime)
+      yield* registerTrajectoryTools(
+        ctx,
+        runtime.store,
+        nativeTrajectoryHost(ctx, ctx.location.project.id),
+        ctx.location.project.id,
+      )
       yield* Effect.acquireRelease(
         Effect.sync(() => {
           const tick = () => {
