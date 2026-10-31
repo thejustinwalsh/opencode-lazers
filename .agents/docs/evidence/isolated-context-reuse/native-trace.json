@@ -1,0 +1,243 @@
+{
+  "observedAt": 1793484378684,
+  "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+  "merge": "837af3f",
+  "session": {
+    "id": "ses_a1ec54d789114148b3c69280cf5f414a",
+    "parentID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+    "agent": "lazers-implementor",
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192",
+    "model": {
+      "id": "gpt-6-luna",
+      "providerID": "openai",
+      "variant": "max"
+    }
+  },
+  "admittedID": "msg_193feadf60012Ga1yfFPYUKWFJ",
+  "cacheBefore": [
+    {
+      "name": "13eb2ff7a7fa49b7a2c101903f8e8de1-1eec1ac4-9ad6-4bce-b6ba-39edeb7c2029.json",
+      "bytes": 2218469,
+      "mtimeMs": 1793471216240.319
+    },
+    {
+      "name": "77c1c68f54c9482195700061415c0892-9e445246-1415-4889-8bea-1456fcb85875.json",
+      "bytes": 2220482,
+      "mtimeMs": 1793469875416.643
+    },
+    {
+      "name": "a88f3ce1630540678bd0218416a5cde4-b6548d85-666b-4bcf-a1f5-5a328cdfabe1.json",
+      "bytes": 3143022,
+      "mtimeMs": 1793484230425.6016
+    }
+  ],
+  "cacheAfter": [
+    {
+      "name": "13eb2ff7a7fa49b7a2c101903f8e8de1-1eec1ac4-9ad6-4bce-b6ba-39edeb7c2029.json",
+      "bytes": 2218469,
+      "mtimeMs": 1793471216240.319
+    },
+    {
+      "name": "77c1c68f54c9482195700061415c0892-9e445246-1415-4889-8bea-1456fcb85875.json",
+      "bytes": 2220482,
+      "mtimeMs": 1793469875416.643
+    },
+    {
+      "name": "a88f3ce1630540678bd0218416a5cde4-b6548d85-666b-4bcf-a1f5-5a328cdfabe1.json",
+      "bytes": 3143022,
+      "mtimeMs": 1793484230425.6016
+    }
+  ],
+  "cacheMetadataUnchanged": true,
+  "events": [
+    {
+      "id": "evt_193fec982001MjOQbaSXEWdPNx",
+      "created": 1793484310914,
+      "type": "session.tool.called",
+      "location": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192"
+      },
+      "data": {
+        "sessionID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "assistantMessageID": "msg_193feae40001Oesd2XM7CkqU9B",
+        "id": "call_LjlG5FlIWmzCk9a7E5QnKFww",
+        "input": {
+          "code": "const [index, read] = await Promise.all([tools.lazers_project_index({paths:[\"src/index.ts\"]}), tools.lazers_project_read({paths:[\"src/index.ts\"],level:\"full\"})]); return {index,read};"
+        },
+        "executed": false,
+        "native": {
+          "itemId": "fc_0a321c42e331d8f5016ae666164a5887d29b3412e5c164e745"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "seq": 1499,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_193fee5660013TNdfz0EmsY9Sw",
+      "created": 1793484318054,
+      "type": "session.tool.success",
+      "location": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192"
+      },
+      "data": {
+        "sessionID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "assistantMessageID": "msg_193feae40001Oesd2XM7CkqU9B",
+        "id": "call_LjlG5FlIWmzCk9a7E5QnKFww",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"index\": {\n    \"snapshotID\": \"b6548d85-666b-4bcf-a1f5-5a328cdfabe1\",\n    \"freshness\": \"as-of-refresh\",\n    \"refreshedAt\": 1793484230419,\n    \"encoding\": \"o200k_base\",\n    \"truncated\": false,\n    \"workspace\": \"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\n    \"repomix\": \"1.18.1\",\n    \"totalFiles\": 289,\n    \"packedTokens\": 37261,\n    \"files\": [\n      {\n        \"path\": \"src/index.ts\",\n        \"bytes\": 5467\n      }\n    ]\n  },\n  \"read\": {\n    \"snapshotID\": \"b6548d85-666b-4bcf-a1f5-5a328cdfabe1\",\n    \"freshness\": \"as-of-refresh\",\n    \"refreshedAt\": 1793484230419,\n    \"encoding\": \"o200k_base\",\n    \"truncated\": false,\n    \"workspace\": \"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\n    \"sources\": [\n      {\n        \"path\": \"src/index.ts\",\n        \"revision\": null,\n        \"startLine\": 1,\n        \"endLine\": 142,\n        \"level\": \"full\",\n        \"text\": \"import { Plugin } from \\\"@opencode/plugin/effect\\\"\\nimport { Effect } from \\\"effect\\\"\\nimport { registerArchitect } from \\\"./architect.ts\\\"\\nimport { TaskRepository, taskDatabasePath } from \\\"./storage.ts\\\"\\nimport { registerTaskTools } from \\\"./tools.ts\\\"\\nimport { registerLocalInference } from \\\"./webgpu/server.ts\\\"\\nimport { registerTaskReads } from \\\"./tasks/rpc.ts\\\"\\nimport { RunnerStore } from \\\"./runner/store.ts\\\"\\nimport { TaskRuntime } from \\\"./runner/runtime.ts\\\"\\nimport { nativeHost } from \\\"./runner/native.ts\\\"\\nimport { registerRunnerTools } from \\\"./runner/tools.ts\\\"\\nimport { registerWorker } from \\\"./runner/roles.ts\\\"\\nimport { ProjectIndex } from \\\"./context/index.ts\\\"\\nimport type { ContextHost } from \\\"./context/index.ts\\\"\\nimport { registerContextTools } from \\\"./context/tools.ts\\\"\\nimport { nativeTrajectoryHost } from \\\"./trajectory/native.ts\\\"\\nimport { registerTrajectoryTools } from \\\"./trajectory/tools.ts\\\"\\nimport { AssociationTaskReads } from \\\"./observability/task-reads.ts\\\"\\nimport { ObservationReads } from \\\"./observability/read.ts\\\"\\nimport { registerObservability } from \\\"./observability/rpc.ts\\\"\\nimport { Agent } from \\\"@opencode/schema/agent\\\"\\nimport { Session } from \\\"@opencode/schema/session\\\"\\nimport { join, dirname } from \\\"node:path\\\"\\n\\nexport default Plugin.define({\\n  id: \\\"lazers\\\",\\n  effect: (ctx) =>\\n    Effect.gen(function* () {\\n      const dataDirectory = ctx.options.dataDirectory\\n      if (dataDirectory !== undefined && typeof dataDirectory !== \\\"string\\\") {\\n        return yield* Effect.die(new Error(\\\"LAZERS dataDirectory must be an absolute path string\\\"))\\n      }\\n      const repository = yield* Effect.acquireRelease(\\n        Effect.sync(\\n          () => new TaskRepository(taskDatabasePath(dataDirectory), ctx.location.project.canonical),\\n        ),\\n        (repository) => Effect.sync(() => repository.close()),\\n      )\\n      const projectIndex = yield* Effect.acquireRelease(\\n        Effect.sync(() => {\\n          const contextHost: ContextHost = {\\n            projectID: ctx.location.project.id,\\n            session: async (id) => {\\n              try {\\n                const session = await Effect.runPromise(\\n                  ctx.session.get({ sessionID: Session.ID.make(id) }),\\n                )\\n                return {\\n                  id: session.id,\\n                  ...(session.parentID ? { parentID: session.parentID } : {}),\\n                  projectID: session.projectID,\\n                  directory: session.location.directory,\\n                  agent: session.agent,\\n                }\\n              } catch (error) {\\n                if (\\n                  typeof error === \\\"object\\\" &&\\n                  error !== null &&\\n                  \\\"_tag\\\" in error &&\\n                  error._tag === \\\"SessionNotFoundError\\\"\\n                )\\n                  return null\\n                throw error\\n              }\\n            },\\n          }\\n          return new ProjectIndex(\\n            ctx.location.directory,\\n            join(dirname(repository.path), \\\"context\\\"),\\n            repository,\\n            async (path, principal, workspace) => {\\n              try {\\n                await Effect.runPromise(\\n                  ctx.permission.assert({\\n                    sessionID: Session.ID.make(principal.sessionID),\\n                    agent: Agent.ID.make(principal.agent),\\n                    action: \\\"read\\\",\\n                    resources: [join(workspace, path)],\\n                  }),\\n                )\\n                return true\\n              } catch {\\n                return false\\n              }\\n            },\\n            contextHost,\\n          )\\n        }),\\n        (index) => Effect.sync(() => index.close()),\\n      )\\n      yield* registerContextTools(ctx, projectIndex)\\n      yield* registerTaskTools(ctx, repository)\\n      yield* registerArchitect(ctx)\\n      const runtime = new TaskRuntime(\\n        new RunnerStore(repository),\\n        nativeHost(ctx, repository),\\n        ctx.location.project.id,\\n      )\\n      yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(\\n        Effect.orDie,\\n      )\\n      yield* registerWorker(ctx, runtime.store)\\n      yield* registerRunnerTools(ctx, runtime)\\n      const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)\\n      yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)\\n      const observationSecret = crypto.getRandomValues(new Uint8Array(32))\\n      yield* registerObservability(\\n        ctx,\\n        new ObservationReads(\\n          runtime.store,\\n          trajectoryHost,\\n          ctx.location.project.id,\\n          observationSecret,\\n        ),\\n        ctx.location.project.id,\\n      ).pipe(Effect.orDie)\\n      yield* Effect.acquireRelease(\\n        Effect.sync(() => {\\n          const tick = () => {\\n            void runtime.tick().catch((error) =>\\n              Effect.runPromise(\\n                Effect.logError(\\\"LAZERS scheduler reconciliation failed\\\", {\\n                  error: String(error),\\n                }),\\n              ),\\n            )\\n          }\\n          const timer = setInterval(tick, 2000)\\n          tick()\\n          return async () => {\\n            clearInterval(timer)\\n            await runtime.stop()\\n          }\\n        }),\\n        (stop) => Effect.promise(stop),\\n      )\\n      yield* registerLocalInference(ctx).pipe(Effect.orDie)\\n      yield* ctx.storage.set(\\\"loaded\\\", true)\\n      yield* Effect.logInfo(\\\"LAZERS loaded\\\", { host: ctx.app.version, database: repository.path })\\n    }),\\n})\\n\"\n      }\n    ]\n  }\n}"
+          }
+        ],
+        "metadata": {
+          "toolCalls": [
+            {
+              "tool": "lazers_project_index",
+              "status": "completed",
+              "input": {
+                "paths": ["src/index.ts"]
+              }
+            },
+            {
+              "tool": "lazers_project_read",
+              "status": "completed",
+              "input": {
+                "paths": ["src/index.ts"],
+                "level": "full"
+              }
+            }
+          ],
+          "truncated": false
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "seq": 1501,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_193ff9ddf0017ncNg4PrY255QY",
+      "created": 1793484365279,
+      "type": "session.tool.called",
+      "location": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192"
+      },
+      "data": {
+        "sessionID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "assistantMessageID": "msg_193ff6f26001ZbyQBgl4yCS7NX",
+        "id": "call_c6wCWIaABklbhEQRHjBCHSQT",
+        "input": {
+          "code": "const [index, read] = await Promise.all([tools.lazers_project_index({paths:[\"src/index.ts\"]}), tools.lazers_project_read({paths:[\"src/index.ts\"],level:\"full\"})]); return {index,read};"
+        },
+        "executed": false,
+        "native": {
+          "itemId": "fc_0948be86e4d8ba48016ae6664c91b087d2b2b61c3cef4f61e3"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "seq": 1511,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_193ffb7a4001cD0LR969jYx0tp",
+      "created": 1793484371876,
+      "type": "session.tool.success",
+      "location": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192"
+      },
+      "data": {
+        "sessionID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "assistantMessageID": "msg_193ff6f26001ZbyQBgl4yCS7NX",
+        "id": "call_c6wCWIaABklbhEQRHjBCHSQT",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"index\": {\n    \"snapshotID\": \"b6548d85-666b-4bcf-a1f5-5a328cdfabe1\",\n    \"freshness\": \"as-of-refresh\",\n    \"refreshedAt\": 1793484230419,\n    \"encoding\": \"o200k_base\",\n    \"truncated\": false,\n    \"workspace\": \"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\n    \"repomix\": \"1.18.1\",\n    \"totalFiles\": 289,\n    \"packedTokens\": 37261,\n    \"files\": [\n      {\n        \"path\": \"src/index.ts\",\n        \"bytes\": 5467\n      }\n    ]\n  },\n  \"read\": {\n    \"snapshotID\": \"b6548d85-666b-4bcf-a1f5-5a328cdfabe1\",\n    \"freshness\": \"as-of-refresh\",\n    \"refreshedAt\": 1793484230419,\n    \"encoding\": \"o200k_base\",\n    \"truncated\": false,\n    \"workspace\": \"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\n    \"sources\": [\n      {\n        \"path\": \"src/index.ts\",\n        \"revision\": null,\n        \"startLine\": 1,\n        \"endLine\": 142,\n        \"level\": \"full\",\n        \"text\": \"import { Plugin } from \\\"@opencode/plugin/effect\\\"\\nimport { Effect } from \\\"effect\\\"\\nimport { registerArchitect } from \\\"./architect.ts\\\"\\nimport { TaskRepository, taskDatabasePath } from \\\"./storage.ts\\\"\\nimport { registerTaskTools } from \\\"./tools.ts\\\"\\nimport { registerLocalInference } from \\\"./webgpu/server.ts\\\"\\nimport { registerTaskReads } from \\\"./tasks/rpc.ts\\\"\\nimport { RunnerStore } from \\\"./runner/store.ts\\\"\\nimport { TaskRuntime } from \\\"./runner/runtime.ts\\\"\\nimport { nativeHost } from \\\"./runner/native.ts\\\"\\nimport { registerRunnerTools } from \\\"./runner/tools.ts\\\"\\nimport { registerWorker } from \\\"./runner/roles.ts\\\"\\nimport { ProjectIndex } from \\\"./context/index.ts\\\"\\nimport type { ContextHost } from \\\"./context/index.ts\\\"\\nimport { registerContextTools } from \\\"./context/tools.ts\\\"\\nimport { nativeTrajectoryHost } from \\\"./trajectory/native.ts\\\"\\nimport { registerTrajectoryTools } from \\\"./trajectory/tools.ts\\\"\\nimport { AssociationTaskReads } from \\\"./observability/task-reads.ts\\\"\\nimport { ObservationReads } from \\\"./observability/read.ts\\\"\\nimport { registerObservability } from \\\"./observability/rpc.ts\\\"\\nimport { Agent } from \\\"@opencode/schema/agent\\\"\\nimport { Session } from \\\"@opencode/schema/session\\\"\\nimport { join, dirname } from \\\"node:path\\\"\\n\\nexport default Plugin.define({\\n  id: \\\"lazers\\\",\\n  effect: (ctx) =>\\n    Effect.gen(function* () {\\n      const dataDirectory = ctx.options.dataDirectory\\n      if (dataDirectory !== undefined && typeof dataDirectory !== \\\"string\\\") {\\n        return yield* Effect.die(new Error(\\\"LAZERS dataDirectory must be an absolute path string\\\"))\\n      }\\n      const repository = yield* Effect.acquireRelease(\\n        Effect.sync(\\n          () => new TaskRepository(taskDatabasePath(dataDirectory), ctx.location.project.canonical),\\n        ),\\n        (repository) => Effect.sync(() => repository.close()),\\n      )\\n      const projectIndex = yield* Effect.acquireRelease(\\n        Effect.sync(() => {\\n          const contextHost: ContextHost = {\\n            projectID: ctx.location.project.id,\\n            session: async (id) => {\\n              try {\\n                const session = await Effect.runPromise(\\n                  ctx.session.get({ sessionID: Session.ID.make(id) }),\\n                )\\n                return {\\n                  id: session.id,\\n                  ...(session.parentID ? { parentID: session.parentID } : {}),\\n                  projectID: session.projectID,\\n                  directory: session.location.directory,\\n                  agent: session.agent,\\n                }\\n              } catch (error) {\\n                if (\\n                  typeof error === \\\"object\\\" &&\\n                  error !== null &&\\n                  \\\"_tag\\\" in error &&\\n                  error._tag === \\\"SessionNotFoundError\\\"\\n                )\\n                  return null\\n                throw error\\n              }\\n            },\\n          }\\n          return new ProjectIndex(\\n            ctx.location.directory,\\n            join(dirname(repository.path), \\\"context\\\"),\\n            repository,\\n            async (path, principal, workspace) => {\\n              try {\\n                await Effect.runPromise(\\n                  ctx.permission.assert({\\n                    sessionID: Session.ID.make(principal.sessionID),\\n                    agent: Agent.ID.make(principal.agent),\\n                    action: \\\"read\\\",\\n                    resources: [join(workspace, path)],\\n                  }),\\n                )\\n                return true\\n              } catch {\\n                return false\\n              }\\n            },\\n            contextHost,\\n          )\\n        }),\\n        (index) => Effect.sync(() => index.close()),\\n      )\\n      yield* registerContextTools(ctx, projectIndex)\\n      yield* registerTaskTools(ctx, repository)\\n      yield* registerArchitect(ctx)\\n      const runtime = new TaskRuntime(\\n        new RunnerStore(repository),\\n        nativeHost(ctx, repository),\\n        ctx.location.project.id,\\n      )\\n      yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(\\n        Effect.orDie,\\n      )\\n      yield* registerWorker(ctx, runtime.store)\\n      yield* registerRunnerTools(ctx, runtime)\\n      const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)\\n      yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)\\n      const observationSecret = crypto.getRandomValues(new Uint8Array(32))\\n      yield* registerObservability(\\n        ctx,\\n        new ObservationReads(\\n          runtime.store,\\n          trajectoryHost,\\n          ctx.location.project.id,\\n          observationSecret,\\n        ),\\n        ctx.location.project.id,\\n      ).pipe(Effect.orDie)\\n      yield* Effect.acquireRelease(\\n        Effect.sync(() => {\\n          const tick = () => {\\n            void runtime.tick().catch((error) =>\\n              Effect.runPromise(\\n                Effect.logError(\\\"LAZERS scheduler reconciliation failed\\\", {\\n                  error: String(error),\\n                }),\\n              ),\\n            )\\n          }\\n          const timer = setInterval(tick, 2000)\\n          tick()\\n          return async () => {\\n            clearInterval(timer)\\n            await runtime.stop()\\n          }\\n        }),\\n        (stop) => Effect.promise(stop),\\n      )\\n      yield* registerLocalInference(ctx).pipe(Effect.orDie)\\n      yield* ctx.storage.set(\\\"loaded\\\", true)\\n      yield* Effect.logInfo(\\\"LAZERS loaded\\\", { host: ctx.app.version, database: repository.path })\\n    }),\\n})\\n\"\n      }\n    ]\n  }\n}"
+          }
+        ],
+        "metadata": {
+          "toolCalls": [
+            {
+              "tool": "lazers_project_index",
+              "status": "completed",
+              "input": {
+                "paths": ["src/index.ts"]
+              }
+            },
+            {
+              "tool": "lazers_project_read",
+              "status": "completed",
+              "input": {
+                "paths": ["src/index.ts"],
+                "level": "full"
+              }
+            }
+          ],
+          "truncated": false
+        },
+        "executed": false
+      },
+      "durable": {
+        "aggregateID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "seq": 1513,
+        "version": 2
+      }
+    },
+    {
+      "id": "evt_193ffd204002tkKabeRamVJNto",
+      "created": 1793484378628,
+      "type": "session.text.ended",
+      "location": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192"
+      },
+      "data": {
+        "sessionID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "assistantMessageID": "msg_193ffb7c2001Q2Q92cLsKzHom4",
+        "ordinal": 0,
+        "text": "Both native reads returned complete structured outputs for snapshot `b6548d85-666b-4bcf-a1f5-5a328cdfabe1`; the read identifies `/Users/tjw/Documents/ChatGPT/opencode-lazers` as its source and reports `as-of-refresh`. No refresh or edits were made.",
+        "native": {
+          "itemId": "msg_0948be86e4d8ba48016ae6665a347887d2b77ca6d176b6b3b2",
+          "phase": "final_answer"
+        }
+      },
+      "durable": {
+        "aggregateID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "seq": 1519,
+        "version": 1
+      }
+    },
+    {
+      "id": "evt_193ffd239001fsZYsjXbmJ8h07",
+      "created": 1793484378681,
+      "type": "session.execution.succeeded",
+      "data": {
+        "sessionID": "ses_a1ec54d789114148b3c69280cf5f414a"
+      },
+      "durable": {
+        "aggregateID": "ses_a1ec54d789114148b3c69280cf5f414a",
+        "seq": 1522,
+        "version": 1
+      }
+    }
+  ],
+  "validation": {
+    "snapshotID": "b6548d85-666b-4bcf-a1f5-5a328cdfabe1",
+    "refreshedAt": 1793484230419,
+    "workspace": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "publishedBytes": 5467,
+    "workerLiveBytes": 4949,
+    "allRegisteredReadsMatchPublishedBytes": true,
+    "differsFromLiveWorker": true,
+    "containsCanonicalObservability": true,
+    "workerContainsObservability": false,
+    "noWorkerRefreshInTrace": true
+  }
+}
