@@ -6,7 +6,7 @@ import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
 import { clampSplit, splitFromKey, splitFromPointer } from "./panel-layout.ts"
 import type { PanelData, PanelPreferences, Selection } from "./panel-state.ts"
-import { TrajectoryPanelState } from "./panel-state.ts"
+import { selectedAttemptFor, TrajectoryPanelState } from "./panel-state.ts"
 import {
   buildTimeline,
   checkKey,
@@ -237,21 +237,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
       ? allTaskChecks().find((check) => checkKey(check) === selection.id)
       : undefined
   }
-  const selectedAttempt = () => {
-    const value = currentData()
-    const currentReport = report()
-    if (!value || !currentReport) return undefined
-    const selection = value.selection
-    const selectedCheckValue = selectedCheck()
-    const event = selectedEvent()
-    const id =
-      selection?.kind === "attempt"
-        ? selection.id
-        : (selectedCheckValue?.attemptID ?? event?.attemptID ?? undefined)
-    return (
-      currentReport.attempts.find((attempt) => attempt.id === id) ?? currentReport.attempts.at(-1)
-    )
-  }
+  const selectedAttempt = () => selectedAttemptFor(currentData())
   const checksForInspector = () => {
     const attempt = selectedAttempt()
     return allTaskChecks().filter(

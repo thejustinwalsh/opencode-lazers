@@ -2,7 +2,8 @@ import { expect, test } from "bun:test"
 import type { ObservationChange, ObservationScope } from "../../src/observability/contract.ts"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
-import { TrajectoryPanelState } from "../../src/trajectory-panel/panel-state.ts"
+import { selectedAttemptFor, TrajectoryPanelState } from "../../src/trajectory-panel/panel-state.ts"
+import { checkKey, detailedChecks } from "../../src/trajectory-panel/projection.ts"
 import type { TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
 import { makeFixture, secondAttemptID, taskID } from "../trajectory/fixture.ts"
 
@@ -57,6 +58,38 @@ async function waitFor(state: TrajectoryPanelState, predicate: () => boolean) {
   }
   throw new Error(`Timed out waiting for trajectory state: ${JSON.stringify(state.data)}`)
 }
+
+test("plan checks and unassociated events never inherit the latest worker attempt", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect("view", "project", { kind: "project", sessionID: "ses-owner" }, transport, {
+      taskID,
+      selection: null,
+    })
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    const planCheck = detailedChecks(state.data.report!).find((check) => check.scope === "plan")!
+    expect(planCheck.attemptID).toBeNull()
+    state.selectCheck(checkKey(planCheck))
+    expect(selectedAttemptFor(state.data)).toBeUndefined()
+    const unassociated = { id: "plan-event", kind: "runner-transition", attemptID: null }
+    state.data.events.push(unassociated)
+    state.selectEvent(unassociated.id)
+    expect(selectedAttemptFor(state.data)).toBeUndefined()
+    state.selectAttempt(secondAttemptID)
+    expect(selectedAttemptFor(state.data)?.id).toBe(secondAttemptID)
+    expect(selectedAttemptFor({ ...state.data, selection: null })?.id).toBe(secondAttemptID)
+    expect(
+      selectedAttemptFor({ ...state.data, selection: { kind: "attempt", id: "unavailable" } }),
+    ).toBeUndefined()
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
 
 test("projection-backed panel retains failed-attempt selection and all-attempt unique-session totals on late updates", async () => {
   const fixture = makeFixture()

@@ -38,6 +38,20 @@ export type PanelData = {
   error: string
 }
 
+export function selectedAttemptFor(data: PanelData | undefined) {
+  const report = data?.report
+  if (!data || !report) return undefined
+  const selection = data.selection
+  if (!selection) return report.attempts.at(-1)
+  const id =
+    selection.kind === "attempt"
+      ? selection.id
+      : selection.kind === "check"
+        ? detailedChecks(report).find((check) => checkKey(check) === selection.id)?.attemptID
+        : data.events.find((event) => event.id === selection.id)?.attemptID
+  return id ? report.attempts.find((attempt) => attempt.id === id) : undefined
+}
+
 const blank = (key = ""): PanelData => ({
   key,
   tasks: [],
