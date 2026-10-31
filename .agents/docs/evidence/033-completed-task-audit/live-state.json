@@ -1,7 +1,7 @@
 {
-  "observedAt": "2026-10-31T21:33:23.525139+00:00",
-  "checkout": "bbde60e",
-  "scope": "Read-only durable runner state; no native UI or integration claim inferred from counts",
+  "observedAt": "2026-10-31T21:51:24.143180+00:00",
+  "checkout": "c5c285f",
+  "scope": "Read-only durable runner state; source merges and native proof are documented separately",
   "plans": [
     {
       "id": "6d1d3afe-f236-4a33-a5a2-86328e838249",
@@ -36,7 +36,7 @@
     {
       "id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
       "state": "running",
-      "version": 3
+      "version": 4
     },
     {
       "id": "519b8e3c-2997-4455-9cde-09835dc0acda",
@@ -71,7 +71,7 @@
     {
       "id": "58146c54-d236-4235-9704-630ad550c084",
       "state": "running",
-      "version": 3
+      "version": 6
     },
     {
       "id": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
@@ -193,7 +193,7 @@
     {
       "plan_id": "58146c54-d236-4235-9704-630ad550c084",
       "task_id": "7207e67f-927e-41a2-b382-a3a8904ee54f",
-      "state": "queued"
+      "state": "running"
     },
     {
       "plan_id": "58146c54-d236-4235-9704-630ad550c084",

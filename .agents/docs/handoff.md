@@ -10,8 +10,8 @@ lives in the numbered spikes/evidence directories and Git history.
 
 OpenCode Desktop Architect `ses_e6e0e6239ffdtzIePMeJ1sHA4l` uses
 `openai/gpt-6.1-sol#high`. Ten plans are integrated (twelve accepted nodes). Two
-more nodes are accepted inside the active product plan: speech is merged; the
-observation projection is under Architect review. Inspect Git and durable state
+more nodes are accepted inside the active product plan: speech and the
+observation projection are merged. Registered native snapshot/trajectory reads work. Inspect Git and durable state
 before making an integration claim. The [live audit](evidence/033-completed-task-audit/live-update.md)
 separates returned artifacts, merged source and whole-plan acceptance.
 
@@ -20,10 +20,12 @@ Existing plans are admitted with durable priority and dependencies:
 - `8d505ab3`: integrated Go `qwen3.8-flash#medium` Tasks menu/tab increment; native
   close/reopen and Terra screenshot review passed, owned worktrees cleaned.
 - `b50a1a71`: OpenAI `gpt-6-luna#max`, observation API + speech, then Radar/Trajectory
-  and GUI assembly. Speech is on main; projection `bb2c78d` is in review. Radar
-  and Trajectory run concurrently in separate native worktrees.
-- `58146c54`: task references and grouping, after product integration.
-- `b9e55d09`: hook-backed durable progress, after product integration.
+  and GUI assembly. Speech and corrected projection are on main (`d3030f5`).
+  Radar and Trajectory run concurrently in separate native worktrees.
+- `58146c54`: task references running, then grouping. Its unrelated visual-acceptance
+  barrier was removed; the real references → grouping dependency remains.
+- `b9e55d09`: hook-backed durable progress, ready without the unrelated visual
+  barrier; runner/context write scopes currently serialize it behind repairs.
 - `8253ff59`: Architect renewal, after durable progress integration.
 - `caa8c80c`: shared Architect Repomix publication, isolated implementor reuse.
 - `1d4a866e`: coalesce obsolete pending outcome wakes without losing useful partial
@@ -85,7 +87,10 @@ Preserve handoff, pending input, model and ownership before native archival.
 - Load Portless skill before launching a project listening server. None is needed
   for native Desktop maintenance or one-shot checks.
 
-Current verified tree through `bf73cbe`: 254 tests / 2,411 assertions, formatting,
-lint and strict TypeScript pass; GUI build passes. Speech replay/stop and auto
-menu toggling were observed in Desktop. Automatic playback of the next real final
-response remains to be observed. Consult the audit for tests versus native proof.
+Full tree after projection merge and Project filter repair: 264 tests / 2,492
+assertions. The subsequent Session-filter correction passes seven focused tests
+and formatting/lint/strict TypeScript. Native Project and Session each show nine
+Open tasks; cancelled work stays in history. Speech replay/Stop and automatic
+generation of a real Architect final were observed; Auto was restored off.
+See evidence/024-final-prose-speech/replay-repair.md and
+evidence/033-completed-task-audit/open-filter.md for observation limits.
