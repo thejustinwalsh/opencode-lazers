@@ -1,0 +1,224 @@
+{
+  "observedAt": "2026-10-31T21:33:23.525139+00:00",
+  "checkout": "bbde60e",
+  "scope": "Read-only durable runner state; no native UI or integration claim inferred from counts",
+  "plans": [
+    {
+      "id": "6d1d3afe-f236-4a33-a5a2-86328e838249",
+      "state": "integrated",
+      "version": 22
+    },
+    {
+      "id": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+      "state": "integrated",
+      "version": 9
+    },
+    {
+      "id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "state": "integrated",
+      "version": 32
+    },
+    {
+      "id": "e07cea4d-1f61-4f3d-92cd-215e63e4cb45",
+      "state": "integrated",
+      "version": 13
+    },
+    {
+      "id": "b22f1f04-8856-4dd3-a7a7-6b9d2bc256d4",
+      "state": "cancelled",
+      "version": 4
+    },
+    {
+      "id": "aa71e2c0-3f4c-4cff-82f2-b3afc8b661a8",
+      "state": "integrated",
+      "version": 13
+    },
+    {
+      "id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
+      "state": "running",
+      "version": 3
+    },
+    {
+      "id": "519b8e3c-2997-4455-9cde-09835dc0acda",
+      "state": "cancelled",
+      "version": 8
+    },
+    {
+      "id": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "state": "integrated",
+      "version": 13
+    },
+    {
+      "id": "7b602667-38d8-4350-9e20-46c09b75b934",
+      "state": "integrated",
+      "version": 13
+    },
+    {
+      "id": "6ed421e4-88cc-4324-b521-8f9a32d5de43",
+      "state": "integrated",
+      "version": 9
+    },
+    {
+      "id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "state": "running",
+      "version": 15
+    },
+    {
+      "id": "8d505ab3-e279-4c54-bd0f-dc5169f228e9",
+      "state": "integrated",
+      "version": 10
+    },
+    {
+      "id": "58146c54-d236-4235-9704-630ad550c084",
+      "state": "running",
+      "version": 3
+    },
+    {
+      "id": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
+      "state": "integrated",
+      "version": 9
+    },
+    {
+      "id": "8253ff59-57a5-45fd-8847-acd971438af8",
+      "state": "running",
+      "version": 3
+    },
+    {
+      "id": "caa8c80c-130f-45fd-bd64-a446a59bfd65",
+      "state": "running",
+      "version": 4
+    },
+    {
+      "id": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "state": "running",
+      "version": 4
+    }
+  ],
+  "nodes": [
+    {
+      "plan_id": "6d1d3afe-f236-4a33-a5a2-86328e838249",
+      "task_id": "5f5743c3-1bd0-4a53-a86b-a347dd961e1a",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+      "task_id": "71e53745-0ce8-4798-b453-17f260d03aa0",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "task_id": "8a2c9ed1-ff42-427f-9fb2-8583b1e81d97",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "task_id": "970b0feb-1fd3-40bb-a61d-f8decccb8a9f",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "e07cea4d-1f61-4f3d-92cd-215e63e4cb45",
+      "task_id": "b9d649d7-5d15-4406-824b-6681865072d4",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "b22f1f04-8856-4dd3-a7a7-6b9d2bc256d4",
+      "task_id": "81b77d5b-f376-4431-88ff-80862e595f33",
+      "state": "cancelled"
+    },
+    {
+      "plan_id": "aa71e2c0-3f4c-4cff-82f2-b3afc8b661a8",
+      "task_id": "f55e7013-630e-4b3e-ab3c-407e61c75ccc",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
+      "task_id": "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
+      "state": "queued"
+    },
+    {
+      "plan_id": "519b8e3c-2997-4455-9cde-09835dc0acda",
+      "task_id": "c0ef9f9d-7e16-48b7-9a04-f98d9a45a8cf",
+      "state": "failed"
+    },
+    {
+      "plan_id": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "task_id": "6edcc32f-bac1-45c6-b785-2087fb75a93c",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "task_id": "fc88ccc0-0265-4f71-a688-c19f99c76a58",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "7b602667-38d8-4350-9e20-46c09b75b934",
+      "task_id": "08e3d569-5081-4eb4-b79a-e4ac9dc42176",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "6ed421e4-88cc-4324-b521-8f9a32d5de43",
+      "task_id": "2958fa32-9f7a-43d9-9252-3d30f2d4dca1",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "efd8459f-1dbe-4472-968b-f26f59504291",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "3af64c61-ff16-43a9-8983-a11763ccf415",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "c1cc0d39-42d7-4845-bcce-8d91aee4935b",
+      "state": "running"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd",
+      "state": "running"
+    },
+    {
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": "8db1b281-c288-4c2e-abaa-f846dd642246",
+      "state": "queued"
+    },
+    {
+      "plan_id": "8d505ab3-e279-4c54-bd0f-dc5169f228e9",
+      "task_id": "7548e7f8-d33b-4768-b8a1-9c81222da176",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "58146c54-d236-4235-9704-630ad550c084",
+      "task_id": "7207e67f-927e-41a2-b382-a3a8904ee54f",
+      "state": "queued"
+    },
+    {
+      "plan_id": "58146c54-d236-4235-9704-630ad550c084",
+      "task_id": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
+      "state": "queued"
+    },
+    {
+      "plan_id": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
+      "task_id": "1532ce08-7aac-434f-a8e1-a92e5d7e3cb3",
+      "state": "accepted"
+    },
+    {
+      "plan_id": "8253ff59-57a5-45fd-8847-acd971438af8",
+      "task_id": "239f45a9-3247-4cba-b339-19c8267d0800",
+      "state": "queued"
+    },
+    {
+      "plan_id": "caa8c80c-130f-45fd-bd64-a446a59bfd65",
+      "task_id": "430e08d8-ce98-45db-811f-4362a45174b6",
+      "state": "running"
+    },
+    {
+      "plan_id": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "task_id": "44fb4817-4826-481f-acac-7840caf14341",
+      "state": "running"
+    }
+  ]
+}

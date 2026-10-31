@@ -3,7 +3,10 @@
 2026-10-31. Audited every accepted task against its contract, current source,
 recorded checks and native observations. Twelve accepted tasks now belong to ten
 integrated plans. Integration records do not erase missing acceptance observations.
-The [full matrix](evidence/033-completed-task-audit/matrix.json) retains task IDs,
+Two further accepted nodes belong to the active product plan; speech source is merged
+and the observation API is under review. See the [live audit](evidence/033-completed-task-audit/live-update.md)
+and [durable snapshot](evidence/033-completed-task-audit/live-state.json) for current work.
+The historical [full matrix](evidence/033-completed-task-audit/matrix.json) retains task IDs,
 acceptance assertions, verification commands, artifacts, findings and sources.
 
 ## Delivered work

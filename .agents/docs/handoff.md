@@ -9,19 +9,25 @@ lives in the numbered spikes/evidence directories and Git history.
 ## Live operation
 
 OpenCode Desktop Architect `ses_e6e0e6239ffdtzIePMeJ1sHA4l` uses
-`openai/gpt-6.1-sol#high`. Main recovery commit is `9b0ab5e`; all nine plans with
-accepted results now record integration, including permission reads, Repomix and
-Tasks continuation. Source/API maintenance and docs may have later commits: inspect
-Git before changing anything.
+`openai/gpt-6.1-sol#high`. Ten plans are integrated (twelve accepted nodes). Two
+more nodes are accepted inside the active product plan: speech is merged; the
+observation projection is under Architect review. Inspect Git and durable state
+before making an integration claim. The [live audit](evidence/033-completed-task-audit/live-update.md)
+separates returned artifacts, merged source and whole-plan acceptance.
 
-Five existing product plans are admitted with durable priority and dependencies:
+Existing plans are admitted with durable priority and dependencies:
 
-- `8d505ab3`: Go `qwen3.8-flash#medium`, Tasks menu order/tab icon.
+- `8d505ab3`: integrated Go `qwen3.8-flash#medium` Tasks menu/tab increment; native
+  close/reopen and Terra screenshot review passed, owned worktrees cleaned.
 - `b50a1a71`: OpenAI `gpt-6-luna#max`, observation API + speech, then Radar/Trajectory
-  and GUI assembly. Initial workers run concurrently in separate native worktrees.
+  and GUI assembly. Speech is on main; projection `bb2c78d` is in review. Radar
+  and Trajectory run concurrently in separate native worktrees.
 - `58146c54`: task references and grouping, after product integration.
 - `b9e55d09`: hook-backed durable progress, after product integration.
 - `8253ff59`: Architect renewal, after durable progress integration.
+- `caa8c80c`: shared Architect Repomix publication, isolated implementor reuse.
+- `1d4a866e`: coalesce obsolete pending outcome wakes without losing useful partial
+  task review. Both repair workers run in their own native worktrees.
 
 Use production tools/commands and current versions. `schedule` changes priority and
 unstarted plan baseline/prerequisites; `run` admits; runtime dispatches. Scope
@@ -48,7 +54,8 @@ and relevant theme/font coverage. Cheap heartbeat and compact inspection (`3623d
 location reload; existing attempts/sessions remained, and active tools saw the reload
 boundary. A later renderer freeze is documented in [trace evidence](evidence/034-renderer-trace/report.md). Cross-worktree context delivery is
 specified and admitted by Architect as plan `caa8c80c`, task `430e08d8`;
-current workers have separate empty cache roots. Native diagnostics are active:
+the observed worker roots initially had separate empty cache roots. The repair
+worker is now implementing publication reuse; ordinary source reads remain usable. Native diagnostics are active:
 a Desktop decision check recorded 33 input tokens, ORT run/readback and completion
 in the main-process log. The earlier freeze cause remains unresolved. Next-freeze local Electron CPU
 profiling is armed (500 ms profile / 2 s inspector deadline); capture artifacts
@@ -78,5 +85,7 @@ Preserve handoff, pending input, model and ownership before native archival.
 - Load Portless skill before launching a project listening server. None is needed
   for native Desktop maintenance or one-shot checks.
 
-Current verified tree: 241 tests / 2,357 assertions, formatting, lint and strict
-TypeScript pass. Consult the audit for the boundary between tests and native proof.
+Current verified tree through `bf73cbe`: 254 tests / 2,411 assertions, formatting,
+lint and strict TypeScript pass; GUI build passes. Speech replay/stop and auto
+menu toggling were observed in Desktop. Automatic playback of the next real final
+response remains to be observed. Consult the audit for tests versus native proof.
