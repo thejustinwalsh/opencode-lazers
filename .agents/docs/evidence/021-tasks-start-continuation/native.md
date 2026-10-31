@@ -62,7 +62,11 @@ forms cancel. After the final build, root may reload this location, without a
 background service restart or settings/inference changes, then exercise the
 repaired Start/search/split/state paths and return running captures to Terra.
 
-Native acceptance remains pending that repaired-build pass, including effective
-`lazers-implementor` native model selection after the server code reload. The old
-loaded transform deleted `agent.model`; a pre-reload native read still returned
-null. No live default-route success is inferred from the agent file alone.
+Native acceptance remains pending that repaired-build pass. Effective native
+agent selection is now verified separately: the installed pinned client's
+`agent.get({agentID: "lazers-implementor", location: {directory: checkout}})`
+returned this checkout and `{providerID: "openai", id: "gpt-6-luna", variant: "max"}`.
+This used `Service.discover` and the existing authenticated endpoint, without
+starting/restarting a server. The earlier CLI read without location returned
+`/Users/tjw` and null, not evidence about this project's selection. A real new
+Start still needs to demonstrate the selected route end-to-end.
