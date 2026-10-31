@@ -1,5 +1,32 @@
 # LAZERS next phase handoff
 
+## Desktop driver checkpoint — 2026-10-31, 17:25 UTC
+
+Current main includes the Tasks browser repair `a53dba3`, native interaction
+proof `7a9d009`, Start continuation race repair `ce6174d`, and shared first-node
+baseline repair `6da13a5`. The combined suite passes 168 tests / 1,493 assertions
+plus formatting, lint and typecheck. Main was loaded through supported native
+`location.reload`; LAZERS is active. Project-native Architect is Sol High and
+implementor is `openai/gpt-6-luna#max`.
+
+Read [native Desktop evidence](evidence/021-tasks-start-continuation/browser.md)
+and [runner source review](evidence/021-tasks-start-continuation/source-review.md).
+The narrow panel, scrolling, split resize, close/reopen restoration and manual
+Start were exercised in Desktop. Start admitted existing Repomix task `f55e7013`
+under plan `aa71e2c0` without duplicating it; worker execution remains queued.
+
+Actual Luna Max child `ses_4f015aa635c64fd4a9af9d2effa8484a` is still implementing
+parallel-runner task `2958fa32` in its owned native worktree (attempt
+`efb203d8-1c32-4995-a6c6-96a2d218a330`). Its result needs review/merge preserving
+the newer Start and baseline repairs. Native parallel overlap is not yet proved.
+The existing product graph `b50a1a71` has disjoint initial observation/speech
+work for that dogfood. No duplicate demonstration tasks are needed.
+
+Linked-worker Session Tasks visibility and completed-plan finalization delays
+are recorded against their existing tasks. Inference remains enabled and
+unchanged; the previously requested freeze investigation was report-only.
+
+
 ## Latest authority correction
 
 Architect has normal OpenCode tool access, including Code Mode, research, shell,
