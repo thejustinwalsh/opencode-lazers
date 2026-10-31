@@ -41,6 +41,7 @@ test("a validated submission survives closing and reopening SQLite with runtime 
   const result = submitTask(repository, keyedProposal(), provenance)
   expect(result.status).toBe("submitted")
   if (result.status !== "submitted") throw new Error("Submission failed")
+  expect(result.reference).toBe("LZ-1")
   repository.close()
   const reopened = open(path)
   const task = reopened.get(result.taskID)!
@@ -48,6 +49,8 @@ test("a validated submission survives closing and reopening SQLite with runtime 
   expect(task.provenance).toEqual(provenance())
   expect(task.proposal).toEqual(validProposal())
   expect(task.status).toBe("submitted")
+  expect(reopened.referenceFor(result.taskID)).toBe("LZ-1")
+  expect(reopened.get("LZ-1")).toEqual(task)
   expect(reopened.list()).toHaveLength(1)
   expect(() => reopened.insert(task)).toThrow()
   expect(reopened.list()).toHaveLength(1)
@@ -74,8 +77,10 @@ test("worktrees sharing canonical project identity see tasks; other projects can
   const sameProject = open(path)
   const otherProject = open(path, "/other")
   expect(sameProject.get(result.taskID)?.provenance.workspaceDirectory).toBe("/repo/worktree")
+  expect(sameProject.get(result.reference)?.id).toBe(result.taskID)
   expect(otherProject.get(result.taskID)).toBeUndefined()
   expect(otherProject.list()).toEqual([])
+  expect(otherProject.get(result.reference)).toBeUndefined()
   expect(() => otherProject.insert(repository.get(result.taskID))).toThrow("provenance")
 })
 

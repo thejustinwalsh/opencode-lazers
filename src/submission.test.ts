@@ -66,9 +66,12 @@ test("lost receipts and reordered nested objects replay the unchanged original a
   expect(submitTask(reopened, reordered, noProvenance)).toEqual({
     status: "submitted",
     taskID: original.id,
+    reference: "LZ-1",
     revision: original.revision,
   })
   expect(reopened.get(original.id)).toEqual(original)
+  expect(reopened.get("LZ-1")).toEqual(original)
+  expect(reopened.referenceFor(original.id)).toBe("LZ-1")
   expect(original.proposal).not.toHaveProperty("idempotencyKey")
   expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
 })
@@ -208,14 +211,22 @@ test("fresh native-tool processes recover a lost receipt across session/worktree
       }),
     ),
   )
-  expect(retry.receipt).toEqual({ status: "submitted", taskID: original.id, revision: 1 })
+  expect(retry.receipt).toMatchObject({
+    status: "submitted",
+    taskID: original.id,
+    reference: repository.referenceFor(original.id),
+    revision: 1,
+    title: validProposal().objective,
+    goal: validProposal().objective,
+    state: "submitted",
+  })
   expect(retry.get.task).toEqual(original)
   expect(retry.list.tasks.map((task: { taskID: string }) => task.taskID)).toEqual([original.id])
   expect(open(path, project).get(original.id)).toEqual(original)
   expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
 }, 30_000)
 
-async function race(options: RetryProcessOptions[], path: string) {
+async function race(options: RetryProcessOptions[], path: string, expectedCount = 1) {
   const children: ReturnType<typeof child>[] = []
   const ready = options.map(
     (option) =>
@@ -239,7 +250,7 @@ async function race(options: RetryProcessOptions[], path: string) {
     const results = await Promise.all(
       children.map(async (contender) => JSON.parse(await output(contender))),
     )
-    expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
+    expect(counts(path)).toEqual({ tasks: expectedCount, keys: expectedCount })
     return results
   } finally {
     for (const contender of children) contender.kill()
@@ -291,7 +302,33 @@ test("independent native-tool connections racing changed content produce one win
   )
   expect(
     submitTask(open(path, directory), { ...keyedProposal(), ...task.proposal }, noProvenance),
-  ).toEqual(results[winner])
+  ).toMatchObject({
+    status: "submitted",
+    taskID: results[winner].taskID,
+    reference: results[winner].reference,
+    revision: 1,
+  })
+}, 30_000)
+
+test("concurrent distinct submissions allocate unique project-local references", async () => {
+  const { path, directory } = fixture()
+  expect(spawnSync("git", ["init", "--initial-branch=main", directory]).status).toBe(0)
+  const base = { path, project: directory, workspace: directory, session: "race" }
+  const results = await race(
+    [
+      { ...base, input: keyedProposal("reference-a") },
+      { ...base, input: keyedProposal("reference-b"), session: "other" },
+    ],
+    path,
+    2,
+  )
+  expect(results.map((result) => result.status)).toEqual(["submitted", "submitted"])
+  expect(new Set(results.map((result) => result.reference))).toEqual(new Set(["LZ-1", "LZ-2"]))
+  const reopened = open(path, directory)
+  expect(reopened.list()).toHaveLength(2)
+  expect(new Set(reopened.list().map((task) => reopened.referenceFor(task.id)))).toEqual(
+    new Set(["LZ-1", "LZ-2"]),
+  )
 }, 30_000)
 
 test("genuine v1 data migrates transactionally and mappings survive repeated reopening", () => {
@@ -325,10 +362,12 @@ test("genuine v1 data migrates transactionally and mappings survive repeated reo
     const db = new Database(path)
     try {
       expect(db.query("SELECT body FROM tasks WHERE id=?").get(task.id)).toEqual({ body })
-      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 4 })
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 5 })
     } finally {
       db.close()
     }
+    expect(repository.referenceFor(task.id)).toBe("LZ-1")
+    expect(result).toMatchObject({ status: "submitted", reference: "LZ-2" })
     expect(counts(path)).toEqual({ tasks: 2, keys: 1 })
   }
 })

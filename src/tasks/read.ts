@@ -15,6 +15,7 @@ const Cursor = z.strictObject({
 
 function summarize(
   task: TaskSpec,
+  reference: string,
   search: string,
   scopePath: string | undefined,
   disposition: TaskSummary["disposition"],
@@ -23,6 +24,7 @@ function summarize(
   const needle = search.toLowerCase()
   const fields = {
     id: task.id,
+    reference,
     objective: task.proposal.objective,
     scope: task.proposal.writeScope.join("\n"),
     acceptance: task.proposal.acceptance.map((item) => item.assertion).join("\n"),
@@ -48,6 +50,7 @@ function summarize(
   }
   return {
     taskID: task.id,
+    reference,
     revision: task.revision,
     status: task.status,
     reason: null,
@@ -108,11 +111,11 @@ export class TaskReads {
       projectDirectory: this.repository.projectDirectory,
       snapshot: page.version,
       count: page.count,
-      tasks: visible.map(({ task }) => {
+      tasks: visible.map(({ task, reference }) => {
         const execution = this.runner.execution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
         return {
-          ...summarize(task, query.search, query.scopePath, disposition),
+          ...summarize(task, reference, query.search, query.scopePath, disposition),
           status: execution?.state ?? task.status,
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
@@ -132,9 +135,16 @@ export class TaskReads {
       return GetOutput.parse({ status: "revision_unavailable", revision: task.revision })
     }
     const disposition = this.repository.taskDisposition(task.id)
+    const reference = this.repository.referenceFor(task.id)
+    if (!reference) throw new Error("Task reference is missing from this repository")
     const execution = this.runner.execution(task.id)
     if (!execution)
-      return GetOutput.parse({ status: "found", task, ...(disposition ? { disposition } : {}) })
+      return GetOutput.parse({
+        status: "found",
+        task,
+        reference,
+        ...(disposition ? { disposition } : {}),
+      })
     const attempts = this.runner
       .attempts(execution.planID)
       .filter((attempt) => attempt.task_id === task.id)
@@ -157,6 +167,7 @@ export class TaskReads {
     return GetOutput.parse({
       status: "found",
       task,
+      reference,
       ...(disposition ? { disposition } : {}),
       execution,
       attempts,

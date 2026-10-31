@@ -2,7 +2,12 @@ import { Database, SQLiteError } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join } from "node:path"
-import { IdempotencyKeySchema, TaskProposalSchema, TaskSpecSchema } from "./task.ts"
+import {
+  IdempotencyKeySchema,
+  TaskProposalSchema,
+  TaskReferenceSchema,
+  TaskSpecSchema,
+} from "./task.ts"
 import type { TaskSpec } from "./task.ts"
 import { canonical, fingerprint } from "./identity.ts"
 import {
@@ -49,7 +54,7 @@ export class TaskRepository {
       const version = () =>
         db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
       const initial = version()
-      if (initial > 4) throw new Error(`Unsupported LAZERS database version ${initial}`)
+      if (initial > 5) throw new Error(`Unsupported LAZERS database version ${initial}`)
       // SQLite can fail a concurrent first WAL transition immediately despite
       // busy_timeout. Retry only connection configuration, never a task write.
       const deadline = Date.now() + 5_000
@@ -69,7 +74,7 @@ export class TaskRepository {
       }
       db.transaction(() => {
         const current = version()
-        if (current > 4) throw new Error(`Unsupported LAZERS database version ${current}`)
+        if (current > 5) throw new Error(`Unsupported LAZERS database version ${current}`)
         db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
@@ -126,6 +131,35 @@ export class TaskRepository {
               ON task_dispositions(project_directory, task_id, id DESC);
             PRAGMA user_version=4;
           `)
+        if (current < 5) {
+          db.exec(`
+            CREATE TABLE task_references (
+              project_directory TEXT NOT NULL,
+              task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),
+              reference TEXT NOT NULL,
+              sequence INTEGER NOT NULL CHECK(sequence > 0),
+              PRIMARY KEY(project_directory, task_id),
+              UNIQUE(project_directory, reference),
+              UNIQUE(project_directory, sequence)
+            );
+            CREATE INDEX task_references_project ON task_references(project_directory, reference);
+          `)
+          const rows = db
+            .query<{ id: string; project_directory: string }, []>(
+              "SELECT id, project_directory FROM tasks ORDER BY rowid",
+            )
+            .all()
+          const nextByProject = new Map<string, number>()
+          const addReference = db.query(
+            "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
+          )
+          for (const row of rows) {
+            const sequence = (nextByProject.get(row.project_directory) ?? 0) + 1
+            nextByProject.set(row.project_directory, sequence)
+            addReference.run(row.project_directory, row.id, `LZ-${sequence}`, sequence)
+          }
+          db.exec("PRAGMA user_version=5")
+        }
       }).immediate()
       return db
     } catch (error) {
@@ -168,18 +202,24 @@ export class TaskRepository {
             status: "conflict" as const,
             message: "idempotencyKey already identifies different validated content",
           }
-        return { status: "submitted" as const, taskID: task.id, revision: task.revision }
+        return {
+          status: "submitted" as const,
+          taskID: task.id,
+          reference: this.referenceIn(db, task.id),
+          revision: task.revision,
+        }
       }
       const task = TaskSpecSchema.parse(create())
       if (canonical(task.proposal) !== content)
         throw new Error("Task proposal does not match validated submission")
-      this.persist(task)
+      this.persist(db, task)
+      const reference = this.allocateReference(db, task.id)
       db.query(
         `INSERT INTO submission_requests
         (project_directory, request_id, fingerprint, task_id) VALUES (?, ?, ?, ?)`,
       ).run(this.projectDirectory, key, fingerprint(validated), task.id)
       inserted = true
-      return { status: "submitted" as const, taskID: task.id, revision: task.revision }
+      return { status: "submitted" as const, taskID: task.id, reference, revision: task.revision }
     })
     if (inserted) this.notify()
     return receipt
@@ -187,18 +227,78 @@ export class TaskRepository {
 
   insert(input: unknown): TaskSpec {
     const task = TaskSpecSchema.parse(input)
-    this.persist(task)
+    this.atomic((db) => {
+      this.persist(db, task)
+      this.allocateReference(db, task.id)
+    })
     this.notify()
     return task
   }
 
-  private persist(task: TaskSpec): void {
+  private persist(db: Database, task: TaskSpec): void {
     if (task.provenance.projectDirectory !== this.projectDirectory) {
       throw new Error("Task provenance does not match this repository")
     }
-    this.db
-      .query("INSERT INTO tasks (id, project_directory, created_at, body) VALUES (?, ?, ?, ?)")
-      .run(task.id, this.projectDirectory, task.createdAt, JSON.stringify(task))
+    db.query("INSERT INTO tasks (id, project_directory, created_at, body) VALUES (?, ?, ?, ?)").run(
+      task.id,
+      this.projectDirectory,
+      task.createdAt,
+      JSON.stringify(task),
+    )
+  }
+
+  private allocateReference(db: Database, taskID: string): string {
+    const existing = db
+      .query<{ reference: string }, [string, string]>(
+        "SELECT reference FROM task_references WHERE project_directory=? AND task_id=?",
+      )
+      .get(this.projectDirectory, taskID)?.reference
+    if (existing) return existing
+    const sequence = db
+      .query<{ sequence: number }, [string]>(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM task_references WHERE project_directory=?",
+      )
+      .get(this.projectDirectory)!.sequence
+    if (!Number.isSafeInteger(sequence) || sequence < 1)
+      throw new Error("Task reference sequence is exhausted")
+    const reference = `LZ-${sequence}`
+    db.query(
+      "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
+    ).run(this.projectDirectory, taskID, reference, sequence)
+    return reference
+  }
+
+  private referenceIn(db: Database, taskID: string): string {
+    const row = db
+      .query<{ reference: string }, [string, string]>(
+        "SELECT reference FROM task_references WHERE project_directory=? AND task_id=?",
+      )
+      .get(this.projectDirectory, taskID)
+    if (!row) throw new Error("Task reference is missing from this repository")
+    return TaskReferenceSchema.parse(row.reference)
+  }
+
+  referenceFor(taskID: string): string | undefined {
+    return this.db
+      .query<{ reference: string }, [string, string]>(
+        "SELECT reference FROM task_references WHERE project_directory=? AND task_id=?",
+      )
+      .get(this.projectDirectory, taskID)?.reference
+  }
+
+  resolveTaskID(idOrReference: string): string | undefined {
+    if (TaskReferenceSchema.safeParse(idOrReference).success) {
+      return this.db
+        .query<{ task_id: string }, [string, string]>(
+          "SELECT task_id FROM task_references WHERE project_directory=? AND reference=?",
+        )
+        .get(this.projectDirectory, idOrReference)?.task_id
+    }
+    return this.db
+      .query<{ id: string }, [string, string]>(
+        "SELECT id FROM tasks WHERE project_directory=? AND id=?",
+      )
+      .get(this.projectDirectory, idOrReference)?.id
   }
 
   private notify(): void {
@@ -250,7 +350,7 @@ export class TaskRepository {
         if (mutation > input.snapshot)
           throw new Error("Task execution changed; start a fresh query")
       }
-      const clauses = ["project_directory = ?", "created_version <= ?"]
+      const clauses = ["tasks.project_directory = ?", "tasks.created_version <= ?"]
       const values: (string | number)[] = [this.projectDirectory, version]
       if (input.includeCompleted === false)
         clauses.push(
@@ -262,11 +362,18 @@ export class TaskRepository {
           "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)",
         )
       if (input.sessionID) {
-        clauses.push("json_extract(body, '$.provenance.sessionID') = ?")
+        clauses.push("json_extract(tasks.body, '$.provenance.sessionID') = ?")
         values.push(input.sessionID)
       }
       if (input.search) {
-        clauses.push("instr(lower(body), lower(?)) > 0")
+        clauses.push(`(
+          instr(lower(tasks.body), lower(?)) > 0 OR EXISTS (
+            SELECT 1 FROM task_references r
+            WHERE r.project_directory=tasks.project_directory AND r.task_id=tasks.id
+              AND instr(lower(r.reference), lower(?)) > 0
+          )
+        )`)
+        values.push(input.search)
         values.push(input.search)
       }
       if (input.scopePath) {
@@ -281,10 +388,13 @@ export class TaskRepository {
           `SELECT COUNT(*) AS count FROM tasks WHERE ${where}`,
         )
         .get(...values)!.count
-      const before = input.before === undefined ? "" : " AND rowid < ?"
+      const before = input.before === undefined ? "" : " AND tasks.rowid < ?"
       const rows = this.db
-        .query<{ body: string; position: number }, (string | number)[]>(
-          `SELECT body, rowid AS position FROM tasks WHERE ${where}${before} ORDER BY rowid DESC LIMIT ?`,
+        .query<{ body: string; position: number; reference: string }, (string | number)[]>(
+          `SELECT tasks.body, tasks.rowid AS position, task_references.reference
+           FROM tasks JOIN task_references ON task_references.project_directory=tasks.project_directory
+             AND task_references.task_id=tasks.id
+           WHERE ${where}${before} ORDER BY tasks.rowid DESC LIMIT ?`,
         )
         .all(...values, ...(input.before === undefined ? [] : [input.before]), input.limit + 1)
       return {
@@ -293,17 +403,20 @@ export class TaskRepository {
         rows: rows.map((row) => ({
           position: row.position,
           task: TaskSpecSchema.parse(JSON.parse(row.body)),
+          reference: TaskReferenceSchema.parse(row.reference),
         })),
       }
     })()
   }
 
   get(id: string): TaskSpec | undefined {
+    const taskID = this.resolveTaskID(id)
+    if (!taskID) return undefined
     const row = this.db
       .query<{ body: string }, [string, string]>(
         "SELECT body FROM tasks WHERE project_directory = ? AND id = ?",
       )
-      .get(this.projectDirectory, id)
+      .get(this.projectDirectory, taskID)
     return row ? TaskSpecSchema.parse(JSON.parse(row.body)) : undefined
   }
 

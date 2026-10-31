@@ -124,6 +124,11 @@ export const IdempotencyKeySchema = z
   .min(1)
   .max(200)
   .regex(/\S/, "Key must contain non-whitespace text")
+export const TaskReferenceSchema = z
+  .string()
+  .max(19)
+  .regex(/^LZ-[1-9]\d{0,15}$/)
+  .refine((reference) => Number.isSafeInteger(Number(reference.slice(3))))
 export const TaskSubmissionSchema = TaskProposalSchema.safeExtend({
   idempotencyKey: IdempotencyKeySchema,
 })

@@ -19,6 +19,7 @@ const page = (project: string, id = crypto.randomUUID(), snapshot = 1): TaskPage
   tasks: [
     {
       taskID: id,
+      reference: "LZ-1",
       revision: 1,
       status: "submitted",
       reason: null,

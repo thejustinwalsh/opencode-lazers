@@ -61,10 +61,28 @@ test("older records, literal filters, sessions and keyset snapshots stay bounded
   const otherConnection = open()
   const otherProject = open("/other")
   const older = insert(repository, "Literal λ_% ' OR 1=1 --")
-  for (let i = 0; i < 125; i++) insert(repository, `Task ${i}`, i % 2 ? "session-a" : "session-b")
+  let finalTaskID = ""
+  for (let i = 0; i < 125; i++) {
+    const task = insert(repository, `Task ${i}`, i % 2 ? "session-a" : "session-b")
+    if (i === 124) finalTaskID = task.id
+  }
   const foreign = insert(otherProject, "Literal λ_% ' OR 1=1 --")
   const reads = new TaskReads(repository)
   expect(reads.query({ search: older.id }).tasks.map((task) => task.taskID)).toEqual([older.id])
+  expect(reads.query({ search: "LZ-126" }).tasks[0]).toMatchObject({
+    taskID: finalTaskID,
+    reference: "LZ-126",
+    matches: [{ field: "reference", snippet: "LZ-126" }],
+  })
+  expect(reads.get({ taskID: "LZ-1" })).toMatchObject({
+    status: "found",
+    reference: "LZ-1",
+    task: { id: older.id },
+  })
+  expect(new TaskReads(otherProject).get({ taskID: "LZ-1" })).toMatchObject({
+    status: "found",
+    task: { id: foreign.id },
+  })
   expect(reads.query({ search: "λ_% ' OR 1=1 --" }).count).toBe(1)
   expect(reads.query({ search: "Acceptance needle λ_%", scopePath: "tasks/**" }).count).toBe(126)
   expect(reads.query({ search: "Context needle λ_%" }).count).toBe(126)

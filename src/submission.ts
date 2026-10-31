@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process"
 import { TaskSubmissionSchema } from "./task.ts"
 import type { TaskRepository } from "./storage.ts"
 import type { TaskSpec } from "./task.ts"
+import { taskTitle } from "./tasks/presentation.ts"
 
 export function startingRevision(directory: string): TaskSpec["provenance"]["startingRevision"] {
   const git = (...args: string[]) =>
@@ -43,4 +44,26 @@ export function submitTask(
     provenance: provenance(),
     proposal,
   }))
+}
+
+export function taskSubmissionSummary(
+  receipt: Extract<ReturnType<TaskRepository["submitOnce"]>, { status: "submitted" }>,
+  task: TaskSpec,
+  state: string,
+) {
+  const proposal = task.proposal
+  return {
+    ...receipt,
+    title: taskTitle(proposal.objective),
+    goal: proposal.objective,
+    doneWhen: proposal.acceptance.map(({ id, assertion }) => ({ id, assertion })),
+    boundaries: {
+      writeScope: proposal.writeScope,
+      exclusions: proposal.exclusions,
+      constraints: proposal.constraints,
+      assumptions: proposal.assumptions,
+    },
+    state,
+    note: "Submission records the task; it does not start execution.",
+  }
 }
