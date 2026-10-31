@@ -11,6 +11,7 @@ const root = process.argv[2]!,
 const config = JSON.parse(readFileSync(join(root, "fixture.json"), "utf8")) as {
   planID: string
   scopeUpdate?: boolean
+  unownedTranscript?: boolean
 }
 const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
 const store = new RunnerStore(repository)
@@ -121,7 +122,13 @@ const host: RunnerHost = {
     const messages = state.sessions[input.sessionID]!.messages
     if (!messages.some((message) => message.id === input.id)) {
       state.calls.push({ kind: "notify", id: input.id })
-      messages.push({ id: input.id, text: input.text })
+      messages.push({
+        id: input.id,
+        text: input.text,
+        ...(!config.unownedTranscript
+          ? { type: "synthetic", ...(input.metadata ? { metadata: input.metadata } : {}) }
+          : {}),
+      })
     }
     save(state)
     cut("after-notify")

@@ -56,3 +56,23 @@ failure must preserve the current outcome for stable-ID recovery, not discard it
 or mark uncertain delivery as success. Race/reopen/lost-response tests and actual
 pinned native queue observation are required; fixtures alone do not prove native
 suppression. No historical inbox sweep or new scheduler/polling/lifecycle system.
+
+## Implemented delivery boundary
+
+New outbox records persist ownership metadata for the project, plan, status,
+version, Architect session, outbox row, and native message ID. Delivery selects
+the highest durable plan version (with insertion order as a tie-breaker), so a
+late older retry cannot become current. Pending obsolete rows are retained as
+`superseded`; native-admitted, consumed, cancellation-confirmed, and
+consumption-unknown outcomes have distinct states and append-only receipts.
+
+The native adapter uses only authenticated `Service.discover` plus the pinned
+`@opencode/client` inbox API after verifying host PID/version and the same-project
+Architect target. It cancels only an exact owned synthetic entry still marked
+`queue`; unavailable service and lifecycle conflicts remain visible and keep the
+new current outcome recoverable. The repository migration preserves legacy
+`delivered` rows as host-admitted with consumption unknown. Focused fixtures cover
+coalescing, actionable partial review, cancellation/consumption races, lost
+responses, reopen, and unrelated inbox inputs. Native host evidence remains a
+separate acceptance observation in `../evidence/035-outcome-inbox/native.md`;
+fixtures alone do not establish it.

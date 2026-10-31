@@ -126,6 +126,47 @@ async function run(root: string, fault: string) {
   return { stdout, stderr, code }
 }
 
+test("legacy delivered outbox rows reopen as host-admitted with unknown consumption", () => {
+  const f = fixture()
+  const payload = { planID: f.plan.planID, planRevision: 1, version: 1, status: "accepted" }
+  f.store.atomic((db) =>
+    db
+      .query(
+        "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES('legacy-outbox',?,?,? ,?,'delivered',1,NULL,NULL)",
+      )
+      .run(f.plan.planID, "owner", "msg_legacy_outcome", JSON.stringify(payload)),
+  )
+
+  new RunnerStore(f.repository)
+  const migrated = f.store.atomic((db) =>
+    db
+      .query<{ id: string; message_id: string; state: string; receipt: string }, []>(
+        "SELECT id,message_id,state,receipt FROM runner_outbox WHERE id='legacy-outbox'",
+      )
+      .get(),
+  )
+  expect(migrated).toMatchObject({
+    id: "legacy-outbox",
+    message_id: "msg_legacy_outcome",
+    state: "admitted",
+  })
+  expect(JSON.parse(migrated!.receipt)).toEqual({
+    kind: "legacy-host-admitted",
+    consumption: "unknown",
+  })
+
+  new RunnerStore(f.repository)
+  expect(
+    f.store.atomic((db) =>
+      db
+        .query<{ state: string; receipt: string }, []>(
+          "SELECT state,receipt FROM runner_outbox WHERE id='legacy-outbox'",
+        )
+        .get(),
+    ),
+  ).toEqual({ state: "admitted", receipt: migrated!.receipt })
+})
+
 test("fresh processes recover accepted session/prompt effects without replay", async () => {
   for (const fault of ["after-session", "after-prompt"]) {
     const f = fixture()
@@ -211,14 +252,32 @@ test("durable outbox survives process death before/after host delivery without d
     }
     const notices = state.calls.filter((c) => c.kind === "notify")
     expect(new Set(notices.map((c) => c.id)).size).toBe(notices.length)
-    const delivered = f.store.atomic((db) =>
+    const latest = f.store.atomic((db) =>
       db
-        .query<{ state: string }, [string]>(
-          "SELECT state FROM runner_outbox WHERE plan_id=? ORDER BY rowid LIMIT 1",
+        .query<{ state: string; payload: string }, [string]>(
+          "SELECT state,payload FROM runner_outbox WHERE plan_id=? ORDER BY rowid DESC LIMIT 1",
         )
         .get(f.plan.planID),
     )
-    expect(delivered?.state).toBe("delivered")
+    expect(JSON.parse(latest!.payload).status).toBe("accepted")
+    expect(latest?.state).toBe(fault === "before-notify" ? "admitted" : "consumed")
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
+}, 20000)
+
+test("legacy unowned transcript remains unknown rather than proving post-crash consumption", async () => {
+  const f = fixture()
+  writeFileSync(
+    join(f.root, "fixture.json"),
+    JSON.stringify({ planID: f.plan.planID, unownedTranscript: true }),
+  )
+  expect((await run(f.root, "after-notify")).code).not.toBe(0)
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const resumed = await run(f.root, "none")
+  expect(resumed.code, resumed.stderr).toBe(0)
+  expect(f.store.outboxForDelivery().at(-1)!.state).toBe("unknown")
+  const state = JSON.parse(readFileSync(join(f.root, "host.json"), "utf8")) as {
+    calls: { kind: string }[]
+  }
+  expect(state.calls.filter((call) => call.kind === "notify")).toHaveLength(1)
 }, 20000)

@@ -15,9 +15,11 @@ import {
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
-import type { PlanRow, NodeRow, AttemptRow, EffectRow } from "./store.ts"
-import { RunnerStore } from "./store.ts"
+import type { PlanRow, NodeRow, AttemptRow, EffectRow, OutboxRow } from "./store.ts"
+import { appendOutboxReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
+import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
+import type { OutcomeOwnership } from "./inbox.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 
@@ -718,16 +720,54 @@ export class TaskRuntime {
       planRevision: plan.revision,
       version: plan.version,
       ...(payload as object),
+      currentPlan: { state: plan.state, reason: plan.reason },
+      reviewableTasks: this.store
+        .nodes(planID)
+        .filter((node) => node.state === "accepted" && node.artifact)
+        .map((node) => ({
+          taskID: node.task_id,
+          artifact: node.artifact,
+          attemptID:
+            this.store
+              .attempts(planID)
+              .findLast(
+                (attempt) => attempt.task_id === node.task_id && attempt.state === "accepted",
+              )?.id ?? null,
+          evidence: this.store.repository
+            .get(node.task_id)!
+            .proposal.verification.map((check) => check.id),
+        })),
     }
     const id = fingerprint(full)
+    const nativeMessageID = messageID()
+    const metadata: OutcomeOwnership = {
+      lazersKind: "runner-outcome",
+      lazersProjectID: this.projectID,
+      lazersProjectDirectory: this.directory,
+      lazersPlanID: planID,
+      lazersOutboxID: id,
+      lazersMessageID: nativeMessageID,
+      lazersSessionID: plan.owner,
+      lazersStatus:
+        typeof payload === "object" &&
+        payload !== null &&
+        "status" in payload &&
+        typeof payload.status === "string"
+          ? payload.status
+          : "update",
+      lazersVersion: plan.version,
+    }
     this.store.atomic((db) => {
-      db.query("INSERT OR IGNORE INTO runner_outbox VALUES(?,?,?,?,?,'pending',?)").run(
+      db.query(
+        "INSERT OR IGNORE INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES(?,?,?,?,?,'pending',?,?,NULL)",
+      ).run(
         id,
         planID,
         plan.owner,
-        messageID(),
+        nativeMessageID,
         JSON.stringify(full),
         Number(resume),
+        JSON.stringify(metadata),
       )
       this.store.repository.changed()
     })
@@ -1949,83 +1989,545 @@ export class TaskRuntime {
       if (effect.state !== "uncertain") this.uncertain(effect, error, fence)
     }
   }
-  private async deliver(fence: number) {
-    type Message = {
-      id: string
-      plan_id: string
-      session_id: string
-      message_id: string
-      payload: string
-      state: string
-      resume: number
-    }
-    const messages = this.store.atomic((db) =>
-      db
-        .query<Message, [string]>(
-          "SELECT o.* FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id WHERE p.project_directory=? AND o.state!='delivered' ORDER BY o.rowid LIMIT 20",
-        )
-        .all(this.directory),
+  private ownership(message: OutboxRow): OutcomeOwnership | undefined {
+    const ownership = parseOutcomeOwnership(message.metadata ? JSON.parse(message.metadata) : null)
+    if (
+      !ownership ||
+      ownership.lazersOutboxID !== message.id ||
+      ownership.lazersPlanID !== message.plan_id ||
+      ownership.lazersMessageID !== message.message_id ||
+      ownership.lazersSessionID !== message.session_id
     )
-    for (const message of messages) {
-      const plan = this.store.plan(message.plan_id)
-      if (!plan) continue
-      let target = await this.host.session(
-        message.session_id,
-        message.state === "pending" ? undefined : { messages: true },
-      )
-      let targetMessageID = message.message_id
-      let state = message.state
-      if (
-        this.validArchitect(target) &&
-        target.id === plan.owner &&
-        state !== "pending" &&
-        target.messages.some((entry) => entry.id === targetMessageID)
-      ) {
-        this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_outbox SET state='delivered' WHERE id=?").run(message.id)
-          this.store.repository.changed()
-        })
-        continue
-      }
-      if (!this.validArchitect(target) || target.id !== plan.owner) {
-        const owner = await this.ensureArchitectOwner(plan, target)
-        target = owner
-        targetMessageID = messageID()
-        if (!this.store.retargetOutbox(message.id, target.id, targetMessageID)) continue
-        state = "pending"
-      }
-      if (!this.validArchitect(target)) continue
+      return undefined
+    return ownership
+  }
 
-      if (state !== "pending" && target.messages.some((entry) => entry.id === targetMessageID)) {
-        this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_outbox SET state='delivered' WHERE id=?").run(message.id)
-          this.store.repository.changed()
+  private createOwnership(message: OutboxRow, sessionID: string): OutcomeOwnership {
+    const payload = JSON.parse(message.payload) as { status?: unknown; version?: unknown }
+    return {
+      lazersKind: "runner-outcome",
+      lazersProjectID: this.projectID,
+      lazersProjectDirectory: this.directory,
+      lazersPlanID: message.plan_id,
+      lazersOutboxID: message.id,
+      lazersMessageID: message.message_id,
+      lazersSessionID: sessionID,
+      lazersStatus: typeof payload.status === "string" ? payload.status : "update",
+      lazersVersion: typeof payload.version === "number" ? payload.version : 0,
+    }
+  }
+
+  private outcomeState(
+    message: OutboxRow,
+    expected: string[],
+    state: string,
+    receipt: unknown,
+    event: string,
+    fence: number,
+  ) {
+    return this.store.fenced(this.owner, fence, (db) => {
+      const placeholders = expected.map(() => "?").join(",")
+      const current = db
+        .query<{ state: string; receipt: string | null }, [string]>(
+          "SELECT state,receipt FROM runner_outbox WHERE id=?",
+        )
+        .get(message.id)
+      if (!current || !expected.includes(current.state)) return false
+      const nextReceipt = appendOutboxReceipt(current.receipt, receipt)
+      const changed = db
+        .query(
+          `UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state=? AND state IN (${placeholders})`,
+        )
+        .run(state, nextReceipt, message.id, current.state, ...expected).changes
+      if (changed) {
+        this.store.record(message.plan_id, null, event, {
+          outboxID: message.id,
+          messageID: message.message_id,
+          from: current.state,
+          to: state,
+          receipt,
         })
-        continue
+        this.store.repository.changed()
       }
-      this.store.fenced(this.owner, fence, (db) =>
-        db.query("UPDATE runner_outbox SET state='sending' WHERE id=?").run(message.id),
+      return changed === 1
+    })
+  }
+
+  private async outcomeObservation(
+    message: OutboxRow,
+    sessionID: string,
+    ownership?: OutcomeOwnership,
+  ): Promise<"queued" | "consumed" | "missing" | "unowned"> {
+    // Older injected hosts used by recovery fixtures do not have the pinned
+    // inbox API. They can still prove an exact transcript ID, but cannot prove
+    // that an absent message was cancelled or consumed.
+    if (!this.host.outcomeInbox) {
+      const target = await this.host.session(sessionID, { messages: true })
+      const transcript = target?.messages.find((item) => item.id === message.message_id)
+      if (!transcript) return "missing"
+      if (ownership) return isOwnedOutcomeTranscript(transcript, ownership) ? "consumed" : "unowned"
+      return transcript.type === "synthetic" ? "consumed" : "unowned"
+    }
+    const inbox = await this.host.outcomeInbox(sessionID)
+    const entry = inbox.find((item) => item.id === message.message_id)
+    if (entry) {
+      if (ownership && isOwnedQueuedOutcome(entry, ownership)) return "queued"
+      return "unowned"
+    }
+    const target = await this.host.session(sessionID, { messages: true })
+    const transcript = target?.messages.find((item) => item.id === message.message_id)
+    if (!transcript) return "missing"
+    if (ownership) return isOwnedOutcomeTranscript(transcript, ownership) ? "consumed" : "unowned"
+    return transcript.type === "synthetic" ? "consumed" : "unowned"
+  }
+
+  private async supersedeOutcome(
+    message: OutboxRow,
+    latest: OutboxRow,
+    plan: PlanRow,
+    fence: number,
+  ) {
+    if (message.state === "unknown") return true
+    if (message.state === "pending") {
+      this.outcomeState(
+        message,
+        ["pending"],
+        "superseded",
+        { kind: "superseded-before-native-admission", byOutboxID: latest.id },
+        "OUTCOME_SUPERSEDED",
+        fence,
       )
+      return true
+    }
+    if (!["sending", "uncertain", "admitted", "unknown", "delivered"].includes(message.state))
+      return true
+
+    const ownership = this.ownership(message)
+    if (
+      !ownership ||
+      message.session_id !== latest.session_id ||
+      message.session_id !== plan.owner
+    ) {
+      this.outcomeState(
+        message,
+        [message.state],
+        "unknown",
+        { kind: "supersession-ownership-unavailable", byOutboxID: latest.id },
+        "OUTCOME_CONSUMPTION_UNKNOWN",
+        fence,
+      )
+      return true
+    }
+
+    const target = await this.host.session(message.session_id)
+    if (!this.validArchitect(target) || target.id !== plan.owner) return true
+    let observation: "queued" | "consumed" | "missing" | "unowned"
+    try {
+      observation = await this.outcomeObservation(message, target.id, ownership)
+    } catch (error) {
+      this.outcomeState(
+        message,
+        [message.state],
+        message.state,
+        {
+          kind: "supersession-observation-unavailable",
+          byOutboxID: latest.id,
+          error: errorText(error),
+        },
+        "OUTCOME_SUPERSESSION_UNCERTAIN",
+        fence,
+      )
+      return false
+    }
+    if (observation === "consumed") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "consumed",
+        { kind: "transcript-observed", byOutboxID: latest.id },
+        "OUTCOME_CONSUMED",
+        fence,
+      )
+      return true
+    }
+    if (observation === "unowned") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "unknown",
+        { kind: "supersession-input-identity-conflict", byOutboxID: latest.id },
+        "OUTCOME_CONSUMPTION_UNKNOWN",
+        fence,
+      )
+      return true
+    }
+    if (observation === "missing") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "unknown",
+        { kind: "unknown-consumption", byOutboxID: latest.id },
+        "OUTCOME_CONSUMPTION_UNKNOWN",
+        fence,
+      )
+      return true
+    }
+
+    if (!this.host.cancelOutcome) {
+      this.outcomeState(
+        message,
+        [message.state],
+        message.state,
+        { kind: "native-cancellation-unavailable", byOutboxID: latest.id },
+        "OUTCOME_CANCEL_UNCERTAIN",
+        fence,
+      )
+      return false
+    }
+
+    try {
+      await this.host.cancelOutcome({
+        sessionID: target.id,
+        inboxID: message.message_id,
+        ownership,
+      })
+    } catch (error) {
+      let afterFailure: "queued" | "consumed" | "missing" | "unowned"
       try {
-        await this.host.notify({
-          sessionID: target.id,
-          id: targetMessageID,
-          text: outcomeText(message.payload),
-          resume: Boolean(message.resume),
-        })
-        this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_outbox SET state='delivered' WHERE id=?").run(message.id)
-          this.store.repository.changed()
-        })
-      } catch (error) {
-        this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_outbox SET state='uncertain' WHERE id=?").run(message.id)
-          this.store.record(message.plan_id, null, "DELIVERY_UNCERTAIN", {
-            id: message.id,
+        afterFailure = await this.outcomeObservation(message, target.id, ownership)
+      } catch (observationError) {
+        this.outcomeState(
+          message,
+          [message.state],
+          message.state,
+          {
+            kind: "cancellation-outcome-unobservable",
+            byOutboxID: latest.id,
             error: errorText(error),
-          })
-        })
+            observationError: errorText(observationError),
+          },
+          "OUTCOME_CANCEL_UNCERTAIN",
+          fence,
+        )
+        return false
       }
+      if (afterFailure === "consumed") {
+        this.outcomeState(
+          message,
+          [message.state],
+          "consumed",
+          { kind: "cancel-raced-with-consumption", byOutboxID: latest.id, error: errorText(error) },
+          "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
+          fence,
+        )
+        return true
+      }
+      if (afterFailure === "queued") {
+        this.outcomeState(
+          message,
+          [message.state],
+          message.state,
+          {
+            kind: "cancellation-failed-still-queued",
+            byOutboxID: latest.id,
+            error: errorText(error),
+          },
+          "OUTCOME_CANCEL_UNCERTAIN",
+          fence,
+        )
+        return false
+      }
+      if (afterFailure === "missing")
+        this.outcomeState(
+          message,
+          [message.state],
+          "unknown",
+          {
+            kind: "cancel-race-consumption-unknown",
+            byOutboxID: latest.id,
+            error: errorText(error),
+          },
+          "OUTCOME_CONSUMPTION_UNKNOWN",
+          fence,
+        )
+      if (afterFailure === "unowned") {
+        this.outcomeState(
+          message,
+          [message.state],
+          message.state,
+          { kind: "cancellation-not-confirmed-unowned-input", byOutboxID: latest.id },
+          "OUTCOME_CANCEL_UNCERTAIN",
+          fence,
+        )
+        return false
+      }
+      return true
+    }
+
+    let afterCancellation: "queued" | "consumed" | "missing" | "unowned"
+    try {
+      afterCancellation = await this.outcomeObservation(message, target.id, ownership)
+    } catch (error) {
+      this.outcomeState(
+        message,
+        [message.state],
+        message.state,
+        {
+          kind: "cancellation-confirmation-unavailable",
+          byOutboxID: latest.id,
+          error: errorText(error),
+        },
+        "OUTCOME_CANCEL_UNCERTAIN",
+        fence,
+      )
+      return false
+    }
+    if (afterCancellation === "consumed") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "consumed",
+        { kind: "consumption-observed-after-cancel", byOutboxID: latest.id },
+        "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
+        fence,
+      )
+      return true
+    }
+    if (afterCancellation === "queued") {
+      this.outcomeState(
+        message,
+        [message.state],
+        message.state,
+        { kind: "cancel-returned-but-outcome-still-queued", byOutboxID: latest.id },
+        "OUTCOME_CANCEL_UNCERTAIN",
+        fence,
+      )
+      return false
+    }
+    if (afterCancellation === "unowned") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "unknown",
+        { kind: "cancel-returned-with-identity-conflict", byOutboxID: latest.id },
+        "OUTCOME_CONSUMPTION_UNKNOWN",
+        fence,
+      )
+      return true
+    }
+
+    this.outcomeState(
+      message,
+      [message.state],
+      "superseded",
+      { kind: "native-cancellation-confirmed", inboxID: message.message_id, byOutboxID: latest.id },
+      "OUTCOME_SUPERSEDED",
+      fence,
+    )
+    return true
+  }
+
+  private async deliverCurrent(message: OutboxRow, fence: number) {
+    if (["consumed", "superseded", "unknown"].includes(message.state)) return
+    const plan = this.store.plan(message.plan_id)
+    if (!plan) return
+    let target = await this.host.session(message.session_id)
+    if (!this.validArchitect(target) || target.id !== plan.owner) {
+      // Admitted is not consumed. Prove consumption in the original session
+      // before transferring an otherwise-current notice to its replacement.
+      const priorOwnership = this.ownership(message)
+      let priorObservation: string
+      try {
+        priorObservation = await this.outcomeObservation(
+          message,
+          message.session_id,
+          priorOwnership,
+        )
+      } catch (error) {
+        priorObservation = `unavailable: ${errorText(error)}`
+      }
+      if (priorObservation === "consumed") {
+        this.outcomeState(
+          message,
+          [message.state],
+          "consumed",
+          { kind: "transcript-observed-before-owner-transfer" },
+          "OUTCOME_CONSUMED",
+          fence,
+        )
+        return
+      }
+      const owner = await this.ensureArchitectOwner(plan, target)
+      // Native message IDs are global. Never reuse an admitted/uncertain ID in
+      // another session; persist the replacement identity before host admission.
+      const replacementID = messageID()
+      const nextOwnership = {
+        ...(priorOwnership ?? this.createOwnership(message, message.session_id)),
+        lazersSessionID: owner.id,
+        lazersMessageID: replacementID,
+      }
+      if (
+        !this.store.retargetOutbox({
+          id: message.id,
+          expectedState: message.state,
+          sessionID: owner.id,
+          messageID: replacementID,
+          metadata: JSON.stringify(nextOwnership),
+          receipt: {
+            kind: "owner-retargeted-current-outcome",
+            fromSessionID: message.session_id,
+            toSessionID: owner.id,
+            previousMessageID: message.message_id,
+            replacementMessageID: replacementID,
+            priorOwnership: priorOwnership ?? null,
+            priorObservation,
+            priorDeliveryState: message.state,
+          },
+        })
+      )
+        return
+      message = {
+        ...message,
+        state: "pending",
+        session_id: owner.id,
+        message_id: replacementID,
+        metadata: JSON.stringify(nextOwnership),
+      }
+      target = owner
+    }
+    if (!this.validArchitect(target)) return
+    if (message.state === "admitted") return
+
+    const ownership = this.ownership(message)
+    let observation: "queued" | "consumed" | "missing" | "unowned"
+    try {
+      observation = await this.outcomeObservation(message, target.id, ownership)
+    } catch (error) {
+      this.outcomeState(
+        message,
+        [message.state],
+        message.state,
+        { kind: "native-observation-unavailable", error: errorText(error) },
+        "OUTCOME_OBSERVATION_UNAVAILABLE",
+        fence,
+      )
+      return
+    }
+    if (observation === "queued") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "admitted",
+        { kind: "native-inbox-observed", consumption: "unknown" },
+        "OUTCOME_HOST_ADMITTED",
+        fence,
+      )
+      return
+    }
+    if (observation === "consumed") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "consumed",
+        { kind: "transcript-observed" },
+        "OUTCOME_CONSUMED",
+        fence,
+      )
+      return
+    }
+    if (observation === "unowned") {
+      this.outcomeState(
+        message,
+        [message.state],
+        "unknown",
+        { kind: "native-input-identity-conflict" },
+        "OUTCOME_CONSUMPTION_UNKNOWN",
+        fence,
+      )
+      return
+    }
+
+    if (
+      !this.outcomeState(
+        message,
+        ["pending", "sending", "uncertain", "delivered"],
+        "sending",
+        { kind: "native-admission-in-progress" },
+        "OUTCOME_SEND_STARTED",
+        fence,
+      )
+    )
+      return
+    try {
+      await this.host.notify({
+        sessionID: target.id,
+        id: message.message_id,
+        text: outcomeText(message.payload),
+        resume: Boolean(message.resume),
+        ...(ownership ? { metadata: ownership } : {}),
+      })
+      this.outcomeState(
+        message,
+        ["sending"],
+        "admitted",
+        { kind: "host-admitted", consumption: "unknown", sessionID: target.id },
+        "OUTCOME_HOST_ADMITTED",
+        fence,
+      )
+    } catch (error) {
+      this.outcomeState(
+        message,
+        ["pending", "sending", "uncertain", "delivered"],
+        "uncertain",
+        { kind: "native-delivery-uncertain", error: errorText(error) },
+        "OUTCOME_DELIVERY_UNCERTAIN",
+        fence,
+      )
+    }
+  }
+
+  private async deliver(fence: number) {
+    const messages = this.store.outboxForDelivery(this.directory)
+    const groups = new Map<string, OutboxRow[]>()
+    for (const message of messages) {
+      const group = groups.get(message.plan_id) ?? []
+      group.push(message)
+      groups.set(message.plan_id, group)
+    }
+    for (const group of groups.values()) {
+      const ordered = group.toSorted((a, b) => a.version - b.version || a.sequence - b.sequence)
+      const plan = this.store.plan(ordered[0]!.plan_id)
+      if (!plan) continue
+      const ready = new Map<string, boolean>()
+      const current = new Map<string, OutboxRow>()
+      for (const [index, message] of ordered.entries()) {
+        const older = JSON.parse(message.payload)
+        const replacement = ordered.slice(index + 1).findLast((candidate) => {
+          const next = JSON.parse(candidate.payload)
+          // Current outcomes include the whole accepted-artifact review set.
+          // Legacy partial notices cannot suppress a different actionable result.
+          if (older.status === "task-accepted")
+            return (
+              (Array.isArray(next.reviewableTasks) &&
+                next.reviewableTasks.some(
+                  (task: { taskID?: string; artifact?: string }) =>
+                    task.taskID === older.taskID && task.artifact === older.artifact,
+                )) ||
+              (next.status === "task-accepted" &&
+                next.taskID === older.taskID &&
+                next.artifact === older.artifact) ||
+              (["accepted", "integrated"].includes(next.status) &&
+                typeof next.artifact === "string")
+            )
+          return next.status !== "task-accepted" || Boolean(next.currentPlan)
+        })
+        if (replacement) {
+          const ok = await this.supersedeOutcome(message, replacement, plan, fence)
+          ready.set(replacement.id, (ready.get(replacement.id) ?? true) && ok)
+        } else current.set(message.id, message)
+      }
+      for (const message of current.values())
+        if (ready.get(message.id) !== false) await this.deliverCurrent(message, fence)
     }
   }
 }

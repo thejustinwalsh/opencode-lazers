@@ -51,6 +51,40 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
+test("legacy delivered outbox schema migrates across an actual close and reopen with unknown consumption", () => {
+  const f = fixture("legacy-outbox")
+  const plan = f.store.submit(f.input, "owner")
+  f.store.atomic((db) => {
+    db.query(
+      "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,'delivered',1)",
+    ).run(
+      "legacy-outbox-id",
+      plan.planID,
+      "owner",
+      "msg_legacy_outbox",
+      JSON.stringify({ planID: plan.planID, status: "accepted" }),
+    )
+    db.exec(
+      "ALTER TABLE runner_outbox DROP COLUMN metadata; ALTER TABLE runner_outbox DROP COLUMN receipt",
+    )
+  })
+  f.repository.close()
+  const repository = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(repository)
+  const reopened = new RunnerStore(repository)
+  const row = reopened.atomic((db) =>
+    db
+      .query<{ id: string; message_id: string; state: string; receipt: string }, [string]>(
+        "SELECT id,message_id,state,receipt FROM runner_outbox WHERE id=?",
+      )
+      .get("legacy-outbox-id"),
+  )!
+  expect(row.id).toBe("legacy-outbox-id")
+  expect(row.message_id).toBe("msg_legacy_outbox")
+  expect(row.state).toBe("admitted")
+  expect(JSON.parse(row.receipt)).toEqual({ kind: "legacy-host-admitted", consumption: "unknown" })
+})
+
 function revisions(store: RunnerStore, planID: string) {
   return store.atomic((db) =>
     db
