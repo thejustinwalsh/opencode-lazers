@@ -45,3 +45,11 @@ and confirms that reading does not change either stored record.
 files, no lint problems in 109 files, no type errors in 104 files, and 143 tests
 with 1,190 expectations. The earlier failed runtime attempts remain recorded;
 these checks do not replace runtime re-verification or claim Desktop UI coverage.
+
+## Assigned-baseline re-verification
+
+On baseline `5b41706d4d0fc03c05d35106c36bd96a8fe78ce5`, the focused command passed
+53 tests with 638 expectations, `bun test` passed 143 tests with 1,190
+expectations, and `bun run verify` passed formatting (196 files), lint (109
+files), and typechecking (104 files). These checks cover the combined artifact;
+they are not a live Desktop session or a model experiment.
