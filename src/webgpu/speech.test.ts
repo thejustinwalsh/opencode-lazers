@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import type { SessionMessageInfo } from "@opencode/client"
 import {
   DEFAULT_VOICE,
+  latestCompletedResponse,
   latestResponse,
   speechInstruction,
   speechSegments,
@@ -92,6 +93,44 @@ test("active, failed, interrupted and tool-only turns never fall back to older a
   ])
     expect(latestResponse([...previous, ...fixture(...current)])).toBe("")
   expect(latestResponse(fixture(answer))).toBe("")
+})
+
+test("manual replay retains the latest successful final while newer work is active or failed", () => {
+  const completed = { ...answer }
+  expect(
+    latestCompletedResponse(
+      fixture(
+        { type: "user", text: "Earlier question" },
+        completed,
+        idle,
+        { type: "user", text: "New work" },
+        { ...answer, time: { created: 5 }, content: [{ type: "text", text: "Still working" }] },
+      ),
+    ),
+  ).toBe("Visible answer.")
+  expect(
+    latestCompletedResponse(
+      fixture(
+        completed,
+        idle,
+        { ...answer, finish: "error", error: { message: "Failed" } },
+        { ...idle, outcome: "failed" },
+      ),
+    ),
+  ).toBe("Visible answer.")
+  expect(
+    latestCompletedResponse(
+      fixture(
+        completed,
+        idle,
+        { ...answer, content: [{ type: "text", text: "```ts\nprivate()\n```" }] },
+        idle,
+      ),
+    ),
+  ).toBe("Visible answer.")
+  expect(
+    latestCompletedResponse(fixture({ ...answer, content: [{ type: "text", text: "Not done" }] })),
+  ).toBe("")
 })
 
 test("speech cleans Markdown without reading fenced code, comments, image paths or link destinations", () => {
