@@ -23,7 +23,7 @@ export function taskInstructions(detail: TaskDetail): string {
     return `${name}: ${description}`
   })
   return (
-    `# Task ${task.id}, revision ${task.revision}\n\n${proposal.objective}` +
+    `# Task ${task.id} (${detail.reference}), revision ${task.revision}\n\n${proposal.objective}` +
     (detail.disposition
       ? `\n\n## Disposition\n${detail.disposition.disposition}: ${detail.disposition.reason}\nEvidence: ${detail.disposition.evidence.map((item) => item.reference).join("; ")}`
       : "") +

@@ -15,11 +15,17 @@ const Cursor = z.strictObject({
   before: z.int().positive(),
 })
 
-function summarize(task: TaskSpec, search: string, scopePath: string | undefined): TaskSummary {
+function summarize(
+  task: TaskSpec,
+  reference: string,
+  search: string,
+  scopePath: string | undefined,
+): TaskSummary {
   const matches: TaskSummary["matches"] = []
   const needle = search.toLowerCase()
   const fields = {
     id: task.id,
+    reference,
     objective: task.proposal.objective,
     scope: task.proposal.writeScope.join("\n"),
     acceptance: task.proposal.acceptance.map((item) => item.assertion).join("\n"),
@@ -42,6 +48,7 @@ function summarize(task: TaskSpec, search: string, scopePath: string | undefined
     })
   return {
     taskID: task.id,
+    reference,
     revision: task.revision,
     status: task.status,
     reason: null,
@@ -133,7 +140,14 @@ export class AssociationTaskReads extends TaskReads {
           "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=t.project_directory AND d.task_id=t.id)",
         )
       if (query.search) {
-        clauses.push("instr(lower(t.body),lower(?))>0")
+        clauses.push(`(
+          instr(lower(t.body),lower(?))>0 OR EXISTS (
+            SELECT 1 FROM task_references r
+            WHERE r.project_directory=t.project_directory AND r.task_id=t.id
+              AND instr(lower(r.reference),lower(?))>0
+          )
+        )`)
+        values.push(query.search)
         values.push(query.search)
       }
       if (query.scopePath) {
@@ -150,8 +164,10 @@ export class AssociationTaskReads extends TaskReads {
         .get(...values)!.count
       const before = cursor ? " AND t.rowid<?" : ""
       const rows = db
-        .query<{ body: string; position: number }, (string | number)[]>(
-          `SELECT t.body,t.rowid AS position FROM tasks t WHERE ${where}${before}
+        .query<{ body: string; position: number; reference: string }, (string | number)[]>(
+          `SELECT t.body,t.rowid AS position,r.reference FROM tasks t
+           JOIN task_references r ON r.project_directory=t.project_directory AND r.task_id=t.id
+           WHERE ${where}${before}
            ORDER BY t.rowid DESC LIMIT ?`,
         )
         .all(...values, ...(cursor ? [cursor.before] : []), query.limit + 1)
@@ -161,6 +177,7 @@ export class AssociationTaskReads extends TaskReads {
         rows: rows.map((row) => ({
           position: row.position,
           task: TaskSpecSchema.parse(JSON.parse(row.body)),
+          reference: row.reference,
         })),
       }
     })
@@ -177,11 +194,11 @@ export class AssociationTaskReads extends TaskReads {
       projectDirectory: this.repository.projectDirectory,
       snapshot: page.version,
       count: page.count,
-      tasks: visible.map(({ task }) => {
+      tasks: visible.map(({ task, reference }) => {
         const execution = this.runner.execution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
         return {
-          ...summarize(task, query.search, query.scopePath),
+          ...summarize(task, reference, query.search, query.scopePath),
           ...(disposition ? { disposition } : {}),
           status: execution?.state ?? task.status,
           reason: execution?.reason ?? disposition?.reason ?? null,
@@ -195,9 +212,11 @@ export class AssociationTaskReads extends TaskReads {
   override get(input: unknown) {
     const query = GetInput.parse(input)
     if (!query.sessionID) return super.get(input)
+    const taskID = this.repository.resolveTaskID(query.taskID)
+    if (!taskID) return GetOutput.parse({ status: "not_found" })
     const linked = this.repository.atomic((db) =>
       sessionAssociations(db, this.repository.projectDirectory, query.sessionID!).taskIDs.has(
-        query.taskID,
+        taskID,
       ),
     )
     if (!linked) return GetOutput.parse({ status: "not_found" })
