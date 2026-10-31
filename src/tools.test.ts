@@ -9,9 +9,43 @@ import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
 import { nativeTools } from "../test/retry-process.ts"
 import { TaskRepository } from "./storage.ts"
+import { GetInstructionsOutput } from "./tasks/contract.ts"
 import { registerTaskTools } from "./tools.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
+type CodeModeResult = {
+  output?: unknown
+  content?:
+    | string
+    | ReadonlyArray<{ type: "text"; text: string } | { type: "file"; uri: string; mime: string }>
+}
+
+// Pinned OpenCode 2.2.5 resultValue: output wins when defined; otherwise join
+// text content and return null for empty content.
+function resultValue(result: CodeModeResult) {
+  if (result.output !== undefined) return result.output
+  const content =
+    typeof result.content === "string"
+      ? result.content
+      : (result.content ?? []).flatMap((item) => (item.type === "text" ? [item.text] : [])).join("")
+  return content.length ? content : null
+}
+
+test("pinned Code Mode resultValue prefers defined output and joins text only as fallback", () => {
+  expect(resultValue({ output: { typed: true }, content: "ignored text" })).toEqual({
+    typed: true,
+  })
+  expect(
+    resultValue({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+  ).toBe("firstsecond")
+  expect(resultValue({ content: [] })).toBeNull()
+})
+
 const context = {
   sessionID: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("SessionID")))("session"),
   agent: Agent.ID.make("architect"),
@@ -122,6 +156,7 @@ test("retained tool callbacks survive disposal of the registration connection", 
   expect(receipt.status).toBe("submitted")
   for (const [name, input] of [
     ["lazers_get_task", { taskID: receipt.taskID }],
+    ["lazers_get_task_instructions", { taskID: receipt.taskID }],
     ["lazers_list_tasks", { limit: 5 }],
     ["lazers_query_tasks", {}],
   ] as const) {
@@ -162,6 +197,7 @@ test("task reads expose structured Code Mode outputs and require their own permi
   for (const [name, input] of [
     ["lazers_query_tasks", {}],
     ["lazers_get_task", { taskID: crypto.randomUUID() }],
+    ["lazers_get_task_instructions", { taskID: crypto.randomUUID() }],
     ["lazers_list_tasks", { limit: 2 }],
   ] as const) {
     await expect(
@@ -170,7 +206,7 @@ test("task reads expose structured Code Mode outputs and require their own permi
   }
 })
 
-test("implementors fetch prose instructions through the existing task tool with typed data intact", async () => {
+test("registered Code Mode implementor fetch yields readable instructions before typed data", async () => {
   const { tools } = await setup()
   const proposal = {
     ...keyedProposal(),
@@ -181,22 +217,61 @@ test("implementors fetch prose instructions through the existing task tool with 
     tools.get("lazers_submit_task")!.execute(proposal, context),
   )
   const { taskID } = JSON.parse(String(receipt.content))
+  const instructionsTool = tools.get("lazers_get_task_instructions")!
   const result = await Effect.runPromise(
+    tools
+      .get("lazers_get_task_instructions")!
+      .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
+  )
+  expect(instructionsTool.options).toMatchObject({ codemode: true, pinned: true })
+  expect(instructionsTool.output).toBeDefined()
+  const value = resultValue(result)
+  if (typeof value !== "string") throw new Error("Readable Code Mode output must be a string")
+  expect(typeof value).toBe("string")
+  expect(GetInstructionsOutput.parse(value)).toBe(value)
+  const prose = value
+  expect(prose).toContain(`# Task ${taskID}`)
+  expect(prose).toContain("## Done when")
+  expect(prose).toContain("## Verification")
+  expect(prose.indexOf("## Done when")).toBeLessThan(prose.indexOf("## Constraints"))
+  expect(prose).toContain("## Implementation guidance (advisory)")
+  expect(prose).toContain(proposal.guidance)
+  expect(prose).toContain("## Write scope")
+  expect(prose).toContain("## Exclusions")
+  expect(prose).toContain("## Context references")
+  expect(prose).not.toContain('"proposal"')
+  expect(result.output).toBe(prose)
+  expect(resultValue({ ...result, content: "This fallback must not override output" })).toBe(
+    result.output,
+  )
+
+  const structured = await Effect.runPromise(
     tools
       .get("lazers_get_task")!
       .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
   )
-  expect(result.content).toContain(`# Task ${taskID}`)
-  expect(result.content).toContain("## Done when")
-  expect(result.content).toContain("## Verification")
-  const prose = String(result.content)
-  expect(prose.indexOf("## Done when")).toBeLessThan(prose.indexOf("## Constraints"))
-  expect(prose).toContain("## Implementation guidance (advisory)")
-  expect(prose).toContain(proposal.guidance)
-  expect(result.content).not.toContain('"proposal"')
-  expect(result.output).toHaveProperty("task.id", taskID)
-  expect(result.output).toHaveProperty("task.proposal.objective", validProposal().objective)
-  expect(result.output).toHaveProperty("task.proposal.guidance", proposal.guidance)
+  const structuredValue = resultValue(structured)
+  expect(structuredValue).toHaveProperty("task.id", taskID)
+  expect(structuredValue).toHaveProperty("task.proposal.objective", validProposal().objective)
+  expect(structuredValue).toHaveProperty("task.proposal.guidance", proposal.guidance)
+})
+
+test("readable task fetch handles missing and unavailable revisions", async () => {
+  const { tools } = await setup()
+  const receipt = await Effect.runPromise(
+    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+  )
+  const { taskID } = JSON.parse(String(receipt.content))
+  const instructions = tools.get("lazers_get_task_instructions")!
+
+  const missing = await Effect.runPromise(
+    instructions.execute({ taskID: crypto.randomUUID() }, context),
+  )
+  const unavailable = await Effect.runPromise(
+    instructions.execute({ taskID, revision: 2 }, context),
+  )
+  expect(resultValue(missing)).toBe("Task not_found.")
+  expect(resultValue(unavailable)).toBe("Task revision_unavailable.")
 })
 
 test("native schema/runtime require keys, validate before database access, and leave rejected keys reusable", async () => {
@@ -249,6 +324,7 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
     ["lazers_submit_task", { ...keyedProposal(), objective: "Changed content" }],
     ["lazers_submit_task", validProposal()],
     ["lazers_get_task", { taskID: receipt.taskID }],
+    ["lazers_get_task_instructions", { taskID: receipt.taskID }],
     ["lazers_list_tasks", { limit: 20 }],
     ["lazers_query_tasks", {}],
   ] as const
@@ -298,6 +374,12 @@ test("native retries and conflicts skip inaccessible Git; canonical project scop
     expect(await isolated.call("lazers_get_task", { taskID: receipt.taskID })).toEqual({
       status: "not_found",
     })
+    const isolatedInstructions = await Effect.runPromise(
+      isolated.tools
+        .get("lazers_get_task_instructions")!
+        .execute({ taskID: receipt.taskID }, isolated.context),
+    )
+    expect(resultValue(isolatedInstructions)).toBe("Task not_found.")
     expect((await isolated.call("lazers_list_tasks", { limit: 20 })).tasks).toEqual([])
     const independent = await isolated.call("lazers_submit_task", {
       ...keyedProposal(),

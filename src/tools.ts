@@ -5,7 +5,13 @@ import { Tool } from "@opencode/schema/tool"
 import { TaskRepository } from "./storage.ts"
 import { startingRevision, submitTask } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
-import { GetInput, GetOutput, QueryInput, QueryOutput } from "./tasks/contract.ts"
+import {
+  GetInput,
+  GetInstructionsOutput,
+  GetOutput,
+  QueryInput,
+  QueryOutput,
+} from "./tasks/contract.ts"
 import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
 
@@ -100,7 +106,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_get_task",
       description:
-        "Retrieve a LAZERS task by UUID. Implementors receive readable instructions; typed structured output remains available.",
+        "Retrieve a LAZERS task by UUID as structured task and execution data. Implementors should use lazers_get_task_instructions for readable instructions.",
       input: GetInput,
       output: GetOutput,
       options: { codemode: true, pinned: true, permission: "lazers_get_task" },
@@ -118,6 +124,38 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
                 () => withRepository((connection) => new TaskReads(connection).get(input)),
                 true,
                 context.agent === "lazers-implementor" ? taskInstructions : JSON.stringify,
+              ),
+            ),
+          ),
+    })
+    editor.add({
+      name: "lazers_get_task_instructions",
+      description:
+        "Retrieve readable implementation instructions as a string, including the goal, acceptance, boundaries, advisory guidance, verification and sources. Use lazers_get_task when structured task and execution fields are needed.",
+      input: GetInput,
+      output: GetInstructionsOutput,
+      options: {
+        codemode: true,
+        pinned: true,
+        permission: "lazers_get_task_instructions",
+      },
+      execute: (input, context) =>
+        ctx.permission
+          .assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            action: "lazers_get_task_instructions",
+            resources: ["*"],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              result(
+                () =>
+                  taskInstructions(
+                    withRepository((connection) => new TaskReads(connection).get(input)),
+                  ),
+                true,
+                (instructions) => instructions,
               ),
             ),
           ),

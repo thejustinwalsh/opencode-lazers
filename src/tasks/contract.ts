@@ -17,6 +17,7 @@ export const GetInput = z.strictObject({
   revision: z.int().positive().optional(),
   sessionID: z.string().min(1).max(200).optional(),
 })
+export const GetInstructionsOutput = z.string()
 export const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   revision: z.literal(1),

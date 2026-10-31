@@ -1,6 +1,6 @@
 import type { TaskDetail } from "./contract.ts"
 
-/** Human-readable task instructions; the tool's output retains the typed record. */
+/** Human-readable task instructions for the implementor's readable fetch path. */
 export function taskInstructions(detail: TaskDetail): string {
   if (detail.status !== "found") return `Task ${detail.status}.`
   const { task } = detail,

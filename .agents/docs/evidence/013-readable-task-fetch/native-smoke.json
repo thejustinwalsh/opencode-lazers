@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-31",
+  "surface": "OpenCode native Code Mode tools",
+  "implementorSession": {
+    "provenance": "Direct Code Mode calls in the implementor session",
+    "spawnedWorkers": false,
+    "readableFetch": {
+      "tool": "lazers_get_task_instructions",
+      "taskID": "8a2c9ed1-ff42-427f-9fb2-8583b1e81d97",
+      "valueType": "string",
+      "requiredSectionsPresent": ["Done when", "Implementation guidance (advisory)", "Verification"]
+    },
+    "typedQuery": {
+      "tool": "lazers_query_tasks",
+      "projectDirectoryType": "string",
+      "snapshotType": "number",
+      "matchingTaskStatus": "running"
+    }
+  },
+  "architectObservation": {
+    "provenance": "Architect live-tool observation relayed by the user",
+    "spawnedWorkers": false,
+    "readableFetch": {
+      "tool": "lazers_get_task_instructions",
+      "valueType": "string",
+      "sectionsPresent": [
+        "Task",
+        "Done when",
+        "advisory guidance",
+        "Verification",
+        "Context references"
+      ]
+    },
+    "structuredGet": {
+      "tool": "lazers_get_task",
+      "fieldsAvailable": ["task", "execution"]
+    },
+    "typedQuery": {
+      "tool": "lazers_query_tasks",
+      "fieldsAvailable": [
+        "projectDirectory",
+        "snapshot",
+        "count",
+        "tasks",
+        "nextCursor",
+        "serverTime"
+      ]
+    },
+    "hostReload": "not attempted; final native review belongs to Architect"
+  }
+}

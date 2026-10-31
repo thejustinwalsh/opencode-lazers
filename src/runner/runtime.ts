@@ -662,7 +662,11 @@ export class TaskRuntime {
       )
     ) {
       if (!policy.packet) {
-        policy.packet = { recipe: "task-tool/1", taskID: attempt.task_id, tool: "lazers_get_task" }
+        policy.packet = {
+          recipe: "task-tool/1",
+          taskID: attempt.task_id,
+          tool: "lazers_get_task_instructions",
+        }
         this.store.fenced(this.owner, fence, (db) => {
           db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
             JSON.stringify(policy),
@@ -692,14 +696,14 @@ export class TaskRuntime {
           id: attempt.message_id,
           directory: attempt.workspace,
           skills: JSON.parse(policy.context).skills,
-          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch revision 1 with lazers_get_task before editing. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.`,
+          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lazers_get_task_instructions before editing. Use lazers_get_task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.`,
         })
         this.receipt(
           effect,
           {
             messageID: attempt.message_id,
             taskID: attempt.task_id,
-            instructions: "prose; lazers_get_task",
+            instructions: "readable; lazers_get_task_instructions",
             skills: JSON.parse(policy.context).skills.map((skill: { id: string }) => skill.id),
           },
           fence,

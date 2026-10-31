@@ -129,7 +129,7 @@ function fixture(
     },
     prompt: async (input) => {
       events.push(`prompt:${input.id}`)
-      expect(input.text).toContain("lazers_get_task")
+      expect(input.text).toContain("lazers_get_task_instructions")
       expect(input.text).not.toContain('"specification"')
       expect(input.text.length).toBeLessThan(1200)
       const session = sessions.get(input.sessionID)!
@@ -228,6 +228,11 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   ).toBe(true)
   const workers = f.store.attempts(plan.id)
   expect(workers[1]!.base_commit).toBe(workers[0]!.artifact!)
+  expect(JSON.parse(workers[0]!.policy).packet).toEqual({
+    recipe: "task-tool/1",
+    taskID: workers[0]!.task_id,
+    tool: "lazers_get_task_instructions",
+  })
   await drive(f.runtime)
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
 })
