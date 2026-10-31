@@ -23,6 +23,13 @@ export type ModelPolicy = z.infer<typeof ModelPolicy>
 export const PlanInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),
+    title: z
+      .string()
+      .max(120)
+      .optional()
+      .describe(
+        "Optional concise Architect-authored label; preserve verbatim and do not derive from objective.",
+      ),
     objective: z.string().trim().min(1).max(8000),
     baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
     workspaceMode: z.enum(["shared", "isolated"]).default("shared"),
