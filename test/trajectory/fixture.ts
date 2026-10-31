@@ -152,6 +152,8 @@ export function makeFixture() {
   const store = new RunnerStore(repository)
   const baseCommit = "a".repeat(40)
   const proposal = validProposal()
+  proposal.guidance =
+    "Reuse src/runner/store.ts for recorded attempts; api_key=fake-guidance-secret"
   proposal.objective = "Inspect a worker attempt without disclosing private data"
   proposal.acceptance = [
     {

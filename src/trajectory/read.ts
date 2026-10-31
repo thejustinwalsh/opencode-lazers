@@ -111,6 +111,7 @@ function safeSpec(task: TaskSpec, stats: PrivacyStats) {
   const proposal = task.proposal
   return {
     objective: safeText(proposal.objective, stats),
+    ...(proposal.guidance ? { guidance: safeText(proposal.guidance, stats) } : {}),
     exclusions: proposal.exclusions.map((value) => safeText(value, stats)),
     constraints: proposal.constraints.map((value) => safeText(value, stats)),
     assumptions: proposal.assumptions.map((value) => safeText(value, stats)),

@@ -1,0 +1,267 @@
+{
+  "observedAt": "2026-10-31T13:39:14.896Z",
+  "source": "Visible Architect tool results from native Desktop session",
+  "sessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+  "status": "performed",
+  "legacyAttempt": {
+    "id": "3ceef8dc-c679-4eb7-b1fe-04cc0951f672",
+    "status": "rejected",
+    "reason": "Immutable task projectID global differs from current native project ID; isolation preserved"
+  },
+  "results": [
+    {
+      "input": {
+        "attemptID": "e3d41c7b-55fa-43ee-b198-3483230dd92f",
+        "limit": 1
+      },
+      "taskID": "71e53745-0ce8-4798-b453-17f260d03aa0",
+      "focusedAttemptID": "e3d41c7b-55fa-43ee-b198-3483230dd92f",
+      "attempts": [
+        {
+          "id": "e3d41c7b-55fa-43ee-b198-3483230dd92f",
+          "state": "accepted",
+          "admittedModel": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "observedCurrentModel": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          }
+        }
+      ],
+      "effort": {
+        "accepted": true,
+        "ongoing": false,
+        "firstAttemptAt": 1793450647534,
+        "acceptedAt": 1793453495693,
+        "wallClockSpanMs": 2848159,
+        "wallClockBasis": "earliest runner attempt start to the task ACCEPT transition; not model-active time",
+        "tokenUsage": {
+          "measuredSubtotal": {
+            "uncachedInput": 394855,
+            "cacheRead": 15413120,
+            "cacheWrite": 0,
+            "output": 42532,
+            "reasoning": 79323
+          },
+          "total": {
+            "uncachedInput": 394855,
+            "cacheRead": 15413120,
+            "cacheWrite": 0,
+            "output": 42532,
+            "reasoning": 79323
+          },
+          "unit": "tokens",
+          "components": {
+            "uncachedInput": "OpenCode input; cache is reported separately",
+            "cacheRead": "OpenCode cache-read tokens",
+            "cacheWrite": "OpenCode cache-write tokens",
+            "output": "OpenCode output; reasoning is reported separately",
+            "reasoning": "OpenCode reasoning tokens"
+          },
+          "source": "One cumulative OpenCode session snapshot per unique worker session; never sum message or page snapshots",
+          "knownSessions": 1,
+          "totalSessions": 1,
+          "unknownAttempts": [],
+          "legacyAttemptScalarsNotAdded": [
+            {
+              "attemptID": "e3d41c7b-55fa-43ee-b198-3483230dd92f",
+              "value": 15929830,
+              "source": "runner_attempt.token_count scalar; not added to categorized session totals",
+              "status": "legacy-aggregate"
+            }
+          ]
+        },
+        "toolCalls": {
+          "count": 187,
+          "source": "Sum of runner_attempt.tool_count once per attempt; transcript tool events are not added"
+        },
+        "providerRetries": {
+          "count": 0,
+          "source": "Sum of runner_attempt.retry_count once per attempt"
+        },
+        "recordedCost": {
+          "workerAttemptSubtotalUsd": 0,
+          "workerScope": "LAZERS attempt rows only",
+          "provenance": "Legacy runner scalar; source model, price date, and billing basis are not persisted",
+          "unknownContributions": [
+            "e3d41c7b-55fa-43ee-b198-3483230dd92f"
+          ],
+          "apiEquivalentTotalUsd": null,
+          "apiEquivalentStatus": "unknown; recorded subscription/session zero is not an API-equivalent estimate"
+        }
+      },
+      "coverage": {
+        "sessionRead": "OpenCode session.get followed by session.context",
+        "transcript": "Only messages returned by session.context; plugin context does not expose client.message.list",
+        "availableSessionContexts": 1,
+        "unavailableSessionContexts": 0,
+        "fullSessionHistory": "not guaranteed; use explicit warnings and do not infer omitted history",
+        "compacted": true,
+        "ongoing": false,
+        "attemptsWithoutRecordedSessions": 0
+      },
+      "checks": [
+        {
+          "planID": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+          "checks": [
+            {
+              "id": "focused",
+              "result": "passed"
+            },
+            {
+              "id": "all",
+              "result": "passed"
+            },
+            {
+              "id": "quality",
+              "result": "passed"
+            },
+            {
+              "id": "focused",
+              "result": "passed"
+            },
+            {
+              "id": "all",
+              "result": "passed"
+            },
+            {
+              "id": "quality",
+              "result": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "input": {
+        "taskID": "71e53745-0ce8-4798-b453-17f260d03aa0",
+        "limit": 1
+      },
+      "taskID": "71e53745-0ce8-4798-b453-17f260d03aa0",
+      "focusedAttemptID": null,
+      "attempts": [
+        {
+          "id": "e3d41c7b-55fa-43ee-b198-3483230dd92f",
+          "state": "accepted",
+          "admittedModel": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          },
+          "observedCurrentModel": {
+            "providerID": "openai",
+            "id": "gpt-6-luna",
+            "variant": "max"
+          }
+        }
+      ],
+      "effort": {
+        "accepted": true,
+        "ongoing": false,
+        "firstAttemptAt": 1793450647534,
+        "acceptedAt": 1793453495693,
+        "wallClockSpanMs": 2848159,
+        "wallClockBasis": "earliest runner attempt start to the task ACCEPT transition; not model-active time",
+        "tokenUsage": {
+          "measuredSubtotal": {
+            "uncachedInput": 394855,
+            "cacheRead": 15413120,
+            "cacheWrite": 0,
+            "output": 42532,
+            "reasoning": 79323
+          },
+          "total": {
+            "uncachedInput": 394855,
+            "cacheRead": 15413120,
+            "cacheWrite": 0,
+            "output": 42532,
+            "reasoning": 79323
+          },
+          "unit": "tokens",
+          "components": {
+            "uncachedInput": "OpenCode input; cache is reported separately",
+            "cacheRead": "OpenCode cache-read tokens",
+            "cacheWrite": "OpenCode cache-write tokens",
+            "output": "OpenCode output; reasoning is reported separately",
+            "reasoning": "OpenCode reasoning tokens"
+          },
+          "source": "One cumulative OpenCode session snapshot per unique worker session; never sum message or page snapshots",
+          "knownSessions": 1,
+          "totalSessions": 1,
+          "unknownAttempts": [],
+          "legacyAttemptScalarsNotAdded": [
+            {
+              "attemptID": "e3d41c7b-55fa-43ee-b198-3483230dd92f",
+              "value": 15929830,
+              "source": "runner_attempt.token_count scalar; not added to categorized session totals",
+              "status": "legacy-aggregate"
+            }
+          ]
+        },
+        "toolCalls": {
+          "count": 187,
+          "source": "Sum of runner_attempt.tool_count once per attempt; transcript tool events are not added"
+        },
+        "providerRetries": {
+          "count": 0,
+          "source": "Sum of runner_attempt.retry_count once per attempt"
+        },
+        "recordedCost": {
+          "workerAttemptSubtotalUsd": 0,
+          "workerScope": "LAZERS attempt rows only",
+          "provenance": "Legacy runner scalar; source model, price date, and billing basis are not persisted",
+          "unknownContributions": [
+            "e3d41c7b-55fa-43ee-b198-3483230dd92f"
+          ],
+          "apiEquivalentTotalUsd": null,
+          "apiEquivalentStatus": "unknown; recorded subscription/session zero is not an API-equivalent estimate"
+        }
+      },
+      "coverage": {
+        "sessionRead": "OpenCode session.get followed by session.context",
+        "transcript": "Only messages returned by session.context; plugin context does not expose client.message.list",
+        "availableSessionContexts": 1,
+        "unavailableSessionContexts": 0,
+        "fullSessionHistory": "not guaranteed; use explicit warnings and do not infer omitted history",
+        "compacted": true,
+        "ongoing": false,
+        "attemptsWithoutRecordedSessions": 0
+      },
+      "checks": [
+        {
+          "planID": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+          "checks": [
+            {
+              "id": "focused",
+              "result": "passed"
+            },
+            {
+              "id": "all",
+              "result": "passed"
+            },
+            {
+              "id": "quality",
+              "result": "passed"
+            },
+            {
+              "id": "focused",
+              "result": "passed"
+            },
+            {
+              "id": "all",
+              "result": "passed"
+            },
+            {
+              "id": "quality",
+              "result": "passed"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -58,13 +58,14 @@ const sensitiveKey = (key: string) => {
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/gi,
   /\b(?:github_pat|gh[pousr]|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/gi,
+  /\boc_sk_[A-Za-z0-9_-]{12,}\b/gi,
   /\b(?:sk|pk|rk)[-_](?:proj[-_])?[A-Za-z0-9_-]{12,}\b/gi,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
   /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\b(?:https?|ftp|file):\/\/[^\s<>"')\]}]+/gi,
   /\bwww\.[^\s<>"')\]}]+/gi,
-  /(?<![\w.-])((?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|password|passwd|secret|client[_-]?secret|private[_-]?key)\s*[=:]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
+  /(?<![\w.-])((?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|auth(?:orization)?|password|passwd|secret|client[_-]?secret|private[_-]?key)["']?\s*[=:]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
 ]
 
 /** Redact first; truncate only the already-redacted visible string. */

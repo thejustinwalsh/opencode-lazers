@@ -74,3 +74,24 @@ claimed. The limitation and the required next action are recorded in
 [`native-report.json`](../evidence/012-worker-inspection/native-report.json).
 This evidence remains unresolved until an Architect-authorized production read
 is completed.
+
+## Driver review and native observation
+
+The Desktop Architect subsequently read current attempt
+`e3d41c7b-55fa-43ee-b198-3483230dd92f` and its task through the registered tool.
+Both succeeded; the admitted and observed worker model is OpenAI GPT-6 Luna Max.
+Returned coverage explicitly reports compaction and does not promise complete
+history. See [native report](../evidence/012-worker-inspection/native-report-current.json).
+
+The older retained attempt remains rejected: its immutable task project ID is
+`global`, while the current native project has a Git-backed ID. Project isolation
+was preserved. This limits historical coverage; it is not a successful read of
+that legacy attempt.
+
+Driver review exposed missing advisory guidance in the task projection and
+credential patterns missed in visible prose (OpenCode keys and embedded quoted
+JSON). Regressions failed before the fixes and pass afterward. Current focused
+suite: 15 tests / 108 assertions. Full suite: 135 tests / 992 assertions.
+Formatting, lint and typecheck pass. Native observations above precede these
+small review fixes; their regressions establish the corrected projection and
+redaction behavior.
