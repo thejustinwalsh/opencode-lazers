@@ -31,12 +31,12 @@ export function git(directory: string, args: string[], input?: string): string {
   return result.stdout.trimEnd()
 }
 
-export function changedPaths(directory: string): string[] {
+export function changedPaths(directory: string, base = "HEAD"): string[] {
   return [
     ...new Set(
       [
-        ...git(directory, ["diff", "--name-only", "--no-renames", "-z", "HEAD"]).split("\0"),
-        ...git(directory, ["diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD"]).split(
+        ...git(directory, ["diff", "--name-only", "--no-renames", "-z", base]).split("\0"),
+        ...git(directory, ["diff", "--cached", "--name-only", "--no-renames", "-z", base]).split(
           "\0",
         ),
         ...git(directory, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0"),
@@ -84,11 +84,14 @@ export function commitArtifact(
   base: string,
   scope: string[],
 ): { commit: string; paths: string[]; identity: string } {
-  const paths = changedPaths(directory)
+  const paths = changedPaths(directory, base)
   const violations = scopeViolations(paths, scope)
   if (violations.length)
     throw new Error(`Out-of-scope changes: ${violations.slice(0, 20).join(", ")}`)
   const identity = contentIdentity(directory)
+  const head = git(directory, ["rev-parse", "HEAD"])
+  git(directory, ["merge-base", "--is-ancestor", base, head])
+  if (changedPaths(directory).length === 0) return { commit: head, paths, identity }
   git(directory, ["add", "--all"])
   const tree = git(directory, ["write-tree"])
   const commit = git(
@@ -101,7 +104,7 @@ export function commitArtifact(
       "commit-tree",
       tree,
       "-p",
-      base,
+      head,
     ],
     "LAZERS verified candidate\n",
   )
