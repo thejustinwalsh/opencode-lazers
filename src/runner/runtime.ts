@@ -4,6 +4,7 @@ import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
 import {
   artifactExists,
+  ArtifactScopeViolation,
   artifactUnchanged,
   combineArtifacts,
   commitArtifact,
@@ -616,7 +617,7 @@ export class TaskRuntime {
     )
   }
 
-  private hold(plan: PlanRow, reason: string) {
+  private hold(plan: PlanRow, reason: string, allowedActions = ["audit", "reconcile", "cancel"]) {
     this.store.atomic((db) => {
       const changed = db
         .query(
@@ -625,11 +626,7 @@ export class TaskRuntime {
         .run(reason, plan.id, reason).changes
       if (!changed) return
       this.store.record(plan.id, null, "BLOCKED", { reason })
-      this.outcome(
-        plan.id,
-        { status: "blocked", reason, allowedActions: ["audit", "reconcile", "cancel"] },
-        true,
-      )
+      this.outcome(plan.id, { status: "blocked", reason, allowedActions }, true)
     })
     return {
       status: "blocked",
@@ -795,6 +792,17 @@ export class TaskRuntime {
             )
           if (plan!.state === "blocked" && attempt.state === "preparing" && !promptCompleted)
             return this.cancelReservedAttempt(plan!, attempt, fence)
+          const scopeWait = this.store.latestTransition<{ attemptID: string; reason: string }>(
+            plan!.id,
+            attempt.task_id,
+            "SCOPE_DECISION_REQUIRED",
+          )
+          if (
+            plan!.state === "blocked" &&
+            scopeWait?.attemptID === attempt.id &&
+            scopeWait.reason === plan!.reason
+          )
+            return
           return this.advanceAttempt(this.store.plan(plan!.id)!, attempt, fence)
         }),
       )
@@ -1322,6 +1330,19 @@ export class TaskRuntime {
         attempt.workspace !== this.directory,
       )
     } catch (error) {
+      if (error instanceof ArtifactScopeViolation) {
+        this.store.fenced(this.owner, fence, () => {
+          this.store.record(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED", {
+            attemptID: attempt.id,
+            workspace: attempt.workspace,
+            baseCommit: attempt.base_commit,
+            paths: error.paths,
+            reason: error.message,
+          })
+          this.hold(plan, error.message, ["amend-scope", "audit", "reconcile", "cancel"])
+        })
+        return
+      }
       this.failAttempt(plan, attempt, errorText(error))
       return
     }

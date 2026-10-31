@@ -140,6 +140,12 @@ export function artifactUnchanged(directory: string, commit: string): boolean {
   )
 }
 
+export class ArtifactScopeViolation extends Error {
+  constructor(readonly paths: string[]) {
+    super(`Out-of-scope changes: ${paths.slice(0, 20).join(", ")}`)
+  }
+}
+
 /** Only a private runtime-created worktree may be snapshotted. Never stages origin. */
 export function commitArtifact(
   directory: string,
@@ -149,8 +155,7 @@ export function commitArtifact(
 ): { commit: string; paths: string[]; identity: string } {
   const paths = changedPaths(directory, base)
   const violations = scopeViolations(paths, scope)
-  if (violations.length)
-    throw new Error(`Out-of-scope changes: ${violations.slice(0, 20).join(", ")}`)
+  if (violations.length) throw new ArtifactScopeViolation(violations)
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
   if (changedPaths(directory).length === 0) return { commit: head, paths, identity: head }

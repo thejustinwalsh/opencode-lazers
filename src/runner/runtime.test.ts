@@ -343,6 +343,62 @@ async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
 
+test("scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it", async () => {
+  const f = fixture({ outside: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  const spec = f.repository.get(task.id)
+  await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await drive(f.runtime, 4)
+  const blocked = f.store.plan(planID)!
+  const first = f.store.attempts(planID)[0]!
+  expect(blocked.state).toBe("blocked")
+  expect(blocked.reason).toContain("escape.txt")
+  expect(first.state).toBe("verifying")
+  expect(f.store.nodes(planID)[0]!.state).toBe("verifying")
+  expect(
+    f.store.activity(planID, task.id).filter((event) => event.event === "REPAIR"),
+  ).toHaveLength(0)
+  const history = f.store.activity(planID, task.id)
+  const workspaceStatus = git(first.workspace, ["status", "--porcelain"])
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)!.version).toBe(blocked.version)
+  expect(f.store.activity(planID, task.id)).toEqual(history)
+  expect(git(first.workspace, ["status", "--porcelain"])).toBe(workspaceStatus)
+  expect(readFileSync(join(first.workspace, "escape.txt"), "utf8")).toBe("bad")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  await f.runtime.command(
+    {
+      requestID: "authorize-dependency",
+      planID,
+      expectedVersion: blocked.version,
+      action: "amend-scope",
+      taskID: task.id,
+      scopeAdditions: ["escape.txt"],
+      reason: "Reviewed dependency belongs to this implementation.",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  expect(f.store.plan(planID)!.state).toBe("blocked")
+  await f.runtime.command(
+    {
+      requestID: "review-candidate",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]!.id).toBe(first.id)
+  expect(f.store.attempts(planID)[0]!.state).toBe("accepted")
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+  expect(f.repository.get(task.id)).toEqual(spec)
+})
+
 test("scope amendments preserve the specification and recover dependency edits in the same attempt", async () => {
   const f = fixture({ outside: true, delayed: true })
   const planID = f.receipt.planID
