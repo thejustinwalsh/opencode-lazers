@@ -10,8 +10,8 @@ attempt. Fixture tests do not substitute for that host observation.
 
 - Task: `430e08d8-ce98-45db-811f-4362a45174b6`, revision 1.
 - Starting revision: `6e0fc1097b7667628949cc55daa75cf9ccf75182`.
-- Repaired source/test artifact: commit
-  `ab3604aad4d8b4d1610d3862f6ececf81873f6c5`.
+- Repaired source/test artifact (final code state): commit
+  `92c30d05690b661df16f723e13dc9cad662b53ef`.
 - Architect/source project ID from task provenance:
   `b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df`.
 - Architect/source project directory and workspace:
