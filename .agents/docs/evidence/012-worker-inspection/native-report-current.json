@@ -87,9 +87,7 @@
           "workerAttemptSubtotalUsd": 0,
           "workerScope": "LAZERS attempt rows only",
           "provenance": "Legacy runner scalar; source model, price date, and billing basis are not persisted",
-          "unknownContributions": [
-            "e3d41c7b-55fa-43ee-b198-3483230dd92f"
-          ],
+          "unknownContributions": ["e3d41c7b-55fa-43ee-b198-3483230dd92f"],
           "apiEquivalentTotalUsd": null,
           "apiEquivalentStatus": "unknown; recorded subscription/session zero is not an API-equivalent estimate"
         }
@@ -214,9 +212,7 @@
           "workerAttemptSubtotalUsd": 0,
           "workerScope": "LAZERS attempt rows only",
           "provenance": "Legacy runner scalar; source model, price date, and billing basis are not persisted",
-          "unknownContributions": [
-            "e3d41c7b-55fa-43ee-b198-3483230dd92f"
-          ],
+          "unknownContributions": ["e3d41c7b-55fa-43ee-b198-3483230dd92f"],
           "apiEquivalentTotalUsd": null,
           "apiEquivalentStatus": "unknown; recorded subscription/session zero is not an API-equivalent estimate"
         }
