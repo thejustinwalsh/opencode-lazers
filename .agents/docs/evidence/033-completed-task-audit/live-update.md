@@ -33,7 +33,7 @@ These rows establish source/tests and, where the evidence documents say so, nati
   - `efd8459f` scoped observation projection artifact `bb2c78d` and review correction `bf5a8b0` are merged as `d3030f5`; native scoped snapshot and rich trajectory reads passed. Whole-plan acceptance remains open.
   - `3af64c61` final-prose speech artifact `7dc6b4a` is on current main, but the plan remains open because its other nodes are active.
   - `c1cc0d39` Radar and `f1b1a687` Trajectory are running; `8db1b281` Radar/Trajectory assembly is queued behind both.
-- Current active attempts visible in SQLite are the outcome-wake repair `44fb4817`, isolated-context repair `430e08d8`, and Radar/Trajectory workers `c1cc0d39` and `f1b1a687`. Their node records are still running; no integration claim is available.
+- Current active attempts visible in SQLite are the outcome-wake repair `44fb4817`, isolated-context repair `430e08d8`, Radar/Trajectory workers `c1cc0d39` and `f1b1a687`, and references worker `7207e67f`. Their node records are still running; no integration claim is available.
 - Plans `1d4a866` (outcome coalescing) and `caa8c80` (isolated Repomix context reuse) are active and have running nodes.
 - Plan `b9e55d09` (progress recorder/hooks, task `01d89f85`) no longer waits for renderer acceptance; overlapping active runner/context scopes serialize its dispatch.
 - Plan `58146c54` now runs references `7207e67f`, then grouped Tasks `f09ad402`; the unrelated renderer-acceptance prerequisite was removed through versioned scheduling.
@@ -41,7 +41,7 @@ These rows establish source/tests and, where the evidence documents say so, nati
 
 The plan bodies for `b50a1a71`, `58146c54`, and `8253ff59` still contain “HOLD DRAFT” language while their durable plan state is `running`. This is obsolete authoring prose, not a dispatch gate. Durable readiness, dependencies and priority control execution. Remove it from future authoring; preserve immutable historical records.
 
-## Capabilities that remain queued
+## Active and queued features
 
 The user-requested Radar/Trajectory UI, live scoped projection, task links/references, grouped dependency presentation, progress hooks, isolated-worker context reuse, outcome wake coalescing, and Architect lifecycle renewal all remain represented by existing task IDs above. Keep these records and their relationships; do not redispatch the retired broad tasks.
 
