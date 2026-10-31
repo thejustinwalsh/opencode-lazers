@@ -2,7 +2,6 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "../runner/artifacts.ts"
 import { ProjectIndex } from "./index.ts"
@@ -64,32 +63,24 @@ test("real pinned Repomix indexing compresses source and filters ignores, secret
   expect(full.sources[0]!.text).toContain("toUpperCase")
   expect(outline.sources[0]!.text).toContain("feature")
   expect(outline.sources[0]!.text).not.toContain("toUpperCase")
-  const proposal = validProposal()
-  proposal.context = [{ reference: full.receipt!, revision: full.snapshotID }]
-  await f.index.validateReceipt(principal, proposal)
-  await expect(
-    f.index.validateReceipt({ ...principal, sessionID: "other" }, proposal),
-  ).rejects.toThrow("foreign")
-  const cached = await f.index.manifest(principal)
-  expect(cached.snapshotID).toBe(manifest.snapshotID)
+  expect(full).not.toHaveProperty("receipt")
+  expect(full.sources[0]!.revision).toBeNull()
+  writeFileSync(join(f.root, "unrelated.txt"), "Other work proceeds")
+  expect(
+    (await f.index.evidence(principal, { paths: ["src/feature.ts"] })).sources[0]!.text,
+  ).toContain("toUpperCase")
   writeFileSync(join(f.root, "src", "feature.ts"), "export const changed = true\n")
-  await expect(f.index.validateReceipt(principal, proposal)).rejects.toThrow("stale")
-  expect((await f.index.manifest(principal)).snapshotID).not.toBe(manifest.snapshotID)
+  expect(
+    (await f.index.evidence(principal, { paths: ["src/feature.ts"] })).sources[0]!.text,
+  ).toContain("changed")
 })
 
-test("cached content is reauthorized; manifest and empty results cannot authorize task submission", async () => {
+test("cached reads respect current permissions without submission receipts", async () => {
   const f = fixture()
-  const evidence = await f.index.evidence(principal, { paths: ["src/feature.ts"] })
+  await f.index.evidence(principal, { paths: ["src/feature.ts"] })
   f.denied.add("src/feature.ts")
-  expect((await f.index.manifest(principal)).files.map((file) => file.path)).not.toContain(
-    "src/feature.ts",
-  )
-  const proposal = validProposal()
-  proposal.context = [{ reference: evidence.receipt!, revision: evidence.snapshotID }]
-  await expect(f.index.validateReceipt(principal, proposal)).rejects.toThrow("stale")
-  expect((await f.index.evidence(principal, { search: "no-such-content" })).receipt).toBeNull()
-  proposal.context = []
-  await expect(f.index.validateReceipt(principal, proposal)).rejects.toThrow("focused")
+  expect((await f.index.evidence(principal, { paths: ["src/feature.ts"] })).sources).toEqual([])
+  expect((await f.index.evidence(principal, { search: "no-such-content" })).sources).toEqual([])
 })
 
 test("response bounds count the complete wrapper and require narrower evidence", async () => {

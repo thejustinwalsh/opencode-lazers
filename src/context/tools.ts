@@ -25,18 +25,15 @@ const IndexOutput = z.strictObject({
   repomix: z.literal("1.18.1"),
   totalFiles: z.int().nonnegative(),
   packedTokens: z.int().nonnegative(),
-  files: z
-    .array(z.strictObject({ path: z.string(), hash: z.string(), bytes: z.int().nonnegative() }))
-    .max(100),
+  files: z.array(z.strictObject({ path: z.string(), bytes: z.int().nonnegative() })).max(100),
 })
 const EvidenceOutput = z.strictObject({
   ...base,
-  receipt: z.string().nullable(),
   sources: z
     .array(
       z.strictObject({
         path: z.string(),
-        revision: z.string(),
+        revision: z.string().nullable(),
         startLine: z.int().positive(),
         endLine: z.int().nonnegative(),
         level: z.enum(["full", "outline", "structure"]),
@@ -51,7 +48,7 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
     editor.add({
       name: "lazers_project_index",
       description:
-        "Build/reuse the current worktree's permission-filtered Repomix index. Returns at most 100 file hashes and structural metrics, never a whole-repository pack. Filter paths when the manifest is large. Manifest alone is not source evidence.",
+        "Map the current worktree with Repomix. Returns up to 100 file paths and structural metrics. Filter paths for a focused area; no whole-repository pack is injected.",
       input: IndexInput,
       output: IndexOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_index" },
@@ -79,18 +76,18 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
           ),
     })
     editor.add({
-      name: "lazers_project_evidence",
+      name: "lazers_project_read",
       description:
-        "Retrieve focused original source, Repomix outline, or file structure from the current worktree. Filter paths/search and line range. Responses include original hashes and source lines, are capped at 16 KiB/4,000 tokens including metadata, and issue a session-bound evidence receipt for nonempty source. Put receipt in task context.reference and snapshotID in context.revision.",
+        "Read focused source, Repomix outline, or file structure from the current worktree. Filter paths/search and line range. Returns source paths and lines within 16 KiB/4,000 tokens. Investigation aid; passing tests and observed behavior establish completion.",
       input: EvidenceInput,
       output: EvidenceOutput,
-      options: { codemode: true, pinned: true, permission: "lazers_project_evidence" },
+      options: { codemode: true, pinned: true, permission: "lazers_project_read" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_project_evidence",
+            action: "lazers_project_read",
             resources: ["*"],
           })
           .pipe(

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
-import { artifactExists, commitArtifact, contentIdentity, git, runCheck } from "./artifacts.ts"
+import { artifactExists, commitArtifact, artifactUnchanged, git, runCheck } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput } from "./schema.ts"
@@ -712,7 +712,7 @@ export class TaskRuntime {
       this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
       return
     }
-    if (contentIdentity(attempt.workspace) !== artifact.identity) {
+    if (!artifactUnchanged(attempt.workspace, artifact.commit)) {
       this.failAttempt(plan, attempt, "Artifact changed after verification")
       return
     }
@@ -821,7 +821,7 @@ export class TaskRuntime {
         null,
         null,
         `graph-verify:${check.id}`,
-        { workspace, artifact, identity: contentIdentity(workspace), check, receiptPath },
+        { workspace, artifact, identity: artifact, check, receiptPath },
         fence,
       )
       try {
@@ -903,7 +903,7 @@ export class TaskRuntime {
             check.artifact === payload.artifact &&
             check.command === payload.check.command &&
             check.inputIdentity === payload.identity &&
-            contentIdentity(payload.workspace) === payload.identity
+            artifactUnchanged(payload.workspace, payload.artifact)
           ) {
             this.receipt(effect, { check, reconciled: true }, fence)
             return

@@ -1,19 +1,15 @@
 import { spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
 import {
   constants,
-  existsSync,
   lstatSync,
   openSync,
   closeSync,
-  readFileSync,
   mkdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import type { TaskProposal } from "../task.ts"
-import { fingerprint } from "../identity.ts"
 
 export function git(directory: string, args: string[], input?: string): string {
   const result = spawnSync("git", args, {
@@ -55,27 +51,15 @@ export function scopeViolations(paths: string[], scope: string[]): string[] {
   )
 }
 
-export function contentIdentity(directory: string): string {
-  const hash = createHash("sha256")
-  const paths = [
-    ...new Set(
-      [...git(directory, ["ls-files", "-z"]).split("\0"), ...changedPaths(directory)].filter(
-        Boolean,
-      ),
-    ),
-  ].sort()
-  for (const path of paths) {
-    hash.update(path).update("\0")
-    const absolute = join(directory, path)
-    if (!existsSync(absolute)) {
-      hash.update("deleted\0")
-      continue
-    }
-    const stat = lstatSync(absolute)
-    if (!stat.isFile()) throw new Error(`Unsupported artifact entry ${path}`)
-    hash.update(String(stat.mode)).update("\0").update(readFileSync(absolute)).update("\0")
-  }
-  return hash.digest("hex")
+export function artifactUnchanged(directory: string, commit: string): boolean {
+  const result = spawnSync("git", ["diff", "--quiet", commit, "--"], {
+    cwd: directory,
+    timeout: 30000,
+  })
+  return (
+    result.status === 0 &&
+    git(directory, ["ls-files", "--others", "--exclude-standard"]).length === 0
+  )
 }
 
 /** Only a private runtime-created worktree may be snapshotted. Never stages origin. */
@@ -88,10 +72,9 @@ export function commitArtifact(
   const violations = scopeViolations(paths, scope)
   if (violations.length)
     throw new Error(`Out-of-scope changes: ${violations.slice(0, 20).join(", ")}`)
-  const identity = contentIdentity(directory)
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
-  if (changedPaths(directory).length === 0) return { commit: head, paths, identity }
+  if (changedPaths(directory).length === 0) return { commit: head, paths, identity: head }
   git(directory, ["add", "--all"])
   const tree = git(directory, ["write-tree"])
   const commit = git(
@@ -108,7 +91,7 @@ export function commitArtifact(
     ],
     "LAZERS verified candidate\n",
   )
-  return { commit, paths, identity }
+  return { commit, paths, identity: commit }
 }
 
 export function artifactExists(directory: string, reference: string): boolean {
@@ -164,10 +147,9 @@ export async function runCheck(
   check: TaskProposal["verification"][number],
   receiptPath: string,
 ): Promise<CheckReceipt> {
-  const inputIdentity = contentIdentity(directory)
-  // Hash environment values; never persist credentials in verification evidence.
-  const environmentIdentity = fingerprint({
-    env: process.env,
+  const inputIdentity = artifact
+  // Record runtime metadata without persisting environment credentials.
+  const environmentIdentity = JSON.stringify({
     bun: Bun.revision,
     platform: process.platform,
   })
@@ -209,7 +191,7 @@ export async function runCheck(
       timedOut,
       stdout,
       stderr,
-      unchanged: contentIdentity(directory) === inputIdentity,
+      unchanged: artifactUnchanged(directory, artifact),
     }
     mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })
     writeFileSync(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })

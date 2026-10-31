@@ -58,7 +58,7 @@ export default Plugin.define({
         (index) => Effect.sync(() => index.close()),
       )
       yield* registerContextTools(ctx, projectIndex)
-      yield* registerTaskTools(ctx, repository, projectIndex)
+      yield* registerTaskTools(ctx, repository)
       yield* registerTaskReads(ctx, new TaskReads(repository)).pipe(Effect.orDie)
       yield* registerArchitect(ctx)
       const runtime = new TaskRuntime(

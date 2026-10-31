@@ -1,5 +1,23 @@
 # LAZERS next phase handoff
 
+## Governing correction — source hashing removed
+
+The user's latest direction supersedes historical source-hash, fingerprint and
+evidence-receipt requirements in earlier task records and research artifacts.
+Repository investigation uses ordinary source reads and focused Repomix context;
+submission must not depend on unchanged repository hashes or index receipts.
+JSON schema validation stays. Architect self-review with `lazers_verify_task`,
+including the System One gut check, stays. This is self-review, not approval from
+another model. Completion evidence is passing checks and observed app behavior.
+
+Source is now committed: baseline `b3b47fc`, worker-commit preservation `beae6c3`,
+native RPC encoding repair `b13ea0e`. The runner and context service are implemented
+in a first pass; native worker execution and full original-task acceptance remain
+unverified. Older unimplemented/untracked statements below describe earlier phases.
+Native Architect submitted additional task `75f62b3b-4cd2-4a3a-b17b-30d22c37aaad`
+with rejected source-receipt requirements; do not execute those requirements.
+Continue real worker dogfooding through Desktop with the corrected scope.
+
 ## Repomix and role alignment — 2026-10-31
 
 Read the [Repomix strategy](repomix-strategy.md) before implementing context or

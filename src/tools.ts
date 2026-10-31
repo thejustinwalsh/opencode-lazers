@@ -2,7 +2,6 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { z } from "zod"
 import { Tool } from "@opencode/schema/tool"
-import type { ProjectIndex } from "./context/index.ts"
 import { TaskRepository } from "./storage.ts"
 import { startingRevision, submitTask } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
@@ -35,11 +34,7 @@ type TaskToolContext = {
   tool: Pick<Plugin.Context["tool"], "transform">
 }
 
-export function registerTaskTools(
-  ctx: TaskToolContext,
-  repository: TaskRepository,
-  index?: ProjectIndex,
-) {
+export function registerTaskTools(ctx: TaskToolContext, repository: TaskRepository) {
   // The host may retain an admitted tool callback while a plugin reload closes
   // its setup-scoped connection. Each execution owns its connection; never
   // retry a write just because its old connection was disposed.
@@ -88,11 +83,6 @@ export function registerTaskTools(
                     connection.submissionReceipt(idempotencyKey, proposal),
                   )
                   if (previous) return { content: JSON.stringify(previous) }
-                  if (context.agent === "architect" && index)
-                    await index.validateReceipt(
-                      { sessionID: context.sessionID, agent: context.agent },
-                      proposal,
-                    )
                   const receipt = withRepository((connection) =>
                     submitTask(
                       connection,

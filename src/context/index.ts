@@ -16,16 +16,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { createHash } from "node:crypto"
 import { isAbsolute, join, relative } from "node:path"
 import { spawnSync } from "node:child_process"
 import ignore from "ignore"
 import type { Ignore } from "ignore"
-import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import type { TaskProposal } from "../task.ts"
 
-type FileRecord = { path: string; hash: string; content: string; outline: string; bytes: number }
+type FileRecord = { path: string; stamp: string; content: string; outline: string; bytes: number }
 type Snapshot = {
   version: 1
   id: string
@@ -45,7 +43,6 @@ export type Focus = {
   startLine?: number
   endLine?: number
 }
-const digest = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex")
 const maxFile = 512 * 1024
 const maxResponse = 16 * 1024
 const matchesPath = (pattern: string, path: string) =>
@@ -100,6 +97,7 @@ function readSource(root: string, path: string): string {
 }
 
 export class ProjectIndex {
+  private readonly cacheID: string
   private counter?: import("repomix").TokenCounter
   private active?: Promise<Snapshot>
   constructor(
@@ -112,9 +110,18 @@ export class ProjectIndex {
     mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 })
     repository.atomic((db) =>
       db.exec(
-        `CREATE TABLE IF NOT EXISTS context_receipts(id TEXT PRIMARY KEY,project_directory TEXT NOT NULL,workspace TEXT NOT NULL,session_id TEXT NOT NULL,snapshot_id TEXT NOT NULL,sources TEXT NOT NULL,created_at INTEGER NOT NULL);`,
+        `CREATE TABLE IF NOT EXISTS context_workspaces(workspace TEXT PRIMARY KEY,id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_cache(workspace TEXT NOT NULL,selection TEXT NOT NULL,stamp TEXT NOT NULL,file TEXT NOT NULL,PRIMARY KEY(workspace,selection));`,
       ),
     )
+    this.cacheID = repository.atomic((db) => {
+      db.query("INSERT OR IGNORE INTO context_workspaces VALUES(?,?)").run(
+        this.root,
+        crypto.randomUUID().replaceAll("-", ""),
+      )
+      return db
+        .query<{ id: string }, [string]>("SELECT id FROM context_workspaces WHERE workspace=?")
+        .get(this.root)!.id
+    })
   }
   private async tokenizer() {
     if (!this.counter) {
@@ -166,7 +173,7 @@ export class ProjectIndex {
     const started = Date.now()
     const { defaultIgnoreList } = await import("repomix")
     const ignores = defaultIgnoreList.map((pattern) => new Bun.Glob(pattern))
-    const selected: { path: string; content: string; hash: string; bytes: number }[] = []
+    const selected: { path: string; content: string; stamp: string; bytes: number }[] = []
     let visited = 0,
       total = 0
     const walk = async (path: string, inherited: { base: string; rules: Ignore }[] = []) => {
@@ -227,7 +234,13 @@ export class ProjectIndex {
           total += bytes
           if (selected.length >= 5000 || total > 32 * 1024 * 1024)
             throw new Error("Project source exceeds 5,000 files/32 MiB; narrow indexing policy")
-          selected.push({ path: name, content, hash: digest(content), bytes })
+          const stat = statSync(join(this.root, name))
+          selected.push({
+            path: name,
+            content,
+            stamp: JSON.stringify([stat.size, stat.mtimeMs, stat.ctimeMs]),
+            bytes,
+          })
         }
       } finally {
         directory.closeSync()
@@ -235,24 +248,25 @@ export class ProjectIndex {
     }
     await walk("")
     selected.sort((a, b) => a.path.localeCompare(b.path))
-    const identity = fingerprint({
-      workspace: this.root,
-      files: selected.map(({ path, hash }) => ({ path, hash })),
-      repomix: "1.18.1",
-      recipe: "outline/2",
-      ignorePolicy: "repomix-default+git+secret/1",
-    })
-    const cache = join(
-      this.cacheDirectory,
-      `${digest(this.root).slice(0, 24)}-${identity}-${fingerprint([...selection].sort()).slice(0, 16)}.json`,
+    const view = JSON.stringify([...selection].sort())
+    const stamp = JSON.stringify(selected.map(({ path, stamp }) => ({ path, stamp })))
+    const previous = this.repository.atomic((db) =>
+      db
+        .query<{ stamp: string; file: string }, [string, string]>(
+          "SELECT stamp,file FROM context_cache WHERE workspace=? AND selection=?",
+        )
+        .get(this.root, view),
     )
-    if (existsSync(cache)) {
+    if (previous?.stamp === stamp && existsSync(join(this.cacheDirectory, previous.file))) {
+      const cache = join(this.cacheDirectory, previous.file)
       if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
       const stored = JSON.parse(readFileSync(cache, "utf8")) as Snapshot
-      if (stored.id === identity && stored.version === 1 && stored.workspace === this.root)
-        return stored
+      if (stored.version === 1 && stored.workspace === this.root) return stored
       throw new Error("Invalid cached snapshot identity")
     }
+    const identity = crypto.randomUUID()
+    const filename = `${this.cacheID}-${identity}.json`
+    const cache = join(this.cacheDirectory, filename)
     const packed = await new Promise<{
       files: { path: string; content: string }[]
       denied: string[]
@@ -317,6 +331,13 @@ export class ProjectIndex {
     if (Buffer.byteLength(text) > 64 * 1024 * 1024) throw new Error("Snapshot exceeds 64 MiB")
     writeFileSync(`${cache}.tmp`, text, { mode: 0o600 })
     renameSync(`${cache}.tmp`, cache)
+    this.repository.atomic((db) =>
+      db
+        .query(
+          "INSERT INTO context_cache VALUES(?,?,?,?) ON CONFLICT(workspace,selection) DO UPDATE SET stamp=excluded.stamp,file=excluded.file",
+        )
+        .run(this.root, view, stamp, filename),
+    )
     this.evict()
     return snapshot
   }
@@ -332,7 +353,7 @@ export class ProjectIndex {
       encoding: snapshot.encoding,
       totalFiles: snapshot.files.length,
       packedTokens: snapshot.tokens,
-      files: matches.map(({ path, hash, bytes }) => ({ path, hash, bytes })),
+      files: matches.map(({ path, bytes }) => ({ path, bytes })),
       truncated: snapshot.files.length > matches.length,
     })
   }
@@ -352,7 +373,7 @@ export class ProjectIndex {
         end = Math.min(focus.endLine ?? lines.length, lines.length)
       return {
         path: f.path,
-        revision: f.hash,
+        revision: null,
         startLine: start,
         endLine: end,
         level: focus.level ?? "full",
@@ -364,59 +385,12 @@ export class ProjectIndex {
               : lines.slice(start - 1, end).join("\n"),
       }
     })
-    const id = crypto.randomUUID()
-    const response = await this.bounded({
+    return this.bounded({
       snapshotID: snapshot.id,
-      receipt: sources.some((s) => s.text) ? `lazers-evidence:${id}` : null,
       encoding: snapshot.encoding,
       sources,
       truncated: matches.length === 50,
     })
-    if (response.receipt)
-      this.repository.atomic((db) =>
-        db
-          .query("INSERT INTO context_receipts VALUES(?,?,?,?,?,?,?)")
-          .run(
-            id,
-            this.repository.projectDirectory,
-            this.root,
-            principal.sessionID,
-            snapshot.id,
-            JSON.stringify(sources.map(({ path, revision }) => ({ path, revision }))),
-            Date.now(),
-          ),
-      )
-    return response
-  }
-  async validateReceipt(principal: Principal, proposal: TaskProposal) {
-    const refs = proposal.context.filter((c) => c.reference.startsWith("lazers-evidence:"))
-    if (!refs.length)
-      throw new Error("Architect requires focused project evidence before task submission")
-    const snapshot = await this.snapshot(principal)
-    for (const ref of refs) {
-      const row = this.repository.atomic((db) =>
-        db
-          .query<{ snapshot_id: string; sources: string }, [string, string, string, string]>(
-            "SELECT snapshot_id,sources FROM context_receipts WHERE id=? AND project_directory=? AND workspace=? AND session_id=?",
-          )
-          .get(
-            ref.reference.slice("lazers-evidence:".length),
-            this.repository.projectDirectory,
-            this.root,
-            principal.sessionID,
-          ),
-      )
-      if (!row || row.snapshot_id !== snapshot.id || ref.revision !== snapshot.id)
-        throw new Error(
-          "Project evidence is stale, foreign or unavailable; refresh focused evidence",
-        )
-      const sources = JSON.parse(row.sources) as { path: string; revision: string }[]
-      if (
-        !sources.length ||
-        sources.some((s) => !snapshot.files.some((f) => f.path === s.path && f.hash === s.revision))
-      )
-        throw new Error("Evidence no longer matches permitted source")
-    }
   }
 
   async packet(
@@ -455,8 +429,12 @@ export class ProjectIndex {
         Number(/(?:test|spec)\./.test(b.path)) - Number(/(?:test|spec)\./.test(a.path)) ||
         a.path.localeCompare(b.path),
     )
-    const entries: { path: string; revision: string; level: "full" | "outline"; text: string }[] =
-      []
+    const entries: {
+      path: string
+      revision: string | null
+      level: "full" | "outline"
+      text: string
+    }[] = []
     const counter = await this.tokenizer()
     const base = {
       task: proposal,
@@ -472,7 +450,7 @@ export class ProjectIndex {
       const full = mandatory || /(?:test|spec)\./.test(file.path) || file.path.endsWith(".md")
       const entry = {
         path: file.path,
-        revision: file.hash,
+        revision: null,
         level: full ? ("full" as const) : ("outline" as const),
         text: full ? file.content : file.outline,
       }
