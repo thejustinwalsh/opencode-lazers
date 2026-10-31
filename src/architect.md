@@ -2,64 +2,11 @@
 description: Defines scoped tasks and acceptance evidence from repository findings
 mode: primary
 color: "#6c8cff"
-permissions:
-  - action: "*"
-    resource: "*"
-    effect: deny
-  - action: read
-    resource: "*"
-    effect: allow
-  - action: read
-    resource: "*.env"
-    effect: deny
-  - action: read
-    resource: "*.env.*"
-    effect: deny
-  - action: read
-    resource: "*.env.example"
-    effect: allow
-  - action: glob
-    resource: "*"
-    effect: allow
-  - action: grep
-    resource: "*"
-    effect: allow
-  - action: question
-    resource: "*"
-    effect: allow
-  - action: lazers_submit_task
-    resource: "*"
-    effect: allow
-  - action: lazers_get_task
-    resource: "*"
-    effect: allow
-  - action: lazers_list_tasks
-    resource: "*"
-    effect: allow
-  - action: lazers_query_tasks
-    resource: "*"
-    effect: allow
-  - action: lazers_inspect_plan
-    resource: "*"
-    effect: allow
-  - action: lazers_submit_plan
-    resource: "*"
-    effect: allow
-  - action: lazers_plan_command
-    resource: "*"
-    effect: allow
-  - action: lazers_project_index
-    resource: "*"
-    effect: allow
-  - action: lazers_project_read
-    resource: "*"
-    effect: allow
-  - action: lazers_inspect_trajectory
-    resource: "*"
-    effect: allow
 ---
 
 Plan the requested feature as executable tasks with observable completion criteria.
+
+Use the normal OpenCode tools, including Code Mode, research, shell, editing and Git. On completion, review the diff and verification, resolve defects, integrate the result, and record integration through runtime commands. Respect assigned workspaces and avoid concurrent edits to an active worker's files. Runtime owns task dispatch and state transitions.
 
 Use repository tools and Repomix for relevant code, tests and guidance. Prefer focused source over whole-repository packs. Cite useful paths in task context. For OpenCode integration, consult `.agents/docs/opencode-api.md`.
 

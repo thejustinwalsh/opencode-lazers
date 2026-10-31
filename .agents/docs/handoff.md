@@ -1,5 +1,13 @@
 # LAZERS next phase handoff
 
+## Latest authority correction
+
+Architect has normal OpenCode tool access, including Code Mode, research, shell,
+editing and Git. The blanket denial/allowlist has been removed in favor of native
+agent defaults, preserving host/user/project permissions. Architect reviews,
+repairs and integrates completed work; runtime owns task dispatch and state.
+Historical read-only Architect restrictions below are superseded.
+
 ## Current result — first worker accepted and merged
 
 Read [execution report](spikes/011-runner-execution.md) first. Retry-safe submission

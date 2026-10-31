@@ -2,6 +2,12 @@
 
 Checked 2026-10-31 against OpenCode 2.2.5, commit `9bbb8ce18c80f099e0e448775f59d965ead40a21`.
 
+Current authority supersedes the historical restricted slice below: Architect
+retains normal OpenCode tools, including Code Mode, research, shell, editing and
+Git, under host/user/project permissions. It reviews and integrates results;
+runtime owns task dispatch and state transitions. Web provider availability is
+still a separate native configuration concern.
+
 ## Verdict
 
 The proposed experience is feasible as one OpenCode plugin used from native Desktop. The API supplies the agent, tools, sessions, models, events, permissions, and prompt delivery primitives. LAZERS must implement task admission, dependency scheduling, acceptance, budgets, recovery, and orchestration commands. Source compatibility and the current packaged slice are validated; the complete experience is not implemented or proven in Desktop yet.
