@@ -60,7 +60,10 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
               Effect.flatMap(() =>
                 Effect.tryPromise({
                   try: async () => {
-                    if (call.agent !== "architect" && definition.name !== "lazers_inspect_plan")
+                    if (
+                      call.agent !== "architect" &&
+                      ["lazers_submit_plan", "lazers_plan_command"].includes(definition.name)
+                    )
                       throw new Error("Plan orchestration is restricted to Architect")
                     const output = await definition.run(input, call.sessionID)
                     return { content: JSON.stringify(output) }

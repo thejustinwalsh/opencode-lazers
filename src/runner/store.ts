@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
+import { scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
@@ -488,14 +489,14 @@ export class RunnerStore {
           const aa = this.repository.get(a.id)!,
             bb = this.repository.get(b.id)!
           const exact = fingerprint(aa.proposal) === fingerprint(bb.proposal)
-          const overlap = aa.proposal.writeScope.filter((p) => bb.proposal.writeScope.includes(p))
-          if (exact || overlap.length)
+          const overlap = scopePatternsConflict(aa.proposal.writeScope, bb.proposal.writeScope)
+          if (exact || overlap)
             add(
               exact ? "exact-content" : "scope-overlap",
               [a.id, b.id],
               exact
                 ? "Validated proposal fingerprints match"
-                : `Shared scope entries: ${overlap.slice(0, 8).join(", ")}`,
+                : `Conflicting path scopes: ${aa.proposal.writeScope.join(", ")} ↔ ${bb.proposal.writeScope.join(", ")}`,
               ["distinct", "duplicate", "supplements"],
             )
         }

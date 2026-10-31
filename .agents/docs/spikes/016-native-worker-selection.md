@@ -25,7 +25,7 @@ no-delegation boundary; each selected node adds at most one short UI, Systems, o
 Small task/refactoring overlay to its attempt prompt. Persona and route are
 independent.
 
-The Architect-only `lazers_worker_catalog` reads the live native model list and
+The permission-checked read-only `lazers_worker_catalog` reads the live native model list and
 configured implementor selection, including listed prices, variants, and
 capability metadata. It is advisory: missing prices are unknown; capability or
 enabled flags and catalog omissions are not route gates. A user preference
@@ -62,7 +62,7 @@ different route or effort.
 - Catalog serialization tests retain disabled/tool-incompatible entries and
   entries missing capability or price data; missing prices serialize as
   `null`. Registration tests verify the catalog tool is permission-checked and
-  Architect-only. No Go inference was launched, and no model ranking is claimed.
+  accessible to authorized workers without granting orchestration. No Go inference was launched, and no model ranking is claimed.
 
 ## Limits
 
@@ -70,3 +70,14 @@ The CLI route listing is a current native observation, not a Desktop interaction
 test of the registered Architect tool. API composition and unchanged route
 selection are covered by focused adapter/registration tests; actual provider
 availability and error behavior remain governed by OpenCode at execution time.
+
+# Driver correction
+
+The accepted `fc88ccc0` artifact `d1c52ab` preserves exact native routes and
+independent personas. Driver review replaces the blanket model-ranking ban with
+a distinction between unsupported catalog-only quality rankings and researched,
+qualified recommendations/classifications. The route tutorial is one short
+paragraph. Read-only catalog access is not delegation: role filtering and the
+registered tool's role check now allow natively authorized callers while plan
+submission/commands remain Architect-only. Registration, context filtering,
+execution and permission-denial regressions cover that distinction.

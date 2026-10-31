@@ -7,13 +7,9 @@ import type { RunnerStore } from "./store.ts"
 
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
-  [
-    "lazers_research",
-    "lazers_submit_plan",
-    "lazers_plan_command",
-    "lazers_submit_task",
-    "lazers_worker_catalog",
-  ].includes(tool)
+  ["lazers_research", "lazers_submit_plan", "lazers_plan_command", "lazers_submit_task"].includes(
+    tool,
+  )
 
 export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
   return Effect.gen(function* () {
@@ -31,7 +27,6 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
           { action: "lazers_submit_plan", resource: "*", effect: "deny" },
           { action: "lazers_plan_command", resource: "*", effect: "deny" },
           { action: "lazers_submit_task", resource: "*", effect: "deny" },
-          { action: "lazers_worker_catalog", resource: "*", effect: "deny" },
         ]
         // Preserve the model/effort selected in native OpenCode configuration.
         delete agent.steps

@@ -49,6 +49,13 @@ test("the packaged definition registers a missing primary agent and isolates tra
   expect(first.system).toContain("workerModel: {providerID, id, variant?}")
   expect(first.system).toContain("nodes[].persona")
   expect(first.system).toContain("Never substitute another route or effort")
+  expect(first.system).toContain("evidence-based recommendations/classifications")
+  expect(first.system).toContain("catalog metadata alone cannot establish quality rankings")
+  expect(first.system).not.toContain("Do not rank models")
+  const routeGuidance = first
+    .system!.split("## Worker persona and route choice")[1]!
+    .split("\n\n")[1]!
+  expect(routeGuidance.split(/\s+/).length).toBeLessThan(150)
   expect(first.system).toContain("read-only selections of that same snapshot")
   expect(first.system).toContain("freshness as-of-refresh")
   expect(first.system).not.toContain("Required skills")

@@ -6,7 +6,7 @@ import workerInstructions from "../implementor.md" with { type: "text" }
 import { delegationTool, registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
 
-test("worker personas share the normal tool core and cannot inspect catalogs or delegate", async () => {
+test("worker personas retain read-only catalog access but cannot delegate", async () => {
   const model = { providerID: "custom-provider", id: "selected", variant: "deep" }
   const agent = { model, permissions: [] as unknown[] }
   let contextHook: ((context: never) => Effect.Effect<void>) | undefined
@@ -46,7 +46,7 @@ test("worker personas share the normal tool core and cannot inspect catalogs or 
   await Effect.runPromise(Effect.scoped(registerWorker(ctx, store)))
   expect(agent.model).toEqual(model)
   expect(agent).toHaveProperty("system", workerInstructions.trim())
-  expect(agent.permissions).toContainEqual({
+  expect(agent.permissions).not.toContainEqual({
     action: "lazers_worker_catalog",
     resource: "*",
     effect: "deny",
@@ -64,13 +64,20 @@ test("worker personas share the normal tool core and cannot inspect catalogs or 
   }
   await Effect.runPromise(contextHook!(context as never))
   expect(delegationTool("subagent.list")).toBe(true)
-  expect(delegationTool("lazers_worker_catalog")).toBe(true)
-  expect(Object.keys(context.tools)).toEqual(["read", "edit", "bash"])
+  expect(delegationTool("lazers_worker_catalog")).toBe(false)
+  expect(Object.keys(context.tools)).toEqual(["read", "edit", "bash", "lazers_worker_catalog"])
   await Effect.runPromise(
     executeHook!({
       sessionID: "worker",
       agent: Agent.ID.make("lazers-implementor"),
       tool: "bash",
+    } as never),
+  )
+  await Effect.runPromise(
+    executeHook!({
+      sessionID: "worker",
+      agent: Agent.ID.make("lazers-implementor"),
+      tool: "lazers_worker_catalog",
     } as never),
   )
   await expect(

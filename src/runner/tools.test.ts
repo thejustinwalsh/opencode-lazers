@@ -20,7 +20,7 @@ const callContext = (agent: string) =>
     progress: () => Effect.void,
   }) as Parameters<RegisteredTool["execute"]>[1]
 
-test("Architect's worker catalog tool presents live native route advice, not a validator", async () => {
+test("authorized callers read native catalog advice; only orchestration requires Architect", async () => {
   const tools = new Map<string, RegisteredTool>()
   const editor: ToolEditor = {
     add: (tool) => tools.set(tool.name, tool),
@@ -32,6 +32,7 @@ test("Architect's worker catalog tool presents live native route advice, not a v
   }
   const permissionChecks: string[] = []
   let catalogCalls = 0
+  let denied = false
   const ctx = {
     location: { directory: "/project" },
     agent: {
@@ -62,6 +63,7 @@ test("Architect's worker catalog tool presents live native route advice, not a v
     permission: {
       assert: ({ action }: { action: string }) => {
         permissionChecks.push(action)
+        if (denied) return Effect.fail(new Error("permission denied"))
         return Effect.void
       },
     },
@@ -90,9 +92,17 @@ test("Architect's worker catalog tool presents live native route advice, not a v
   expect(permissionChecks).toEqual(["lazers_worker_catalog"])
   expect(catalogCalls).toBe(1)
 
+  const worker = await Effect.runPromise(catalog.execute({}, callContext("lazers-implementor")))
+  expect(JSON.parse(String(worker.content))).toEqual(advice)
+  expect(permissionChecks).toEqual(["lazers_worker_catalog", "lazers_worker_catalog"])
+  expect(catalogCalls).toBe(2)
+  for (const name of ["lazers_submit_plan", "lazers_plan_command"])
+    await expect(
+      Effect.runPromise(tools.get(name)!.execute({}, callContext("lazers-implementor"))),
+    ).rejects.toThrow("Plan orchestration is restricted to Architect")
+  denied = true
   await expect(
     Effect.runPromise(catalog.execute({}, callContext("lazers-implementor"))),
-  ).rejects.toThrow("Plan orchestration is restricted to Architect")
-  expect(permissionChecks).toEqual(["lazers_worker_catalog", "lazers_worker_catalog"])
-  expect(catalogCalls).toBe(1)
+  ).rejects.toThrow("permission denied")
+  expect(catalogCalls).toBe(2)
 })

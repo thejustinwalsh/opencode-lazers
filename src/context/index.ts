@@ -152,20 +152,22 @@ export class ProjectIndex {
     return this.counter
   }
   private evict() {
-    const active = new Set(
-      this.repository.atomic((db) =>
+    // Coordinate with readers across processes. Age alone cannot prove that a
+    // superseded immutable file is no longer selected by a reader.
+    this.repository.atomic((db) => {
+      const active = new Set(
         db
           .query<{ file: string }, [string]>("SELECT file FROM context_cache WHERE selection=?")
           .all(workspaceSelection)
           .map(({ file }) => file),
-      ),
-    )
-    const now = Date.now()
-    const orphans = readdirSync(this.cacheDirectory).filter((name) => {
-      if (!name.endsWith(".json") || active.has(name)) return false
-      return now - statSync(join(this.cacheDirectory, name)).mtimeMs > orphanGraceMs
+      )
+      const now = Date.now()
+      const orphans = readdirSync(this.cacheDirectory).filter((name) => {
+        if (!name.endsWith(".json") || active.has(name)) return false
+        return now - statSync(join(this.cacheDirectory, name)).mtimeMs > orphanGraceMs
+      })
+      for (const name of orphans) unlinkSync(join(this.cacheDirectory, name))
     })
-    for (const name of orphans) unlinkSync(join(this.cacheDirectory, name))
   }
 
   private assertCacheCapacity(size: number, filename: string) {
@@ -383,19 +385,22 @@ export class ProjectIndex {
   }
 
   private loadSnapshot(): Snapshot {
-    const row = this.repository.atomic((db) =>
-      db
+    // The immediate transaction is a lock, not a snapshot write. Hold it until
+    // the immutable bytes are read so another process cannot evict that file.
+    const { row, text } = this.repository.atomic((db) => {
+      const row = db
         .query<{ file: string }, [string, string]>(
           "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
         )
-        .get(this.root, workspaceSelection),
-    )
-    if (!row) throw new WorkspaceIndexUnavailable()
-    if (!snapshotFilename.test(row.file)) throw new Error("Invalid cached snapshot path")
-    const cache = join(this.cacheDirectory, row.file)
-    if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
-    if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
-    const stored = JSON.parse(readFileSync(cache, "utf8")) as Snapshot
+        .get(this.root, workspaceSelection)
+      if (!row) throw new WorkspaceIndexUnavailable()
+      if (!snapshotFilename.test(row.file)) throw new Error("Invalid cached snapshot path")
+      const cache = join(this.cacheDirectory, row.file)
+      if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
+      if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
+      return { row, text: readFileSync(cache, "utf8") }
+    })
+    const stored = JSON.parse(text) as Snapshot
     if (
       stored.version !== 2 ||
       !uuidPattern.test(stored.id) ||

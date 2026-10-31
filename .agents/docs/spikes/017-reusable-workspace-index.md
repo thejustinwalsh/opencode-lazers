@@ -15,3 +15,15 @@ Read outputs include the stable snapshot ID, refresh timestamp, and `freshness: 
 `src/context/index.test.ts` covers Repomix filtering, stable identity across selections and service reopen, throwing collection/processor spies, cache-state immutability on reads, current reader permission and revocation, absent and foreign indexes, failed refresh rollback, visibility of additions/edits/deletions/ignore changes after refresh, reads during a concurrent refresh, and bounded responses. `src/context/tools.test.ts` covers native tool permissions and Architect-only refresh. `src/architect.test.ts` checks that Architect is told to reuse snapshots and refresh explicitly.
 
 Verification on 2026-10-31: focused `bun test src/context src/tools.test.ts src/architect.test.ts` passed (24 tests); full `bun test` passed (177 tests); `bun run verify` passed formatting, lint, and typechecking. No source hashes or evidence receipts are used as gates.
+
+# Driver review
+
+Accepted task `f55e7013-630e-4b3e-ab3c-407e61c75ccc`, artifact `c787af3`,
+was reviewed without editing the active route/persona worker. A cross-process
+publication/eviction race was found: creation-age grace does not protect a reader
+between selecting the old pointer and opening its immutable file. Snapshot byte
+acquisition and eviction now share the repository's immediate transaction lock;
+reads still perform no snapshot writes, traversal or repacking. The regression
+publishes and evicts in a separate Bun process precisely at that boundary and
+requires complete old content followed by complete new content. Cached selections
+still recheck the caller's permissions and return full selected source.

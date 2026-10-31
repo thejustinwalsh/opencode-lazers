@@ -270,3 +270,32 @@ test("native worker selection survives role registration and reaches native crea
   ).rejects.toThrow("Native route error")
   expect(created).toHaveLength(routes.length)
 })
+
+test("actionable notifications use native queued synthetic resume with the durable message identity", async () => {
+  let received: unknown
+  const host = nativeHost(
+    {
+      session: {
+        synthetic: (input: unknown) =>
+          Effect.sync(() => {
+            received = input
+          }),
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  await host.notify({
+    sessionID: "ses_owner",
+    id: "msg_durable",
+    text: "Review accepted artifact now",
+    resume: true,
+  })
+  expect(received).toEqual({
+    sessionID: "ses_owner",
+    id: "msg_durable",
+    text: "Review accepted artifact now",
+    resume: true,
+    delivery: "queue",
+    description: "LAZERS task outcome",
+  })
+})

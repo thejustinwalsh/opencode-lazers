@@ -6,6 +6,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -290,6 +291,56 @@ test("queries during a refresh see the prior complete snapshot until atomic publ
   const after = await f.index.evidence(worker, { paths: ["src/feature.ts"] })
   expect(after.snapshotID).toBe(last.id)
   expect(after.sources[0]!.text).toContain("atomic")
+})
+
+test("cross-process publication and eviction cannot remove bytes selected by an in-flight reader", async () => {
+  const f = fixture()
+  const first = await f.index.refresh(architect)
+  const oldPointer = cacheState(f).row!
+  writeFileSync(join(f.root, "src", "feature.ts"), "export const replacement = true\n")
+  const second = await f.index.refresh(architect)
+  const newPointer = cacheState(f).row!
+  // Stage a complete replacement, then restore the old pointer to schedule the
+  // writer exactly after the reader's transaction. Neither cache is synthetic.
+  f.repository.atomic((db) =>
+    db
+      .query("UPDATE context_cache SET file=?,stamp=? WHERE workspace=? AND selection=?")
+      .run(oldPointer.file, oldPointer.stamp, f.index.root, "$workspace"),
+  )
+  const old = new Date(Date.now() - 120_000)
+  utimesSync(join(f.cacheDirectory, oldPointer.file), old, old)
+  const atomic = f.repository.atomic.bind(f.repository)
+  let injected = false
+  Reflect.set(f.repository, "atomic", (run: Parameters<TaskRepository["atomic"]>[0]) => {
+    const result = atomic(run)
+    if (!injected) {
+      injected = true
+      const script = `
+        import { TaskRepository } from ${JSON.stringify(join(import.meta.dir, "../storage.ts"))};
+        import { ProjectIndex } from ${JSON.stringify(join(import.meta.dir, "index.ts"))};
+        const root=${JSON.stringify(f.index.root)};
+        const repository=new TaskRepository(${JSON.stringify(join(f.root, "data/tasks.sqlite"))},root);
+        const index=new ProjectIndex(root,${JSON.stringify(f.cacheDirectory)},repository,async()=>true);
+        repository.atomic(db=>db.query("UPDATE context_cache SET file=?,stamp=? WHERE workspace=? AND selection=?").run(${JSON.stringify(newPointer.file)},${JSON.stringify(newPointer.stamp)},root,"$workspace"));
+        Reflect.get(index,"evict").call(index);
+        index.close(); repository.close();
+      `
+      const writer = Bun.spawnSync([process.execPath, "-e", script])
+      expect(writer.exitCode).toBe(0)
+      expect(writer.stderr.toString()).toBe("")
+      expect(readdirSync(f.cacheDirectory)).not.toContain(oldPointer.file)
+    }
+    return result
+  })
+  disableIndexWork(f.index)
+  const selected = await f.index.evidence(worker, { paths: ["src/feature.ts"] })
+  expect(selected.snapshotID).toBe(first.id)
+  expect(selected.sources[0]!.text).toContain("toUpperCase")
+  const before = cacheState(f)
+  const current = await f.index.evidence(worker, { paths: ["src/feature.ts"] })
+  expect(current.snapshotID).toBe(second.id)
+  expect(current.sources[0]!.text).toContain("replacement")
+  expect(cacheState(f)).toEqual(before)
 })
 
 test("refresh requires Architect authority and foreign workspaces do not inherit another index", async () => {
