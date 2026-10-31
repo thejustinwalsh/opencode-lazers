@@ -146,12 +146,13 @@ export function makeMessages(which: "failed" | "accepted") {
   ]
 }
 
-export function makeFixture() {
+export function makeFixture(options: { withoutPolicy?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "lazers-trajectory-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), directory)
   const store = new RunnerStore(repository)
   const baseCommit = "a".repeat(40)
   const proposal = validProposal()
+  if (options.withoutPolicy) delete proposal.requirements.policyReference
   proposal.guidance =
     "Reuse src/runner/store.ts for recorded attempts; api_key=fake-guidance-secret"
   proposal.objective = "Inspect a worker attempt without disclosing private data"

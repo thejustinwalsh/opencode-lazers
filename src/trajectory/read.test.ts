@@ -7,6 +7,28 @@ function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
 }
 
+test("trajectory specifications preserve legacy policy references and omit absent ones", async () => {
+  for (const withoutPolicy of [false, true]) {
+    const fixture = makeFixture({ withoutPolicy })
+    try {
+      const before = JSON.stringify(fixture.repository.get(taskID))
+      const report = await inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        parse({ taskID }),
+        cursorSecret,
+      )
+      const specification = report.task.specification as { requirements: Record<string, unknown> }
+      expect(Object.hasOwn(specification.requirements, "policyReference")).toBe(!withoutPolicy)
+      if (!withoutPolicy) expect(specification.requirements.policyReference).toBe("AGENTS.md")
+      expect(JSON.stringify(fixture.repository.get(taskID))).toBe(before)
+    } finally {
+      fixture.close()
+    }
+  }
+})
+
 test("task reports include unsuccessful and accepted attempts, usage categories, checks and unknown cost", async () => {
   const fixture = makeFixture()
   try {

@@ -648,7 +648,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                   <dt>Requirements</dt>
                   <dd>
                     <p>Risk: {task().proposal.requirements.risk}</p>
-                    <Ui.Markdown text={task().proposal.requirements.policyReference} />
+                    <Show when={task().proposal.requirements.policyReference}>
+                      {(reference) => <Ui.Markdown text={reference()} />}
+                    </Show>
                     <For each={task().proposal.requirements.capabilities}>
                       {(text) => <Ui.Markdown text={text} />}
                     </For>

@@ -32,3 +32,16 @@ no other type errors were reported.
 The unit adapter test verifies the cleanup call targets only
 `lazers-required-skills`; it is not evidence of a live OpenCode Desktop session.
 No model call, comparative run, or effectiveness claim is included.
+
+## Architect compatibility review
+
+After both scoped worker attempts stopped, the two reserved readers were fixed:
+the panel conditionally renders an existing reference, and the trajectory
+projection conditionally includes its sanitized legacy field. A regression
+constructs records both with and without the field, verifies the projection,
+and confirms that reading does not change either stored record.
+
+`bun fmt --check && bun lint && bun check && bun test` passed: 196 formatted
+files, no lint problems in 109 files, no type errors in 104 files, and 143 tests
+with 1,190 expectations. The earlier failed runtime attempts remain recorded;
+these checks do not replace runtime re-verification or claim Desktop UI coverage.

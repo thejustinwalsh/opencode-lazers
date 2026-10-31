@@ -44,10 +44,9 @@ Behavior coverage and exact command results are recorded in
 No live-model comparison or model-quality experiment was run. The native entry
 cleanup is exercised with a focused adapter test double, not a Desktop session.
 
-The optional `policyReference` type has two narrow out-of-scope consumers still
-requiring follow-through: `src/tasks/panel.tsx:651` should render the Markdown
-only when a reference exists, and `src/trajectory/read.ts:138` should conditionally
-include the sanitized `policyReference` in its projection so old values survive
-and absent values remain absent. The current `bun check` output identifies only
-those two compatibility errors; both files remain unchanged per the assigned
-write scope.
+The worker left two narrow out-of-scope optional-reference consumers for review.
+After its attempts stopped, Architect corrected `src/tasks/panel.tsx` to render
+only an existing reference and `src/trajectory/read.ts` to omit an absent field.
+Both legacy and omitted-field records are covered by a projection regression;
+typechecking and the complete 143-test suite pass. Historical worker failures
+remain retained, and runtime re-verification is still required.

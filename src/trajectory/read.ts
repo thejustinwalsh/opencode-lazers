@@ -135,7 +135,9 @@ function safeSpec(task: TaskSpec, stats: PrivacyStats) {
       capabilities: proposal.requirements.capabilities.map((value) => safeText(value, stats)),
       skills: proposal.requirements.skills.map((value) => safeText(value, stats)),
       risk: proposal.requirements.risk,
-      policyReference: safeText(proposal.requirements.policyReference, stats),
+      ...(proposal.requirements.policyReference !== undefined
+        ? { policyReference: safeText(proposal.requirements.policyReference, stats) }
+        : {}),
     },
     verification: proposal.verification.map((item) => ({
       id: safeText(item.id, stats, 120),
