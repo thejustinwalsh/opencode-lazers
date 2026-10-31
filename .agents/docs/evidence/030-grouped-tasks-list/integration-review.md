@@ -86,3 +86,16 @@ launched in the background; their result is not implied by this source record.
 Native observations must identify the repaired build rather than pristine
 `dcba900`. Progress remains on original `d543a0f7`; no edits were made in that
 active workspace and its newer-main preservation entry was read back natively.
+
+The background command subsequently completed: **353 passed, 0 failed, 3,315
+assertions across 71 files**, followed by passing `bun run verify` (354 formatted
+files, lint and strict types). Root's audit-only formatting change was preserved;
+no remaining formatting failure is claimed for this checkpoint. The additional
+repairs are committed as `53ba06f`.
+
+At Root's request the GUI was rebuilt again from that committed source for the
+next native pass. Bundle SHA-256:
+`63842245ee69f03e86220cc1008f49fd7f6d971d3772fee5014618c9fb88a0ff`.
+The build passed, retaining the existing warning boundary above. Root's request
+to close Tasks/select Radar and click the emitted LZ-23 link is not itself proof
+of navigation; the actual click result remains pending Root's report.
