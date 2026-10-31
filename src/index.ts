@@ -4,7 +4,6 @@ import { registerArchitect } from "./architect.ts"
 import { TaskRepository, taskDatabasePath } from "./storage.ts"
 import { registerTaskTools } from "./tools.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
-import { TaskReads } from "./tasks/read.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { RunnerStore } from "./runner/store.ts"
 import { TaskRuntime } from "./runner/runtime.ts"
@@ -15,6 +14,9 @@ import { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { nativeTrajectoryHost } from "./trajectory/native.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
+import { AssociationTaskReads } from "./observability/task-reads.ts"
+import { ObservationReads } from "./observability/read.ts"
+import { registerObservability } from "./observability/rpc.ts"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
@@ -67,15 +69,24 @@ export default Plugin.define({
         nativeHost(ctx, repository),
         ctx.location.project.id,
       )
-      yield* registerTaskReads(ctx, new TaskReads(repository), runtime).pipe(Effect.orDie)
+      yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(
+        Effect.orDie,
+      )
       yield* registerWorker(ctx, runtime.store)
       yield* registerRunnerTools(ctx, runtime)
-      yield* registerTrajectoryTools(
+      const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
+      yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)
+      const observationSecret = crypto.getRandomValues(new Uint8Array(32))
+      yield* registerObservability(
         ctx,
-        runtime.store,
-        nativeTrajectoryHost(ctx, ctx.location.project.id),
+        new ObservationReads(
+          runtime.store,
+          trajectoryHost,
+          ctx.location.project.id,
+          observationSecret,
+        ),
         ctx.location.project.id,
-      )
+      ).pipe(Effect.orDie)
       yield* Effect.acquireRelease(
         Effect.sync(() => {
           const tick = () => {
