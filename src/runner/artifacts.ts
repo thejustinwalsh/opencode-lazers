@@ -152,13 +152,20 @@ export function commitArtifact(
   base: string,
   scope: string[],
   snapshot = true,
-): { commit: string; paths: string[]; identity: string } {
-  const paths = changedPaths(directory, base)
-  const violations = scopeViolations(paths, scope)
-  if (violations.length) throw new ArtifactScopeViolation(violations)
+  reviewedHead?: string,
+): { commit: string; paths: string[]; identity: string; scopeBase: string } {
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
-  if (changedPaths(directory).length === 0) return { commit: head, paths, identity: head }
+  let scopeBase = base
+  if (snapshot && reviewedHead) {
+    const common = git(directory, ["merge-base", head, reviewedHead])
+    if (git(directory, ["merge-base", base, common]) === base) scopeBase = common
+  }
+  const paths = changedPaths(directory, scopeBase)
+  const violations = scopeViolations(paths, scope)
+  if (violations.length) throw new ArtifactScopeViolation(violations)
+  if (changedPaths(directory).length === 0)
+    return { commit: head, paths, identity: head, scopeBase }
   if (!snapshot)
     throw new Error(
       "Commit task edits before verification; shared checkout was not staged by runtime",
@@ -179,7 +186,7 @@ export function commitArtifact(
     ],
     "LAZERS verified candidate\n",
   )
-  return { commit, paths, identity: commit }
+  return { commit, paths, identity: commit, scopeBase }
 }
 
 export function artifactExists(directory: string, reference: string): boolean {

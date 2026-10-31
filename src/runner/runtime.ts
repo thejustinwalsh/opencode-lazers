@@ -1349,6 +1349,9 @@ export class TaskRuntime {
         attempt.base_commit,
         this.store.effectiveWriteScope(attempt.task_id),
         attempt.workspace !== this.directory,
+        attempt.workspace !== this.directory
+          ? git(this.directory, ["rev-parse", "HEAD"])
+          : undefined,
       )
     } catch (error) {
       if (error instanceof ArtifactScopeViolation) {
