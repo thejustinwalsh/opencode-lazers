@@ -9,9 +9,22 @@ formatter, linter and typechecker checks passed. Failed attempts and the
 stale-retry-baseline recovery remain in runtime history.
 
 Task `c0ef9f9d-7e16-48b7-9a04-f98d9a45a8cf`, plan
-`519b8e3c-2997-4455-9cde-09835dc0acda`, is the next priority on
-`openai/gpt-6-luna` variant `max`. Other feature plans remain held until its
-review, native observations and integration. Architect stays Sol High.
+`519b8e3c-2997-4455-9cde-09835dc0acda`, was explicitly stopped by the human.
+Runtime recorded cancellation at version 8; native interrupt confirmed worker
+`ses_2d3ee27ce39e4d258af5be6f3ea2c37c` was idle before any cleanup edits.
+Do not restore, refine, build, reload, deploy or redispatch that refactor.
+
+Codex driver parked exactly its six unfinished `src/webgpu` files in Git stash
+`e6b3f592f6cff3a02c69b57f9ba6483515f2aa62`, labelled
+`LAZERS cancelled inference isolation 2026-10-31` (`stash@{0}` when recorded).
+The main checkout is clean and its tracked inference files match the working
+pre-refactor baseline. No new GUI bundle was built or deployed. The successful
+full-source read correction remains in main.
+
+The original product sequence resumes, starting with retry-baseline recovery,
+then trajectory permission, native providers/personas, reusable index, durable
+progress/reporting, task references and Radar. Architect stays Sol High and
+workers Luna Max. Inference isolation is not a prerequisite or approval gate.
 
 ## Evidence, not a complete causal claim
 
@@ -32,20 +45,20 @@ review, native observations and integration. Architect stays Sol High.
 
 Native Relaunch recovered the app and the backend worker survived. Relaunch
 is not the fix. No post-restart CPU sample is used to prove the original cause.
+The diagnosis was overstated: these observations do not prove WebGPU failure.
+The human and driver confirmed that existing inference works; preserve that
+working stack rather than pursue the cancelled refactor. When consulting the
+old sampled stacks, strip enormous inline data URLs before printing any log
+lines, retaining function names and offsets.
 
-## Temporary mitigation and remaining proof
+## Settings restored; no further GPU changes
 
 Before further task-review inference, Architect read native feature settings:
 `enabled`, `questions`, `decisions`, `review`, `dictation`, `readAloud` were
-all true. Through the supported `lazers.webgpu.configure` RPC, only `review`
-was temporarily set false; the other five values stayed true. This prevents
-planning self-review from immediately retriggering the affected path. Preserve
-the tool and restore `review: true` after validating its off-thread path.
-
-No off-thread fix or responsiveness result is claimed yet. Required native
-proof includes actual cold loading and representative multi-batch task-review
-inference while panel/composer interactions continue, warm inference, model
-switching, cancellation/unload, worker/trace identity, and logs for the observed
-interval. A toy result, disabled review, mocks alone or moving only an async
-wrapper is insufficient. Keep cache verification, queue/deadlines, ownership,
-usage reporting and failure/cancellation semantics intact.
+all true. Architect temporarily set only `review` false. That historical action
+must not be reapplied: Codex driver restored Task review through Desktop settings
+and observed all six switches ON, with GPU runtime Ready on apple. A subsequent
+read-only native settings check confirmed all six values true after cancellation.
+Do not disable any local feature as a workaround or make further GPU changes.
+Retain the working models, WebGPU and `lazers_verify_task`. No off-thread fix or
+responsiveness improvement is claimed for the abandoned work.
