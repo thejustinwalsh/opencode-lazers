@@ -6,10 +6,12 @@ import type {
   TaskQuery,
   TaskSummary,
 } from "./contract.ts"
+import type { SnapshotResponse } from "../observability/contract.ts"
 
 export interface TaskTransport {
   query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
+  snapshot?(signal: AbortSignal): Promise<SnapshotResponse>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
   changes(signal: AbortSignal): AsyncIterable<{ projectDirectory: string; version: number }>
   online(): boolean
@@ -18,13 +20,23 @@ export interface PanelData {
   key: string
   tasks: TaskSummary[]
   page?: TaskPage
+  topology?: SnapshotResponse
+  topologyError?: string
   detail?: TaskDetail
   selectedID?: string
+  linkedDetails: Record<string, Extract<TaskDetail, { status: "found" }>>
   loading: boolean
   stale: boolean
   error: string
 }
-const blank = (key = ""): PanelData => ({ key, tasks: [], loading: true, stale: false, error: "" })
+const blank = (key = ""): PanelData => ({
+  key,
+  tasks: [],
+  linkedDetails: {},
+  loading: true,
+  stale: false,
+  error: "",
+})
 
 /** Owns cancellation and response identity independently of the mounted Solid view. */
 export class TaskPanelState {
@@ -41,6 +53,10 @@ export class TaskPanelState {
   private pendingVersion = 0
   private refreshing = false
   private starts = new Map<string, Promise<StartTaskResult>>()
+  private linkedRequests = new Map<
+    string,
+    Promise<Extract<TaskDetail, { status: "found" }> | undefined>
+  >()
 
   constructor(
     private readonly changed: (data: PanelData) => void,
@@ -70,7 +86,6 @@ export class TaskPanelState {
     const signal = this.controller.signal
     void this.watch(generation, transport, signal)
     void this.refresh()
-    if (selectedID) void this.select(selectedID)
     this.timer = setInterval(() => {
       void this.refresh()
     }, 3_000)
@@ -84,22 +99,65 @@ export class TaskPanelState {
     const request = ++this.listRequest
     const signal = this.controller.signal
     try {
-      const first = await transport.query({ ...this.query, cursor: undefined }, signal)
-      if (generation !== this.generation || request !== this.listRequest) return
-      if (first.projectDirectory !== this.project)
-        throw new Error("Task response belongs to another project")
-      const wanted = Math.max(
-        first.tasks.length,
-        this.data.tasks.length + Math.max(0, first.count - (this.data.page?.count ?? first.count)),
-      )
-      let page = first
-      const tasks = [...first.tasks]
-      while (page.nextCursor && tasks.length < wanted) {
-        page = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
+      let page: TaskPage | undefined
+      let tasks: TaskSummary[] = []
+      let topology: SnapshotResponse | undefined
+      let topologyError = ""
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const first = await transport.query({ ...this.query, cursor: undefined }, signal)
         if (generation !== this.generation || request !== this.listRequest) return
-        tasks.push(...page.tasks)
+        if (first.projectDirectory !== this.project)
+          throw new Error("Task response belongs to another project")
+        topology = undefined
+        topologyError = ""
+        if (transport.snapshot) {
+          try {
+            const observed = await transport.snapshot(signal)
+            if (observed.boundary.repositoryVersion !== first.snapshot) {
+              if (attempt < 2) continue
+              topologyError =
+                "Execution topology changed during the task read. Showing ungrouped tasks."
+            } else {
+              topology = observed
+            }
+          } catch (error) {
+            if (signal.aborted || generation !== this.generation) return
+            topologyError = `Execution links unavailable: ${String(error)}`
+          }
+        }
+        const wanted = Math.max(
+          first.tasks.length,
+          this.data.tasks.length +
+            Math.max(0, first.count - (this.data.page?.count ?? first.count)),
+        )
+        page = first
+        tasks = [...first.tasks]
+        let changedSnapshot = false
+        while (page.nextCursor && tasks.length < wanted) {
+          page = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
+          if (generation !== this.generation || request !== this.listRequest) return
+          if (page.snapshot !== first.snapshot) {
+            changedSnapshot = true
+            break
+          }
+          tasks.push(...page.tasks)
+        }
+        if (changedSnapshot && attempt < 2) continue
+        if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
+        if (!topology && transport.snapshot && !topologyError)
+          topologyError = "Execution topology is unavailable. Showing ungrouped tasks."
+        break
       }
-      this.update({ tasks, page, loading: false, stale: !transport.online(), error: "" })
+      if (!page) throw new Error("Could not read a stable task snapshot")
+      this.update({
+        tasks,
+        page,
+        topology,
+        topologyError,
+        loading: false,
+        stale: !transport.online(),
+        error: "",
+      })
       if (!this.data.selectedID && tasks.length) await this.select(tasks[0]!.taskID)
       else if (this.data.selectedID) await this.select(this.data.selectedID, true)
     } catch (error) {
@@ -166,6 +224,32 @@ export class TaskPanelState {
     }
   }
 
+  async resolveLinked(taskID: string) {
+    const cached = this.data.linkedDetails[taskID]
+    if (cached) return cached
+    const pending = this.linkedRequests.get(taskID)
+    if (pending) return pending
+    const transport = this.transport
+    if (!transport || this.controller.signal.aborted) return undefined
+    const generation = this.generation
+    const signal = this.controller.signal
+    const request = transport
+      .get(taskID, signal)
+      .then((detail) => {
+        if (generation !== this.generation || signal.aborted || detail.status !== "found")
+          return undefined
+        const linkedDetails = { ...this.data.linkedDetails, [taskID]: detail }
+        this.update({ linkedDetails })
+        return detail
+      })
+      .catch(() => undefined)
+    this.linkedRequests.set(taskID, request)
+    void request.finally(() => {
+      if (this.linkedRequests.get(taskID) === request) this.linkedRequests.delete(taskID)
+    })
+    return request
+  }
+
   async start(input: StartTaskInput): Promise<StartTaskResult> {
     const key = `${input.taskID}:${input.revision}`
     const pending = this.starts.get(key)
@@ -223,6 +307,7 @@ export class TaskPanelState {
     this.controller.abort()
     this.detailController.abort()
     this.starts.clear()
+    this.linkedRequests.clear()
     if (this.timer) clearInterval(this.timer)
     this.transport = undefined
     this.refreshing = false
