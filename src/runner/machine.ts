@@ -1,4 +1,4 @@
-import { createMachine, getInitialSnapshot, getNextSnapshot } from "xstate"
+import { createMachine, initialTransition, transition as xstateTransition } from "xstate"
 import type { TaskState } from "./schema.ts"
 
 export const machineVersion = "lazers-task/1"
@@ -44,7 +44,7 @@ export const taskMachine = createMachine({
 
 export function transition(state: TaskState, event: string) {
   const snapshot = taskMachine.resolveState({ value: state, context: {} })
-  const next = getNextSnapshot(taskMachine, snapshot, { type: event })
+  const [next] = xstateTransition(taskMachine, snapshot, { type: event })
   if (next.value === state) throw new Error(`Invalid task transition ${state} → ${event}`)
   return {
     state: next.value as TaskState,
@@ -53,4 +53,4 @@ export function transition(state: TaskState, event: string) {
   }
 }
 export const initialSnapshot = () =>
-  taskMachine.getPersistedSnapshot(getInitialSnapshot(taskMachine))
+  taskMachine.getPersistedSnapshot(initialTransition(taskMachine)[0])

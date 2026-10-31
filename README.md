@@ -18,33 +18,35 @@ The user selects **Architect** from the Desktop agent dropdown before starting a
 
 Architect does not run or maintain the task state machine. Deterministic runtime rules handle state transitions, dependencies, concurrency, verification, configured repair/retry behavior, cancellation, and usage accounting. Routine progress and completions that merely unblock an already-defined task do not require a model call. Wake Architect when a decision is needed, a task group needs synthesis, or the feature needs its final user-facing result. Architect's decisions return through validated runtime commands; it cannot directly mark a task accepted or erase attempt history.
 
-This is the required product flow. Architect resolves requirements and submits work for scheduler execution. The current Desktop slice has completed its first real worker task through verification and driver review/merge. The durable serial graph runner, dispatch, outcome delivery, resume/retry and integration cleanup have a first implementation. Native multi-task acceptance, current-web specialist dispatch and general replanning remain incomplete; see the [execution report](.agents/docs/spikes/011-runner-execution.md).
+This is the required product flow. Nine plans with eleven accepted tasks have been integrated through native worker execution, runtime verification and review. The durable graph runner, dispatch, outcome delivery, resume/retry, scheduling and cleanup are implemented. Native parallel completion, specialist dispatch and general specification revision retain explicit gaps in the [completed-task audit](.agents/docs/completed-task-audit.md); active product work is exercising those boundaries.
 
 ## Operating principles
 
 - **One entry point.** Select Architect, describe a feature, and let it gather evidence, resolve material ambiguity, define done, and request execution. A sufficiently specified request needs no interview or additional approval ceremony.
 - **Reason where it helps.** Architect specifies work and resolves orchestration decisions; specialists investigate/research and workers implement. Deterministic code admits tasks, selects resources, dispatches workers, schedules verification, and stops execution. Progress events do not trigger supervisor model calls.
-- **One implementation worker by default.** Split work only when independently verifiable increments or real dependencies justify it. Multiple files alone do not justify multiple workers. Optional investigator/researcher subagents have separate bounded assignments and model choices.
+- **Match execution mode to the work.** Shared serial tasks use native child sessions. Independent tasks may run in parallel through OpenCode-managed worktrees when their scopes and integration order allow it; conflicting scopes serialize. Multiple files alone do not justify fan-out. Optional investigator/researcher subagents have separate bounded assignments and model choices.
 - **Knowledge, policy, and procedure have different owners.** Skills supply knowledge; runtime rules enforce policy; executable checks produce evidence. Required behavior must not depend on the model remembering prose.
 - **Verify at meaningful boundaries.** Complete the scoped implementation, then run the necessary checks. Earlier targeted checks are appropriate when they inform implementation or protect a risky operation.
-- **Track trajectories and actual usage.** Provider/model limits govern model capacity. LAZERS does not invent token, time, tool-call or spend budgets. Collect traces before designing deterministic corrections. Verification and self-review retain their specific bounded procedures.
+- **Track trajectories and actual usage.** Provider/model limits govern model capacity. LAZERS does not invent token, time, tool-call or spend budgets. Verification and self-review retain their specific procedures.
 - **Make additions earn their cost.** Keep a capability only when evidence supports its benefit. Preserve useful decisions, checks, and tooling without imposing a retrospective on every task.
 
 ## Core contracts
 
-These are target contracts, implemented progressively rather than prerequisites for first use. The first Architect can produce tasks while a human applies execution policy. Each dogfood spike moves a proven responsibility into the runtime.
+These are the target contracts from the design brief. Current implementation status is stated with each contract; remaining native observations are kept explicit instead of being treated as complete.
 
 ### 1 Task specification
 
+**Status:** Implemented and used by the Architect; task dispositions preserve the immutable specification while recording reviewed legacy outcomes.
+
 The compiler returns either a valid `TaskSpec` or focused questions identifying what prevents execution.
 
-| Field        | Required meaning                                                                                                       |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Identity     | Stable task ID, specification revision, repository, and starting revision                                              |
-| Intent       | Observable objective, explicit exclusions, constraints, and assumptions                                                |
-| Scope        | Relevant context references and permitted write paths                                                                  |
-| Acceptance   | Identified behavioral assertions, each mapped to required evidence or an explicit human decision                       |
-| Requirements | Required capabilities, optional skill suggestions, verification procedures, risk, and optional legacy policy reference |
+| Field        | Required meaning                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| Identity     | Stable task ID, specification revision, repository, and starting revision                        |
+| Intent       | Observable objective, explicit exclusions, constraints, and assumptions                          |
+| Scope        | Relevant context references and permitted write paths                                            |
+| Acceptance   | Identified behavioral assertions, each mapped to required evidence or an explicit human decision |
+| Requirements | Required capabilities, optional skill suggestions, verification procedures, and risk             |
 
 Optional `guidance` carries scoped implementation advice: existing code to reuse,
 known pitfalls and useful practices with source references. It is distinct from
@@ -56,27 +58,33 @@ Unresolved material ambiguity prevents admission. A worker cannot silently expan
 
 ### 2 Work decomposition
 
-A `TaskGraph` contains versioned specifications and dependency edges. Every task contributes to the overall objective. Reject duplicate IDs, missing dependencies, cycles, and undefined integration order. Serialize conflicting write scopes; isolated worktrees do not eliminate integration conflicts.
+**Status:** Implemented through versioned plans, dependency edges, priority, integrated plan prerequisites, shared serial execution, and compatible isolated fan-out.
 
-Use one task for self-contained work and a series of tasks when the requested feature requires it. Add parallelism only when tasks have compatible interfaces, independent write scopes, and a measured advantage. Accept the graph only after its combined result meets overall acceptance. The initial implementation stores individual tasks; graph support is a later increment.
+A `TaskGraph` contains versioned specifications and dependency edges. Every task contributes to the overall objective. Reject duplicate IDs, missing dependencies, cycles, and undefined integration order. Schedule compatible work in parallel, serialize conflicting write scopes, and use `priority` and `afterPlans` when ordering or integrated prerequisites matter. Isolated worktrees do not eliminate integration conflicts.
+
+Use one task for self-contained work and a series of tasks when the requested feature requires it. Add parallelism when tasks have compatible interfaces and independent write scopes. Accept the graph only after its combined result meets overall acceptance.
 
 ### 3 Execution policy
 
-Admission resolves a `TaskSpec` and versioned policy into a recorded `ExecutionPlan`: agent, model and provider, tools and permissions, context, workspace and verification schedule. Given the same inputs and capability snapshot, policy resolution produces the same plan. Architect recommendations are inputs; runtime policy makes the final selection. Task skill entries are optional suggestions and do not gate admission or dispatch. Workers may load a useful native skill progressively under OpenCode's normal permission check; LAZERS does not resolve or inject skill bodies.
+**Status:** Implemented in the runtime and native adapters; exact route failures remain visible and are never replaced by fallback selection.
 
-Historical Architect-generated limits do not stop execution. Measure tokens, time, tool calls and retries, and report unavailable equivalent cost honestly. Continuation and repair preserve prior usage and trajectory records; model selection should use those observations to find affordable, effective models.
+Admission resolves each `TaskSpec` into a recorded execution plan: agent, exact native model route when selected, tools and permissions, context, workspace and verification schedule. Task skill entries are optional suggestions and do not gate admission or dispatch. Workers may load a useful native skill progressively under OpenCode's normal permission check; LAZERS does not resolve or inject skill bodies.
+
+Measure tokens, time, tool calls and retries, and report unavailable equivalent cost honestly. Continuation and repair preserve prior usage and trajectory records.
 
 The worker returns an artifact reference, changed files, evidence references, and unresolved issues. It cannot certify its own completion or launch subagents. Implementors retain normal OpenCode coding capabilities, including Code Mode, shell, editing and available native LSP/diagnostics, under user/project policy. Their ContextPacket focuses the work; it does not limit permitted reads to writeScope. Runtime enforces actual write scope, verification and acceptance and owns all task dispatch and implementation parallelism.
 
-Architect can request bounded code investigation or current-web research from internal specialist roles. Runtime admission resolves the approved agent/model/variant and reserves resources before dispatching the native child. Specialists are subagent profiles, not extra human-facing primary agents. They do not recursively delegate. Research and implementation use the same admitted-dispatch boundary; unrestricted native child spawning is not a cost-control substitute.
+Architect can request bounded code investigation or current-web research from internal specialist roles. Runtime dispatches the selected agent/model/variant through the native child boundary. Specialists are subagent profiles, not extra human-facing primary agents. They do not recursively delegate. Research and implementation use the same admitted-dispatch boundary; unrestricted native child spawning is not a cost-control substitute.
 
 ### Worker route and persona choice
 
-Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. The native host decides whether it is configured and usable: catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lazers_worker_catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
+Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. Catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lazers_worker_catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
 
 Each plan node may independently select one optional persona: `ui`, `systems`, or `small-refactoring`. A persona contributes one short overlay to the shared implementor core and is independent of provider/model/effort. It does not remove normal coding tools or permit worker delegation. Existing plans without a persona or explicit `workerModel` keep their prior behavior; there is no separate persona/model settings engine.
 
 ### 4 Verification and completion
+
+**Status:** Runtime verification, evidence, repair, retry, delivery, integration and cleanup are implemented; native multi-task acceptance remains an observation boundary.
 
 The runtime owns this lifecycle:
 
@@ -98,15 +106,19 @@ Serial tasks default to native child sessions in the shared checkout; parallel w
 
 ### 5 Context and memory
 
-A `ContextPacket` supplies concise repository rules, the specification and its optional skill suggestions, relevant interfaces and findings, and their source revisions. Reuse valid findings; invalidate stale ones. Workers can progressively load a useful native skill when needed and permitted; skill bodies are not eagerly attached to task context.
+**Status:** The reusable Repomix workspace index and focused read tools are implemented; native Architect refresh/read dogfood remains an acceptance observation.
+
+A `ContextPacket` supplies concise repository rules, the specification and its optional skill suggestions, relevant interfaces and findings, and their source references. Reuse useful findings. Workers can progressively load a useful native skill when needed and permitted; skill bodies are not eagerly attached to task context.
 
 Persistent memory retrieval is bounded and relevant. Durable decisions retain provenance. Stable prompt prefixes may improve provider caching, but reported cache usage must demonstrate the benefit; separate sessions do not imply shared caches.
 
-The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, count and bound the packet, and deliver it at dispatch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal tools and can request more evidence. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a mandatory research ceremony. All 26 canonical English guide pages were reviewed; a local library probe reduced selected submission context from 80,702 to 6,807 content tokens. Production integration and total cost/quality benefits remain to be verified through Desktop.
+The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, bound the packet, and deliver it at dispatch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal tools and can request more evidence. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a research ceremony.
 
 The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lazers_project_refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
 
 ### 6 Measurement and learning
+
+**Status:** Trajectory and usage records are available; comparative model conclusions require matched real work and external acceptance.
 
 A `RunRecord` links specification, policy, context, model/provider versions, attempts, state transitions, artifacts, and evidence. Record tokens, reported cache usage, cost, elapsed time, tool calls, verification time, retries, and human interventions. Distinguish missing measurements from zero.
 
@@ -114,7 +126,7 @@ Compare fixed tasks from the same starting revisions with the same acceptance cr
 
 ## Platform boundary
 
-Build on OpenCode and its native provider access. Use the user's ChatGPT subscription for current dogfooding; OpenRouter supplies equivalent API price estimates and may supply execution models when authorized. Reuse native sessions, structured questions, tools, skills, permissions, persistence, and worktrees where validated. Keep policy and lifecycle logic separate from thin host and desktop adapters.
+Build on OpenCode and its native provider access. Use the user's ChatGPT subscription for current dogfooding; OpenRouter supplies equivalent API price estimates and can supply an execution route when configured by the user. Reuse native sessions, structured questions, tools, skills, permissions, persistence, and worktrees where validated. Keep policy and lifecycle logic separate from thin host and desktop adapters.
 
 The transcript's API examples, model prices, and performance targets are research leads. Pin and test the actual host and SDK before depending on specific hooks or desktop extension points. Unsupported enforcement paths must be exposed before enabling them.
 
@@ -160,7 +172,7 @@ evidence](.agents/docs/evidence/012-worker-inspection/native-report.json).
 
 An optional parallel [WebGPU experiment](.agents/docs/webgpu-api.md) adds a Desktop model cache, queued local questions and typed decisions, and native agent tools in this same package. Settings → LAZERS covers the whole plugin and provides a local-inference master switch plus independent capability switches; `options.webgpu: true` seeds the initial master preference. The core task workflow works with local inference off. This experiment is independent of the main Architect dogfooding sequence. Build its Desktop entry with `bun run build:gui`. The API document records the native voice integration gap in OpenCode 2.2.5; the experiment does not replace the built-in voice controls.
 
-The optional [task-hardening tool](.agents/docs/task-hardening.md), `lazers_verify_task`, checks task JSON and returns one targeted correction at a time. It allows three verification rounds total, advances revised concerns on equal-or-better scores, and continues at the limit with concerns retained. Architect uses it before ordinary submission when local Task review is enabled. Its quality benefit is the subject of the next [parallel evaluation phase](.agents/docs/parallel-task-review-evaluation.md).
+The optional [task-hardening tool](.agents/docs/task-hardening.md), `lazers_verify_task`, checks task JSON and returns one targeted correction at a time. Architect uses it before ordinary submission when local task review is enabled. It reviews task structure and intent; it does not approve implementation or acceptance.
 
 ```text
 src/index.ts                         Effect server plugin adapter
@@ -192,10 +204,10 @@ Open this repository in OpenCode Desktop to discover the local plugin. LAZERS is
 | Bun                                       | Selected runtime, package manager, and test runner                                     |
 | Formatter and linter                      | Native Bun tooling; no separate Biome, ESLint, Prettier, or Oxlint dependencies        |
 | Task schema validator                     | Zod 4.6.7, generating JSON Schema for the submission tool                              |
-| Vite, Solid, and a GUI bundle             | Optional, for a later custom Desktop panel                                             |
+| Vite, Solid, and a GUI bundle             | Used by the native Tasks panel and optional WebGPU Desktop surface                     |
 | Orchestration framework or memory service | Add only when a dogfood spike establishes the need                                     |
 
-The server uses OpenCode's Effect-native SDK. `@opencode/plugin` and `effect` are pinned peer/dev dependencies because OpenCode supplies them at runtime. Tasks use Bun's native SQLite adapter in a plugin-owned database, separate from OpenCode's private tables. The default file is `${XDG_DATA_HOME:-~/.local/share}/opencode/plugins/lazers/tasks.sqlite`; a plugin `dataDirectory` option can supply an absolute override. Canonical project directories partition tasks and share them across that project's worktrees; each task records its original worktree and session. The native `lazers_submit_task`, `lazers_get_task`, and `lazers_list_tasks` tools validate input and explicitly check their permission actions. A successful submission records `submitted`; it does not admit or start execution. Tasks are immutable in this slice. Legacy proposed limits remain optional compatibility metadata; they do not impose execution quotas. Actual usage and attempt history are retained.
+The server uses OpenCode's Effect-native SDK. `@opencode/plugin` and `effect` are pinned peer/dev dependencies because OpenCode supplies them at runtime. Tasks use Bun's native SQLite adapter in a plugin-owned database, separate from OpenCode's private tables. The default file is `${XDG_DATA_HOME:-~/.local/share}/opencode/plugins/lazers/tasks.sqlite`; a plugin `dataDirectory` option can supply an absolute override. Canonical project directories partition tasks and share them across that project's worktrees; each task records its original worktree and session. The native task tools validate input and explicitly check their permission actions. A successful submission records `submitted`; it does not admit or start execution. Task specifications remain immutable, while durable dispositions can mark superseded, rejected, duplicate or reviewed fulfillment. Actual usage and attempt history are retained.
 
 ### Retry-safe direct task submission
 
@@ -269,13 +281,13 @@ Question:       One uncertainty this spike resolves.
 Increment:      Smallest usable behavior added to the previous retained spike.
 Scope:          Starting revision, allowed writes, dependencies, and exclusions.
 Acceptance:     Observable result and the evidence required to prove it.
-Execution:      One worker, explicit model/tools, optional skill suggestions, and context references.
+Execution:      Native worker route, optional persona/skill suggestions, dependencies, and context references.
 Usage:          Actual usage, trajectory records, provider/model limits and unknown costs.
 Verification:   Checks at the completion boundary and invalidation conditions.
 Outcome:        Artifact, measurements, unresolved issues, retain/revise/discard.
 ```
 
-Do not generate arbitrary caps to fill out a task. Ask only questions that change scope, acceptance, or authorization. Implement one increment, verify it at the completion boundary, and use at most one bounded verification repair by default. A discarded experiment still delivers evidence answering its question.
+Do not generate arbitrary caps to fill out a task. Ask only questions that change scope, acceptance, or authorization. Implement one increment and verify it at the completion boundary. A discarded experiment still delivers evidence answering its question.
 
 Retain a small working increment or a useful finding before starting dependent work. Extend the previous retained slice; avoid speculative scaffolding. Record reusable knowledge only when it will reduce later work. Route any development or verification server through Portless, following repository guidance.
 
@@ -283,17 +295,17 @@ Retain a small working increment or a useful finding before starting dependent w
 
 The first useful slice is an Architect we can use inside OpenCode Desktop to specify the remaining plugin work. Continue from the [next phase handoff](.agents/docs/handoff.md). Follow this order:
 
-| Stage                             | Build                                                                                                                                                                                               | Exit evidence                                                                                                                       |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 1 API reference                   | Maintain a single-page lookup of the entire public API surface in [.agents/docs/opencode-api.md](.agents/docs/opencode-api.md), with concise summaries and direct authoritative source links.       | Every server/Desktop/TUI/RPC/client/SDK/HTTP surface indexed; experimental APIs and platform boundaries identified.                 |
-| 2 Scaffold and stack decisions    | Create the smallest loadable plugin and useful directory structure. Separate required tooling from optional additions. Review concrete choices with the architect before fixing the stack.          | The plugin typechecks and loads; the local workflow is documented; consequential stack choices are answered.                        |
-| 3 Task format and first Architect | Define the minimal structured task format, its validation, and one default Architect agent. It inspects relevant code, asks material questions, and produces scoped tasks with acceptance evidence. | A clear request yields a valid task; an ambiguous request yields focused questions. The Architect is available in OpenCode Desktop. |
-| 4 Build through the Architect     | Use our own Architect inside OpenCode Desktop to specify and dogfood each remaining increment. Apply the spike record and completion boundary above.                                                | Real plugin changes are specified with our task format, implemented, verified, and used to improve the next spike.                  |
+| Stage                          | Build                                                                                                                                                                                         | Exit evidence                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1 API reference                | Maintain a single-page lookup of the entire public API surface in [.agents/docs/opencode-api.md](.agents/docs/opencode-api.md), with concise summaries and direct authoritative source links. | Every server/Desktop/TUI/RPC/client/SDK/HTTP surface indexed; experimental APIs and platform boundaries identified.                 |
+| 2 Scaffold and stack decisions | Create the smallest loadable plugin and useful directory structure. Separate required tooling from optional additions. Review concrete choices with the architect before fixing the stack.    | The plugin typechecks and loads; the local workflow is documented; consequential stack choices are answered.                        |
+| 3 Task format and Architect    | Define the minimal structured task format, its validation, and the Architect agent. It inspects relevant code, asks material questions, and produces scoped tasks with acceptance evidence.   | A clear request yields a valid task; an ambiguous request yields focused questions. The Architect is available in OpenCode Desktop. |
+| 4 Build through the Architect  | Use our own Architect inside OpenCode Desktop to specify and dogfood each remaining increment. Apply the spike record and completion boundary above.                                          | Real plugin changes are specified with our task format, implemented, verified, and used to improve the next spike.                  |
 
-During stage 4, choose the next spike from observed friction: skill admission, worker dispatch, trajectory instrumentation, verification, bounded repair, measurement, recovery, dependency scheduling, or desktop controls. The Architect specifies that increment before implementation. A custom desktop panel and a complete execution engine are not prerequisites for using the native Desktop agent.
+During stage 4, choose the next increment from observed friction: trajectory instrumentation, verification, repair, measurement, recovery, dependency scheduling, or desktop controls. The Architect specifies that increment before implementation and the scheduler runs admitted work.
 
 The target Architect flow above guides these increments: enable current web research and, where useful, bounded investigation/research specialists; support feature plans with task dependencies and overall acceptance; add admitted dispatch; then deliver durable outcomes and validated repair/reschedule/replan decisions. Keep each addition independently usable and verified in Desktop. Use current native catalog and user preferences as route-selection advice; do not hard-code model assignments to task personas or infer a global ranking.
 
-Model routing, cache affinity, parallel workers, bounded memory, hashline editing, and selective compound learning remain separate experiments. Each needs a stated hypothesis, a fixed comparison, and a retention criterion.
+Cache affinity, bounded memory, hashline editing, and selective compound learning remain separate experiments. Each needs a stated hypothesis, a fixed comparison, and a retention criterion.
 
 Source: [Agent Harness Solutions conversation](https://chatgpt.com/share/6ae566ed-4b30-83ea-9d5d-23d85c7c4ae4). The [original design brief](.agents/docs/sources/original-design-brief.md) and [visible source transcript](.agents/docs/sources/agent-harness-solutions.json) are retained locally with fetch provenance. The contracts operationalize its final mission; the spike sequence is the proposed implementation path. Current user decisions take precedence over historical examples.

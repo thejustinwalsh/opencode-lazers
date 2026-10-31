@@ -1,0 +1,1098 @@
+{
+  "generatedAt": "2026-10-31T20:23:43.801Z",
+  "scope": {
+    "database": "/Users/tjw/.local/share/opencode/plugins/lazers/tasks.sqlite",
+    "selection": "Every accepted or incorporated task node, including nodes whose containing plan has not finished integration.",
+    "excluded": "draft and cancelled plans are excluded; active accepted nodes are reported separately from completed plans",
+    "source_hash_evidence": false
+  },
+  "inventory": {
+    "acceptedTaskNodes": 11,
+    "plansWithAcceptedNodes": 9,
+    "integratedPlans": 9
+  },
+  "currentVerification": {
+    "command": "bun test",
+    "result": "219 passed, 0 failed, 2236 expectations",
+    "quality": "bun run verify passed formatting, lint, and strict typecheck",
+    "interpretation": "This is the current checkout result at the audit snapshot; historical task acceptance and later active-plan observations remain separate."
+  },
+  "performanceRisks": [
+    {
+      "location": "src/runner/native.ts nativeHost.session",
+      "status": "concrete_current_hole",
+      "finding": "Every session projection calls ctx.session.context and materializes the entire transcript, then maps every message, even when runtime polling only needs busy/outcome/model/usage or an exact message-presence check.",
+      "impact": "The scheduler polls owner and active worker sessions repeatedly; long Architect contexts can make each tick expensive in memory and transport, and the same transcript is reread for reconciliation and outbox delivery.",
+      "why_it_exists": "HostSession currently combines metadata, usage, tool counting and message IDs in one adapter method; prompt and notify reconciliation use message IDs to avoid duplicate effects.",
+      "safe_follow_up": "Split a cheap session summary from bounded message-ID reconciliation, or cache a projection by native updated/idle metadata and invalidate after LAZERS sends. If the pinned host exposes no message-ID endpoint, fetch full context only for an uncertain prompt/notify effect, never on the normal heartbeat path. Preserve stale/uncertain semantics before reducing reads.",
+      "not_fixed_in_audit": true
+    }
+  ],
+  "plans": [
+    {
+      "planID": "6d1d3afe-f236-4a33-a5a2-86328e838249",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "5f5743c3-1bd0-4a53-a86b-a347dd961e1a",
+          "disposition": "delivered_observed_integrated",
+          "claims": [
+            {
+              "id": "retry-contract-and-failure-boundaries",
+              "status": "delivered_and_tested",
+              "evidence": [
+                "submission.test.ts fresh-process replay and concurrent race tests",
+                "storage/tools migration, permission and rollback tests",
+                "accepted runner attempt and verification effects in SQLite"
+              ]
+            },
+            {
+              "id": "integrated-quality-and-record",
+              "status": "historical_acceptance_and_current_checks_pass",
+              "evidence": [
+                "spike 007 record",
+                "native Sol High worker attempt",
+                "integrated plan state",
+                "current full suite and verify"
+              ],
+              "gap": "API-equivalent cost remains unavailable."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "submission-contract",
+              "assertion": "New submissions require a valid bounded idempotencyKey in native tool JSON Schema and runtime validation. Missing/invalid keys and invalid proposals return field guidance without collecting provenance, writing tasks, or reserving keys. Existing stored proposal/envelope schemas still accept legacy tasks.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "schema-tests"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "submission-tests"
+                }
+              ]
+            },
+            {
+              "id": "lost-response-replay",
+              "assertion": "Commit a submission, discard its receipt, then retry identical content and key. The receipt identifies the originally persisted UUID/revision, the database contains exactly one task, and original timestamps/provenance/content are unchanged. Reordered JSON object keys replay identically; a retry succeeds even if a fresh provenance callback would throw.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "submission-tests"
+                }
+              ]
+            },
+            {
+              "id": "restart-durability",
+              "assertion": "A one-shot subprocess submits through the registered native tool against a temporary file-backed database and exits without delivering the receipt to the simulated caller. A fresh subprocess reconstructs repository/tool registration and retries with the same key/content; it returns the persisted original UUID, and get/list show exactly one unchanged task. Use changed session/worktree provenance inputs on retry to prove they do not redefine identity.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "submission-tests"
+                }
+              ]
+            },
+            {
+              "id": "conflicts-and-isolation",
+              "assertion": "Same key plus changed valid content returns structured conflict with no new task or original mutation. Same content with a different key creates a distinct task. The same key in another canonical repository is independent, and cross-repository get/list never expose the first repository's task. Worktrees sharing a canonical repository share the key namespace.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "submission-tests"
+                }
+              ]
+            },
+            {
+              "id": "atomic-concurrent-persistence",
+              "assertion": "Tests race at least two independent subprocess/database connections for the same repository/key/content and obtain the same UUID with one task and one committed association. Racing changed payloads for one key produces one winner and a conflict for the other. An injected failure between persistence steps rolls back both task and association; retry can subsequently succeed. Provenance failure before commit likewise saves nothing and leaves the key reusable.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "submission-tests"
+                }
+              ]
+            },
+            {
+              "id": "migration-and-permissions",
+              "assertion": "A genuine pre-change version-1 SQLite fixture containing a legacy task migrates and reopens without altering its body or get/list results; keyed submissions and retry mappings survive reopening. Unsupported future versions still fail without metadata changes. Permission denial blocks first submission, matching replay, and conflicting reuse before repository lookup/write and does not disclose or change stored data.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "submission-tests"
+                }
+              ]
+            },
+            {
+              "id": "quality-and-record",
+              "assertion": "Full behavior tests and native formatting/lint/type checks pass. README/tool/Architect guidance explains key lifecycle, conflicts, repository scope, and submitted-not-executed semantics without expanding permissions. A spike outcome records the question, scope, actual starting/resulting revision or diff artifact, exact checks/results, and unresolved issues; it does not claim unperformed Desktop verification.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all-tests"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/007-retry-safe-submission.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "schema-tests",
+              "command": "bun test src/task.test.ts",
+              "timeoutMs": 60000
+            },
+            {
+              "id": "submission-tests",
+              "command": "bun test src/storage.test.ts src/tools.test.ts src/submission.test.ts",
+              "timeoutMs": 120000
+            },
+            {
+              "id": "all-tests",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb"
+        }
+      ]
+    },
+    {
+      "planID": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "71e53745-0ce8-4798-b453-17f260d03aa0",
+          "disposition": "delivered_observed_with_native_gap",
+          "claims": [
+            {
+              "id": "safe-visible-inspection",
+              "status": "delivered_and_fixture_tested",
+              "evidence": [
+                "trajectory/read.test.ts and registered permission tests",
+                "redaction, foreign-project, cursor and no-write coverage"
+              ]
+            },
+            {
+              "id": "honest-total-worker-effort",
+              "status": "delivered_and_fixture_tested",
+              "evidence": [
+                "categorized usage fixtures retain failed and retry attempts",
+                "unknown cost is explicit"
+              ]
+            },
+            {
+              "id": "observed-and-regression-checked",
+              "status": "partial",
+              "evidence": [
+                "native report for accepted Luna Max attempt e3d41c7b",
+                "integrated plan and recorded checks"
+              ],
+              "gap": "The required legacy attempt 3ceef8dc was rejected by project identity isolation; a fresh native read of that target was not observed."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "inspect",
+              "assertion": "Tool supports owned attempt/task reports with spec/plan/session, admitted/observed model/variant, base/result, runner state/acceptance, available times/checks. Ordered bounded trajectory pages include visible prose/tool inputs/results/status and failures/retries with IDs/times. Missing/compacted/truncated/ongoing data is explicit; continuation preserves order or rejects stale context. Registered-tool fixture compares exact IDs/order/fields across pages, failed then successful tools/checks, mutation invalidation and compaction warnings.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "account",
+              "assertion": "Include failed/cancelled/interrupted/retried/resumed/accepted attempts. Separate uncached/cache-read/cache-write/output/reasoning, counts/times, sources/coverage and model attribution. Never double-count snapshots/messages, resumes, pages or overlapping times; unknowns/legacy scalars stay explicit. Recorded costs retain provenance/worker scope; missing contributions show subtotal plus unknown total, never subscription zero as API-equivalent cost. Acceptance uses runner evidence.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "safe",
+              "assertion": "Tests prove permission-before-access, foreign identity/cursor rejection, unchanged DB/audit/watermark/host and disposal-safe callbacks. Scan full serialized text/structured/error JSON for seeded excluded/private fields, nested secrets and credentials/URLs in prose/tools/errors; none leak. Test redaction-before-truncation, unknown parts, pagination, failed→accepted, resume/provider retry, mixed models, missing data and host errors.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "native-quality",
+              "assertion": "Fresh production-adapter read of retained attempt 3ceef8dc-c679-4eb7-b1fe-04cc0951f672 records sanitized JSON, usage/check observations and API coverage; access failure stays unresolved. Spike preserves brief/answers, schema/privacy/coverage and matched-task comparison limits. Full tests and quality checks pass without existing behavior regressions.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/012-worker-inspection.md"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/evidence/012-worker-inspection/native-report.json"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/trajectory test/trajectory",
+              "timeoutMs": 120000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a"
+        }
+      ]
+    },
+    {
+      "planID": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "8a2c9ed1-ff42-427f-9fb2-8583b1e81d97",
+          "disposition": "delivered_observed_integrated",
+          "claims": [
+            {
+              "id": "readable-and-typed",
+              "status": "delivered_and_native_smoke_observed",
+              "evidence": [
+                "registered tool tests",
+                "native Code Mode smoke returned a string and typed query fields",
+                "spike 013"
+              ]
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "readable",
+              "assertion": "Default admitted worker fetch and its prompt/role instructions yield readable text under pinned Code Mode output-first semantics, not full task JSON/object. Goal, Done when, boundaries, advisory guidance, verification and sources survive. Registered-tool regression applies exact resultValue precedence and asserts a string plus those sections, failing on the current object-valued behavior, not merely checking content.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "compatible",
+              "assertion": "Structured get/query retain schema-valid, programmatically accessible task/execution/page fields in Code Mode. Tests cover readable and typed paths, missing task/revision, denial before reads, foreign-project isolation and retained callbacks after disposal; no undeclared output/schema mismatch or stored-task changes.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "verified",
+              "assertion": "Focused/full tests and quality pass. Record one native Code Mode smoke of readable returned value and typed query access without spawning workers; unavailable corrected host registration stays unresolved. Document source-backed cause/correction.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/013-readable-task-fetch.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/tools.test.ts src/tasks src/runner/runtime.test.ts src/architect.test.ts",
+              "timeoutMs": 120000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "4267db97bfbea7659b9897aaff8079c07b0a5376"
+        },
+        {
+          "taskID": "970b0feb-1fd3-40bb-a61d-f8decccb8a9f",
+          "disposition": "delivered_observed_integrated",
+          "claims": [
+            {
+              "id": "optional-skills-no-eager-content",
+              "status": "delivered_and_regression_tested",
+              "evidence": [
+                "three failed attempts and one accepted repair are retained",
+                "skill-body canary and retry/resume/repair tests"
+              ]
+            },
+            {
+              "id": "focused-guidance-and-regressions",
+              "status": "historical_acceptance_and_current_checks_pass",
+              "evidence": [
+                "spike 014 final re-verification",
+                "integrated plan",
+                "current full suite and verify"
+              ],
+              "gap": "Native adapter coverage used a fixture rather than a live Desktop session."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "optional-progressive",
+              "assertion": "Admission/dispatch no longer require skill resolution or skill permission. Fixtures with absent/denied suggestions run; fresh/retry/resume/repair handoffs and new policy/context/instruction entries contain no seeded skill-body canary, including when reading old policy shapes. No eager skill load or lazers-required-skills body injection occurs. Explicit worker-chosen native skill loading remains available and permission-checked; unrelated/nonowned entries and historical records stay intact.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "focused-handoff",
+              "assertion": "Task rendering/authoring show optional skill names with one-line descriptions (unavailable legacy description labeled honestly), never Required skills or full bodies. Shared worker template carries generic LAZERS index/focused-read discovery and progressive skill advice once. Task contract keeps goal/done, code findings/source pointers, relevant research summary and optional deep link, without repeated discovery tutorials. Existing serialized string skills/tasks still parse and typed reads work.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "quality",
+              "assertion": "Focused/full tests and quality checks pass on combined artifact; docs remove mandatory-skill/eager-injection instructions and record focused cause/change/evidence without claiming a model experiment or rewriting old outcomes.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/014-progressive-worker-guidance.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/runner src/task.test.ts src/tasks src/tools.test.ts src/architect.test.ts test/runner",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "dade430d964f677f364969d6e94a384f328c07ca"
+        }
+      ]
+    },
+    {
+      "planID": "e07cea4d-1f61-4f3d-92cd-215e63e4cb45",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "b9d649d7-5d15-4406-824b-6681865072d4",
+          "disposition": "delivered_tested_native_gap",
+          "claims": [
+            {
+              "id": "permission-owned-private",
+              "status": "delivered_and_fixture_tested",
+              "evidence": [
+                "registered permission-first tests",
+                "authorized worker/other-agent reads",
+                "foreign identity and disposal protections"
+              ]
+            },
+            {
+              "id": "checked-observed",
+              "status": "partial",
+              "evidence": ["spike 015", "integrated plan"],
+              "gap": "The record explicitly says a live authorized native read after reload remained pending; no native result was claimed."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "authorized-read",
+              "assertion": "Registered-tool tests show Architect, implementor and another agent can read an owned report when native permission allows. Denied callers fail before input validation/DB/host access. Foreign task/attempt/session identities and cursors still fail; privacy, no-write and disposal regressions remain passing. A correctly assigned worker is not treated as misassigned merely because it reads a prior attempt.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "quality",
+              "assertion": "Full tests and quality pass; documentation describes permission-based read access, not Architect-only access. A native authorized read confirms the corrected tool after an idle supported reload; no worker or host restart is used to force it.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/015-trajectory-read-access.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/trajectory test/trajectory",
+              "timeoutMs": 120000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc"
+        }
+      ]
+    },
+    {
+      "planID": "aa71e2c0-3f4c-4cff-82f2-b3afc8b661a8",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "f55e7013-630e-4b3e-ab3c-407e61c75ccc",
+          "disposition": "delivered_tested_integrated",
+          "claims": [
+            {
+              "id": "reused-private-index",
+              "status": "delivered_and_fixture_tested",
+              "evidence": [
+                "context/index.test.ts refresh/reuse/permission/race/rollback coverage",
+                "spike 017"
+              ]
+            },
+            {
+              "id": "checked-observed",
+              "status": "partial",
+              "evidence": ["focused/full/quality checks recorded", "accepted plan state"],
+              "gap": "Integrated; native production refresh/index/read reuse still needs its separate observed record."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "reused-read-only",
+              "assertion": "After one Architect build, multiple worker/specialist path/search/outline/full queries and a service reopen use the same workspace snapshot. Instrumented tests show no workspace traversal, source-content recollection, Repomix repacking or snapshot writes on those queries; changing selections does not create snapshots. Absent-index reads are explicit and do not build; unauthorized callers cannot refresh.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "refresh-and-isolation",
+              "assertion": "Explicit Architect refresh publishes changed/additional/deleted source and updated ignore rules atomically; failed/concurrent refresh cannot expose partial contents. Snapshot identity/freshness is returned honestly. Per-reader permission denial, permission revocation, foreign-workspace, symlink/secret/ignore and response-bound regressions pass without source-hash gates.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "quality-native",
+              "assertion": "Full tests and quality pass. Native build followed by differently focused reads observes stable snapshot identity and cached behavior; source/docs describe one reusable index, without copying a discovery tutorial into every task.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/017-reusable-workspace-index.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/context src/tools.test.ts src/architect.test.ts",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e"
+        }
+      ]
+    },
+    {
+      "planID": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "6edcc32f-bac1-45c6-b785-2087fb75a93c",
+          "disposition": "delivered_observed_integrated",
+          "claims": [
+            {
+              "id": "source-and-history",
+              "status": "delivered_and_real_git_tested",
+              "evidence": [
+                "runtime reopen regression selects explicit retry baseline",
+                "prior attempts, usage and checks retained",
+                "spike 020 recovery observation"
+              ]
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "explicit-baseline-wins",
+              "assertion": "A retry with an explicit corrected shared baseline dispatches from that exact commit even when older attempt and predecessor artifacts exist. Real-Git regression proves reviewer changes already in the baseline are not counted as worker scope violations; reopening runtime between admission and dispatch preserves the selected source. The old artifact-first implementation fails these checks.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "continuation-history-evidence",
+              "assertion": "Retry without a newly selected baseline retains established continuation semantics. Prior attempts/usage/outcomes remain intact, new source attribution is explicit, and verification runs against the new artifact without reusing failed or stale receipts. Existing cancellation/resume/recovery/dependency and scope-check regressions remain passing, with no new gate.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "quality",
+              "assertion": "Full tests and quality pass; source-backed evidence records the corrected retry flow and observed tuning causes without treating measured worker effort as comparative model-quality evidence.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/020-explicit-retry-baseline.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/runner/runtime.test.ts src/runner/artifacts.test.ts test/runner",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "134f5c3d38ee128867427b7756d11b755480821b"
+        },
+        {
+          "taskID": "fc88ccc0-0265-4f71-a688-c19f99c76a58",
+          "disposition": "delivered_tested_native_observation_limited",
+          "claims": [
+            {
+              "id": "native-authority-independent-personas",
+              "status": "delivered_and_adapter_tested",
+              "evidence": [
+                "native adapter forwards exact route",
+                "three persona overlays and no-delegation tests",
+                "catalog advice is permission checked"
+              ]
+            },
+            {
+              "id": "quality-observed",
+              "status": "partial",
+              "evidence": ["spike 016 CLI route listing and focused tests"],
+              "gap": "No Desktop native inference run establishes provider availability or persona behavior; no ranking or cost-effectiveness claim is made."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "native-authority-no-veto",
+              "assertion": "Tests pass exact user-selected provider/model/effort into native execution for Go and arbitrary configured providers, including a catalog entry marked tool-incompatible or missing capability metadata. LAZERS adds no provider/model/capability veto. Native failures remain native failures without fallback, hidden retries on another route or changed effort. Old inheritance and Architect selection remain compatible.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "independent-personas-guidance",
+              "assertion": "UI, Systems and Small task/refactoring are independently selectable across models, sharing one core and at most one short overlay per attempt. Normal tools and no-delegation boundaries hold. Guided setup uses live catalog/price/effort context and user preferences/questions as advice, records explicit choices, and does not lock models to personas or introduce a settings engine.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/016-native-worker-selection.md"
+                }
+              ]
+            },
+            {
+              "id": "quality-observed",
+              "assertion": "Full tests and quality pass. Native catalog and registration observations establish composition and unchanged selection without launching unauthorized Go inference or claiming model rankings.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/runner src/architect.test.ts test/runner",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a"
+        }
+      ]
+    },
+    {
+      "planID": "6ed421e4-88cc-4324-b521-8f9a32d5de43",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "2958fa32-9f7a-43d9-9252-3d30f2d4dca1",
+          "disposition": "delivered_automated_only_native_gap",
+          "claims": [
+            {
+              "id": "dispatch-and-combine",
+              "status": "delivered_and_fixture_tested",
+              "evidence": [
+                "real Git delayed-host tests prove isolated overlap, dependency/scope safety, combined checks, recovery and nonforced cleanup",
+                "spike 022"
+              ]
+            },
+            {
+              "id": "native-dogfood",
+              "status": "unresolved",
+              "evidence": ["native.md explicitly reports no native scheduler run"],
+              "gap": "No native worker session overlap, native worktree cleanup, reviewed merge or native integration receipt was observed."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "parallel-isolated",
+              "assertion": "At least two ready disjoint isolated tasks run simultaneously in distinct native-owned worktrees, within one plan and across plans, with recorded dispatch/session/workspace identities. Shared work remains serial and default; dependent and wildcard/ancestor-conflicting tasks do not overlap. Two reconcilers/restart/lost creation or prompt response cannot duplicate sessions or dispatch blocked work. No budget gate is added.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "combined-and-recovered",
+              "assertion": "Real-Git branch fixtures prove deterministic combined acceptance includes every branch's changes, not just the last artifact. Downstream tasks see their accepted prerequisite inputs; conflicts hold with all artifacts preserved. Failure/cancel/repair of one branch does not falsely accept siblings or erase usage/checks. After reviewed merge, only owned clean inactive merged worktrees are removed natively without force; dirty/unmerged/foreign work survives.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "verified-dogfood",
+              "assertion": "Full tests/quality pass and actual scheduler dogfood records overlapping native isolated worker lifetimes plus successful combined review/integration and nonforced cleanup. Unperformed native overlap is explicitly unresolved; no parallelism claim follows merely from queued plans.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/evidence/022-native-parallel-dispatch/native.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/runner test/runner",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e"
+        }
+      ]
+    },
+    {
+      "planID": "7b602667-38d8-4350-9e20-46c09b75b934",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "08e3d569-5081-4eb4-b79a-e4ac9dc42176",
+          "disposition": "accepted_node_integrated_plan_with_native_observation_limits",
+          "claims": [
+            {
+              "id": "tasks-start-and-continuation",
+              "status": "native_partial",
+              "evidence": [
+                "evidence/021-tasks-start-continuation/browser.md",
+                "evidence/021-tasks-start-continuation/source-review.md",
+                "real Desktop Start admitted the existing Repomix plan and showed a Luna Max child"
+              ],
+              "gap": "Plan reconciliation and native cleanup now completed. Final combined artifact was checked; remaining theme/font and broader recovery observations stay separate."
+            },
+            {
+              "id": "panel-behavior",
+              "status": "native_observed_partial",
+              "evidence": [
+                "narrow layout, split resize, close/reopen restoration, independent scrolling and running child activity were observed in Desktop"
+              ],
+              "gap": "Theme/font coverage and final native repaired-build acceptance are not claimed."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "start-state",
+              "assertion": "Inspector Start reaches runtime/Architect and real execution; duplicate clicks/reconnect cannot duplicate work. Real active/blocked/failed/cancelled/accepted glyphs and accessible state/reason update from records. Denied/stale/foreign/ineligible actions cannot fake running or bypass runtime.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "readable-layout",
+              "assertion": "Objective and criteria wrap fully once, including narrow objectives under180chars. Compact ID/state/Start replaces duplicate title/gaps; Done when stays visible; Details/Activity/JSON start closed and show recorded data. Actual pane geometry survives header/search wrapping, multi-move/keyboard resize and explicit saved48%, with independent scrolling and usable short/narrow panes.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "continuation",
+              "assertion": "Actionable work wakes a valid Architect or creates one linked native continuation. Busy/idle/missing/archived owners, duplicate ticks, lost delivery and restart around create/notify preserve one logical continuation without lost work, duplicate model runs, foreign context or cancelled-task revival. Admitted work needs no manual-click gate.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "quality-native",
+              "assertion": "Tests/build/quality pass. Driver observes real Start/state/continuation and resize/search/scroll; fresh running captures return to Terra. Native fonts/theme and quiet surface remain, without invented labels/cards/report prose or GPU/settings changes; missing observations stay explicit.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "build"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/evidence/021-tasks-start-continuation/native.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/tasks src/runner src/architect.test.ts test/task-panel test/runner",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "build",
+              "command": "bun run build:gui",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021"
+        }
+      ]
+    },
+    {
+      "planID": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
+      "state": "integrated",
+      "tasks": [
+        {
+          "taskID": "1532ce08-7aac-434f-a8e1-a92e5d7e3cb3",
+          "disposition": "delivered_tested_integrated",
+          "claims": [
+            {
+              "id": "authored-source-compatible",
+              "status": "delivered_and_persistence_tested",
+              "evidence": [
+                "schema/store replay and legacy omission tests",
+                "spike 031",
+                "integrated plan"
+              ],
+              "gap": "The panel/grouped UI consumer was explicitly outside this task and remains unverified here."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "source-title-compatible",
+              "assertion": "Production plan schema/submission accepts and persists optional authored title unchanged through reopen and idempotent replay. Untitled existing/new plans remain valid and retain absent title; changed-content replay still conflicts correctly. Reading/submitting titled plans does not rewrite any historical plan body/revision or generate a title from its objective.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                }
+              ]
+            },
+            {
+              "id": "checks",
+              "assertion": "Focused compatibility regressions, full tests and quality pass; record source contract for existing projection/grouped-task consumers without claiming those separate UIs are implemented by this field.",
+              "evidence": [
+                {
+                  "kind": "verification",
+                  "verificationID": "focused"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "all"
+                },
+                {
+                  "kind": "verification",
+                  "verificationID": "quality"
+                },
+                {
+                  "kind": "artifact",
+                  "reference": ".agents/docs/spikes/031-authored-plan-title.md"
+                }
+              ]
+            }
+          ],
+          "verification": [
+            {
+              "id": "focused",
+              "command": "bun test src/runner/schema.test.ts src/runner/store.test.ts test/runner",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "all",
+              "command": "bun test",
+              "timeoutMs": 180000
+            },
+            {
+              "id": "quality",
+              "command": "bun run verify",
+              "timeoutMs": 120000
+            }
+          ],
+          "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca"
+        }
+      ]
+    }
+  ],
+  "stateMachineAudit": {
+    "status": "real_xstate_node_lifecycle; not an_xstate_orchestrator",
+    "implementation": [
+      "src/runner/machine.ts uses XState 5.33.3 createMachine with queued/ready/running/verifying/accepted/blocked/failed/cancelled/exhausted/incorporated states.",
+      "store.move resolves the XState state, computes the next snapshot, checks machine_version, updates the node with optimistic version fencing, and records a transition.",
+      "runner_nodes persist XState persisted snapshots plus a separate lazers-task/1 machine version; runner_effects, leases and SQL transitions journal external effects before native work.",
+      "runtime.ts owns dependency readiness, cross-plan prerequisites, shared serialization, isolated conflict selection, dispatch, verification, repair, cancellation, integration and cleanup."
+    ],
+    "observed": [
+      "Runner and recovery tests exercise invalid effect recovery, lost native responses, dependency gates, parallel isolated branches, cancellation and cleanup.",
+      "The database contains accepted snapshots with value accepted and status done, and transition/effect rows for each accepted plan.",
+      "src/runner/machine.test.ts directly covers the initial snapshot, all declared transition edges, terminal/unknown event rejection, and machine version propagation."
+    ],
+    "gaps": [
+      "Plan lifecycle, dependency graph and scheduler concurrency are SQL/runtime logic outside the XState machine; XState is not the graph scheduler.",
+      "No createActor/invocation/timer/actor supervision or XState event-log replay is used. This is a pure transition reducer with durable host effects.",
+      "Changing machine_version currently rejects old nodes; there is no explicit snapshot migration path."
+    ],
+    "assessment": "The current design is coherent for a SQL-owned durable scheduler: XState constrains task-node transitions while the database/effect journal owns durable orchestration. Calling the whole runner an XState state machine overstates what is implemented."
+  },
+  "externalPrimarySources": [
+    {
+      "title": "XState events and transitions",
+      "url": "https://stately.ai/docs/transitions",
+      "relevance": "Transitions are deterministic; pure transition APIs are supported and getNextSnapshot/getInitialSnapshot are deprecated in favor of transition/initialTransition."
+    },
+    {
+      "title": "XState persistence",
+      "url": "https://stately.ai/docs/persistence",
+      "relevance": "Persisted actor snapshots restore state; external durable hosts still own storage and effects."
+    },
+    {
+      "title": "Temporal workflows",
+      "url": "https://docs.temporal.io/workflows",
+      "relevance": "Durable orchestration replays an ordered event history and separates durable commands from external activity."
+    },
+    {
+      "title": "Temporal workflow definition",
+      "url": "https://docs.temporal.io/workflow-definition",
+      "relevance": "Workflow code must be deterministic; external I/O and model calls belong in activities, and workflow versioning matters."
+    },
+    {
+      "title": "Temporal activity failures",
+      "url": "https://docs.temporal.io/encyclopedia/detecting-activity-failures",
+      "relevance": "Retries are attempts of one logical activity and require timeout/recovery semantics."
+    }
+  ],
+  "nativeParallelObservation": {
+    "observedAt": "2026-10-31T20:23:43.802Z",
+    "status": "Three concurrent native sessions and separate worktrees observed through native session.get and Desktop subagent menu; work completion and cleanup remain pending.",
+    "workers": [
+      {
+        "task_id": "7548e7f8-d33b-4768-b8a1-9c81222da176",
+        "session_id": "ses_de0ba270cb044fac97f46f3b275e45df",
+        "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/e7f473db-3716-49fa-8075-c81be5b924ad",
+        "state": "running",
+        "started_at": 1793478045858
+      },
+      {
+        "task_id": "efd8459f-1dbe-4472-968b-f26f59504291",
+        "session_id": "ses_24973c3a02bf468787ea501e79e71813",
+        "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7eaa8182-bc03-4200-9086-78a28bf709f2",
+        "state": "running",
+        "started_at": 1793478049892
+      },
+      {
+        "task_id": "3af64c61-ff16-43a9-8983-a11763ccf415",
+        "session_id": "ses_51ea19be1f964b8baf0c6225fe833c35",
+        "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/963f6a39-fadb-4de1-982b-22b548668e7c",
+        "state": "running",
+        "started_at": 1793478049923
+      }
+    ]
+  }
+}

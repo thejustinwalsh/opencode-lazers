@@ -1,0 +1,53 @@
+{
+  "observedAt": "2026-10-31T20:24:08.490Z",
+  "workers": [
+    {
+      "id": "ses_de0ba270cb044fac97f46f3b275e45df",
+      "model": {
+        "id": "qwen3.8-flash",
+        "providerID": "opencode-go",
+        "variant": "medium"
+      },
+      "agent": "lazers-implementor",
+      "parentID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "busy": 1793478046437,
+      "idle": 1793478046139,
+      "outcome": "succeeded",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/e7f473db-3716-49fa-8075-c81be5b924ad",
+      "toolCount": 33,
+      "toolNames": ["lazers_get_task", "execute", "read", "shell", "glob", "skill"]
+    },
+    {
+      "id": "ses_24973c3a02bf468787ea501e79e71813",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "agent": "lazers-implementor",
+      "parentID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "busy": 1793478050581,
+      "idle": 1793478050162,
+      "outcome": "succeeded",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7eaa8182-bc03-4200-9086-78a28bf709f2",
+      "toolCount": 45,
+      "toolNames": ["execute", "shell", "read", "grep"]
+    },
+    {
+      "id": "ses_51ea19be1f964b8baf0c6225fe833c35",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "agent": "lazers-implementor",
+      "parentID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "busy": 1793478050566,
+      "idle": 1793478050169,
+      "outcome": "succeeded",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/963f6a39-fadb-4de1-982b-22b548668e7c",
+      "toolCount": 51,
+      "toolNames": ["execute", "read", "shell", "glob", "grep"]
+    }
+  ]
+}

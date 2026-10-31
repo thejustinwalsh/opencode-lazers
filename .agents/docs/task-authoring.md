@@ -16,12 +16,11 @@ The typed schema maps these to `objective`, `acceptance`,
 `context` holds useful references. Dependencies and worker selection belong to
 the execution plan; runtime owns identities, provenance and execution records.
 `requirements.skills` is an optional list of suggestions, preferably written as
-`name — one-line description`. Name-only legacy entries remain readable; their
+`name — one-line description`. Name-only entries remain readable; their
 description is unknown rather than inferred. Workers may load a useful native
 skill progressively, subject to OpenCode's normal permission check; an absent or
-denied suggestion does not block a task. `requirements.policyReference` is
-optional legacy metadata; use task-specific constraints for actual requirements.
-An empty applicable list is sufficient. Do not fill fields with boilerplate.
+denied suggestion does not block a task. An empty applicable list is sufficient.
+Do not fill fields with boilerplate.
 
 Long specifications warrant checking whether distinct outcomes should be tasks
 or whether the feature needs an explicit complex contract. Split by verifiable
@@ -37,17 +36,19 @@ optional link to deeper material. Generic repository-discovery and skill-loading
 advice lives in the shared implementor instructions, not repeated in each task.
 
 Architect self-review through `lazers_verify_task` stays. It checks both missing
-behavior and unsupported or repeated obligations. It must preserve necessary
-requirements while removing needless instructions. No word-count approval gate.
+behavior and unsupported or repeated obligations. It preserves necessary
+requirements while removing needless instructions; it is not implementation
+approval.
 
 Use an explicit user-selected native implementor route through plan `workerModel`
 with the exact `providerID`, model `id`, and optional native `variant`/effort.
-Otherwise omit it and inherit the native implementor configuration. The native
-session API governs route availability and errors; live catalog prices, variants,
-and capability metadata inform advice but do not gate or rewrite a selection.
-Missing prices remain unknown. Each plan node may independently name at most one
+Otherwise omit it and inherit the native implementor configuration. LAZERS passes
+an explicit route to the native session API unchanged; the host either creates
+that route or returns its error. Live catalog prices, variants, and capability
+metadata inform advice but do not gate or rewrite a selection. Missing prices
+remain unknown. Each plan node may independently name at most one
 model-independent persona (`ui`, `systems`, or `small-refactoring`); do not map
-personas to models. Old plans without a route or persona retain their behavior.
+personas to models. Plans without a route or persona retain their behavior.
 
 Grade real work by acceptance correctness, regressions, scope, maintainability
 and necessary rework. Retain visible trajectories and failed attempts. Compare
