@@ -2,7 +2,7 @@
 
 Existing task: `efd8459f-1dbe-4472-968b-f26f59504291`, existing plan:
 `b50a1a71-1a54-4d89-8ef2-0644bcccc327`. These clarifications apply to that
-work, not a replacement task. Implementation and verification are pending.
+work, not a replacement task. Implementation and verification evidence follows.
 
 ## Linked worker association — native reproduction, 2026-10-31
 
@@ -39,3 +39,66 @@ unambiguous fork/join boundaries, one row per task, selectable Waiting on / Bloc
 Graph independence is not evidence of actual scheduler concurrency. Radar uses
 real machine topology/snapshots/transitions; Trajectory uses recorded history,
 with unknown timing/accounting left unknown. Keep these sources distinct.
+
+## Implementation and verification — 2026-10-31
+
+- Registered `lazers.observability` exposes project/session-scoped `snapshot` and
+  `trajectory` reads. Session IDs are resolved with native `session.get`, checked
+  for current-project/live status, and authorized against the resolved agent.
+  Project-wide scope is a separate explicit selector. The trajectory action uses
+  the existing `lazers_inspect_trajectory` permission.
+- Radar reads use the read-only trajectory store. The response carries the actual
+  XState definition/version and persisted snapshots separately from transitions
+  ordered by database sequence; unsupported/mismatched snapshots are not silently
+  rewritten. Scope expansion follows persisted task provenance, plan-owner,
+  worker-attempt and same-project plan dependency links only.
+- Registered Tasks query/get now use an association-aware adapter for plan-owner
+  and worker-session discovery without changing task provenance or admitting
+  foreign-project records. Radar omits raw policy/attempt internals; visible text
+  is sanitized, while Trajectory retains only its existing safe attempt summary.
+  Neither projection calls `RunnerStore.detail()` or writes audits.
+- Runner/check source fingerprints detect changes outside the repository
+  watermark; native usage/tool events invalidate separately. Duplicate/late
+  durable events are ignored, sequence gaps/reconnects request a resnapshot, and
+  the client sync state rejects stale scope/project generations. Trajectory output
+  retains the existing privacy/coverage and unique-session usage calculations.
+  Attempt end times remain unknown; check receipt endpoints and native model
+  activity endpoints are labeled by source, with native idle not treated as task
+  acceptance.
+
+Verification completed:
+
+- `bun test src/observability test/observability src/trajectory test/trajectory src/tasks/rpc.test.ts`
+  — 27 passed.
+- `bun test` — 224 passed.
+- `bun run verify` — formatting, lint and typecheck passed.
+- A read-only projection against the local task database included task
+  `970b0feb-1fd3-40bb-a61d-f8decccb8a9f` in its actual owner-session plan and
+  returned the persisted accepted state/snapshot consistently. A separate
+  read-only comparison found the four persisted attempt IDs, states, scalar token
+  totals, tool counts and start times match the retained measurement's runner
+  records (267 tool calls total). The runtime does not load the design JSON.
+
+Verification boundary: this test harness has no live native OpenCode session
+context, so the registered RPC's native authorization and trajectory host reads
+were exercised with test doubles, not a live `session.get`/`session.context` call.
+Accordingly the retained measurement's native cumulative token fields have not
+been independently re-read through the new registered RPC; the recorded design
+data remains historical evidence, not claimed live output.
+
+## Driver corrections
+
+Native durable sequence jumps are not loss signals on a type-filtered
+subscription: omitted native event types can own those sequence numbers.
+Monotonic jumps now invalidate normally; explicit disconnect and gaps in the
+projection's own emitted sequence still require resnapshot.
+
+`SnapshotOutput` now includes task `revision`/sanitized `objective` on every
+planned node plus top-level `attempts` and `checks` for Timeline. These arrays
+come only from scoped runner records and receipt endpoint columns, without
+native session/context reads. Attempt reservation starts, recorded worker
+activity segments and verification intervals have separate explicit timing
+bases; absent ends stay null and resumed segments stay separate. Rich transcript
+and native usage remain available through selected `trajectory` reads, not
+mandatory fanout for every Timeline lane. See the
+[driver review](../evidence/023-scoped-observation-projections/driver-review.md).

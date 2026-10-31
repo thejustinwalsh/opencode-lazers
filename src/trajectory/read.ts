@@ -29,6 +29,7 @@ type CheckView = {
   command: string | null
   startedAt: number | null
   endedAt: number | null
+  timingBasis: string
   exitCode: number | null
   timedOut: boolean | null
   unchanged: boolean | null
@@ -373,6 +374,8 @@ function checkView(
     command: typeof check?.command === "string" ? safeText(check.command, stats) : null,
     startedAt: asNumber(check?.startedAt),
     endedAt: asNumber(check?.endedAt),
+    timingBasis:
+      "Verification receipt check.startedAt/check.endedAt; absent endpoints remain unknown",
     exitCode,
     timedOut,
     unchanged,
@@ -609,6 +612,19 @@ function attemptView(
           sessionBusy: session.busy,
         }
       : null,
+    intervals: {
+      attempt: {
+        startedAt: attempt.started_at,
+        endedAt: null,
+        basis: "runner_attempt.started_at is recorded; no attempt end is inferred",
+      },
+      modelActivity: {
+        startedAt: session?.time.busy ?? null,
+        endedAt: session?.time.idle ?? null,
+        basis:
+          "OpenCode native session busy/idle endpoints describe model activity only; idle is not task acceptance",
+      },
+    },
     sessionStatus,
     ...(sessionError ? { sessionError: safeText(sessionError, stats, 1000) } : {}),
     outcome: session?.outcome ?? null,
