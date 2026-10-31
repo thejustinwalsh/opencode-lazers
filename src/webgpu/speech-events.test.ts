@@ -153,3 +153,26 @@ test("a comment and a fence split between parts remain excluded", () => {
   coordinator.handle(text(" data}\n```\nSafe ending.", 3, { phase: "final_answer" }))
   expect(calls.flatMap((call) => call.segments).join(" ")).toBe("Visible. Done. Safe ending.")
 })
+
+test("discarded code fragments do not turn an inline delimiter into a closing fence", () => {
+  const { calls, coordinator } = harness()
+  coordinator.handle(started())
+  coordinator.handle(text("```ts\ninside_code ", 0, { phase: "final_answer" }))
+  coordinator.handle(
+    text("```\nPRIVATE_CODE_CANARY\n```\nSafe prose.", 1, { phase: "final_answer" }),
+  )
+  coordinator.handle(step())
+  coordinator.handle(succeeded())
+  expect(calls.flatMap((call) => call.segments)).toEqual(["Safe prose."])
+})
+
+test("replayed success events do not repeat an unmarked completed final", () => {
+  const { calls, coordinator } = harness()
+  coordinator.handle(started())
+  coordinator.handle(text("Unmarked final once."))
+  coordinator.handle(step())
+  coordinator.handle(succeeded())
+  coordinator.handle(step())
+  coordinator.handle(succeeded())
+  expect(calls.flatMap((call) => call.segments)).toEqual(["Unmarked final once."])
+})
