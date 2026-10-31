@@ -390,7 +390,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
     !props.session.server.connected
       ? "Server disconnected; observation is not live"
       : visible()?.stale
-        ? "Observation is stale"
+        ? `Observation is stale; last observation ${snapshot()?.observedAt ?? "unavailable"}`
         : "Observation is current"
   const currentPlanTransitions = () => transitions()
   const flowNode = () => node()
@@ -467,6 +467,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
             data-stale={stale()}
             role="img"
             aria-label={staleLabel()}
+            title={staleLabel()}
           />
           <span class="lazers-radar-scope">
             <Ui.Menu
@@ -593,7 +594,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
         >
           {(value) => (
             <>
-              <Show when={stale()}>
+              <Show when={stale() && (visible()?.error || !props.session.server.connected)}>
                 <div class="lazers-radar-note" role="status">
                   {!props.session.server.connected
                     ? "The server is disconnected. Displayed records are not live."

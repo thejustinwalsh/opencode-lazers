@@ -123,6 +123,7 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
     const queues = [new EventQueue<ObservationChange>(), new EventQueue<ObservationChange>()]
     let streamCalls = 0
     let snapshotCalls = 0
+    const updates: { stale: boolean; error: string }[] = []
     let eventSequence = session.boundary.eventSequence
     const transport: RadarTransport = {
       snapshot: async () => {
@@ -139,7 +140,7 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
       online: () => true,
     }
     const state = new RadarPanelState(
-      () => {},
+      (data) => updates.push({ stale: data.stale, error: data.error }),
       async () => {},
     )
     state.connect(
@@ -165,18 +166,25 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
       })
     }
     const next = eventSequence + 1
+    const beforeUpdate = updates.length
     emit(next)
     await until(() => state.data.snapshot?.boundary.eventSequence === next && !state.data.stale)
     expect(snapshotCalls).toBe(2)
+    expect(updates.slice(beforeUpdate)).toContainEqual({ stale: true, error: "" })
 
     emit(next)
     await new Promise((resolve) => setTimeout(resolve, 5))
     expect(snapshotCalls).toBe(2)
 
     const gap = next + 2
+    const beforeGap = updates.length
     emit(gap, true)
     await until(() => state.data.snapshot?.boundary.eventSequence === gap && !state.data.stale)
     expect(snapshotCalls).toBe(3)
+    expect(updates.slice(beforeGap)).toContainEqual({
+      stale: true,
+      error: "Observation gap; refreshing the snapshot.",
+    })
 
     queues[0]!.close()
     await until(() => streamCalls >= 2 && snapshotCalls >= 4 && !state.data.stale)

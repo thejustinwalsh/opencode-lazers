@@ -162,9 +162,12 @@ export class RadarPanelState {
         for await (const change of transport.changes(signal)) {
           if (!this.current(epoch, transport, signal)) return
           const previous = this.sync.eventSequence
-          this.sync.acceptChange(generation, projectID, change)
+          const contiguous = this.sync.acceptChange(generation, projectID, change)
           if (this.sync.eventSequence === previous) continue
-          this.update({ stale: true, error: "Observation changed; refreshing the snapshot." })
+          this.update({
+            stale: true,
+            error: contiguous ? "" : "Observation gap; refreshing the snapshot.",
+          })
           void this.refresh(epoch, generation, transport, signal)
         }
         if (signal.aborted) return
