@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
+import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
@@ -22,6 +23,7 @@ function fixture(
     shared?: boolean
     commit?: boolean
     repair?: boolean
+    wrongFirstB?: boolean
     skillSuggestions?: string[]
     workerModel?: { providerID: string; id: string; variant?: string }
   } = {},
@@ -143,7 +145,13 @@ function fixture(
         .find((attempt) => attempt.session_id === input.sessionID)!
       const path = repository.get(assigned.task_id)!.proposal.writeScope[0]!
       if (path === "b.txt") expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
-      writeFileSync(join(session.directory, path), path[0]!)
+      const wrongFirstB = options.wrongFirstB && path === "b.txt" && assigned.number === 1
+      if (wrongFirstB) {
+        session.tokens = 65941
+        session.tools = 17
+        session.cost = 1.25
+      }
+      writeFileSync(join(session.directory, path), wrongFirstB ? "wrong" : path[0]!)
       if (options.outside) writeFileSync(join(session.directory, "escape.txt"), "bad")
       if (options.shared || options.commit) {
         const checkout = session.directory
@@ -202,6 +210,41 @@ function fixture(
 }
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
+}
+async function failSecondSharedTask(f: ReturnType<typeof fixture>) {
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  const attempts = f.store.attempts(f.receipt.planID)
+  const predecessor = attempts.find((attempt) => attempt.task_id === f.tasks[0]!.id)!
+  const failed = attempts.find((attempt) => attempt.task_id === f.tasks[1]!.id)!
+  if (!predecessor.artifact || !failed.artifact)
+    throw new Error("Expected predecessor and failed worker artifacts")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(predecessor.state).toBe("accepted")
+  expect(failed.state).toBe("failed")
+  expect(failed.base_commit).toBe(predecessor.artifact)
+  expect(failed.artifact).toBeTruthy()
+  return { predecessor, failed }
+}
+function attemptCheck(
+  f: ReturnType<typeof fixture>,
+  taskID: string,
+  attemptID: string,
+): CheckReceipt {
+  const effect = f.store
+    .effects(f.receipt.planID)
+    .find(
+      (candidate) =>
+        candidate.task_id === taskID &&
+        candidate.attempt_id === attemptID &&
+        candidate.kind === "verify:content",
+    )
+  if (!effect?.receipt) throw new Error(`Missing verification receipt for ${attemptID}`)
+  expect(effect.state).toBe("completed")
+  return (JSON.parse(effect.receipt) as { check: CheckReceipt }).check
 }
 const skillBodyCanary = "SECRET_SKILL_BODY_CANARY"
 function seedLegacySkillBody(
@@ -540,6 +583,187 @@ test("explicit retry starts a fresh native child and retains the old attempt and
   expectNoSkillBody(attempts[1]!.policy)
   expect(attempts[1]!.session_id).not.toBe(old.session_id)
   expect(attempts[1]!.workspace).toBe(f.root)
+})
+
+test("an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes", async () => {
+  const f = fixture({ shared: true, wrongFirstB: true })
+  const { predecessor, failed } = await failSecondSharedTask(f)
+  const predecessorArtifact = predecessor.artifact
+  const failedArtifact = failed.artifact
+  if (!predecessorArtifact || !failedArtifact) throw new Error("Expected Git artifacts")
+  expect(failed.token_count).toBe(65941)
+  expect(failed.tool_count).toBe(17)
+  expect(failed.cost).toBe(1.25)
+
+  writeFileSync(join(f.root, "reviewer-fix.txt"), "approved\n")
+  git(f.root, ["add", "reviewer-fix.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Reviewer correction",
+  ])
+  const correctedBaseline = git(f.root, ["rev-parse", "HEAD"])
+  expect(correctedBaseline).not.toBe(failedArtifact)
+  expect(git(f.root, ["show", `${correctedBaseline}:reviewer-fix.txt`])).toBe("approved")
+
+  const retry = await f.runtime.command(
+    {
+      requestID: "retry-corrected-baseline",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "retry",
+      taskID: f.tasks[1]!.id,
+      reason: "Start from the reviewed shared baseline",
+      workspaceMode: "shared",
+      baseCommit: correctedBaseline,
+    },
+    "owner",
+  )
+  expect(retry).toMatchObject({ status: "retrying" })
+  expect(
+    f.store.latestTransition<{ attemptID: string; source: string; explicitBaseline: boolean }>(
+      f.receipt.planID,
+      f.tasks[1]!.id,
+      "WORKSPACE_SELECTED",
+    ),
+  ).toMatchObject({ source: correctedBaseline, explicitBaseline: true })
+  expect(
+    f.store.latestTransition<{
+      attemptID: string
+      selectedBaseline: string | null
+      reason: string
+      usageRetained: boolean
+      budget: null
+    }>(f.receipt.planID, f.tasks[1]!.id, "RETRY_REQUESTED"),
+  ).toEqual({
+    attemptID: failed.id,
+    reason: "Start from the reviewed shared baseline",
+    usageRetained: true,
+    budget: null,
+    selectedBaseline: correctedBaseline,
+  })
+
+  // A fresh runtime must recover the selected source from durable retry history.
+  f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await drive(reopened)
+  } finally {
+    reopened.stop()
+  }
+
+  const retriedAttempts = f.store
+    .attempts(f.receipt.planID)
+    .filter((attempt) => attempt.task_id === f.tasks[1]!.id)
+  expect(retriedAttempts).toHaveLength(2)
+  const retried = retriedAttempts[1]!
+  const retriedArtifact = retried.artifact
+  if (!retriedArtifact) throw new Error("Expected retry artifact")
+  expect(retried.base_commit).toBe(correctedBaseline)
+  expect(JSON.parse(retried.policy).source).toBe(correctedBaseline)
+  expect(retried.workspace).toBe(f.root)
+  expect(retried.state).toBe("accepted")
+  expect(retriedAttempts[0]).toMatchObject({
+    id: failed.id,
+    state: "failed",
+    base_commit: predecessorArtifact,
+    artifact: failedArtifact,
+    token_count: 65941,
+    tool_count: 17,
+    cost: 1.25,
+  })
+  expect(f.store.nodes(f.receipt.planID)[1]!.state).toBe("accepted")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(git(f.root, ["diff", "--name-only", `${correctedBaseline}..${retriedArtifact}`])).toBe(
+    "b.txt",
+  )
+  expect(git(f.root, ["show", `${retriedArtifact}:reviewer-fix.txt`])).toBe("approved")
+
+  const failedCheck = attemptCheck(f, f.tasks[1]!.id, failed.id)
+  const retriedCheck = attemptCheck(f, f.tasks[1]!.id, retried.id)
+  expect(failedCheck.artifact).toBe(failedArtifact)
+  expect(failedCheck.exitCode).not.toBe(0)
+  expect(retriedCheck.artifact).toBe(retriedArtifact)
+  expect(retriedCheck.inputIdentity).toBe(retriedArtifact)
+  expect(retriedCheck.exitCode).toBe(0)
+  const checks = f.store
+    .effects(f.receipt.planID)
+    .filter((effect) => effect.task_id === f.tasks[1]!.id && effect.kind === "verify:content")
+  expect(checks.map((effect) => effect.id)).toHaveLength(2)
+  expect(new Set(checks.map((effect) => effect.attempt_id)).size).toBe(2)
+  const combined = f.store
+    .effects(f.receipt.planID)
+    .find((effect) => effect.kind === "graph-verify:combined")!
+  expect(JSON.parse(combined.receipt!).check.artifact).toBe(retriedArtifact)
+})
+
+test("retry without a newly selected baseline continues from the failed artifact and retains history", async () => {
+  const f = fixture({ shared: true, wrongFirstB: true })
+  const { predecessor, failed } = await failSecondSharedTask(f)
+  const predecessorArtifact = predecessor.artifact
+  const failedArtifact = failed.artifact
+  if (!predecessorArtifact || !failedArtifact) throw new Error("Expected Git artifacts")
+  expect(git(f.root, ["rev-parse", "HEAD"])).toBe(failedArtifact)
+
+  await f.runtime.command(
+    {
+      requestID: "retry-existing-baseline",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "retry",
+      taskID: f.tasks[1]!.id,
+      reason: "Continue the existing shared attempt",
+      workspaceMode: "shared",
+    },
+    "owner",
+  )
+  expect(
+    f.store.latestTransition<{ attemptID: string; selectedBaseline: string | null }>(
+      f.receipt.planID,
+      f.tasks[1]!.id,
+      "RETRY_REQUESTED",
+    ),
+  ).toMatchObject({ attemptID: failed.id, selectedBaseline: null })
+  await drive(f.runtime)
+
+  const retriedAttempts = f.store
+    .attempts(f.receipt.planID)
+    .filter((attempt) => attempt.task_id === f.tasks[1]!.id)
+  expect(retriedAttempts).toHaveLength(2)
+  const retried = retriedAttempts[1]!
+  const retriedArtifact = retried.artifact
+  if (!retriedArtifact) throw new Error("Expected retry artifact")
+  expect(retried.base_commit).toBe(failedArtifact)
+  expect(JSON.parse(retried.policy).source).toBe(failedArtifact)
+  expect(retried.state).toBe("accepted")
+  expect(retriedAttempts[0]).toMatchObject({
+    id: failed.id,
+    state: "failed",
+    base_commit: predecessorArtifact,
+    artifact: failedArtifact,
+    token_count: 65941,
+    tool_count: 17,
+    cost: 1.25,
+  })
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+
+  const failedCheck = attemptCheck(f, f.tasks[1]!.id, failed.id)
+  const retriedCheck = attemptCheck(f, f.tasks[1]!.id, retried.id)
+  expect(failedCheck.artifact).toBe(failedArtifact)
+  expect(failedCheck.exitCode).not.toBe(0)
+  expect(retriedArtifact).not.toBe(failedArtifact)
+  expect(retriedCheck.artifact).toBe(retriedArtifact)
+  expect(retriedCheck.inputIdentity).toBe(retriedArtifact)
+  expect(retriedCheck.exitCode).toBe(0)
+  const combined = f.store
+    .effects(f.receipt.planID)
+    .find((effect) => effect.kind === "graph-verify:combined")!
+  expect(JSON.parse(combined.receipt!).check.artifact).toBe(retriedArtifact)
 })
 
 test("native cleanup follows verified integration, preserves dirty work, and retries explicitly", async () => {

@@ -159,7 +159,15 @@ export class TaskRuntime {
         if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
         else if (node.state !== "running")
           this.store.move(plan.id, node.task_id, "RESUME", command.reason)
-        if (command.workspaceMode === "shared") {
+        const planInput = PlanInput.parse(JSON.parse(plan.body))
+        const sharedMode =
+          command.workspaceMode === "shared" ||
+          (command.workspaceMode === undefined && planInput.workspaceMode === "shared")
+        let selectedBaseline: string | null = null
+        if (
+          command.workspaceMode === "shared" ||
+          (retry && sharedMode && command.baseCommit !== undefined)
+        ) {
           const source = command.baseCommit ?? git(this.directory, ["rev-parse", "HEAD"])
           git(this.directory, ["merge-base", "--is-ancestor", source, "HEAD"])
           if (!retry)
@@ -189,9 +197,11 @@ export class TaskRuntime {
             from: attempt.workspace,
             directory: this.directory,
             source,
+            explicitBaseline: retry && command.baseCommit !== undefined,
             mode: "shared",
             reason: command.reason,
           })
+          if (retry && command.baseCommit !== undefined) selectedBaseline = source
         }
         if (retry)
           db.query(
@@ -210,6 +220,7 @@ export class TaskRuntime {
           reason: command.reason,
           usageRetained: true,
           budget: null,
+          ...(retry ? { selectedBaseline } : {}),
         })
         return {
           status: retry ? "retrying" : "resuming",
@@ -515,7 +526,16 @@ export class TaskRuntime {
       .nodes(plan.id)
       .filter((n) => n.ordinal < node.ordinal && n.state === "accepted")
       .at(-1)
+    const retryRequest = this.store.latestTransition<{
+      attemptID?: string
+      selectedBaseline?: string | null
+    }>(plan.id, task.id, "RETRY_REQUESTED")
+    const selectedBaseline =
+      retryRequest && retryRequest.attemptID === attempts.at(-1)?.id
+        ? retryRequest.selectedBaseline
+        : null
     const base =
+      selectedBaseline ??
       attempts.at(-1)?.artifact ??
       previous?.artifact ??
       (input.workspaceMode === "shared"
