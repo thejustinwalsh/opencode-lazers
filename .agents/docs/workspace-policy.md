@@ -13,8 +13,9 @@ returned directory when the host handles a name collision.
 
 Child creation inherits its parent's location. In pinned OpenCode 2.2.5,
 `session.create` ignores the supplied `location` when `parentID` is present.
-For isolated work, use `session.move` and confirm the assigned location before
-prompting. Shared children retain their inherited checkout.
+For isolated work, use `session.move`, await native session completion with
+`session.wait`, and confirm the assigned location before prompting. Moves are
+queued. Shared children retain their inherited checkout.
 
 Review the changes and checks, integrate them, and verify the combined result.
 For this dogfood run the driver performs review and merge; the user waived PR
@@ -27,10 +28,11 @@ cleanup failure does not erase an accepted implementation or its history. Recove
 must distinguish an already-removed directory from an unfinished removal, and
 never remove unrelated worktrees. Reconcile leftovers at startup and after merges.
 
-Current boundary: native creation and location routing are implemented. Shared
-checkout selection, recorded integration and automatic cleanup still require a
-bounded runner increment. The existing interrupted attempt retains its original
-worktree and preserved edits while its corrected worker flow is verified.
+Current boundary: native creation/location routing, shared-by-default serial
+selection, and explicit retry into a fresh child are implemented. Combined serial
+verification reuses the final accepted worker's checkout. Recorded integration
+and cleanup remain the next lifecycle increment. The existing interrupted attempt
+retains its original worktree and preserved edits while its corrected flow runs.
 
 Pinned source: [session handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/session.ts),
 [worktree lifecycle](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/worktree.ts).

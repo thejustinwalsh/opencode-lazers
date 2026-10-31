@@ -46,10 +46,14 @@ test("child prompt uses native move and verifies location before any model work"
     {
       session: {
         get: () => Effect.sync(() => ({ location: { directory } })),
-        move: (input: { directory: string }) =>
+        move: (_input: { directory: string }) =>
           Effect.sync(() => {
             calls.push("move")
-            directory = input.directory
+          }),
+        wait: () =>
+          Effect.sync(() => {
+            calls.push("wait")
+            directory = "/worker"
           }),
         prompt: () =>
           Effect.sync(() => {
@@ -66,14 +70,14 @@ test("child prompt uses native move and verifies location before any model work"
     directory: "/worker",
     text: "Fetch the task and implement it.",
   })
-  expect(calls).toEqual(["move", "prompt"])
+  expect(calls).toEqual(["move", "wait", "prompt"])
   await host.prompt({
     sessionID: "ses_worker",
     id: "msg_next",
     directory: "/worker",
     text: "Continue.",
   })
-  expect(calls).toEqual(["move", "prompt", "prompt"])
+  expect(calls).toEqual(["move", "wait", "prompt", "prompt"])
 })
 
 test("a host that fails to move the child cannot receive its work prompt", async () => {
@@ -83,6 +87,7 @@ test("a host that fails to move the child cannot receive its work prompt", async
       session: {
         get: () => Effect.succeed({ location: { directory: "/parent" } }),
         move: () => Effect.void,
+        wait: () => Effect.void,
         prompt: () =>
           Effect.sync(() => {
             prompted = true

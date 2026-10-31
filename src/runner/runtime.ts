@@ -39,7 +39,7 @@ export class TaskRuntime {
     if (!old) throw new Error("Plan not found")
     const target = command.action === "reassign" ? command.targetSessionID : old.owner
     let ownerSession: HostSession | null | undefined
-    if (["run", "reassign", "reconcile", "resume"].includes(command.action)) {
+    if (["run", "reassign", "reconcile", "resume", "retry"].includes(command.action)) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
     }
@@ -116,7 +116,8 @@ export class TaskRuntime {
         })
         return { status: "recorded", version: this.store.plan(plan.id)!.version }
       }
-      if (command.action === "resume") {
+      if (command.action === "resume" || command.action === "retry") {
+        const retry = command.action === "retry"
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
         if (!command.taskID || !command.reason) throw new Error("Resume requires taskID and reason")
         const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
@@ -125,34 +126,90 @@ export class TaskRuntime {
           .filter((a) => a.task_id === command.taskID)
           .at(-1)
         if (
-          !["blocked", "cancelled"].includes(plan.state) ||
+          !["blocked", "cancelled", "failed"].includes(plan.state) ||
           !node ||
-          !["exhausted", "cancelled"].includes(node.state) ||
+          !["exhausted", "cancelled", "running", "failed", "blocked"].includes(node.state) ||
           !attempt ||
-          !["exhausted", "cancelled"].includes(attempt.state)
+          !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state)
         )
           throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
-        if (this.store.effects(plan.id).some((effect) => effect.state !== "completed"))
-          throw new Error("Reconcile uncertain effects first")
-        this.store.move(plan.id, node.task_id, "RESUME", command.reason)
-        db.query("UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=?").run(
-          messageID(),
-          attempt.id,
+        if (
+          this.store
+            .effects(plan.id)
+            .some((effect) => ["intended", "uncertain"].includes(effect.state))
         )
+          throw new Error("Reconcile uncertain effects first")
+        if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
+        else if (node.state !== "running")
+          this.store.move(plan.id, node.task_id, "RESUME", command.reason)
+        if (command.workspaceMode === "shared") {
+          const source = command.baseCommit ?? git(this.directory, ["rev-parse", "HEAD"])
+          git(this.directory, ["merge-base", "--is-ancestor", source, "HEAD"])
+          if (!retry)
+            db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
+              this.directory,
+              source,
+              attempt.id,
+            )
+          const policy = JSON.parse(attempt.policy)
+          policy.workspaceMode = "shared"
+          policy.source = source
+          const revised = PlanInput.parse({
+            ...JSON.parse(plan.body),
+            workspaceMode: "shared",
+            baseCommit: source,
+          })
+          db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
+            JSON.stringify(revised),
+            plan.id,
+          )
+          db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
+            plan.id,
+            plan.revision + 1,
+            JSON.stringify(revised),
+            plan.owner,
+            Date.now(),
+          )
+          if (!retry)
+            db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
+              JSON.stringify(policy),
+              attempt.id,
+            )
+          this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
+            attemptID: attempt.id,
+            from: attempt.workspace,
+            directory: this.directory,
+            source,
+            mode: "shared",
+            reason: command.reason,
+          })
+        }
+        if (retry)
+          db.query(
+            "UPDATE runner_attempts SET state='cancelled' WHERE id=? AND state='preparing'",
+          ).run(attempt.id)
+        else
+          db.query("UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=?").run(
+            messageID(),
+            attempt.id,
+          )
         db.query(
           "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
         ).run(plan.id)
-        this.store.record(plan.id, node.task_id, "ATTEMPT_RESUMED", {
+        this.store.record(plan.id, node.task_id, retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED", {
           attemptID: attempt.id,
           reason: command.reason,
           usageRetained: true,
           budget: null,
         })
-        return { status: "resuming", version: this.store.plan(plan.id)!.version }
+        return {
+          status: retry ? "retrying" : "resuming",
+          version: this.store.plan(plan.id)!.version,
+        }
       }
       if (command.action === "reconcile") {
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-        if (this.store.effects(plan.id).some((e) => e.state !== "completed"))
+        if (this.store.effects(plan.id).some((e) => ["intended", "uncertain"].includes(e.state)))
           return {
             status: "blocked",
             reason: "Uncertain effects require conclusive host/artifact evidence",
@@ -362,7 +419,9 @@ export class TaskRuntime {
         this.hold(plan, "Owner is missing or archived")
       return
     }
-    const pending = this.store.effects(plan.id).find((e) => e.state !== "completed")
+    const pending = this.store
+      .effects(plan.id)
+      .find((e) => ["intended", "uncertain"].includes(e.state))
     if (pending) {
       await this.reconcileEffect(pending, fence)
       return
@@ -410,13 +469,6 @@ export class TaskRuntime {
     )
       return
     const nodes = this.store.nodes(plan.id)
-    const failed = nodes.find((n) =>
-      ["failed", "cancelled", "exhausted", "blocked"].includes(n.state),
-    )
-    if (failed) {
-      this.hold(plan, `Task ${failed.task_id}: ${failed.reason ?? failed.state}`)
-      return
-    }
     const next = nodes.find(
       (n) =>
         ["queued", "ready"].includes(n.state) &&
@@ -426,6 +478,13 @@ export class TaskRuntime {
       await this.dispatch(plan, next, fence)
       return
     }
+    const failed = nodes.find((n) =>
+      ["failed", "cancelled", "exhausted", "blocked"].includes(n.state),
+    )
+    if (failed) {
+      this.hold(plan, `Task ${failed.task_id}: ${failed.reason ?? failed.state}`)
+      return
+    }
     if (nodes.every((n) => n.state === "accepted" || n.state === "incorporated"))
       await this.finish(plan, fence)
   }
@@ -433,15 +492,6 @@ export class TaskRuntime {
   private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
-    if (attempts.length > (task.proposal.limits?.maxRepairAttempts ?? 1)) {
-      this.store.move(
-        plan.id,
-        task.id,
-        node.state === "queued" ? "BLOCK" : "EXHAUST",
-        "Repair allowance exhausted",
-      )
-      return
-    }
     const first = attempts[0]
     const audit = this.store.audit()
     if (
@@ -453,6 +503,8 @@ export class TaskRuntime {
       return
     }
     const input = PlanInput.parse(JSON.parse(plan.body))
+    if (JSON.parse(plan.body).workspaceMode === undefined && attempts.length)
+      input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
     const skills = await this.host.skills(plan.owner, task.proposal.requirements.skills)
     if (skills.length !== task.proposal.requirements.skills.length) {
       this.hold(plan, "Required skill unavailable at dispatch")
@@ -464,8 +516,14 @@ export class TaskRuntime {
       .nodes(plan.id)
       .filter((n) => n.ordinal < node.ordinal && n.state === "accepted")
       .at(-1)
-    const base = attempts.at(-1)?.artifact ?? previous?.artifact ?? input.baseCommit
-    const workspace = join(this.dataDirectory, "worktrees", id)
+    const base =
+      attempts.at(-1)?.artifact ??
+      previous?.artifact ??
+      (input.workspaceMode === "shared"
+        ? git(this.directory, ["rev-parse", "HEAD"])
+        : input.baseCommit)
+    const workspace =
+      input.workspaceMode === "shared" ? this.directory : join(this.dataDirectory, "worktrees", id)
     const text = JSON.stringify({
       taskID: task.id,
       revision: task.revision,
@@ -478,11 +536,20 @@ export class TaskRuntime {
     })
     const policy = {
       agent: "lazers-implementor",
+      workspaceMode: input.workspaceMode,
       model: ModelPolicy.parse(JSON.parse(plan.model!)),
       source: base,
       context: text,
       skills: skills.map(({ content: _content, ...s }) => s),
       budget: null,
+      repairAttempt: this.store.atomic(
+        (db) =>
+          db
+            .query<{ event: string }, [string, string]>(
+              "SELECT event FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id DESC LIMIT 1",
+            )
+            .get(plan.id, task.id)?.event === "REPAIR",
+      ),
       toolPolicy: "inherit host/user/project; delegation forbidden",
       costEstimate: { status: "unavailable", currency: "USD", kind: "equivalent-api" },
     }
@@ -506,6 +573,10 @@ export class TaskRuntime {
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
     })
+    if (input.workspaceMode === "shared") {
+      await this.prepareWorker(plan, attempt, fence)
+      return
+    }
     const effect = this.effect(plan.id, task.id, id, "worktree", { workspace, base }, fence)
     try {
       const actual = await this.host.worktree({ directory: workspace, base })
@@ -642,7 +713,12 @@ export class TaskRuntime {
   private async verify(plan: PlanRow, attempt: AttemptRow, proposal: TaskProposal, fence: number) {
     let artifact
     try {
-      artifact = commitArtifact(attempt.workspace, attempt.base_commit, proposal.writeScope)
+      artifact = commitArtifact(
+        attempt.workspace,
+        attempt.base_commit,
+        proposal.writeScope,
+        attempt.workspace !== this.directory,
+      )
     } catch (error) {
       this.failAttempt(plan, attempt, errorText(error))
       return
@@ -778,11 +854,14 @@ export class TaskRuntime {
   }
   private failAttempt(plan: PlanRow, attempt: AttemptRow, reason: string) {
     const task = this.store.repository.get(attempt.task_id)!
-    const count = this.store.attempts(plan.id).filter((a) => a.task_id === task.id).length
     const node = this.store.nodes(plan.id).find((n) => n.task_id === task.id)!
     this.store.atomic((db) => {
       db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id)
-      if (node.state === "verifying" && count <= (task.proposal.limits?.maxRepairAttempts ?? 1))
+      if (
+        node.state === "verifying" &&
+        (task.proposal.limits?.maxRepairAttempts ?? 1) > 0 &&
+        !JSON.parse(attempt.policy).repairAttempt
+      )
         this.store.move(plan.id, task.id, "REPAIR", reason)
       else this.store.move(plan.id, task.id, "FAIL", reason)
     })
@@ -795,30 +874,13 @@ export class TaskRuntime {
         .nodes(plan.id)
         .filter((n) => n.artifact)
         .at(-1)?.artifact ?? input.baseCommit
-    const known = this.store.effects(plan.id).find((e) => e.kind === "graph-worktree")
-    let workspace =
-      known?.state === "completed"
-        ? (JSON.parse(known.receipt!).workspace as string)
-        : join(this.dataDirectory, "graphs", plan.id)
-    if (!known) {
-      const effect = this.effect(
-        plan.id,
-        null,
-        null,
-        "graph-worktree",
-        { workspace, base: artifact },
-        fence,
-      )
-      try {
-        workspace = await this.host.worktree({ directory: workspace, base: artifact })
-        if (git(workspace, ["rev-parse", "HEAD"]) !== artifact)
-          throw new Error("Host integration worktree has the wrong starting revision")
-        this.receipt(effect, { workspace, base: artifact }, fence)
-      } catch (error) {
-        this.uncertain(effect, error, fence)
-        return
-      }
-    }
+    // Serial integration is already present in the last accepted worker's workspace.
+    // Reuse it for combined checks instead of allocating another worktree.
+    const workspace =
+      this.store
+        .attempts(plan.id)
+        .filter((attempt) => attempt.artifact === artifact)
+        .at(-1)?.workspace ?? this.directory
     const receipts: CheckReceipt[] = []
     for (const check of input.verification) {
       const existing = this.store
@@ -894,6 +956,32 @@ export class TaskRuntime {
             },
             fence,
           )
+          return
+        }
+        // This guard throws before ctx.session.prompt. A queued native move may
+        // finish after the call returns; no model work was admitted by this effect.
+        if (
+          !session?.messages.some((m) => m.id === payload.messageID) &&
+          JSON.parse(effect.receipt ?? "{}").error ===
+            "Worker session is not in its assigned worktree"
+        ) {
+          this.store.fenced(this.owner, fence, (db) => {
+            db.query("UPDATE runner_effects SET state='failed',receipt=? WHERE id=?").run(
+              JSON.stringify({
+                notSent: true,
+                reason: "Native move queued; prompt guard prevented dispatch",
+              }),
+              effect.id,
+            )
+            db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
+              messageID(),
+              effect.attempt_id!,
+            )
+            this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
+              effectID: effect.id,
+              continuation: "new durable message after native move wait",
+            })
+          })
           return
         }
       } else if (effect.kind === "worktree" || effect.kind === "graph-worktree") {

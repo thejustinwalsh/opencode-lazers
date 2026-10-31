@@ -20,6 +20,7 @@ export const taskMachine = createMachine({
         FAIL: "failed",
         CANCEL: "cancelled",
         EXHAUST: "exhausted",
+        RETRY: "ready",
       },
     },
     verifying: {
@@ -32,11 +33,11 @@ export const taskMachine = createMachine({
         EXHAUST: "exhausted",
       },
     },
-    blocked: { on: { RECONCILE: "queued", CANCEL: "cancelled" } },
+    blocked: { on: { RECONCILE: "queued", CANCEL: "cancelled", RETRY: "ready" } },
     accepted: { type: "final" },
-    failed: { type: "final" },
-    cancelled: { on: { RESUME: "running" } },
-    exhausted: { on: { RESUME: "running" } },
+    failed: { on: { RETRY: "ready" } },
+    cancelled: { on: { RESUME: "running", RETRY: "ready" } },
+    exhausted: { on: { RESUME: "running", RETRY: "ready" } },
     incorporated: { type: "final" },
   },
 })

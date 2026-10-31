@@ -141,10 +141,12 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
     async prompt(input) {
       const id = Session.ID.make(input.sessionID)
       const before = await Effect.runPromise(ctx.session.get({ sessionID: id }))
-      if (before.location.directory !== input.directory)
+      if (before.location.directory !== input.directory) {
         await Effect.runPromise(
           ctx.session.move({ sessionID: id, directory: AbsolutePath.make(input.directory) }),
         )
+        await Effect.runPromise(ctx.session.wait({ sessionID: id }))
+      }
       const located = await Effect.runPromise(ctx.session.get({ sessionID: id }))
       if (located.location.directory !== input.directory)
         throw new Error("Worker session is not in its assigned worktree")

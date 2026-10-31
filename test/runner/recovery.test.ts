@@ -67,6 +67,7 @@ function fixture(crashVerifier = false) {
       requestID: "plan",
       objective: "Crash-recover one real artifact",
       baseCommit: base,
+      workspaceMode: "isolated",
       nodes: [{ taskID: task.id, revision: 1 }],
       dependencies: [],
       integrationOrder: [task.id],

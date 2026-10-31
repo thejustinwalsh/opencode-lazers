@@ -67,6 +67,7 @@ export function commitArtifact(
   directory: string,
   base: string,
   scope: string[],
+  snapshot = true,
 ): { commit: string; paths: string[]; identity: string } {
   const paths = changedPaths(directory, base)
   const violations = scopeViolations(paths, scope)
@@ -75,6 +76,10 @@ export function commitArtifact(
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
   if (changedPaths(directory).length === 0) return { commit: head, paths, identity: head }
+  if (!snapshot)
+    throw new Error(
+      "Commit task edits before verification; shared checkout was not staged by runtime",
+    )
   git(directory, ["add", "--all"])
   const tree = git(directory, ["write-tree"])
   const commit = git(

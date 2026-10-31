@@ -14,7 +14,9 @@ const cleanup: (() => void)[] = []
 afterEach(() => {
   for (const fn of cleanup.splice(0)) fn()
 })
-function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean } = {}) {
+function fixture(
+  options: { fail?: boolean; human?: boolean; outside?: boolean; shared?: boolean } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "lazers-runner-"))
   git(root, ["init", "--initial-branch=main"])
   writeFileSync(join(root, "seed.txt"), "baseline\n")
@@ -29,8 +31,11 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
     "baseline",
   ])
   const base = git(root, ["rev-parse", "HEAD"])
-  writeFileSync(join(root, "dirty-sentinel.txt"), "preserve me")
-  const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
+  if (!options.shared) writeFileSync(join(root, "dirty-sentinel.txt"), "preserve me")
+  const stateDirectory = options.shared
+    ? mkdtempSync(join(tmpdir(), "lazers-shared-data-"))
+    : join(root, "data")
+  const repository = new TaskRepository(join(stateDirectory, "tasks.sqlite"), root)
   const store = new RunnerStore(repository)
   const tasks = ["a", "b"].map((name, index) => {
     const proposal = validProposal()
@@ -125,6 +130,19 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
       if (path === "b.txt") expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
       writeFileSync(join(session.directory, path), path[0]!)
       if (options.outside) writeFileSync(join(session.directory, "escape.txt"), "bad")
+      if (options.shared) {
+        git(root, ["add", path])
+        if (git(root, ["status", "--porcelain"]))
+          git(root, [
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            `Implement ${path}`,
+          ])
+      }
       session.outcome = "succeeded"
     },
     notify: async (input) => {
@@ -140,6 +158,7 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
   const input = {
     requestID: "plan-request",
     objective: "Two dependent exact-content files",
+    workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
     baseCommit: base,
     nodes: tasks.map((t) => ({ taskID: t.id, revision: 1 as const })),
     dependencies: [{ prerequisite: tasks[0]!.id, successor: tasks[1]!.id }],
@@ -160,6 +179,7 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
     runtime.stop()
     repository.close()
     rmSync(root, { recursive: true, force: true })
+    if (options.shared) rmSync(stateDirectory, { recursive: true, force: true })
   })
   return { root, repository, store, tasks, sessions, events, host, runtime, input, receipt, base }
 }
@@ -325,10 +345,9 @@ test("runtime retains the actual directory returned by the host worktree strateg
   expect(
     f.store.attempts(f.receipt.planID).every((attempt) => attempt.workspace.endsWith("-2")),
   ).toBe(true)
-  const graph = f.store
-    .effects(f.receipt.planID)
-    .find((effect) => effect.kind === "graph-worktree")!
-  expect(JSON.parse(graph.receipt!).workspace.endsWith("-2")).toBe(true)
+  expect(f.store.effects(f.receipt.planID).some((effect) => effect.kind === "graph-worktree")).toBe(
+    false,
+  )
 })
 
 test("an explicitly cancelled worker can continue through its owner without replacing its worktree", async () => {
@@ -366,4 +385,67 @@ test("an explicitly cancelled worker can continue through its owner without repl
   expect(f.store.attempts(f.receipt.planID)[0]!.workspace).toBe(attempt.workspace)
   expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+})
+
+test("serial shared children commit in the current checkout without creating worktrees", async () => {
+  const f = fixture({ shared: true })
+  f.host.worktree = async () => {
+    throw new Error("Serial tasks must not allocate worktrees")
+  }
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID).every((attempt) => attempt.workspace === f.root)).toBe(
+    true,
+  )
+  expect(f.store.effects(f.receipt.planID).some((effect) => effect.kind.includes("worktree"))).toBe(
+    false,
+  )
+  expect(git(f.root, ["show", "HEAD:a.txt"])).toBe("a")
+  expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
+})
+
+test("explicit retry starts a fresh native child and retains the old attempt and usage", async () => {
+  const f = fixture({ shared: true })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await f.runtime.tick()
+  const old = f.store.attempts(f.receipt.planID)[0]!
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET token_count=65941 WHERE id=?").run(old.id),
+  )
+  await f.runtime.command(
+    {
+      requestID: "cancel",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const command = {
+    requestID: "fresh-retry",
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "retry",
+    taskID: old.task_id,
+    reason: "Use concise task fetch in a fresh child",
+    workspaceMode: "shared",
+    baseCommit: f.base,
+  }
+  const receipt = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(receipt)
+  await f.runtime.tick()
+  const attempts = f.store.attempts(f.receipt.planID)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[0]!.token_count).toBe(65941)
+  expect(attempts[0]!.state).toBe("cancelled")
+  expect(attempts[1]!.session_id).not.toBe(old.session_id)
+  expect(attempts[1]!.workspace).toBe(f.root)
 })

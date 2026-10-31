@@ -19,6 +19,7 @@ export const PlanInput = z
     requestID: z.string().trim().min(1).max(200),
     objective: z.string().trim().min(1).max(8000),
     baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
+    workspaceMode: z.enum(["shared", "isolated"]).default("shared"),
     nodes: z
       .array(z.strictObject({ taskID: z.uuid(), revision: z.literal(1) }))
       .min(1)
@@ -91,8 +92,22 @@ export const CommandInput = z.strictObject({
   requestID: z.string().trim().min(1).max(200),
   planID: z.uuid(),
   expectedVersion: z.int().positive(),
-  action: z.enum(["run", "cancel", "audit", "reconcile", "reassign", "human-evidence", "resume"]),
+  action: z.enum([
+    "run",
+    "cancel",
+    "audit",
+    "reconcile",
+    "reassign",
+    "human-evidence",
+    "resume",
+    "retry",
+  ]),
   reason: z.string().min(1).max(2000).optional(),
+  workspaceMode: z.enum(["shared", "isolated"]).optional(),
+  baseCommit: z
+    .string()
+    .regex(/^[a-f0-9]{40,64}$/)
+    .optional(),
   targetSessionID: z.string().min(1).max(200).optional(),
   taskID: z.uuid().optional(),
   assertionID: z.string().max(64).optional(),
