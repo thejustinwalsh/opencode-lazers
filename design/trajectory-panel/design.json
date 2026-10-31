@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-31",
+  "status": "Approved concept; not implemented",
+  "image": "trajectory-review-v2.png",
+  "prompt": "Refine this LAZERS Trajectory panel mockup while preserving its composition, restrained native dark styling, exact real data, four serial attempt bars, horizontal divider and lower selected-check inspector. Change only hierarchy and scope clarity: (1) Make 'Progressive worker guidance' the primary task heading at the top; demote '970b0feb' to small muted metadata beside the copy icon. Keep 'GPT-6 Luna · Max' and '4 attempts · 267 tool calls' subordinate. (2) Add a small muted axis caption 'Elapsed since first attempt' above the existing shared0m–50m axis; preserve attempt gaps and bar positions. (3) Replace the open Usage disclosure title with 'Tokens' and retain its adjacent scope caption 'All 4 attempts'; change its 'Input' label to 'Uncached input'. Exact values remain744,233 /11,832,448 /23,243 /54,955 for Uncached input/Cache read/Output/Reasoning. Keep 'API equivalent —' unknown. (4) Reduce the oversized 'bun run verify' command heading modestly while preserving its readable command, Exit1, two error source links, and Open worker session. No extra cards, labels, controls, prose or fabricated metrics. Everything remains inside a narrow native side panel, visualization ABOVE inspector. Preserve 'Concept · recorded task data' footer.",
+  "review": "Terra 6.1 High approved v2: primary task title, explicit elapsed origin, scoped token units, unknown cost retained.",
+  "sources": [
+    {
+      "url": "https://www.langchain.com/blog/langsmith-trajectories-tracing",
+      "finding": "Readable chronological behavior with drilldown into underlying traces. Public UI inspected.",
+      "application": "Show attempts first; inspect selected tool/check below."
+    },
+    {
+      "url": "https://langfuse.com/changelog/2025-03-19-new-trace-view",
+      "finding": "Tree and timeline views with progressive detail.",
+      "application": "Timeline above a horizontal inspector split; payloads collapsed."
+    },
+    {
+      "url": "https://langfuse.com/blog/2026-09-30-langfuse-september-update",
+      "finding": "Cache token and cost provenance in trace inspection.",
+      "application": "Separate cache categories and preserve unknown API-equivalent cost."
+    },
+    {
+      "url": "https://langfuse.com/docs/observability/best-practices",
+      "finding": "Observations, traces and sessions provide meaningful hierarchy.",
+      "application": "Task → attempt → real events/checks, using stable native identities."
+    },
+    {
+      "url": "https://arize.com/docs/phoenix/learn/tracing/how-tracing-works",
+      "finding": "Instrumented spans provide trace data.",
+      "application": "Render hook/event records; do not ask models to invent execution facts."
+    }
+  ],
+  "measurement": {
+    "taskID": "970b0feb-1fd3-40bb-a61d-f8decccb8a9f",
+    "attempts": 4,
+    "toolCalls": 267,
+    "uncachedInputTokens": 744233,
+    "cacheReadTokens": 11832448,
+    "cacheWriteTokens": 0,
+    "visibleOutputTokens": 23243,
+    "reasoningTokens": 54955,
+    "apiEquivalentCost": null,
+    "scope": "Worker attempts only; excludes Architect, driver and runtime verification usage.",
+    "time": "Bars show recorded attempt start to native session idle relative to first attempt start. These are model activity windows, not durable task-completion or verification intervals. Production must establish endpoint semantics.",
+    "coverage": "Native context may be compacted or missing. Show coverage/gaps; never display private reasoning content."
+  },
+  "implementation": [
+    {
+      "slice": "Scoped projection",
+      "goal": "Expose existing trajectory read projection through permission-aware GUI RPC; reuse redaction, coverage and unique-session token aggregation. Share scoped task/plan/attempt identities and invalidation with Radar without conflating machine snapshots with historical event pages.",
+      "source": [
+        "src/trajectory/read.ts",
+        "src/trajectory/tools.ts",
+        "src/runner/machine.ts",
+        "src/tasks/rpc.ts"
+      ]
+    },
+    {
+      "slice": "Trajectory panel",
+      "goal": "Optional closable native panel with task selection, real attempt timeline above a horizontal resizable inspector, selected event/check details and all-attempt token totals. Native font/theme; unknown time/cost stays unknown; Activity and payload disclosures closed initially.",
+      "reference": "trajectory-review-v2.png"
+    },
+    {
+      "slice": "Live dogfood",
+      "goal": "Observe actual worker attempt/check updates, compare narrow and wide Desktop screenshots with Terra, verify reconnect/selection, keyboard resize, independent scroll, redaction and missing data using actual tasks. No fabricated benchmarks."
+    }
+  ],
+  "integration": "Saved in native OpenCode worktree to avoid contaminating active worker scope. Integrate separately after active worker review; remove owned clean merged worktree through native API."
+}

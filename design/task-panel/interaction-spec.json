@@ -111,9 +111,9 @@
       "history": "Explicit history filter can retrieve all states; show hidden accepted count",
       "selectedTaskFinishes": "Keep its inspector and a completion notice until the user changes selection; update list counts without stealing focus"
     },
-    "groups": "Feature grouping is presentation. Parallel eligibility and dependency ordering are runtime facts, not inferred from list order.",
-    "sequential": "Selected-task dependency line names the next unmet prerequisite; further predecessor/successor relations are in Details.",
-    "parallel": "Concurrent work is visible through the same running glyph on multiple rows. Execution batches and parallel eligibility are available in Details rather than repeated badges.",
+    "groups": "Use the recorded plan/feature root and actual dependency topology. Sequential rows stay ordered; unambiguous parallel branches expand beneath their root. See execution-list.json for the current user-directed behavior.",
+    "sequential": "Render stable admitted order and direct dependency references; do not infer a serial dependency from adjacent rows.",
+    "parallel": "Accordion actual fork/join branches with lifecycle glyphs and a shared root lane. Runtime facts determine whether branches are eligible or actually concurrent; write/resource waits remain visible through compact references and selected detail.",
     "writeConflicts": "Explain serialization caused by overlapping write scopes even when there is no dependency edge",
     "readiness": "Default list uses a lifecycle glyph. Selected details explain its wait reason in one plain line; recorded lifecycle and other scheduling reasons are available in Details.",
     "ordering": "Stable feature groups and task order; avoid event-driven resorting while the user reads.",

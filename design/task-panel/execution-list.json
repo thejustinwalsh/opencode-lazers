@@ -1,0 +1,49 @@
+{
+  "updated": "2026-10-31",
+  "status": "User-directed implementation guidance; Terra 6.1 High reviewed",
+  "reference": "tasks-focus-v2.png",
+  "goal": "Make execution structure clear in the focused Tasks list: sequential rows, expandable parallel branches under their actual root, and readable dependencies.",
+  "source": [
+    "src/runner/schema.ts:PlanInput",
+    "src/runner/store.ts:runner_nodes and runner_dependencies",
+    "src/tasks/contract.ts:QueryOutput and Execution",
+    "src/tasks/panel.tsx"
+  ],
+  "presentation": {
+    "root": "Use a short recorded plan title for its root lane, or the actual prerequisite task row where it anchors a fork. New plans may carry an optional concise Architect-authored title; legacy plans without one use a quiet short plan reference and keep their full objective in details. A root group is presentation, not a fabricated task. Never display operational handoff instructions as the root title.",
+    "sequential": "Keep ordinary rows in stable admitted integration order, with light indentation/connectors where useful. Dependency edges determine relationships; row order alone does not promise execution order.",
+    "parallel": "A quiet chevron expands sibling branches beneath their actual root. Keep the existing lifecycle glyph and task title on each child. A shared join returns to the root lane. Disjoint root tasks may share the recorded plan root.",
+    "mixedGraphs": "Only fold unambiguous non-overlapping fork/join blocks. Keep each task once; expose cross-dependencies as references instead of forcing a DAG into a false tree.",
+    "scheduling": "A branch group describes graph structure. Actual concurrent execution and serialization/wait reasons come from runtime records.",
+    "dependencies": "Use a compact dependency indicator on affected rows and concise clickable Waiting on / Blocks references in the selected inspector. References can retrieve completed or filtered-out prerequisites within the same authorized scope.",
+    "focus": "Preserve the quiet Linear-influenced list, existing row density, native theme/fonts and lower split inspector. Use topology and selection to expose useful context without a new grouping toolbar or repeated state badges."
+  },
+  "interaction": {
+    "accordion": "Separate keyboard-accessible disclosure from row selection. Persist expansion by session/project, plan and stable fork identity. Status updates do not reset it or reorder rows.",
+    "selection": "Selecting a child reference reveals its containing group and scrolls/focuses the row when it belongs to the visible view. Keep the lower inspector available for an authorized dependency excluded by the current filter.",
+    "search": "Reveal matching descendants temporarily without overwriting the saved collapse preference.",
+    "filtering": "Hide completed work by default while retaining enough quiet root/dependency context to understand remaining branches. Group counts identify their active/total scope.",
+    "empty": "Planless tasks remain ordinary rows. Missing topology stays ungrouped with honest availability; never infer a complete graph from a partial result page."
+  },
+  "contract": {
+    "reuse": "Extend the shared scoped observation projection already tasked as efd8459f-1dbe-4472-968b-f26f59504291.",
+    "fields": [
+      "canonical plan and task IDs",
+      "optional concise authored plan title, with honest legacy reference fallback",
+      "plan objective/revision/version",
+      "task specification revision and stable ordinal",
+      "recorded prerequisite/successor edges",
+      "current task states and real wait reasons",
+      "routed-session/project ownership associations",
+      "consistent snapshot or resnapshot boundary"
+    ],
+    "paging": "QueryOutput is currently flat and paginated. Obtain complete scoped plan topology separately or return graph membership consistently with pagination; PlanInput currently caps a plan at 100 nodes.",
+    "authority": "Display existing graph and scheduling facts. Folding and selection never change dependencies or dispatch policy.",
+    "planTitle": "Optional title belongs in the normal versioned PlanInput body; existing revisions remain unchanged. The GUI does not generate summaries or call a model to name groups. Architect supplies concise user-facing titles for new plans."
+  },
+  "implementation": [
+    "Add the needed topology/group data to the shared read projection before UI grouping.",
+    "Implement the compact grouped Tasks renderer as a focused increment after the current Start/layout worker is reviewed.",
+    "Dogfood a real sequential chain and real parallel branches; verify join/cross-edge handling, filtered prerequisites, search, keyboard disclosure, paging, persisted expansion and narrow-panel behavior with Terra captures."
+  ]
+}

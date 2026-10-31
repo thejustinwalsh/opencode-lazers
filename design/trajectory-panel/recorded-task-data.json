@@ -1,0 +1,138 @@
+{
+  "taskID": "970b0feb-1fd3-40bb-a61d-f8decccb8a9f",
+  "planID": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+  "source": "Read-only native session.get and runner_attempts; measured 2026-10-31",
+  "coverage": "Worker attempts only. Architect, Codex driver, runtime verification and earlier readable-fetch task usage excluded. No comparative model-quality or cost-savings claim.",
+  "observations": [
+    "Original worker artifact fd80616 left two optional policyReference caller type errors outside its write scope; Architect fixed those in 5b41706.",
+    "A requested shared retry baseline was recorded in plan.body, but dispatch preferred attempts.at(-1)?.artifact over that baseline. Supported cancel/resume with baseCommit recovered.",
+    "Final worker verified the corrected baseline and produced documentation commit dade430; all failed attempt usage remains included."
+  ],
+  "attempts": [
+    {
+      "id": "cebd1c8e-47f1-4570-b73e-e6ba81e1eed3",
+      "session_id": "ses_53d74b789cfc41318dea998c09829cb8",
+      "state": "failed",
+      "tool_count": 137,
+      "retry_count": 0,
+      "started_at": 1793455168575,
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "tokens": {
+        "input": 546771,
+        "output": 17757,
+        "reasoning": 42493,
+        "cache": {
+          "read": 9880064,
+          "write": 0
+        }
+      },
+      "time": {
+        "created": 1793455168604,
+        "updated": 1793458112013,
+        "busy": 1793455168609,
+        "idle": 1793456782495
+      }
+    },
+    {
+      "id": "21d36306-6b1a-4b42-94b9-631b52ec977f",
+      "session_id": "ses_8b2f654fc11d4e4ca469b010458e5172",
+      "state": "failed",
+      "tool_count": 39,
+      "retry_count": 0,
+      "started_at": 1793456820444,
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "tokens": {
+        "input": 86011,
+        "output": 1447,
+        "reasoning": 2978,
+        "cache": {
+          "read": 468608,
+          "write": 0
+        }
+      },
+      "time": {
+        "created": 1793456820480,
+        "updated": 1793457108065,
+        "busy": 1793456820485,
+        "idle": 1793457108068
+      }
+    },
+    {
+      "id": "2fe52c56-bff5-4916-be06-987b104910fd",
+      "session_id": "ses_e463106891b347a48c2761715b517238",
+      "state": "failed",
+      "tool_count": 40,
+      "retry_count": 0,
+      "started_at": 1793457329804,
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "tokens": {
+        "input": 27218,
+        "output": 1618,
+        "reasoning": 3860,
+        "cache": {
+          "read": 563584,
+          "write": 0
+        }
+      },
+      "time": {
+        "created": 1793457329834,
+        "updated": 1793457675845,
+        "busy": 1793457329838,
+        "idle": 1793457675848
+      }
+    },
+    {
+      "id": "0fcfb4b1-ef2f-4574-8178-db20d24137c2",
+      "session_id": "ses_2aa87d802028493ea46b8e3005a4a4db",
+      "state": "accepted",
+      "tool_count": 51,
+      "retry_count": 0,
+      "started_at": 1793457678109,
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "tokens": {
+        "input": 84233,
+        "output": 2421,
+        "reasoning": 5624,
+        "cache": {
+          "read": 920192,
+          "write": 0
+        }
+      },
+      "time": {
+        "created": 1793457678151,
+        "updated": 1793457991561,
+        "busy": 1793457774181,
+        "idle": 1793457991564
+      }
+    }
+  ],
+  "totals": {
+    "nonCachedInput": 744233,
+    "visibleOutput": 23243,
+    "reasoning": 54955,
+    "cacheRead": 11832448,
+    "cacheWrite": 0,
+    "toolCalls": 267
+  },
+  "cost": {
+    "subscriptionCharge": "not inferred",
+    "apiEquivalent": null,
+    "reason": "No dated route/tier pricing applied in this observation."
+  }
+}
