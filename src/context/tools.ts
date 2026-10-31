@@ -78,7 +78,7 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
     editor.add({
       name: "lazers_project_read",
       description:
-        "Read focused source, Repomix outline, or file structure from the current worktree. Filter paths/search and line range. Returns source paths and lines within 16 KiB/4,000 tokens. Investigation aid; passing tests and observed behavior establish completion.",
+        "Read selected source, Repomix outline, or file structure from the current worktree, with source paths and line ranges. Filter paths/search and lines when useful; focused reads are not rejected for a fixed response token count. Investigation aid; passing tests and observed behavior establish completion.",
       input: EvidenceInput,
       output: EvidenceOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_read" },

@@ -84,12 +84,22 @@ test("cached reads respect current permissions without submission receipts", asy
   expect((await f.index.evidence(principal, { search: "no-such-content" })).sources).toEqual([])
 })
 
-test("response bounds count the complete wrapper and require narrower evidence", async () => {
+test("focused multi-file reads return complete source beyond the former response cap", async () => {
   const f = fixture()
-  writeFileSync(join(f.root, "large.txt"), "word ".repeat(5000))
-  await expect(f.index.evidence(principal, { paths: ["large.txt"] })).rejects.toThrow(
-    "Response exceeds",
-  )
+  const first = `${"first ".repeat(5000)}\nFIRST_FILE_END`,
+    second = `${"second ".repeat(5000)}\nSECOND_FILE_END`
+  writeFileSync(join(f.root, "first.txt"), first)
+  writeFileSync(join(f.root, "second.txt"), second)
+  const result = await f.index.evidence(principal, { paths: ["first.txt", "second.txt"] })
+  expect(result.sources.map((source) => [source.path, source.text])).toEqual([
+    ["first.txt", first],
+    ["second.txt", second],
+  ])
+  expect(result.sources.map((source) => [source.startLine, source.endLine])).toEqual([
+    [1, 2],
+    [1, 2],
+  ])
+  expect(result.truncated).toBe(false)
 })
 
 test("worker packets honor cited line ranges and defer large source without blocking dispatch", async () => {
