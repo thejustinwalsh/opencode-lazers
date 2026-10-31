@@ -65,10 +65,38 @@ export type ContinuationRow = {
   model: string | null
   generation: number
 }
+export type OutboxRow = {
+  id: string
+  plan_id: string
+  session_id: string
+  message_id: string
+  payload: string
+  state: string
+  resume: number
+  metadata: string | null
+  receipt: string | null
+  sequence: number
+}
+
+export function appendOutboxReceipt(previous: string | null, next: unknown) {
+  let history: unknown[] = []
+  if (previous) {
+    const parsed: unknown = JSON.parse(previous)
+    history =
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "history" in parsed &&
+      Array.isArray(parsed.history)
+        ? parsed.history
+        : [parsed]
+  }
+  history.push(next)
+  return JSON.stringify({ history })
+}
 
 export class RunnerStore {
   constructor(readonly repository: TaskRepository) {
-    repository.atomic((db) =>
+    repository.atomic((db) => {
       db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
@@ -125,7 +153,8 @@ export class RunnerStore {
       );
       CREATE TABLE IF NOT EXISTS runner_outbox (
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL,
-        message_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, state TEXT NOT NULL, resume INTEGER NOT NULL
+        message_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, state TEXT NOT NULL, resume INTEGER NOT NULL,
+        metadata TEXT, receipt TEXT
       );
       CREATE TABLE IF NOT EXISTS runner_continuations (
         plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
@@ -134,8 +163,20 @@ export class RunnerStore {
       CREATE TABLE IF NOT EXISTS runner_audits (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
-    `),
-    )
+    `)
+      const columns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_outbox)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!columns.has("metadata")) db.exec("ALTER TABLE runner_outbox ADD COLUMN metadata TEXT")
+      if (!columns.has("receipt")) db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt TEXT")
+      // Version-1 delivered meant native admission, never proven model consumption.
+      db.query(
+        "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
+      ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
+    })
   }
   atomic<T>(run: (db: Database) => T): T {
     return this.repository.atomic(run)
@@ -228,14 +269,43 @@ export class RunnerStore {
       this.record(planID, null, "OWNER_CONTINUED", { from: expectedOwner, to: nextOwner })
     return changed
   }
-  retargetOutbox(id: string, sessionID: string, messageID: string) {
-    return this.atomic(
-      (db) =>
+  retargetOutbox(input: {
+    id: string
+    expectedState: string
+    sessionID: string
+    metadata: string
+    receipt: unknown
+  }) {
+    return this.atomic((db) => {
+      const current = db
+        .query<{ state: string; receipt: string | null }, [string]>(
+          "SELECT state,receipt FROM runner_outbox WHERE id=?",
+        )
+        .get(input.id)
+      if (current?.state !== input.expectedState) return false
+      const receipt = appendOutboxReceipt(current.receipt, input.receipt)
+      return (
         db
           .query(
-            "UPDATE runner_outbox SET session_id=?,message_id=?,state='pending' WHERE id=? AND state!='delivered'",
+            "UPDATE runner_outbox SET session_id=?,metadata=?,state='pending',receipt=? WHERE id=? AND state=?",
           )
-          .run(sessionID, messageID, id).changes === 1,
+          .run(input.sessionID, input.metadata, receipt, input.id, input.expectedState).changes ===
+        1
+      )
+    })
+  }
+  outboxForDelivery(projectDirectory = this.repository.projectDirectory): OutboxRow[] {
+    return this.atomic((db) =>
+      db
+        .query<OutboxRow, [string]>(
+          `SELECT o.*,o.rowid AS sequence FROM runner_outbox o
+           JOIN runner_plans p ON p.id=o.plan_id
+           WHERE p.project_directory=?
+             AND (o.state IN ('pending','sending','uncertain','admitted','unknown','delivered')
+               OR o.rowid=(SELECT MAX(latest.rowid) FROM runner_outbox latest WHERE latest.plan_id=o.plan_id))
+           ORDER BY o.rowid`,
+        )
+        .all(projectDirectory),
     )
   }
   activity(planID: string, taskID: string) {

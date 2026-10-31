@@ -139,3 +139,43 @@ test("new and legacy untitled plan bodies remain title-absent across reopen and 
   expect(reopened.plan(receipt.planID)!.revision).toBe(1)
   expect(revisions(reopened, receipt.planID)).toEqual(originalRevisions)
 })
+
+test("legacy delivered outbox rows migrate as admitted with stable identity and unknown consumption", () => {
+  const f = fixture("legacy-outbox")
+  const plan = f.store.submit(f.input, "owner")
+  const id = "legacy-outbox-id"
+  const messageID = "msg_legacy_outbox"
+  f.store.atomic((db) => {
+    db.query("INSERT INTO runner_outbox VALUES(?,?,?,?,?,'delivered',1,?,?)").run(
+      id,
+      plan.planID,
+      "owner",
+      messageID,
+      JSON.stringify({ planID: plan.planID, status: "accepted" }),
+      null,
+      null,
+    )
+    db.exec(
+      "ALTER TABLE runner_outbox DROP COLUMN metadata; ALTER TABLE runner_outbox DROP COLUMN receipt",
+    )
+  })
+
+  f.repository.close()
+  const reopenedRepository = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(reopenedRepository)
+  const reopened = new RunnerStore(reopenedRepository)
+  const row = reopened.atomic((db) =>
+    db
+      .query<{ id: string; message_id: string; state: string; receipt: string }, [string]>(
+        "SELECT id,message_id,state,receipt FROM runner_outbox WHERE id=?",
+      )
+      .get(id),
+  )!
+  expect(row.id).toBe(id)
+  expect(row.message_id).toBe(messageID)
+  expect(row.state).toBe("admitted")
+  expect(JSON.parse(row.receipt)).toEqual({
+    kind: "legacy-host-admitted",
+    consumption: "unknown",
+  })
+})

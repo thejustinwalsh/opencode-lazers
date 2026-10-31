@@ -4,6 +4,8 @@ import type { Plugin } from "@opencode/plugin/effect"
 import type { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
 import { nativeHost } from "./native.ts"
+import type { NativeInboxClient, NativeInboxDependencies } from "./native.ts"
+import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
 
@@ -271,33 +273,149 @@ test("native worker selection survives role registration and reaches native crea
   expect(created).toHaveLength(routes.length)
 })
 
-test("actionable notifications use native queued synthetic resume with the durable message identity", async () => {
-  let received: unknown
+function nativeOutcomeFixture(options: {
+  pid?: number
+  unavailable?: boolean
+  inbox?: OutcomeInboxEntry[]
+  onCancel?: (inboxID: string) => void
+  onSynthetic?: (input: unknown) => void
+}) {
+  const entries = options.inbox ?? []
+  let listCalls = 0
+  const client = {
+    server: { info: async () => ({ pid: options.pid ?? 42, version: "2.2.5" }) },
+    session: {
+      get: async () => ({ projectID: "project", agent: "architect" }),
+      synthetic: async (input: unknown) => options.onSynthetic?.(input),
+      inbox: {
+        list: async () => {
+          listCalls++
+          return entries.map((entry) => ({
+            id: entry.id,
+            sessionID: "ses_owner",
+            time: { created: 1 },
+            type: entry.type,
+            delivery: entry.delivery,
+            payload: { text: "fixture", ...(entry.metadata ? { metadata: entry.metadata } : {}) },
+          }))
+        },
+        cancel: async (input: { inboxID: string }) => {
+          options.onCancel?.(input.inboxID)
+          const index = entries.findIndex((entry) => entry.id === input.inboxID)
+          if (index >= 0) entries.splice(index, 1)
+        },
+      },
+    },
+  } as unknown as NativeInboxClient
+  const dependencies = {
+    discover: async () =>
+      options.unavailable ? undefined : { url: "https://opencode.localhost", auth: undefined },
+    make: () => client,
+    processID: () => 42,
+  } as NativeInboxDependencies
   const host = nativeHost(
     {
-      session: {
-        synthetic: (input: unknown) =>
-          Effect.sync(() => {
-            received = input
-          }),
-      },
+      app: { version: "2.2.5" },
+      location: { project: { id: "project" } },
     } as unknown as Plugin.Context,
-    {} as TaskRepository,
+    { projectDirectory: "/project" } as TaskRepository,
+    dependencies,
   )
+  return {
+    host,
+    entries,
+    get listCalls() {
+      return listCalls
+    },
+  }
+}
+
+const ownership: OutcomeOwnership = {
+  lazersKind: "runner-outcome",
+  lazersProjectID: "project",
+  lazersProjectDirectory: "/project",
+  lazersPlanID: "plan-1",
+  lazersOutboxID: "outbox-1",
+  lazersMessageID: "msg_durable",
+  lazersSessionID: "ses_owner",
+  lazersStatus: "accepted",
+  lazersVersion: 7,
+}
+
+test("actionable notifications use the authenticated native client with durable ownership", async () => {
+  let received: unknown
+  const { host } = nativeOutcomeFixture({ onSynthetic: (input) => (received = input) })
   await host.notify({
     sessionID: "ses_owner",
     id: "msg_durable",
     text: "Review accepted artifact now",
     resume: true,
+    metadata: ownership,
   })
   expect(received).toEqual({
     sessionID: "ses_owner",
     id: "msg_durable",
     text: "Review accepted artifact now",
+    metadata: ownership,
     resume: true,
     delivery: "queue",
     description: "LAZERS task outcome",
   })
+})
+
+test("native cancellation rechecks exact ownership and preserves user, worker, and foreign inputs", async () => {
+  const user: OutcomeInboxEntry = { id: "msg_user", type: "user", delivery: "queue" }
+  const worker: OutcomeInboxEntry = {
+    id: "msg_worker",
+    type: "synthetic",
+    delivery: "queue",
+    metadata: { lazersKind: "worker-prompt" },
+  }
+  const foreign: OutcomeInboxEntry = {
+    id: "msg_foreign",
+    type: "synthetic",
+    delivery: "queue",
+    metadata: { ...ownership, lazersPlanID: "foreign-plan", lazersMessageID: "msg_foreign" },
+  }
+  const owned: OutcomeInboxEntry = {
+    id: ownership.lazersMessageID,
+    type: "synthetic",
+    delivery: "queue",
+    metadata: ownership,
+  }
+  const cancelled: string[] = []
+  const fixture = nativeOutcomeFixture({
+    inbox: [user, worker, foreign, owned],
+    onCancel: (id) => cancelled.push(id),
+  })
+  expect(await fixture.host.outcomeInbox("ses_owner")).toHaveLength(4)
+  await fixture.host.cancelOutcome({
+    sessionID: "ses_owner",
+    inboxID: owned.id,
+    ownership,
+  })
+  expect(cancelled).toEqual([owned.id])
+  expect(fixture.entries).toEqual([user, worker, foreign])
+  await expect(
+    fixture.host.cancelOutcome({ sessionID: "ses_owner", inboxID: user.id, ownership }),
+  ).rejects.toThrow("mismatched durable ownership")
+  expect(cancelled).toEqual([owned.id])
+})
+
+test("native inbox refuses a discovered service owned by another process", async () => {
+  const fixture = nativeOutcomeFixture({ pid: 900 })
+  await expect(fixture.host.outcomeInbox("ses_owner")).rejects.toThrow(
+    "not this OpenCode host process",
+  )
+  expect(fixture.listCalls).toBe(0)
+})
+
+test("native inbox does not start or substitute an unavailable service", async () => {
+  const fixture = nativeOutcomeFixture({ unavailable: true })
+  await expect(fixture.host.outcomeInbox("ses_owner")).rejects.toThrow(
+    "Native outcome inbox is unavailable",
+  )
+  expect(fixture.listCalls).toBe(0)
 })
 
 test("native session heartbeat reads metadata without context and opts into messages explicitly", async () => {

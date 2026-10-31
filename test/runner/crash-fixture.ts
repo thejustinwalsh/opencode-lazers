@@ -34,6 +34,10 @@ const host: RunnerHost = {
     git(root, ["worktree", "remove", directory])
   },
   session: async (id) => load().sessions[id] ?? null,
+  outcomeInbox: async () => [],
+  cancelOutcome: async () => {
+    throw new Error("No fixture inbox entry is queued")
+  },
   create: async (input) => {
     cut("before-session")
     const state = load()
@@ -101,7 +105,12 @@ const host: RunnerHost = {
     const messages = state.sessions[input.sessionID]!.messages
     if (!messages.some((message) => message.id === input.id)) {
       state.calls.push({ kind: "notify", id: input.id })
-      messages.push({ id: input.id, text: input.text })
+      messages.push({
+        id: input.id,
+        text: input.text,
+        type: "synthetic",
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+      })
     }
     save(state)
     cut("after-notify")

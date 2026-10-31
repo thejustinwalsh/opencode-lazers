@@ -179,14 +179,15 @@ test("durable outbox survives process death before/after host delivery without d
     }
     const notices = state.calls.filter((c) => c.kind === "notify")
     expect(new Set(notices.map((c) => c.id)).size).toBe(notices.length)
-    const delivered = f.store.atomic((db) =>
+    const latest = f.store.atomic((db) =>
       db
-        .query<{ state: string }, [string]>(
-          "SELECT state FROM runner_outbox WHERE plan_id=? ORDER BY rowid LIMIT 1",
+        .query<{ state: string; payload: string }, [string]>(
+          "SELECT state,payload FROM runner_outbox WHERE plan_id=? ORDER BY rowid DESC LIMIT 1",
         )
         .get(f.plan.planID),
     )
-    expect(delivered?.state).toBe("delivered")
+    expect(JSON.parse(latest!.payload).status).toBe("accepted")
+    expect(latest?.state).toBe(fault === "before-notify" ? "admitted" : "consumed")
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
 }, 20000)
