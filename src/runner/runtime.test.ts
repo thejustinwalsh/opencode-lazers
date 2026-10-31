@@ -20,6 +20,7 @@ import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
 import type { WorkerPersona } from "./schema.ts"
 import { TaskReads } from "../tasks/read.ts"
+import { taskInstructions } from "../tasks/instructions.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -341,6 +342,160 @@ function fixture(
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
+
+test("scope amendments preserve the specification and recover dependency edits in the same attempt", async () => {
+  const f = fixture({ outside: true, delayed: true })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  const original = f.repository.get(task.id)
+  await f.runtime.command(
+    { requestID: "scope-run", planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(planID)[0]!
+  expect(attempt.state).toBe("running")
+  const version = f.store.plan(planID)!.version
+  const command = {
+    requestID: "allow-dependency",
+    planID,
+    expectedVersion: version,
+    action: "amend-scope" as const,
+    taskID: task.id,
+    scopeAdditions: ["escape.txt"],
+    reason: "The existing implementation needs this dependency file.",
+  }
+  await expect(f.runtime.command(command, "other-owner")).rejects.toThrow("Only the plan owner")
+  await expect(
+    f.runtime.command({ ...command, expectedVersion: version - 1 }, "owner"),
+  ).rejects.toThrow("Stale plan version")
+  await expect(
+    f.runtime.command({ ...command, scopeAdditions: ["../outside"] }, "owner"),
+  ).rejects.toThrow()
+  const receipt = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(receipt)
+  expect(f.repository.get(task.id)).toEqual(original)
+  expect(f.store.effectiveWriteScope(task.id)).toEqual(["a.txt", "escape.txt"])
+  const reopenedRepository = new TaskRepository(f.repository.path, f.root)
+  try {
+    const reopened = new RunnerStore(reopenedRepository)
+    expect(reopened.effectiveWriteScope(task.id)).toEqual(["a.txt", "escape.txt"])
+    expect(reopenedRepository.get(task.id)).toEqual(original)
+  } finally {
+    reopenedRepository.close()
+  }
+  expect(taskInstructions(new TaskReads(f.repository).get({ taskID: task.id }))).toContain(
+    "Authorized execution scope",
+  )
+  expect(
+    f.store.activity(planID, task.id).filter((event) => event.event === "SCOPE_AMENDED"),
+  ).toHaveLength(1)
+  const now = f.store.plan(planID)!.version
+  const unchanged = await f.runtime.command(
+    { ...command, requestID: "duplicate-path", expectedVersion: now },
+    "owner",
+  )
+  expect(unchanged).toMatchObject({ status: "scope-unchanged", version: now })
+  f.completeWorker(attempt.session_id)
+  await drive(f.runtime, 2)
+  expect(f.store.nodes(planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(planID).filter((item) => item.task_id === task.id)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("stop:"))).toHaveLength(1)
+  expect(f.store.effectiveWriteScope(f.tasks[1]!.id)).toEqual(["b.txt"])
+  await expect(
+    f.runtime.command(
+      {
+        ...command,
+        requestID: "too-late",
+        expectedVersion: f.store.plan(planID)!.version,
+        scopeAdditions: ["another.txt"],
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("unfinished work")
+})
+
+test("scope amendment rejects active overlap and reserves amended scope before later dispatch", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  const planID = f.receipt.planID
+  await f.runtime.command(
+    { requestID: "scope-run", planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(planID)).toHaveLength(2)
+  const version = f.store.plan(planID)!.version
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "conflicting-amendment",
+        planID,
+        expectedVersion: version,
+        action: "amend-scope",
+        taskID: f.tasks[0]!.id,
+        scopeAdditions: ["b.txt"],
+        reason: "Would overlap active work.",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("conflicts with active task")
+  expect(f.store.plan(planID)!.version).toBe(version)
+  expect(f.store.effectiveWriteScope(f.tasks[0]!.id)).toEqual(["a.txt"])
+
+  const queued = fixture({ independent: true, delayed: true })
+  const queuedPlan = queued.receipt.planID
+  await queued.runtime.command(
+    {
+      requestID: "queued-amendment",
+      planID: queuedPlan,
+      expectedVersion: 1,
+      action: "amend-scope",
+      taskID: queued.tasks[0]!.id,
+      scopeAdditions: ["b.txt"],
+      reason: "Reserve dependency before dispatch.",
+    },
+    "owner",
+  )
+  await queued.runtime.command(
+    { requestID: "queued-run", planID: queuedPlan, expectedVersion: 2, action: "run" },
+    "owner",
+  )
+  await drive(queued.runtime, 2)
+  expect(queued.store.attempts(queuedPlan)).toHaveLength(1)
+  expect(queued.store.attempts(queuedPlan)[0]!.task_id).toBe(queued.tasks[0]!.id)
+})
+
+test("scope amendment requires this plan's unfinished task and explicit additive authorization", async () => {
+  const f = fixture({ delayed: true })
+  const planID = f.receipt.planID
+  const command = {
+    requestID: "invalid-scope",
+    planID,
+    expectedVersion: 1,
+    action: "amend-scope",
+    taskID: crypto.randomUUID(),
+    scopeAdditions: ["dependency.ts"],
+    reason: "Authorize dependency.",
+  }
+  await expect(f.runtime.command(command, "owner")).rejects.toThrow("unfinished work")
+  await expect(
+    f.runtime.command(
+      {
+        requestID: command.requestID,
+        planID,
+        expectedVersion: 1,
+        action: "amend-scope",
+        taskID: f.tasks[0]!.id,
+        scopeAdditions: command.scopeAdditions,
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("requires task")
+  await expect(
+    f.runtime.command({ ...command, taskID: f.tasks[0]!.id, scopeAdditions: [] }, "owner"),
+  ).rejects.toThrow()
+  expect(f.store.plan(planID)!.version).toBe(1)
+})
 
 test("inspector Start admits one real runtime plan and returns record-backed task state", async () => {
   const f = fixture({ shared: true, commit: true, startOnly: true })

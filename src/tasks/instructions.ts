@@ -1,10 +1,22 @@
 import type { TaskDetail } from "./contract.ts"
+import { TaskProposalSchema } from "../task.ts"
 
 /** Human-readable task instructions for the implementor's readable fetch path. */
 export function taskInstructions(detail: TaskDetail): string {
   if (detail.status !== "found") return `Task ${detail.status}.`
   const { task } = detail,
     proposal = task.proposal
+  const amendment = detail.activity?.findLast((event) => event.event === "SCOPE_AMENDED")
+  let amendedScope: string[] = []
+  if (amendment) {
+    try {
+      amendedScope = TaskProposalSchema.shape.writeScope.parse(
+        JSON.parse(amendment.payload).writeScope,
+      )
+    } catch {
+      // Malformed historical metadata must not invent an execution authorization.
+    }
+  }
   const section = (name: string, items: string[]) =>
     items.length ? `\n\n## ${name}\n${items.map((item) => `- ${item}`).join("\n")}` : ""
   const skills = proposal.requirements.skills.map((suggestion) => {
@@ -35,6 +47,10 @@ export function taskInstructions(detail: TaskDetail): string {
       ),
     ) +
     section("Write scope", proposal.writeScope) +
+    section(
+      "Authorized execution scope (additive amendment; specification unchanged)",
+      amendedScope,
+    ) +
     section("Exclusions", proposal.exclusions) +
     section("Constraints", proposal.constraints) +
     section("Assumptions", proposal.assumptions) +

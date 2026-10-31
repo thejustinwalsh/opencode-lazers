@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
+import { TaskProposalSchema } from "../task.ts"
 import { scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
@@ -256,6 +257,17 @@ export class RunnerStore {
         )
         .all(planID, taskID),
     )
+  }
+  effectiveWriteScope(taskID: string): string[] {
+    const task = this.repository.get(taskID)
+    if (!task) throw new Error("Task not found")
+    const execution = this.execution(taskID)
+    const amendment = execution
+      ? this.latestTransition<{ writeScope: string[] }>(execution.planID, taskID, "SCOPE_AMENDED")
+      : undefined
+    return TaskProposalSchema.shape.writeScope.parse([
+      ...new Set([...task.proposal.writeScope, ...(amendment?.writeScope ?? [])]),
+    ])
   }
   execution(taskID: string): Execution | undefined {
     const node = this.atomic((db) =>
@@ -521,14 +533,16 @@ export class RunnerStore {
           const aa = this.repository.get(a.id)!,
             bb = this.repository.get(b.id)!
           const exact = fingerprint(aa.proposal) === fingerprint(bb.proposal)
-          const overlap = scopePatternsConflict(aa.proposal.writeScope, bb.proposal.writeScope)
+          const aScope = this.effectiveWriteScope(a.id)
+          const bScope = this.effectiveWriteScope(b.id)
+          const overlap = scopePatternsConflict(aScope, bScope)
           if (exact || overlap)
             add(
               exact ? "exact-content" : "scope-overlap",
               [a.id, b.id],
               exact
                 ? "Validated proposal fingerprints match"
-                : `Conflicting path scopes: ${aa.proposal.writeScope.join(", ")} ↔ ${bb.proposal.writeScope.join(", ")}`,
+                : `Conflicting path scopes: ${aScope.join(", ")} ↔ ${bScope.join(", ")}`,
               ["distinct", "duplicate", "supplements"],
             )
         }

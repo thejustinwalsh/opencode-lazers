@@ -90,6 +90,42 @@ export class TaskRuntime {
       // creation succeeds but this command fails, exact replay can recover it
       // without granting an old owner authority over a reassigned plan.
       if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
+      if (command.action === "amend-scope") {
+        if (!command.taskID || !command.scopeAdditions?.length || !command.reason)
+          throw new Error("Scope amendment requires task, added paths and reason")
+        const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+        if (!node || terminal.has(plan.state) || ["accepted", "incorporated"].includes(node.state))
+          throw new Error("Scope amendment requires unfinished work in this plan")
+        const previous = this.store.effectiveWriteScope(node.task_id)
+        const writeScope = [...new Set([...previous, ...command.scopeAdditions])]
+        if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
+        const additions = writeScope.filter((path) => !previous.includes(path))
+        if (!additions.length) return { status: "scope-unchanged", version: plan.version }
+        const active = ["preparing", "running", "verifying"]
+        if (
+          this.store
+            .attempts(plan.id)
+            .some((a) => a.task_id === node.task_id && active.includes(a.state))
+        ) {
+          for (const otherPlan of this.store.plans())
+            for (const other of this.store.attempts(otherPlan.id))
+              if (
+                other.task_id !== node.task_id &&
+                active.includes(other.state) &&
+                scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
+              )
+                throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
+        }
+        this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
+          additions,
+          writeScope,
+          reason: command.reason,
+          caller,
+          taskRevision: this.store.repository.get(node.task_id)!.revision,
+        })
+        db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+        return { status: "scope-amended", version: plan.version + 1, writeScope }
+      }
       if (command.action === "integrated") {
         if (!["accepted", "cleanup-blocked"].includes(plan.state) || !plan.artifact)
           throw new Error("Only an accepted result can be integrated")
@@ -802,7 +838,7 @@ export class TaskRuntime {
     )
     const occupied = activeProject.map(({ attempt }) => ({
       shared: attempt.workspace === this.directory,
-      scopes: this.store.repository.get(attempt.task_id)!.proposal.writeScope,
+      scopes: this.store.effectiveWriteScope(attempt.task_id),
     }))
     const ready = nodes.filter(
       (node) =>
@@ -815,11 +851,10 @@ export class TaskRuntime {
       if (occupied.length === 0 && ready[0]) selected.push(ready[0])
     } else if (!occupied.some((entry) => entry.shared)) {
       for (const node of ready) {
-        const task = this.store.repository.get(node.task_id)!
-        if (occupied.some((entry) => scopePatternsConflict(entry.scopes, task.proposal.writeScope)))
-          continue
+        const scope = this.store.effectiveWriteScope(node.task_id)
+        if (occupied.some((entry) => scopePatternsConflict(entry.scopes, scope))) continue
         selected.push(node)
-        occupied.push({ shared: false, scopes: task.proposal.writeScope })
+        occupied.push({ shared: false, scopes: scope })
       }
     }
     if (selected.length) {
@@ -1101,7 +1136,7 @@ export class TaskRuntime {
   }
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
   private preparationAllowed(attempt: AttemptRow) {
-    const scope = this.store.repository.get(attempt.task_id)!.proposal.writeScope
+    const scope = this.store.effectiveWriteScope(attempt.task_id)
     for (const plan of this.store.plans()) {
       for (const other of this.store.attempts(plan.id)) {
         if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
@@ -1127,10 +1162,7 @@ export class TaskRuntime {
         if (
           attempt.workspace === this.directory ||
           other.workspace === this.directory ||
-          scopePatternsConflict(
-            scope,
-            this.store.repository.get(other.task_id)!.proposal.writeScope,
-          )
+          scopePatternsConflict(scope, this.store.effectiveWriteScope(other.task_id))
         )
           return false
       }
@@ -1286,7 +1318,7 @@ export class TaskRuntime {
       artifact = commitArtifact(
         attempt.workspace,
         attempt.base_commit,
-        proposal.writeScope,
+        this.store.effectiveWriteScope(attempt.task_id),
         attempt.workspace !== this.directory,
       )
     } catch (error) {
