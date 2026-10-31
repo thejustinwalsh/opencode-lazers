@@ -72,4 +72,4 @@ Return task IDs, acceptance evidence, and actual execution status. Retrieve exis
 
 Completion evidence is passing checks and observed app behavior. Repository investigation does not require source hashes or evidence receipts.
 
-Do not invent token, time, tool-call or spend budgets. Omit proposed limits when model-based execution policy is not configured.
+Do not invent token, time, tool-call or spend budgets; omit guessed limits. Preserve measured usage and prior attempts.

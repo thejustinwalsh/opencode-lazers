@@ -1,12 +1,43 @@
 # LAZERS next phase handoff
 
+## Current result — first worker accepted and merged
+
+Read [execution report](spikes/011-runner-execution.md) first. Retry-safe submission
+task `5f5743c3-1bd0-4a53-a86b-a347dd961e1a` was completed by a real native Sol High
+worker, accepted by runtime, reviewed and merged into main as `3b4c105`. Worker
+artifact: `38be10db9c398e978c68638fc8b7105070cd56cb`. Combined checks now pass
+117 tests / 851 assertions, formatting, lint and typecheck; the GUI build passed
+at the integration boundary. Four original tasks remain open.
+
+Desktop is blocked by the locked Mac; an unlock request is pending. Do not send
+model prompts through CLI/API to bypass this. When unlocked, inspect plan
+`6d1d3afe-f236-4a33-a5a2-86328e838249` (last accepted version 20), then have its
+Architect owner call `lazers_plan_command` action `integrated`, current
+`expectedVersion`, stable `requestID`, the worker artifact above,
+`targetBranch: "main"` and the actual review/check/merge reason. Verify native
+removal of the owned worktree and final `integrated` status. It still occupies
+approximately 541 MiB. Do not delete it manually or fake a database transition.
+
+Cleanup implementation and behavior tests are present: native inventory,
+non-forced removal, active/dirty/unmerged protection, visible blocked state,
+explicit retry and recovery. Native acceptance is pending. Per-worktree ancestry
+also protects clean unmerged commits from abandoned attempts.
+
+Retained visible worker trace and token-only per-message pricing are under
+`evidence/011-runner-execution/`. Worker-only OpenRouter equivalent: approximately
+$1.04; subscription usage, not a charge or total project cost. This failed-then-
+repaired run establishes feasibility, not an efficiency improvement.
+
+The older sections below are historical snapshots. Current code and this section
+supersede their unimplemented, untracked, step-cap and budget statements.
+
 ## Latest execution corrections
 
 Read [workspace policy](workspace-policy.md). Serial tasks should default to
 native children in the shared checkout; parallel tasks use native worktrees.
 Owned worktrees require recorded integration, reconciliation and cleanup after
-merge. Those selection/cleanup behaviors remain implementation work, not a claim
-that native creation alone completes the lifecycle.
+merge. Selection and cleanup are implemented and behavior-tested; native cleanup
+acceptance is still pending.
 
 The first worker was misrouted because native child creation ignores `location`
 when `parentID` is supplied. It was cancelled through Architect. Six edited files
@@ -17,10 +48,10 @@ Workers now receive prose directions to the existing `lazers_get_task`, whose
 implementor response renders instructions and retains typed output. Do not inject
 or repeatedly send raw JSON ContextPackets as user messages.
 
-The user rejected guessed execution budgets. There is no configured model-based
-budget policy. Preserve measured usage; do not enforce historical task token,
-time, tool-call or spend numbers or invent replacements. New tasks may omit
-limits. Budget policy belongs to future model selection. Schema validation,
+The user rejected guessed execution budgets. Preserve measured usage and
+trajectories; do not enforce historical task token, time, tool-call or spend
+numbers or invent replacements. Provider/model capacity limits remain native.
+New tasks may omit limits. Schema validation,
 Architect self-review/System One, explicit cancellation, and bounded verification
 procedures remain useful and are retained.
 

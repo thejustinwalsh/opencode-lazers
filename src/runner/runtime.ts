@@ -998,8 +998,15 @@ export class TaskRuntime {
         )
         if (active.some((session) => session?.busy)) throw new Error("Worker is still active")
         const listed = await this.host.worktrees()
-        if (listed.includes(workspace)) await this.host.removeWorktree(workspace)
-        else if (existsSync(workspace))
+        if (listed.includes(workspace)) {
+          const head = git(workspace, ["rev-parse", "HEAD"])
+          try {
+            git(this.directory, ["merge-base", "--is-ancestor", head, "HEAD"])
+          } catch {
+            throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
+          }
+          await this.host.removeWorktree(workspace)
+        } else if (existsSync(workspace))
           throw new Error(
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )

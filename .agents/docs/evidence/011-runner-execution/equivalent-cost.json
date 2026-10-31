@@ -1,0 +1,545 @@
+{
+  "observedAt": "2026-10-31T10:48:34.950Z",
+  "source": "https://openrouter.ai/api/v1/models",
+  "modelID": "openai/gpt-6.1-sol",
+  "canonicalSlug": "openai/gpt-6.1-sol-20260929",
+  "pricing": {
+    "prompt": "0.000002",
+    "completion": "0.00001",
+    "web_search": "0.01",
+    "input_cache_read": "0.0000001",
+    "input_cache_write": "0.0000025",
+    "overrides": [
+      {
+        "min_prompt_tokens": 272000,
+        "prompt": "0.000004",
+        "completion": "0.000015",
+        "input_cache_read": "0.0000002",
+        "input_cache_write": "0.000005"
+      }
+    ]
+  },
+  "accountingSource": "https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/usage.ts",
+  "method": "Per-message native usage; uncached input, cached input and visible output plus reasoning priced separately. Context tiers selected per request. Excludes Architect, driver, verification compute and unavailable provider/tool charges. Metadata estimate only; no paid inference.",
+  "requests": [
+    {
+      "messageID": "msg_191697b17001GJF78G02DZbzn3",
+      "tokens": {
+        "input": 28414,
+        "output": 83,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.057657999999999994
+    },
+    {
+      "messageID": "msg_191698e5e001f4P5sAAMmkusJa",
+      "tokens": {
+        "input": 8967,
+        "output": 61,
+        "reasoning": 0,
+        "cache": {
+          "read": 28416,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.021385599999999998
+    },
+    {
+      "messageID": "msg_191709954001plfrrZ9s175q3v",
+      "tokens": {
+        "input": 59739,
+        "output": 18,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.119658
+    },
+    {
+      "messageID": "msg_19170abb8001nDM9uVTgRyY0CI",
+      "tokens": {
+        "input": 3053,
+        "output": 130,
+        "reasoning": 0,
+        "cache": {
+          "read": 59648,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.013370799999999999
+    },
+    {
+      "messageID": "msg_19170c712001gNoXgD4N4HWbVJ",
+      "tokens": {
+        "input": 7378,
+        "output": 157,
+        "reasoning": 516,
+        "cache": {
+          "read": 62720,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.027758
+    },
+    {
+      "messageID": "msg_191713046001EBcu1VDjRyxZAi",
+      "tokens": {
+        "input": 5822,
+        "output": 1912,
+        "reasoning": 286,
+        "cache": {
+          "read": 70656,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0406896
+    },
+    {
+      "messageID": "msg_191724bdc001k7Ks63mI56gGKq",
+      "tokens": {
+        "input": 133,
+        "output": 102,
+        "reasoning": 301,
+        "cache": {
+          "read": 78592,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.012155200000000001
+    },
+    {
+      "messageID": "msg_191728d1e001LfbXuziOyU38HP",
+      "tokens": {
+        "input": 1871,
+        "output": 43,
+        "reasoning": 9,
+        "cache": {
+          "read": 78976,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0121596
+    },
+    {
+      "messageID": "msg_191729fe0001jHvfPy5mOzNyZD",
+      "tokens": {
+        "input": 277,
+        "output": 32,
+        "reasoning": 232,
+        "cache": {
+          "read": 80768,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.011270800000000001
+    },
+    {
+      "messageID": "msg_19172d1a4001uJDaTlhMIwPFNp",
+      "tokens": {
+        "input": 188,
+        "output": 45,
+        "reasoning": 0,
+        "cache": {
+          "read": 81152,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0089412
+    },
+    {
+      "messageID": "msg_19172e3a60019BQu6dd9dEiN2W",
+      "tokens": {
+        "input": 343,
+        "output": 34,
+        "reasoning": 0,
+        "cache": {
+          "read": 81280,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.009153999999999999
+    },
+    {
+      "messageID": "msg_1917cbbd5001bzBfebey35GLMn",
+      "tokens": {
+        "input": 81735,
+        "output": 61,
+        "reasoning": 0,
+        "cache": {
+          "read": 5248,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.1646048
+    },
+    {
+      "messageID": "msg_1917ccdc8001hsgEDBieluZtgH",
+      "tokens": {
+        "input": 3384,
+        "output": 105,
+        "reasoning": 0,
+        "cache": {
+          "read": 86912,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0165092
+    },
+    {
+      "messageID": "msg_1917ce321001qSxOLPRVJAqv9p",
+      "tokens": {
+        "input": 5312,
+        "output": 140,
+        "reasoning": 26,
+        "cache": {
+          "read": 90240,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.021308
+    },
+    {
+      "messageID": "msg_1917d01e3001VyfmeBzHCQfWrD",
+      "tokens": {
+        "input": 4337,
+        "output": 30,
+        "reasoning": 131,
+        "cache": {
+          "read": 95616,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.019845599999999998
+    },
+    {
+      "messageID": "msg_1917d397c001AcItE3ZxkOcPkF",
+      "tokens": {
+        "input": 363,
+        "output": 5436,
+        "reasoning": 0,
+        "cache": {
+          "read": 99968,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0650828
+    },
+    {
+      "messageID": "msg_1917fc4330015xAZePU6oHEYdX",
+      "tokens": {
+        "input": 210,
+        "output": 1996,
+        "reasoning": 516,
+        "cache": {
+          "read": 105600,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.03610000000000001
+    },
+    {
+      "messageID": "msg_19180fc3d001PjJDrSLejvxlrD",
+      "tokens": {
+        "input": 190,
+        "output": 715,
+        "reasoning": 216,
+        "cache": {
+          "read": 108160,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.020506
+    },
+    {
+      "messageID": "msg_19181754b001iKIKIjd30I63ze",
+      "tokens": {
+        "input": 140,
+        "output": 55,
+        "reasoning": 13,
+        "cache": {
+          "read": 109184,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0118784
+    },
+    {
+      "messageID": "msg_191818a42001AbhDZnZDA11GRB",
+      "tokens": {
+        "input": 233,
+        "output": 2108,
+        "reasoning": 0,
+        "cache": {
+          "read": 109312,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.032477200000000005
+    },
+    {
+      "messageID": "msg_191829185001s3RG3aLbUUl2Ux",
+      "tokens": {
+        "input": 211,
+        "output": 159,
+        "reasoning": 39,
+        "cache": {
+          "read": 111488,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.013550799999999998
+    },
+    {
+      "messageID": "msg_19182bb62001IrIFaJeXmBH51Z",
+      "tokens": {
+        "input": 309,
+        "output": 59,
+        "reasoning": 0,
+        "cache": {
+          "read": 111744,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.012382399999999998
+    },
+    {
+      "messageID": "msg_19183159a001eP5PeFMZbj0iHY",
+      "tokens": {
+        "input": 1547,
+        "output": 98,
+        "reasoning": 40,
+        "cache": {
+          "read": 112000,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.015674
+    },
+    {
+      "messageID": "msg_1918333fe0010Y7yZLRiPIS132",
+      "tokens": {
+        "input": 4764,
+        "output": 403,
+        "reasoning": 497,
+        "cache": {
+          "read": 113536,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0298816
+    },
+    {
+      "messageID": "msg_19183ab7f001K6zGd0c73rY1Ln",
+      "tokens": {
+        "input": 183,
+        "output": 146,
+        "reasoning": 79,
+        "cache": {
+          "read": 119040,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.01452
+    },
+    {
+      "messageID": "msg_19183d193001y41JtaUwEG7bCq",
+      "tokens": {
+        "input": 175,
+        "output": 49,
+        "reasoning": 0,
+        "cache": {
+          "read": 119296,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0127696
+    },
+    {
+      "messageID": "msg_19183ebf7001h7kU2T5eq31ehR",
+      "tokens": {
+        "input": 664,
+        "output": 47,
+        "reasoning": 232,
+        "cache": {
+          "read": 119424,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0160604
+    },
+    {
+      "messageID": "msg_191842141001yMkLU29xD4forj",
+      "tokens": {
+        "input": 389,
+        "output": 473,
+        "reasoning": 132,
+        "cache": {
+          "read": 120192,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0188472
+    },
+    {
+      "messageID": "msg_19184726d001LuDyr9SWHBC3R6",
+      "tokens": {
+        "input": 119,
+        "output": 452,
+        "reasoning": 270,
+        "cache": {
+          "read": 121088,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.019566800000000002
+    },
+    {
+      "messageID": "msg_19184d322001rGHLxdj1hyc270",
+      "tokens": {
+        "input": 244,
+        "output": 92,
+        "reasoning": 136,
+        "cache": {
+          "read": 121728,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0149408
+    },
+    {
+      "messageID": "msg_191851fc80011RhPBPyu8Y5Ii8",
+      "tokens": {
+        "input": 693,
+        "output": 59,
+        "reasoning": 0,
+        "cache": {
+          "read": 122112,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0141872
+    },
+    {
+      "messageID": "msg_1918577c2001Ut5FjLYbTZktHU",
+      "tokens": {
+        "input": 224,
+        "output": 156,
+        "reasoning": 1552,
+        "cache": {
+          "read": 122752,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.029803200000000002
+    },
+    {
+      "messageID": "msg_19186646a001bvWuaUjIq8G5dJ",
+      "tokens": {
+        "input": 4508,
+        "output": 554,
+        "reasoning": 516,
+        "cache": {
+          "read": 124544,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0321704
+    },
+    {
+      "messageID": "msg_19186f12d0013eDH71xzUQq9F8",
+      "tokens": {
+        "input": 233,
+        "output": 178,
+        "reasoning": 0,
+        "cache": {
+          "read": 129920,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.015238
+    },
+    {
+      "messageID": "msg_191871b1c001vFMwO8Ea9Bn9LC",
+      "tokens": {
+        "input": 477,
+        "output": 221,
+        "reasoning": 857,
+        "cache": {
+          "read": 130176,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0247516
+    },
+    {
+      "messageID": "msg_19187a6db001ikPBZ0s6rbxiTG",
+      "tokens": {
+        "input": 178,
+        "output": 99,
+        "reasoning": 0,
+        "cache": {
+          "read": 131584,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.014504399999999999
+    },
+    {
+      "messageID": "msg_19187bf2c00174HOzOD31IfbNy",
+      "tokens": {
+        "input": 380,
+        "output": 107,
+        "reasoning": 75,
+        "cache": {
+          "read": 131712,
+          "write": 0
+        }
+      },
+      "pricingTierMinPromptTokens": 0,
+      "equivalentApiCostUsd": 0.0157512
+    }
+  ],
+  "totalEquivalentApiCostUsd": 1.0371123999999998
+}

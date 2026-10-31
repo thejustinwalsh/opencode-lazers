@@ -61,7 +61,7 @@ Results:
 
 - `invalid`: fix structural/bound errors; no inference round was consumed.
 - `feedback`: follow `focus.guidance` and `next.instruction`, then reuse this review ID with changed task/evidence.
-- `unavailable`: model/transport failure is explicit; retry within the remaining budget or report the limitation.
+- `unavailable`: model/transport failure is explicit; retry when appropriate or report the limitation.
 - `completed`: all checked concerns resolved or did not apply; proceed to ordinary submission.
 - `completed_with_concerns`: proceed under the agreed advisory policy, retaining findings and errors.
 - `busy`: a call for this review is active; wait for it to finish.

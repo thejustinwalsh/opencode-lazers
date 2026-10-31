@@ -495,3 +495,45 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
 })
+
+test("cleanup preserves clean worktrees with commits outside the reviewed integration", async () => {
+  const f = fixture({ commit: true })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  const artifact = f.store.plan(f.receipt.planID)!.artifact!
+  git(f.root, ["merge", "--ff-only", artifact])
+  const worktree = f.store.attempts(f.receipt.planID)[0]!.workspace
+  writeFileSync(join(worktree, "unmerged.txt"), "retain this commit")
+  git(worktree, ["add", "unmerged.txt"])
+  git(worktree, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Unreviewed follow-up",
+  ])
+  const unmerged = git(worktree, ["rev-parse", "HEAD"])
+  expect(git(worktree, ["status", "--porcelain"])).toBe("")
+  await f.runtime.command(
+    {
+      requestID: "integrate",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "integrated",
+      artifact,
+      targetBranch: "main",
+      reason: "Reviewed accepted artifact",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("cleanup-blocked")
+  expect(f.store.plan(f.receipt.planID)!.reason).toContain("unmerged commits")
+  expect(git(worktree, ["rev-parse", "HEAD"])).toBe(unmerged)
+  expect(await f.host.worktrees()).toContain(worktree)
+})

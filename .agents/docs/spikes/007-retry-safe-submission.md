@@ -17,10 +17,6 @@ Submission does not execute work.
   historical observation `b5da4ca` is not this implementation's starting tree.
 - Result artifact: the commit containing this spike record. Reproduce the scoped
   implementation diff with `git diff 1b03c03423ac4e0bd1082018c897ebd36da70755 <result-commit>`.
-- Implementation diff SHA-256 (excluding this record):
-  `228dbc6b1c77304137c72eca1bf45830276698a32440b87f2c5392cd285deb7c`.
-  At the resulting commit, reproduce with
-  `git diff 1b03c03423ac4e0bd1082018c897ebd36da70755 HEAD -- . ':(exclude).agents/docs/spikes/007-retry-safe-submission.md' | shasum -a 256`.
 - Writes limited to the task's submission/storage/schema/tool sources and tests,
   `test/proposal.ts`, `test/retry-process.ts`, Architect prose, README and this file.
   Existing runner/GUI/permission rules, dependency pins and unrelated edits remain

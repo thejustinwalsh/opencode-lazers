@@ -33,7 +33,9 @@ selection, and explicit retry into a fresh child are implemented. Combined seria
 verification reuses the final accepted worker's checkout. After review/merge,
 `lazers_plan_command` action `integrated` records the accepted artifact, current
 target branch and review reason. The runtime checks Git ancestry and requests
-native, non-forced removal of only the plan's recorded worktrees. Dirty/active or
+native, non-forced removal of only the plan's recorded worktrees. Each worktree's
+HEAD must be an ancestor of the integration checkout's HEAD; this preserves clean
+unmerged commits from abandoned attempts too. Dirty/active/unmerged or
 unregistered directories produce `cleanup-blocked`; accepted nodes and history
 remain. An explicit retry after fixing the cause reconciles inventory, including
 already-removed directories. Persisted `cleaning` work resumes after restart.
