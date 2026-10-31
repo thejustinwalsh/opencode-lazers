@@ -400,18 +400,24 @@ export class ProjectIndex {
     source: string,
   ) {
     const snapshot = await this.snapshot(principal)
-    const references = new Set(
-      proposal.context.flatMap((ref) =>
-        ref.reference.startsWith("lazers-evidence:")
-          ? []
-          : (ref.reference.match(
-              /(?:\.?[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.(?:md|tsx?|json|yaml|yml)/g,
-            ) ?? []),
-      ),
-    )
+    const references = new Map<string, { start: number; end: number }[]>()
+    for (const ref of proposal.context) {
+      for (const match of ref.reference.matchAll(
+        /((?:\.?[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.(?:md|tsx?|json|yaml|yml))(?::(\d+)(?:-(\d+))?)?/g,
+      )) {
+        const path = match[1]!
+        const ranges = references.get(path) ?? []
+        if (match[2]) {
+          const start = Number(match[2]),
+            end = Number(match[3] ?? match[2])
+          if (start > 0 && end >= start) ranges.push({ start, end })
+        }
+        references.set(path, ranges)
+      }
+    }
     const required = ["AGENTS.md", "README.md"].filter((path) => existsSync(join(this.root, path)))
     const missing = required.filter((path) => !snapshot.files.some((file) => file.path === path))
-    for (const path of references)
+    for (const path of references.keys())
       if (existsSync(join(this.root, path)) && !snapshot.files.some((file) => file.path === path))
         missing.push(path)
     if (missing.length) throw new Error(`Mandatory context unavailable: ${missing.join(", ")}`)
@@ -436,38 +442,55 @@ export class ProjectIndex {
       text: string
     }[] = []
     const counter = await this.tokenizer()
+    const deferred: string[] = []
     const base = {
       task: proposal,
       skills,
       source,
       snapshotID: snapshot.id,
-      recipe: "task-context/1",
+      recipe: "task-context/2",
+      deferred,
       entries,
     }
     const limit = Math.min(24000, Math.floor(proposal.limits.maxTokens / 2))
     for (const file of candidates) {
       const mandatory = required.includes(file.path) || references.has(file.path)
       const full = mandatory || /(?:test|spec)\./.test(file.path) || file.path.endsWith(".md")
+      const ranges = references.get(file.path) ?? []
+      const lines = file.content.split("\n")
       const entry = {
         path: file.path,
         revision: null,
         level: full ? ("full" as const) : ("outline" as const),
-        text: full ? file.content : file.outline,
+        text: ranges.length
+          ? ranges
+              .map(
+                ({ start, end }) =>
+                  `[Lines ${start}-${Math.min(end, lines.length)}]\n${lines.slice(start - 1, end).join("\n")}`,
+              )
+              .join("\n")
+          : full
+            ? file.content
+            : file.outline,
       }
       entries.push(entry)
       if (counter.countTokens(JSON.stringify(base)) > limit) {
         entries.pop()
-        if (mandatory)
-          throw new Error(`Mandatory context exceeds reserved ${limit} tokens: ${file.path}`)
+        if (required.includes(file.path))
+          throw new Error(`Repository guidance exceeds reserved ${limit} tokens: ${file.path}`)
+        deferred.push(file.path)
       }
     }
     const text = JSON.stringify(base)
+    if (counter.countTokens(text) > limit)
+      throw new Error("Task and required guidance exceed context reservation")
     return {
       text,
       metadata: {
         snapshotID: snapshot.id,
         source,
-        recipe: "task-context/1",
+        recipe: "task-context/2",
+        deferred,
         tokens: counter.countTokens(text),
         encoding: "o200k_base",
         paths: entries.map(({ path, revision, level }) => ({ path, revision, level })),

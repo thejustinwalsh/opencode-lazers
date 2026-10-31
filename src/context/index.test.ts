@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
 import { git } from "../runner/artifacts.ts"
 import { ProjectIndex } from "./index.ts"
+import { validProposal } from "../../test/proposal.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -89,4 +90,32 @@ test("response bounds count the complete wrapper and require narrower evidence",
   await expect(f.index.evidence(principal, { paths: ["large.txt"] })).rejects.toThrow(
     "Response exceeds",
   )
+})
+
+test("worker packets honor cited line ranges and defer large source without blocking dispatch", async () => {
+  const f = fixture()
+  writeFileSync(join(f.root, "AGENTS.md"), "Use strict TypeScript. No worker delegation.")
+  writeFileSync(join(f.root, "README.md"), "Implement the scoped feature and run its tests.")
+  writeFileSync(
+    join(f.root, "guide.md"),
+    "outside-range\nRelevant contract.\nRelevant procedure.\n" +
+      "unrelated guide prose ".repeat(5000),
+  )
+  writeFileSync(join(f.root, "oversized.md"), "large context source ".repeat(5000))
+  const proposal = validProposal()
+  proposal.context = [
+    { reference: "guide.md:2-3: relevant integration", revision: null },
+    { reference: "oversized.md", revision: null },
+  ]
+  proposal.limits.maxTokens = 4000
+  const packet = await f.index.packet(principal, proposal, [], "fixture-base")
+  const delivered = JSON.parse(packet.text)
+  expect(delivered.entries.find((entry: { path: string }) => entry.path === "guide.md").text).toBe(
+    "[Lines 2-3]\nRelevant contract.\nRelevant procedure.",
+  )
+  expect(packet.text).not.toContain("outside-range")
+  expect(packet.text).not.toContain("unrelated guide prose")
+  expect(delivered.deferred).toContain("oversized.md")
+  expect(packet.metadata.tokens).toBeLessThanOrEqual(2000)
+  expect(delivered.entries.some((entry: { path: string }) => entry.path === "AGENTS.md")).toBe(true)
 })
