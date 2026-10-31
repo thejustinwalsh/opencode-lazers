@@ -1,4 +1,6 @@
 import type { Plugin } from "@opencode/plugin/effect"
+import { OpenCode } from "@opencode/client"
+import { Service } from "@opencode/client/service"
 import { Agent } from "@opencode/schema/agent"
 import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
@@ -9,8 +11,67 @@ import { DateTime, Effect } from "effect"
 import type { RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
+import type { OutcomeInboxEntry } from "./inbox.ts"
+import { isOwnedQueuedOutcome } from "./inbox.ts"
 
-export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): RunnerHost {
+export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
+export type NativeInboxClient = {
+  server: Pick<ReturnType<typeof OpenCode.make>["server"], "info">
+  session: Pick<ReturnType<typeof OpenCode.make>["session"], "get" | "synthetic" | "inbox">
+}
+export type NativeInboxDependencies = {
+  discover: typeof Service.discover
+  make(endpoint: NativeInboxEndpoint): NativeInboxClient
+  processID(): number
+}
+
+const nativeInboxDependencies: NativeInboxDependencies = {
+  discover: (options) => Service.discover(options),
+  make: (endpoint) => OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }),
+  processID: () => process.pid,
+}
+
+async function inboxClient(
+  ctx: Plugin.Context,
+  dependencies: NativeInboxDependencies,
+): Promise<NativeInboxClient> {
+  const endpoint = await dependencies.discover({ version: ctx.app.version })
+  if (!endpoint)
+    throw new Error(`Native outcome inbox is unavailable for OpenCode ${ctx.app.version}`)
+  const client = dependencies.make(endpoint)
+  const info = await client.server.info()
+  if (info.pid !== dependencies.processID() || info.version !== ctx.app.version)
+    throw new Error("Native outcome inbox service is not this OpenCode host process")
+  return client
+}
+
+async function assertArchitectTarget(
+  ctx: Plugin.Context,
+  client: NativeInboxClient,
+  sessionID: string,
+) {
+  const target = await client.session.get({ sessionID })
+  if (target.projectID !== ctx.location.project.id || target.agent !== "architect")
+    throw new Error("Native outcome inbox target is not a same-project Architect session")
+}
+
+function inboxEntry(
+  entry: Awaited<ReturnType<NativeInboxClient["session"]["inbox"]["list"]>>[number],
+) {
+  const metadata = entry.type === "synthetic" ? entry.payload.metadata : undefined
+  return {
+    id: entry.id,
+    type: entry.type,
+    ...("delivery" in entry ? { delivery: entry.delivery } : {}),
+    ...(metadata ? { metadata } : {}),
+  } satisfies OutcomeInboxEntry
+}
+
+export function nativeHost(
+  ctx: Plugin.Context,
+  repository: TaskRepository,
+  dependencies: NativeInboxDependencies = nativeInboxDependencies,
+): RunnerHost {
   return {
     async workerModel() {
       const agent = await Effect.runPromise(
@@ -95,6 +156,8 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         cost: null,
         messages: messages.map((message) => ({
           id: message.id,
+          ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
+          ...(message.metadata ? { metadata: message.metadata } : {}),
           text:
             message.type === "user" || message.type === "synthetic"
               ? message.text
@@ -106,6 +169,28 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
                 : "",
         })),
       }
+    },
+    async outcomeInbox(sessionID) {
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, sessionID)
+      return (await client.session.inbox.list({ sessionID })).map(inboxEntry)
+    },
+    async cancelOutcome(input) {
+      if (
+        input.ownership.lazersSessionID !== input.sessionID ||
+        input.ownership.lazersMessageID !== input.inboxID ||
+        input.ownership.lazersProjectID !== ctx.location.project.id ||
+        input.ownership.lazersProjectDirectory !== repository.projectDirectory
+      )
+        throw new Error("Refusing to cancel an outcome with mismatched durable ownership")
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, input.sessionID)
+      const entry = (await client.session.inbox.list({ sessionID: input.sessionID }))
+        .map(inboxEntry)
+        .find((candidate) => candidate.id === input.inboxID)
+      if (!entry || !isOwnedQueuedOutcome(entry, input.ownership))
+        throw new Error("Owned outcome is no longer queued; cancellation was not confirmed")
+      await client.session.inbox.cancel({ sessionID: input.sessionID, inboxID: input.inboxID })
     },
     async create(input) {
       // Preserve the admitted native ref verbatim. Catalog metadata is advisory;
@@ -179,16 +264,25 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
       )
     },
     async notify(input) {
-      await Effect.runPromise(
-        ctx.session.synthetic({
-          sessionID: Session.ID.make(input.sessionID),
-          id: SessionMessage.ID.make(input.id),
-          text: input.text,
-          resume: input.resume,
-          delivery: "queue",
-          description: "LAZERS task outcome",
-        }),
+      if (
+        input.metadata &&
+        (input.metadata.lazersProjectID !== ctx.location.project.id ||
+          input.metadata.lazersProjectDirectory !== repository.projectDirectory ||
+          input.metadata.lazersSessionID !== input.sessionID ||
+          input.metadata.lazersMessageID !== input.id)
       )
+        throw new Error("Native outcome notification has mismatched durable ownership")
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, input.sessionID)
+      await client.session.synthetic({
+        sessionID: Session.ID.make(input.sessionID),
+        id: SessionMessage.ID.make(input.id),
+        text: input.text,
+        ...(input.metadata ? { metadata: input.metadata } : {}),
+        resume: input.resume,
+        delivery: "queue",
+        description: "LAZERS task outcome",
+      })
     },
     async interrupt(id) {
       await Effect.runPromise(ctx.session.interrupt({ sessionID: Session.ID.make(id) }))

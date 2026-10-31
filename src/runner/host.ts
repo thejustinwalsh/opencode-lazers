@@ -1,4 +1,12 @@
 import type { ModelPolicy } from "./schema.ts"
+import type { OutcomeOwnership, OutcomeInboxEntry } from "./inbox.ts"
+
+export type HostMessage = {
+  id: string
+  text: string
+  type?: string
+  metadata?: Record<string, unknown>
+}
 
 export type HostSession = {
   id: string
@@ -14,7 +22,7 @@ export type HostSession = {
   tokens: number | null
   tools: number
   cost: number | null
-  messages: { id: string; text: string }[]
+  messages: HostMessage[]
 }
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
@@ -29,6 +37,14 @@ export interface RunnerHost {
    * needed to prove a receipt or count completed tools.
    */
   session(id: string, options?: { messages?: boolean }): Promise<HostSession | null>
+  /** Public native inbox snapshot; the adapter verifies it belongs to this process. */
+  outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
+  /** Revalidates ownership and queued state immediately before native cancellation. */
+  cancelOutcome?(input: {
+    sessionID: string
+    inboxID: string
+    ownership: OutcomeOwnership
+  }): Promise<void>
   create(input: {
     id: string
     parentID: string
@@ -48,6 +64,12 @@ export interface RunnerHost {
     sourceSessionID: string
   }): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
-  notify(input: { sessionID: string; id: string; text: string; resume: boolean }): Promise<void>
+  notify(input: {
+    sessionID: string
+    id: string
+    text: string
+    resume: boolean
+    metadata?: OutcomeOwnership
+  }): Promise<void>
   interrupt(id: string): Promise<void>
 }
