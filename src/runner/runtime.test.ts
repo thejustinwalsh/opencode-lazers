@@ -1310,6 +1310,92 @@ test("shared resume waits for another plan's worker and cancellation retains fin
   await drive(f.runtime)
 })
 
+test("reconciliation retains legacy advanced-checkout receipts and verifies the exact artifact afresh", async () => {
+  const f = fixture({ shared: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const move = f.store.move.bind(f.store)
+  let legacyID = ""
+  f.store.move = (planID, taskID, event, reason) => {
+    const result = move(planID, taskID, event, reason)
+    if (event === "ACCEPT") {
+      const artifact = f.store.attempts(planID)[0]!.artifact!
+      writeFileSync(join(f.root, "later.txt"), "preserve\n")
+      git(f.root, ["add", "later.txt"])
+      git(f.root, [
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "Later reviewed work",
+      ])
+      const check = f.input.verification[0]!
+      legacyID = crypto.randomUUID()
+      f.store.atomic((db) => {
+        db.query("INSERT INTO runner_effects VALUES(?,?,NULL,NULL,?,'completed',?,?,1)").run(
+          legacyID,
+          planID,
+          `graph-verify:${check.id}`,
+          JSON.stringify({
+            workspace: f.root,
+            artifact,
+            identity: artifact,
+            check,
+            receiptPath: "legacy-receipt.json",
+          }),
+          JSON.stringify({
+            check: {
+              id: check.id,
+              command: check.command,
+              cwd: f.root,
+              artifact,
+              exitCode: 0,
+              timedOut: false,
+              unchanged: false,
+            },
+          }),
+        )
+        db.query(
+          "UPDATE runner_plans SET state='blocked',reason='Combined artifact verification failed',version=version+1 WHERE id=?",
+        ).run(planID)
+      })
+    }
+    return result
+  }
+  await runPlan(f)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  await f.runtime.command(
+    {
+      requestID: "reconcile-legacy",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  const effects = f.store
+    .effects(f.receipt.planID)
+    .filter((effect) => effect.kind === "graph-verify:combined")
+  expect(effects).toHaveLength(2)
+  expect(effects.find((effect) => effect.id === legacyID)?.state).toBe("completed")
+  expect(
+    JSON.parse(effects.find((effect) => effect.id === legacyID)!.receipt!).check.unchanged,
+  ).toBe(false)
+  const fresh = JSON.parse(effects.find((effect) => effect.id !== legacyID)!.receipt!).check
+  expect(fresh).toMatchObject({
+    artifact: f.store.plan(f.receipt.planID)!.artifact!,
+    unchanged: true,
+    exitCode: 0,
+  })
+  expect(fresh.cwd).not.toBe(f.root)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(readFileSync(join(f.root, "later.txt"), "utf8")).toBe("preserve\n")
+})
+
 test("uncertain prompt cannot prevent cancellation of an admitted sibling", async () => {
   const f = fixture({ independent: true, delayed: true })
   const prompt = f.host.prompt

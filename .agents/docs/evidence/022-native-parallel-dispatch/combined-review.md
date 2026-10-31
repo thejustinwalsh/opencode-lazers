@@ -31,3 +31,23 @@ does not establish ChatGPT-route retention.
 These checks are not real native parallel-worker overlap evidence. Main merge,
 supported location reload, actionable native wake-up and runtime integration/
 non-forced cleanup must be observed separately before product fan-out.
+
+## Loaded native boundary and historical receipt repair
+
+Main was fast-forwarded to `a8d6c11`, where the same 205 tests and quality checks
+passed. Supported `client.location.reload` completed; project-scoped native agent
+reads exposed the concise researched-advice guidance and no worker catalog denial.
+The configured worker remained `openai/gpt-6-luna#max` unchanged.
+
+Native inspection found Repomix and trajectory-permission plans blocked by old
+combined receipts taken on advanced shared main: exit code zero but
+`unchanged:false`. Those are not valid acceptance evidence. The scheduler now
+matches combined receipts by exact verification workspace and command as well as
+artifact, retaining old records while checking an isolated exact artifact after
+explicit reconciliation. A regression seeds that historical blocked state and
+proves recovery without another implementation attempt or deleting old evidence.
+Updated combined checks: **206 tests / 2,067 expectations**; focused runner checks
+**69 tests / 1,093 expectations**; format/lint/typecheck passed.
+
+The temporary native driver script's manual `--queue` path was not used: prefer
+the real reconciled-plan outcomes for native actionable wake-up evidence.

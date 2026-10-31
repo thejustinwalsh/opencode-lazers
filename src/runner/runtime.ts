@@ -1441,7 +1441,10 @@ export class TaskRuntime {
         .effects(plan.id)
         .find(
           (e) =>
-            e.kind === `graph-verify:${check.id}` && JSON.parse(e.payload).artifact === artifact,
+            e.kind === `graph-verify:${check.id}` &&
+            JSON.parse(e.payload).artifact === artifact &&
+            JSON.parse(e.payload).workspace === workspace &&
+            fingerprint(JSON.parse(e.payload).check) === fingerprint(check),
         )
       if (existing?.state === "completed") {
         receipts.push(JSON.parse(existing.receipt!).check)
