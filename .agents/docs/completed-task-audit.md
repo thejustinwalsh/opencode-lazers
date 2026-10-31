@@ -1,7 +1,7 @@
 # Completed-task audit and recovery plan
 
 2026-10-31. Audited every accepted task against its contract, current source,
-recorded checks and native observations. Eleven accepted tasks now belong to nine
+recorded checks and native observations. Twelve accepted tasks now belong to ten
 integrated plans. Integration records do not erase missing acceptance observations.
 The [full matrix](evidence/033-completed-task-audit/matrix.json) retains task IDs,
 acceptance assertions, verification commands, artifacts, findings and sources.
@@ -20,6 +20,7 @@ acceptance assertions, verification commands, artifacts, findings and sources.
 | `fc88ccc0` Native model routes and personas  | Exact route forwarding, no fallback/veto, three optional overlays                                                     | Current native Go/Qwen and OpenAI/Luna workers demonstrate route use; persona quality is not established              |
 | `2958fa32` Parallel dispatch                 | Real-Git tests cover conflicts, dependencies, combined checks, recovery, cancellation and cleanup                     | Three native workers now overlap; actual returned artifacts, combined UI acceptance and cleanup still need completion |
 | `08e3d569` Tasks Start and continuation      | Native Start, running child, narrow layout, split resize, scroll and restoration; reconciled and integrated           | Full theme/font and broader recovery matrix remains partial                                                           |
+| `7548e7f8` Tasks menu/tab affordances        | Native menu order, themed tab icon, close/reopen, canonical merge, Terra screenshot review and native cleanup passed  | First Qwen Go sample; cost/category attribution is incomplete, no comparative quality/cost claim                      |
 | `1532ce08` Authored plan title               | Optional verbatim title, persistence, replay and legacy omission                                                      | UI title consumers belong to the grouping increment                                                                   |
 
 Delivered means code and checks exist. Observed means the relevant native or real
@@ -107,3 +108,13 @@ Durable progress and small handoffs are consistent with
 We apply those findings to current failures rather than copying a large prompt or
 adding another orchestration layer. Completed work per hour and accepted-task cost
 remain the product measures; this run does not yet prove a cost improvement.
+
+## Observed wake churn
+
+The completed Tasks affordance generated separate resumable task-accepted and
+plan-accepted outcomes. Architect subsequently answered obsolete notices with
+“already handled” even after integration. [The outbox/inbox audit](evidence/033-completed-task-audit/wake-churn.md)
+identifies exact outcomes and the public native inbox APIs. A narrow repair must
+retain durable history and lost-response recovery while suppressing obsolete
+queued outcomes and waking Architect only for actionable orchestration. This is
+not covered by the progress or session-renewal tasks.
