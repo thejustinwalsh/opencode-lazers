@@ -18,6 +18,12 @@ explicit reassignments during creation: stale Start must reject, retain restored
 owner A/version 3 and create no attempt; a fresh click may then start under A.
 This removes the duplicate adoption path rather than weakening ownership checks.
 
+Verification at `ce6174d` (including root's `a53dba3` scheduler-binding repair):
+`bun test` passed **167 tests / 1,472 expectations** across 37 files; full
+formatting/lint/typecheck passed. Focused runner/native/process-recovery checks
+passed 39 tests, and command replay, foreign-caller denial and pre-receipt-crash
+reproductions still passed. These do not establish final native acceptance.
+
 ## Confirmed scheduler acceptance starvation (existing task 2958fa32)
 
 Driver observations: `/private/tmp/lazers-021-driver-observations.json` records
