@@ -3,6 +3,7 @@ import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
 import { SnapshotOutput } from "./contract.ts"
 import { makeFixture, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { AssociationTaskReads } from "./task-reads.ts"
 
 test("session snapshots expose actual machine topology and recorded transitions separately, read-only", () => {
   const fixture = makeFixture()
@@ -193,6 +194,34 @@ test("snapshot supplies complete task labels and recorded Timeline intervals wit
     expect(JSON.stringify(snapshot)).not.toContain("logged-secret")
     expect(JSON.stringify(snapshot)).not.toContain("stdout")
     expect(JSON.stringify(snapshot)).not.toContain("policy")
+  } finally {
+    fixture.close()
+  }
+})
+
+test("associated task reads resolve references consistently for session queries and gets", () => {
+  const fixture = makeFixture()
+  try {
+    const reads = new AssociationTaskReads(fixture.repository)
+    fixture.store.updatePlanOwner(fixture.receipt.planID, "ses-owner", "ses-reviewer")
+    for (const sessionID of ["ses-owner", "ses-reviewer", "ses-failed", "ses-accepted"]) {
+      expect(
+        reads.query({ sessionID, search: "LZ-1", includeCompleted: true }).tasks,
+      ).toMatchObject([
+        { taskID, reference: "LZ-1", matches: [{ field: "reference", snippet: "LZ-1" }] },
+      ])
+      expect(reads.get({ taskID: "LZ-1", sessionID })).toMatchObject({
+        status: "found",
+        reference: "LZ-1",
+        task: { id: taskID },
+      })
+    }
+    expect(
+      reads.query({ sessionID: "ses-unrelated", search: "LZ-1", includeCompleted: true }).tasks,
+    ).toEqual([])
+    expect(reads.get({ taskID: "LZ-1", sessionID: "ses-unrelated" })).toEqual({
+      status: "not_found",
+    })
   } finally {
     fixture.close()
   }

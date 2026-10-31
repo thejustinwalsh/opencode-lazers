@@ -23,7 +23,7 @@ export const GetInstructionsOutput = z.string()
 export const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   // The association-aware RPC adapter fills this from the canonical relation before returning pages.
-  reference: TaskReferenceSchema.optional(),
+  reference: TaskReferenceSchema,
   revision: z.literal(1),
   status: z.union([z.literal("submitted"), TaskState]),
   reason: z.string().nullable(),
