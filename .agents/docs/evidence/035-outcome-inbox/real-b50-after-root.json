@@ -1,0 +1,151 @@
+{
+  "observedAt": "2026-10-31T23:23:34.253Z",
+  "native": {
+    "pid": 16786,
+    "version": "2.2.5",
+    "sessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "agent": "architect",
+    "time": {
+      "created": 1793449893552,
+      "updated": 1793489008883,
+      "busy": 1793485730484,
+      "idle": 1793485712541,
+      "viewed": 1793485712541
+    }
+  },
+  "inbox": [
+    {
+      "id": "msg_adae6fcdbd2a4fcea02a1d6b736cea26",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_2c009dc68e364b49a39dc0b8303b0cd7",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_965b1e71b94c4ef69a8d3b8252fa2c8d",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+      "type": "synthetic",
+      "delivery": "queue",
+      "metadata": {
+        "lazersKind": "runner-outcome",
+        "lazersProjectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+        "lazersProjectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "lazersPlanID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "lazersOutboxID": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d",
+        "lazersMessageID": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+        "lazersSessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+        "lazersStatus": "integrated",
+        "lazersVersion": 27
+      }
+    }
+  ],
+  "rows": [
+    {
+      "id": "60259e07ee61cfd127f3088a674a563be34309e1148421f433800f3436e34fcb",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_2d3455e35df34be4a93288e8d80ed465",
+      "state": "unknown",
+      "status": "task-accepted",
+      "version": 9,
+      "metadata": null,
+      "receipt": "{\"history\":[{\"kind\":\"legacy-host-admitted\",\"consumption\":\"unknown\"},{\"kind\":\"supersession-ownership-unavailable\",\"byOutboxID\":\"5cc8f7f4f1e5df9a65983881ed0408707074e48f106b4ea8b1337ff08ce58701\"}]}"
+    },
+    {
+      "id": "0e0c964c45c4cfb2fdf00b0e6ac784ee542d12a387c6ac4e25a736f9784e0e24",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_690bec516c5942b7b34b8d2a37e3d4ea",
+      "state": "unknown",
+      "status": "task-accepted",
+      "version": 11,
+      "metadata": null,
+      "receipt": "{\"history\":[{\"kind\":\"legacy-host-admitted\",\"consumption\":\"unknown\"},{\"kind\":\"supersession-ownership-unavailable\",\"byOutboxID\":\"5cc8f7f4f1e5df9a65983881ed0408707074e48f106b4ea8b1337ff08ce58701\"}]}"
+    },
+    {
+      "id": "1281ff2bbd0f265bf40f1bdf469cd85669af5af7ee1bbed5fc87264fe975dc14",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_a20f83af296f409698ba6ea6b29a3cf9",
+      "state": "unknown",
+      "status": "task-accepted",
+      "version": 17,
+      "metadata": null,
+      "receipt": "{\"history\":[{\"kind\":\"legacy-host-admitted\",\"consumption\":\"unknown\"},{\"kind\":\"supersession-ownership-unavailable\",\"byOutboxID\":\"5cc8f7f4f1e5df9a65983881ed0408707074e48f106b4ea8b1337ff08ce58701\"}]}"
+    },
+    {
+      "id": "5cc8f7f4f1e5df9a65983881ed0408707074e48f106b4ea8b1337ff08ce58701",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_b9ff1b7feda7413f8f5a5f4582dfe6d8",
+      "state": "unknown",
+      "status": "task-accepted",
+      "version": 19,
+      "metadata": null,
+      "receipt": "{\"history\":[{\"kind\":\"legacy-host-admitted\",\"consumption\":\"unknown\"},{\"kind\":\"supersession-ownership-unavailable\",\"byOutboxID\":\"693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff\"}]}"
+    },
+    {
+      "id": "f2e958c670ac2f931e71e4cc5ea11b49fff669e9830a3b157bc18f1f0815e090",
+      "plan_id": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_2c009dc68e364b49a39dc0b8303b0cd7",
+      "state": "unknown",
+      "status": "blocked",
+      "version": 9,
+      "metadata": null,
+      "receipt": "{\"history\":[{\"kind\":\"legacy-host-admitted\",\"consumption\":\"unknown\"},{\"kind\":\"supersession-ownership-unavailable\",\"byOutboxID\":\"c60dcd1244af73500541afa66d4868c3101ff2c2192ee0704a1c5da63a88a61a\"}]}"
+    },
+    {
+      "id": "c60dcd1244af73500541afa66d4868c3101ff2c2192ee0704a1c5da63a88a61a",
+      "plan_id": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_965b1e71b94c4ef69a8d3b8252fa2c8d",
+      "state": "admitted",
+      "status": "blocked",
+      "version": 12,
+      "metadata": null,
+      "receipt": "{\"kind\":\"legacy-host-admitted\",\"consumption\":\"unknown\"}"
+    },
+    {
+      "id": "97163e34d03dc22dcf614d5693987afdab13e0361a41914fc9eec7c50650d522",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_9796f36654c24a919273cb84898a0128",
+      "state": "superseded",
+      "status": "task-accepted",
+      "version": 24,
+      "metadata": "{\"lazersKind\":\"runner-outcome\",\"lazersProjectID\":\"b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df\",\"lazersProjectDirectory\":\"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\"lazersPlanID\":\"b50a1a71-1a54-4d89-8ef2-0644bcccc327\",\"lazersOutboxID\":\"97163e34d03dc22dcf614d5693987afdab13e0361a41914fc9eec7c50650d522\",\"lazersMessageID\":\"msg_9796f36654c24a919273cb84898a0128\",\"lazersSessionID\":\"ses_e6e0e6239ffdtzIePMeJ1sHA4l\",\"lazersStatus\":\"task-accepted\",\"lazersVersion\":24}",
+      "receipt": "{\"history\":[{\"kind\":\"superseded-before-native-admission\",\"byOutboxID\":\"693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff\"}]}"
+    },
+    {
+      "id": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+      "state": "superseded",
+      "status": "accepted",
+      "version": 25,
+      "metadata": "{\"lazersKind\":\"runner-outcome\",\"lazersProjectID\":\"b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df\",\"lazersProjectDirectory\":\"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\"lazersPlanID\":\"b50a1a71-1a54-4d89-8ef2-0644bcccc327\",\"lazersOutboxID\":\"693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff\",\"lazersMessageID\":\"msg_fa4727e7b7344416a4f4eef24a1b4384\",\"lazersSessionID\":\"ses_e6e0e6239ffdtzIePMeJ1sHA4l\",\"lazersStatus\":\"accepted\",\"lazersVersion\":25}",
+      "receipt": "{\"history\":[{\"kind\":\"native-admission-in-progress\"},{\"kind\":\"host-admitted\",\"consumption\":\"unknown\",\"sessionID\":\"ses_e6e0e6239ffdtzIePMeJ1sHA4l\"},{\"kind\":\"native-cancellation-confirmed\",\"inboxID\":\"msg_fa4727e7b7344416a4f4eef24a1b4384\",\"byOutboxID\":\"ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d\"}]}"
+    },
+    {
+      "id": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+      "state": "admitted",
+      "status": "integrated",
+      "version": 27,
+      "metadata": "{\"lazersKind\":\"runner-outcome\",\"lazersProjectID\":\"b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df\",\"lazersProjectDirectory\":\"/Users/tjw/Documents/ChatGPT/opencode-lazers\",\"lazersPlanID\":\"b50a1a71-1a54-4d89-8ef2-0644bcccc327\",\"lazersOutboxID\":\"ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d\",\"lazersMessageID\":\"msg_af4d7f6a5e4f4c12b9e760749e1a7a08\",\"lazersSessionID\":\"ses_e6e0e6239ffdtzIePMeJ1sHA4l\",\"lazersStatus\":\"integrated\",\"lazersVersion\":27}",
+      "receipt": "{\"history\":[{\"kind\":\"native-admission-in-progress\"},{\"kind\":\"host-admitted\",\"consumption\":\"unknown\",\"sessionID\":\"ses_e6e0e6239ffdtzIePMeJ1sHA4l\"}]}"
+    }
+  ]
+}

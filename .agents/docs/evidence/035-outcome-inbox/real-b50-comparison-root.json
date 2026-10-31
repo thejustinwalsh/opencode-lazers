@@ -1,0 +1,13 @@
+{
+  "before": "2026-10-31T23:16:17.320Z",
+  "after": "2026-10-31T23:23:34.253Z",
+  "pidUnchanged": true,
+  "oldQueuedOwned": true,
+  "oldNoLongerQueued": true,
+  "oldHistoryRetained": true,
+  "unrelatedQueuedIDsPreserved": true,
+  "priorOutboxRowsRetained": true,
+  "currentIntegratedQueued": true,
+  "currentResume": 0,
+  "consumption": "unknown"
+}
