@@ -9,7 +9,15 @@ import { CommandInput, ModelPolicy, PlanInput } from "./schema.ts"
 import type { PlanRow, NodeRow, AttemptRow, EffectRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 
-const terminal = new Set(["accepted", "failed", "cancelled", "exhausted", "incorporated"])
+const terminal = new Set([
+  "accepted",
+  "failed",
+  "cancelled",
+  "exhausted",
+  "incorporated",
+  "integrated",
+  "cleanup-blocked",
+])
 const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`
 const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -59,6 +67,25 @@ export class TaskRuntime {
         throw new Error(`Stale plan version; current ${plan.version}`)
       if (caller !== plan.owner && !["audit", "reassign"].includes(command.action))
         throw new Error("Only the plan owner may change execution")
+      if (command.action === "integrated") {
+        if (!["accepted", "cleanup-blocked"].includes(plan.state) || !plan.artifact)
+          throw new Error("Only an accepted result can be integrated")
+        if (command.artifact !== plan.artifact || !command.targetBranch || !command.reason)
+          throw new Error("Record the accepted artifact, reviewed targetBranch and reason")
+        if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
+          throw new Error("The current checkout is not the reviewed target branch")
+        git(this.directory, ["merge-base", "--is-ancestor", plan.artifact, "HEAD"])
+        this.store.record(plan.id, null, "INTEGRATION_RECORDED", {
+          artifact: plan.artifact,
+          branch: command.targetBranch,
+          head: git(this.directory, ["rev-parse", "HEAD"]),
+          reason: command.reason,
+        })
+        db.query(
+          "UPDATE runner_plans SET state='cleaning',reason=NULL,version=version+1 WHERE id=?",
+        ).run(plan.id)
+        return { status: "cleanup-requested", version: this.store.plan(plan.id)!.version }
+      }
       if (command.action === "audit")
         return { status: "audited", ...this.store.audit(), version: plan.version }
       if (command.action === "reassign") {
@@ -413,6 +440,10 @@ export class TaskRuntime {
   }
 
   private async step(plan: PlanRow, fence: number) {
+    if (plan.state === "cleaning") {
+      await this.cleanupWorktrees(plan, fence)
+      return
+    }
     const owner = await this.host.session(plan.owner)
     if (!owner || owner.archived) {
       if (plan.reason !== "Owner is missing or archived")
@@ -935,6 +966,83 @@ export class TaskRuntime {
         true,
       )
     })
+  }
+  private async cleanupWorktrees(plan: PlanRow, fence: number) {
+    const owned = [
+      ...new Set(
+        this.store
+          .effects(plan.id)
+          .filter(
+            (effect) =>
+              ["worktree", "graph-worktree"].includes(effect.kind) && effect.state === "completed",
+          )
+          .map((effect) => JSON.parse(effect.receipt!).workspace as string),
+      ),
+    ]
+    for (const workspace of owned) {
+      if (workspace === this.directory) throw new Error("Refusing to remove the shared checkout")
+      const effect =
+        this.store
+          .effects(plan.id)
+          .find(
+            (entry) =>
+              entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
+          ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
+      if (effect.state === "completed") continue
+      try {
+        const active = await Promise.all(
+          this.store
+            .attempts(plan.id)
+            .filter((attempt) => attempt.workspace === workspace)
+            .map((attempt) => this.host.session(attempt.session_id)),
+        )
+        if (active.some((session) => session?.busy)) throw new Error("Worker is still active")
+        const listed = await this.host.worktrees()
+        if (listed.includes(workspace)) await this.host.removeWorktree(workspace)
+        else if (existsSync(workspace))
+          throw new Error(
+            "Owned directory is not registered with OpenCode; preserve it for reconciliation",
+          )
+        this.receipt(effect, { workspace, removed: true, native: true }, fence)
+      } catch (error) {
+        const reason = errorText(error)
+        this.store.fenced(this.owner, fence, (db) => {
+          db.query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?").run(
+            JSON.stringify({ error: reason }),
+            effect.id,
+          )
+          db.query(
+            "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=?",
+          ).run(reason, plan.id)
+          this.store.record(plan.id, null, "CLEANUP_BLOCKED", { workspace, reason })
+        })
+        this.outcome(
+          plan.id,
+          {
+            status: "cleanup-blocked",
+            reason,
+            artifact: plan.artifact,
+            allowedActions: ["integrated"],
+          },
+          true,
+        )
+        return
+      }
+    }
+    this.store.fenced(this.owner, fence, (db) => {
+      db.query(
+        "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=?",
+      ).run(plan.id)
+      this.store.record(plan.id, null, "WORKTREES_RECONCILED", {
+        directories: owned,
+        artifact: plan.artifact,
+      })
+    })
+    this.outcome(
+      plan.id,
+      { status: "integrated", artifact: plan.artifact, worktreesRemoved: owned },
+      false,
+    )
   }
   private async reconcileEffect(effect: EffectRow, fence: number) {
     const payload = JSON.parse(effect.payload)

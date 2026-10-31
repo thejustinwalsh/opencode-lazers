@@ -19,6 +19,7 @@ export type SkillSource = { id: string; path: string; content: string; revision:
 export interface RunnerHost {
   worktree(input: { directory: string; base: string }): Promise<string>
   worktrees(): Promise<string[]>
+  removeWorktree(directory: string): Promise<void>
   session(id: string): Promise<HostSession | null>
   skills(sessionID: string, ids: string[]): Promise<SkillSource[]>
   create(input: {

@@ -30,9 +30,15 @@ never remove unrelated worktrees. Reconcile leftovers at startup and after merge
 
 Current boundary: native creation/location routing, shared-by-default serial
 selection, and explicit retry into a fresh child are implemented. Combined serial
-verification reuses the final accepted worker's checkout. Recorded integration
-and cleanup remain the next lifecycle increment. The existing interrupted attempt
-retains its original worktree and preserved edits while its corrected flow runs.
+verification reuses the final accepted worker's checkout. After review/merge,
+`lazers_plan_command` action `integrated` records the accepted artifact, current
+target branch and review reason. The runtime checks Git ancestry and requests
+native, non-forced removal of only the plan's recorded worktrees. Dirty/active or
+unregistered directories produce `cleanup-blocked`; accepted nodes and history
+remain. An explicit retry after fixing the cause reconciles inventory, including
+already-removed directories. Persisted `cleaning` work resumes after restart.
+This lifecycle has behavior tests; native cleanup acceptance still requires the
+first real merged worker result.
 
 Pinned source: [session handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/session.ts),
 [worktree lifecycle](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/worktree.ts).

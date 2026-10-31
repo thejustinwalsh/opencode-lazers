@@ -30,6 +30,9 @@ const host: RunnerHost = {
       .split("\n")
       .filter((line) => line.startsWith("worktree "))
       .map((line) => line.slice(9)),
+  removeWorktree: async (directory) => {
+    git(root, ["worktree", "remove", directory])
+  },
   session: async (id) => load().sessions[id] ?? null,
   skills: async () => [],
   create: async (input) => {

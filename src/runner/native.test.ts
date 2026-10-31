@@ -5,6 +5,7 @@ import type { TaskRepository } from "../storage.ts"
 import { nativeHost } from "./native.ts"
 
 test("native worktrees use the host lifecycle with the admitted ref and returned directory", async () => {
+  let removed: unknown
   let created: unknown
   let refreshed = false
   const host = nativeHost(
@@ -21,6 +22,10 @@ test("native worktrees use the host lifecycle with the admitted ref and returned
             refreshed = true
           }),
         list: () => Effect.succeed([{ directory: "/work/attempt-2", strategy: "git" }]),
+        remove: (input: unknown) =>
+          Effect.sync(() => {
+            removed = input
+          }),
       },
     } as unknown as Plugin.Context,
     {} as TaskRepository,
@@ -37,6 +42,8 @@ test("native worktrees use the host lifecycle with the admitted ref and returned
   })
   expect(await host.worktrees()).toEqual(["/work/attempt-2"])
   expect(refreshed).toBe(true)
+  await host.removeWorktree("/work/attempt-2")
+  expect(removed).toEqual({ projectID: "project", directory: "/work/attempt-2", force: false })
 })
 
 test("child prompt uses native move and verifies location before any model work", async () => {

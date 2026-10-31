@@ -31,6 +31,15 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         await Effect.runPromise(ctx.worktree.list({ projectID: ctx.location.project.id }))
       ).map((entry) => entry.directory)
     },
+    async removeWorktree(directory) {
+      await Effect.runPromise(
+        ctx.worktree.remove({
+          projectID: ctx.location.project.id,
+          directory: AbsolutePath.make(directory),
+          force: false,
+        }),
+      )
+    },
     async session(id) {
       const session = await Effect.runPromise(
         ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(

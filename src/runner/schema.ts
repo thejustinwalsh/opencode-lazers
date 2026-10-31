@@ -101,6 +101,7 @@ export const CommandInput = z.strictObject({
     "human-evidence",
     "resume",
     "retry",
+    "integrated",
   ]),
   reason: z.string().min(1).max(2000).optional(),
   workspaceMode: z.enum(["shared", "isolated"]).optional(),
@@ -112,6 +113,7 @@ export const CommandInput = z.strictObject({
   taskID: z.uuid().optional(),
   assertionID: z.string().max(64).optional(),
   artifact: z.string().max(128).optional(),
+  targetBranch: z.string().min(1).max(200).optional(),
 })
 export type CommandInput = z.infer<typeof CommandInput>
 

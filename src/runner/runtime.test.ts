@@ -15,7 +15,13 @@ afterEach(() => {
   for (const fn of cleanup.splice(0)) fn()
 })
 function fixture(
-  options: { fail?: boolean; human?: boolean; outside?: boolean; shared?: boolean } = {},
+  options: {
+    fail?: boolean
+    human?: boolean
+    outside?: boolean
+    shared?: boolean
+    commit?: boolean
+  } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-runner-"))
   git(root, ["init", "--initial-branch=main"])
@@ -99,6 +105,9 @@ function fixture(
         .split("\n")
         .filter((line) => line.startsWith("worktree "))
         .map((line) => line.slice(9)),
+    removeWorktree: async (directory) => {
+      git(root, ["worktree", "remove", directory])
+    },
     session: async (id) => structuredClone(sessions.get(id) ?? null),
     skills: async () => [],
     create: async (input) => {
@@ -130,10 +139,11 @@ function fixture(
       if (path === "b.txt") expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
       writeFileSync(join(session.directory, path), path[0]!)
       if (options.outside) writeFileSync(join(session.directory, "escape.txt"), "bad")
-      if (options.shared) {
-        git(root, ["add", path])
-        if (git(root, ["status", "--porcelain"]))
-          git(root, [
+      if (options.shared || options.commit) {
+        const checkout = session.directory
+        git(checkout, ["add", path])
+        if (git(checkout, ["status", "--porcelain"]))
+          git(checkout, [
             "-c",
             "user.name=fixture",
             "-c",
@@ -448,4 +458,39 @@ test("explicit retry starts a fresh native child and retains the old attempt and
   expect(attempts[0]!.state).toBe("cancelled")
   expect(attempts[1]!.session_id).not.toBe(old.session_id)
   expect(attempts[1]!.workspace).toBe(f.root)
+})
+
+test("native cleanup follows verified integration, preserves dirty work, and retries explicitly", async () => {
+  const f = fixture({ commit: true })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  const artifact = f.store.plan(f.receipt.planID)!.artifact!
+  const request = (key: string) => ({
+    requestID: key,
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "integrated",
+    artifact,
+    targetBranch: "main",
+    reason: "Reviewed task changes and combined checks",
+  })
+  await expect(f.runtime.command(request("not-merged"), "owner")).rejects.toThrow()
+  git(f.root, ["merge", "--ff-only", artifact])
+  const worktree = f.store.attempts(f.receipt.planID)[0]!.workspace
+  writeFileSync(join(worktree, "unreviewed.txt"), "preserve this")
+  await f.runtime.command(request("merged"), "owner")
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("cleanup-blocked")
+  expect(readFileSync(join(worktree, "unreviewed.txt"), "utf8")).toBe("preserve this")
+  expect(f.store.nodes(f.receipt.planID).every((node) => node.state === "accepted")).toBe(true)
+  rmSync(join(worktree, "unreviewed.txt"))
+  await f.runtime.command(request("retry-cleanup"), "owner")
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("integrated")
+  expect(await f.host.worktrees()).toEqual([f.root])
+  expect(git(f.root, ["show", "HEAD:b.txt"])).toBe("b")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
 })
