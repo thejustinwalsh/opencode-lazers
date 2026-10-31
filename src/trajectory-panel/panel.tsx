@@ -4,7 +4,7 @@ import { Schema } from "effect"
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
-import { clampSplit, splitFromKey, splitFromPointer } from "./panel-layout.ts"
+import { clampSplit, splitFromKey, splitFromPointer, visibleTicks } from "./panel-layout.ts"
 import type { PanelData, PanelPreferences, Selection } from "./panel-state.ts"
 import { selectedAttemptFor, TrajectoryPanelState } from "./panel-state.ts"
 import {
@@ -105,6 +105,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     error: "",
   })
   const [split, setSplit] = createSignal(initial.split)
+  const [axisWidth, setAxisWidth] = createSignal(0)
+  let axisObserver: ResizeObserver | undefined
   const state = new TrajectoryPanelState(setData, (preferences: PanelPreferences) => {
     save({
       selectedTaskID: preferences.taskID,
@@ -175,6 +177,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   onCleanup(() => {
     state.close()
     endDrag?.()
+    axisObserver?.disconnect()
   })
 
   createKeyed(
@@ -435,8 +438,24 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
             <Show when={timeline()?.origin !== null && timeline()?.origin !== undefined}>
               <div class="lazers-trajectory-axis" aria-hidden="true">
                 <span />
-                <div class="lazers-trajectory-axis-track">
-                  <For each={timeline()?.ticks ?? []}>
+                <div
+                  class="lazers-trajectory-axis-track"
+                  ref={(element) => {
+                    axisObserver?.disconnect()
+                    setAxisWidth(element.getBoundingClientRect().width)
+                    axisObserver = new ResizeObserver((entries) =>
+                      setAxisWidth(entries[0]?.contentRect.width ?? 0),
+                    )
+                    axisObserver.observe(element)
+                  }}
+                >
+                  <For
+                    each={visibleTicks(
+                      timeline()?.ticks ?? [],
+                      timeline()?.durationMs ?? 0,
+                      axisWidth(),
+                    )}
+                  >
                     {(tick) => (
                       <span
                         class="lazers-trajectory-tick"

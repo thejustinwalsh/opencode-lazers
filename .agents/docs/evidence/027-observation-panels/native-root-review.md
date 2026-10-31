@@ -62,7 +62,23 @@ regression passed 3 / 14. Formatting, lint, strict types and combined production
 GUI builds passed at their recorded checkpoints. Later backend changes have
 separate validation; these counts are not a claim about all subsequent source.
 
-Unobserved here: alternate themes/fonts, 330 px/short panes, full graph scrolling,
+A later native pass resized the real side panel to approximately 330 CSS px.
+Terra found adjacent Trajectory elapsed labels colliding. The repaired axis
+measures its plot width and thins labels without moving recorded ticks or marks:
+[330 px Trajectory](trajectory-narrow.png) shows 0/20/50m; the wider pane retains
+all six labels. The focused panel suite passes 13 tests / 57 assertions and the
+production GUI build passes. [Narrow Radar](radar-narrow.png) remains within the
+pane; timestamps wrap, and the fourth execution lane is partly below the divider
+at the captured scroll position. Terra found no additional blocker in that
+settled narrow capture; no claim is made that all lanes fit without scrolling.
+
+Native Appearance changed System → Light while keeping Ayu. Both
+[Trajectory](trajectory-light.png) and [Radar](radar-light.png) adopted the light
+palette without plugin-specific theme selection. The original System/Ayu setting
+and approximately 450 CSS px side-panel width were restored. Font settings were
+not changed.
+
+Unobserved here: alternate/custom fonts, short panes, full graph scrolling,
 complete reconnect/error interaction, all source/session navigation, and the
 entire product plan's merged integration/cleanup. Coincident Timeline points
 remain keyboard accessible but may overlap for pointer selection. Unknown cost
