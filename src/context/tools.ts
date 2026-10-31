@@ -6,6 +6,7 @@ import type { ProjectIndex } from "./index.ts"
 
 const paths = z.array(z.string().min(1).max(1024)).max(20).default([])
 const IndexInput = z.strictObject({ paths })
+const RefreshInput = z.strictObject({})
 const EvidenceInput = z
   .strictObject({
     paths,
@@ -18,7 +19,13 @@ const EvidenceInput = z
     (input) => !input.startLine || !input.endLine || input.startLine <= input.endLine,
     "Line range must be ordered",
   )
-const base = { snapshotID: z.string(), encoding: z.literal("o200k_base"), truncated: z.boolean() }
+const base = {
+  snapshotID: z.string(),
+  freshness: z.literal("as-of-refresh"),
+  refreshedAt: z.int().positive(),
+  encoding: z.literal("o200k_base"),
+  truncated: z.boolean(),
+}
 const IndexOutput = z.strictObject({
   ...base,
   workspace: z.string(),
@@ -26,6 +33,13 @@ const IndexOutput = z.strictObject({
   totalFiles: z.int().nonnegative(),
   packedTokens: z.int().nonnegative(),
   files: z.array(z.strictObject({ path: z.string(), bytes: z.int().nonnegative() })).max(100),
+})
+const RefreshOutput = z.strictObject({
+  ...base,
+  workspace: z.string(),
+  repomix: z.literal("1.18.1"),
+  totalFiles: z.int().nonnegative(),
+  packedTokens: z.int().nonnegative(),
 })
 const EvidenceOutput = z.strictObject({
   ...base,
@@ -48,7 +62,7 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
     editor.add({
       name: "lazers_project_index",
       description:
-        "Map the current worktree with Repomix. Returns up to 100 file paths and structural metrics. Filter paths for a focused area; no whole-repository pack is injected.",
+        "Read the latest Architect-built workspace snapshot. Returns up to 100 permitted file paths and structural metrics; path selections reuse the same snapshot. Freshness is stated as-of its explicit refresh.",
       input: IndexInput,
       output: IndexOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_index" },
@@ -76,9 +90,54 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
           ),
     })
     editor.add({
+      name: "lazers_project_refresh",
+      description:
+        "Architect only: explicitly collect and atomically publish a fresh bounded Repomix workspace snapshot. Read/index tools never build or refresh implicitly.",
+      input: RefreshInput,
+      output: RefreshOutput,
+      options: { codemode: true, pinned: true, permission: "lazers_project_refresh" },
+      execute: (_input, call) =>
+        ctx.permission
+          .assert({
+            sessionID: call.sessionID,
+            agent: call.agent,
+            action: "lazers_project_refresh",
+            resources: ["*"],
+          })
+          .pipe(
+            Effect.flatMap(() => {
+              if (call.agent !== "architect")
+                return Effect.fail(
+                  new Tool.Error({ message: "Only Architect may refresh the workspace index" }),
+                )
+              return Effect.tryPromise({
+                try: async () => {
+                  const snapshot = await index.refresh({
+                    sessionID: call.sessionID,
+                    agent: call.agent,
+                  })
+                  const output = {
+                    snapshotID: snapshot.id,
+                    freshness: "as-of-refresh" as const,
+                    refreshedAt: snapshot.createdAt,
+                    workspace: snapshot.workspace,
+                    repomix: snapshot.repomix,
+                    encoding: snapshot.encoding,
+                    totalFiles: snapshot.files.length,
+                    packedTokens: snapshot.tokens,
+                    truncated: false,
+                  }
+                  return { content: JSON.stringify(output), output }
+                },
+                catch: (error) => new Tool.Error({ message: String(error) }),
+              })
+            }),
+          ),
+    })
+    editor.add({
       name: "lazers_project_read",
       description:
-        "Read selected source, Repomix outline, or file structure from the current worktree, with source paths and line ranges. Filter paths/search and lines when useful; focused reads are not rejected for a fixed response token count. Investigation aid; passing tests and observed behavior establish completion.",
+        "Read selected source, Repomix outline, or file structure from the latest Architect-built snapshot, with source paths and line ranges. Filter paths/search and lines; these selections do not recollect or repack the workspace. Freshness is stated as-of its explicit refresh.",
       input: EvidenceInput,
       output: EvidenceOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_read" },

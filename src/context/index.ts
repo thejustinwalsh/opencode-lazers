@@ -25,7 +25,7 @@ import type { TaskProposal } from "../task.ts"
 
 type FileRecord = { path: string; stamp: string; content: string; outline: string; bytes: number }
 type Snapshot = {
-  version: 1
+  version: 2
   id: string
   workspace: string
   createdAt: number
@@ -36,6 +36,7 @@ type Snapshot = {
 }
 type Principal = { sessionID: string; agent: string }
 type Permission = (path: string, principal: Principal) => Promise<boolean>
+type Packed = { files: { path: string; content: string }[]; denied: string[]; tokens: number }
 export type Focus = {
   paths?: string[]
   search?: string
@@ -44,12 +45,33 @@ export type Focus = {
   endLine?: number
 }
 const maxFile = 512 * 1024
+const maxCache = 256 * 1024 * 1024
+const orphanGraceMs = 60_000
+const workspaceSelection = "$workspace"
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const snapshotFilename =
+  /^[a-f0-9]{32}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/
 const matchesPath = (pattern: string, path: string) =>
   new Bun.Glob(pattern).match(path) || path.startsWith(`${pattern.replace(/\/$/, "")}/`)
 const secret = (path: string) =>
   /(^|\/)(?:\.env(?:\..*)?|[^/]*\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519)|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)$/i.test(
     path,
   ) && !/(?:^|\/)\.env\.example$/.test(path)
+
+function validSourcePath(path: string) {
+  return (
+    path.length <= 1024 &&
+    !isAbsolute(path) &&
+    !path.split("/").some((part) => part === ".." || part === ".") &&
+    !secret(path)
+  )
+}
+
+export class WorkspaceIndexUnavailable extends Error {
+  constructor() {
+    super("Workspace index is unavailable; Architect must refresh it before it can be read")
+  }
+}
 
 /** Reads at most maxFile+1 bytes. Rejects symlinks and changed inode/metadata. */
 function readSource(root: string, path: string): string {
@@ -98,7 +120,6 @@ function readSource(root: string, path: string): string {
 export class ProjectIndex {
   private readonly cacheID: string
   private counter?: import("repomix").TokenCounter
-  private active?: Promise<Snapshot>
   constructor(
     readonly root: string,
     readonly cacheDirectory: string,
@@ -131,38 +152,96 @@ export class ProjectIndex {
     return this.counter
   }
   private evict() {
-    const snapshots = readdirSync(this.cacheDirectory)
-      .filter((p) => p.endsWith(".json"))
-      .map((name) => {
-        const path = join(this.cacheDirectory, name)
-        const stat = statSync(path)
-        return { path, name, size: stat.size, mtime: stat.mtimeMs }
-      })
-      .sort((a, b) => b.mtime - a.mtime)
-    let bytes = 0
-    const perWorkspace = new Map<string, number>()
-    for (const item of snapshots) {
-      const workspace = item.name.split("-")[0]!
-      const count = (perWorkspace.get(workspace) ?? 0) + 1
-      perWorkspace.set(workspace, count)
-      if (Date.now() - item.mtime > 86400000 || count > 2 || bytes + item.size > 256 * 1024 * 1024)
-        unlinkSync(item.path)
-      else bytes += item.size
-    }
+    const active = new Set(
+      this.repository.atomic((db) =>
+        db
+          .query<{ file: string }, [string]>("SELECT file FROM context_cache WHERE selection=?")
+          .all(workspaceSelection)
+          .map(({ file }) => file),
+      ),
+    )
+    const now = Date.now()
+    const orphans = readdirSync(this.cacheDirectory).filter((name) => {
+      if (!name.endsWith(".json") || active.has(name)) return false
+      return now - statSync(join(this.cacheDirectory, name)).mtimeMs > orphanGraceMs
+    })
+    for (const name of orphans) unlinkSync(join(this.cacheDirectory, name))
   }
-  async snapshot(principal: Principal, selection: string[] = []): Promise<Snapshot> {
-    // Concurrent callers may share work only with identical authority. No cross-session permission cache.
-    if (this.active) await this.active.catch(() => {})
-    const promise = this.collect(principal, selection)
-    this.active = promise
+
+  private assertCacheCapacity(size: number, filename: string) {
+    let bytes = size
+    for (const name of readdirSync(this.cacheDirectory))
+      if (name.endsWith(".json") && name !== filename)
+        bytes += statSync(join(this.cacheDirectory, name)).size
+    if (bytes > maxCache) throw new Error("Workspace snapshot cache exceeds 256 MiB")
+  }
+  private activeRefresh?: Promise<Snapshot>
+
+  async refresh(principal: Principal): Promise<Snapshot> {
+    if (principal.agent !== "architect")
+      throw new Error("Only Architect may refresh the workspace index")
+    const previous = this.activeRefresh
+    const promise = (async () => {
+      if (previous) await previous.catch(() => {})
+      return await this.publish(principal)
+    })()
+    this.activeRefresh = promise
     try {
       return await promise
     } finally {
-      if (this.active === promise) this.active = undefined
+      if (this.activeRefresh === promise) this.activeRefresh = undefined
     }
   }
-  private async collect(principal: Principal, selection: string[]): Promise<Snapshot> {
-    this.evict()
+
+  private async publish(principal: Principal): Promise<Snapshot> {
+    const snapshot = await this.collectWorkspace(principal)
+    const filename = `${this.cacheID}-${snapshot.id}.json`
+    const cache = join(this.cacheDirectory, filename)
+    const temporary = `${cache}.${crypto.randomUUID()}.tmp`
+    try {
+      const text = JSON.stringify(snapshot)
+      const size = Buffer.byteLength(text)
+      if (size > 64 * 1024 * 1024) throw new Error("Snapshot exceeds 64 MiB")
+      writeFileSync(temporary, text, { flag: "wx", mode: 0o600 })
+      renameSync(temporary, cache)
+      this.evict()
+      this.assertCacheCapacity(size, filename)
+      this.repository.atomic((db) => {
+        db.query("DELETE FROM context_cache WHERE workspace=? AND selection<>?").run(
+          this.root,
+          workspaceSelection,
+        )
+        db.query(
+          "INSERT INTO context_cache VALUES(?,?,?,?) ON CONFLICT(workspace,selection) DO UPDATE SET stamp=excluded.stamp,file=excluded.file",
+        ).run(
+          this.root,
+          workspaceSelection,
+          JSON.stringify(snapshot.files.map(({ path, stamp }) => [path, stamp])),
+          filename,
+        )
+      })
+    } catch (error) {
+      try {
+        unlinkSync(temporary)
+      } catch {
+        // A failed refresh must not hide the original publish error.
+      }
+      try {
+        unlinkSync(cache)
+      } catch {
+        // The new snapshot may not have been written to disk.
+      }
+      throw error
+    }
+    try {
+      this.evict()
+    } catch {
+      // Eviction is best-effort and must not turn a successfully published snapshot into a failure.
+    }
+    return snapshot
+  }
+
+  private async collectWorkspace(principal: Principal): Promise<Snapshot> {
     const started = Date.now()
     const { defaultIgnoreList } = await import("repomix")
     const ignores = defaultIgnoreList.map((pattern) => new Bun.Glob(pattern))
@@ -241,30 +320,38 @@ export class ProjectIndex {
     }
     await walk("")
     selected.sort((a, b) => a.path.localeCompare(b.path))
-    const view = JSON.stringify([...selection].sort())
-    const stamp = JSON.stringify(selected.map(({ path, stamp }) => ({ path, stamp })))
-    const previous = this.repository.atomic((db) =>
-      db
-        .query<{ stamp: string; file: string }, [string, string]>(
-          "SELECT stamp,file FROM context_cache WHERE workspace=? AND selection=?",
-        )
-        .get(this.root, view),
+    const packed = await this.processWorkspace(
+      selected.map(({ path, content }) => ({
+        path,
+        content,
+        level: /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb|c|cpp|h|cs|swift|kt)$/.test(path)
+          ? ("compress" as const)
+          : ("directory-only" as const),
+      })),
+      started,
     )
-    if (previous?.stamp === stamp && existsSync(join(this.cacheDirectory, previous.file))) {
-      const cache = join(this.cacheDirectory, previous.file)
-      if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
-      const stored = JSON.parse(readFileSync(cache, "utf8")) as Snapshot
-      if (stored.version === 1 && stored.workspace === this.root) return stored
-      throw new Error("Invalid cached snapshot identity")
+    const denied = new Set(packed.denied)
+    const outline = new Map(packed.files.map((f) => [f.path, f.content]))
+    const snapshot: Snapshot = {
+      version: 2,
+      id: crypto.randomUUID(),
+      workspace: this.root,
+      createdAt: Date.now(),
+      repomix: "1.18.1",
+      encoding: "o200k_base",
+      tokens: packed.tokens,
+      files: selected
+        .filter((f) => !denied.has(f.path))
+        .map((f) => ({ ...f, outline: outline.get(f.path) ?? "" })),
     }
-    const identity = crypto.randomUUID()
-    const filename = `${this.cacheID}-${identity}.json`
-    const cache = join(this.cacheDirectory, filename)
-    const packed = await new Promise<{
-      files: { path: string; content: string }[]
-      denied: string[]
-      tokens: number
-    }>((resolve, reject) => {
+    return snapshot
+  }
+
+  private async processWorkspace(
+    files: { path: string; content: string; level: "compress" | "directory-only" }[],
+    started: number,
+  ): Promise<Packed> {
+    return await new Promise<Packed>((resolve, reject) => {
       const worker = new Worker(new URL("./processor.ts", import.meta.url).href, { type: "module" })
       const timer = setTimeout(
         () => {
@@ -291,75 +378,86 @@ export class ProjectIndex {
         worker.terminate()
         reject(new Error(event.message))
       }
-      worker.postMessage({
-        root: this.root,
-        files: selected.map(({ path, content }) => ({
-          path,
-          content,
-          level: (
-            !selection.length
-              ? /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb|c|cpp|h|cs|swift|kt)$/.test(path)
-              : selection.some((p) => matchesPath(p, path))
-          )
-            ? "compress"
-            : "directory-only",
-        })),
-      })
+      worker.postMessage({ root: this.root, files })
     })
-    const denied = new Set(packed.denied)
-    const outline = new Map(packed.files.map((f) => [f.path, f.content]))
-    const snapshot: Snapshot = {
-      version: 1,
-      id: identity,
-      workspace: this.root,
-      createdAt: Date.now(),
-      repomix: "1.18.1",
-      encoding: "o200k_base",
-      tokens: packed.tokens,
-      files: selected
-        .filter((f) => !denied.has(f.path))
-        .map((f) => ({ ...f, outline: outline.get(f.path) ?? "" })),
-    }
-    const text = JSON.stringify(snapshot)
-    if (Buffer.byteLength(text) > 64 * 1024 * 1024) throw new Error("Snapshot exceeds 64 MiB")
-    writeFileSync(`${cache}.tmp`, text, { mode: 0o600 })
-    renameSync(`${cache}.tmp`, cache)
-    this.repository.atomic((db) =>
-      db
-        .query(
-          "INSERT INTO context_cache VALUES(?,?,?,?) ON CONFLICT(workspace,selection) DO UPDATE SET stamp=excluded.stamp,file=excluded.file",
-        )
-        .run(this.root, view, stamp, filename),
-    )
-    this.evict()
-    return snapshot
   }
+
+  private loadSnapshot(): Snapshot {
+    const row = this.repository.atomic((db) =>
+      db
+        .query<{ file: string }, [string, string]>(
+          "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
+        )
+        .get(this.root, workspaceSelection),
+    )
+    if (!row) throw new WorkspaceIndexUnavailable()
+    if (!snapshotFilename.test(row.file)) throw new Error("Invalid cached snapshot path")
+    const cache = join(this.cacheDirectory, row.file)
+    if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
+    if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
+    const stored = JSON.parse(readFileSync(cache, "utf8")) as Snapshot
+    if (
+      stored.version !== 2 ||
+      !uuidPattern.test(stored.id) ||
+      row.file !== `${this.cacheID}-${stored.id}.json` ||
+      stored.workspace !== this.root ||
+      !Number.isInteger(stored.createdAt) ||
+      stored.repomix !== "1.18.1" ||
+      stored.encoding !== "o200k_base" ||
+      !Number.isInteger(stored.tokens) ||
+      stored.tokens < 0 ||
+      !Array.isArray(stored.files) ||
+      stored.files.some(
+        (file) =>
+          !file ||
+          !validSourcePath(file.path) ||
+          typeof file.content !== "string" ||
+          typeof file.outline !== "string" ||
+          !Number.isInteger(file.bytes) ||
+          file.bytes !== Buffer.byteLength(file.content),
+      )
+    )
+      throw new Error("Invalid cached snapshot identity")
+    return stored
+  }
+
+  private async permittedFiles(snapshot: Snapshot, principal: Principal) {
+    const files: FileRecord[] = []
+    for (const file of snapshot.files)
+      if (validSourcePath(file.path) && (await this.allow(file.path, principal))) files.push(file)
+    return files
+  }
+
   async manifest(principal: Principal, paths: string[] = []) {
-    const snapshot = await this.snapshot(principal, paths)
-    const matches = snapshot.files
-      .filter((f) => !paths.length || paths.some((p) => matchesPath(p, f.path)))
-      .slice(0, 100)
+    const snapshot = this.loadSnapshot()
+    const visible = await this.permittedFiles(snapshot, principal)
+    const allMatches = visible.filter(
+      (f) => !paths.length || paths.some((p) => matchesPath(p, f.path)),
+    )
+    const matches = allMatches.slice(0, 100)
     return {
       snapshotID: snapshot.id,
+      freshness: "as-of-refresh" as const,
+      refreshedAt: snapshot.createdAt,
       workspace: this.root,
       repomix: snapshot.repomix,
       encoding: snapshot.encoding,
-      totalFiles: snapshot.files.length,
+      totalFiles: visible.length,
       packedTokens: snapshot.tokens,
       files: matches.map(({ path, bytes }) => ({ path, bytes })),
-      truncated: snapshot.files.length > matches.length,
+      truncated: allMatches.length > matches.length,
     }
   }
   async evidence(principal: Principal, focus: Focus) {
-    const snapshot = await this.snapshot(principal, focus.paths ?? [])
+    const snapshot = this.loadSnapshot()
     const paths = focus.paths ?? []
-    const matches = snapshot.files
-      .filter(
-        (f) =>
-          (!paths.length || paths.some((p) => matchesPath(p, f.path))) &&
-          (!focus.search || f.content.toLowerCase().includes(focus.search.toLowerCase())),
-      )
-      .slice(0, 50)
+    const visible = await this.permittedFiles(snapshot, principal)
+    const allMatches = visible.filter(
+      (f) =>
+        (!paths.length || paths.some((p) => matchesPath(p, f.path))) &&
+        (!focus.search || f.content.toLowerCase().includes(focus.search.toLowerCase())),
+    )
+    const matches = allMatches.slice(0, 50)
     const sources = matches.map((f) => {
       const lines = f.content.split("\n"),
         start = focus.startLine ?? 1,
@@ -380,9 +478,11 @@ export class ProjectIndex {
     })
     return {
       snapshotID: snapshot.id,
+      freshness: "as-of-refresh" as const,
+      refreshedAt: snapshot.createdAt,
       encoding: snapshot.encoding,
       sources,
-      truncated: matches.length === 50,
+      truncated: allMatches.length > matches.length,
     }
   }
 
@@ -392,7 +492,8 @@ export class ProjectIndex {
     skills: { id: string; path: string; content: string; revision: string }[],
     source: string,
   ) {
-    const snapshot = await this.snapshot(principal)
+    const snapshot = this.loadSnapshot()
+    const visible = await this.permittedFiles(snapshot, principal)
     const references = new Map<string, { start: number; end: number }[]>()
     for (const ref of proposal.context) {
       for (const match of ref.reference.matchAll(
@@ -409,13 +510,13 @@ export class ProjectIndex {
       }
     }
     const required = ["AGENTS.md", "README.md"].filter((path) => existsSync(join(this.root, path)))
-    const missing = required.filter((path) => !snapshot.files.some((file) => file.path === path))
+    const missing = required.filter((path) => !visible.some((file) => file.path === path))
     for (const path of references.keys())
-      if (existsSync(join(this.root, path)) && !snapshot.files.some((file) => file.path === path))
+      if (existsSync(join(this.root, path)) && !visible.some((file) => file.path === path))
         missing.push(path)
     if (missing.length) throw new Error(`Mandatory context unavailable: ${missing.join(", ")}`)
     const scopes = proposal.writeScope.map((pattern) => new Bun.Glob(pattern))
-    const candidates = snapshot.files.filter(
+    const candidates = visible.filter(
       (file) =>
         required.includes(file.path) ||
         references.has(file.path) ||
@@ -441,6 +542,8 @@ export class ProjectIndex {
       skills,
       source,
       snapshotID: snapshot.id,
+      freshness: "as-of-refresh",
+      refreshedAt: snapshot.createdAt,
       recipe: "task-context/2",
       deferred,
       entries,
@@ -481,6 +584,8 @@ export class ProjectIndex {
       text,
       metadata: {
         snapshotID: snapshot.id,
+        freshness: "as-of-refresh",
+        refreshedAt: snapshot.createdAt,
         source,
         recipe: "task-context/2",
         deferred,

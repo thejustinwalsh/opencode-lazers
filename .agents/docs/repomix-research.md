@@ -18,7 +18,7 @@ The npm registry resolves Repomix 1.18.1 (Node >=22). Its exported `mergeConfigs
 
 ## Current gap
 
-Architect has read/glob/grep/question and task submission/retrieval permissions. It has no index, websearch/webfetch or subagent permission. The README requires evidence gathering before material questions; the agent must not ask users to rediscover repository facts.
+Architect has read/glob/grep/question and task submission/retrieval permissions. The reusable workspace index and Architect-owned refresh are implemented in [spike 017](spikes/017-reusable-workspace-index.md); websearch/webfetch and subagent permission remain separate capabilities. The README requires evidence gathering before material questions; the agent must not ask users to rediscover repository facts.
 
 ## Primary sources
 
@@ -32,9 +32,9 @@ Architect has read/glob/grep/question and task submission/retrieval permissions.
 
 ## Proposed smallest coherent increment
 
-Build a workspace-sensitive, bounded local snapshot/index backed by a pinned Repomix library. Return manifest metadata and opaque identity; let Architect/specialists retrieve relevant source. Include permitted tracked, dirty and untracked source. Keep separate worktree caches and refresh changed/deleted files as ordinary cache maintenance. Source hashes and evidence receipts are not planning or submission requirements.
+Build a workspace-sensitive, bounded local snapshot/index backed by a pinned Repomix library. Return manifest metadata and opaque identity; let Architect/specialists retrieve relevant source. Include permitted tracked, dirty and untracked source. Keep separate worktree identities; explicit Architect refresh publishes additions, edits, deletions, and ignore-policy changes atomically. Readers reuse the latest snapshot without traversal, recollection, repacking, or snapshot writes. Source hashes and evidence receipts are not planning or submission requirements.
 
-Expose project-confined native tools with explicit permission assertions and bounded pagination/search/source reads. Store artifacts outside the repository and exclude them from indexing. Cap files, bytes, output tokens and elapsed work; report exclusions/truncation/unsupported files and incomplete coverage honestly. Reuse unchanged snapshots; do not put a complete pack into every system prompt or build an always-running crawler. Check Bun compatibility, package startup impact and packaging before enabling.
+Expose project-confined native tools with explicit permission assertions and bounded pagination/search/source reads. Store artifacts outside the repository and exclude them from indexing. Cap files, bytes, output tokens and elapsed work; report exclusions/truncation/unsupported files and incomplete coverage honestly. Read queries reuse the current snapshot; explicit refresh is the only operation that recollects and repacks. Do not put a complete pack into every system prompt or build an always-running crawler. Check Bun compatibility, package startup impact and packaging before enabling.
 
 Investigate relevant code before asking avoidable questions; record useful source paths and findings. Material intent or authorization questions may precede repository work when necessary. Do not gate submission on an index receipt or unchanged repository fingerprint. Preserve JSON schema validation and Architect self-review through `lazers_verify_task`, including its System One gut check. Completion requires passing checks and observed feature behavior.
 

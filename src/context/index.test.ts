@@ -1,16 +1,25 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
 import { git } from "../runner/artifacts.ts"
-import { ProjectIndex } from "./index.ts"
+import { ProjectIndex, WorkspaceIndexUnavailable } from "./index.ts"
 import { validProposal } from "../../test/proposal.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
 })
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "lazers-index-"))
   git(root, ["init", "--initial-branch=main"])
@@ -29,59 +38,277 @@ function fixture() {
   writeFileSync(join(root, "untracked.txt"), "dirty source")
   symlinkSync("/etc/passwd", join(root, "escape.txt"))
   const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
-  const denied = new Set(["denied.txt"]),
-    reads: string[] = []
-  const index = new ProjectIndex(root, join(root, "cache"), repository, async (path) => {
-    reads.push(path)
-    return !denied.has(path)
-  })
+  const denied = new Map<string, Set<string>>(),
+    permissionChecks: { path: string; agent: string }[] = [],
+    cacheDirectory = join(root, "cache")
+  const allow = async (path: string, principal: { agent: string }) => {
+    permissionChecks.push({ path, agent: principal.agent })
+    return !denied.get(principal.agent)?.has(path)
+  }
+  let index = new ProjectIndex(root, cacheDirectory, repository, allow)
   cleanups.push(() => {
     index.close()
     repository.close()
     rmSync(root, { recursive: true, force: true })
   })
-  return { root, repository, index, denied, reads }
+  return {
+    root,
+    repository,
+    cacheDirectory,
+    allow,
+    denied,
+    permissionChecks,
+    get index() {
+      return index
+    },
+    set index(value: ProjectIndex) {
+      index = value
+    },
+  }
 }
-const principal = { sessionID: "architect", agent: "architect" }
 
-test("real pinned Repomix indexing compresses source and filters ignores, secrets, denied and symlink paths", async () => {
+const architect = { sessionID: "architect-session", agent: "architect" }
+const worker = { sessionID: "worker-session", agent: "lazers-implementor" }
+
+function cacheState(f: ReturnType<typeof fixture>) {
+  return {
+    files: readdirSync(f.cacheDirectory)
+      .sort()
+      .map((name) => {
+        const stat = statSync(join(f.cacheDirectory, name))
+        return [name, stat.size, stat.mtimeMs]
+      }),
+    row: f.repository.atomic((db) =>
+      db
+        .query<{ stamp: string; file: string }, [string, string]>(
+          "SELECT stamp,file FROM context_cache WHERE workspace=? AND selection=?",
+        )
+        .get(f.index.root, "$workspace"),
+    ),
+  }
+}
+
+function disableIndexWork(index: ProjectIndex) {
+  const fail = () => {
+    throw new Error("Read queries must not collect or process the workspace")
+  }
+  Reflect.set(index, "collectWorkspace", fail)
+  Reflect.set(index, "processWorkspace", fail)
+}
+
+test("explicit refresh uses pinned Repomix and preserves ignore, secret, permission, and symlink protections", async () => {
   const f = fixture()
-  const manifest = await f.index.manifest(principal)
+  f.denied.set(architect.agent, new Set(["denied.txt"]))
+  const built = await f.index.refresh(architect)
+  const manifest = await f.index.manifest(architect)
   const paths = manifest.files.map((file) => file.path)
   expect(paths).toContain("src/feature.ts")
   expect(paths).toContain("untracked.txt")
   for (const name of ["ignored/never.txt", ".env", "custom.txt", "denied.txt", "escape.txt"])
     expect(paths).not.toContain(name)
-  expect(f.reads).not.toContain(".env")
   expect(manifest.repomix).toBe("1.18.1")
-  const full = await f.index.evidence(principal, {
+  expect(manifest.snapshotID).toBe(built.id)
+  expect(manifest.freshness).toBe("as-of-refresh")
+  expect(manifest.refreshedAt).toBe(built.createdAt)
+
+  const full = await f.index.evidence(architect, {
     paths: ["src/feature.ts"],
     level: "full",
     startLine: 2,
     endLine: 5,
   })
-  const outline = await f.index.evidence(principal, { paths: ["src/feature.ts"], level: "outline" })
+  const outline = await f.index.evidence(architect, { paths: ["src/feature.ts"], level: "outline" })
   expect(full.sources[0]!.text).toContain("toUpperCase")
   expect(outline.sources[0]!.text).toContain("feature")
   expect(outline.sources[0]!.text).not.toContain("toUpperCase")
-  expect(full).not.toHaveProperty("receipt")
+  expect(full.snapshotID).toBe(manifest.snapshotID)
   expect(full.sources[0]!.revision).toBeNull()
+
   writeFileSync(join(f.root, "unrelated.txt"), "Other work proceeds")
-  expect(
-    (await f.index.evidence(principal, { paths: ["src/feature.ts"] })).sources[0]!.text,
-  ).toContain("toUpperCase")
   writeFileSync(join(f.root, "src", "feature.ts"), "export const changed = true\n")
-  expect(
-    (await f.index.evidence(principal, { paths: ["src/feature.ts"] })).sources[0]!.text,
-  ).toContain("changed")
+  const unchanged = await f.index.evidence(architect, { paths: ["src/feature.ts"] })
+  expect(unchanged.snapshotID).toBe(built.id)
+  expect(unchanged.sources[0]!.text).toContain("toUpperCase")
+
+  const refreshed = await f.index.refresh(architect)
+  const changed = await f.index.evidence(architect, { paths: ["src/feature.ts"] })
+  expect(refreshed.id).not.toBe(built.id)
+  expect(changed.snapshotID).toBe(refreshed.id)
+  expect(changed.sources[0]!.text).toContain("changed")
+  expect((await f.index.manifest(architect)).files.map((file) => file.path)).toContain(
+    "unrelated.txt",
+  )
 })
 
-test("cached reads respect current permissions without submission receipts", async () => {
+test("read selections and service reopen reuse one snapshot without collection, processing, or cache writes", async () => {
   const f = fixture()
-  await f.index.evidence(principal, { paths: ["src/feature.ts"] })
-  f.denied.add("src/feature.ts")
-  expect((await f.index.evidence(principal, { paths: ["src/feature.ts"] })).sources).toEqual([])
-  expect((await f.index.evidence(principal, { search: "no-such-content" })).sources).toEqual([])
+  await expect(f.index.evidence(worker, { paths: ["src/feature.ts"] })).rejects.toBeInstanceOf(
+    WorkspaceIndexUnavailable,
+  )
+  await expect(f.index.manifest(worker)).rejects.toThrow("Architect must refresh")
+  expect(cacheState(f).files).toEqual([])
+
+  const built = await f.index.refresh(architect)
+  const before = cacheState(f)
+  disableIndexWork(f.index)
+  const manifestA = await f.index.manifest(worker, ["src"])
+  const manifestB = await f.index.manifest(worker, ["untracked.txt"])
+  const specialist = await f.index.manifest(
+    { sessionID: "specialist-session", agent: "lazers-investigator" },
+    ["src/feature.ts"],
+  )
+  const full = await f.index.evidence(worker, { paths: ["src/feature.ts"], level: "full" })
+  const outline = await f.index.evidence(worker, { paths: ["src/feature.ts"], level: "outline" })
+  const searched = await f.index.evidence(worker, { search: "dirty source", level: "structure" })
+  expect([
+    manifestA.snapshotID,
+    manifestB.snapshotID,
+    specialist.snapshotID,
+    full.snapshotID,
+    outline.snapshotID,
+  ]).toEqual([built.id, built.id, built.id, built.id, built.id])
+  expect(searched.sources.map((source) => source.path)).toEqual(["untracked.txt"])
+  expect(manifestA.freshness).toBe("as-of-refresh")
+  expect(cacheState(f)).toEqual(before)
+
+  f.index.close()
+  f.index = new ProjectIndex(f.root, f.cacheDirectory, f.repository, f.allow)
+  disableIndexWork(f.index)
+  const reopened = await f.index.evidence(worker, { paths: ["src/feature.ts"], level: "outline" })
+  expect(reopened.snapshotID).toBe(built.id)
+  expect(cacheState(f)).toEqual(before)
+})
+
+test("readers and later permission revocations are checked against cached files on every read", async () => {
+  const f = fixture()
+  await f.index.refresh(architect)
+  const workerDenied = new Set(["src/feature.ts", "untracked.txt"])
+  f.denied.set(worker.agent, workerDenied)
+  const deniedManifest = await f.index.manifest(worker)
+  const deniedRead = await f.index.evidence(worker, { search: "dirty source" })
+  expect(deniedManifest.files.map((file) => file.path)).not.toContain("src/feature.ts")
+  expect(deniedManifest.files.map((file) => file.path)).not.toContain("untracked.txt")
+  expect(deniedRead.sources).toEqual([])
+
+  workerDenied.delete("src/feature.ts")
+  const allowed = await f.index.evidence(worker, { paths: ["src/feature.ts"] })
+  expect(allowed.sources[0]!.text).toContain("toUpperCase")
+  workerDenied.add("src/feature.ts")
+  expect((await f.index.evidence(worker, { paths: ["src/feature.ts"] })).sources).toEqual([])
+  expect(allowed.snapshotID).toBe((await f.index.manifest(architect)).snapshotID)
+  expect(f.permissionChecks.some((check) => check.agent === worker.agent)).toBe(true)
+})
+
+test("failed refresh leaves the published snapshot intact; refresh updates changed, added, deleted, and ignored files atomically", async () => {
+  const f = fixture()
+  const built = await f.index.refresh(architect)
+  const before = cacheState(f)
+  writeFileSync(join(f.root, ".repomixignore"), "")
+  writeFileSync(join(f.root, "custom.txt"), "now included")
+  writeFileSync(join(f.root, "added.txt"), "added source")
+  writeFileSync(join(f.root, "src", "feature.ts"), "export const refreshed = true\n")
+  rmSync(join(f.root, "untracked.txt"))
+
+  const process = Reflect.get(f.index, "processWorkspace") as (
+    ...args: unknown[]
+  ) => Promise<unknown>
+  Reflect.set(f.index, "processWorkspace", async () => {
+    throw new Error("simulated Repomix failure")
+  })
+  await expect(f.index.refresh(architect)).rejects.toThrow("simulated Repomix failure")
+  expect(cacheState(f)).toEqual(before)
+  const afterFailure = await f.index.evidence(architect, { paths: ["src/feature.ts"] })
+  expect(afterFailure.snapshotID).toBe(built.id)
+  expect(afterFailure.sources[0]!.text).toContain("toUpperCase")
+  Reflect.set(f.index, "processWorkspace", process)
+
+  const atomic = f.repository.atomic.bind(f.repository)
+  let transactionCalls = 0
+  Reflect.set(f.repository, "atomic", (run: Parameters<TaskRepository["atomic"]>[0]) => {
+    transactionCalls++
+    if (transactionCalls === 2) throw new Error("simulated snapshot pointer failure")
+    return atomic(run)
+  })
+  await expect(f.index.refresh(architect)).rejects.toThrow("simulated snapshot pointer failure")
+  expect(cacheState(f)).toEqual(before)
+  expect((await f.index.evidence(architect, { paths: ["src/feature.ts"] })).snapshotID).toBe(
+    built.id,
+  )
+  Reflect.set(f.repository, "atomic", atomic)
+
+  const refreshed = await f.index.refresh(architect)
+  expect(refreshed.id).not.toBe(built.id)
+  const paths = (await f.index.manifest(architect)).files.map((file) => file.path)
+  expect(paths).toContain("custom.txt")
+  expect(paths).toContain("added.txt")
+  expect(paths).not.toContain("untracked.txt")
+  expect(
+    (await f.index.evidence(architect, { paths: ["src/feature.ts"] })).sources[0]!.text,
+  ).toContain("refreshed")
+})
+
+test("queries during a refresh see the prior complete snapshot until atomic publication", async () => {
+  const f = fixture()
+  const built = await f.index.refresh(architect)
+  writeFileSync(join(f.root, "src", "feature.ts"), "export const atomic = true\n")
+
+  const process = Reflect.get(f.index, "processWorkspace") as (
+    ...args: unknown[]
+  ) => Promise<unknown>
+  let entered!: () => void
+  let release!: () => void
+  const processing = new Promise<void>((resolve) => (entered = resolve))
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  let activeProcessors = 0
+  let maximumProcessors = 0
+  let calls = 0
+  Reflect.set(f.index, "processWorkspace", async (...args: unknown[]) => {
+    calls++
+    activeProcessors++
+    maximumProcessors = Math.max(maximumProcessors, activeProcessors)
+    const result = await process.apply(f.index, args)
+    if (calls === 1) {
+      entered()
+      await gate
+    }
+    activeProcessors--
+    return result
+  })
+
+  const refresh = f.index.refresh(architect)
+  await processing
+  const queuedRefresh = f.index.refresh(architect)
+  const lastRefresh = f.index.refresh(architect)
+  const during = await f.index.evidence(worker, { paths: ["src/feature.ts"] })
+  expect(during.snapshotID).toBe(built.id)
+  expect(during.sources[0]!.text).toContain("toUpperCase")
+  release()
+  const [completed, queued, last] = await Promise.all([refresh, queuedRefresh, lastRefresh])
+  expect(new Set([completed.id, queued.id, last.id]).size).toBe(3)
+  expect(calls).toBe(3)
+  expect(maximumProcessors).toBe(1)
+  const after = await f.index.evidence(worker, { paths: ["src/feature.ts"] })
+  expect(after.snapshotID).toBe(last.id)
+  expect(after.sources[0]!.text).toContain("atomic")
+})
+
+test("refresh requires Architect authority and foreign workspaces do not inherit another index", async () => {
+  const f = fixture()
+  await expect(f.index.refresh(worker)).rejects.toThrow("Only Architect")
+  expect(cacheState(f).files).toEqual([])
+  await f.index.refresh(architect)
+
+  const otherRoot = mkdtempSync(join(tmpdir(), "lazers-foreign-index-"))
+  const otherRepository = new TaskRepository(join(otherRoot, "tasks.sqlite"), otherRoot)
+  const otherIndex = new ProjectIndex(otherRoot, join(otherRoot, "cache"), otherRepository, f.allow)
+  try {
+    await expect(otherIndex.manifest(worker)).rejects.toBeInstanceOf(WorkspaceIndexUnavailable)
+    expect(await f.index.manifest(architect)).toMatchObject({ workspace: f.index.root })
+  } finally {
+    otherIndex.close()
+    otherRepository.close()
+    rmSync(otherRoot, { recursive: true, force: true })
+  }
 })
 
 test("focused multi-file reads return complete source beyond the former response cap", async () => {
@@ -90,7 +317,10 @@ test("focused multi-file reads return complete source beyond the former response
     second = `${"second ".repeat(5000)}\nSECOND_FILE_END`
   writeFileSync(join(f.root, "first.txt"), first)
   writeFileSync(join(f.root, "second.txt"), second)
-  const result = await f.index.evidence(principal, { paths: ["first.txt", "second.txt"] })
+  await f.index.refresh(architect)
+  const result = await f.index.evidence(architect, {
+    paths: ["first.txt", "second.txt"],
+  })
   expect(result.sources.map((source) => [source.path, source.text])).toEqual([
     ["first.txt", first],
     ["second.txt", second],
@@ -102,7 +332,21 @@ test("focused multi-file reads return complete source beyond the former response
   expect(result.truncated).toBe(false)
 })
 
-test("worker packets honor cited line ranges and defer large source without blocking dispatch", async () => {
+test("manifest and evidence retain their source-count response bounds", async () => {
+  const f = fixture()
+  for (let number = 0; number < 105; number++)
+    writeFileSync(join(f.root, `source-${number}.txt`), `content ${number}`)
+  await f.index.refresh(architect)
+  const manifest = await f.index.manifest(architect)
+  const evidence = await f.index.evidence(architect, { search: "content" })
+  expect(manifest.files).toHaveLength(100)
+  expect(manifest.truncated).toBe(true)
+  expect(manifest.totalFiles).toBeGreaterThan(100)
+  expect(evidence.sources).toHaveLength(50)
+  expect(evidence.truncated).toBe(true)
+})
+
+test("worker packets use the reusable snapshot, cited ranges, and bounded source deferral", async () => {
   const f = fixture()
   writeFileSync(join(f.root, "AGENTS.md"), "Use strict TypeScript. No worker delegation.")
   writeFileSync(join(f.root, "README.md"), "Implement the scoped feature and run its tests.")
@@ -112,13 +356,14 @@ test("worker packets honor cited line ranges and defer large source without bloc
       "unrelated guide prose ".repeat(5000),
   )
   writeFileSync(join(f.root, "oversized.md"), "large context source ".repeat(20000))
+  await f.index.refresh(architect)
   const proposal = validProposal()
   proposal.context = [
     { reference: "guide.md:2-3: relevant integration", revision: null },
     { reference: "oversized.md", revision: null },
   ]
   proposal.limits.maxTokens = 4000
-  const packet = await f.index.packet(principal, proposal, [], "fixture-base")
+  const packet = await f.index.packet(architect, proposal, [], "fixture-base")
   const delivered = JSON.parse(packet.text)
   expect(delivered.entries.find((entry: { path: string }) => entry.path === "guide.md").text).toBe(
     "[Lines 2-3]\nRelevant contract.\nRelevant procedure.",
@@ -128,4 +373,5 @@ test("worker packets honor cited line ranges and defer large source without bloc
   expect(delivered.deferred).toContain("oversized.md")
   expect(packet.metadata.tokens).toBeLessThanOrEqual(24000)
   expect(delivered.entries.some((entry: { path: string }) => entry.path === "AGENTS.md")).toBe(true)
+  expect(packet.metadata.freshness).toBe("as-of-refresh")
 })

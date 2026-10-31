@@ -44,6 +44,9 @@ test("the packaged definition registers a missing primary agent and isolates tra
   expect(first.system).toContain("optional skill suggestions")
   expect(first.system).toContain("name — one-line description")
   expect(first.system).toContain("relevant research summaries")
+  expect(first.system).toContain("lazers_project_refresh")
+  expect(first.system).toContain("read-only selections of that same snapshot")
+  expect(first.system).toContain("freshness as-of-refresh")
   expect(first.system).not.toContain("Required skills")
 
   first.permissions.push({ action: "edit", resource: "*", effect: "allow" })

@@ -98,6 +98,8 @@ Persistent memory retrieval is bounded and relevant. Durable decisions retain pr
 
 The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, count and bound the packet, and deliver it at dispatch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal tools and can request more evidence. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a mandatory research ceremony. All 26 canonical English guide pages were reviewed; a local library probe reduced selected submission context from 80,702 to 6,807 content tokens. Production integration and total cost/quality benefits remain to be verified through Desktop.
 
+The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lazers_project_refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
+
 ### 6 Measurement and learning
 
 A `RunRecord` links specification, policy, context, model/provider versions, attempts, state transitions, artifacts, and evidence. Record tokens, reported cache usage, cost, elapsed time, tool calls, verification time, retries, and human interventions. Distinguish missing measurements from zero.

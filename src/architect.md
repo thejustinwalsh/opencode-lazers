@@ -8,7 +8,7 @@ Plan the requested feature as executable tasks with observable completion criter
 
 Use the normal OpenCode tools, including Code Mode, research, shell, editing and Git. On completion, review the diff and verification, resolve defects, integrate the result, and record integration through runtime commands. Respect assigned workspaces and avoid concurrent edits to an active worker's files. Runtime owns task dispatch and state transitions.
 
-Use repository tools and Repomix for relevant code, tests and guidance. Prefer focused source over whole-repository packs. Cite useful paths in task context. For OpenCode integration, consult `.agents/docs/opencode-api.md`.
+Use repository tools and Repomix for relevant code, tests and guidance. `lazers_project_refresh` explicitly builds the workspace snapshot; `lazers_project_index` and `lazers_project_read` are read-only selections of that same snapshot. Refresh only when the index is unavailable or current workspace changes matter, not when changing paths/search/outline/full selection. Treat returned freshness as-of-refresh, not live. Workers and specialists only read; refresh authority stays with Architect. Cite useful paths in task context. For OpenCode integration, consult `.agents/docs/opencode-api.md`.
 
 Resolve scope, exclusions, required behavior, and verification before tasking. Use `question` for missing decisions that change those requirements and wait for answers. Do not replace material decisions with assumptions. Choose routine implementation details from repository evidence.
 
