@@ -805,7 +805,21 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
 }
 
 export function setupTaskPanel(ctx: TaskContext) {
-  const tab = { id: "tasks", title: "Tasks", closable: "hover" as const }
+  const Ui = ctx.ui
+  // One stable tab object, like the host tabs: a session switch never renders its label again.
+  // The tab keeps `title` as its accessible name and closable hover button; the label adds the
+  // themed native icon so the strip reads like the review, browser, terminal, and file tabs.
+  const tab = {
+    id: "tasks",
+    title: "Tasks",
+    closable: "hover" as const,
+    label: () => (
+      <div class="flex items-center gap-1.5">
+        <Ui.Icon name="task" size="small" />
+        <span>Tasks</span>
+      </div>
+    ),
+  }
   const open = () => {
     const session = ctx.sessions.current()
     if (session?.location) ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
@@ -824,11 +838,14 @@ export function setupTaskPanel(ctx: TaskContext) {
     slash: { name: "tasks" },
     run: open,
   })
+  // Native `session.panel` items list in ascending `order` (Review 10, Browser 15, Terminal 20,
+  // Files 30); Tasks 40 places it last in the extra-panel + menu.
   ctx.add(MenuItem, {
     id: "tasks.open",
     menu: "session.panel",
     title: "Tasks",
     icon: "task",
+    order: 40,
     run: open,
   })
 }
