@@ -68,3 +68,33 @@ force integration to hide the mismatch.
 - Root's blank-panel `Illegal invocation` finding demonstrates why the passing
   pure-helper suite and GUI build alone were insufficient. A final repaired-build
   running capture is still required. No native visual pass is claimed here.
+
+## Subsequent native evidence and shared baseline correction
+
+Root's `7a9d009` adds `browser.md` and real Desktop captures: Terra passed narrow
+Search; pointer/keyboard split, independent scrolling and close/reopen restoration
+passed. Manual Start admitted existing Repomix plan `aa71e2c0` from draft/v1 to
+running/v2 with Luna Max; replay retained one plan/version. No worker attempt or
+execution is claimed for that admission. These observations supersede the earlier
+pending visual checks above, but not scheduler finalization or exact-artifact gates.
+
+Root also identified queued `fc88ccc0` following accepted `6edcc32f` in plan
+`db24c4b4`. Dispatch preferred the old predecessor artifact over current shared
+HEAD even for the next task's first attempt. A real-Git regression reproduced the
+wrong base after a reviewed commit between accepted predecessor and successor:
+the successor's scope comparison included the reviewer's unrelated repair.
+
+The correction chooses current HEAD for a new shared node, treating intervening
+reviewed commits as input. Explicit retry baselines still take precedence, and
+retry without a newly selected baseline still continues its failed artifact;
+isolated predecessor selection is unchanged. The regression reopens the runtime,
+checks successor base/policy source, verifies only its own file is attributed,
+and preserves the predecessor's historical artifact and source. No hash gate,
+task replacement or active-worker-checkout edit was added. Preserve this behavior
+when reviewing and merging the isolated `2958fa32` scheduler result.
+
+Verification: the new first-attempt regression failed before the correction;
+all three first-attempt/explicit-retry/default-retry baseline tests now pass
+(110 expectations). Full suite: **168 tests / 1,493 expectations** passed across
+37 files; formatting, lint and typecheck passed. This runner-only correction
+does not change the GUI bundle or establish a live successor dispatch.

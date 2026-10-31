@@ -748,7 +748,9 @@ export class TaskRuntime {
     if (JSON.parse(plan.body).workspaceMode === undefined && attempts.length)
       input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
     const id = crypto.randomUUID()
-    // Serial integration uses each accepted prior artifact; dependencies remain explicit readiness gates.
+    // Isolated serial work inherits accepted prior artifacts. A new shared node
+    // starts at the actual reviewed checkout, so intervening integrated repairs
+    // are input, not attributed to that worker's write scope.
     const previous = this.store
       .nodes(plan.id)
       .filter((n) => n.ordinal < node.ordinal && n.state === "accepted")
@@ -764,10 +766,9 @@ export class TaskRuntime {
     const base =
       selectedBaseline ??
       attempts.at(-1)?.artifact ??
-      previous?.artifact ??
       (input.workspaceMode === "shared"
         ? git(this.directory, ["rev-parse", "HEAD"])
-        : input.baseCommit)
+        : (previous?.artifact ?? input.baseCommit))
     const workspace =
       input.workspaceMode === "shared" ? this.directory : join(this.dataDirectory, "worktrees", id)
     const text = JSON.stringify({

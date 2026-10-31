@@ -1069,6 +1069,55 @@ test("explicit retry starts a fresh native child and retains the old attempt and
   expect(attempts[1]!.workspace).toBe(f.root)
 })
 
+test("a shared node's first attempt starts at reviewed HEAD, not an older accepted predecessor", async () => {
+  const f = fixture({ shared: true })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  for (let i = 0; i < 12 && f.store.execution(f.tasks[0]!.id)?.state !== "accepted"; i++)
+    await f.runtime.tick()
+  expect(f.store.execution(f.tasks[0]!.id)?.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  const predecessor = f.store.attempts(f.receipt.planID)[0]!
+  const predecessorArtifact = predecessor.artifact
+  writeFileSync(join(f.root, "reviewer-fix.txt"), "approved\n")
+  git(f.root, ["add", "reviewer-fix.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Reviewed repair between shared nodes",
+  ])
+  const reviewedHead = git(f.root, ["rev-parse", "HEAD"])
+  expect(reviewedHead).not.toBe(predecessorArtifact)
+  f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  await drive(reopened)
+  const next = f.store
+    .attempts(f.receipt.planID)
+    .find((attempt) => attempt.task_id === f.tasks[1]!.id)!
+  expect(next.base_commit).toBe(reviewedHead)
+  expect(JSON.parse(next.policy).source).toBe(reviewedHead)
+  expect(next.state).toBe("accepted")
+  expect(git(f.root, ["diff", "--name-only", `${next.base_commit}..${next.artifact}`])).toBe(
+    "b.txt",
+  )
+  expect(git(f.root, ["show", `${next.artifact}:reviewer-fix.txt`])).toBe("approved")
+  expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+    id: predecessor.id,
+    artifact: predecessorArtifact,
+    base_commit: f.base,
+    state: "accepted",
+  })
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+})
+
 test("an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes", async () => {
   const f = fixture({ shared: true, wrongFirstB: true })
   const { predecessor, failed } = await failSecondSharedTask(f)
