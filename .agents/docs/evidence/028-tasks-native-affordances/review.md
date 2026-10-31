@@ -45,7 +45,7 @@ at version 8 with all attempt and combined focused/full/quality receipts passing
 and `unchanged:true`. That runtime result does not supply the missing native
 capture/reviewer evidence; at that point main integration remained unrecorded.
 
-## Native acceptance remains open
+## Native acceptance at initial review
 
 The worker correctly records post-change Desktop menu/tab captures and Terra
 review as outstanding in spike 028. Source tests and an isolated bundle do not
@@ -68,4 +68,22 @@ concurrent edits to `src/webgpu/main.ts` and untracked `renderer-debug.ts` and
 `renderer-debug.test.ts`. Those files were not edited, staged or committed by
 this driver; the built bundle is not asserted to be a clean-commit-only build.
 No activation, native capture or Terra pass is inferred from compilation. The
-native observation remains explicitly pending for the user to capture.
+native observation was explicitly pending for the user to capture.
+
+## Native observation and cleanup completed
+
+Commit `f9ed6e4` supplies [Terra's native review](terra-review.md) and actual
+[menu](native-menu.png)/[tab](native-tab.png) captures. Terra 6.1 High passed
+the scoped screenshot review with no actionable defects. Root drove the actual
+Review / Browser / Terminal / Open file / Tasks menu and verified themed
+icon/title/close plus close/reopen with Session scope and selection retained.
+The scoped native acceptance observation is now complete; broader panel,
+theme/session matrices and inference diagnostics are not certified by it.
+
+Plan `8d505ab3` was already normally integrated at version 10, so no duplicate
+integration command was issued. Its worker checkout had already been removed
+by runtime non-forced cleanup. The remaining `driver-go-ui-review` checkout
+was clean; its three task files matched main, and its only non-merge commit
+`db00e89` was patch-equivalent to main's `415ccf2`. The native worktree API
+then removed that review checkout with `force:false`. Active projection and
+speech checkouts were left alone, as were Root's debugger changes.

@@ -56,17 +56,18 @@ Against the previous registration (no `label`, no `order`) the order and
 render tests fail; the stability/scoping guards pass on both, matching their
 role as regression fences.
 
-## Native review — outstanding
+## Native review — completed
 
-Source tests and the bundled GUI artifact do not establish Desktop behavior.
-No driver has captured the post-change native menu and tab yet. Outstanding
-observations for Terra:
-
-- the + menu before the side panel lists Tasks below Review, Browser,
-  Terminal, and Files with the task icon;
-- the open Tasks tab strip shows the themed icon next to "Tasks" with the
-  hover close button, and close/reopen and session scoping behave as before;
-- Start/continuation flows and inference settings show no regression.
+Source tests and the bundled GUI artifact alone do not establish Desktop
+behavior. Commit `f9ed6e4` now supplies actual native captures and a Terra 6.1
+High **PASS** with no scoped defects in
+[the native review](../evidence/028-tasks-native-affordances/terra-review.md).
+Root observed the menu order Review / Browser / Terminal / Open file / Tasks,
+the themed icon/title/close control, and successful close/reopen retaining
+Session scope and selection. Inference remained enabled and product workers
+continued. This closes the scoped native affordance observation, not broader
+Start/continuation, theme/session matrices, grouping or inference-diagnostics
+verification.
 
 Per the record, this attempt should retain its explicitly selected Go
 route/effort/persona and measured usage/failures; no fallback is claimed and
