@@ -6,12 +6,15 @@ import { InferenceBroker } from "../src/webgpu/broker.ts"
 import { ModelLease } from "../src/webgpu/lease.ts"
 import { defaultFeatures } from "../src/webgpu/features.ts"
 import type { Plugin } from "@opencode/plugin/gui"
+import type { InferenceTraceEvent } from "../src/webgpu/inference-trace.ts"
 import { LocalInference } from "../src/webgpu/rpc.ts"
 
 const solid: typeof import("solid-js") = await import(
   createRequire(import.meta.url).resolve("solid-js/dist/solid.js")
 )
 mock.module("solid-js", () => solid)
+const traces: InferenceTraceEvent[] = []
+let failTracing = false
 let allocations = 0
 let maximum = 0
 let releases = 0
@@ -41,14 +44,21 @@ mock.module("../.cache/lfm3-engine.js", () => ({
       deviceInfo: () => ({ description: "Test GPU" }),
       create_session: () => ({
         dispose: async () => {},
-        generate: () => ({
-          async *[Symbol.asyncIterator]() {},
-          result: Promise.resolve({
-            message: { content: "ready" },
-            usage: { prompt_tokens: 1, completion_tokens: 1 },
-            finish_reason: "stop",
-          }),
-        }),
+        generate: () => {
+          assert.equal(
+            traces.at(-1)?.stage,
+            "generate",
+            "The stage must reach the independent log sink before model work",
+          )
+          return {
+            async *[Symbol.asyncIterator]() {},
+            result: Promise.resolve({
+              message: { content: "ready" },
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
+              finish_reason: "stop",
+            }),
+          }
+        },
       }),
     }),
   },
@@ -90,6 +100,10 @@ const worker = {
   demand: async () => broker.demand(),
 }
 const files = {
+  trace: async (event: InferenceTraceEvent) => {
+    traces.push(event)
+    if (failTracing) throw Error("Diagnostic sink unavailable")
+  },
   acquire: async () => lease.acquire(1),
   release: async ({ owner }: { owner: string }) => lease.release(1, owner),
   cancel: async ({ owner }: { owner: string }) => lease.assert(1, owner),
@@ -123,6 +137,22 @@ try {
     controller.signal,
   )
   assert.equal(answer.text, "ready")
+  assert.ok(
+    traces.some(
+      (event) =>
+        event.stage === "complete" &&
+        event.actualInputTokens === 1 &&
+        event.outputGeneratedTokens === 1,
+    ),
+  )
+  assert.ok(!JSON.stringify(traces).includes("hello"), "Trace must not retain request text")
+  failTracing = true
+  const withoutLogs = await broker.generate(
+    { prompt: "private", maxTokens: 16, timeoutMs: 3_000 },
+    controller.signal,
+  )
+  assert.equal(withoutLogs.ok, true, "A failed diagnostic sink cannot fail model inference")
+  failTracing = false
   const decision = () =>
     broker.generate(
       { prompt: "{}", mode: "systemone", maxTokens: 1, timeoutMs: 3_000 },

@@ -25,6 +25,9 @@ import type { SpeechVoice } from "./speech.ts"
 import { featureEnabled, usesGPU, needsChat } from "./features.ts"
 import type { Features, LocalFeature } from "./features.ts"
 
+import { startInferenceTrace } from "./inference-trace.ts"
+import type { InferenceTraceEvent, InferenceTraceMark, TraceStage } from "./inference-trace.ts"
+
 type ModelKind = "chat" | "decision"
 
 export function createInferenceRuntime(
@@ -34,6 +37,42 @@ export function createInferenceRuntime(
   features: () => Features,
 ) {
   const files = ctx.main(ModelFiles)
+  let traceWrites = Promise.resolve()
+  const writeTrace = (event: InferenceTraceEvent) => {
+    traceWrites = traceWrites
+      .then(async () => {
+        await files.trace(event, { signal: AbortSignal.timeout(2_000) })
+      })
+      .catch(() => {})
+  }
+  const runtimeStarted = performance.now()
+  const runtimeTraceID = `renderer:${crypto.randomUUID()}`
+  let activeTrace: ReturnType<typeof startInferenceTrace> | undefined
+  let activeInputTokens: number | undefined
+  const traceStage = async (stage: TraceStage, metadata?: InferenceTraceMark) => {
+    if (activeTrace && metadata?.actualInputTokens !== undefined)
+      activeInputTokens = metadata.actualInputTokens
+    if (activeTrace) activeTrace.mark(stage, metadata)
+    else
+      writeTrace({
+        requestID: runtimeTraceID,
+        stage,
+        elapsedMs: Math.min(86_400_000, Math.round(performance.now() - runtimeStarted)),
+        deltaMs: 0,
+        configuredEP: "webgpu",
+        observedEP: "unknown",
+        ...metadata,
+      })
+    await traceWrites
+  }
+  const heap = () => {
+    const memory = (
+      performance as Performance & { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }
+    ).memory
+    return memory
+      ? { jsHeapBytes: memory.usedJSHeapSize, heapLimitBytes: memory.jsHeapSizeLimit }
+      : {}
+  }
   const [state, setState] = createSignal("unloaded")
   const [detail, setDetail] = createSignal("Preparing local intelligence")
   const [gpu, setGPU] = createSignal("")
@@ -128,6 +167,7 @@ export function createInferenceRuntime(
           () =>
             retryLoad(
               async () => {
+                await traceStage("session-create")
                 const engine = await Lfm3OmniForConditionalGeneration.from_pretrained(
                   MODEL_REPOSITORY,
                   {
@@ -147,6 +187,7 @@ export function createInferenceRuntime(
                       ),
                   },
                 )
+                await traceStage("session-ready")
                 let intentional = false
                 void engine.lost.then(() => {
                   if (!intentional && !disposed && !unloading) recover("chat")
@@ -178,8 +219,10 @@ export function createInferenceRuntime(
                   signal,
                   setDetail,
                   () => {
+                    activeTrace?.mark("device-lost")
                     if (!disposed && !unloading) recover("decision")
                   },
+                  traceStage,
                 )
                 return { engine, dispose: () => engine.dispose() }
               },
@@ -236,16 +279,37 @@ export function createInferenceRuntime(
   }
 
   const run = async (job: InferenceJob, token: string, controller: AbortController) => {
+    const trace = startInferenceTrace(
+      {
+        requestID: job.requestID,
+        jobID: job.id,
+        mode: job.mode,
+        feature: job.feature,
+        configuredEP: "webgpu",
+        contextCapacityTokens: job.mode === "systemone" ? 8_192 : 4_096,
+        configuredMaxTokens: job.maxTokens,
+      },
+      writeTrace,
+    )
+    activeTrace = trace
+    activeInputTokens = undefined
+    trace.mark("polled", { active: true, inputChars: job.prompt.length, ...heap() })
+    await traceWrites
     const deadline = setTimeout(
-      () => controller.abort(new Error("Local inference deadline exceeded")),
+      () =>
+        controller.abort(
+          Object.assign(new Error("Local inference deadline exceeded"), { name: "TimeoutError" }),
+        ),
       job.timeoutMs,
     )
     let session: Session | undefined
     let result = failed("Generation did not complete")
+    let failure: unknown
     try {
       if (!featureEnabled(features(), job.feature))
         throw Error("This local inference feature is turned off")
       recoveryBlocked = false
+      await traceStage("loading")
       await ensureModel(job.mode === "systemone" ? "decision" : "chat", controller.signal)
       setState("busy")
       setPhase("busy")
@@ -261,7 +325,7 @@ export function createInferenceRuntime(
       if (job.mode === "systemone") {
         const output = await models
           .get("decision")!
-          .engine.systemOne(JSON.parse(job.prompt), controller.signal)
+          .engine.systemOne(JSON.parse(job.prompt), controller.signal, traceStage)
         result = {
           ok: true,
           text: JSON.stringify(output),
@@ -270,7 +334,9 @@ export function createInferenceRuntime(
           completionTokens: 0,
         }
       } else {
+        await traceStage("session-create")
         session = models.get("chat")!.engine.create_session()
+        await traceStage("session-ready")
         const messages: Parameters<Session["generate"]>[0] =
           job.mode === "transcribe"
             ? (() => {
@@ -295,6 +361,7 @@ export function createInferenceRuntime(
                   { role: "user", content: job.prompt },
                 ]
               : [{ role: "user", content: job.prompt }]
+        await traceStage("generate", heap())
         const generation = session.generate(messages, {
           generation_mode: job.mode === "speak" ? "audio" : "text",
           ...(job.mode === "speak"
@@ -332,15 +399,28 @@ export function createInferenceRuntime(
         }
       }
     } catch (error) {
+      failure = error
       result = failed(error instanceof Error ? error.message : String(error))
     } finally {
       clearTimeout(deadline)
       try {
+        await traceStage("dispose")
         await session?.dispose()
       } catch (error) {
+        failure = error
         result = failed(`GPU session cleanup failed: ${String(error)}`)
         recover("chat")
       }
+      if (result.ok)
+        trace.finish({
+          actualInputTokens: activeInputTokens ?? result.promptTokens,
+          outputGeneratedTokens: result.completionTokens,
+          active: false,
+          ...heap(),
+        })
+      else trace.fail(failure, { active: false, ...heap() })
+      await traceWrites
+      activeTrace = undefined
       await worker()
         .complete({ owner: token, id: job.id, result }, { signal: serviceSignal() })
         .catch(() => {})
@@ -553,7 +633,25 @@ export function createInferenceRuntime(
       checking = false
     }
   }
+  const started = performance.now()
+  let lastTick = started
   const timer = setInterval(() => {
+    const now = performance.now()
+    const lag = Math.max(0, now - lastTick - 500)
+    lastTick = now
+    if (lag >= 1_000)
+      writeTrace({
+        requestID: activeTrace?.request.requestID ?? runtimeTraceID,
+        ...(active ? { jobID: active.id } : {}),
+        stage: "renderer-lag",
+        elapsedMs: Math.min(86_400_000, Math.round(now - started)),
+        deltaMs: Math.min(86_400_000, Math.round(lag)),
+        rendererLagMs: Math.min(86_400_000, Math.round(lag)),
+        configuredEP: "unknown",
+        observedEP: "unknown",
+        active: Boolean(active),
+        ...heap(),
+      })
     void tick()
   }, 500)
   let disposal: Promise<void> | undefined

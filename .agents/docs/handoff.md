@@ -44,8 +44,9 @@ the audit. Canceled inference-isolation task `c0ef9f9d` stays canceled.
 
 Missing native observations: permitted worker trajectory reads, production Repomix
 refresh/index/read reuse, optional guidance, complete parallel return/merge/cleanup,
-and relevant theme/font coverage. Cheap heartbeat and compact inspection are implemented/tested on main; activate at
-a safe native worker boundary and observe them. Cross-worktree context delivery is
+and relevant theme/font coverage. Cheap heartbeat and compact inspection (`3623d50`) were activated with supported
+location reload; existing attempts/sessions remained, and active tools saw the reload
+boundary. A later renderer freeze is documented in [trace evidence](evidence/034-renderer-trace/report.md). Cross-worktree context delivery is
 queued for Architect specification; current workers have separate empty cache roots.
 
 Architect renewal must use provider/model/options-sensitive cache policy with user
@@ -65,12 +66,12 @@ Preserve handoff, pending input, model and ownership before native archival.
   are reused as-of-refresh. No source hashing/freshness receipts as evidence.
 - Keep schema validation and `lazers_verify_task` Architect self-review. Passing
   checks and observed behavior establish completion.
-- Inference remains enabled. Freeze diagnostics are report-only; no engine changes
+- Inference remains enabled. Persistent content-free inference diagnostics are authorized; no engine changes
   or inferred freeze fix. Last code-5 crash export is in Downloads.
 - Use pinned OpenCode 2.2.5 V2 APIs and native worktree lifecycle. Bun binary:
   `/Users/tjw/.bun/bin/bun`; native `fmt`, `lint`, `check`, `test`.
 - Load Portless skill before launching a project listening server. None is needed
   for native Desktop maintenance or one-shot checks.
 
-Current verified tree: 222 tests / 2,276 assertions, formatting, lint and strict
+Current verified tree: 229 tests / 2,303 assertions, formatting, lint and strict
 TypeScript pass. Consult the audit for the boundary between tests and native proof.

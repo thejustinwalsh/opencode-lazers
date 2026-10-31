@@ -4,6 +4,16 @@ import { ModelFiles } from "./ipc.ts"
 import { DECISION_FILES, DECISION_REVISION, decisionURL } from "./manifest.ts"
 import { dirname, join } from "node:path"
 import { ModelLease } from "./lease.ts"
+import type { InferenceTraceEvent } from "./inference-trace.ts"
+
+const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) => {
+  try {
+    const pid = window.webContents.getOSProcessId()
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export const setupMain: Plugin.MainSetup = (ctx) => {
   const configured = ctx.options.dataDirectory
@@ -19,24 +29,72 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
   const lease = new ModelLease(async () => {
     await Promise.all([cache.stop(), decisions.stop()])
   })
+  const lastTrace = new Map<number, InferenceTraceEvent>()
+  const writeLog = (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    data: Readonly<Record<string, unknown>>,
+  ) => {
+    try {
+      ctx.log.write(level, message, data)
+    } catch {
+      // Diagnostics must never interrupt inference or lease cleanup.
+    }
+  }
+  const lifecycleData = (window: NonNullable<ReturnType<typeof ctx.windows.get>>) => {
+    const trace = lastTrace.get(window.id)
+    const rendererPID = safeRendererPID(window)
+    return {
+      windowID: window.id,
+      ...(rendererPID === undefined ? {} : { rendererPID }),
+      lastStage: trace?.stage ?? "none",
+      ...(trace?.requestID ? { lastRequestID: trace.requestID } : {}),
+      ...(trace?.jobID ? { lastJobID: trace.jobID } : {}),
+    }
+  }
   const lost = (window: number) => {
     void lease.lost(window).catch((error: unknown) => {
-      ctx.log.write("error", "LAZERS cache ownership cleanup failed", { error: String(error) })
+      writeLog("error", "LAZERS cache ownership cleanup failed", {
+        windowID: window,
+        error: String(error),
+      })
     })
   }
   const watch = (window: NonNullable<ReturnType<typeof ctx.windows.get>>) => {
     const disconnected = () => lost(window.id)
+    const unresponsive = () =>
+      writeLog("warn", "LAZERS WebGPU renderer unresponsive", lifecycleData(window))
+    const responsive = () =>
+      writeLog("info", "LAZERS WebGPU renderer responsive", lifecycleData(window))
+    const rendererGone = (_event: unknown, details: { reason?: string }) =>
+      writeLog("error", "LAZERS WebGPU renderer process gone", {
+        ...lifecycleData(window),
+        ...(details.reason ? { reason: details.reason.slice(0, 80) } : {}),
+      })
+    const navigated = () => {
+      writeLog("info", "LAZERS WebGPU renderer navigated", lifecycleData(window))
+      disconnected()
+    }
+    window.on("unresponsive", unresponsive)
+    window.on("responsive", responsive)
+    window.webContents.on("render-process-gone", rendererGone)
     window.webContents.on("render-process-gone", disconnected)
     // A reload destroys this renderer's GPU resources even when the BrowserWindow survives.
-    window.webContents.on("did-navigate", disconnected)
+    window.webContents.on("did-navigate", navigated)
     ctx.onCleanup(() => {
+      window.removeListener("unresponsive", unresponsive)
+      window.removeListener("responsive", responsive)
+      window.webContents.removeListener("render-process-gone", rendererGone)
       window.webContents.removeListener("render-process-gone", disconnected)
-      window.webContents.removeListener("did-navigate", disconnected)
+      window.webContents.removeListener("did-navigate", navigated)
     })
   }
   for (const window of ctx.windows.list()) watch(window)
   ctx.windows.on("open", watch)
-  ctx.windows.on("close", (window) => lost(window.id))
+  ctx.windows.on("close", (window) => {
+    lastTrace.delete(window.id)
+    lost(window.id)
+  })
   ctx.provide(ModelFiles, {
     status: async () => ({ ...(await cache.status()), occupied: lease.occupied() }),
     decisionStatus: async () => ({ ...(await decisions.status()), occupied: lease.occupied() }),
@@ -65,6 +123,13 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
       cache.cancel()
       decisions.cancel()
     },
+    trace: (event, caller) => {
+      lastTrace.set(caller.window, event)
+      writeLog("info", "LAZERS WebGPU inference trace", {
+        windowID: caller.window,
+        ...event,
+      })
+    },
     clear: async () => {
       await lease.clear(async () => {
         await cache.clear()
@@ -72,7 +137,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
       })
     },
   })
-  ctx.log.write("info", "LAZERS WebGPU cache available", { directory: cache.directory })
+  writeLog("info", "LAZERS WebGPU cache available", { directory: cache.directory })
   return async () => {
     await Promise.all([cache.stop(), decisions.stop()])
   }

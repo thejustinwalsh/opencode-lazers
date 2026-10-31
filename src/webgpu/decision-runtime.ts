@@ -13,12 +13,16 @@ import {
 } from "./system-one.ts"
 import type { SystemOneInput, SystemOneOutput } from "./system-one.ts"
 import { withResources } from "./resources.ts"
+import type { TraceStage, InferenceTraceMark } from "./inference-trace.ts"
+
+type DecisionTrace = (stage: TraceStage, mark?: InferenceTraceMark) => Promise<void>
 
 export async function loadDecisionRuntime(
   read: (id: string, offset: number, length: number) => Promise<string>,
   signal: AbortSignal,
   progress: (text: string) => void,
   lost: () => void,
+  trace?: DecisionTrace,
 ) {
   const bytes = async (id: string) => {
     signal.throwIfAborted()
@@ -67,11 +71,13 @@ export async function loadDecisionRuntime(
   })
   let session: ort.InferenceSession | undefined
   try {
+    await trace?.("session-create")
     session = await ort.InferenceSession.create(await bytes("decoder"), {
       executionProviders: [{ name: "webgpu", device }],
       externalData: [{ path: "decoder_q4f16.onnx_data", data: await bytes("weights") }],
       graphOptimizationLevel: "all",
     })
+    await trace?.("session-ready")
     signal.throwIfAborted()
   } catch (error) {
     disposed = true
@@ -94,11 +100,16 @@ export async function loadDecisionRuntime(
   return {
     dispose,
     loseDevice: () => device.destroy(),
-    async systemOne(input: SystemOneInput, signal: AbortSignal): Promise<SystemOneOutput> {
+    async systemOne(
+      input: SystemOneInput,
+      signal: AbortSignal,
+      trace?: DecisionTrace,
+    ): Promise<SystemOneOutput> {
       if (disposed) throw new Error("Decision model is disposed")
       signal.throwIfAborted()
       const request = SystemOneRequest.parse(input)
       const entries = Object.entries(request.questions)
+      await trace?.("tokenize", { questionCount: entries.length })
       const groups: number[][][] = []
       const suffixes = entries.map(([, question]) => {
         const labels = question.type === "choice" ? Object.keys(question.criteria) : []
@@ -132,8 +143,17 @@ export async function loadDecisionRuntime(
         questionIDs.push(...own.map(() => i + 1))
         slots.push(ids.length - 1)
       }
+      await trace?.("inputs-ready", {
+        actualInputTokens: ids.length,
+        contextCapacityTokens: 8_192,
+        inputShape: [1, ids.length],
+        questionCount: entries.length,
+      })
       if (ids.length > 8_192)
-        throw new Error("Decision context exceeds 8,192 tokens; input was not truncated")
+        throw Object.assign(
+          new Error("Decision context exceeds 8,192 tokens; input was not truncated"),
+          { name: "ContextOverflowError", required: ids.length, capacity: 8_192 },
+        )
       return withResources(async (own) => {
         const int64 = (values: number[], dims: number[]) =>
           own(new ort.Tensor("int64", BigInt64Array.from(values, BigInt), dims))
@@ -154,7 +174,9 @@ export async function loadDecisionRuntime(
           audio_features: own(new ort.Tensor("float32", new Float32Array(), [0, 2048])),
         }
         signal.throwIfAborted()
+        await trace?.("run", { actualInputTokens: ids.length, inputShape: [1, ids.length] })
         const outputs = await session!.run(feeds, ["logits"])
+        await trace?.("readback", { outputShape: outputs.logits?.dims })
         Object.values(outputs).forEach(own)
         signal.throwIfAborted()
         const tensor = outputs.logits

@@ -84,8 +84,10 @@ session metadata, requesting history for final usage or message reconciliation;
 plan inspection returns compact state by default with explicit `full: true` retrieval.
 A real sample was 678 bytes of metadata versus 2,304,994 bytes / 184 transcript
 messages. Lost-response, final-count and busy-again race regressions pass. These
-source changes await native activation at a worker boundary; running model turns
-were not interrupted to reload them. No live performance gain is claimed yet.
+changes were activated through supported location reload with the same worker
+sessions and attempts. Active tools observed the reload boundary; no live performance
+gain is claimed yet. A subsequent renderer hang and added diagnostics are recorded
+in [renderer trace evidence](evidence/034-renderer-trace/report.md).
 
 Cross-worktree Repomix delivery remains a concrete hole: native location moves
 create separate context roots, and the three current worker roots have no published
