@@ -10,7 +10,7 @@
     "src/tasks/panel.tsx"
   ],
   "presentation": {
-    "root": "Use the recorded plan/feature objective as the root lane. Where an actual task forks, its row can anchor the branch accordion. A root group is presentation, not a fabricated task.",
+    "root": "Use a short recorded plan title for its root lane, or the actual prerequisite task row where it anchors a fork. New plans may carry an optional concise Architect-authored title; legacy plans without one use a quiet short plan reference and keep their full objective in details. A root group is presentation, not a fabricated task. Never display operational handoff instructions as the root title.",
     "sequential": "Keep ordinary rows in stable admitted integration order, with light indentation/connectors where useful. Dependency edges determine relationships; row order alone does not promise execution order.",
     "parallel": "A quiet chevron expands sibling branches beneath their actual root. Keep the existing lifecycle glyph and task title on each child. A shared join returns to the root lane. Disjoint root tasks may share the recorded plan root.",
     "mixedGraphs": "Only fold unambiguous non-overlapping fork/join blocks. Keep each task once; expose cross-dependencies as references instead of forcing a DAG into a false tree.",
@@ -29,6 +29,7 @@
     "reuse": "Extend the shared scoped observation projection already tasked as efd8459f-1dbe-4472-968b-f26f59504291.",
     "fields": [
       "canonical plan and task IDs",
+      "optional concise authored plan title, with honest legacy reference fallback",
       "plan objective/revision/version",
       "task specification revision and stable ordinal",
       "recorded prerequisite/successor edges",
@@ -37,7 +38,8 @@
       "consistent snapshot or resnapshot boundary"
     ],
     "paging": "QueryOutput is currently flat and paginated. Obtain complete scoped plan topology separately or return graph membership consistently with pagination; PlanInput currently caps a plan at 100 nodes.",
-    "authority": "Display existing graph and scheduling facts. Folding and selection never change dependencies or dispatch policy."
+    "authority": "Display existing graph and scheduling facts. Folding and selection never change dependencies or dispatch policy.",
+    "planTitle": "Optional title belongs in the normal versioned PlanInput body; existing revisions remain unchanged. The GUI does not generate summaries or call a model to name groups. Architect supplies concise user-facing titles for new plans."
   },
   "implementation": [
     "Add the needed topology/group data to the shared read projection before UI grouping.",
