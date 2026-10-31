@@ -1855,6 +1855,53 @@ test("verification failure and scope violations cannot unblock a successor", asy
   }
 })
 
+test("an unchanged evidence wait keeps its version and notification stable until evidence arrives", async () => {
+  const f = fixture({ human: true, commit: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await drive(f.runtime, 5)
+  const blocked = f.store.plan(planID)!
+  expect(blocked.state).toBe("blocked")
+  const counts = () =>
+    f.store.atomic((db) => ({
+      blocked: db
+        .query("SELECT COUNT(*) AS n FROM runner_transitions WHERE plan_id=? AND event='BLOCKED'")
+        .get(planID),
+      outcomes: db.query("SELECT COUNT(*) AS n FROM runner_outbox WHERE plan_id=?").get(planID),
+    }))
+  const before = counts()
+  await drive(f.runtime, 4)
+  expect(f.store.plan(planID)!.version).toBe(blocked.version)
+  expect(counts()).toEqual(before)
+
+  await f.runtime.command(
+    {
+      requestID: "observed",
+      planID,
+      expectedVersion: blocked.version,
+      action: "human-evidence",
+      taskID: f.tasks[0]!.id,
+      assertionID: "correct",
+      artifact: f.store.nodes(planID)[0]!.artifact!,
+      reason: "Observed the fixture acceptance condition.",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 4)
+  expect(f.store.nodes(planID)[0]!.state).toBe("accepted")
+  await f.runtime.command(
+    {
+      requestID: "continue-observed",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 4)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+})
+
 test("lost host response reconciles a real accepted prompt without creating another worker", async () => {
   const f = fixture()
   const original = f.host.prompt

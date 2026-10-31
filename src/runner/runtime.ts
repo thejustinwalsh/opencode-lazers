@@ -568,17 +568,20 @@ export class TaskRuntime {
   }
 
   private hold(plan: PlanRow, reason: string) {
-    this.store.atomic((db) =>
-      db
-        .query("UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=?")
-        .run(reason, plan.id),
-    )
-    this.store.record(plan.id, null, "BLOCKED", { reason })
-    this.outcome(
-      plan.id,
-      { status: "blocked", reason, allowedActions: ["audit", "reconcile", "cancel"] },
-      true,
-    )
+    this.store.atomic((db) => {
+      const changed = db
+        .query(
+          "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=? AND (state!='blocked' OR reason IS NOT ?)",
+        )
+        .run(reason, plan.id, reason).changes
+      if (!changed) return
+      this.store.record(plan.id, null, "BLOCKED", { reason })
+      this.outcome(
+        plan.id,
+        { status: "blocked", reason, allowedActions: ["audit", "reconcile", "cancel"] },
+        true,
+      )
+    })
     return {
       status: "blocked",
       reason,
