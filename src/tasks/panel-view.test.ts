@@ -49,6 +49,26 @@ test("scroll restoration waits for detail content independently of the list", ()
   expect(detailElement.scrollTop).toBe(500)
 })
 
+test("default scroll restoration respects the browser scheduler receiver", () => {
+  const original = globalThis.queueMicrotask
+  const jobs: (() => void)[] = []
+  try {
+    // Browser WebIDL functions reject an arbitrary object as their receiver.
+    globalThis.queueMicrotask = function (this: unknown, job: () => void) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation")
+      jobs.push(job)
+    }
+    const restoration = new ScrollRestoration()
+    const element = { scrollTop: 0 }
+    expect(() => restoration.restore("task", true, element, 420)).not.toThrow()
+    jobs.forEach((job) => job())
+    expect(element.scrollTop).toBe(420)
+    expect(restoration.restored("task")).toBe(true)
+  } finally {
+    globalThis.queueMicrotask = original
+  }
+})
+
 test("planned queued work exposes Start, but ended or held work does not", () => {
   for (const state of ["submitted", "queued", "ready"]) expect(canStart(state)).toBe(true)
   for (const state of [

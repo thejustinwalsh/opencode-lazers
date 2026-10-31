@@ -39,7 +39,9 @@ export class ScrollRestoration {
   private generation = 0
   private key = ""
   private applied = ""
-  constructor(private readonly schedule: (apply: () => void) => void = queueMicrotask) {}
+  constructor(
+    private readonly schedule: (apply: () => void) => void = (apply) => queueMicrotask(apply),
+  ) {}
 
   restored(key: string) {
     return Boolean(key) && this.applied === key
