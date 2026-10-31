@@ -1,10 +1,18 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { git } from "./artifacts.ts"
+import { combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
@@ -26,6 +34,11 @@ function fixture(
     wrongFirstB?: boolean
     skillSuggestions?: string[]
     workerModel?: { providerID: string; id: string; variant?: string }
+    independent?: boolean
+    delayed?: boolean
+    wrongFirstA?: boolean
+    allowScopeOverlap?: boolean
+    taskFiles?: { name: string; path: string; scope?: string[] }[]
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -48,14 +61,20 @@ function fixture(
     : join(root, "data")
   const repository = new TaskRepository(join(stateDirectory, "tasks.sqlite"), root)
   const store = new RunnerStore(repository)
-  const tasks = ["a", "b"].map((name, index) => {
+  const metadata = new Map<string, { name: string; path: string }>()
+  const createTask = (
+    name: string,
+    path = `${name}.txt`,
+    scope: string[] = [path],
+    failing = false,
+  ) => {
     const proposal = validProposal()
-    proposal.objective = `Write ${name}.txt`
-    proposal.writeScope = [`${name}.txt`]
+    proposal.objective = `Write ${path}`
+    proposal.writeScope = scope
     proposal.verification = [
       {
         id: "content",
-        command: options.fail && index === 0 ? "exit 7" : `test "$(cat ${name}.txt)" = ${name}`,
+        command: options.fail && failing ? "exit 7" : `test "$(cat ${path})" = "${name}"`,
         timeoutMs: 1000,
       },
     ]
@@ -71,7 +90,7 @@ function fixture(
     ]
     proposal.requirements.skills = options.skillSuggestions ?? []
     proposal.limits.maxRepairAttempts = options.repair ? 1 : 0
-    return repository.insert({
+    const task = repository.insert({
       schemaVersion: 1,
       id: crypto.randomUUID(),
       revision: 1,
@@ -86,7 +105,14 @@ function fixture(
       },
       proposal,
     })
-  })
+    metadata.set(task.id, { name, path })
+    return task
+  }
+  const taskFiles: { name: string; path: string; scope?: string[] }[] =
+    options.taskFiles ?? ["a", "b"].map((name) => ({ name, path: `${name}.txt` }))
+  const tasks = taskFiles.map((file, index) =>
+    createTask(file.name, file.path, file.scope ?? [file.path], index === 0),
+  )
   const sessions = new Map<string, HostSession>()
   sessions.set("owner", {
     id: "owner",
@@ -141,17 +167,22 @@ function fixture(
       const session = sessions.get(input.sessionID)!
       session.messages.push({ id: input.id, text: input.text })
       const assigned = store
-        .attempts(receipt.planID)
+        .plans()
+        .flatMap((plan) => store.attempts(plan.id))
         .find((attempt) => attempt.session_id === input.sessionID)!
-      const path = repository.get(assigned.task_id)!.proposal.writeScope[0]!
-      if (path === "b.txt") expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
+      const info = metadata.get(assigned.task_id)!
+      const path = info.path
+      if (path === "b.txt" && !options.independent && !options.taskFiles)
+        expect(readFileSync(join(session.directory, "a.txt"), "utf8")).toBe("a")
       const wrongFirstB = options.wrongFirstB && path === "b.txt" && assigned.number === 1
+      const wrongFirstA = options.wrongFirstA && info.name === "a" && assigned.number === 1
       if (wrongFirstB) {
         session.tokens = 65941
         session.tools = 17
         session.cost = 1.25
       }
-      writeFileSync(join(session.directory, path), wrongFirstB ? "wrong" : path[0]!)
+      mkdirSync(dirname(join(session.directory, path)), { recursive: true })
+      writeFileSync(join(session.directory, path), wrongFirstA || wrongFirstB ? "wrong" : info.name)
       if (options.outside) writeFileSync(join(session.directory, "escape.txt"), "bad")
       if (options.shared || options.commit) {
         const checkout = session.directory
@@ -167,7 +198,10 @@ function fixture(
             `Implement ${path}`,
           ])
       }
-      session.outcome = "succeeded"
+      if (options.delayed) {
+        session.busy = true
+        events.push(`start:${session.id}`)
+      } else session.outcome = "succeeded"
     },
     notify: async (input) => {
       events.push(`notify:${input.id}`)
@@ -176,29 +210,65 @@ function fixture(
     interrupt: async (id) => {
       sessions.get(id)!.busy = false
       sessions.get(id)!.outcome = "interrupted"
+      events.push(`stop:${id}`)
     },
   }
   const runtime = new TaskRuntime(store, host, "project")
-  const input = {
-    requestID: "plan-request",
-    objective: "Two dependent exact-content files",
-    workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
-    baseCommit: base,
-    ...(options.workerModel ? { workerModel: options.workerModel } : {}),
-    nodes: tasks.map((t) => ({ taskID: t.id, revision: 1 as const })),
-    dependencies: [{ prerequisite: tasks[0]!.id, successor: tasks[1]!.id }],
-    integrationOrder: tasks.map((t) => t.id),
-    verification: [
-      { id: "combined", command: "test $(cat a.txt)$(cat b.txt) = ab", timeoutMs: 1000 },
-    ],
-    acceptance: [
-      {
-        id: "combined",
-        assertion: "Both changes coexist",
-        evidence: [{ kind: "verification" as const, verificationID: "combined" }],
-      },
-    ],
+  const inputFor = (
+    selected: typeof tasks,
+    config: {
+      requestID?: string
+      dependencies?: [number, number][]
+      allowScopeOverlap?: boolean
+    } = {},
+  ) => {
+    const files = selected.map((task) => metadata.get(task.id)!)
+    const dependencies =
+      config.dependencies ??
+      (!options.independent
+        ? files.slice(1).map((_, index) => [index, index + 1] as [number, number])
+        : [])
+    return {
+      requestID: config.requestID ?? "plan-request",
+      objective: `Implement ${files.map((file) => file.name).join(" and ")}`,
+      workspaceMode: options.shared ? ("shared" as const) : ("isolated" as const),
+      baseCommit: base,
+      ...(options.workerModel ? { workerModel: options.workerModel } : {}),
+      nodes: selected.map((task) => ({ taskID: task.id, revision: 1 as const })),
+      dependencies: dependencies.map(([prerequisite, successor]) => ({
+        prerequisite: selected[prerequisite]!.id,
+        successor: selected[successor]!.id,
+      })),
+      integrationOrder: selected.map((task) => task.id),
+      verification: [
+        {
+          id: "combined",
+          command: `test "$(cat ${files.map((file) => file.path).join(" ")})" = "${files.map((file) => file.name).join("")}"`,
+          timeoutMs: 1000,
+        },
+      ],
+      acceptance: [
+        {
+          id: "combined",
+          assertion: "All accepted changes coexist",
+          evidence: [{ kind: "verification" as const, verificationID: "combined" }],
+        },
+      ],
+      ...(config.allowScopeOverlap
+        ? {
+            dispositions: selected.flatMap((task, index) =>
+              selected.slice(index + 1).map((other) => ({
+                taskID: task.id,
+                otherTaskID: other.id,
+                relation: "supplements" as const,
+                rationale: "The paths are intentionally scheduled sequentially in this fixture.",
+              })),
+            ),
+          }
+        : {}),
+    }
   }
+  const input = inputFor(tasks, { allowScopeOverlap: options.allowScopeOverlap })
   const receipt = store.submit(input, "owner")
   cleanup.push(() => {
     runtime.stop()
@@ -206,10 +276,50 @@ function fixture(
     rmSync(root, { recursive: true, force: true })
     if (options.shared) rmSync(stateDirectory, { recursive: true, force: true })
   })
-  return { root, repository, store, tasks, sessions, events, host, runtime, input, receipt, base }
+  const completeWorker = (
+    id: string,
+    outcome: "succeeded" | "failed" | "interrupted" = "succeeded",
+  ) => {
+    const session = sessions.get(id)
+    if (!session) throw new Error(`Missing worker ${id}`)
+    session.busy = false
+    session.outcome = outcome
+    events.push(`stop:${id}`)
+  }
+  return {
+    root,
+    repository,
+    store,
+    tasks,
+    sessions,
+    events,
+    host,
+    runtime,
+    input,
+    inputFor,
+    createTask,
+    completeWorker,
+    receipt,
+    base,
+  }
 }
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
+}
+async function runPlan(
+  f: ReturnType<typeof fixture>,
+  planID = f.receipt.planID,
+  requestID = "run",
+) {
+  return f.runtime.command(
+    {
+      requestID,
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "run",
+    },
+    "owner",
+  )
 }
 async function failSecondSharedTask(f: ReturnType<typeof fixture>) {
   await f.runtime.command(
@@ -309,6 +419,402 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
 })
 
+test("independent isolated Git branches overlap and combined verification includes every artifact", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  await runPlan(f)
+  await f.runtime.tick()
+
+  const attempts = f.store.attempts(f.receipt.planID)
+  expect(attempts).toHaveLength(2)
+  expect(new Set(attempts.map((attempt) => attempt.workspace)).size).toBe(2)
+  expect(attempts.every((attempt) => attempt.base_commit === f.base)).toBe(true)
+  expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
+  const starts = f.events
+    .map((event, index) => ({ event, index }))
+    .filter((entry) => entry.event.startsWith("start:"))
+  expect(starts).toHaveLength(2)
+  const activity = f.store.detail(f.receipt.planID).activity as {
+    id: number
+    event: string
+    payload: string
+  }[]
+  const dispatchRecords = activity.filter((entry) => entry.event === "WORKER_STARTED")
+  expect(dispatchRecords).toHaveLength(2)
+  for (const record of dispatchRecords) {
+    const identity = JSON.parse(record.payload)
+    expect(
+      attempts.some(
+        (attempt) =>
+          attempt.id === identity.attemptID &&
+          attempt.session_id === identity.sessionID &&
+          attempt.workspace === identity.workspace,
+      ),
+    ).toBe(true)
+  }
+
+  f.completeWorker(attempts[0]!.session_id)
+  await f.runtime.tick()
+  expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual(["accepted", "running"])
+  const currentActivity = f.store.detail(f.receipt.planID).activity as {
+    id: number
+    event: string
+    payload: string
+  }[]
+  const lifetimes = currentActivity.filter((entry) =>
+    ["WORKER_STARTED", "WORKER_STOPPED"].includes(entry.event),
+  )
+  const startsBeforeStop = lifetimes.filter((entry) => entry.event === "WORKER_STARTED")
+  const firstStop = lifetimes.find((entry) => entry.event === "WORKER_STOPPED")!
+  expect(Math.max(...startsBeforeStop.map((entry) => entry.id))).toBeLessThan(firstStop.id)
+  f.completeWorker(attempts[1]!.session_id)
+  await drive(f.runtime)
+
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("accepted")
+  expect(git(f.root, ["show", `${plan.artifact}:a.txt`])).toBe("a")
+  expect(git(f.root, ["show", `${plan.artifact}:b.txt`])).toBe("b")
+  expect(
+    combineArtifacts(
+      f.root,
+      f.base,
+      f.store.nodes(plan.id).map((node) => node.artifact!),
+    ),
+  ).toBe(plan.artifact!)
+  const graphWorkspace = f.store.effects(plan.id).find((effect) => effect.kind === "graph-worktree")
+  expect(graphWorkspace?.state).toBe("completed")
+  const combinedCheck = f.store
+    .effects(plan.id)
+    .find((effect) => effect.kind === "graph-verify:combined")!
+  expect(JSON.parse(combinedCheck.receipt!).check.artifact).toBe(plan.artifact)
+  expect(JSON.parse(combinedCheck.receipt!).check.exitCode).toBe(0)
+})
+
+test("dependencies wait for accepted inputs and wildcard ancestor scopes serialize", async () => {
+  const dependent = fixture({ delayed: true })
+  await runPlan(dependent)
+  await dependent.runtime.tick()
+  expect(dependent.store.attempts(dependent.receipt.planID)).toHaveLength(1)
+  expect(dependent.store.execution(dependent.tasks[1]!.id)?.waitingOn).toEqual([
+    dependent.tasks[0]!.id,
+  ])
+  const predecessor = dependent.store.attempts(dependent.receipt.planID)[0]!
+  dependent.completeWorker(predecessor.session_id)
+  await dependent.runtime.tick()
+  expect(dependent.store.attempts(dependent.receipt.planID)).toHaveLength(2)
+  const successor = dependent.store.attempts(dependent.receipt.planID)[1]!
+  expect(successor.base_commit).toBe(
+    dependent.store.attempts(dependent.receipt.planID)[0]!.artifact!,
+  )
+  expect(dependent.events.indexOf(`stop:${predecessor.session_id}`)).toBeLessThan(
+    dependent.events.indexOf(`start:${successor.session_id}`),
+  )
+  dependent.completeWorker(successor.session_id)
+  await drive(dependent.runtime)
+  expect(dependent.store.plan(dependent.receipt.planID)!.state).toBe("accepted")
+
+  const scopes = fixture({
+    independent: true,
+    delayed: true,
+    allowScopeOverlap: true,
+    taskFiles: [
+      { name: "a", path: "src/a.txt", scope: ["src/**"] },
+      { name: "b", path: "src/b/b.txt", scope: ["src/b/**"] },
+    ],
+  })
+  await runPlan(scopes)
+  await scopes.runtime.tick()
+  expect(scopes.store.attempts(scopes.receipt.planID)).toHaveLength(1)
+  const first = scopes.store.attempts(scopes.receipt.planID)[0]!
+  scopes.completeWorker(first.session_id)
+  await scopes.runtime.tick()
+  await scopes.runtime.tick()
+  const second = scopes.store.attempts(scopes.receipt.planID)[1]!
+  expect(second.base_commit).toBe(scopes.base)
+  expect(scopes.events.indexOf(`stop:${first.session_id}`)).toBeLessThan(
+    scopes.events.indexOf(`start:${second.session_id}`),
+  )
+  scopes.completeWorker(second.session_id)
+  await drive(scopes.runtime)
+  expect(scopes.store.plan(scopes.receipt.planID)!.state).toBe("accepted")
+})
+
+test("independent plans overlap while a second reconciler cannot duplicate dispatch", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "src/a.txt", scope: ["src/**"] }],
+  })
+  const taskB = f.createTask("b", "src/b/b.txt", ["src/b/**"])
+  const planBInput = {
+    ...f.inputFor([taskB], { requestID: "plan-b" }),
+    dispositions: [
+      {
+        taskID: taskB.id,
+        otherTaskID: f.tasks[0]!.id,
+        relation: "supplements" as const,
+        rationale: "Serialize overlapping source scopes across plans.",
+      },
+    ],
+  }
+  const planB = f.store.submit(planBInput, "owner")
+  const taskC = f.createTask("c", "other/c.txt")
+  const planC = f.store.submit(f.inputFor([taskC], { requestID: "plan-c" }), "owner")
+  await runPlan(f, f.receipt.planID, "run-a")
+  await runPlan(f, planB.planID, "run-b")
+  await runPlan(f, planC.planID, "run-c")
+
+  const secondReconciler = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await Promise.all([f.runtime.tick(), secondReconciler.tick()])
+    const attemptsA = f.store.attempts(f.receipt.planID)
+    const attemptsB = f.store.attempts(planB.planID)
+    const attemptsC = f.store.attempts(planC.planID)
+    expect(attemptsA).toHaveLength(1)
+    expect(attemptsB).toHaveLength(0)
+    expect(attemptsC).toHaveLength(1)
+    expect(attemptsA[0]!.workspace).not.toBe(attemptsC[0]!.workspace)
+    expect(f.sessions.get(attemptsA[0]!.session_id)?.busy).toBe(true)
+    expect(f.sessions.get(attemptsC[0]!.session_id)?.busy).toBe(true)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+    secondReconciler.stop()
+
+    f.completeWorker(attemptsA[0]!.session_id)
+    await f.runtime.tick()
+    const attemptsBAfterA = f.store.attempts(planB.planID)
+    expect(attemptsBAfterA).toHaveLength(1)
+    expect(f.sessions.get(attemptsBAfterA[0]!.session_id)?.busy).toBe(true)
+    expect(f.events.indexOf(`stop:${attemptsA[0]!.session_id}`)).toBeLessThan(
+      f.events.indexOf(`start:${attemptsBAfterA[0]!.session_id}`),
+    )
+
+    f.completeWorker(attemptsBAfterA[0]!.session_id)
+    f.completeWorker(attemptsC[0]!.session_id)
+    await drive(f.runtime)
+    expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+    expect(f.store.plan(planB.planID)!.state).toBe("accepted")
+    expect(f.store.plan(planC.planID)!.state).toBe("accepted")
+  } finally {
+    secondReconciler.stop()
+  }
+})
+
+test("one failed branch blocks combined acceptance without losing sibling verification or usage", async () => {
+  const f = fixture({ independent: true, delayed: true, fail: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const [first, second] = f.store.attempts(f.receipt.planID)
+  if (!first || !second) throw new Error("Expected two isolated workers")
+  f.completeWorker(first.session_id)
+  f.completeWorker(second.session_id)
+  await f.runtime.tick()
+
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual(["failed", "accepted"])
+  expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.token_count)).toEqual([
+    100, 100,
+  ])
+  expect(attemptCheck(f, first.task_id, first.id).exitCode).toBe(7)
+  expect(attemptCheck(f, second.task_id, second.id).exitCode).toBe(0)
+  expect(
+    f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("graph-verify:")),
+  ).toBe(false)
+})
+
+test("conflicting accepted branches hold integration and preserve both real Git artifacts", async () => {
+  const f = fixture({
+    independent: true,
+    allowScopeOverlap: true,
+    taskFiles: [
+      { name: "a", path: "shared.txt", scope: ["shared.txt"] },
+      { name: "b", path: "shared.txt", scope: ["shared.txt"] },
+    ],
+  })
+  await runPlan(f)
+  await drive(f.runtime)
+
+  const plan = f.store.plan(f.receipt.planID)!
+  const nodes = f.store.nodes(plan.id)
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toContain("Conflicting accepted artifacts")
+  expect(nodes.map((node) => node.state)).toEqual(["accepted", "accepted"])
+  expect(nodes.every((node) => node.artifact)).toBe(true)
+  expect(git(f.root, ["show", `${nodes[0]!.artifact}:shared.txt`])).toBe("a")
+  expect(git(f.root, ["show", `${nodes[1]!.artifact}:shared.txt`])).toBe("b")
+  expect(f.store.attempts(plan.id).every((attempt) => existsSync(attempt.workspace))).toBe(true)
+  expect(
+    f.store
+      .effects(plan.id)
+      .filter((effect) => effect.kind.startsWith("verify:"))
+      .every((e) => e.state === "completed"),
+  ).toBe(true)
+  expect(f.store.effects(plan.id).some((effect) => effect.kind.startsWith("graph-verify:"))).toBe(
+    false,
+  )
+})
+
+test("lost worktree creation response reconciles without dispatching a blocked worker", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  const create = f.host.worktree
+  let loseFirstResponse = true
+  let createCalls = 0
+  f.host.worktree = async (input) => {
+    createCalls++
+    const directory = await create(input)
+    if (loseFirstResponse) {
+      loseFirstResponse = false
+      throw new Error("native worktree response lost")
+    }
+    return directory
+  }
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(createCalls).toBe(2)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
+  expect(
+    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "worktree"),
+  ).toHaveLength(2)
+
+  f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await reopened.tick()
+    expect(
+      f.store
+        .effects(f.receipt.planID)
+        .find((effect) => effect.state === "completed" && effect.kind === "worktree"),
+    ).toBeTruthy()
+    await reopened.tick()
+    expect(
+      f.store.attempts(f.receipt.planID).every((attempt) => attempt.state === "cancelled"),
+    ).toBe(true)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(0)
+    expect(await f.host.worktrees()).toHaveLength(3)
+    expect(createCalls).toBe(2)
+  } finally {
+    reopened.stop()
+  }
+})
+
+test("cancelling overlapping workers waits for every native session and preserves usage", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempts = f.store.attempts(f.receipt.planID)
+  for (const attempt of attempts) f.sessions.get(attempt.session_id)!.tokens = 123
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.token_count)).toEqual([
+    123, 123,
+  ])
+
+  await f.runtime.command(
+    {
+      requestID: "cancel-parallel",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("cancelling")
+  expect(f.store.attempts(f.receipt.planID).every((attempt) => attempt.state === "running")).toBe(
+    true,
+  )
+  await f.runtime.tick()
+
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("cancelled")
+  expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual([
+    "cancelled",
+    "cancelled",
+  ])
+  expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.state)).toEqual([
+    "cancelled",
+    "cancelled",
+  ])
+  expect(f.store.attempts(f.receipt.planID).map((attempt) => attempt.token_count)).toEqual([
+    123, 123,
+  ])
+  expect(
+    f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("graph-verify:")),
+  ).toBe(false)
+})
+
+test("reviewed combined merge removes only owned Git worktrees and preserves foreign work", async () => {
+  const f = fixture({ independent: true, commit: true })
+  const foreignPath = join(tmpdir(), `lazers-foreign-${crypto.randomUUID()}`)
+  git(f.root, ["worktree", "add", "--detach", foreignPath, f.base])
+  const foreign = realpathSync(foreignPath)
+  try {
+    await runPlan(f)
+    await drive(f.runtime)
+    const artifact = f.store.plan(f.receipt.planID)!.artifact!
+    expect(
+      f.store.effects(f.receipt.planID).some((effect) => effect.kind === "graph-worktree"),
+    ).toBe(true)
+    git(f.root, ["merge", "--ff-only", artifact])
+    await f.runtime.command(
+      {
+        requestID: "integrate-parallel",
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "integrated",
+        artifact,
+        targetBranch: "main",
+        reason: "Reviewed every branch and the combined checks",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+
+    expect(f.store.plan(f.receipt.planID)!.state).toBe("integrated")
+    const removals = f.store
+      .effects(f.receipt.planID)
+      .filter((effect) => effect.kind === "worktree-remove")
+    expect(removals).toHaveLength(3)
+    expect(removals.every((effect) => JSON.parse(effect.receipt!).native === true)).toBe(true)
+    expect(await f.host.worktrees()).toEqual([f.root, foreign])
+  } finally {
+    if (existsSync(foreign)) git(f.root, ["worktree", "remove", foreign])
+  }
+})
+
+test("repairing one parallel branch retains its failed check and usage while its sibling is accepted", async () => {
+  const f = fixture({ independent: true, delayed: true, wrongFirstA: true, repair: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  const initial = f.store.attempts(f.receipt.planID)
+  f.completeWorker(initial[0]!.session_id)
+  f.completeWorker(initial[1]!.session_id)
+  await f.runtime.tick()
+  expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual(["running", "accepted"])
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  expect(attemptCheck(f, initial[0]!.task_id, initial[0]!.id).exitCode).not.toBe(0)
+
+  await f.runtime.tick()
+  const repaired = f.store
+    .attempts(f.receipt.planID)
+    .filter((attempt) => attempt.task_id === initial[0]!.task_id)
+    .at(-1)!
+  expect(
+    f.store.attempts(f.receipt.planID).filter((attempt) => attempt.task_id === repaired.task_id),
+  ).toHaveLength(2)
+  f.completeWorker(repaired.session_id)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  const attempts = f.store
+    .attempts(f.receipt.planID)
+    .filter((attempt) => attempt.task_id === repaired.task_id)
+  expect(attempts[0]!.token_count).toBe(100)
+  expect(attemptCheck(f, attempts[0]!.task_id, attempts[0]!.id).exitCode).not.toBe(0)
+  expect(attemptCheck(f, attempts[1]!.task_id, attempts[1]!.id).exitCode).toBe(0)
+  expect(f.store.nodes(f.receipt.planID).map((node) => node.state)).toEqual([
+    "accepted",
+    "accepted",
+  ])
+})
+
 test("missing and permission-denied skill suggestions never block admission or dispatch", async () => {
   for (const skillSuggestions of [
     [],
@@ -341,8 +847,7 @@ test("repair handoffs do not copy legacy skill bodies into a new attempt", async
   const first = f.store.attempts(f.receipt.planID)[0]!
   seedLegacySkillBody(f, first)
   await f.runtime.tick()
-  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("ready")
-  await f.runtime.tick()
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("running")
   const attempts = f.store.attempts(f.receipt.planID)
   expect(attempts).toHaveLength(2)
   expect(attempts[0]!.policy).toContain(skillBodyCanary)
@@ -858,5 +1363,34 @@ test("cleanup preserves clean worktrees with commits outside the reviewed integr
   expect(f.store.plan(f.receipt.planID)!.state).toBe("cleanup-blocked")
   expect(f.store.plan(f.receipt.planID)!.reason).toContain("unmerged commits")
   expect(git(worktree, ["rev-parse", "HEAD"])).toBe(unmerged)
+  expect(await f.host.worktrees()).toContain(worktree)
+})
+
+test("cleanup preserves a dirty owned worktree even after its accepted commit was merged", async () => {
+  const f = fixture({ independent: true, commit: true })
+  await runPlan(f)
+  await drive(f.runtime)
+  const artifact = f.store.plan(f.receipt.planID)!.artifact!
+  git(f.root, ["merge", "--ff-only", artifact])
+  const worktree = f.store.attempts(f.receipt.planID)[0]!.workspace
+  writeFileSync(join(worktree, "a.txt"), "unreviewed dirty edit")
+
+  await f.runtime.command(
+    {
+      requestID: "integrate-dirty",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "integrated",
+      artifact,
+      targetBranch: "main",
+      reason: "Reviewed only the accepted combined artifact",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("cleanup-blocked")
+  expect(f.store.plan(f.receipt.planID)!.reason).toContain("worktree is dirty")
+  expect(git(worktree, ["status", "--porcelain"])).toContain("a.txt")
   expect(await f.host.worktrees()).toContain(worktree)
 })
