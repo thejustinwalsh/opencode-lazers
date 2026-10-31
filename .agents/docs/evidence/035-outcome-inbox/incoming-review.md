@@ -71,3 +71,18 @@ and the separate plan-command gap are documented in `12e5ae4`. Preserve the
 existing plan/task and evidence; do not retire the work, force acceptance or
 insert graph evidence through SQL. No duplicate context or runtime repair task
 was submitted by this driver.
+
+Root completed the plan-evidence lane as `a771bc3`; retain it along with
+`a07377c`. The driver checked 61 runtime/recovery tests and quality checks,
+then used the repaired registered evidence/reconcile/integrated commands to
+complete context plan `caa8c80c` at integrated version 322, with non-forced native
+cleanup completed. Real native proof is unchanged. The preservation instruction
+was also delivered to the runtime's current repair worker session
+`ses_2baf8e6b157b4ae781054408707ab8d7`, attempt
+`7513f29c-f4fd-44dd-88dc-9e9946c9f994`; no extra retry was requested.
+
+Root's supplied [obsolete-wait recovery audit](obsolete-wait-recovery.json)
+records 292 exact matching candidates recovered from an inbox of 294, leaving
+two current synthetics. This was a separately bounded Root recovery; durable
+outbox/history remain retained. It does not expand this worker's scope into
+historical sweeps or justify suppressing a lone current uncertain notification.

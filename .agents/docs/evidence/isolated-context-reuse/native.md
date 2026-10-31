@@ -1,6 +1,6 @@
 # Isolated context reuse — native host observation
 
-## Status: native observation completed by Architect
+## Status: native observation completed; plan integrated
 
 The implementation attempt originally left this observation pending. The driver
 subsequently observed the repaired registered tools on the pinned native host,
@@ -64,7 +64,7 @@ comparisons. This closes the scoped native assertion for exact artifact
 `7913a14170e7b2b3318c3b25b2bfc19505a4b38f`, not arbitrary future permissions,
 providers or workspace changes. It is driver evidence, not a user approval.
 
-## Runtime evidence attachment and remaining plan-command gap
+## Runtime evidence attachment and resolved plan-command gap
 
 The normal evidence tool was permission-admitted but repeatedly rejected stale
 versions (227 → 235, 246 → 252, 282 → 287) while unchanged missing-evidence waits
@@ -81,7 +81,7 @@ the existing plan at version **317**. All combined focused/full/quality checks
 completed with exit **0**, no timeout and `unchanged:true`. The existing task
 remains accepted with no active attempt; it is not redispatched.
 
-Whole-plan integration is **not yet recorded**. Plan `caa8c80c` is blocked at
+At that point whole-plan integration was **not yet recorded**. Plan `caa8c80c` was blocked at
 version **318** with `Combined artifact evidence missing: native:human`.
 This is a separate command-surface defect: `human-evidence` currently requires
 a task ID, validates only task assertions, and writes task-scoped evidence;
@@ -99,6 +99,40 @@ native proof; no second context implementation, retry, or user approval is neede
 Active wake repair overlaps the runtime source; do not edit its worker checkout
 or silently expand its immutable specification. No duplicate task has been
 submitted for the completed context work.
+
+## Final acceptance, integration and cleanup
+
+Root repaired the command lane in `a771bc3`, retaining `a07377c`'s idempotent
+unchanged-wait handling. The driver reviewed both changes and re-ran runtime/
+recovery tests: **61 pass / 0 fail / 1,081 assertions**; `bun run verify` also
+passed. Root reports the canonical full suite **272 pass / 0 fail / 2,566
+assertions** and canonical activation without a service restart. No additional
+reload was requested by the driver.
+
+Normal registered command `context-combined-native-c1ced6f-v1` recorded the
+separate plan assertion `native` at version **318**, omitting taskID and binding
+the exact current combined artifact `7913a14170e7b2b3318c3b25b2bfc19505a4b38f`
+to the real observation above. Normal reconcile command
+`context-reconcile-combined-native-c1ced6f-v1` advanced to **319**. The scheduler
+reran focused/full/quality combined checks; all exited **0**, with no timeout
+and `unchanged:true`, then accepted the plan at **320**.
+
+Normal `integrated` command
+`context-integrated-reviewed-7913a14-native-c1ced6f-v1` recorded the existing
+normal merge `837af3f` on `main` and requested non-forced native cleanup at
+**321**. Runtime subsequently recorded `WORKTREES_RECONCILED` and **integrated
+version 322**, with 13 completed effects and no pending effects. The original
+owned context worktree no longer exists; no active worker was interrupted.
+Task and plan IDs, their original specifications, the one attempt and durable
+evidence are retained. No second context implementation, retry, retirement,
+SQL evidence insertion or force-accept was used.
+
+Root separately recovered 292 obsolete queued task-level waits after exact
+inbox/outbox ID-and-text matching, retaining the two current synthetics and all
+durable history. Its [audit](../035-outcome-inbox/obsolete-wait-recovery.json)
+is retained as supplied; the driver did not repeat the sweep. Future wake
+integration must preserve **both `a07377c` and `a771bc3`**. The current repair
+attempt received that explicit native instruction without interruption.
 
 ## Original implementation context (retained history)
 
