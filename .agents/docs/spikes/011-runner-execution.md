@@ -10,16 +10,17 @@ as `3b4c1051b7c0d1f742ca810269061bba2d639cf9`. The user delegated review and mer
 for this dogfood run. This is real product work, not a simulated model response.
 
 - Task: `5f5743c3-1bd0-4a53-a86b-a347dd961e1a`, revision 1.
-- Plan: `6d1d3afe-f236-4a33-a5a2-86328e838249`; accepted version 20.
+- Plan: `6d1d3afe-f236-4a33-a5a2-86328e838249`; integrated version 22.
 - Attempt: `3ceef8dc-c679-4eb7-b1fe-04cc0951f672`.
 - Native child: `ses_b6d619d62ec44b25bd27acd8ca5f64c6`.
 - Actual model: OpenAI GPT-6.1 Sol, High, through the subscription.
 - [Worker implementation and checks](007-retry-safe-submission.md).
 - [Visible trajectory and verifier receipts](../evidence/011-runner-execution/worker-visible.json).
 
-Native post-merge cleanup remains unperformed because the Mac is locked. The
-owned worktree is still registered and occupies approximately 541 MiB, including
-dependencies. Do not report it removed or the whole five-task project complete.
+Desktop Architect recorded the reviewed merge through `lazers_plan_command`.
+The native `worktree-remove` effect completed with `removed: true, native: true`.
+Git inventory lists only main and the owned ~541 MiB directory is gone. Four
+original tasks remain open; this result does not close their acceptance.
 
 ## Corrections established by dogfooding
 
@@ -56,8 +57,9 @@ and the GUI build. A subsequent cleanup regression added protection for clean
 unmerged commits: **117 tests / 851 assertions pass**, with formatting, lint and
 typecheck passing. The targeted real-Git tests cover successful removal after
 merge, refusal before merge, dirty-file preservation, explicit cleanup retry and
-unmerged-commit preservation. These tests do not substitute for native Desktop
-cleanup acceptance.
+unmerged-commit preservation. Native Desktop cleanup subsequently completed as
+recorded above. Task-guidance baseline `28c4e67` passes 120 tests / 883 assertions,
+formatting, lint, typecheck and GUI build.
 
 ## Usage and equivalent cost
 
@@ -101,5 +103,6 @@ their acceptance clauses. Reconcile them through Architect before defining more
 work. Rejected hash-receipt supplement `75f62b3b-4cd2-4a3a-b17b-30d22c37aaad`
 must not execute; it needs a legitimate disposition, not fabricated acceptance.
 
-Retain the increment. Resume Desktop, record integration and observe native
-cleanup, then use the remaining real records to build the next missing capability.
+Retain the increment. Native integration/cleanup is complete. Continue the fresh
+Luna Max trial and reconcile remaining records against their actual acceptance
+and the user's corrected scope.

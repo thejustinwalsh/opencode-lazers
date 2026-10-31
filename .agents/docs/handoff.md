@@ -6,21 +6,18 @@ Read [execution report](spikes/011-runner-execution.md) first. Retry-safe submis
 task `5f5743c3-1bd0-4a53-a86b-a347dd961e1a` was completed by a real native Sol High
 worker, accepted by runtime, reviewed and merged into main as `3b4c105`. Worker
 artifact: `38be10db9c398e978c68638fc8b7105070cd56cb`. Combined checks now pass
-117 tests / 851 assertions, formatting, lint and typecheck; the GUI build passed
-at the integration boundary. Four original tasks remain open.
+120 tests / 883 assertions, formatting, lint and typecheck pass at task-guidance
+baseline `28c4e67`; the GUI build passed. Four original tasks remain open.
 
-Desktop is blocked by the locked Mac; an unlock request is pending. Do not send
-model prompts through CLI/API to bypass this. When unlocked, inspect plan
-`6d1d3afe-f236-4a33-a5a2-86328e838249` (last accepted version 20), then have its
-Architect owner call `lazers_plan_command` action `integrated`, current
-`expectedVersion`, stable `requestID`, the worker artifact above,
-`targetBranch: "main"` and the actual review/check/merge reason. Verify native
-removal of the owned worktree and final `integrated` status. It still occupies
-approximately 541 MiB. Do not delete it manually or fake a database transition.
+Desktop Architect recorded integration. Plan
+`6d1d3afe-f236-4a33-a5a2-86328e838249` reached `integrated`, version 22. Its
+`worktree-remove` effect reports `removed: true, native: true`; Git inventory
+lists only main and the owned ~541 MiB directory is gone. No manual deletion or
+database transition was used.
 
 Cleanup implementation and behavior tests are present: native inventory,
 non-forced removal, active/dirty/unmerged protection, visible blocked state,
-explicit retry and recovery. Native acceptance is pending. Per-worktree ancestry
+explicit retry and recovery. Native removal succeeded. Per-worktree ancestry
 also protects clean unmerged commits from abandoned attempts.
 
 Retained visible worker trace and token-only per-message pricing are under
@@ -31,13 +28,38 @@ repaired run establishes feasibility, not an efficiency improvement.
 The older sections below are historical snapshots. Current code and this section
 supersede their unimplemented, untracked, step-cap and budget statements.
 
+## Task-quality research and current Desktop trial
+
+Read the [implementor research synthesis](implementor-profiles.md) and its four
+source-linked specialist reports. The three classifications are UI, Systems and
+Small task / Refactoring. Runtime profile routing is not implemented yet. Public
+benchmarks seed matched local trials; they do not establish universal rankings.
+
+Commit `28c4e67` adds optional advisory `guidance`, outcome-first instructions,
+balanced self-review, explicit plan `workerModel`, shorter worker dispatch and
+required-skill delivery through native session instruction entries. Required
+nonempty native skill/permission acceptance remains to be observed.
+
+Fresh Desktop session `ses_e6e0e6239ffdtzIePMeJ1sHA4l`, “LAZERS attempt trajectory
+and usage”, runs Architect on Sol High. It submitted read-only trajectory/usage
+task `71e53745-0ce8-4798-b453-17f260d03aa0`; requested implementor is
+`openai/gpt-6-luna`, variant `max`. Driver answered material choices: tool + JSON,
+recorded costs only, redacted visible content with acknowledged arbitrary
+prose-secret detection limits. Inspect current plan/dispatch before continuing;
+submission alone does not establish execution. Planning context exceeded 110k
+and one oversized local review request was rejected before three review rounds.
+Retain this overhead as evidence, not a prompt-efficiency success claim.
+
+All model prompts remain through Desktop computer use. A transient automation
+lock report was resolved after reconnect/unlock; Desktop control is available.
+
 ## Latest execution corrections
 
 Read [workspace policy](workspace-policy.md). Serial tasks should default to
 native children in the shared checkout; parallel tasks use native worktrees.
 Owned worktrees require recorded integration, reconciliation and cleanup after
-merge. Selection and cleanup are implemented and behavior-tested; native cleanup
-acceptance is still pending.
+merge. Selection and cleanup are implemented and behavior-tested; native
+post-merge cleanup completed in the first integrated plan above.
 
 The first worker was misrouted because native child creation ignores `location`
 when `parentID` is supplied. It was cancelled through Architect. Six edited files

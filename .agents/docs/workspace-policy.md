@@ -39,8 +39,11 @@ unmerged commits from abandoned attempts too. Dirty/active/unmerged or
 unregistered directories produce `cleanup-blocked`; accepted nodes and history
 remain. An explicit retry after fixing the cause reconciles inventory, including
 already-removed directories. Persisted `cleaning` work resumes after restart.
-This lifecycle has behavior tests; native cleanup acceptance still requires the
-first real merged worker result.
+This lifecycle has behavior tests. Desktop Architect recorded the first reviewed
+merge in plan `6d1d3afe-f236-4a33-a5a2-86328e838249`, which reached `integrated`
+version 22. Its native removal receipt reports success; Git inventory and the
+filesystem confirm that its owned worktree is gone. Parallel-work acceptance
+remains separate.
 
 Pinned source: [session handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/session.ts),
 [worktree lifecycle](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/worktree.ts).
