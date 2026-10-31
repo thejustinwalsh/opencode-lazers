@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { Agent, Location } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Effect, Schema } from "effect"
@@ -6,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
+import { nativeTools } from "../test/retry-process.ts"
 import { TaskRepository } from "./storage.ts"
 import { registerTaskTools } from "./tools.ts"
 
@@ -165,5 +167,120 @@ test("task reads expose structured Code Mode outputs and require their own permi
     await expect(
       Effect.runPromise(denied.tools.get(name)!.execute(input, context)),
     ).rejects.toThrow("Permission denied")
+  }
+})
+
+test("native schema/runtime require keys, validate before database access, and leave rejected keys reusable", async () => {
+  const { repository } = await setup()
+  const { tools, call } = await nativeTools(repository, { workspace: "/no-git-access" })
+  const schema = tools.get("lazers_submit_task")!.input as {
+    required: string[]
+    properties: { idempotencyKey: { minLength: number; maxLength: number; pattern: string } }
+  }
+  expect(schema.required).toContain("idempotencyKey")
+  expect(schema.properties.idempotencyKey).toMatchObject({
+    minLength: 1,
+    maxLength: 200,
+    pattern: "\\S",
+  })
+  const query = spyOn(Database.prototype, "query")
+  const exec = spyOn(Database.prototype, "exec")
+  try {
+    for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)]) {
+      const result = await call("lazers_submit_task", { ...validProposal(), idempotencyKey })
+      expect(result.status).toBe("invalid")
+      expect(result.errors[0].path).toBe("idempotencyKey")
+    }
+    const result = await call("lazers_submit_task", { ...keyedProposal(), verification: [] })
+    expect(result.status).toBe("invalid")
+    expect(result.errors[0].path).toBe("acceptance.0.evidence.0.verificationID")
+    expect(query).not.toHaveBeenCalled()
+    expect(exec).not.toHaveBeenCalled()
+  } finally {
+    query.mockRestore()
+    exec.mockRestore()
+  }
+  const allowed = await nativeTools(repository)
+  expect((await allowed.call("lazers_submit_task", keyedProposal())).status).toBe("submitted")
+  expect(repository.list()).toHaveLength(1)
+})
+
+test("permission denial precedes every lookup/write for first, replay, conflict and read invocations", async () => {
+  const { repository } = await setup()
+  let deny = false
+  const { tools, call, assertions } = await nativeTools(repository, { denied: () => deny })
+  const receipt = await call("lazers_submit_task", keyedProposal())
+  const original = repository.get(receipt.taskID)
+  deny = true
+  const query = spyOn(Database.prototype, "query")
+  const exec = spyOn(Database.prototype, "exec")
+  const calls = [
+    ["lazers_submit_task", { ...keyedProposal(), idempotencyKey: "new-denied-key" }],
+    ["lazers_submit_task", keyedProposal()],
+    ["lazers_submit_task", { ...keyedProposal(), objective: "Changed content" }],
+    ["lazers_submit_task", validProposal()],
+    ["lazers_get_task", { taskID: receipt.taskID }],
+    ["lazers_list_tasks", { limit: 20 }],
+    ["lazers_query_tasks", {}],
+  ] as const
+  try {
+    for (const [name, input] of calls) {
+      await expect(Effect.runPromise(tools.get(name)!.execute(input, context))).rejects.toThrow(
+        "Permission denied",
+      )
+    }
+    expect(query).not.toHaveBeenCalled()
+    expect(exec).not.toHaveBeenCalled()
+  } finally {
+    query.mockRestore()
+    exec.mockRestore()
+  }
+  expect(assertions).toEqual(["lazers_submit_task", ...calls.map(([name]) => name)])
+  expect(repository.list()).toEqual([original!])
+  deny = false
+  expect(await call("lazers_submit_task", keyedProposal())).toEqual(receipt)
+  expect(
+    (await call("lazers_submit_task", { ...keyedProposal(), idempotencyKey: "new-denied-key" }))
+      .status,
+  ).toBe("submitted")
+})
+
+test("native retries and conflicts skip inaccessible Git; canonical project scope crosses worktrees but not repositories", async () => {
+  const { repository } = await setup()
+  const first = await nativeTools(repository)
+  const receipt = await first.call("lazers_submit_task", keyedProposal())
+  const original = repository.get(receipt.taskID)
+  const retry = await nativeTools(repository, {
+    workspace: "/unavailable-worktree",
+    session: "other-session",
+  })
+  expect(await retry.call("lazers_submit_task", keyedProposal())).toEqual(receipt)
+  expect(
+    await retry.call("lazers_submit_task", { ...keyedProposal(), objective: "Changed" }),
+  ).toEqual({
+    status: "conflict",
+    message: "idempotencyKey already identifies different validated content",
+  })
+  expect(repository.list()).toEqual([original!])
+  const other = new TaskRepository(repository.path, "/another-canonical-repository")
+  try {
+    // Use an accessible Git worktree, but an independent host canonical identity.
+    const isolated = await nativeTools(other, { workspace: process.cwd() })
+    expect(await isolated.call("lazers_get_task", { taskID: receipt.taskID })).toEqual({
+      status: "not_found",
+    })
+    expect((await isolated.call("lazers_list_tasks", { limit: 20 })).tasks).toEqual([])
+    const independent = await isolated.call("lazers_submit_task", {
+      ...keyedProposal(),
+      objective: "Other repository",
+    })
+    expect(independent.status).toBe("submitted")
+    expect(independent.taskID).not.toBe(receipt.taskID)
+    expect((await isolated.call("lazers_list_tasks", { limit: 20 })).tasks).toHaveLength(1)
+    expect(await first.call("lazers_get_task", { taskID: independent.taskID })).toEqual({
+      status: "not_found",
+    })
+  } finally {
+    other.close()
   }
 })

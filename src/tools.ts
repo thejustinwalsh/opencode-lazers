@@ -52,7 +52,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_submit_task",
       description:
-        "Validate and persist a task. Required idempotencyKey (1–200 characters, exact, non-whitespace) identifies one logical submission within this project. Reuse key/content after a lost response; changed content conflicts; a new key intentionally creates new work. Returns taskID or field errors; does not execute. Cost limits are equivalent API USD, not subscription charges.",
+        "Validate and persist a task, not execute it. Choose required idempotencyKey before the first call: 1–200 characters containing non-whitespace text, compared exactly without trimming/normalization. Keys are durable within the canonical repository, shared across sessions/worktrees. Reuse the same key and validated content after an ambiguous/lost response or restart to recover the original submitted taskID/revision. Object property order is ignored; array order and field values matter. Changed valid content returns {status:'conflict',message}; invalid input returns field guidance. Use a new key only for a new logical submission. Cost limits are equivalent API USD, not subscription charges.",
       input: z.toJSONSchema(TaskSubmissionSchema, { io: "input" }),
       options: { codemode: false, permission: "lazers_submit_task" },
       execute: (input, context) =>
@@ -78,24 +78,14 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
                         })),
                       }),
                     }
-                  const { idempotencyKey, ...proposal } = parsed.data
-                  const previous = withRepository((connection) =>
-                    connection.submissionReceipt(idempotencyKey, proposal),
-                  )
-                  if (previous) return { content: JSON.stringify(previous) }
                   const receipt = withRepository((connection) =>
-                    submitTask(
-                      connection,
-                      proposal,
-                      () => ({
-                        projectID: ctx.location.project.id,
-                        projectDirectory: ctx.location.project.canonical,
-                        workspaceDirectory: ctx.location.directory,
-                        sessionID: context.sessionID,
-                        startingRevision: startingRevision(ctx.location.directory),
-                      }),
-                      idempotencyKey,
-                    ),
+                    submitTask(connection, parsed.data, () => ({
+                      projectID: ctx.location.project.id,
+                      projectDirectory: ctx.location.project.canonical,
+                      workspaceDirectory: ctx.location.directory,
+                      sessionID: context.sessionID,
+                      startingRevision: startingRevision(ctx.location.directory),
+                    })),
                   )
                   return { content: JSON.stringify(receipt) }
                 },
