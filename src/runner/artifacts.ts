@@ -11,20 +11,98 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import type { TaskProposal } from "../task.ts"
 
-export function git(directory: string, args: string[], input?: string): string {
+export function git(
+  directory: string,
+  args: string[],
+  input?: string,
+  environment: Record<string, string> = {},
+): string {
   const result = spawnSync("git", args, {
     cwd: directory,
     encoding: "utf8",
     input,
     timeout: 30000,
     maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...environment },
   })
   if (result.status !== 0)
     throw new Error(
       `git ${args[0]} failed: ${(result.stderr || result.error?.message || "unknown").slice(0, 2000)}`,
     )
   return result.stdout.trimEnd()
+}
+
+/** Conservatively detects equal, wildcard-overlapping, and ancestor path scopes. */
+export function scopePatternsConflict(left: string[], right: string[]): boolean {
+  const prefix = (pattern: string) => {
+    const normalized = pattern.replaceAll("\\", "/").replace(/^\.\//, "")
+    const wildcard = normalized.search(/[*?{}[\]!]/)
+    return wildcard < 0 ? normalized : normalized.slice(0, wildcard)
+  }
+  return left.some((a) =>
+    right.some((b) => {
+      const aPrefix = prefix(a)
+      const bPrefix = prefix(b)
+      return !aPrefix || !bPrefix || aPrefix.startsWith(bPrefix) || bPrefix.startsWith(aPrefix)
+    }),
+  )
+}
+
+/** Merge branch artifacts in caller-supplied deterministic order without moving a checkout. */
+export function combineArtifacts(directory: string, base: string, artifacts: string[]): string {
+  const isAncestor = (ancestor: string, descendant: string) => {
+    try {
+      git(directory, ["merge-base", "--is-ancestor", ancestor, descendant])
+      return true
+    } catch {
+      return false
+    }
+  }
+  let combined = base
+  for (const artifact of artifacts) {
+    if (artifact === combined || isAncestor(artifact, combined)) continue
+    if (isAncestor(combined, artifact)) {
+      combined = artifact
+      continue
+    }
+    const result = spawnSync("git", ["merge-tree", "--write-tree", combined, artifact], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 30000,
+      maxBuffer: 8 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    })
+    if (result.status !== 0) {
+      const detail = (result.stdout || result.stderr || result.error?.message || "unknown").trim()
+      throw new Error(
+        `Conflicting accepted artifacts ${combined} and ${artifact}: ${detail.slice(0, 1500)}`,
+      )
+    }
+    const tree = result.stdout.trim().split(/\s/, 1)[0]
+    if (!tree || !/^[a-f0-9]{40,64}$/.test(tree))
+      throw new Error("Git did not return a tree for combined artifacts")
+    const fixedDate = "2000-01-01T00:00:00+00:00"
+    combined = git(
+      directory,
+      [
+        "-c",
+        "user.name=LAZERS",
+        "-c",
+        "user.email=runner@lazers.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit-tree",
+        tree,
+        "-p",
+        combined,
+        "-p",
+        artifact,
+      ],
+      "LAZERS deterministic artifact integration\n",
+      { GIT_AUTHOR_DATE: fixedDate, GIT_COMMITTER_DATE: fixedDate },
+    )
+  }
+  return combined
 }
 
 export function changedPaths(directory: string, base = "HEAD"): string[] {
