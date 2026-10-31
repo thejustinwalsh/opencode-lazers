@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { TaskProposalSchema } from "./task.ts"
+import { TaskSubmissionSchema } from "./task.ts"
 import type { TaskRepository } from "./storage.ts"
 import type { TaskSpec } from "./task.ts"
 
@@ -22,9 +22,8 @@ export function submitTask(
   repository: TaskRepository,
   input: unknown,
   provenance: () => TaskSpec["provenance"],
-  requestID?: string,
 ) {
-  const result = TaskProposalSchema.safeParse(input)
+  const result = TaskSubmissionSchema.safeParse(input)
   if (!result.success) {
     return {
       status: "invalid" as const,
@@ -34,16 +33,14 @@ export function submitTask(
       })),
     }
   }
-  const create = () => ({
+  const { idempotencyKey, ...proposal } = result.data
+  return repository.submitOnce(idempotencyKey, proposal, () => ({
     schemaVersion: 1,
     id: crypto.randomUUID(),
     revision: 1,
     status: "submitted",
     createdAt: new Date().toISOString(),
     provenance: provenance(),
-    proposal: result.data,
-  })
-  if (requestID !== undefined) return repository.submitOnce(requestID, result.data, create)
-  const task = repository.insert(create())
-  return { status: "submitted" as const, taskID: task.id, revision: task.revision }
+    proposal,
+  }))
 }

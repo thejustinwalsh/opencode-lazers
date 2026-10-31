@@ -1,6 +1,44 @@
 import { describe, expect, test } from "bun:test"
-import { TaskProposalSchema, TaskSpecSchema, taskProposalJSONSchema } from "./task.ts"
+import { z } from "zod"
+import {
+  TaskProposalSchema,
+  TaskSpecSchema,
+  TaskSubmissionSchema,
+  taskProposalJSONSchema,
+} from "./task.ts"
 import { validProposal } from "../test/proposal.ts"
+
+test("submission keys are required transport identity, bounded and never normalized", () => {
+  const schema = z.toJSONSchema(TaskSubmissionSchema, { io: "input" })
+  expect(schema.required).toContain("idempotencyKey")
+  expect(schema.properties?.idempotencyKey).toMatchObject({
+    type: "string",
+    minLength: 1,
+    maxLength: 200,
+    pattern: "\\S",
+  })
+  for (const idempotencyKey of [undefined, null, 1, {}, "", " \t\n", "a".repeat(201)]) {
+    const result = TaskSubmissionSchema.safeParse({ ...validProposal(), idempotencyKey })
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(["idempotencyKey"])
+  }
+  for (const idempotencyKey of ["a", "a".repeat(200), " key ", "é", "e\u0301"]) {
+    expect(TaskSubmissionSchema.parse({ ...validProposal(), idempotencyKey }).idempotencyKey).toBe(
+      idempotencyKey,
+    )
+  }
+  expect(TaskProposalSchema.safeParse(validProposal()).success).toBe(true)
+  expect(TaskProposalSchema.safeParse({ ...validProposal(), idempotencyKey: "key" }).success).toBe(
+    false,
+  )
+  expect(
+    TaskSubmissionSchema.safeParse({
+      ...validProposal(),
+      idempotencyKey: "key",
+      verification: [],
+    }).success,
+  ).toBe(false)
+})
 
 describe("task proposals", () => {
   test("accepts a scoped task and emits strict JSON Schema from Zod", () => {

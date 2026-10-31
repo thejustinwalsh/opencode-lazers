@@ -143,10 +143,44 @@ Open this repository in OpenCode Desktop to discover the local plugin. LAZERS is
 
 The server uses OpenCode's Effect-native SDK. `@opencode/plugin` and `effect` are pinned peer/dev dependencies because OpenCode supplies them at runtime. Tasks use Bun's native SQLite adapter in a plugin-owned database, separate from OpenCode's private tables. The default file is `${XDG_DATA_HOME:-~/.local/share}/opencode/plugins/lazers/tasks.sqlite`; a plugin `dataDirectory` option can supply an absolute override. Canonical project directories partition tasks and share them across that project's worktrees; each task records its original worktree and session. The native `lazers_submit_task`, `lazers_get_task`, and `lazers_list_tasks` tools validate input and explicitly check their permission actions. A successful submission records `submitted`; it does not admit or start execution. Tasks are immutable in this slice. Token, equivalent cost, elapsed time, tool-call, retry, and repair limits are recorded requirements, not yet runtime-enforced budgets.
 
+### Retry-safe direct task submission
+
+Choose a caller-owned `idempotencyKey` **before the first** `lazers_submit_task`
+call. It is a required top-level transport field alongside proposal fields, not
+part of the stored proposal or `TaskSpec`. Use 1–200 characters (runtime length is
+measured in UTF-16 code units), containing non-whitespace text. Keys are compared
+exactly: whitespace, case and Unicode normalization are significant; nothing is
+trimmed or normalized.
+
+Reuse the same key and validated proposal after an ambiguous/lost response or host
+restart. Within the same canonical repository this returns the original
+`{status: "submitted", taskID, revision}` receipt, without recollecting Git
+provenance or changing the original content, timestamp, session or worktree.
+Object property order is irrelevant; array order and field values are significant.
+Sessions, worktrees, tool-call IDs and HEAD do not redefine submission identity.
+The same key in another canonical repository is independent. A new key creates a
+new task even for identical content: use it only for a new logical submission.
+
+Reusing a key with different valid content returns
+`{status: "conflict", message: "idempotencyKey already identifies different validated content"}`,
+without modifying the original task or returning its content. Resolve that intent
+mismatch rather than blindly changing keys. Missing/invalid keys or proposals
+return `{status: "invalid", errors: [{path, message}]}` before provenance or writes.
+Every invocation checks permission before lookup/write, including replay/conflict.
+
+SQLite enforces repository/key uniqueness and persists the task and association in
+one transaction. Associations last for the lifetime of stored tasks; no expiration
+or automatic retry orchestration is added. Existing keyless tasks remain readable
+and are not retroactively recoverable by key. Version-1 databases migrate
+transactionally through the existing version-3 schema without changing task bodies;
+future versions are rejected. See [spike 007](.agents/docs/spikes/007-retry-safe-submission.md)
+for deterministic fresh-process and concurrency evidence. Submission records work;
+it does not execute it.
+
 ### Desktop tryout
 
 1. Open this folder in OpenCode Desktop and start a new session. It should select **architect**; existing sessions keep their previous agent and need manual selection. Use your connected **Sign in with ChatGPT** subscription and select the model/reasoning setting in Desktop. The project deliberately does not pin a model or switch an existing session's provider.
-2. Give Architect a clear real request, for example: “Specify the smallest next increment that makes task submission safe to retry after a lost response. Preserve SQLite persistence and the read-only Architect boundary. Do not implement it.” Expect inspection followed by `lazers_submit_task` and a durable task UUID, with scope and evidence. This request addresses a current limitation: retries can create duplicate tasks.
+2. Give Architect a clear real request. Expect inspection and focused questions where needed, followed by a scoped task with acceptance evidence. For direct `lazers_submit_task`, choose an idempotencyKey before the first call. Retry the exact key and content after a lost response, including after restart; expect the original durable task UUID, not another task.
 3. Ask “Retrieve task <UUID>.” Restart Desktop/the connected host, reopen the repository, and retrieve that UUID again. Expect the same stored specification, without a new submission.
 4. Try a materially ambiguous request, such as “Add task export for our external system,” without naming the system or interface. Expect focused questions before submission. Also verify that Architect cannot edit files, run a shell, or launch another agent. These operations are denied by its permission rules and are outside its role.
 

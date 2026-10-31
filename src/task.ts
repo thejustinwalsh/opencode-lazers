@@ -100,8 +100,14 @@ export const TaskProposalSchema = z
 
 // JSON Schema represents structure. Zod also checks cross-field references at submission time.
 export const taskProposalJSONSchema = z.toJSONSchema(TaskProposalSchema, { io: "input" })
+// Transport identity only: never trim/normalize or add it to stored proposals.
+export const IdempotencyKeySchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/\S/, "Key must contain non-whitespace text")
 export const TaskSubmissionSchema = TaskProposalSchema.safeExtend({
-  idempotencyKey: z.string().min(1).max(200).regex(/\S/, "Key must contain non-whitespace text"),
+  idempotencyKey: IdempotencyKeySchema,
 })
 
 export const StartingRevisionSchema = z.discriminatedUnion("kind", [

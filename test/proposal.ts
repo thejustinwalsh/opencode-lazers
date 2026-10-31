@@ -1,5 +1,9 @@
 import type { TaskProposal } from "../src/task.ts"
 
+export function keyedProposal(idempotencyKey = "test-submission") {
+  return { ...validProposal(), idempotencyKey }
+}
+
 export function validProposal(): TaskProposal & { limits: NonNullable<TaskProposal["limits"]> } {
   return {
     objective: "Keep submitted tasks after the plugin restarts",

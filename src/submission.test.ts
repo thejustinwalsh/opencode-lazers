@@ -1,14 +1,19 @@
 import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { spawnSync } from "node:child_process"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { validProposal } from "../test/proposal.ts"
+import { keyedProposal, validProposal } from "../test/proposal.ts"
+import type { RetryProcessOptions } from "../test/retry-process.ts"
 import { TaskRepository } from "./storage.ts"
 import { submitTask } from "./submission.ts"
+import type { TaskSpec } from "./task.ts"
 
 const directories: string[] = []
+const repositories: TaskRepository[] = []
 afterEach(() => {
+  for (const repository of repositories.splice(0)) repository.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 function fixture() {
@@ -22,93 +27,334 @@ function fixture() {
     sessionID: "s",
     startingRevision: { kind: "unborn" as const },
   })
-  return { path, provenance }
+  return { path, directory, provenance }
+}
+function open(path: string, project = "/repo") {
+  const repository = new TaskRepository(path, project)
+  repositories.push(repository)
+  return repository
+}
+function counts(path: string) {
+  const db = new Database(path)
+  try {
+    return {
+      tasks: db.query<{ n: number }, []>("SELECT count(*) AS n FROM tasks").get()!.n,
+      keys: db.query<{ n: number }, []>("SELECT count(*) AS n FROM submission_requests").get()!.n,
+    }
+  } finally {
+    db.close()
+  }
+}
+function noProvenance(): never {
+  throw new Error("Must not recollect provenance")
 }
 
-test("lost receipts, closed connections, canonical keys and conflicts preserve identity", () => {
+test("lost receipts and reordered nested objects replay the unchanged original after reopening", () => {
   const { path, provenance } = fixture()
-  const repository = new TaskRepository(path, "/repo")
-  const first = submitTask(repository, validProposal(), provenance, "logical-request")
+  const repository = open(path)
+  submitTask(repository, keyedProposal(), provenance) // Simulate losing the receipt.
+  const original = repository.list()[0]!
   repository.close()
-  const reordered = Object.fromEntries(Object.entries(validProposal()).reverse())
-  expect(
-    submitTask(
-      repository,
-      reordered,
-      () => {
-        throw new Error("retry must not collect new provenance")
-      },
-      "logical-request",
+  const reopened = open(path)
+  const reordered = JSON.parse(
+    JSON.stringify(keyedProposal(), (_key, value) =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).reverse())
+        : value,
     ),
-  ).toEqual(first)
-  expect(
-    submitTask(
-      repository,
-      { ...validProposal(), objective: "Different intent" },
-      provenance,
-      "logical-request",
-    ).status,
-  ).toBe("conflict")
-  expect(repository.list()).toHaveLength(1)
-  expect(submitTask(repository, validProposal(), provenance, "different-request")).not.toEqual(
-    first,
   )
-  expect(repository.list()).toHaveLength(2)
-  const other = new TaskRepository(path, "/other")
-  expect(
-    submitTask(
-      other,
-      validProposal(),
-      () => ({ ...provenance(), projectDirectory: "/other" }),
-      "logical-request",
-    ).status,
-  ).toBe("submitted")
-  other.close()
-  repository.close()
+  expect(submitTask(reopened, reordered, noProvenance)).toEqual({
+    status: "submitted",
+    taskID: original.id,
+    revision: original.revision,
+  })
+  expect(reopened.get(original.id)).toEqual(original)
+  expect(original.proposal).not.toHaveProperty("idempotencyKey")
+  expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
 })
 
-test("real processes race one retry key and migration preserves genuine v1 data", async () => {
+test("changed values and array order conflict; distinct exact keys and canonical repositories are independent", () => {
   const { path, provenance } = fixture()
-  const legacy = new Database(path)
-  legacy.exec(
-    "CREATE TABLE tasks(id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, created_at TEXT NOT NULL, body TEXT NOT NULL); PRAGMA user_version=1",
+  const repository = open(path)
+  const first = submitTask(repository, keyedProposal(), provenance)
+  if (first.status !== "submitted") throw new Error("Expected submission")
+  const original = repository.get(first.taskID)
+  for (const change of [
+    { objective: "Different intent" },
+    { writeScope: [...validProposal().writeScope].reverse() },
+    { requirements: { ...validProposal().requirements, risk: "high" } },
+  ]) {
+    expect(submitTask(repository, { ...keyedProposal(), ...change }, noProvenance)).toEqual({
+      status: "conflict",
+      message: "idempotencyKey already identifies different validated content",
+    })
+  }
+  expect(repository.get(first.taskID)).toEqual(original)
+  const shared = open(path)
+  expect(submitTask(shared, keyedProposal(), noProvenance)).toEqual(first)
+  const keys = ["new", " new", "new ", "NEW", "é", "e\u0301"]
+  const ids = new Set([first.taskID])
+  for (const key of keys) {
+    const result = submitTask(repository, keyedProposal(key), provenance)
+    if (result.status !== "submitted") throw new Error("Expected distinct key submission")
+    ids.add(result.taskID)
+  }
+  expect(ids.size).toBe(keys.length + 1)
+  const other = open(path, "/other")
+  expect(other.get(first.taskID)).toBeUndefined()
+  expect(other.list()).toEqual([])
+  const separate = submitTask(other, { ...keyedProposal(), objective: "Other repo" }, () => ({
+    ...provenance(),
+    projectDirectory: "/other",
+  }))
+  if (separate.status !== "submitted") throw new Error("Expected independent namespace")
+  expect(repository.get(separate.taskID)).toBeUndefined()
+  expect(other.list().map((task) => task.id)).toEqual([separate.taskID])
+})
+
+test("invalid keys/proposals and provenance failures never reserve a key", () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  for (const idempotencyKey of [undefined, "", " \n", "a".repeat(201), 1]) {
+    const result = submitTask(repository, { ...validProposal(), idempotencyKey }, noProvenance)
+    expect(result.status).toBe("invalid")
+    if (result.status === "invalid") expect(result.errors[0]?.path).toBe("idempotencyKey")
+  }
+  const invalid = submitTask(repository, { ...keyedProposal(), verification: [] }, noProvenance)
+  expect(invalid.status).toBe("invalid")
+  if (invalid.status === "invalid")
+    expect(invalid.errors[0]?.path).toBe("acceptance.0.evidence.0.verificationID")
+  expect(counts(path)).toEqual({ tasks: 0, keys: 0 })
+  expect(() => submitTask(repository, keyedProposal(), noProvenance)).toThrow("provenance")
+  expect(counts(path)).toEqual({ tasks: 0, keys: 0 })
+  expect(submitTask(repository, keyedProposal(), provenance).status).toBe("submitted")
+})
+
+test("a failed association write rolls back task, key and change stream; retry succeeds", () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  let notifications = 0
+  repository.subscribe(() => {
+    notifications++
+  })
+  const db = new Database(path)
+  try {
+    db.exec(`CREATE TRIGGER fail_association BEFORE INSERT ON submission_requests BEGIN
+      SELECT RAISE(ABORT, 'injected association failure'); END;`)
+    expect(() => submitTask(repository, keyedProposal(), provenance)).toThrow(
+      "injected association failure",
+    )
+    expect(counts(path)).toEqual({ tasks: 0, keys: 0 })
+    expect(repository.version()).toBe(0)
+    expect(notifications).toBe(0)
+    db.exec("DROP TRIGGER fail_association")
+    let observed: ReturnType<typeof counts> | undefined
+    repository.subscribe(() => {
+      observed = counts(path)
+      throw new Error("Read observer cannot discard a committed receipt")
+    })
+    expect(submitTask(repository, keyedProposal(), provenance).status).toBe("submitted")
+    expect(observed!).toEqual({ tasks: 1, keys: 1 })
+    expect(notifications).toBe(1)
+    expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
+    expect(submitTask(repository, keyedProposal(), noProvenance).status).toBe("submitted")
+    expect(notifications).toBe(1)
+  } finally {
+    db.close()
+  }
+})
+
+const processScript = new URL("../test/retry-process.ts", import.meta.url).pathname
+function child(options: RetryProcessOptions, ready?: () => void) {
+  return Bun.spawn([process.execPath, processScript, JSON.stringify(options)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 15_000,
+    ...(ready
+      ? {
+          ipc: (message: unknown) => {
+            if (message === "ready") ready()
+          },
+        }
+      : {}),
+  })
+}
+async function output(process: ReturnType<typeof child>) {
+  const [stdout, stderr, exit] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ])
+  expect(exit, stderr).toBe(0)
+  return stdout
+}
+
+test("fresh native-tool processes recover a lost receipt across session/worktree/HEAD changes", async () => {
+  const { path, directory } = fixture()
+  const project = join(directory, "project")
+  expect(spawnSync("git", ["init", "--initial-branch=main", project]).status).toBe(0)
+  const options = { path, project, workspace: project, session: "original", input: keyedProposal() }
+  expect(await output(child({ ...options, discard: true }))).toBe("")
+  const repository = open(path, project)
+  const original = repository.list()[0]!
+  repository.close()
+  const retry = JSON.parse(
+    await output(
+      child({
+        ...options,
+        workspace: join(directory, "no-git-access"),
+        session: "new-session",
+        inspect: true,
+      }),
+    ),
   )
-  const task = {
-    schemaVersion: 1 as const,
+  expect(retry.receipt).toEqual({ status: "submitted", taskID: original.id, revision: 1 })
+  expect(retry.get.task).toEqual(original)
+  expect(retry.list.tasks.map((task: { taskID: string }) => task.taskID)).toEqual([original.id])
+  expect(open(path, project).get(original.id)).toEqual(original)
+  expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
+}, 30_000)
+
+async function race(options: RetryProcessOptions[], path: string) {
+  const children: ReturnType<typeof child>[] = []
+  const ready = options.map(
+    (option) =>
+      new Promise<void>((resolve, reject) => {
+        let reached = false
+        const contender = child({ ...option, gate: true }, () => {
+          reached = true
+          resolve()
+        })
+        children.push(contender)
+        void contender.exited.then(async () => {
+          if (reached) return
+          const error = await new Response(contender.stderr).text()
+          reject(new Error(`Contender exited before release: ${error}`))
+        })
+      }),
+  )
+  try {
+    await Promise.all(ready)
+    for (const contender of children) contender.send("go")
+    const results = await Promise.all(
+      children.map(async (contender) => JSON.parse(await output(contender))),
+    )
+    expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
+    return results
+  } finally {
+    for (const contender of children) contender.kill()
+    await Promise.all(children.map((contender) => contender.exited))
+  }
+}
+
+test("independent native-tool connections racing the same content commit one task and association", async () => {
+  const { path, directory } = fixture()
+  expect(spawnSync("git", ["init", "--initial-branch=main", directory]).status).toBe(0)
+  const options = {
+    path,
+    project: directory,
+    workspace: directory,
+    session: "race",
+    input: keyedProposal(),
+  }
+  const results = await race([options, { ...options, session: "other" }], path)
+  expect(results[0].status).toBe("submitted")
+  expect(results[1]).toEqual(results[0])
+}, 30_000)
+
+test("independent native-tool connections racing changed content produce one winner and one conflict", async () => {
+  const { path, directory } = fixture()
+  expect(spawnSync("git", ["init", "--initial-branch=main", directory]).status).toBe(0)
+  const options = {
+    path,
+    project: directory,
+    workspace: directory,
+    session: "race",
+    input: keyedProposal(),
+  }
+  const results = await race(
+    [
+      options,
+      {
+        ...options,
+        input: { ...keyedProposal(), objective: "Competing intent" },
+      },
+    ],
+    path,
+  )
+  expect(results.map((result) => result.status).sort()).toEqual(["conflict", "submitted"])
+  const winner = results.findIndex((result) => result.status === "submitted")
+  const task = open(path, directory).list()[0]!
+  expect(task.id).toBe(results[winner].taskID)
+  expect(task.proposal.objective).toBe(
+    winner === 0 ? validProposal().objective : "Competing intent",
+  )
+  expect(
+    submitTask(open(path, directory), { ...keyedProposal(), ...task.proposal }, noProvenance),
+  ).toEqual(results[winner])
+}, 30_000)
+
+test("genuine v1 data migrates transactionally and mappings survive repeated reopening", () => {
+  const { path, provenance } = fixture()
+  const task: TaskSpec = {
+    schemaVersion: 1,
     id: crypto.randomUUID(),
-    revision: 1 as const,
-    status: "submitted" as const,
-    createdAt: new Date().toISOString(),
+    revision: 1,
+    status: "submitted",
+    createdAt: "2026-01-01T00:00:00.000Z",
     provenance: provenance(),
     proposal: validProposal(),
   }
-  legacy
-    .query("INSERT INTO tasks VALUES(?,?,?,?)")
-    .run(task.id, "/repo", task.createdAt, JSON.stringify(task))
+  const body = JSON.stringify(task, null, 2)
+  const legacy = new Database(path)
+  legacy.exec(`CREATE TABLE tasks(id TEXT PRIMARY KEY, project_directory TEXT NOT NULL,
+    created_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE INDEX tasks_project_created ON tasks(project_directory, created_at);
+    PRAGMA user_version=1;`)
+  legacy.query("INSERT INTO tasks VALUES(?,?,?,?)").run(task.id, "/repo", task.createdAt, body)
   legacy.close()
-  const script = `import {TaskRepository} from ${JSON.stringify(new URL("./storage.ts", import.meta.url).pathname)}; import {submitTask} from ${JSON.stringify(new URL("./submission.ts", import.meta.url).pathname)}; const r=new TaskRepository(process.argv[1],"/repo"); console.log(JSON.stringify(submitTask(r,JSON.parse(process.argv[2]),()=>JSON.parse(process.argv[3]),"race")));r.close()`
-  const results = await Promise.all(
-    Array.from({ length: 8 }, async () => {
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          "-e",
-          script,
-          path,
-          JSON.stringify(validProposal()),
-          JSON.stringify(provenance()),
-        ],
-        { stdout: "pipe", stderr: "pipe" },
-      )
-      const output = await new Response(child.stdout).text()
-      const error = await new Response(child.stderr).text()
-      expect(await child.exited, error).toBe(0)
-      return JSON.parse(output)
-    }),
-  )
-  expect(new Set(results.map((result) => result.taskID)).size).toBe(1)
-  const repository = new TaskRepository(path, "/repo")
-  expect(repository.get(task.id)).toEqual(task)
-  expect(repository.list()).toHaveLength(2)
-  repository.close()
+  let receipt: ReturnType<typeof submitTask> | undefined
+  for (let index = 0; index < 3; index++) {
+    const repository = open(path)
+    expect(repository.get(task.id)).toEqual(task)
+    expect(repository.list().find((stored) => stored.id === task.id)).toEqual(task)
+    const result = submitTask(repository, keyedProposal(), index === 0 ? provenance : noProvenance)
+    if (index === 0) receipt = result
+    expect(result).toEqual(receipt!)
+    repository.close()
+    const db = new Database(path)
+    try {
+      expect(db.query("SELECT body FROM tasks WHERE id=?").get(task.id)).toEqual({ body })
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 3 })
+    } finally {
+      db.close()
+    }
+    expect(counts(path)).toEqual({ tasks: 2, keys: 1 })
+  }
+})
+
+test("migration failure preserves v1 metadata/body and can be retried without partial DDL", () => {
+  const { path } = fixture()
+  const legacy = new Database(path)
+  legacy.exec(`CREATE TABLE tasks(id TEXT PRIMARY KEY, project_directory TEXT NOT NULL,
+    created_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE submission_requests(block_migration TEXT);
+    PRAGMA user_version=1;`)
+  try {
+    expect(() => new TaskRepository(path, "/repo")).toThrow("already exists")
+    expect(legacy.query("PRAGMA user_version").get()).toEqual({ user_version: 1 })
+    expect(
+      legacy
+        .query<{ name: string }, []>("PRAGMA table_info(tasks)")
+        .all()
+        .map((row) => row.name),
+    ).toEqual(["id", "project_directory", "created_at", "body"])
+    expect(legacy.query("SELECT name FROM sqlite_master WHERE name='task_changes'").all()).toEqual(
+      [],
+    )
+    legacy.exec("DROP TABLE submission_requests")
+    expect(open(path).list()).toEqual([])
+  } finally {
+    legacy.close()
+  }
 })

@@ -1,10 +1,10 @@
-import { Database } from "bun:sqlite"
+import { Database, SQLiteError } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join } from "node:path"
-import { TaskSpecSchema } from "./task.ts"
+import { IdempotencyKeySchema, TaskProposalSchema, TaskSpecSchema } from "./task.ts"
 import type { TaskSpec } from "./task.ts"
-import { fingerprint } from "./identity.ts"
+import { canonical, fingerprint } from "./identity.ts"
 
 export function taskDatabasePath(dataDirectory?: string): string {
   const directory =
@@ -39,11 +39,31 @@ export class TaskRepository {
   private open(): Database {
     const db = new Database(this.path, { create: true, strict: true })
     try {
-      db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON")
+      db.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON")
+      const version = () =>
+        db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
+      const initial = version()
+      if (initial > 3) throw new Error(`Unsupported LAZERS database version ${initial}`)
+      // SQLite can fail a concurrent first WAL transition immediately despite
+      // busy_timeout. Retry only connection configuration, never a task write.
+      const deadline = Date.now() + 5_000
+      for (;;) {
+        try {
+          db.exec("PRAGMA journal_mode = WAL")
+          break
+        } catch (error) {
+          if (
+            !(error instanceof SQLiteError) ||
+            error.code !== "SQLITE_BUSY" ||
+            Date.now() >= deadline
+          )
+            throw error
+          Bun.sleepSync(10)
+        }
+      }
       db.transaction(() => {
-        const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!
-          .user_version
-        if (version > 3) throw new Error(`Unsupported LAZERS database version ${version}`)
+        const current = version()
+        if (current > 3) throw new Error(`Unsupported LAZERS database version ${current}`)
         db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
@@ -54,7 +74,7 @@ export class TaskRepository {
           CREATE INDEX IF NOT EXISTS tasks_project_created
             ON tasks(project_directory, created_at);
         `)
-        if (version < 2) {
+        if (current < 2) {
           db.exec(`
             ALTER TABLE tasks ADD COLUMN created_version INTEGER NOT NULL DEFAULT 0;
             UPDATE tasks SET created_version = rowid;
@@ -75,7 +95,7 @@ export class TaskRepository {
             PRAGMA user_version = 2;
           `)
         }
-        if (version < 3)
+        if (current < 3)
           db.exec(
             "ALTER TABLE task_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'insert'; PRAGMA user_version=3",
           )
@@ -98,58 +118,63 @@ export class TaskRepository {
       .run(this.projectDirectory)
   }
 
-  submitOnce(requestID: string, proposal: unknown, create: () => unknown) {
-    if (!requestID.trim() || requestID.length > 200)
-      throw new Error("requestID must contain 1–200 characters")
-    const hash = fingerprint(proposal)
-    return this.atomic((db) => {
+  submitOnce(key: string, proposal: unknown, create: () => unknown) {
+    IdempotencyKeySchema.parse(key)
+    const validated = TaskProposalSchema.parse(proposal)
+    const content = canonical(validated)
+    let inserted = false
+    // The write lock covers lookup, lazy provenance collection, and both inserts.
+    // No competing caller can collect provenance or reserve this key in between.
+    const receipt = this.atomic((db) => {
       const existing = db
-        .query<{ fingerprint: string; task_id: string }, [string, string]>(
-          "SELECT fingerprint, task_id FROM submission_requests WHERE project_directory = ? AND request_id = ?",
+        .query<{ body: string }, [string, string]>(
+          `SELECT t.body FROM submission_requests r JOIN tasks t ON t.id = r.task_id
+           AND t.project_directory = r.project_directory
+           WHERE r.project_directory = ? AND r.request_id = ?`,
         )
-        .get(this.projectDirectory, requestID)
+        .get(this.projectDirectory, key)
       if (existing) {
-        if (existing.fingerprint !== hash)
+        const task = TaskSpecSchema.parse(JSON.parse(existing.body))
+        // Compare full validated structure, not just a potentially colliding hash.
+        if (canonical(task.proposal) !== content)
           return {
             status: "conflict" as const,
-            message: "requestID already identifies different validated content",
+            message: "idempotencyKey already identifies different validated content",
           }
-        return { status: "submitted" as const, taskID: existing.task_id, revision: 1 as const }
+        return { status: "submitted" as const, taskID: task.id, revision: task.revision }
       }
-      const task = this.insert(create())
-      db.query("INSERT INTO submission_requests VALUES (?, ?, ?, ?)").run(
-        this.projectDirectory,
-        requestID,
-        hash,
-        task.id,
-      )
+      const task = TaskSpecSchema.parse(create())
+      if (canonical(task.proposal) !== content)
+        throw new Error("Task proposal does not match validated submission")
+      this.persist(task)
+      db.query(
+        `INSERT INTO submission_requests
+        (project_directory, request_id, fingerprint, task_id) VALUES (?, ?, ?, ?)`,
+      ).run(this.projectDirectory, key, fingerprint(validated), task.id)
+      inserted = true
       return { status: "submitted" as const, taskID: task.id, revision: task.revision }
     })
-  }
-
-  submissionReceipt(key: string, proposal: unknown) {
-    const existing = this.db
-      .query<{ fingerprint: string; task_id: string }, [string, string]>(
-        "SELECT fingerprint,task_id FROM submission_requests WHERE project_directory=? AND request_id=?",
-      )
-      .get(this.projectDirectory, key)
-    if (!existing) return undefined
-    return existing.fingerprint === fingerprint(proposal)
-      ? { status: "submitted" as const, taskID: existing.task_id, revision: 1 as const }
-      : {
-          status: "conflict" as const,
-          message: "idempotencyKey already identifies different validated content",
-        }
+    if (inserted) this.notify()
+    return receipt
   }
 
   insert(input: unknown): TaskSpec {
     const task = TaskSpecSchema.parse(input)
+    this.persist(task)
+    this.notify()
+    return task
+  }
+
+  private persist(task: TaskSpec): void {
     if (task.provenance.projectDirectory !== this.projectDirectory) {
       throw new Error("Task provenance does not match this repository")
     }
     this.db
       .query("INSERT INTO tasks (id, project_directory, created_at, body) VALUES (?, ?, ?, ?)")
       .run(task.id, this.projectDirectory, task.createdAt, JSON.stringify(task))
+  }
+
+  private notify(): void {
     // Notifications are best effort after the durable write, never part of its receipt.
     for (const listener of this.listeners) {
       try {
@@ -158,7 +183,6 @@ export class TaskRepository {
         /* A read observer cannot undo a committed submission. */
       }
     }
-    return task
   }
 
   version(): number {
