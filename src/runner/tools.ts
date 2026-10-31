@@ -3,6 +3,7 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { z } from "zod"
 import { nativeWorkerOptions } from "./catalog.ts"
+import { InspectPlanInput, inspectPlan } from "./inspection.ts"
 import { CommandInput, PlanInput } from "./schema.ts"
 import type { TaskRuntime } from "./runtime.ts"
 
@@ -26,13 +27,10 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lazers_inspect_plan",
         description:
-          "Inspect plan, dependencies, execution, attempts, effects, evidence, delivery and current audit. Without planID returns all project plans and deterministic overlap/unplanned findings.",
-        schema: z.strictObject({ planID: z.uuid().optional() }),
+          "Compact by default: inspect all project plans or one plan with IDs, authored title/objective, state/version/reason, model, schedule, node states/waiting reasons, attempt/effect/outcome counts and concise check exit status. It omits policies, transcripts and check output. Set full=true only for progressive troubleshooting; it returns the existing full plan detail, or all plan source and audit when planID is omitted.",
+        schema: InspectPlanInput,
         run: (input: unknown) => {
-          const { planID } = input as { planID?: string }
-          return planID
-            ? runtime.store.detail(planID)
-            : { plans: runtime.store.plans(), audit: runtime.store.audit() }
+          return inspectPlan(runtime.store, InspectPlanInput.parse(input))
         },
       },
       {

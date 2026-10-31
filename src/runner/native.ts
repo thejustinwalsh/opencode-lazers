@@ -45,7 +45,7 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         }),
       )
     },
-    async session(id) {
+    async session(id, options) {
       const session = await Effect.runPromise(
         ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(
           Effect.catch((error) => {
@@ -61,7 +61,9 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         ),
       )
       if (!session) return null
-      const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+      const messages = options?.messages
+        ? await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+        : []
       const busy = session.time.busy ? DateTime.toEpochMillis(session.time.busy) : 0
       const idle = session.time.idle ? DateTime.toEpochMillis(session.time.idle) : 0
       return {

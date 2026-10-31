@@ -64,7 +64,7 @@ determines the APIs used here.
   all three now record integration and native cleanup.
 
 `9b0ab5e` contains the recovery/scheduling/prompt repairs. The reviewed tree including
-machine API maintenance passes **219 tests / 2,236 assertions**, formatting, lint
+machine API maintenance passes **222 tests / 2,276 assertions**, formatting, lint
 and strict typecheck. These checks do not complete the native observations above.
 
 ## Executable order and remaining holes
@@ -79,11 +79,21 @@ records their priority, models and dependencies; no prose HOLD controls executio
 | After product integration  | Task references/grouping and durable progress                                        | Copy usable task references; expose waiting/running state; hook automatic facts and concise progress into one log            |
 | After progress integration | Architect renewal                                                                    | Preserve decisions/questions/model, use provider/model/options cache policy, transfer ownership durably, archive predecessor |
 
-The progress work should also remove one concrete polling inefficiency:
-`nativeHost.session` currently loads and maps the whole transcript during routine
-polling. Prefer cheap native session metadata for heartbeat and bounded/cached
-message-presence reconciliation, preserving lost-response safety. Measure native
-reads and verify no duplicate prompt or outcome before claiming improvement.
+Two further audit repairs are implemented and checked: native heartbeat now reads
+session metadata, requesting history for final usage or message reconciliation;
+plan inspection returns compact state by default with explicit `full: true` retrieval.
+A real sample was 678 bytes of metadata versus 2,304,994 bytes / 184 transcript
+messages. Lost-response, final-count and busy-again race regressions pass. These
+source changes await native activation at a worker boundary; running model turns
+were not interrupted to reload them. No live performance gain is claimed yet.
+
+Cross-worktree Repomix delivery remains a concrete hole: native location moves
+create separate context roots, and the three current worker roots have no published
+cache. They have used ordinary source tools. Architect has a queued narrow repair
+request to make a selected project snapshot readable in isolated worktrees, preserve
+permission/project checks and as-of-refresh attribution, and demonstrate one refresh
+plus isolated read without recollection. Unavailable optional context falls back to
+normal reads/LSP. This supplements workspace-local reuse rather than repeating it.
 
 Close the trajectory permission, Repomix reuse and optional-guidance observations
 while these real workers run. Keep missing observations in this matrix; create a

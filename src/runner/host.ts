@@ -23,7 +23,12 @@ export interface RunnerHost {
   worktree(input: { directory: string; base: string }): Promise<string>
   worktrees(): Promise<string[]>
   removeWorktree(directory: string): Promise<void>
-  session(id: string): Promise<HostSession | null>
+  /**
+   * Session metadata is the normal heartbeat path. Request messages only for
+   * explicit reconciliation or final accounting, where message history is
+   * needed to prove a receipt or count completed tools.
+   */
+  session(id: string, options?: { messages?: boolean }): Promise<HostSession | null>
   create(input: {
     id: string
     parentID: string

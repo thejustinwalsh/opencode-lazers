@@ -13,19 +13,26 @@
   },
   "currentVerification": {
     "command": "bun test",
-    "result": "219 passed, 0 failed, 2236 expectations",
+    "result": "222 passed, 0 failed, 2276 expectations",
     "quality": "bun run verify passed formatting, lint, and strict typecheck",
     "interpretation": "This is the current checkout result at the audit snapshot; historical task acceptance and later active-plan observations remain separate."
   },
   "performanceRisks": [
     {
-      "location": "src/runner/native.ts nativeHost.session",
-      "status": "concrete_current_hole",
-      "finding": "Every session projection calls ctx.session.context and materializes the entire transcript, then maps every message, even when runtime polling only needs busy/outcome/model/usage or an exact message-presence check.",
-      "impact": "The scheduler polls owner and active worker sessions repeatedly; long Architect contexts can make each tick expensive in memory and transport, and the same transcript is reread for reconciliation and outbox delivery.",
-      "why_it_exists": "HostSession currently combines metadata, usage, tool counting and message IDs in one adapter method; prompt and notify reconciliation use message IDs to avoid duplicate effects.",
-      "safe_follow_up": "Split a cheap session summary from bounded message-ID reconciliation, or cache a projection by native updated/idle metadata and invalidate after LAZERS sends. If the pinned host exposes no message-ID endpoint, fetch full context only for an uncertain prompt/notify effect, never on the normal heartbeat path. Preserve stale/uncertain semantics before reducing reads.",
-      "not_fixed_in_audit": true
+      "location": "src/runner/native.ts and src/runner/inspection.ts",
+      "status": "implemented_and_tested_pending_native_activation",
+      "measurement": {
+        "metadataBytes": 678,
+        "transcriptBytes": 2304994,
+        "transcriptMessages": 184
+      },
+      "repair": "Metadata-only normal heartbeats; history for final usage and exact message recovery. Compact plan inspection, explicit full retrieval."
+    },
+    {
+      "location": "src/context and runner dispatch",
+      "status": "native_cross_worktree_delivery_gap",
+      "observation": "Separate native worker workspace roots have no context_cache rows; observed workers use ordinary source tools. Workspace-local reuse is tested; isolated shared reuse is not delivered.",
+      "plan": "Queued native Architect request for one concise context-delivery repair, permission-checked and as-of-refresh, with normal-read fallback and one native isolated-read observation."
     }
   ],
   "plans": [
@@ -225,7 +232,7 @@
             },
             {
               "id": "safe",
-              "assertion": "Tests prove permission-before-access, foreign identity/cursor rejection, unchanged DB/audit/watermark/host and disposal-safe callbacks. Scan full serialized text/structured/error JSON for seeded excluded/private fields, nested secrets and credentials/URLs in prose/tools/errors; none leak. Test redaction-before-truncation, unknown parts, pagination, failed→accepted, resume/provider retry, mixed models, missing data and host errors.",
+              "assertion": "Tests prove permission-before-access, foreign identity/cursor rejection, unchanged DB/audit/watermark/host and disposal-safe callbacks. Scan full serialized text/structured/error JSON for seeded excluded/private fields, nested secrets and credentials/URLs in prose/tools/errors; none leak. Test redaction-before-truncation, unknown parts, pagination, failed\u2192accepted, resume/provider retry, mixed models, missing data and host errors.",
               "evidence": [
                 {
                   "kind": "verification",
@@ -689,9 +696,11 @@
             },
             {
               "id": "quality-observed",
-              "status": "partial",
-              "evidence": ["spike 016 CLI route listing and focused tests"],
-              "gap": "No Desktop native inference run establishes provider availability or persona behavior; no ranking or cost-effectiveness claim is made."
+              "status": "native_routes_observed_persona_quality_unproven",
+              "evidence": [
+                "native-workers.json: exact opencode-go/qwen3.8-flash medium and openai/gpt-6-luna max sessions"
+              ],
+              "gap": "No comparative affordability or persona-quality conclusion before accepted work."
             }
           ],
           "acceptance": [
@@ -773,9 +782,12 @@
             },
             {
               "id": "native-dogfood",
-              "status": "unresolved",
-              "evidence": ["native.md explicitly reports no native scheduler run"],
-              "gap": "No native worker session overlap, native worktree cleanup, reviewed merge or native integration receipt was observed."
+              "status": "native_overlap_observed_completion_pending",
+              "evidence": [
+                "native-workers.json: three concurrent native sessions, routes, workspaces and tool activity",
+                ".agents/docs/evidence/022-native-parallel-dispatch/first-product-wave.md: native queued wake consumed and integrated earlier plans cleaned up"
+              ],
+              "gap": "Current product wave still needs returned artifacts, reviewed combined behavior, merge and cleanup."
             }
           ],
           "acceptance": [

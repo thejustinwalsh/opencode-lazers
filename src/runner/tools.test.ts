@@ -93,7 +93,9 @@ test("authorized callers read native catalog advice; only orchestration requires
   expect(catalogCalls).toBe(1)
 
   const worker = await Effect.runPromise(catalog.execute({}, callContext("lazers-implementor")))
-  expect(JSON.parse(String(worker.content))).toEqual(advice)
+  const workerAdvice = JSON.parse(String(worker.content))
+  expect(workerAdvice.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/)
+  expect({ ...workerAdvice, observedAt: advice.observedAt }).toEqual(advice)
   expect(permissionChecks).toEqual(["lazers_worker_catalog", "lazers_worker_catalog"])
   expect(catalogCalls).toBe(2)
   for (const name of ["lazers_submit_plan", "lazers_plan_command"])

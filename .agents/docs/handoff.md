@@ -37,15 +37,16 @@ panels in Desktop; do not substitute CLI fixtures for native acceptance. Terra
 6.1 High reviews actual screenshots against `design/system-panel`,
 `design/trajectory-panel` and `design/task-panel` references.
 
-Retire five broad legacy records through `lazers_dispose_task`: rejected ceremony
+Five broad legacy records were retired through native `lazers_dispose_task`: rejected ceremony
 `75f62b3b`, and superseded `2d955ffa`, `94298112`, `313174d7`, `9dde2941`.
 Superseded does not mean every old acceptance observation passed. Preserve gaps in
 the audit. Canceled inference-isolation task `c0ef9f9d` stays canceled.
 
 Missing native observations: permitted worker trajectory reads, production Repomix
 refresh/index/read reuse, optional guidance, complete parallel return/merge/cleanup,
-and relevant theme/font coverage. Cheap heartbeat/session projection belongs with
-durable progress; avoid fetching the entire Architect transcript every poll.
+and relevant theme/font coverage. Cheap heartbeat and compact inspection are implemented/tested on main; activate at
+a safe native worker boundary and observe them. Cross-worktree context delivery is
+queued for Architect specification; current workers have separate empty cache roots.
 
 Architect renewal must use provider/model/options-sensitive cache policy with user
 override and fallback; do not treat a universal timeout as a provider guarantee.
@@ -71,5 +72,5 @@ Preserve handoff, pending input, model and ownership before native archival.
 - Load Portless skill before launching a project listening server. None is needed
   for native Desktop maintenance or one-shot checks.
 
-Current verified tree: 219 tests / 2,236 assertions, formatting, lint and strict
+Current verified tree: 222 tests / 2,276 assertions, formatting, lint and strict
 TypeScript pass. Consult the audit for the boundary between tests and native proof.

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Effect } from "effect"
+import { DateTime, Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
@@ -298,4 +298,57 @@ test("actionable notifications use native queued synthetic resume with the durab
     delivery: "queue",
     description: "LAZERS task outcome",
   })
+})
+
+test("native session heartbeat reads metadata without context and opts into messages explicitly", async () => {
+  let contextReads = 0
+  const now = DateTime.nowUnsafe()
+  const host = nativeHost(
+    {
+      session: {
+        get: () =>
+          Effect.succeed({
+            id: "ses_worker",
+            parentID: "ses_owner",
+            projectID: "project",
+            agent: "lazers-implementor",
+            metadata: {},
+            location: { directory: "/worker" },
+            time: { busy: now, idle: now, archived: undefined },
+            tokens: { input: 10, output: 4, reasoning: 2, cache: { read: 3, write: 1 } },
+            model: { providerID: "openai", id: "gpt-6-luna", variant: "max" },
+            outcome: "succeeded",
+          }),
+        context: () => {
+          contextReads++
+          return Effect.succeed([
+            { id: "msg_user", type: "user", text: "Implement it" },
+            {
+              id: "msg_done",
+              type: "assistant",
+              content: [
+                { type: "tool", name: "edit", state: "completed" },
+                { type: "text", text: "Done" },
+              ],
+            },
+          ])
+        },
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+
+  const heartbeat = await host.session("ses_worker")
+  expect(contextReads).toBe(0)
+  expect(heartbeat?.tokens).toBe(20)
+  expect(heartbeat?.tools).toBe(0)
+  expect(heartbeat?.messages).toEqual([])
+
+  const detailed = await host.session("ses_worker", { messages: true })
+  expect(contextReads).toBe(1)
+  expect(detailed?.tools).toBe(1)
+  expect(detailed?.messages).toEqual([
+    { id: "msg_user", text: "Implement it" },
+    { id: "msg_done", text: "Done" },
+  ])
 })

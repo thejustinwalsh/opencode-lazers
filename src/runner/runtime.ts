@@ -843,7 +843,10 @@ export class TaskRuntime {
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
     let waiting = false
     for (const attempt of active) {
-      const session = await this.host.session(attempt.session_id)
+      let session = await this.host.session(attempt.session_id)
+      if (session && !session.busy && session.outcome) {
+        session = (await this.host.session(attempt.session_id, { messages: true })) ?? session
+      }
       if (session) this.observeUsage(attempt, session, fence)
       const promptCompleted = this.store
         .effects(plan.id)
@@ -1229,7 +1232,7 @@ export class TaskRuntime {
       await this.prepareWorker(plan, attempt, fence)
       return
     }
-    const session = await this.host.session(attempt.session_id)
+    let session = await this.host.session(attempt.session_id)
     if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) {
       if (session) this.observeUsage(attempt, session, fence)
       return
@@ -1241,8 +1244,12 @@ export class TaskRuntime {
     const task = this.store.repository.get(attempt.task_id)!
     this.observeUsage(attempt, session, fence)
     if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
-    if (!session.busy && session.outcome)
-      this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome)
+    if (!session.busy && session.outcome) {
+      session = (await this.host.session(attempt.session_id, { messages: true })) ?? session
+      this.observeUsage(attempt, session, fence)
+      if (!session.busy && session.outcome)
+        this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome)
+    }
     if (session.busy || !session.outcome) return
     if (session.outcome !== "succeeded") {
       this.failAttempt(plan, attempt, `Worker ${session.outcome}`)
@@ -1665,7 +1672,7 @@ export class TaskRuntime {
           return
         }
       } else if (effect.kind === "prompt") {
-        const session = await this.host.session(payload.sessionID)
+        const session = await this.host.session(payload.sessionID, { messages: true })
         if (session?.messages.some((m) => m.id === payload.messageID)) {
           this.receipt(
             effect,
@@ -1770,7 +1777,10 @@ export class TaskRuntime {
     for (const message of messages) {
       const plan = this.store.plan(message.plan_id)
       if (!plan) continue
-      let target = await this.host.session(message.session_id)
+      let target = await this.host.session(
+        message.session_id,
+        message.state === "pending" ? undefined : { messages: true },
+      )
       let targetMessageID = message.message_id
       let state = message.state
       if (

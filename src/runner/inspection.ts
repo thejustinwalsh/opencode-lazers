@@ -1,0 +1,409 @@
+import { z } from "zod"
+import type { RunnerStore } from "./store.ts"
+
+export const InspectPlanInput = z.strictObject({
+  planID: z.uuid().optional(),
+  full: z.boolean().optional().default(false),
+})
+export type InspectPlanInput = z.infer<typeof InspectPlanInput>
+
+export type CompactWaitingPlan = {
+  planID: string
+  state: string | null
+  version: number | null
+  reason: string | null
+}
+export type CompactNode = {
+  taskID: string
+  ordinal: number
+  state: string
+  version: number
+  reason: string | null
+  waitingOn: string[]
+  attempts: number
+  latestAttempt: {
+    id: string
+    number: number
+    state: string
+    startedAt: number
+    toolCount: number
+    retryCount: number
+  } | null
+}
+export type CompactPlanDetail = {
+  mode: "compact"
+  plan: {
+    id: string
+    owner: string
+    revision: number
+    version: number
+    title: string | null
+    objective: string
+    state: string
+    reason: string | null
+    model: unknown
+    artifact: string | null
+    schedule: {
+      priority: number
+      workspaceMode: string
+      afterPlans: string[]
+      integrationOrder: string[]
+      dependencies: DependencyRow[]
+    }
+  }
+  waitingOnPlans: CompactWaitingPlan[]
+  counts: Record<string, unknown>
+  nodes: CompactNode[]
+  latestOutcomes: Record<string, unknown>[]
+  checks: Record<string, unknown>[]
+}
+export type CompactInspectionSummary = {
+  mode: "compact"
+  plans: Array<{
+    id: string
+    owner: string
+    revision: number
+    version: number
+    title: string | null
+    objective: string
+    state: string
+    reason: string | null
+    model: unknown
+    artifact: string | null
+    schedule: {
+      priority: number
+      workspaceMode: string
+      afterPlans: string[]
+      integrationOrder: string[]
+    }
+    waitingOnPlans: CompactWaitingPlan[]
+    counts: { nodes: number; nodesByState: Record<string, number> }
+  }>
+  audit: { watermark: number; findingCount: number; findingsByCode: Record<string, number> }
+}
+
+type PlanRow = {
+  id: string
+  owner: string
+  revision: number
+  version: number
+  state: string
+  reason: string | null
+  model: string | null
+  artifact: string | null
+  title: string | null
+  objective: string
+  priority: number | null
+  workspaceMode: string
+  afterPlans: string | null
+  integrationOrder: string
+}
+type NodeRow = {
+  task_id: string
+  ordinal: number
+  state: string
+  version: number
+  reason: string | null
+  artifact: string | null
+}
+type DependencyRow = { prerequisite: string; successor: string }
+type AttemptRow = {
+  id: string
+  task_id: string
+  number: number
+  state: string
+  started_at: number
+  tool_count: number
+  retry_count: number
+  token_count: number | null
+  cost: number | null
+}
+type EffectRow = {
+  id: string
+  task_id: string | null
+  attempt_id: string | null
+  kind: string
+  state: string
+  receipt: string | null
+}
+type TransitionRow = {
+  task_id: string | null
+  event: string
+  payload: string
+  created_at: number
+}
+type WaitingPlanRow = { id: string; state: string; version: number; reason: string | null }
+
+const json = (value: string | null): unknown => {
+  if (!value) return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return undefined
+  }
+}
+
+const arrayJSON = <T>(value: string | null, fallback: T[]): T[] => {
+  const parsed = json(value)
+  return Array.isArray(parsed) ? (parsed as T[]) : fallback
+}
+
+const model = (value: string | null): unknown => {
+  const parsed = json(value)
+  return parsed && typeof parsed === "object" ? parsed : null
+}
+
+function waitingOnPlans(store: RunnerStore, plan: PlanRow): CompactWaitingPlan[] {
+  const prerequisites = arrayJSON<string>(plan.afterPlans, [])
+  if (!prerequisites.length) return []
+  return store.atomic((db) =>
+    prerequisites.flatMap((planID) => {
+      const current = db
+        .query<WaitingPlanRow, [string, string]>(
+          "SELECT id,state,version,reason FROM runner_plans WHERE project_directory=? AND id=?",
+        )
+        .get(store.repository.projectDirectory, planID)
+      if (current?.state === "integrated") return []
+      return [
+        {
+          planID,
+          state: current?.state ?? null,
+          version: current?.version ?? null,
+          reason: current?.reason ?? null,
+        },
+      ]
+    }),
+  )
+}
+
+function planRows(store: RunnerStore, planID?: string): PlanRow[] {
+  return store.atomic((db) =>
+    db
+      .query<PlanRow, (string | null)[]>(
+        `SELECT id,owner,revision,version,state,reason,model,artifact,
+          json_extract(body,'$.title') AS title,
+          json_extract(body,'$.objective') AS objective,
+          json_extract(body,'$.priority') AS priority,
+          COALESCE(json_extract(body,'$.workspaceMode'),'shared') AS workspaceMode,
+          json_extract(body,'$.afterPlans') AS afterPlans,
+          json_extract(body,'$.integrationOrder') AS integrationOrder
+         FROM runner_plans
+         WHERE project_directory=? AND (? IS NULL OR id=?)
+         ORDER BY COALESCE(json_extract(body,'$.priority'),0) DESC,rowid`,
+      )
+      .all(store.repository.projectDirectory, planID ?? null, planID ?? null),
+  )
+}
+
+function compactPlan(store: RunnerStore, plan: PlanRow) {
+  const { nodes, dependencies, attempts, effects, transitions } = store.atomic((db) => ({
+    nodes: db
+      .query<NodeRow, [string]>(
+        "SELECT task_id,ordinal,state,version,reason,artifact FROM runner_nodes WHERE plan_id=? ORDER BY ordinal",
+      )
+      .all(plan.id),
+    dependencies: db
+      .query<DependencyRow, [string]>(
+        "SELECT prerequisite,successor FROM runner_dependencies WHERE plan_id=? ORDER BY prerequisite,successor",
+      )
+      .all(plan.id),
+    attempts: db
+      .query<AttemptRow, [string]>(
+        "SELECT id,task_id,number,state,started_at,tool_count,retry_count,token_count,cost FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
+      )
+      .all(plan.id),
+    effects: db
+      .query<EffectRow, [string]>(
+        "SELECT id,task_id,attempt_id,kind,state,receipt FROM runner_effects WHERE plan_id=? ORDER BY rowid",
+      )
+      .all(plan.id),
+    transitions: db
+      .query<TransitionRow, [string]>(
+        "SELECT task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? ORDER BY id",
+      )
+      .all(plan.id),
+  }))
+
+  const prerequisites = new Map<string, string[]>()
+  for (const dependency of dependencies) {
+    const list = prerequisites.get(dependency.successor) ?? []
+    list.push(dependency.prerequisite)
+    prerequisites.set(dependency.successor, list)
+  }
+  const attemptsByTask = new Map<string, AttemptRow[]>()
+  for (const attempt of attempts) {
+    const list = attemptsByTask.get(attempt.task_id) ?? []
+    list.push(attempt)
+    attemptsByTask.set(attempt.task_id, list)
+  }
+  const nodeStates = new Map(nodes.map((node) => [node.task_id, node.state]))
+  const lastTransition = new Map<string, TransitionRow>()
+  for (const event of transitions) if (event.task_id) lastTransition.set(event.task_id, event)
+
+  const checks = new Map<string, Record<string, unknown>>()
+  for (const effect of effects) {
+    if (!effect.kind.includes("verify")) continue
+    const receipt = json(effect.receipt)
+    const check =
+      receipt && typeof receipt === "object" && "check" in receipt && receipt.check
+        ? receipt.check
+        : undefined
+    const summary: Record<string, unknown> = {
+      kind: effect.kind,
+      state: effect.state,
+      taskID: effect.task_id,
+      attemptID: effect.attempt_id,
+    }
+    if (check && typeof check === "object") {
+      for (const key of ["exitCode", "timedOut", "unchanged"])
+        if (key in check) summary[key] = (check as Record<string, unknown>)[key]
+    }
+    checks.set(`${effect.task_id ?? "plan"}:${effect.attempt_id ?? "none"}:${effect.kind}`, summary)
+  }
+
+  const countBy = (values: string[]) =>
+    values.reduce<Record<string, number>>((counts, value) => {
+      counts[value] = (counts[value] ?? 0) + 1
+      return counts
+    }, {})
+  const activeStates = new Set(["preparing", "running", "verifying"])
+  const latestOutcomes = nodes.map((node) => {
+    const latest = lastTransition.get(node.task_id)
+    const payload = latest ? json(latest.payload) : undefined
+    const outcome: Record<string, unknown> = { taskID: node.task_id, event: latest?.event ?? null }
+    if (payload && typeof payload === "object") {
+      for (const key of ["status", "outcome", "reason"])
+        if (key in payload) outcome[key] = (payload as Record<string, unknown>)[key]
+    }
+    return outcome
+  })
+
+  const planDetail = {
+    id: plan.id,
+    owner: plan.owner,
+    revision: plan.revision,
+    version: plan.version,
+    title: plan.title,
+    objective: plan.objective,
+    state: plan.state,
+    reason: plan.reason,
+    model: model(plan.model),
+    artifact: plan.artifact,
+    schedule: {
+      priority: plan.priority ?? 0,
+      workspaceMode: plan.workspaceMode,
+      afterPlans: arrayJSON<string>(plan.afterPlans, []),
+      integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
+      dependencies,
+    },
+  }
+  return {
+    mode: "compact" as const,
+    plan: planDetail,
+    waitingOnPlans: waitingOnPlans(store, plan),
+    counts: {
+      nodes: nodes.length,
+      attempts: attempts.length,
+      activeAttempts: attempts.filter((attempt) => activeStates.has(attempt.state)).length,
+      effects: effects.length,
+      pendingEffects: effects.filter((effect) => ["intended", "uncertain"].includes(effect.state))
+        .length,
+      attemptsByState: countBy(attempts.map((attempt) => attempt.state)),
+      effectsByState: countBy(effects.map((effect) => effect.state)),
+      transitionsByEvent: countBy(transitions.map((event) => event.event)),
+    },
+    nodes: nodes.map((node) => {
+      const waitingOn = (prerequisites.get(node.task_id) ?? []).filter(
+        (taskID) => nodeStates.get(taskID) !== "accepted",
+      )
+      const taskAttempts = attemptsByTask.get(node.task_id) ?? []
+      const latestAttempt = taskAttempts.at(-1)
+      return {
+        taskID: node.task_id,
+        ordinal: node.ordinal,
+        state:
+          plan.state === "blocked" && ["queued", "ready"].includes(node.state)
+            ? "blocked"
+            : node.state,
+        version: node.version,
+        reason: node.reason ?? (plan.state === "blocked" ? plan.reason : null),
+        waitingOn,
+        attempts: taskAttempts.length,
+        latestAttempt: latestAttempt
+          ? {
+              id: latestAttempt.id,
+              number: latestAttempt.number,
+              state: latestAttempt.state,
+              startedAt: latestAttempt.started_at,
+              toolCount: latestAttempt.tool_count,
+              retryCount: latestAttempt.retry_count,
+            }
+          : null,
+      }
+    }),
+    latestOutcomes,
+    checks: [...checks.values()],
+  }
+}
+
+function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
+  const states = store.atomic((db) =>
+    db
+      .query<{ state: string; count: number }, [string]>(
+        "SELECT state,COUNT(*) AS count FROM runner_nodes WHERE plan_id=? GROUP BY state ORDER BY state",
+      )
+      .all(plan.id),
+  )
+  return {
+    id: plan.id,
+    owner: plan.owner,
+    revision: plan.revision,
+    version: plan.version,
+    title: plan.title,
+    objective: plan.objective,
+    state: plan.state,
+    reason: plan.reason,
+    model: model(plan.model),
+    artifact: plan.artifact,
+    schedule: {
+      priority: plan.priority ?? 0,
+      workspaceMode: plan.workspaceMode,
+      afterPlans: arrayJSON<string>(plan.afterPlans, []),
+      integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
+    },
+    waitingOnPlans: waitingOnPlans(store, plan),
+    counts: {
+      nodes: states.reduce((total, entry) => total + entry.count, 0),
+      nodesByState: Object.fromEntries(states.map((entry) => [entry.state, entry.count])),
+    },
+  }
+}
+
+function compactAudit(store: RunnerStore) {
+  const audit = store.audit()
+  return {
+    watermark: audit.watermark,
+    findingCount: audit.findings.length,
+    findingsByCode: audit.findings.reduce<Record<string, number>>((counts, finding) => {
+      counts[finding.code] = (counts[finding.code] ?? 0) + 1
+      return counts
+    }, {}),
+  }
+}
+
+export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
+  if (input.full) {
+    return input.planID
+      ? store.detail(input.planID)
+      : { plans: store.plans(), audit: store.audit() }
+  }
+  const plans = planRows(store, input.planID)
+  if (input.planID && !plans.length) throw new Error("Plan not found")
+  return input.planID
+    ? compactPlan(store, plans[0]!)
+    : {
+        mode: "compact",
+        plans: plans.map((plan) => compactPlanSummary(store, plan)),
+        audit: compactAudit(store),
+      }
+}

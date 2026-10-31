@@ -837,6 +837,12 @@ test("Start rejects stale, foreign and ended work without changing runtime state
 
 test("an archived Architect is replaced by one linked owner and uncertain delivery reuses its message ID", async () => {
   const f = fixture({ shared: true, commit: true })
+  const detailedSessionIDs: string[] = []
+  const session = f.host.session
+  f.host.session = async (id, options) => {
+    if (options?.messages) detailedSessionIDs.push(id)
+    return session(id, options)
+  }
   f.sessions.get("owner")!.archived = true
   await f.runtime.command(
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
@@ -873,6 +879,7 @@ test("an archived Architect is replaced by one linked owner and uncertain delive
     .get(plan.owner)!
     .messages.filter((message) => message.id === messageIDBeforeRestart)
   expect(received).toHaveLength(1)
+  expect(detailedSessionIDs).toContain(plan.owner)
   expect(
     f.store.attempts(plan.id).filter((attempt) => attempt.task_id === f.tasks[0]!.id),
   ).toHaveLength(1)
@@ -1435,6 +1442,12 @@ test("explicit reconcile retries conclusive combined checks after environment re
 
 test("uncertain prompt cannot prevent cancellation of an admitted sibling", async () => {
   const f = fixture({ independent: true, delayed: true })
+  const detailedSessionIDs: string[] = []
+  const session = f.host.session
+  f.host.session = async (id, options) => {
+    if (options?.messages) detailedSessionIDs.push(id)
+    return session(id, options)
+  }
   const prompt = f.host.prompt
   let release!: () => void
   const admitted = new Promise<void>((resolve) => {
@@ -1477,6 +1490,7 @@ test("uncertain prompt cannot prevent cancellation of an admitted sibling", asyn
       .effects(f.receipt.planID)
       .some((effect) => effect.kind === "prompt" && effect.state === "uncertain"),
   ).toBe(true)
+  expect(detailedSessionIDs).toContain(b.session_id)
 })
 
 test("two conflicting shared resumes use current prompt identities and cannot deadlock", async () => {
@@ -2478,7 +2492,9 @@ test("cross-plan dependencies wait for integration and dispatch from the integra
   await f.runtime.tick()
   expect(f.store.attempts(dependent.planID)).toHaveLength(0)
   const attempt = f.store.attempts(f.receipt.planID)[0]!
-  f.completeWorker(attempt.session_id)
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "succeeded"
   await drive(f.runtime)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
   expect(f.store.attempts(dependent.planID)).toHaveLength(0)
@@ -2596,4 +2612,39 @@ test("runtime shutdown joins an in-flight native operation before storage may cl
   const attempts = f.store.attempts(f.receipt.planID).length
   await f.runtime.tick()
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(attempts)
+})
+
+test("heartbeat avoids context and rechecks a stopped worker after detailed accounting", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const original = f.host.session
+  const calls: { id: string; messages: boolean }[] = []
+  let firstFinalRead = true
+  f.host.session = async (id, options) => {
+    calls.push({ id, messages: options?.messages === true })
+    const session = await original(id, options)
+    if (session && options?.messages) {
+      session.tools = 9
+      if (id === attempt.session_id && firstFinalRead) {
+        firstFinalRead = false
+        session.busy = true
+        session.outcome = undefined
+      }
+    }
+    return session
+  }
+
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "succeeded"
+  await f.runtime.tick()
+  expect(calls.find((call) => call.id === attempt.session_id)?.messages).toBe(false)
+  expect(calls.some((call) => call.id === attempt.session_id && call.messages)).toBe(true)
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)[0]!.tool_count).toBe(9)
 })
