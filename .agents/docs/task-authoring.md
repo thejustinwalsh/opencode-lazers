@@ -15,6 +15,12 @@ The typed schema maps these to `objective`, `acceptance`,
 `writeScope`/`constraints`/`exclusions`, optional `guidance`, and `verification`.
 `context` holds useful references. Dependencies and worker selection belong to
 the execution plan; runtime owns identities, provenance and execution records.
+`requirements.skills` is an optional list of suggestions, preferably written as
+`name — one-line description`. Name-only legacy entries remain readable; their
+description is unknown rather than inferred. Workers may load a useful native
+skill progressively, subject to OpenCode's normal permission check; an absent or
+denied suggestion does not block a task. `requirements.policyReference` is
+optional legacy metadata; use task-specific constraints for actual requirements.
 An empty applicable list is sufficient. Do not fill fields with boilerplate.
 
 Long specifications warrant checking whether distinct outcomes should be tasks
@@ -25,9 +31,10 @@ Guidance is advice. State mandatory decisions as constraints and explain the
 compatibility or product reason. A mini skill is concise, scoped knowledge:
 what to reuse, a relevant trap, why it matters, and a source. Inline one-off
 findings; link reusable lessons such as [implementation notes](implementation-notes.md).
-Required native skills remain explicit dependencies and their content is attached
-through a stable OpenCode session instruction entry before the worker prompt.
-Repeated attachment replaces that entry instead of appending another task blob.
+Use task guidance for concise, relevant code findings tied to source paths, lines
+and revisions; include research results only when they affect the task, with an
+optional link to deeper material. Generic repository-discovery and skill-loading
+advice lives in the shared implementor instructions, not repeated in each task.
 
 Architect self-review through `lazers_verify_task` stays. It checks both missing
 behavior and unsupported or repeated obligations. It must preserve necessary

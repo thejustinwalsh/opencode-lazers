@@ -34,7 +34,6 @@ const host: RunnerHost = {
     git(root, ["worktree", "remove", directory])
   },
   session: async (id) => load().sessions[id] ?? null,
-  skills: async () => [],
   create: async (input) => {
     cut("before-session")
     const state = load()

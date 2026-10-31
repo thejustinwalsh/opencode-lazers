@@ -7,6 +7,21 @@ export function taskInstructions(detail: TaskDetail): string {
     proposal = task.proposal
   const section = (name: string, items: string[]) =>
     items.length ? `\n\n## ${name}\n${items.map((item) => `- ${item}`).join("\n")}` : ""
+  const skills = proposal.requirements.skills.map((suggestion) => {
+    const line = suggestion.split(/\r?\n/, 1)[0]!.trim()
+    const separator = line.indexOf(" — ")
+    const name = (separator < 0 ? line : line.slice(0, separator)).slice(0, 120)
+    const rawDescription =
+      separator < 0
+        ? ""
+        : line
+            .slice(separator + 3)
+            .trim()
+            .slice(0, 240)
+    const description =
+      rawDescription || "Description unavailable (legacy suggestion stores only a name)."
+    return `${name}: ${description}`
+  })
   return (
     `# Task ${task.id}, revision ${task.revision}\n\n${proposal.objective}` +
     section(
@@ -29,10 +44,11 @@ export function taskInstructions(detail: TaskDetail): string {
     ) +
     section(
       "Context references",
-      proposal.context.map((ref) => ref.reference),
+      proposal.context.map((ref) =>
+        ref.revision ? `${ref.reference} (revision ${ref.revision})` : ref.reference,
+      ),
     ) +
     section("Required capabilities", proposal.requirements.capabilities) +
-    section("Required skills", proposal.requirements.skills) +
-    `\n\nRisk: ${proposal.requirements.risk}. Policy: ${proposal.requirements.policyReference}.`
+    section("Optional skill suggestions", skills)
   )
 }

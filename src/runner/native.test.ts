@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { TaskRepository } from "../storage.ts"
+import workerInstructions from "../implementor.md" with { type: "text" }
 import { nativeHost } from "./native.ts"
 
 test("native worktrees use the host lifecycle with the admitted ref and returned directory", async () => {
@@ -53,6 +54,7 @@ test("child prompt uses native move and verifies location before any model work"
     {
       session: {
         get: () => Effect.sync(() => ({ location: { directory } })),
+        instructions: { entry: { remove: () => Effect.void } },
         move: (_input: { directory: string }) =>
           Effect.sync(() => {
             calls.push("move")
@@ -87,28 +89,52 @@ test("child prompt uses native move and verifies location before any model work"
   expect(calls).toEqual(["move", "wait", "prompt", "prompt"])
 })
 
-test("required skill content reaches a stable native instruction entry before prompting", async () => {
-  const entries = new Map<string, unknown>()
+test("worker guidance teaches focused LAZERS discovery and optional progressive skill use", () => {
+  expect(workerInstructions).toContain("lazers_project_index")
+  expect(workerInstructions).toContain("lazers_project_read")
+  expect(workerInstructions).toContain("optional suggestions, not prerequisites")
+  expect(workerInstructions).toContain("native `skill` tool")
+  expect(workerInstructions).toContain("normal skill permission check")
+})
+
+test("optional skills are not resolved, and only the legacy LAZERS entry is removed before prompting", async () => {
+  const entries = new Map<string, unknown>([
+    ["lazers-required-skills", "SECRET_SKILL_BODY_CANARY"],
+    ["other-plugin", "keep this entry"],
+  ])
   let prompts = 0
-  let fail = false
+  let skillLists = 0
+  let skillPermissions = 0
+  let removals = 0
   const host = nativeHost(
     {
+      skill: {
+        list: () => {
+          skillLists++
+          throw new Error("A suggestion is unavailable")
+        },
+      },
+      permission: {
+        assert: () => {
+          skillPermissions++
+          throw new Error("Skill permission denied")
+        },
+      },
       session: {
         get: () => Effect.succeed({ location: { directory: "/worker" } }),
         instructions: {
           entry: {
-            put: (input: { key: string; value: unknown }) =>
+            remove: (input: { key: string }) =>
               Effect.sync(() => {
-                if (fail) throw new Error("Native attachment failed")
-                entries.set(input.key, input.value)
+                removals++
+                expect(input.key).toBe("lazers-required-skills")
+                entries.delete(input.key)
               }),
           },
         },
         prompt: () =>
           Effect.sync(() => {
-            expect(entries.get("lazers-required-skills")).toContain(
-              "Use the existing transaction helper",
-            )
+            expect(entries.has("lazers-required-skills")).toBe(false)
             prompts++
           }),
       },
@@ -120,21 +146,13 @@ test("required skill content reaches a stable native instruction entry before pr
     id: "msg_worker",
     directory: "/worker",
     text: "Implement the task",
-    skills: [
-      {
-        id: "sqlite",
-        path: "/repo/skills/sqlite/SKILL.md",
-        revision: "v1",
-        content: "Use the existing transaction helper",
-      },
-    ],
   }
   await host.prompt(input)
   await host.prompt(input)
-  expect(entries.size).toBe(1)
-  expect(prompts).toBe(2)
-  fail = true
-  await expect(host.prompt(input)).rejects.toThrow("Native attachment failed")
+  expect(entries).toEqual(new Map([["other-plugin", "keep this entry"]]))
+  expect(removals).toBe(2)
+  expect(skillLists).toBe(0)
+  expect(skillPermissions).toBe(0)
   expect(prompts).toBe(2)
 })
 

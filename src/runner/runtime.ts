@@ -51,16 +51,6 @@ export class TaskRuntime {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
     }
-    const skills =
-      command.action === "run"
-        ? await this.host.skills(old.owner, [
-            ...new Set(
-              this.store
-                .nodes(old.id)
-                .flatMap((n) => this.store.repository.get(n.task_id)!.proposal.requirements.skills),
-            ),
-          ])
-        : []
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -178,9 +168,6 @@ export class TaskRuntime {
               source,
               attempt.id,
             )
-          const policy = JSON.parse(attempt.policy)
-          policy.workspaceMode = "shared"
-          policy.source = source
           const revised = PlanInput.parse({
             ...JSON.parse(plan.body),
             workspaceMode: "shared",
@@ -197,11 +184,6 @@ export class TaskRuntime {
             plan.owner,
             Date.now(),
           )
-          if (!retry)
-            db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
-              JSON.stringify(policy),
-              attempt.id,
-            )
           this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
             attemptID: attempt.id,
             from: attempt.workspace,
@@ -293,22 +275,12 @@ export class TaskRuntime {
           plan,
           `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
         )
-      const required = [
-        ...new Set(
-          this.store
-            .nodes(plan.id)
-            .flatMap((n) => this.store.repository.get(n.task_id)!.proposal.requirements.skills),
-        ),
-      ]
-      if (required.some((id) => !skills.some((s) => s.id === id)))
-        return this.hold(plan, "Required skill unavailable")
       db.query(
         "UPDATE runner_plans SET state='running',model=?,reason=NULL,version=version+1 WHERE id=?",
       ).run(JSON.stringify(model), plan.id)
       this.store.record(plan.id, null, "ADMITTED", {
         model,
         modelSource: proposal.workerModel ? "explicit-plan-selection" : "owner-session",
-        skills: skills.map(({ content: _content, ...source }) => source),
         auditWatermark: audit.watermark,
         source: proposal.baseCommit,
         enforcement: {
@@ -537,11 +509,6 @@ export class TaskRuntime {
     const input = PlanInput.parse(JSON.parse(plan.body))
     if (JSON.parse(plan.body).workspaceMode === undefined && attempts.length)
       input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
-    const skills = await this.host.skills(plan.owner, task.proposal.requirements.skills)
-    if (skills.length !== task.proposal.requirements.skills.length) {
-      this.hold(plan, "Required skill unavailable at dispatch")
-      return
-    }
     const id = crypto.randomUUID()
     // Serial integration uses each accepted prior artifact; dependencies remain explicit readiness gates.
     const previous = this.store
@@ -560,7 +527,6 @@ export class TaskRuntime {
       taskID: task.id,
       revision: task.revision,
       specification: task.proposal,
-      skills,
       source: base,
       previousAttempt: first
         ? { id: attempts.at(-1)!.id, evidence: this.store.detail(plan.id).evidence }
@@ -572,7 +538,11 @@ export class TaskRuntime {
       model: ModelPolicy.parse(JSON.parse(plan.model!)),
       source: base,
       context: text,
-      skills: skills.map(({ content: _content, ...s }) => s),
+      packet: {
+        recipe: "task-tool/1",
+        taskID: task.id,
+        tool: "lazers_get_task_instructions",
+      },
       budget: null,
       repairAttempt: this.store.atomic(
         (db) =>
@@ -605,6 +575,10 @@ export class TaskRuntime {
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
     })
+    this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {
+      attemptID: id,
+      packet: policy.packet,
+    })
     if (input.workspaceMode === "shared") {
       await this.prepareWorker(plan, attempt, fence)
       return
@@ -626,7 +600,6 @@ export class TaskRuntime {
     await this.prepareWorker(plan, attempt, fence)
   }
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const policy = JSON.parse(attempt.policy)
     const existing = this.store.effects(plan.id)
     if (!existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")) {
       const effect = this.effect(
@@ -642,7 +615,7 @@ export class TaskRuntime {
           id: attempt.session_id,
           parentID: plan.owner,
           agent: "lazers-implementor",
-          model: ModelPolicy.parse(policy.model),
+          model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           directory: attempt.workspace,
           title: `LAZERS · ${this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100)}`,
           attemptID: attempt.id,
@@ -661,23 +634,6 @@ export class TaskRuntime {
           JSON.parse(e.payload).messageID === attempt.message_id,
       )
     ) {
-      if (!policy.packet) {
-        policy.packet = {
-          recipe: "task-tool/1",
-          taskID: attempt.task_id,
-          tool: "lazers_get_task_instructions",
-        }
-        this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
-            JSON.stringify(policy),
-            attempt.id,
-          )
-          this.store.record(plan.id, attempt.task_id, "CONTEXT_RESOLVED", {
-            attemptID: attempt.id,
-            packet: policy.packet,
-          })
-        })
-      }
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -695,7 +651,6 @@ export class TaskRuntime {
           sessionID: attempt.session_id,
           id: attempt.message_id,
           directory: attempt.workspace,
-          skills: JSON.parse(policy.context).skills,
           text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lazers_get_task_instructions before editing. Use lazers_get_task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.`,
         })
         this.receipt(
@@ -704,7 +659,6 @@ export class TaskRuntime {
             messageID: attempt.message_id,
             taskID: attempt.task_id,
             instructions: "readable; lazers_get_task_instructions",
-            skills: JSON.parse(policy.context).skills.map((skill: { id: string }) => skill.id),
           },
           fence,
         )

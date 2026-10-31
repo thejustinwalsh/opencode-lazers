@@ -21,6 +21,17 @@ const detail = GetOutput.parse({
     proposal: {
       ...validProposal(),
       guidance: "Reuse the existing task read boundary; keep advice advisory.",
+      context: [{ reference: "README.md", revision: "abc123" }],
+      constraints: ["Preserve transaction atomicity because task submission spans two writes."],
+      requirements: {
+        ...validProposal().requirements,
+        policyReference: "Obsolete boilerplate: required skills must resolve before workers run.",
+        skills: [
+          "sqlite — Reuse the existing transaction helper for atomic writes.",
+          "legacy-skill",
+          "old-header\nSECRET_SKILL_BODY_CANARY",
+        ],
+      },
     },
   },
 })
@@ -34,11 +45,29 @@ test("task instructions preserve goal, acceptance, boundaries, guidance, verific
   expect(instructions).toContain("Evidence: tests")
   expect(instructions).toContain("## Write scope\n- src/**\n- README.md")
   expect(instructions).toContain("## Exclusions\n- Do not dispatch workers")
-  expect(instructions).toContain("## Constraints\n- Use plugin-owned SQLite storage")
+  expect(instructions).toContain(
+    "## Constraints\n- Preserve transaction atomicity because task submission spans two writes.",
+  )
   expect(instructions).toContain("## Implementation guidance (advisory)")
   expect(instructions).toContain("keep advice advisory")
   expect(instructions).toContain("## Verification\n- tests: bun test")
-  expect(instructions).toContain("## Context references\n- README.md")
+  expect(instructions).toContain("## Context references\n- README.md (revision abc123)")
+  expect(instructions).toContain("## Optional skill suggestions")
+  expect(instructions).toContain(
+    "- sqlite: Reuse the existing transaction helper for atomic writes.",
+  )
+  expect(instructions).toContain(
+    "- legacy-skill: Description unavailable (legacy suggestion stores only a name).",
+  )
+  expect(instructions).toContain(
+    "- old-header: Description unavailable (legacy suggestion stores only a name).",
+  )
+  expect(instructions).not.toContain("Required skills")
+  expect(instructions).not.toContain("SECRET_SKILL_BODY_CANARY")
+  expect(instructions).not.toContain("Risk:")
+  expect(instructions).not.toContain("Policy:")
+  expect(instructions).not.toContain("Obsolete boilerplate")
+  expect(instructions).not.toContain("lazers_project_index")
   expect(instructions.indexOf("## Done when")).toBeLessThan(instructions.indexOf("## Constraints"))
   expect(instructions).not.toContain('"proposal"')
 })

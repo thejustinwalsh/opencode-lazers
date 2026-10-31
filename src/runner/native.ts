@@ -6,7 +6,6 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { AbsolutePath } from "@opencode/schema/schema"
 import { DateTime, Effect } from "effect"
-import { fingerprint } from "../identity.ts"
 import type { RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
@@ -98,30 +97,6 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
         })),
       }
     },
-    async skills(sessionID, ids) {
-      if (!ids.length) return []
-      const available = await Effect.runPromise(ctx.skill.list())
-      const selected = []
-      for (const id of ids) {
-        const skill = available.data.find((s) => s.id === id)
-        if (!skill) throw new Error(`Required skill unavailable: ${id}`)
-        await Effect.runPromise(
-          ctx.permission.assert({
-            sessionID: Session.ID.make(sessionID),
-            agent: Agent.ID.make("architect"),
-            action: "skill",
-            resources: [id],
-          }),
-        )
-        selected.push({
-          id: skill.id,
-          path: skill.path,
-          content: skill.content,
-          revision: fingerprint({ path: skill.path, content: skill.content }),
-        })
-      }
-      return selected
-    },
     async create(input) {
       const model = {
         id: Model.ID.make(input.model.id),
@@ -159,17 +134,10 @@ export function nativeHost(ctx: Plugin.Context, _repository: TaskRepository): Ru
       const located = await Effect.runPromise(ctx.session.get({ sessionID: id }))
       if (located.location.directory !== input.directory)
         throw new Error("Worker session is not in its assigned worktree")
-      if (input.skills?.length) {
-        await Effect.runPromise(
-          ctx.session.instructions.entry.put({
-            sessionID: id,
-            key: "lazers-required-skills",
-            value: input.skills
-              .map((skill) => `# ${skill.id}\nSource: ${skill.path}\n\n${skill.content}`)
-              .join("\n\n"),
-          }),
-        )
-      }
+      // Remove only the entry written by the former eager skill adapter. Missing-key removal is safe.
+      await Effect.runPromise(
+        ctx.session.instructions.entry.remove({ sessionID: id, key: "lazers-required-skills" }),
+      )
       await Effect.runPromise(
         ctx.session.prompt({
           sessionID: Session.ID.make(input.sessionID),

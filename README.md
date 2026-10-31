@@ -38,13 +38,13 @@ These are target contracts, implemented progressively rather than prerequisites 
 
 The compiler returns either a valid `TaskSpec` or focused questions identifying what prevents execution.
 
-| Field        | Required meaning                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| Identity     | Stable task ID, specification revision, repository, and starting revision                        |
-| Intent       | Observable objective, explicit exclusions, constraints, and assumptions                          |
-| Scope        | Relevant context references and permitted write paths                                            |
-| Acceptance   | Identified behavioral assertions, each mapped to required evidence or an explicit human decision |
-| Requirements | Required capabilities and skills, verification procedures, risk, and policy reference            |
+| Field        | Required meaning                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Identity     | Stable task ID, specification revision, repository, and starting revision                                              |
+| Intent       | Observable objective, explicit exclusions, constraints, and assumptions                                                |
+| Scope        | Relevant context references and permitted write paths                                                                  |
+| Acceptance   | Identified behavioral assertions, each mapped to required evidence or an explicit human decision                       |
+| Requirements | Required capabilities, optional skill suggestions, verification procedures, risk, and optional legacy policy reference |
 
 Optional `guidance` carries scoped implementation advice: existing code to reuse,
 known pitfalls and useful practices with source references. It is distinct from
@@ -62,9 +62,7 @@ Use one task for self-contained work and a series of tasks when the requested fe
 
 ### 3 Execution policy
 
-Admission resolves a `TaskSpec` and versioned policy into a recorded `ExecutionPlan`: agent, model and provider, skills, tools and permissions, context, workspace and verification schedule. Given the same inputs and capability snapshot, policy resolution produces the same plan. Architect recommendations are inputs; runtime policy makes the final selection.
-
-Required skills must resolve to the intended source and version and reach the worker before implementation. Record selection provenance. Missing or denied requirements stop admission. Apply this guarantee to delegated, synthetic, resumed, and compacted sessions as those paths become supported.
+Admission resolves a `TaskSpec` and versioned policy into a recorded `ExecutionPlan`: agent, model and provider, tools and permissions, context, workspace and verification schedule. Given the same inputs and capability snapshot, policy resolution produces the same plan. Architect recommendations are inputs; runtime policy makes the final selection. Task skill entries are optional suggestions and do not gate admission or dispatch. Workers may load a useful native skill progressively under OpenCode's normal permission check; LAZERS does not resolve or inject skill bodies.
 
 Historical Architect-generated limits do not stop execution. Measure tokens, time, tool calls and retries, and report unavailable equivalent cost honestly. Continuation and repair preserve prior usage and trajectory records; model selection should use those observations to find affordable, effective models.
 
@@ -94,7 +92,7 @@ Serial tasks default to native child sessions in the shared checkout; parallel w
 
 ### 5 Context and memory
 
-A `ContextPacket` supplies concise repository rules, the specification, selected skills, relevant interfaces and findings, and their source revisions. Reuse valid findings; invalidate stale ones. Deliver required guidance without repeatedly appending duplicate instructions.
+A `ContextPacket` supplies concise repository rules, the specification and its optional skill suggestions, relevant interfaces and findings, and their source revisions. Reuse valid findings; invalidate stale ones. Workers can progressively load a useful native skill when needed and permitted; skill bodies are not eagerly attached to task context.
 
 Persistent memory retrieval is bounded and relevant. Durable decisions retain provenance. Stable prompt prefixes may improve provider caching, but reported cache usage must demonstrate the benefit; separate sessions do not imply shared caches.
 
@@ -251,7 +249,7 @@ Question:       One uncertainty this spike resolves.
 Increment:      Smallest usable behavior added to the previous retained spike.
 Scope:          Starting revision, allowed writes, dependencies, and exclusions.
 Acceptance:     Observable result and the evidence required to prove it.
-Execution:      One worker, explicit model/skills/tools, and context references.
+Execution:      One worker, explicit model/tools, optional skill suggestions, and context references.
 Usage:          Actual usage, trajectory records, provider/model limits and unknown costs.
 Verification:   Checks at the completion boundary and invalidation conditions.
 Outcome:        Artifact, measurements, unresolved issues, retain/revise/discard.

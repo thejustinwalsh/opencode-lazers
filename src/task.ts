@@ -55,9 +55,15 @@ export const TaskProposalSchema = z
       ),
     requirements: z.strictObject({
       capabilities: texts,
-      skills: texts,
+      skills: texts.describe(
+        "Optional skill suggestions. Entries may use 'name — one-line description'; name-only legacy strings remain valid and do not become prerequisites.",
+      ),
       risk: z.enum(["low", "medium", "high"]),
-      policyReference: text,
+      policyReference: text
+        .optional()
+        .describe(
+          "Optional legacy policy reference; omit when no task-specific reference is needed.",
+        ),
     }),
     verification: z
       .array(

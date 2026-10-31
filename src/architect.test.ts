@@ -41,6 +41,10 @@ test("the packaged definition registers a missing primary agent and isolates tra
   expect(first.permissions).toContainEqual({ action: "*", resource: "*", effect: "allow" })
   expect(first.permissions.some((rule) => rule.effect === "deny")).toBe(false)
   expect(first.system).toContain("review the diff and verification")
+  expect(first.system).toContain("optional skill suggestions")
+  expect(first.system).toContain("name — one-line description")
+  expect(first.system).toContain("relevant research summaries")
+  expect(first.system).not.toContain("Required skills")
 
   first.permissions.push({ action: "edit", resource: "*", effect: "allow" })
   first.request.body.changed = true

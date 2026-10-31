@@ -21,6 +21,8 @@ function fixture(
     outside?: boolean
     shared?: boolean
     commit?: boolean
+    repair?: boolean
+    skillSuggestions?: string[]
     workerModel?: { providerID: string; id: string; variant?: string }
   } = {},
 ) {
@@ -65,7 +67,8 @@ function fixture(
         ],
       },
     ]
-    proposal.limits.maxRepairAttempts = 0
+    proposal.requirements.skills = options.skillSuggestions ?? []
+    proposal.limits.maxRepairAttempts = options.repair ? 1 : 0
     return repository.insert({
       schemaVersion: 1,
       id: crypto.randomUUID(),
@@ -110,7 +113,6 @@ function fixture(
       git(root, ["worktree", "remove", directory])
     },
     session: async (id) => structuredClone(sessions.get(id) ?? null),
-    skills: async () => [],
     create: async (input) => {
       events.push(`create:${input.id}`)
       sessions.set(input.id, {
@@ -131,6 +133,8 @@ function fixture(
       events.push(`prompt:${input.id}`)
       expect(input.text).toContain("lazers_get_task_instructions")
       expect(input.text).not.toContain('"specification"')
+      expect(input.text).not.toContain("SECRET_SKILL_BODY_CANARY")
+      expect("skills" in input).toBe(false)
       expect(input.text.length).toBeLessThan(1200)
       const session = sessions.get(input.sessionID)!
       session.messages.push({ id: input.id, text: input.text })
@@ -199,6 +203,31 @@ function fixture(
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
+const skillBodyCanary = "SECRET_SKILL_BODY_CANARY"
+function seedLegacySkillBody(
+  f: ReturnType<typeof fixture>,
+  attempt: ReturnType<RunnerStore["attempts"]>[number],
+) {
+  const policy = JSON.parse(attempt.policy) as Record<string, unknown>
+  const context = JSON.parse(policy.context as string) as Record<string, unknown>
+  const body = [{ id: "legacy-skill", path: "/old/SKILL.md", content: skillBodyCanary }]
+  policy.skills = body
+  context.skills = body
+  policy.context = JSON.stringify(context)
+  delete policy.packet
+  const serialized = JSON.stringify(policy)
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(serialized, attempt.id),
+  )
+  attempt.policy = serialized
+  return serialized
+}
+function expectNoSkillBody(policyText: string) {
+  expect(policyText).not.toContain(skillBodyCanary)
+  const policy = JSON.parse(policyText) as Record<string, unknown>
+  expect(policy.skills).toBeUndefined()
+  expect(JSON.parse(policy.context as string)).not.toHaveProperty("skills")
+}
 
 test("real Git worktrees execute a dependency graph, verify combined content and retain origin", async () => {
   const f = fixture()
@@ -235,6 +264,46 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   })
   await drive(f.runtime)
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
+})
+
+test("missing and permission-denied skill suggestions never block admission or dispatch", async () => {
+  for (const skillSuggestions of [
+    [],
+    ["missing-skill — Optional but not installed"],
+    ["denied-skill — Optional and may not be permitted"],
+  ]) {
+    const f = fixture({ skillSuggestions })
+    await f.runtime.command(
+      { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+      "owner",
+    )
+    await drive(f.runtime)
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+    for (const attempt of f.store.attempts(f.receipt.planID)) {
+      expectNoSkillBody(attempt.policy)
+      expect(
+        JSON.parse(JSON.parse(attempt.policy).context).specification.requirements.skills,
+      ).toEqual(skillSuggestions)
+    }
+  }
+})
+
+test("repair handoffs do not copy legacy skill bodies into a new attempt", async () => {
+  const f = fixture({ fail: true, repair: true, skillSuggestions: ["sqlite — Optional helper"] })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  seedLegacySkillBody(f, first)
+  await f.runtime.tick()
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("ready")
+  await f.runtime.tick()
+  const attempts = f.store.attempts(f.receipt.planID)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[0]!.policy).toContain(skillBodyCanary)
+  expectNoSkillBody(attempts[1]!.policy)
 })
 
 test("verification failure and scope violations cannot unblock a successor", async () => {
@@ -319,6 +388,7 @@ test("historical guessed token caps do not stop useful work and stopped attempts
   )
   await f.runtime.tick()
   const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const historicalPolicy = seedLegacySkillBody(f, attempt)
   const worker = f.sessions.get(attempt.session_id)!
   worker.tokens = 65941
   worker.outcome = "interrupted"
@@ -342,6 +412,7 @@ test("historical guessed token caps do not stop useful work and stopped attempts
   expect(f.store.attempts(f.receipt.planID)[0]!.token_count).toBe(65941)
   await drive(f.runtime)
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)[0]!.policy).toBe(historicalPolicy)
   const sameTask = f.store.attempts(f.receipt.planID).filter((a) => a.task_id === attempt.task_id)
   expect(sameTask).toHaveLength(1)
   expect(sameTask[0]!.session_id).toBe(attempt.session_id)
@@ -434,6 +505,7 @@ test("explicit retry starts a fresh native child and retains the old attempt and
   )
   await f.runtime.tick()
   const old = f.store.attempts(f.receipt.planID)[0]!
+  seedLegacySkillBody(f, old)
   f.store.atomic((db) =>
     db.query("UPDATE runner_attempts SET token_count=65941 WHERE id=?").run(old.id),
   )
@@ -464,6 +536,8 @@ test("explicit retry starts a fresh native child and retains the old attempt and
   expect(attempts).toHaveLength(2)
   expect(attempts[0]!.token_count).toBe(65941)
   expect(attempts[0]!.state).toBe("cancelled")
+  expect(attempts[0]!.policy).toContain(skillBodyCanary)
+  expectNoSkillBody(attempts[1]!.policy)
   expect(attempts[1]!.session_id).not.toBe(old.session_id)
   expect(attempts[1]!.workspace).toBe(f.root)
 })

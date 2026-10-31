@@ -47,6 +47,34 @@ describe("task proposals", () => {
     expect(taskProposalJSONSchema.additionalProperties).toBe(false)
     expect(taskProposalJSONSchema.required).not.toContain("limits")
     expect(taskProposalJSONSchema.required).not.toContain("guidance")
+    const requirements = taskProposalJSONSchema.properties?.requirements as {
+      required?: string[]
+      properties: { skills: { description?: string } }
+    }
+    expect(requirements.required).not.toContain("policyReference")
+    expect(requirements.properties.skills.description).toContain("Optional skill suggestions")
+    const { policyReference: _legacyPolicy, ...withoutPolicy } = validProposal().requirements
+    const proposalWithoutPolicy = TaskProposalSchema.parse({
+      ...validProposal(),
+      requirements: {
+        ...withoutPolicy,
+        skills: ["legacy-name", "sqlite — Reuse the atomic write helper."],
+      },
+    })
+    expect(proposalWithoutPolicy.requirements.policyReference).toBeUndefined()
+    expect(proposalWithoutPolicy.requirements.skills).toEqual([
+      "legacy-name",
+      "sqlite — Reuse the atomic write helper.",
+    ])
+    expect(
+      TaskProposalSchema.parse({
+        ...validProposal(),
+        requirements: {
+          ...validProposal().requirements,
+          policyReference: "Obsolete legacy guidance remains readable.",
+        },
+      }).requirements.policyReference,
+    ).toBe("Obsolete legacy guidance remains readable.")
     expect(
       TaskProposalSchema.parse({ ...validProposal(), guidance: "Reuse src/storage.ts." }).guidance,
     ).toBe("Reuse src/storage.ts.")
@@ -161,6 +189,19 @@ test("submitted envelopes distinguish unborn provenance from a missing revision"
     proposal: validProposal(),
   }
   expect(TaskSpecSchema.safeParse(task).success).toBe(true)
+  expect(TaskSpecSchema.parse(task).proposal.requirements.policyReference).toBe("AGENTS.md")
+  const { policyReference: _oldReference, ...requirements } = task.proposal.requirements
+  const legacyWithoutReference = {
+    ...task,
+    proposal: {
+      ...task.proposal,
+      requirements: { ...requirements, skills: ["old-name"] },
+    },
+  }
+  expect(TaskSpecSchema.parse(legacyWithoutReference).proposal.requirements).toEqual({
+    ...requirements,
+    skills: ["old-name"],
+  })
   expect(TaskSpecSchema.safeParse({ ...task, status: "ready" }).success).toBe(false)
   expect(
     TaskSpecSchema.safeParse({
