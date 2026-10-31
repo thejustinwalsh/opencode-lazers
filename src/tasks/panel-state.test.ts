@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { TaskPanelState } from "./panel-state.ts"
 import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
+import type { SnapshotResponse } from "../observability/contract.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -233,6 +234,53 @@ test("read failures retain stale scoped data and recovery preserves the selected
     await state.refresh()
     expect(state.data.stale).toBe(false)
     expect(state.data.selectedID).toBe(selected)
+  } finally {
+    state.close()
+  }
+})
+
+test("topology is published only when it shares the task-page repository boundary", async () => {
+  const state = new TaskPanelState(() => {})
+  let queries = 0
+  let snapshots = 0
+  const api = transport(async () => page("/project", crypto.randomUUID(), ++queries))
+  api.snapshot = async () => {
+    snapshots++
+    return {
+      boundary: { repositoryVersion: snapshots === 1 ? 0 : 2 },
+      plans: [],
+    } as unknown as SnapshotResponse
+  }
+  try {
+    state.connect("view", "/project", api, {})
+    await tick()
+    await tick()
+    expect(queries).toBe(2)
+    expect(snapshots).toBe(2)
+    expect(state.data.page?.snapshot).toBe(2)
+    expect(state.data.topology?.boundary.repositoryVersion).toBe(2)
+    expect(state.data.topologyError).toBe("")
+  } finally {
+    state.close()
+  }
+})
+
+test("linked dependency details use the transport's same-scope authorization path", async () => {
+  const state = new TaskPanelState(() => {})
+  const target = crypto.randomUUID()
+  let requested: string | undefined
+  const api = transport(
+    async () => page("/project"),
+    async (taskID) => {
+      requested = taskID
+      return { status: "not_found" }
+    },
+  )
+  try {
+    state.connect("view", "/project", api, { sessionID: "session" })
+    await tick()
+    await state.resolveLinked(target)
+    expect(requested).toBe(target)
   } finally {
     state.close()
   }

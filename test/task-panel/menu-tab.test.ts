@@ -15,6 +15,7 @@ const jsxRecord = (type: unknown, props: Record<string, unknown>): VNode =>
 const Icon = (props: { name: string; size?: string }) => ({ icon: props.name })
 const gui = {
   Command: { name: "Command" },
+  LinkHandler: { name: "LinkHandler" },
   MenuItem: { name: "MenuItem" },
   Panel: { name: "Panel" },
   Style: { name: "Style" },

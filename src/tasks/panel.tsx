@@ -12,15 +12,18 @@ import {
 } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
-import { For, Show, createSignal, onCleanup, createEffect } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Tasks } from "./contract.ts"
+import { Observability } from "../observability/contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import type { PanelData } from "./panel-state.ts"
 import { clampSplit, splitFromPointer } from "./panel-layout.ts"
 import { taskTitle } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
+import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
+import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
 import css from "./panel.css?inline"
 
 const View = Schema.Struct({
@@ -30,6 +33,9 @@ const View = Schema.Struct({
   split: Schema.Number,
   listScroll: Schema.Number,
   detailScroll: Schema.Number,
+  history: Schema.optionalKey(Schema.Boolean),
+  collapsedForks: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
+  revealTaskID: Schema.optionalKey(Schema.String),
 })
 const initial: typeof View.Type = {
   scope: "session",
@@ -38,6 +44,9 @@ const initial: typeof View.Type = {
   split: 48,
   listScroll: 0,
   detailScroll: 0,
+  history: false,
+  collapsedForks: {},
+  revealTaskID: "",
 }
 export const taskStores = {
   taskView: Store.session(Schema.Struct({ projects: Schema.Record(Schema.String, View) }), {
@@ -53,6 +62,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   const [data, setData] = createSignal<PanelData>({
     key: "",
     tasks: [],
+    linkedDetails: {},
     loading: true,
     stale: false,
     error: "",
@@ -61,6 +71,13 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   const [split, setSplit] = createSignal(48)
   const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
   const [copyStatus, setCopyStatus] = createSignal("")
+  const [revealedTaskIDs, setRevealedTaskIDs] = createSignal<Set<string>>(new Set())
+  const [temporarilyExpandedForks, setTemporarilyExpandedForks] = createSignal<Set<string>>(
+    new Set(),
+  )
+  const [temporarilyCollapsedForks, setTemporarilyCollapsedForks] = createSignal<Set<string>>(
+    new Set(),
+  )
   const feedback = new StartFeedback(setStartFeedback)
   const listRestore = new ScrollRestoration()
   const detailRestore = new ScrollRestoration()
@@ -138,6 +155,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         value.session,
         prefs().scope,
         prefs().search,
+        prefs().history ?? false,
       ])
       return { value, key }
     },
@@ -153,7 +171,20 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
           query: (input, signal) =>
             rpc().query(input, { location: { directory: value.directory }, signal }),
           get: (taskID, signal) =>
-            rpc().get({ taskID, sessionID }, { location: { directory: value.directory }, signal }),
+            rpc().get(
+              { taskID, ...(sessionID ? { sessionID } : {}) },
+              { location: { directory: value.directory }, signal },
+            ),
+          snapshot: (signal) =>
+            value.client.rpc(Observability).snapshot(
+              {
+                scope:
+                  view.scope === "session"
+                    ? { kind: "session", sessionID: value.session }
+                    : { kind: "project", sessionID: value.session },
+              },
+              { location: { directory: value.directory }, signal },
+            ),
           start: (input, signal) =>
             rpc().start(input, { location: { directory: value.directory }, signal }),
           changes: (signal) =>
@@ -163,7 +194,12 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
             })(),
           online: () => props.session.server.connected,
         },
-        { search: view.search, sessionID, limit: 30 },
+        {
+          search: view.search,
+          sessionID,
+          limit: 30,
+          includeCompleted: view.history ?? false,
+        },
         view.selectedID ?? undefined,
       )
       onCleanup(() => state.close())
@@ -177,11 +213,125 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     const value = current()
     const view = prefs()
     return value
-      ? JSON.stringify([value.server, value.project, value.session, view.scope, view.search])
+      ? JSON.stringify([
+          value.server,
+          value.project,
+          value.session,
+          view.scope,
+          view.search,
+          view.history ?? false,
+        ])
       : ""
   }
+  let revealIdentity = ""
+  createEffect(() => {
+    const key = expectedKey()
+    if (key === revealIdentity) return
+    revealIdentity = key
+    setRevealedTaskIDs(new Set<string>())
+    setTemporarilyExpandedForks(new Set<string>())
+    setTemporarilyCollapsedForks(new Set<string>())
+  })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
+  const executionList = createMemo(() =>
+    buildExecutionList({
+      topology: visible()?.topology,
+      tasks: visible()?.tasks ?? [],
+      search: prefs().search,
+      revealTaskIDs: revealedTaskIDs(),
+    }),
+  )
+  const forkPreferenceKey = (planID: string, forkID: string) => {
+    const value = current()
+    return JSON.stringify([
+      value?.server,
+      value?.project,
+      value?.session,
+      prefs().scope,
+      planID,
+      forkID,
+    ])
+  }
+  const forkExpanded = (group: ExecutionPlanGroup, row: ExecutionListRow) => {
+    if (!row.fork) return false
+    const key = forkPreferenceKey(group.planID, row.fork.id)
+    const saved = (prefs().collapsedForks ?? {})[key] === false
+    const searchReveal = Boolean(
+      prefs().search &&
+      row.fork.branches.some((branch) => branch.rows.some((child) => !child.contextOnly)),
+    )
+    if (prefs().search && temporarilyCollapsedForks().has(key)) return false
+    return saved || searchReveal || temporarilyExpandedForks().has(key)
+  }
+  const revealTask = (taskID: string) => {
+    setRevealedTaskIDs((current) => new Set([...current, taskID]))
+    const group = buildExecutionList({
+      topology: visible()?.topology,
+      tasks: visible()?.tasks ?? [],
+      search: prefs().search,
+      revealTaskIDs: new Set([taskID]),
+    })
+    const fork = selectForkForTask(group.plans, taskID)
+    if (fork) {
+      const key = forkPreferenceKey(fork.planID, fork.forkID)
+      if (prefs().search) {
+        setTemporarilyExpandedForks((current) => new Set([...current, key]))
+        setTemporarilyCollapsedForks((current) => {
+          const next = new Set(current)
+          next.delete(key)
+          return next
+        })
+      } else {
+        save({ collapsedForks: { ...(prefs().collapsedForks ?? {}), [key]: false } })
+      }
+    }
+  }
+  const selectTask = (taskID: string) => {
+    revealTask(taskID)
+    void state.select(taskID)
+  }
+  const toggleFork = (group: ExecutionPlanGroup, row: ExecutionListRow) => {
+    if (!row.fork) return
+    const key = forkPreferenceKey(group.planID, row.fork.id)
+    const expanded = forkExpanded(group, row)
+    if (prefs().search) {
+      const nextExpanded = !expanded
+      setTemporarilyExpandedForks((current) => {
+        const next = new Set(current)
+        if (nextExpanded) next.add(key)
+        else next.delete(key)
+        return next
+      })
+      setTemporarilyCollapsedForks((current) => {
+        const next = new Set(current)
+        if (nextExpanded) next.delete(key)
+        else next.add(key)
+        return next
+      })
+    } else {
+      save({ collapsedForks: { ...(prefs().collapsedForks ?? {}), [key]: expanded } })
+    }
+    setTemporarilyExpandedForks((current) => {
+      const next = new Set(current)
+      if (!prefs().search) next.delete(key)
+      return next
+    })
+  }
+  let handledReveal = ""
+  createEffect(() => {
+    const taskID = prefs().revealTaskID ?? ""
+    const value = visible()
+    if (!taskID) {
+      handledReveal = ""
+      return
+    }
+    if (!value || value.loading || handledReveal === taskID) return
+    handledReveal = taskID
+    save({ revealTaskID: "" })
+    if (value.selectedID === taskID) revealTask(taskID)
+    else selectTask(taskID)
+  })
   createEffect(() => {
     const value = visible()
     const view = prefs()
@@ -216,6 +366,150 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   const selectedDetail = () => {
     const result = visible()?.detail
     return result?.status === "found" ? result : undefined
+  }
+  const selectedRelations = () => {
+    const taskID = visible()?.selectedID
+    const waitingOn = selectedExecution()?.waitingOn ?? []
+    const waitingSet = new Set(waitingOn)
+    const prerequisites = new Set<string>()
+    const successors = new Set<string>()
+    for (const plan of visible()?.topology?.plans ?? [])
+      for (const edge of plan.dependencies) {
+        if (edge.successor === taskID && !waitingSet.has(edge.prerequisite))
+          prerequisites.add(edge.prerequisite)
+        if (edge.prerequisite === taskID) successors.add(edge.successor)
+      }
+    return {
+      prerequisites: [...prerequisites],
+      waitingOn,
+      successors: [...successors],
+    }
+  }
+  const relationLabel = (taskID: string) =>
+    visible()?.tasks.find((task) => task.taskID === taskID)?.reference ??
+    visible()?.linkedDetails[taskID]?.reference ??
+    taskID.slice(0, 8)
+  const renderRelation = (taskID: string) => {
+    const reference = relationLabel(taskID)
+    const task = selectedTask()
+    if (reference.startsWith("LZ-") && task)
+      return <Ui.Markdown text={taskMarkdownLink(reference, task.provenance.projectID)} />
+    return (
+      <button
+        type="button"
+        class="lazers-tasks-dependency-ref"
+        aria-label={`Open related task ${reference}`}
+        onClick={() => selectTask(taskID)}
+      >
+        {reference}
+      </button>
+    )
+  }
+  createEffect(() => {
+    const value = visible()
+    if (!value?.selectedID || value.detail?.status !== "found") return
+    const relationIDs = new Set([
+      ...selectedRelations().prerequisites,
+      ...selectedRelations().successors,
+    ])
+    for (const taskID of relationIDs) {
+      const hasReference = Boolean(
+        value.tasks.find((task) => task.taskID === taskID)?.reference ??
+        value.linkedDetails[taskID]?.reference,
+      )
+      if (!hasReference) void state.resolveLinked(taskID)
+    }
+  })
+  const rowValues = createMemo(() => {
+    const model = executionList()
+    const rows: ExecutionListRow[] = []
+    const visit = (taskRow: ExecutionListRow, group?: ExecutionPlanGroup) => {
+      rows.push(taskRow)
+      if (!group || !taskRow.fork || !forkExpanded(group, taskRow)) return
+      for (const branch of taskRow.fork.branches)
+        for (const child of branch.rows) visit(child, group)
+    }
+    for (const group of model.plans) for (const taskRow of group.rows) visit(taskRow, group)
+    rows.push(...model.unplanned)
+    return rows
+  })
+  const focusTaskID = createMemo(() => {
+    const rows = rowValues()
+    const selectedID = visible()?.selectedID
+    return rows.some((row) => row.taskID === selectedID) ? selectedID : rows[0]?.taskID
+  })
+  const rowTabIndex = (taskID: string) => {
+    return taskID === focusTaskID() ? 0 : -1
+  }
+  const renderTaskRow = (
+    taskRow: ExecutionListRow,
+    group?: ExecutionPlanGroup,
+    depth = 0,
+  ): JSX.Element => {
+    const expanded = Boolean(group && taskRow.fork && forkExpanded(group, taskRow))
+    const relationshipCount = new Set([...taskRow.prerequisites, ...taskRow.successors]).size
+    return (
+      <div class="lazers-tasks-entry" data-context-only={taskRow.contextOnly}>
+        <div class="lazers-tasks-entry-line" style={{ "padding-left": `${depth * 12}px` }}>
+          <Show when={taskRow.fork && group}>
+            <button
+              type="button"
+              class="lazers-tasks-disclosure"
+              aria-label={`${expanded ? "Collapse" : "Expand"} parallel work under ${taskTitle(taskRow.title)}`}
+              aria-expanded={expanded}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (group) toggleFork(group, taskRow)
+              }}
+            >
+              <Ui.Icon name={expanded ? "chevron-down" : "chevron-right"} size="small" />
+            </button>
+          </Show>
+          <Show when={!taskRow.fork || !group}>
+            <span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />
+          </Show>
+          <button
+            type="button"
+            class="lazers-tasks-row"
+            data-task-id={taskRow.taskID}
+            aria-pressed={taskRow.taskID === visible()?.selectedID}
+            aria-label={`${taskTitle(taskRow.title)}, ${taskRow.status}${taskRow.contextOnly ? ", context" : ""}${taskRow.reason ? `: ${taskRow.reason}` : ""}`}
+            tabIndex={rowTabIndex(taskRow.taskID)}
+            onKeyDown={rowKey}
+            onClick={() => selectTask(taskRow.taskID)}
+          >
+            <span class="lazers-tasks-state" data-state={taskRow.status} aria-hidden="true" />
+            <span>{taskTitle(taskRow.title)}</span>
+            <Show when={relationshipCount > 0}>
+              <span
+                class="lazers-tasks-dependency-count"
+                aria-label={`${relationshipCount} recorded dependencies`}
+                title={`${relationshipCount} recorded dependencies`}
+              >
+                {relationshipCount} links
+              </span>
+            </Show>
+          </button>
+        </div>
+        <Show when={taskRow.fork && group && expanded}>
+          <div class="lazers-tasks-branches">
+            <For each={taskRow.fork?.branches ?? []}>
+              {(branch) => (
+                <div class="lazers-tasks-branch">
+                  <For each={branch.rows}>{(child) => renderTaskRow(child, group, depth + 1)}</For>
+                  <Show when={branch.hiddenCount > 0}>
+                    <div class="lazers-tasks-branch-note">
+                      {branch.hiddenCount} task{branch.hiddenCount === 1 ? "" : "s"} not shown in
+                      this page or filter
+                    </div>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    )
   }
   const copyTaskLink = async () => {
     const task = selectedTask()
@@ -255,8 +549,23 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
           : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))
     rows[next]?.focus()
     const id = rows[next]?.dataset.taskId
-    if (id) void state.select(id)
+    if (id) selectTask(id)
   }
+  let focusedSelection = ""
+  createEffect(() => {
+    const selectedID = visible()?.selectedID
+    const key = selectionKey()
+    if (!selectedID || visible()?.detail?.status !== "found" || key === focusedSelection) return
+    focusedSelection = key
+    queueMicrotask(() => {
+      if (selectionKey() !== key) return
+      const row = [...(list?.querySelectorAll<HTMLButtonElement>("[data-task-id]") ?? [])].find(
+        (item) => item.dataset.taskId === selectedID,
+      )
+      row?.scrollIntoView({ block: "nearest" })
+      row?.focus({ preventScroll: true })
+    })
+  })
   const resize = (next: number) => setSplit(clampSplit(next))
   const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
     endDrag?.()
@@ -316,7 +625,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">
             <Ui.Menu
-              label={prefs().scope === "session" ? "Session" : "Project"}
+              label={`${prefs().scope === "session" ? "Session" : "Project"}${prefs().history ? " · History" : ""}`}
               trigger="button"
               icon="chevron-down"
               items={[
@@ -327,6 +636,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                 {
                   label: "Project tasks",
                   onSelect: () => save({ scope: "project", selectedID: null }),
+                },
+                {
+                  label: prefs().history ? "Hide completed history" : "Show completed history",
+                  onSelect: () =>
+                    save({ history: !prefs().history, selectedID: null, listScroll: 0 }),
                 },
               ]}
             />
@@ -398,6 +712,18 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
             Updates disconnected. Displayed tasks may be stale.
           </div>
         </Show>
+        <Show when={visible()?.topologyError}>
+          {(message) => (
+            <div class="lazers-tasks-note" role="status">
+              {message()}
+            </div>
+          )}
+        </Show>
+        <Show when={visible() && !visible()?.topology && !visible()?.topologyError}>
+          <div class="lazers-tasks-note" role="status">
+            Execution topology unavailable. Showing tasks without grouping.
+          </div>
+        </Show>
         <Show
           when={visible()}
           fallback={
@@ -421,43 +747,38 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                 }
               >
                 <Show
-                  when={value().tasks.length}
+                  when={rowValues().length}
                   fallback={
                     <div class="lazers-tasks-note">
                       {prefs().search
                         ? "No matching tasks."
-                        : prefs().scope === "session"
-                          ? "No tasks submitted from this session."
-                          : "No tasks in this project."}
+                        : prefs().history
+                          ? "No tasks in this history view."
+                          : prefs().scope === "session"
+                            ? "No open tasks in this session. Show completed history to review finished work."
+                            : "No open tasks in this project. Show completed history to review finished work."}
                     </div>
                   }
                 >
                   <div aria-label="Open tasks">
-                    <For each={value().tasks}>
-                      {(task, index) => (
-                        <button
-                          type="button"
-                          class="lazers-tasks-row"
-                          data-task-id={task.taskID}
-                          aria-pressed={task.taskID === value().selectedID}
-                          aria-label={`${taskTitle(task.objective)}, ${task.status}${task.reason ? `: ${task.reason}` : ""}`}
-                          tabIndex={
-                            task.taskID === value().selectedID ||
-                            (!value().selectedID && index() === 0)
-                              ? 0
-                              : -1
-                          }
-                          onKeyDown={rowKey}
-                          onClick={() => void state.select(task.taskID)}
+                    <For each={executionList().plans}>
+                      {(group) => (
+                        <section
+                          class="lazers-tasks-plan"
+                          aria-label={`${group.hasRecordedTitle ? group.title : "Recorded plan"}, ${group.activeCount} active of ${group.totalCount} tasks`}
                         >
-                          <span
-                            class="lazers-tasks-state"
-                            data-state={task.status}
-                            aria-hidden="true"
-                          />
-                          <span>{taskTitle(task.objective)}</span>
-                        </button>
+                          <div class="lazers-tasks-plan-heading">
+                            <span>{group.hasRecordedTitle ? group.title : "Recorded plan"}</span>
+                            <span>
+                              {group.activeCount}/{group.totalCount}
+                            </span>
+                          </div>
+                          <For each={group.rows}>{(taskRow) => renderTaskRow(taskRow, group)}</For>
+                        </section>
                       )}
+                    </For>
+                    <For each={executionList().unplanned}>
+                      {(taskRow) => renderTaskRow(taskRow)}
                     </For>
                   </div>
                   <Show when={value().page?.nextCursor}>
@@ -571,13 +892,44 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                   </p>
                 )}
               </Show>
-              <Show when={selectedExecution()?.waitingOn.length}>
-                <p class="lazers-tasks-reason">
-                  Waiting on{" "}
-                  {selectedExecution()!
-                    .waitingOn.map((id) => id.slice(0, 8))
-                    .join(", ")}
-                </p>
+              <Show when={selectedRelations().waitingOn.length}>
+                <div class="lazers-tasks-dependencies">
+                  <span>Waiting on </span>
+                  <For each={selectedRelations().waitingOn}>
+                    {(taskID, index) => (
+                      <>
+                        {index() ? ", " : ""}
+                        {renderRelation(taskID)}
+                      </>
+                    )}
+                  </For>
+                </div>
+              </Show>
+              <Show when={selectedRelations().prerequisites.length}>
+                <div class="lazers-tasks-dependencies">
+                  <span>Prerequisites </span>
+                  <For each={selectedRelations().prerequisites}>
+                    {(taskID, index) => (
+                      <>
+                        {index() ? ", " : ""}
+                        {renderRelation(taskID)}
+                      </>
+                    )}
+                  </For>
+                </div>
+              </Show>
+              <Show when={selectedRelations().successors.length}>
+                <div class="lazers-tasks-dependencies">
+                  <span>Blocks </span>
+                  <For each={selectedRelations().successors}>
+                    {(taskID, index) => (
+                      <>
+                        {index() ? ", " : ""}
+                        {renderRelation(taskID)}
+                      </>
+                    )}
+                  </For>
+                </div>
               </Show>
               <Show when={startFeedback().error}>
                 <p class="lazers-tasks-error" role="alert">
@@ -889,6 +1241,7 @@ export function setupTaskPanel(ctx: TaskContext) {
             search: "",
             selectedID: target.taskID,
             detailScroll: 0,
+            revealTaskID: target.taskID,
           }
         })
         ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })

@@ -114,10 +114,88 @@
 .lazers-tasks-row[aria-pressed="true"] {
   background: color-mix(in srgb, var(--text-strong) 9%, var(--background-base));
 }
-.lazers-tasks-row span:last-child {
+.lazers-tasks-row > span:nth-child(2) {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.lazers-tasks-plan {
+  min-width: 0;
+  margin: 4px 0 8px;
+}
+.lazers-tasks-plan-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 12px 4px;
+  color: var(--text-weak);
+  font-size: 0.78em;
+}
+.lazers-tasks-plan-heading > span:first-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lazers-tasks-plan-heading > span:last-child {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.lazers-tasks-entry {
+  min-width: 0;
+}
+.lazers-tasks-entry-line {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.lazers-tasks-disclosure,
+.lazers-tasks-disclosure-spacer {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 28px;
+}
+.lazers-tasks-disclosure {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.lazers-tasks-disclosure:hover {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
+.lazers-tasks-entry[data-context-only="true"] .lazers-tasks-row {
+  color: var(--text-base);
+}
+.lazers-tasks-dependency-count {
+  flex: none;
+  color: var(--text-weak);
+  font-size: 0.76em;
+  font-variant-numeric: tabular-nums;
+}
+.lazers-tasks-branches {
+  min-width: 0;
+  margin-left: 20px;
+}
+.lazers-tasks-branch {
+  min-width: 0;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-base);
+}
+.lazers-tasks-branch-note {
+  padding: 4px 12px 6px;
+  color: var(--text-weak);
+  font-size: 0.78em;
 }
 .lazers-tasks-state {
   position: relative;
@@ -348,6 +426,32 @@
 .lazers-tasks-reason {
   color: var(--text-weak);
   font-size: 0.9em;
+}
+.lazers-tasks-dependencies {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 8px;
+  color: var(--text-weak);
+  font-size: 0.88em;
+}
+.lazers-tasks-dependency-ref {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.lazers-tasks-dependency-ref:hover {
+  color: var(--text-strong);
+}
+.lazers-tasks-dependencies a:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 2px;
 }
 .lazers-tasks-error {
   color: var(--text-critical-base);
