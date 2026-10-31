@@ -4,7 +4,10 @@ export class ScrollRestoration {
   private key = ""
   private applied = ""
 
-  constructor(private readonly schedule: (callback: () => void) => void = queueMicrotask) {}
+  constructor(
+    private readonly schedule: (callback: () => void) => void = (callback) =>
+      queueMicrotask(callback),
+  ) {}
 
   restored(key: string) {
     return Boolean(key) && this.applied === key

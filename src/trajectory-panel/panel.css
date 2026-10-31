@@ -77,10 +77,10 @@
   white-space: nowrap;
 }
 .lazers-trajectory-heading-row {
-  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 6px;
 }
-.lazers-trajectory-heading-row h2 {
+.lazers-trajectory-heading {
   min-width: 0;
   margin: 0;
   font-size: 1.12em;
@@ -90,7 +90,6 @@
 }
 .lazers-trajectory-id {
   flex: none;
-  margin-left: auto;
   color: var(--text-weak);
   font-size: 0.82em;
 }
@@ -229,19 +228,32 @@
   position: absolute;
   z-index: 1;
   top: 4px;
-  width: 7px;
+  width: 20px;
   height: 22px;
+  transform: translateX(-50%);
   padding: 0;
   border: 0;
-  border-left: 2px dotted var(--icon-base);
+  color: var(--icon-base);
   background: transparent;
   cursor: pointer;
 }
+.lazers-trajectory-check-marker::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 1px;
+  height: 20px;
+  border-left: 2px dotted currentColor;
+}
 .lazers-trajectory-check-marker[data-result="failed"] {
-  border-color: var(--icon-critical-base);
+  color: var(--icon-critical-base);
 }
 .lazers-trajectory-check-marker[data-result="passed"] {
-  border-color: var(--icon-success-base);
+  color: var(--icon-success-base);
+}
+.lazers-trajectory-check-marker[aria-pressed="true"]::before {
+  border-left-style: solid;
+  border-left-width: 3px;
 }
 .lazers-trajectory-tool-count {
   color: var(--text-weak);
@@ -254,6 +266,9 @@
   min-height: 34px;
   color: var(--text-weak);
   font-size: 0.82em;
+}
+.lazers-trajectory-plan-checks[data-selected="true"] {
+  background: color-mix(in srgb, var(--text-strong) 6%, var(--background-base));
 }
 .lazers-trajectory-plan-checks > span:first-child {
   overflow-wrap: anywhere;

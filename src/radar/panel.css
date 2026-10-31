@@ -317,11 +317,13 @@
   stroke-width: 1.25;
   stroke-dasharray: 4 4;
   vector-effect: non-scaling-stroke;
+  opacity: 0.1;
 }
 .lazers-radar-statechart-edge[data-recorded="true"] {
   stroke: var(--icon-success-base);
   stroke-width: 1.8;
   stroke-dasharray: none;
+  opacity: 1;
 }
 .lazers-radar-statechart-edge-hit {
   fill: none;
@@ -338,10 +340,12 @@
   stroke: var(--text-weak);
   stroke-width: 1.25;
   vector-effect: non-scaling-stroke;
+  opacity: 0.1;
 }
 .lazers-radar-statechart-edge-arrow[data-recorded="true"] {
   stroke: var(--icon-success-base);
   stroke-width: 1.8;
+  opacity: 1;
 }
 .lazers-radar-statechart-edge-label {
   fill: var(--text-weak);
@@ -452,6 +456,10 @@
   font-size: 0.86em;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .lazers-radar-lane-plot {
   position: relative;
@@ -509,15 +517,15 @@
 .lazers-radar-mark-point {
   position: absolute;
   min-width: 0;
-  max-width: min(180px, calc(100% - 4px));
-  height: 12px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 0 2px;
   border: 0;
   border-radius: 2px;
-  background: var(--background-base);
+  background: transparent;
   color: var(--text-base);
   font-size: 0.68em;
   line-height: 1;
@@ -535,9 +543,7 @@
   background: var(--background-base);
 }
 .lazers-radar-mark-point-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none;
 }
 .lazers-radar-mark-point[data-kind="check"] .lazers-radar-mark-point-dot {
   border-color: var(--icon-warning-base);

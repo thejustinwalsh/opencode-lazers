@@ -345,7 +345,11 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         <div class="lazers-trajectory-controls">
           <span class="lazers-trajectory-task-menu">
             <Ui.Menu
-              label={selectedTask()?.title ?? currentData()?.taskID?.slice(0, 8) ?? "Choose task"}
+              label={
+                selectedTask()?.taskID.slice(0, 8) ??
+                currentData()?.taskID?.slice(0, 8) ??
+                "Choose task"
+              }
               trigger="button"
               disabled={!currentData()?.tasks.length}
               items={(currentData()?.tasks ?? []).map((task) => ({
@@ -400,8 +404,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
           }
         >
           <>
+            <h2 class="lazers-trajectory-heading">{report()?.task.specification.objective}</h2>
             <div class="lazers-trajectory-heading-row">
-              <h2>{report()?.task.specification.objective}</h2>
               <span
                 class="lazers-trajectory-id"
                 style={{ "font-family": ctx.appearance.font("mono") }}
@@ -459,8 +463,10 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     const detail = () =>
                       report()?.attempts.find((attempt) => attempt.id === lane.attempt.id)
                     const selected = () =>
-                      currentData()?.selection?.kind === "attempt" &&
-                      currentData()?.selection?.id === lane.attempt.id
+                      (currentData()?.selection?.kind === "attempt" &&
+                        currentData()?.selection?.id === lane.attempt.id) ||
+                      (currentData()?.selection?.kind === "check" &&
+                        selectedCheck()?.attemptID === lane.attempt.id)
                     return (
                       <div
                         class="lazers-trajectory-attempt"
@@ -510,6 +516,11 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                   type="button"
                                   class="lazers-trajectory-check-marker"
                                   data-result={detailed()?.result ?? "unknown"}
+                                  aria-pressed={Boolean(
+                                    detailed() &&
+                                    selectedCheck() &&
+                                    checkKey(detailed()!) === checkKey(selectedCheck()!),
+                                  )}
                                   aria-label={`Select check ${check.checkID}, ${detailed()?.result ?? check.state}`}
                                   title={`${check.checkID} · ${check.timingBasis}`}
                                   style={{ left: `${check.left}%` }}
@@ -533,13 +544,25 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   {(check) => {
                     const detailed = () => selectionForTimelineCheck(check)
                     return (
-                      <div class="lazers-trajectory-plan-checks">
+                      <div
+                        class="lazers-trajectory-plan-checks"
+                        data-selected={Boolean(
+                          detailed() &&
+                          selectedCheck() &&
+                          checkKey(detailed()!) === checkKey(selectedCheck()!),
+                        )}
+                      >
                         <span>Plan check · {check.checkID}</span>
                         <div class="lazers-trajectory-track">
                           <button
                             type="button"
                             class="lazers-trajectory-check-marker"
                             data-result={detailed()?.result ?? "unknown"}
+                            aria-pressed={Boolean(
+                              detailed() &&
+                              selectedCheck() &&
+                              checkKey(detailed()!) === checkKey(selectedCheck()!),
+                            )}
                             aria-label={`Select plan check ${check.checkID}`}
                             title={check.timingBasis}
                             style={{ left: `${check.left}%` }}
@@ -599,9 +622,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       {checkResult(check())}
                     </span>
                   </div>
-                  <Show when={check().command}>
-                    {(command) => <div class="lazers-trajectory-command">{command()}</div>}
-                  </Show>
                   <div class="lazers-trajectory-metadata">
                     <p>
                       {check().scope === "plan" ? "Plan check" : "Attempt check"} · {check().state}
@@ -609,21 +629,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     <p>
                       Started {timeText(check().startedAt)} · ended {timeText(check().endedAt)}
                     </p>
-                    <p>{check().timingBasis}</p>
-                    <Show when={check().timedOut !== null || check().unchanged !== null}>
-                      <p>
-                        {check().timedOut === null
-                          ? "Timeout unknown"
-                          : check().timedOut
-                            ? "Timed out"
-                            : "Not timed out"}
-                        {check().unchanged === null
-                          ? " · artifact change unknown"
-                          : check().unchanged
-                            ? " · artifact unchanged"
-                            : " · artifact changed"}
-                      </p>
-                    </Show>
                   </div>
                   <div class="lazers-trajectory-source-links">
                     <For each={checkSources(check())}>
@@ -648,6 +653,23 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   </Show>
                   <details class="lazers-trajectory-payload">
                     <summary>Check output</summary>
+                    <div class="lazers-trajectory-metadata">
+                      <p>{check().timingBasis}</p>
+                      <Show when={check().timedOut !== null || check().unchanged !== null}>
+                        <p>
+                          {check().timedOut === null
+                            ? "Timeout unknown"
+                            : check().timedOut
+                              ? "Timed out"
+                              : "Not timed out"}
+                          {check().unchanged === null
+                            ? " · artifact change unknown"
+                            : check().unchanged
+                              ? " · artifact unchanged"
+                              : " · artifact changed"}
+                        </p>
+                      </Show>
+                    </div>
                     <pre>{checkOutput(check())}</pre>
                   </details>
                 </>

@@ -29,6 +29,7 @@ import type { TimelineMark } from "./timeline.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
 import { radarProjectIdentity } from "./project.ts"
+import { taskTitle } from "../tasks/presentation.ts"
 
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
@@ -251,7 +252,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
       return found?.planID === currentPlan.id ? found : undefined
     }
     if (prefs().selectedState) return undefined
-    return transitions().at(-1)
+    return undefined
   }
   const chosenAttempt = () => selectedAttempt(snapshot(), plan()?.id, prefs().selectedAttemptID)
   const chosenCheck = () => selectedCheck(snapshot(), plan()?.id, prefs().selectedCheckID)
@@ -350,6 +351,15 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
   }
   const markStart = (mark: TimelineMark) => mark.startAt ?? mark.endAt ?? mark.displayEndAt
   const markEnd = (mark: TimelineMark) => mark.displayEndAt ?? mark.endAt
+  const laneLabel = (lane: { label: string; taskID: string | null; attemptID: string | null }) => {
+    if (!lane.taskID) return plan()?.title ?? plan()?.id.slice(0, 8) ?? lane.label
+    const attempt = timelineAttempts(snapshot()!, plan()!.id).find(
+      (item) => item.id === lane.attemptID,
+    )
+    const objective = plan()?.nodes.find((item) => item.taskID === lane.taskID)?.objective
+    const label = objective ? taskTitle(objective) : lane.taskID.slice(0, 8)
+    return attempt ? `${label} · ${attempt.number}` : label
+  }
 
   createEffect(() => {
     const value = visible()
@@ -477,7 +487,11 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                 <Show when={value().plans.length > 0}>
                   <span class="lazers-radar-picker">
                     <Ui.Menu
-                      label={plan()?.title ?? (planMissing() ? "Unavailable plan" : "Select plan")}
+                      label={
+                        plan()?.title ??
+                        plan()?.id.slice(0, 8) ??
+                        (planMissing() ? "Unavailable plan" : "Select plan")
+                      }
                       trigger="button"
                       items={value().plans.map((item) => ({
                         label: item.title ?? item.id,
@@ -644,11 +658,8 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                                 </div>
                                 <For each={chart().lanes}>
                                   {(lane) => (
-                                    <div
-                                      class="lazers-radar-lane"
-                                      title={lane.taskID ?? plan()?.id}
-                                    >
-                                      <div class="lazers-radar-lane-label">{lane.label}</div>
+                                    <div class="lazers-radar-lane" title={lane.label}>
+                                      <div class="lazers-radar-lane-label">{laneLabel(lane)}</div>
                                       <div
                                         class="lazers-radar-lane-plot"
                                         style={{
@@ -716,12 +727,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                                                     style={{
                                                       left: `${startPosition()}%`,
                                                       top: `${8 + index() * 14}px`,
-                                                      transform:
-                                                        startPosition()! < 35
-                                                          ? "translateX(0)"
-                                                          : startPosition()! > 65
-                                                            ? "translateX(-100%)"
-                                                            : "translateX(-50%)",
+                                                      transform: "translateX(-6px)",
                                                     }}
                                                     onClick={() => chooseMark(mark)}
                                                   >
@@ -825,15 +831,22 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                                           data-recorded={Boolean(edge.recorded)}
                                           d={edge.arrow}
                                         />
-                                        <text
-                                          class="lazers-radar-statechart-edge-label"
-                                          data-recorded={Boolean(edge.recorded)}
-                                          x={edge.labelX}
-                                          y={edge.labelY}
-                                          text-anchor={edge.labelAnchor}
+                                        <Show
+                                          when={
+                                            edge.recorded &&
+                                            chosenTransition()?.sequence === edge.recorded.sequence
+                                          }
                                         >
-                                          {edge.event}
-                                        </text>
+                                          <text
+                                            class="lazers-radar-statechart-edge-label"
+                                            data-recorded={Boolean(edge.recorded)}
+                                            x={edge.labelX}
+                                            y={edge.labelY}
+                                            text-anchor={edge.labelAnchor}
+                                          >
+                                            {edge.event}
+                                          </text>
+                                        </Show>
                                         <Show when={edge.recorded}>
                                           {(recorded) => (
                                             <path
