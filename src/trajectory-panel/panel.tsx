@@ -427,8 +427,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
               </Ui.Button>
             </div>
             <div class="lazers-trajectory-task-meta">
-              <span>{report()?.task.status}</span>
-              <span aria-hidden="true">·</span>
               <span>{model()}</span>
               <span aria-hidden="true">·</span>
               <span>{runTotal()}</span>

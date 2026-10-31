@@ -560,8 +560,12 @@
   text-overflow: ellipsis;
 }
 .lazers-radar-mark-point[aria-pressed="true"] {
+  z-index: 2;
   outline: 2px solid var(--border-selected);
   outline-offset: 2px;
+}
+.lazers-radar-mark-point:focus-visible {
+  z-index: 3;
 }
 .lazers-radar-mark-unknown {
   position: absolute;

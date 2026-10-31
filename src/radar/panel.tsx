@@ -657,111 +657,126 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                                   </div>
                                 </div>
                                 <For each={chart().lanes}>
-                                  {(lane) => (
-                                    <div class="lazers-radar-lane" title={lane.label}>
-                                      <div class="lazers-radar-lane-label">{laneLabel(lane)}</div>
-                                      <div
-                                        class="lazers-radar-lane-plot"
-                                        style={{
-                                          height: `${Math.max(34, lane.marks.length * 16 + 10)}px`,
-                                        }}
-                                      >
-                                        <For each={lane.marks}>
-                                          {(mark, index) => {
-                                            const start = () => markStart(mark)
-                                            const end = () => markEnd(mark)
-                                            const startPosition = () =>
-                                              start() === null
-                                                ? undefined
-                                                : timePercent(start()!, chart())
-                                            const endPosition = () =>
-                                              end() === null
-                                                ? undefined
-                                                : timePercent(end()!, chart())
-                                            const interval = () =>
-                                              startPosition() !== undefined &&
-                                              endPosition() !== undefined &&
-                                              start() !== end()
-                                            const reversed = () =>
-                                              start() !== null &&
-                                              end() !== null &&
-                                              end()! < start()!
-                                            const ariaLabel = () =>
-                                              `${timelineLabel(mark)}${reversed() ? "; recorded end precedes start" : ""}`
-                                            return (
-                                              <>
-                                                <Show when={interval()}>
-                                                  <button
-                                                    type="button"
-                                                    class="lazers-radar-mark"
-                                                    data-kind={mark.kind}
-                                                    data-open={mark.openThroughObservation}
-                                                    data-reversed={reversed()}
-                                                    aria-label={ariaLabel()}
-                                                    aria-pressed={Boolean(markPressed(mark))}
-                                                    title={ariaLabel()}
-                                                    style={{
-                                                      left: `${Math.min(startPosition()!, endPosition()!)}%`,
-                                                      width: `${Math.max(1, Math.abs(endPosition()! - startPosition()!))}%`,
-                                                      top: `${6 + index() * 14}px`,
-                                                    }}
-                                                    onClick={() => chooseMark(mark)}
-                                                  >
-                                                    <span class="lazers-radar-mark-label">
-                                                      {mark.label}
-                                                    </span>
-                                                  </button>
-                                                </Show>
-                                                <Show
-                                                  when={
-                                                    !interval() && startPosition() !== undefined
-                                                  }
-                                                >
-                                                  <button
-                                                    type="button"
-                                                    class="lazers-radar-mark-point"
-                                                    data-kind={mark.kind}
-                                                    aria-label={ariaLabel()}
-                                                    aria-pressed={Boolean(markPressed(mark))}
-                                                    title={ariaLabel()}
-                                                    style={{
-                                                      left: `${startPosition()}%`,
-                                                      top: `${8 + index() * 14}px`,
-                                                      transform: "translateX(-6px)",
-                                                    }}
-                                                    onClick={() => chooseMark(mark)}
-                                                  >
-                                                    <span class="lazers-radar-mark-point-dot" />
-                                                    <span class="lazers-radar-mark-point-label">
-                                                      {mark.label}
-                                                    </span>
-                                                  </button>
-                                                </Show>
-                                                <Show
-                                                  when={
-                                                    startPosition() === undefined &&
-                                                    endPosition() === undefined
-                                                  }
-                                                >
-                                                  <button
-                                                    type="button"
-                                                    class="lazers-radar-mark-unknown"
-                                                    data-kind={mark.kind}
-                                                    aria-label={`${mark.label}; time unavailable`}
-                                                    aria-pressed={Boolean(markPressed(mark))}
-                                                    style={{ top: `${6 + index() * 14}px` }}
-                                                    onClick={() => chooseMark(mark)}
-                                                  >
-                                                    {mark.label} · time unavailable
-                                                  </button>
-                                                </Show>
-                                              </>
-                                            )
+                                  {(lane) => {
+                                    const transitionCount = lane.marks.filter(
+                                      (mark) => mark.kind === "transition",
+                                    ).length
+                                    const markerHeight = Math.min(transitionCount, 3) * 18
+                                    const markTop = (index: number) => {
+                                      const mark = lane.marks[index]!
+                                      if (mark.kind === "transition") {
+                                        const prior = lane.marks
+                                          .slice(0, index)
+                                          .filter((item) => item.kind === "transition").length
+                                        return 6 + (prior % 3) * 18
+                                      }
+                                      const prior = lane.marks
+                                        .slice(0, index)
+                                        .filter((item) => item.kind !== "transition").length
+                                      return 6 + markerHeight + prior * 18
+                                    }
+                                    return (
+                                      <div class="lazers-radar-lane" title={lane.label}>
+                                        <div class="lazers-radar-lane-label">{laneLabel(lane)}</div>
+                                        <div
+                                          class="lazers-radar-lane-plot"
+                                          style={{
+                                            height: `${Math.max(34, markerHeight + (lane.marks.length - transitionCount) * 18 + 12)}px`,
                                           }}
-                                        </For>
+                                        >
+                                          <For each={lane.marks}>
+                                            {(mark, index) => {
+                                              const start = () => markStart(mark)
+                                              const end = () => markEnd(mark)
+                                              const startPosition = () =>
+                                                start() === null
+                                                  ? undefined
+                                                  : timePercent(start()!, chart())
+                                              const endPosition = () =>
+                                                end() === null
+                                                  ? undefined
+                                                  : timePercent(end()!, chart())
+                                              const interval = () =>
+                                                startPosition() !== undefined &&
+                                                endPosition() !== undefined &&
+                                                start() !== end()
+                                              const reversed = () =>
+                                                start() !== null &&
+                                                end() !== null &&
+                                                end()! < start()!
+                                              const ariaLabel = () =>
+                                                `${timelineLabel(mark)}${reversed() ? "; recorded end precedes start" : ""}`
+                                              return (
+                                                <>
+                                                  <Show when={interval()}>
+                                                    <button
+                                                      type="button"
+                                                      class="lazers-radar-mark"
+                                                      data-kind={mark.kind}
+                                                      data-open={mark.openThroughObservation}
+                                                      data-reversed={reversed()}
+                                                      aria-label={ariaLabel()}
+                                                      aria-pressed={Boolean(markPressed(mark))}
+                                                      title={ariaLabel()}
+                                                      style={{
+                                                        left: `${Math.min(startPosition()!, endPosition()!)}%`,
+                                                        width: `${Math.max(1, Math.abs(endPosition()! - startPosition()!))}%`,
+                                                        top: `${markTop(index())}px`,
+                                                      }}
+                                                      onClick={() => chooseMark(mark)}
+                                                    />
+                                                  </Show>
+                                                  <Show
+                                                    when={
+                                                      !interval() && startPosition() !== undefined
+                                                    }
+                                                  >
+                                                    <button
+                                                      type="button"
+                                                      class="lazers-radar-mark-point"
+                                                      data-kind={mark.kind}
+                                                      aria-label={ariaLabel()}
+                                                      aria-pressed={Boolean(markPressed(mark))}
+                                                      title={ariaLabel()}
+                                                      style={{
+                                                        left: `${startPosition()}%`,
+                                                        top: `${markTop(index())}px`,
+                                                        transform: "translateX(-6px)",
+                                                      }}
+                                                      onClick={() => chooseMark(mark)}
+                                                    >
+                                                      <span class="lazers-radar-mark-point-dot" />
+                                                      <span class="lazers-radar-mark-point-label">
+                                                        {mark.label}
+                                                      </span>
+                                                    </button>
+                                                  </Show>
+                                                  <Show
+                                                    when={
+                                                      startPosition() === undefined &&
+                                                      endPosition() === undefined
+                                                    }
+                                                  >
+                                                    <button
+                                                      type="button"
+                                                      class="lazers-radar-mark-unknown"
+                                                      data-kind={mark.kind}
+                                                      aria-label={`${mark.label}; time unavailable`}
+                                                      aria-pressed={Boolean(markPressed(mark))}
+                                                      style={{ top: `${markTop(index())}px` }}
+                                                      onClick={() => chooseMark(mark)}
+                                                    >
+                                                      {mark.label} · time unavailable
+                                                    </button>
+                                                  </Show>
+                                                </>
+                                              )
+                                            }}
+                                          </For>
+                                        </div>
                                       </div>
-                                    </div>
-                                  )}
+                                    )
+                                  }}
                                 </For>
                                 <div
                                   class="lazers-radar-timeline-key"
