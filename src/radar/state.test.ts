@@ -1,0 +1,221 @@
+import { expect, test } from "bun:test"
+import { ObservationChangeTracker } from "../observability/changes.ts"
+import { ObservationReads } from "../observability/read.ts"
+import type {
+  ObservationChange,
+  ObservationScope,
+  SnapshotResponse,
+} from "../observability/contract.ts"
+import { makeFixture } from "../../test/trajectory/fixture.ts"
+import { RadarPanelState } from "./state.ts"
+import type { RadarTransport } from "./transport.ts"
+
+type QueueItem<T> = { value: T; done: false } | { value: undefined; done: true }
+
+class EventQueue<T> {
+  private values: T[] = []
+  private waiters: Array<(result: QueueItem<T>) => void> = []
+  private closed = false
+
+  push(value: T) {
+    const waiter = this.waiters.shift()
+    if (waiter) waiter({ value, done: false })
+    else this.values.push(value)
+  }
+
+  close() {
+    this.closed = true
+    for (const waiter of this.waiters.splice(0)) waiter({ value: undefined, done: true })
+  }
+
+  next(signal: AbortSignal): Promise<QueueItem<T>> {
+    const value = this.values.shift()
+    if (value !== undefined) return Promise.resolve({ value, done: false })
+    if (this.closed || signal.aborted) return Promise.resolve({ value: undefined, done: true })
+    return new Promise((resolve) => {
+      const done = () => {
+        signal.removeEventListener("abort", done)
+        const index = this.waiters.indexOf(onValue)
+        if (index >= 0) this.waiters.splice(index, 1)
+        resolve({ value: undefined, done: true })
+      }
+      const onValue = (item: QueueItem<T>) => {
+        signal.removeEventListener("abort", done)
+        resolve(item)
+      }
+      this.waiters.push(onValue)
+      signal.addEventListener("abort", done, { once: true })
+    })
+  }
+}
+
+async function* changesFrom<T>(queue: EventQueue<T>, signal: AbortSignal): AsyncIterable<T> {
+  while (!signal.aborted) {
+    const item = await queue.next(signal)
+    if (item.done) return
+    yield item.value
+  }
+}
+
+async function until(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  throw new Error("Condition was not reached")
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => (resolve = done))
+  return { promise, resolve }
+}
+
+function snapshots() {
+  const fixture = makeFixture()
+  const secret = new Uint8Array(32).fill(5)
+  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
+  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+  tracker.initialize()
+  return {
+    fixture,
+    session: reads.snapshot({ kind: "session", sessionID: "ses-failed" }, tracker),
+    project: reads.snapshot({ kind: "project", sessionID: "ses-failed" }, tracker),
+  }
+}
+
+test("late session responses cannot replace a switched project observation", async () => {
+  const { fixture, session, project } = snapshots()
+  try {
+    const first = deferred<SnapshotResponse>()
+    const queue = new EventQueue<ObservationChange>()
+    const late: RadarTransport = {
+      snapshot: () => first.promise,
+      changes: (signal) => changesFrom(queue, signal),
+      online: () => true,
+    }
+    const current: RadarTransport = {
+      snapshot: async () => project,
+      changes: (signal) => changesFrom(queue, signal),
+      online: () => true,
+    }
+    const state = new RadarPanelState(
+      () => {},
+      async () => {},
+    )
+    state.connect("session-view", "project", { kind: "session", sessionID: "ses-failed" }, late)
+    state.connect("project-view", "project", { kind: "project", sessionID: "ses-failed" }, current)
+    await until(() => state.data.snapshot?.scope.kind === "project")
+    first.resolve(session)
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(state.data.key).toBe("project-view")
+    expect(state.data.snapshot?.scope).toEqual({ kind: "project" })
+    expect(state.data.snapshot?.plans).toEqual(project.plans)
+    state.close()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("duplicates are ignored, event gaps invalidate, and a closed stream reconnects by resnapshot", async () => {
+  const { fixture, session } = snapshots()
+  try {
+    const queues = [new EventQueue<ObservationChange>(), new EventQueue<ObservationChange>()]
+    let streamCalls = 0
+    let snapshotCalls = 0
+    let eventSequence = session.boundary.eventSequence
+    const transport: RadarTransport = {
+      snapshot: async () => {
+        snapshotCalls++
+        return {
+          ...session,
+          boundary: { ...session.boundary, eventSequence },
+        }
+      },
+      changes: (signal) => {
+        const queue = queues[Math.min(streamCalls++, queues.length - 1)]!
+        return changesFrom(queue, signal)
+      },
+      online: () => true,
+    }
+    const state = new RadarPanelState(
+      () => {},
+      async () => {},
+    )
+    state.connect(
+      "session-view",
+      "project",
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+    )
+    await until(() => Boolean(state.data.snapshot) && !state.data.stale)
+    expect(snapshotCalls).toBe(1)
+
+    const emit = (sequence: number, resnapshotRequired = false) => {
+      const queue = queues[Math.min(streamCalls - 1, queues.length - 1)]!
+      eventSequence = sequence
+      queue.push({
+        projectID: "project",
+        sequence,
+        repositoryVersion: session.boundary.repositoryVersion,
+        sourceRevision: session.boundary.sourceRevision,
+        nativeRevision: session.boundary.nativeRevision,
+        cause: "runner",
+        resnapshotRequired,
+      })
+    }
+    const next = eventSequence + 1
+    emit(next)
+    await until(() => state.data.snapshot?.boundary.eventSequence === next && !state.data.stale)
+    expect(snapshotCalls).toBe(2)
+
+    emit(next)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(snapshotCalls).toBe(2)
+
+    const gap = next + 2
+    emit(gap, true)
+    await until(() => state.data.snapshot?.boundary.eventSequence === gap && !state.data.stale)
+    expect(snapshotCalls).toBe(3)
+
+    queues[0]!.close()
+    await until(() => streamCalls >= 2 && snapshotCalls >= 4 && !state.data.stale)
+    expect(state.data.snapshot?.boundary.eventSequence).toBe(gap)
+    state.close()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("wrong-project and wrong-scope snapshot responses remain unavailable", async () => {
+  const { fixture, session, project } = snapshots()
+  try {
+    const queue = new EventQueue<ObservationChange>()
+    for (const [wrong, scope, message] of [
+      [
+        { ...session, projectID: "other-project" },
+        { kind: "session", sessionID: "ses-failed" },
+        "another project",
+      ],
+      [project, { kind: "session", sessionID: "ses-failed" }, "another scope"],
+    ] as const) {
+      const state = new RadarPanelState(
+        () => {},
+        async () => {},
+      )
+      const transport: RadarTransport = {
+        snapshot: async () => wrong,
+        changes: (signal) => changesFrom(queue, signal),
+        online: () => true,
+      }
+      const target = scope as ObservationScope
+      state.connect("wrong", "project", target, transport)
+      await until(() => Boolean(state.data.error))
+      expect(state.data.snapshot).toBeUndefined()
+      expect(state.data.error).toContain(message)
+      state.close()
+    }
+  } finally {
+    fixture.close()
+  }
+})
