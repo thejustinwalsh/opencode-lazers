@@ -496,11 +496,13 @@ export class ProjectIndex {
     agent: string,
     directory?: string,
   ) {
+    // Session.Info.agent is optional; the authenticated tool principal supplies
+    // the effective agent, while a conflicting persisted role is rejected.
     if (
       !session ||
       session.id !== id ||
       session.projectID !== this.projectID ||
-      session.agent !== agent
+      (session.agent !== undefined && session.agent !== agent)
     )
       return false
     try {

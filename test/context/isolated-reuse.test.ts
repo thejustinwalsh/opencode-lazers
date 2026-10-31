@@ -368,6 +368,28 @@ test("a worker reads its parent's pinned snapshot, not a later workspace publica
   expect(f.state()).toEqual(beforeRead)
 })
 
+test("native identity remains usable when Session.Info omits its optional agent field", async () => {
+  const f = setup()
+  f.sessions.set("ses_architect", {
+    id: "ses_architect",
+    projectID: "project",
+    directory: f.source,
+  })
+  const published = await f.sourceIndex.refresh({ sessionID: "ses_architect", agent: "architect" })
+  f.sessions.set("ses_worker", {
+    id: "ses_worker",
+    parentID: "ses_architect",
+    projectID: "project",
+    directory: f.worker,
+  })
+  const result = await f.workerIndex.evidence(
+    { sessionID: "ses_worker", agent: "lazers-implementor" },
+    { paths: ["README.md"] },
+  )
+  expect(result).toMatchObject({ snapshotID: published.id, workspace: f.source })
+  expect(result.sources[0]!.text).toContain("published source from Architect")
+})
+
 test("foreign projects and unrelated parent sessions cannot select another Architect's publication", async () => {
   const f = setup()
   await f.sourceIndex.refresh({ sessionID: "ses_architect", agent: "architect" })
