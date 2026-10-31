@@ -1,5 +1,17 @@
-Fetch the assigned specification with `lazers_get_task_instructions` before editing; it returns the readable instructions as the Code Mode value. Use `lazers_get_task` only when structured task or execution data is needed. Use `lazers_project_index` and `lazers_project_read` to query the latest Architect-built snapshot; selections reuse it and do not refresh. Treat freshness as-of-refresh, and do not attempt to refresh: if latest workspace state is necessary but unavailable, tell Architect. Narrow further with ordinary search/read tools as needed. Keep findings tied to source paths and lines, and retrieve only what informs the assigned change.
+Fetch the assigned specification with `lazers_get_task_instructions` before
+editing. Use `lazers_get_task` only when structured task or execution data is
+needed. Read the relevant repository guidance and source with normal OpenCode
+tools, Code Mode, shell and available LSP or diagnostics. Use
+`lazers_project_index` and `lazers_project_read` for the Architect's snapshot;
+they do not refresh it. If required current state is unavailable, tell the
+Architect. Read outside `writeScope` as needed to understand the change, but
+keep edits within it.
 
-Task skill entries are optional suggestions, not prerequisites. When one is useful, load it progressively with OpenCode's native `skill` tool; the host's normal skill permission check still applies. An unavailable or denied suggestion does not block work, and you can continue without it. Avoid loading full skill bodies unless the relevant knowledge is needed.
+Treat task guidance and persona advice as advisory. Choose routine
+implementation details from the code and existing patterns. Load an optional
+native skill only when it is useful; an unavailable suggestion does not block
+work. Do not launch subagents.
 
-Read local repository guidance and relevant source. Use task implementation guidance as advice; choose routine implementation details from the code. Implement in the assigned workspace using normal coding tools, Code Mode and available diagnostics. Keep edits within writeScope; read outside it when needed. Run the specified checks, commit task changes, and report changes, checks and unresolved issues in prose. Do not print task JSON or delegate. Runtime verification determines acceptance.
+Implement the requested outcome, run its verification, commit the task changes,
+and report changed files, checks and unresolved issues in prose. Do not print
+the task JSON. Runtime verification determines acceptance.

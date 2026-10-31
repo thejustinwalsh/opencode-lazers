@@ -148,3 +148,27 @@ test("unplanned detail is encodable by the native JSON RPC boundary", () => {
   expect(Schema.is(Schema.Json)(detail)).toBe(true)
   expect(Object.hasOwn(detail, "execution")).toBe(false)
 })
+
+test("retired tasks disappear from open queries but direct detail preserves disposition", () => {
+  const { open } = fixture()
+  const repository = open()
+  const task = insert(repository, "Legacy task replaced by the runner.")
+  repository.recordDisposition(
+    {
+      taskID: task.id,
+      requestID: "retire-read-test",
+      disposition: "superseded",
+      reason: "The integrated runner plan replaces this record.",
+      evidence: [{ kind: "artifact", reference: ".agents/docs/spikes/011-runner-execution.md" }],
+    },
+    { sessionID: "architect", agent: "architect" },
+  )
+  const reads = new TaskReads(repository)
+  expect(reads.query({}).tasks).toEqual([])
+  const history = reads.query({ includeRetired: true })
+  expect(history.count).toBe(1)
+  expect(history.tasks[0]?.disposition?.disposition).toBe("superseded")
+  expect(history.tasks[0]?.reason).toContain("integrated runner")
+  const detail = reads.get({ taskID: task.id })
+  expect(detail).toMatchObject({ status: "found", disposition: { disposition: "superseded" } })
+})

@@ -136,6 +136,65 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   expect(assertions).toEqual(["lazers_submit_task", "lazers_get_task", "lazers_list_tasks"])
 })
 
+test("Architect can durably retire a legacy task and replay the same disposition", async () => {
+  const { tools, repository, assertions } = await setup()
+  const submit = await Effect.runPromise(
+    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+  )
+  const { taskID } = JSON.parse(String(submit.content))
+  const input = {
+    taskID,
+    requestID: "dispose-tool-test",
+    disposition: "superseded",
+    reason: "Replaced by the integrated implementation.",
+    evidence: [{ kind: "verification", reference: "bun test" }],
+    relatedTaskIDs: [],
+  }
+  const dispose = tools.get("lazers_dispose_task")!
+  const recorded = JSON.parse(
+    String(
+      await Effect.runPromise(dispose.execute(input, context)).then((result) => result.content),
+    ),
+  )
+  expect(recorded.status).toBe("recorded")
+  const replayed = JSON.parse(
+    String(
+      await Effect.runPromise(dispose.execute(input, context)).then((result) => result.content),
+    ),
+  )
+  expect(replayed.status).toBe("replayed")
+  expect(repository.list()).toHaveLength(0)
+  expect(
+    JSON.parse(
+      String(
+        await Effect.runPromise(
+          tools.get("lazers_query_tasks")!.execute({ includeRetired: true }, context),
+        ).then((result) => result.content),
+      ),
+    ).tasks[0].disposition.disposition,
+  ).toBe("superseded")
+  expect(assertions).toContain("lazers_dispose_task")
+})
+
+test("task disposition is Architect-only even when native permission allows the tool", async () => {
+  const { tools } = await setup()
+  const implementor = { ...context, agent: Agent.ID.make("lazers-implementor") }
+  await expect(
+    Effect.runPromise(
+      tools.get("lazers_dispose_task")!.execute(
+        {
+          taskID: crypto.randomUUID(),
+          requestID: "implementor-dispose",
+          disposition: "rejected",
+          reason: "No.",
+          evidence: [{ kind: "human", reference: "review" }],
+        },
+        implementor,
+      ),
+    ),
+  ).rejects.toThrow("restricted to Architect")
+})
+
 test("permission denial prevents task writes", async () => {
   const { tools, repository } = await setup(true)
   await expect(

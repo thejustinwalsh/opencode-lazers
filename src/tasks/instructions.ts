@@ -24,6 +24,9 @@ export function taskInstructions(detail: TaskDetail): string {
   })
   return (
     `# Task ${task.id}, revision ${task.revision}\n\n${proposal.objective}` +
+    (detail.disposition
+      ? `\n\n## Disposition\n${detail.disposition.disposition}: ${detail.disposition.reason}\nEvidence: ${detail.disposition.evidence.map((item) => item.reference).join("; ")}`
+      : "") +
     section(
       "Done when",
       proposal.acceptance.map(

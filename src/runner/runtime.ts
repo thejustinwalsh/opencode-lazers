@@ -38,6 +38,7 @@ export class TaskRuntime {
   readonly owner = crypto.randomUUID()
   private running = false
   private stopped = false
+  private readonly idleWaiters: (() => void)[] = []
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -107,6 +108,37 @@ export class TaskRuntime {
           "UPDATE runner_plans SET state='cleaning',reason=NULL,version=version+1 WHERE id=?",
         ).run(plan.id)
         return { status: "cleanup-requested", version: this.store.plan(plan.id)!.version }
+      }
+      if (command.action === "schedule") {
+        if (terminal.has(plan.state) || plan.state === "cancelling" || plan.state === "cleaning")
+          throw new Error("Plan has ended")
+        if (!command.reason) throw new Error("Scheduling changes require a reason")
+        const attempts = this.store.attempts(plan.id)
+        if (
+          attempts.length &&
+          (command.afterPlans !== undefined ||
+            command.baseCommit !== undefined ||
+            command.workspaceMode !== undefined)
+        )
+          throw new Error("Only priority may change after execution has started")
+        const updated = PlanInput.parse({
+          ...JSON.parse(plan.body),
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          ...(command.afterPlans !== undefined ? { afterPlans: command.afterPlans } : {}),
+          ...(command.baseCommit !== undefined ? { baseCommit: command.baseCommit } : {}),
+          ...(command.workspaceMode !== undefined ? { workspaceMode: command.workspaceMode } : {}),
+        })
+        this.store.validatePlanDependencies(updated.afterPlans ?? [], plan.id)
+        if (command.baseCommit)
+          git(this.directory, ["merge-base", "--is-ancestor", command.baseCommit, "HEAD"])
+        this.store.revisePlan(plan, updated, "SCHEDULE_UPDATED", {
+          caller,
+          reason: command.reason,
+          priority: updated.priority ?? 0,
+          afterPlans: updated.afterPlans ?? [],
+          baseCommit: updated.baseCommit,
+        })
+        return { status: "scheduled", version: this.store.plan(plan.id)!.version }
       }
       if (command.action === "audit")
         return { status: "audited", ...this.store.audit(), version: plan.version }
@@ -312,9 +344,7 @@ export class TaskRuntime {
       const audit = this.store.audit()
       const ids = new Set(proposal.nodes.map((n) => n.taskID))
       const conflicts = audit.findings.filter(
-        (f) =>
-          ["exact-content", "scope-overlap"].includes(f.code) &&
-          f.taskIDs.some((id) => ids.has(id)),
+        (f) => f.code === "exact-content" && f.taskIDs.some((id) => ids.has(id)),
       )
       if (conflicts.length)
         return this.hold(
@@ -355,6 +385,8 @@ export class TaskRuntime {
     )
       throw new Error("Task is not available in this project")
     if (task.revision !== input.revision) throw new Error("Stale task revision")
+    if (this.store.repository.taskDisposition(task.id))
+      throw new Error("Task has been retired; inspect its disposition")
 
     let existing = this.store.execution(task.id)
     // Read the native implementor selection, not the Architect's model. A plan
@@ -659,10 +691,12 @@ export class TaskRuntime {
     } finally {
       clearInterval(heartbeat)
       this.running = false
+      for (const resolve of this.idleWaiters.splice(0)) resolve()
     }
   }
-  stop() {
+  async stop() {
     this.stopped = true
+    if (this.running) await new Promise<void>((resolve) => this.idleWaiters.push(resolve))
   }
 
   private async step(initialPlan: PlanRow, fence: number) {
@@ -720,8 +754,24 @@ export class TaskRuntime {
     }
     if (plan.state === "blocked") return
 
-    const rawInput = JSON.parse(plan.body)
-    const input = PlanInput.parse(rawInput)
+    let rawInput = JSON.parse(plan.body)
+    let input = PlanInput.parse(rawInput)
+    const prerequisites = input.afterPlans ?? []
+    if (prerequisites.some((id) => this.store.plan(id)?.state !== "integrated")) return
+    if (prerequisites.length && !this.store.attempts(plan.id).length) {
+      // A cross-plan prerequisite includes integration, so dependent workers see its code.
+      for (const id of prerequisites) {
+        const artifact = this.store.plan(id)!.artifact
+        if (artifact) git(this.directory, ["merge-base", "--is-ancestor", artifact, "HEAD"])
+      }
+      const baseCommit = git(this.directory, ["rev-parse", "HEAD"])
+      if (input.baseCommit !== baseCommit) {
+        input = PlanInput.parse({ ...rawInput, baseCommit })
+        this.store.revisePlan(plan, input, "DEPENDENCIES_INTEGRATED", { prerequisites, baseCommit })
+        plan = this.store.plan(plan.id)!
+        rawInput = JSON.parse(plan.body)
+      }
+    }
     if (rawInput.workspaceMode === undefined) {
       const attempts = this.store.attempts(plan.id)
       if (attempts.length)
@@ -922,11 +972,7 @@ export class TaskRuntime {
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
     const first = attempts[0]
     const audit = this.store.audit()
-    if (
-      audit.findings.some(
-        (f) => ["exact-content", "scope-overlap"].includes(f.code) && f.taskIDs.includes(task.id),
-      )
-    ) {
+    if (audit.findings.some((f) => f.code === "exact-content" && f.taskIDs.includes(task.id))) {
       this.hold(plan, "Overlap audit changed before dispatch")
       return
     }

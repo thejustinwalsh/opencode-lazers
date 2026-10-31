@@ -89,12 +89,12 @@ export default Plugin.define({
           }
           const timer = setInterval(tick, 2000)
           tick()
-          return () => {
+          return async () => {
             clearInterval(timer)
-            runtime.stop()
+            await runtime.stop()
           }
         }),
-        (stop) => Effect.sync(stop),
+        (stop) => Effect.promise(stop),
       )
       yield* registerLocalInference(ctx).pipe(Effect.orDie)
       yield* ctx.storage.set("loaded", true)

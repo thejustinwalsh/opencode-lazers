@@ -33,6 +33,18 @@ export const PlanInput = z
         "Optional concise Architect-authored label; preserve verbatim and do not derive from objective.",
       ),
     objective: z.string().trim().min(1).max(8000),
+    priority: z
+      .int()
+      .optional()
+      .describe(
+        "Higher values dispatch first; equal priority preserves submission order. Active workers continue.",
+      ),
+    afterPlans: z
+      .array(z.uuid())
+      .optional()
+      .describe(
+        "Wait for these same-project plans to be integrated before dispatching; then use the integrated checkout as the starting baseline.",
+      ),
     baseCommit: z.string().regex(/^[a-f0-9]{40,64}$/),
     workspaceMode: z.enum(["shared", "isolated"]).default("shared"),
     workerModel: ModelPolicy.optional().describe(
@@ -122,8 +134,11 @@ export const CommandInput = z.strictObject({
     "resume",
     "retry",
     "integrated",
+    "schedule",
   ]),
   reason: z.string().min(1).max(2000).optional(),
+  priority: z.int().optional(),
+  afterPlans: z.array(z.uuid()).optional(),
   workspaceMode: z.enum(["shared", "isolated"]).optional(),
   baseCommit: z
     .string()

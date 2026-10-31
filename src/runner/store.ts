@@ -161,7 +161,7 @@ export class RunnerStore {
     return this.atomic((db) =>
       db
         .query<PlanRow, [string]>(
-          "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY rowid LIMIT 1000",
+          "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY COALESCE(json_extract(body, '$.priority'),0) DESC,rowid LIMIT 1000",
         )
         .all(this.repository.projectDirectory),
     )
@@ -336,7 +336,10 @@ export class RunnerStore {
   submit(input: unknown, owner: string) {
     const plan = PlanInput.parse(input)
     return this.command(plan.requestID, { plan, owner }, (db) => {
+      this.validatePlanDependencies(plan.afterPlans ?? [])
       for (const node of plan.nodes) {
+        if (this.repository.taskDisposition(node.taskID))
+          throw new Error("Task has been retired; inspect its disposition")
         const task = this.repository.get(node.taskID)
         if (!task || task.revision !== node.revision)
           throw new Error(`Missing, foreign, or stale task ${node.taskID}`)
@@ -383,6 +386,34 @@ export class RunnerStore {
       }
       this.record(id, null, "PLAN_SUBMITTED", { owner, revision: 1 })
       return { status: "submitted", planID: id, version: 1 }
+    })
+  }
+  validatePlanDependencies(dependencies: string[], sourceID?: string) {
+    if (new Set(dependencies).size !== dependencies.length)
+      throw new Error("Duplicate plan dependency")
+    const visit = (id: string, path: Set<string>) => {
+      if (id === sourceID || path.has(id)) throw new Error("Plan dependency cycle")
+      const plan = this.plan(id)
+      if (!plan) throw new Error("Missing or foreign plan dependency")
+      const next = new Set(path).add(id)
+      for (const dependency of PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? [])
+        visit(dependency, next)
+    }
+    for (const dependency of dependencies) visit(dependency, new Set())
+  }
+  revisePlan(plan: PlanRow, input: PlanInput, event: string, details: unknown) {
+    this.atomic((db) => {
+      db.query(
+        "UPDATE runner_plans SET body=?,revision=revision+1,version=version+1 WHERE id=?",
+      ).run(JSON.stringify(input), plan.id)
+      db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
+        plan.id,
+        plan.revision + 1,
+        JSON.stringify(input),
+        plan.owner,
+        Date.now(),
+      )
+      this.record(plan.id, null, event, details)
     })
   }
   record(planID: string, taskID: string | null, event: string, payload: unknown) {
@@ -454,6 +485,7 @@ export class RunnerStore {
           "SELECT id,body FROM tasks WHERE project_directory=? ORDER BY rowid",
         )
         .all(this.repository.projectDirectory)
+        .filter((task) => !this.repository.taskDisposition(task.id))
       const relations = db
         .query<{ task_id: string; other_task_id: string }, [string]>(
           "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",

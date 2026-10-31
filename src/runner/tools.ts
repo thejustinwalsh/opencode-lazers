@@ -12,14 +12,14 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lazers_submit_plan",
         description:
-          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Resolve audit overlap candidates with explicit distinct/duplicate/supplement rationales. Does not run until lazers_plan_command action run. Stable requestID is mandatory for safe retries.",
+          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Does not run until lazers_plan_command action run. Stable requestID is mandatory for safe retries.",
         schema: PlanInput,
         run: (input: unknown, sessionID: string) => runtime.store.submit(input, sessionID),
       },
       {
         name: "lazers_plan_command",
         description:
-          "Request execution, cancel, audit, reconcile, explicitly reassign, retry an ended task in a fresh child or resume an exhausted or cancelled stopped task with taskID/reason (workspaceMode shared selects the current checkout), or record assertion-bound human evidence. Requires current expectedVersion and a stable requestID. After review/merge, integrated records artifact/targetBranch/reason and requests native non-forced worktree cleanup. Fix cleanup failures before retrying. No force-accept; history remains.",
+          "Schedule priority/afterPlans and an unstarted plan baseline with reason; request execution, cancel, audit, reconcile, explicitly reassign, retry an ended task in a fresh child or resume an exhausted or cancelled stopped task with taskID/reason (workspaceMode shared selects the current checkout), or record assertion-bound human evidence. Requires current expectedVersion and a stable requestID. After review/merge, integrated records artifact/targetBranch/reason and requests native non-forced worktree cleanup. Fix cleanup failures before retrying. No force-accept; history remains.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },

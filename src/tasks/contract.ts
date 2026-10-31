@@ -2,6 +2,7 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { TaskSpecSchema } from "../task.ts"
 import { TaskState } from "../runner/schema.ts"
+import { TaskDispositionRecord } from "../task-disposition.ts"
 
 export const QueryInput = z.strictObject({
   search: z.string().max(200).default(""),
@@ -10,6 +11,7 @@ export const QueryInput = z.strictObject({
   limit: z.int().min(1).max(100).default(30),
   cursor: z.string().min(1).max(2_048).optional(),
   includeCompleted: z.boolean().default(false),
+  includeRetired: z.boolean().default(false),
 })
 export type TaskQuery = z.input<typeof QueryInput>
 export const GetInput = z.strictObject({
@@ -23,6 +25,7 @@ export const TaskSummary = z.strictObject({
   revision: z.literal(1),
   status: z.union([z.literal("submitted"), TaskState]),
   reason: z.string().nullable(),
+  disposition: TaskDispositionRecord.optional(),
   title: z.string().max(120),
   objective: z.string().max(400),
   createdAt: z.iso.datetime(),
@@ -67,6 +70,7 @@ export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
     task: TaskSpecSchema,
+    disposition: TaskDispositionRecord.optional(),
     execution: Execution.optional(),
     attempts: z.array(TaskAttempt).optional(),
     activity: z.array(TaskActivity).optional(),

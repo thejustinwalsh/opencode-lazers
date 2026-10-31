@@ -2422,3 +2422,178 @@ test("cleanup preserves a dirty owned worktree even after its accepted commit wa
   expect(git(worktree, ["status", "--porcelain"])).toContain("a.txt")
   expect(await f.host.worktrees()).toContain(worktree)
 })
+
+test("priority orders conflicting plans without rejecting their overlapping scopes", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "src/a.txt", scope: ["src/**"] }],
+  })
+  const b = f.createTask("b", "src/b.txt", ["src/**"])
+  const later = f.store.submit(
+    { ...f.inputFor([b], { requestID: "priority-b" }), priority: 10 },
+    "owner",
+  )
+  await runPlan(f, f.receipt.planID, "priority-run-a")
+  await runPlan(f, later.planID, "priority-run-b")
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  const attempt = f.store.attempts(later.planID)[0]!
+  expect(attempt).toBeDefined()
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  const updated = await f.runtime.command(
+    {
+      requestID: "priority-live",
+      planID: later.planID,
+      expectedVersion: f.store.plan(later.planID)!.version,
+      action: "schedule",
+      priority: -1,
+      reason: "Let another plan take precedence after this worker finishes",
+    },
+    "owner",
+  )
+  expect(updated).toMatchObject({ status: "scheduled" })
+  expect(f.store.attempts(later.planID)).toHaveLength(1)
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+})
+
+test("cross-plan dependencies wait for integration and dispatch from the integrated source", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const b = f.createTask("b", "b.txt")
+  const dependent = f.store.submit(
+    {
+      ...f.inputFor([b], { requestID: "dependent-b" }),
+      afterPlans: [f.receipt.planID],
+      priority: 10,
+    },
+    "owner",
+  )
+  await runPlan(f, dependent.planID, "dependency-run-b")
+  await runPlan(f, f.receipt.planID, "dependency-run-a")
+  await f.runtime.tick()
+  expect(f.store.attempts(dependent.planID)).toHaveLength(0)
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(f.store.attempts(dependent.planID)).toHaveLength(0)
+  const accepted = f.store.plan(f.receipt.planID)!
+  git(f.root, ["merge", "--ff-only", accepted.artifact!])
+  await f.runtime.command(
+    {
+      requestID: "dependency-integrated",
+      planID: accepted.id,
+      expectedVersion: accepted.version,
+      action: "integrated",
+      artifact: accepted.artifact!,
+      targetBranch: "main",
+      reason: "Reviewed the result and merged it",
+    },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.plan(accepted.id)!.reason).toBeNull()
+  expect(f.store.plan(accepted.id)!.state).toBe("integrated")
+  const next = f.store.attempts(dependent.planID)[0]!
+  expect(next.base_commit).toBe(accepted.artifact!)
+  expect(readFileSync(join(next.workspace, "a.txt"), "utf8")).toBe("a")
+})
+
+test("schedule updates are versioned, retry-safe and reject dependency cycles or foreign plans", async () => {
+  const f = fixture({ startOnly: true, independent: true })
+  const a = f.store.submit(f.inputFor([f.tasks[0]!], { requestID: "schedule-a" }), "owner")
+  const b = f.store.submit(
+    { ...f.inputFor([f.tasks[1]!], { requestID: "schedule-b" }), afterPlans: [a.planID] },
+    "owner",
+  )
+  const original = f.store.plan(a.planID)!
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "schedule-cycle",
+        planID: a.planID,
+        expectedVersion: original.version,
+        action: "schedule",
+        afterPlans: [b.planID],
+        reason: "Invalid cycle",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("cycle")
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "schedule-foreign",
+        planID: a.planID,
+        expectedVersion: original.version,
+        action: "schedule",
+        afterPlans: [crypto.randomUUID()],
+        reason: "Unknown project plan",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("foreign")
+  expect(f.store.plan(a.planID)!.body).toBe(original.body)
+  const command = {
+    requestID: "schedule-valid",
+    planID: b.planID,
+    expectedVersion: b.version,
+    action: "schedule",
+    priority: 5,
+    afterPlans: [],
+    baseCommit: f.base,
+    reason: "Independent work can start immediately",
+  }
+  const first = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(first)
+  expect(f.store.plan(b.planID)!.revision).toBe(2)
+  const history = f.store.atomic((db) =>
+    db
+      .query<{ body: string }, [string]>(
+        "SELECT body FROM runner_plan_revisions WHERE plan_id=? ORDER BY revision",
+      )
+      .all(b.planID),
+  )
+  expect(history).toHaveLength(2)
+  expect(JSON.parse(history[0]!.body).afterPlans).toEqual([a.planID])
+  expect(JSON.parse(history[1]!.body)).toMatchObject({ priority: 5, afterPlans: [] })
+})
+
+test("runtime shutdown joins an in-flight native operation before storage may close", async () => {
+  const f = fixture({ delayed: true })
+  await runPlan(f)
+  const original = f.host.session
+  let entered!: () => void
+  let release!: () => void
+  const entering = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  f.host.session = async (id) => {
+    entered()
+    await blocked
+    return original(id)
+  }
+  const tick = f.runtime.tick()
+  await entering
+  let stopped = false
+  const stopping = f.runtime.stop().then(() => {
+    stopped = true
+  })
+  await Promise.resolve()
+  expect(stopped).toBe(false)
+  release()
+  await tick
+  await stopping
+  expect(stopped).toBe(true)
+  const attempts = f.store.attempts(f.receipt.planID).length
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(attempts)
+})

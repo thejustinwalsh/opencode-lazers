@@ -5,6 +5,12 @@ import { dirname, isAbsolute, join } from "node:path"
 import { IdempotencyKeySchema, TaskProposalSchema, TaskSpecSchema } from "./task.ts"
 import type { TaskSpec } from "./task.ts"
 import { canonical, fingerprint } from "./identity.ts"
+import {
+  dispositionPayload,
+  TaskDispositionInput,
+  TaskDispositionRecord,
+  type TaskDispositionRecord as TaskDispositionRecordType,
+} from "./task-disposition.ts"
 
 export function taskDatabasePath(dataDirectory?: string): string {
   const directory =
@@ -43,7 +49,7 @@ export class TaskRepository {
       const version = () =>
         db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
       const initial = version()
-      if (initial > 3) throw new Error(`Unsupported LAZERS database version ${initial}`)
+      if (initial > 4) throw new Error(`Unsupported LAZERS database version ${initial}`)
       // SQLite can fail a concurrent first WAL transition immediately despite
       // busy_timeout. Retry only connection configuration, never a task write.
       const deadline = Date.now() + 5_000
@@ -63,7 +69,7 @@ export class TaskRepository {
       }
       db.transaction(() => {
         const current = version()
-        if (current > 3) throw new Error(`Unsupported LAZERS database version ${current}`)
+        if (current > 4) throw new Error(`Unsupported LAZERS database version ${current}`)
         db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
@@ -99,6 +105,27 @@ export class TaskRepository {
           db.exec(
             "ALTER TABLE task_changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'insert'; PRAGMA user_version=3",
           )
+        if (current < 4)
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS task_dispositions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_directory TEXT NOT NULL,
+              task_id TEXT NOT NULL REFERENCES tasks(id),
+              request_id TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              disposition TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              evidence TEXT NOT NULL,
+              related_task_ids TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              agent TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(project_directory, request_id)
+            );
+            CREATE INDEX IF NOT EXISTS task_dispositions_current
+              ON task_dispositions(project_directory, task_id, id DESC);
+            PRAGMA user_version=4;
+          `)
       }).immediate()
       return db
     } catch (error) {
@@ -208,6 +235,7 @@ export class TaskRepository {
     snapshot?: number
     before?: number
     includeCompleted?: boolean
+    includeRetired?: boolean
   }) {
     return this.db.transaction(() => {
       const current = this.version()
@@ -227,6 +255,10 @@ export class TaskRepository {
       if (input.includeCompleted === false)
         clauses.push(
           "NOT EXISTS (SELECT 1 FROM runner_nodes n WHERE n.task_id=tasks.id AND n.state IN ('accepted','incorporated','cancelled'))",
+        )
+      if (input.includeRetired !== true)
+        clauses.push(
+          "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)",
         )
       if (input.sessionID) {
         clauses.push("json_extract(body, '$.provenance.sessionID') = ?")
@@ -274,15 +306,145 @@ export class TaskRepository {
     return row ? TaskSpecSchema.parse(JSON.parse(row.body)) : undefined
   }
 
-  list(limit = 20): TaskSpec[] {
+  list(limit = 20, includeRetired = false): TaskSpec[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new Error("Use a limit from 1 to 100")
+    const retired = includeRetired
+      ? ""
+      : " AND NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)"
     return this.db
       .query<{ body: string }, [string, number]>(
-        "SELECT body FROM tasks WHERE project_directory = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+        `SELECT body FROM tasks WHERE project_directory = ?${retired} ORDER BY created_at DESC, id DESC LIMIT ?`,
       )
       .all(this.projectDirectory, limit)
       .map((row) => TaskSpecSchema.parse(JSON.parse(row.body)))
+  }
+
+  /** Return the latest durable disposition without changing the immutable task. */
+  taskDisposition(taskID: string): TaskDispositionRecordType | undefined {
+    const row = this.db
+      .query<DispositionRow, [string, string]>(
+        "SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC LIMIT 1",
+      )
+      .get(this.projectDirectory, taskID)
+    return row ? dispositionRecord(row) : undefined
+  }
+
+  /** Return the append-only disposition history for a project-local task. */
+  taskDispositionHistory(taskID: string): TaskDispositionRecordType[] {
+    return this.db
+      .query<DispositionRow, [string, string]>(
+        "SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id",
+      )
+      .all(this.projectDirectory, taskID)
+      .map(dispositionRecord)
+  }
+
+  recordDisposition(
+    input: unknown,
+    actor: { sessionID: string; agent: string },
+  ): DispositionReceipt {
+    const parsed = TaskDispositionInput.parse(input)
+    let changed = false
+    const receipt = this.atomic((db) => {
+      const payload = canonical(dispositionPayload(parsed))
+      const existingRequest = db
+        .query<DispositionRow, [string, string]>(
+          "SELECT * FROM task_dispositions WHERE project_directory=? AND request_id=?",
+        )
+        .get(this.projectDirectory, parsed.requestID)
+      if (existingRequest) {
+        if (existingRequest.payload !== payload)
+          return {
+            status: "conflict" as const,
+            taskID: parsed.taskID,
+            message: "requestID already identifies different disposition content",
+          }
+        return {
+          status: "replayed" as const,
+          taskID: existingRequest.task_id,
+          disposition: dispositionRecord(existingRequest),
+        }
+      }
+      const task = db
+        .query<{ id: string }, [string, string]>(
+          "SELECT id FROM tasks WHERE project_directory=? AND id=?",
+        )
+        .get(this.projectDirectory, parsed.taskID)
+      if (!task) throw new Error("Task not found in this project")
+      if (parsed.relatedTaskIDs.length) {
+        const placeholders = parsed.relatedTaskIDs.map(() => "?").join(",")
+        const found = db
+          .query<{ count: number }, (string | number)[]>(
+            `SELECT COUNT(*) AS count FROM tasks WHERE project_directory=? AND id IN (${placeholders})`,
+          )
+          .get(this.projectDirectory, ...parsed.relatedTaskIDs)!.count
+        if (found !== parsed.relatedTaskIDs.length)
+          throw new Error("Related task must belong to this project")
+      }
+      const current = db
+        .query<DispositionRow, [string, string]>(
+          "SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC LIMIT 1",
+        )
+        .get(this.projectDirectory, parsed.taskID)
+      if (current)
+        return {
+          status: "already_disposed" as const,
+          taskID: parsed.taskID,
+          disposition: dispositionRecord(current),
+        }
+
+      const activeStates = ["queued", "ready", "running", "verifying", "blocked", "exhausted"]
+      const states = hasTable(db, "runner_nodes")
+        ? db
+            .query<{ state: string }, [string, string]>(
+              `SELECT n.state FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+               WHERE p.project_directory=? AND n.task_id=?`,
+            )
+            .all(this.projectDirectory, parsed.taskID)
+            .map((row) => row.state)
+        : []
+      if (states.some((state) => activeStates.includes(state)))
+        throw new Error("Cannot dispose a task with active execution")
+      if (
+        parsed.disposition === "fulfilled" &&
+        states.length > 0 &&
+        states.some((state) => !["accepted", "incorporated"].includes(state))
+      )
+        throw new Error("Fulfilled disposition requires accepted execution or reviewed evidence")
+
+      db.query(
+        `INSERT INTO task_dispositions
+         (project_directory,task_id,request_id,payload,disposition,reason,evidence,related_task_ids,session_id,agent,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        this.projectDirectory,
+        parsed.taskID,
+        parsed.requestID,
+        payload,
+        parsed.disposition,
+        parsed.reason,
+        JSON.stringify(parsed.evidence),
+        JSON.stringify(parsed.relatedTaskIDs),
+        actor.sessionID,
+        actor.agent,
+        new Date().toISOString(),
+      )
+      this.changed()
+      changed = true
+      const record = db
+        .query<DispositionRow, [string, string]>(
+          "SELECT * FROM task_dispositions WHERE project_directory=? AND request_id=?",
+        )
+        .get(this.projectDirectory, parsed.requestID)!
+      return {
+        status: "recorded" as const,
+        taskID: parsed.taskID,
+        disposition: dispositionRecord(record),
+      }
+    })
+    if (changed) this.notify()
+    return receipt
   }
 
   close(): void {
@@ -290,4 +452,52 @@ export class TaskRepository {
     this.connection?.close()
     this.connection = undefined
   }
+}
+
+type DispositionRow = {
+  id: number
+  project_directory: string
+  task_id: string
+  request_id: string
+  payload: string
+  disposition: string
+  reason: string
+  evidence: string
+  related_task_ids: string
+  session_id: string
+  agent: string
+  created_at: string
+}
+
+export type DispositionReceipt =
+  | {
+      status: "recorded" | "replayed" | "already_disposed"
+      taskID: string
+      disposition: TaskDispositionRecordType
+    }
+  | { status: "conflict"; taskID: string; message: string }
+
+function hasTable(db: Database, name: string): boolean {
+  return Boolean(
+    db
+      .query<{ name: string }, [string]>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      )
+      .get(name),
+  )
+}
+
+function dispositionRecord(row: DispositionRow): TaskDispositionRecordType {
+  return TaskDispositionRecord.parse({
+    id: row.id,
+    taskID: row.task_id,
+    requestID: row.request_id,
+    disposition: row.disposition,
+    reason: row.reason,
+    evidence: JSON.parse(row.evidence),
+    relatedTaskIDs: JSON.parse(row.related_task_ids),
+    sessionID: row.session_id,
+    agent: row.agent,
+    createdAt: row.created_at,
+  })
 }

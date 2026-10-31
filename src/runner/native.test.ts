@@ -94,9 +94,9 @@ test("child prompt uses native move and verifies location before any model work"
 test("worker guidance teaches focused LAZERS discovery and optional progressive skill use", () => {
   expect(workerInstructions).toContain("lazers_project_index")
   expect(workerInstructions).toContain("lazers_project_read")
-  expect(workerInstructions).toContain("optional suggestions, not prerequisites")
-  expect(workerInstructions).toContain("native `skill` tool")
-  expect(workerInstructions).toContain("normal skill permission check")
+  expect(workerInstructions).toContain("optional\nnative skill")
+  expect(workerInstructions).toContain("unavailable suggestion does not block")
+  expect(workerInstructions).toContain("Do not launch subagents")
 })
 
 test("optional skills are not resolved, and only the legacy LAZERS entry is removed before prompting", async () => {

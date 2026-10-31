@@ -117,6 +117,116 @@ test("SQLite itself enforces key uniqueness and task association referential int
   expect(repository.list()).toHaveLength(1)
 })
 
+test("task dispositions are project-local, durable, idempotent, and hide retired records by default", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const other = open(path, "/other")
+  const first = submitTask(repository, keyedProposal(), provenance)
+  if (first.status !== "submitted") throw new Error("Expected submission")
+  const second = submitTask(
+    repository,
+    { ...keyedProposal(), idempotencyKey: "second" },
+    provenance,
+  )
+  if (second.status !== "submitted") throw new Error("Expected submission")
+  const input = {
+    taskID: first.taskID,
+    requestID: "legacy-cleanup-1",
+    disposition: "superseded" as const,
+    reason: "Replaced by the integrated runner plan.",
+    evidence: [
+      { kind: "artifact" as const, reference: ".agents/docs/spikes/011-runner-execution.md" },
+    ],
+    relatedTaskIDs: [second.taskID],
+  }
+  const recorded = repository.recordDisposition(input, {
+    sessionID: "architect",
+    agent: "architect",
+  })
+  expect(recorded.status).toBe("recorded")
+  expect(repository.list()).toHaveLength(1)
+  expect(repository.list(20, true)).toHaveLength(2)
+  expect(repository.taskDisposition(first.taskID)?.disposition).toBe("superseded")
+  expect(repository.taskDispositionHistory(first.taskID)).toHaveLength(1)
+  expect(
+    repository.recordDisposition(input, { sessionID: "other", agent: "architect" }).status,
+  ).toBe("replayed")
+  expect(
+    repository.recordDisposition(
+      { ...input, reason: "Changed reason" },
+      { sessionID: "architect", agent: "architect" },
+    ),
+  ).toEqual({
+    status: "conflict",
+    taskID: first.taskID,
+    message: "requestID already identifies different disposition content",
+  })
+  expect(() =>
+    other.recordDisposition(input, { sessionID: "architect", agent: "architect" }),
+  ).toThrow("not found in this project")
+  repository.close()
+  const reopened = open(path)
+  expect(reopened.taskDisposition(first.taskID)?.reason).toContain("integrated runner")
+  expect(reopened.list()).toHaveLength(1)
+})
+
+test("a disposition cannot hide active execution or claim failed work was fulfilled", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const submitted = submitTask(repository, keyedProposal(), provenance)
+  if (submitted.status !== "submitted") throw new Error("Expected submission")
+  repository.atomic((db) => {
+    db.exec(`
+      CREATE TABLE runner_plans (
+        id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
+        revision INTEGER NOT NULL, version INTEGER NOT NULL, state TEXT NOT NULL,
+        body TEXT NOT NULL, model TEXT, reason TEXT, artifact TEXT
+      );
+      CREATE TABLE runner_nodes (
+        plan_id TEXT NOT NULL, task_id TEXT NOT NULL, spec_revision INTEGER NOT NULL,
+        ordinal INTEGER NOT NULL, state TEXT NOT NULL, version INTEGER NOT NULL,
+        reason TEXT, artifact TEXT, snapshot TEXT NOT NULL, machine_version TEXT NOT NULL
+      );
+    `)
+    db.query("INSERT INTO runner_plans VALUES (?,?,?,?,?,?,?,?,?,?)").run(
+      "plan",
+      "/repo",
+      "architect",
+      1,
+      1,
+      "running",
+      "{}",
+      null,
+      null,
+      null,
+    )
+    db.query("INSERT INTO runner_nodes VALUES (?,?,?,?,?,?,?,?,?,?)").run(
+      "plan",
+      submitted.taskID,
+      1,
+      0,
+      "running",
+      1,
+      null,
+      null,
+      "{}",
+      "v1",
+    )
+  })
+  expect(() =>
+    repository.recordDisposition(
+      {
+        taskID: submitted.taskID,
+        requestID: "active",
+        disposition: "rejected",
+        reason: "Should not be accepted while running.",
+        evidence: [{ kind: "human", reference: "review" }],
+      },
+      { sessionID: "architect", agent: "architect" },
+    ),
+  ).toThrow("active execution")
+})
+
 test("storage path honors an explicit directory and rejects a relative override", () => {
   expect(taskDatabasePath("/tmp/lazers")).toBe("/tmp/lazers/tasks.sqlite")
   expect(() => taskDatabasePath("relative")).toThrow("absolute")

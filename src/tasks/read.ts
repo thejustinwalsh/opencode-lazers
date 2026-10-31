@@ -13,7 +13,12 @@ const Cursor = z.strictObject({
   before: z.int().positive(),
 })
 
-function summarize(task: TaskSpec, search: string, scopePath?: string): TaskSummary {
+function summarize(
+  task: TaskSpec,
+  search: string,
+  scopePath: string | undefined,
+  disposition: TaskSummary["disposition"],
+): TaskSummary {
   const matches: TaskSummary["matches"] = []
   const needle = search.toLowerCase()
   const fields = {
@@ -46,6 +51,7 @@ function summarize(task: TaskSpec, search: string, scopePath?: string): TaskSumm
     revision: task.revision,
     status: task.status,
     reason: null,
+    ...(disposition ? { disposition } : {}),
     title: taskTitle(task.proposal.objective),
     objective: task.proposal.objective.slice(0, 400),
     createdAt: task.createdAt,
@@ -70,6 +76,7 @@ export class TaskReads {
           query.search,
           query.scopePath,
           query.includeCompleted,
+          query.includeRetired,
         ]),
       )
       .digest("hex")
@@ -103,10 +110,11 @@ export class TaskReads {
       count: page.count,
       tasks: visible.map(({ task }) => {
         const execution = this.runner.execution(task.id)
+        const disposition = this.repository.taskDisposition(task.id)
         return {
-          ...summarize(task, query.search, query.scopePath),
+          ...summarize(task, query.search, query.scopePath, disposition),
           status: execution?.state ?? task.status,
-          reason: execution?.reason ?? null,
+          reason: execution?.reason ?? disposition?.reason ?? null,
         }
       }),
       nextCursor,
@@ -123,8 +131,10 @@ export class TaskReads {
     if (query.revision !== undefined && query.revision !== task.revision) {
       return GetOutput.parse({ status: "revision_unavailable", revision: task.revision })
     }
+    const disposition = this.repository.taskDisposition(task.id)
     const execution = this.runner.execution(task.id)
-    if (!execution) return GetOutput.parse({ status: "found", task })
+    if (!execution)
+      return GetOutput.parse({ status: "found", task, ...(disposition ? { disposition } : {}) })
     const attempts = this.runner
       .attempts(execution.planID)
       .filter((attempt) => attempt.task_id === task.id)
@@ -144,6 +154,13 @@ export class TaskReads {
       payload: event.payload,
       createdAt: event.created_at,
     }))
-    return GetOutput.parse({ status: "found", task, execution, attempts, activity })
+    return GetOutput.parse({
+      status: "found",
+      task,
+      ...(disposition ? { disposition } : {}),
+      execution,
+      attempts,
+      activity,
+    })
   }
 }

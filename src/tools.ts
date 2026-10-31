@@ -14,6 +14,7 @@ import {
 } from "./tasks/contract.ts"
 import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
+import { TaskDispositionInput } from "./task-disposition.ts"
 
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
@@ -104,6 +105,45 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           ),
     })
     editor.add({
+      name: "lazers_dispose_task",
+      description:
+        "Architect-only durable disposition for an old task: record reviewed fulfillment, supersession, rejection or duplication with a reason, evidence and project-local related task IDs. The immutable task remains readable. This does not accept worker execution, override active work, or force a plan state.",
+      input: z.toJSONSchema(TaskDispositionInput, { io: "input" }),
+      options: { codemode: false, permission: "lazers_dispose_task" },
+      execute: (input, context) =>
+        ctx.permission
+          .assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            action: "lazers_dispose_task",
+            resources: ["*"],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  if (context.agent !== "architect")
+                    throw new Tool.Error({ message: "Task disposition is restricted to Architect" })
+                  const parsed = TaskDispositionInput.parse(input)
+                  const receipt = withRepository((connection) =>
+                    connection.recordDisposition(parsed, {
+                      sessionID: context.sessionID,
+                      agent: String(context.agent),
+                    }),
+                  )
+                  return { content: JSON.stringify(receipt) }
+                },
+                catch: (error) =>
+                  error instanceof Tool.Error
+                    ? error
+                    : new Tool.Error({
+                        message: error instanceof Error ? error.message : String(error),
+                      }),
+              }),
+            ),
+          ),
+    })
+    editor.add({
       name: "lazers_get_task",
       description:
         "Retrieve a LAZERS task by UUID as structured task and execution data. Implementors should use lazers_get_task_instructions for readable instructions.",
@@ -163,7 +203,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_list_tasks",
       description:
-        "List recent submitted tasks in this repository. Use lazers_get_task for the full specification.",
+        "List recent open submitted tasks in this repository. Retired records stay available through lazers_get_task or lazers_query_tasks with includeRetired; use the latter for the full specification list.",
       input: listInput,
       options: { codemode: false, permission: "lazers_list_tasks" },
       execute: (input, context) =>
@@ -188,7 +228,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
     editor.add({
       name: "lazers_query_tasks",
       description:
-        "Search this project's persisted tasks across sessions, including older records. Literal text/ID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Page with the returned cursor using unchanged filters.",
+        "Search this project's persisted open tasks across sessions, including older records. Literal text/ID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
       input: QueryInput,
       output: QueryOutput,
       options: { codemode: true, pinned: true, permission: "lazers_query_tasks" },
