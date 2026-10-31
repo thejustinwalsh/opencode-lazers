@@ -460,6 +460,52 @@ test("a concurrent reassignment cannot be overwritten by continuation completion
   )
 })
 
+test("Start cannot adopt a stale continuation after an explicit owner round trip", async () => {
+  const f = fixture({ shared: true })
+  f.sessions.get("owner")!.agent = "build"
+  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner", agent: "architect" })
+  const create = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    await create(input)
+    await f.runtime.command(
+      {
+        requestID: "owner-away",
+        planID: f.receipt.planID,
+        expectedVersion: 1,
+        action: "reassign",
+        targetSessionID: "new-owner",
+        reason: "Explicit move",
+      },
+      "owner",
+    )
+    f.sessions.get("owner")!.agent = "architect"
+    await f.runtime.command(
+      {
+        requestID: "owner-back",
+        planID: f.receipt.planID,
+        expectedVersion: 2,
+        action: "reassign",
+        targetSessionID: "owner",
+        reason: "Explicit restore",
+      },
+      "new-owner",
+    )
+  }
+  const input = { taskID: f.tasks[0]!.id, revision: 1 as const, sessionID: "owner" }
+  await expect(f.runtime.startTask(input)).rejects.toThrow("Stale plan version")
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({
+    owner: "owner",
+    version: 3,
+    state: "draft",
+  })
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  expect(await f.runtime.startTask(input)).toMatchObject({
+    planID: f.receipt.planID,
+    state: "running",
+  })
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+})
+
 test("a lost continuation-create response is reconciled by stable native session ID", async () => {
   const f = fixture({ shared: true, commit: true, startOnly: true })
   f.sessions.get("owner")!.agent = "build"

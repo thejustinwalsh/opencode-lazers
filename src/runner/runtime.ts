@@ -387,9 +387,6 @@ export class TaskRuntime {
       created = true
     }
 
-    const currentOwner = await this.host.session(plan.owner)
-    const owner = await this.ensureArchitectOwner(plan, currentOwner)
-    plan = this.store.plan(plan.id)!
     if (plan.state === "draft")
       await this.command(
         {
@@ -398,7 +395,7 @@ export class TaskRuntime {
           expectedVersion: plan.version,
           action: "run",
         },
-        owner.id,
+        plan.owner,
       )
     await this.tick()
     const execution = this.store.execution(task.id)
