@@ -26,7 +26,6 @@ Linked-worker Session Tasks visibility and completed-plan finalization delays
 are recorded against their existing tasks. Inference remains enabled and
 unchanged; the previously requested freeze investigation was report-only.
 
-
 ## Latest authority correction
 
 Architect has normal OpenCode tool access, including Code Mode, research, shell,
