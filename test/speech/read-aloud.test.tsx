@@ -106,12 +106,14 @@ class FakeAudioContext {
   }
 }
 
+let eventSequence = 0
 function event(type: string, data: Record<string, unknown>): OpenCodeEvent {
+  const sequence = ++eventSequence
   return {
-    id: `${type}-event`,
+    id: `${type}-${sequence}`,
     created: 1,
     type,
-    durable: { aggregateID: "session", seq: 1, version: 1 },
+    durable: { aggregateID: "session", seq: sequence, version: 1 },
     data: { sessionID: "session", ...data },
   } as unknown as OpenCodeEvent
 }

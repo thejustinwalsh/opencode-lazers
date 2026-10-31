@@ -25,6 +25,7 @@ type MessageParts = {
 export class SpeechMarkdownParser {
   private fence: { marker: "`" | "~"; length: number } | undefined
   private line = ""
+  private proseStarted = false
   private comments = new HtmlCommentFilter()
 
   push(text: string, final = false): string {
@@ -33,6 +34,7 @@ export class SpeechMarkdownParser {
     let newline = this.line.indexOf("\n")
     while (newline >= 0) {
       prose += this.processLine(this.line.slice(0, newline))
+      this.proseStarted = false
       if (!this.fence) prose += "\n"
       this.line = this.line.slice(newline + 1)
       newline = this.line.indexOf("\n")
@@ -41,19 +43,12 @@ export class SpeechMarkdownParser {
     if (final) {
       prose += this.processLine(this.line)
       this.line = ""
+      this.proseStarted = false
     } else if (this.line) {
-      if (this.fence) {
-        // Keep only a possible closing delimiter. Code lines need not remain in memory.
-        if (!this.couldCloseFence(this.line)) this.line = ""
-      } else {
-        const opening = fenceOpening(this.line)
-        if (opening) {
-          this.fence = opening
-          this.line = ""
-        } else if (!couldBeFenceOpening(this.line)) {
-          prose += this.line
-          this.line = ""
-        }
+      if (!this.fence && (this.proseStarted || !couldBeFenceOpening(this.line))) {
+        prose += this.line
+        this.proseStarted = true
+        this.line = ""
       }
     }
     return this.comments.push(prose, final)
@@ -64,18 +59,12 @@ export class SpeechMarkdownParser {
       if (fenceClosing(line, this.fence)) this.fence = undefined
       return ""
     }
-    const opening = fenceOpening(line)
+    const opening = !this.proseStarted && fenceOpening(line)
     if (opening) {
       this.fence = opening
       return ""
     }
     return line
-  }
-
-  private couldCloseFence(line: string): boolean {
-    const candidate = /^ {0,3}([`~]+)[ \t]*$/.exec(line)
-    if (!candidate || candidate[1]?.[0] !== this.fence?.marker) return false
-    return true
   }
 }
 
@@ -88,6 +77,7 @@ function fenceOpening(line: string): { marker: "`" | "~"; length: number } | und
 }
 
 function couldBeFenceOpening(line: string): boolean {
+  if (/^ {0,3}$/.test(line)) return true
   const match = /^ {0,3}([`~]+)(.*)$/.exec(line)
   const run = match?.[1]
   const remainder = match?.[2]
@@ -161,6 +151,8 @@ export function createSpeechEventCoordinator(options: {
   let finalMessageID: string | undefined
   let suppressed = false
   let disposed = false
+  let lastStartSequence = -1
+  let finished = false
 
   const allowed = () => !disposed && !suppressed && options.enabled() && options.isCurrent()
   const remember = (messageID: string, ordinal: number) => {
@@ -192,6 +184,7 @@ export function createSpeechEventCoordinator(options: {
     if (segments.length) options.speak(segments, messageID)
   }
   const onText = (event: TextPartEvent) => {
+    if (finished) return
     const { assistantMessageID: messageID, ordinal, text, native } = event.data
     if (!remember(messageID, ordinal)) return
     const value = group(messageID)
@@ -229,11 +222,16 @@ export function createSpeechEventCoordinator(options: {
         event.data.sessionID !== options.sessionID
       )
         return
+      if (event.durable.seq < lastStartSequence) return
       switch (event.type) {
         case "session.execution.started":
+          if (event.durable.seq <= lastStartSequence) return
+          lastStartSequence = event.durable.seq
+          finished = false
           suppressed = false
           finalMessageID = undefined
           messages.clear()
+          seenParts.clear()
           break
         case "session.text.ended":
           onText(event)
@@ -245,10 +243,13 @@ export function createSpeechEventCoordinator(options: {
           if (finalMessageID === event.data.assistantMessageID) finalMessageID = undefined
           break
         case "session.execution.succeeded":
+          if (finished) return
+          finished = true
           finish()
           break
         case "session.execution.failed":
         case "session.execution.interrupted":
+          finished = true
           finalMessageID = undefined
           messages.clear()
           break

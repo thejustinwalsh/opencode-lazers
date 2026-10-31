@@ -1,16 +1,18 @@
 import { expect, test } from "bun:test"
 import type { OpenCodeEvent } from "@opencode/client"
-import { createSpeechEventCoordinator } from "./speech-events.ts"
+import { createSpeechEventCoordinator, SpeechMarkdownParser } from "./speech-events.ts"
 
 const sessionID = "session-a"
 const messageID = "message-a"
 
+let eventSequence = 0
 function makeEvent(type: string, data: Record<string, unknown>): OpenCodeEvent {
+  const sequence = ++eventSequence
   return {
-    id: `${type}-event`,
+    id: `${type}-${sequence}`,
     created: 1,
     type,
-    durable: { aggregateID: sessionID, seq: 1, version: 1 },
+    durable: { aggregateID: sessionID, seq: sequence, version: 1 },
     data: { sessionID, ...data },
   } as unknown as OpenCodeEvent
 }
@@ -114,8 +116,8 @@ test("unmarked providers wait for successful final completion and use only the f
 
 test("replayed event parts, inactive sessions, and stopped turns cannot start stale playback", () => {
   const { calls, coordinator, setCurrent } = harness()
-  const part = text("First final.\n", 0, { phase: "final_answer" })
   coordinator.handle(started())
+  const part = text("First final.\n", 0, { phase: "final_answer" })
   setCurrent(false)
   coordinator.handle(part)
   setCurrent(true)
@@ -152,4 +154,52 @@ test("a comment and a fence split between parts remain excluded", () => {
   coordinator.handle(text("```json\n{secret", 2, { phase: "final_answer" }))
   coordinator.handle(text(" data}\n```\nSafe ending.", 3, { phase: "final_answer" }))
   expect(calls.flatMap((call) => call.segments).join(" ")).toBe("Visible. Done. Safe ending.")
+})
+
+test("duplicate execution starts preserve code-fence state and Stop suppression", () => {
+  const { calls, coordinator } = harness()
+  const start = started()
+  coordinator.handle(start)
+  const opening = text("```txt\nPRIVATE_CODE\n", 0, { phase: "final_answer" })
+  coordinator.handle(opening)
+  coordinator.handle(start)
+  coordinator.handle(opening)
+  coordinator.handle(text("CODE_CONTINUATION\n```\nDone.\n", 1, { phase: "final_answer" }))
+  expect(calls.flatMap((call) => call.segments)).toEqual(["Done."])
+  coordinator.suppressCurrent()
+  coordinator.handle(start)
+  coordinator.handle(text("AFTER_STOP_CANARY", 2, { phase: "final_answer" }))
+  expect(calls.flatMap((call) => call.segments)).toEqual(["Done."])
+})
+
+test("split code lines cannot become closing fences mid-line", () => {
+  const parser = new SpeechMarkdownParser()
+  expect(parser.push("```txt\nCODE_WITHOUT_NEWLINE")).toBe("")
+  expect(parser.push("```\nCODE_CANARY\n")).toBe("")
+  expect(parser.push("```\nDone.\n")).toContain("Done.")
+  const prose = new SpeechMarkdownParser()
+  expect(prose.push("Visible ")).toBe("Visible ")
+  expect(prose.push("```inline text")).toBe("```inline text")
+  const indented = new SpeechMarkdownParser()
+  expect(indented.push("  ")).toBe("")
+  expect(indented.push("```ts\nCODE_CANARY\n```\nDone.", true)).not.toContain("CANARY")
+})
+
+test("duplicate completion and stale previous-turn events cannot replay audio", () => {
+  const { calls, coordinator } = harness()
+  coordinator.handle(started())
+  const old = text("First final.")
+  coordinator.handle(old)
+  coordinator.handle(step())
+  const complete = succeeded()
+  coordinator.handle(complete)
+  coordinator.handle(complete)
+  expect(calls.flatMap((call) => call.segments)).toEqual(["First final."])
+  coordinator.handle(started())
+  coordinator.handle(old)
+  coordinator.handle(complete)
+  coordinator.handle(text("Second final.", 0, undefined, "message-b"))
+  coordinator.handle(step("message-b"))
+  coordinator.handle(succeeded())
+  expect(calls.flatMap((call) => call.segments)).toEqual(["First final.", "Second final."])
 })
