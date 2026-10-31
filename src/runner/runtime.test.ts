@@ -343,6 +343,70 @@ async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
 
+test("task integration records a reviewed landing without finalizing the plan or disturbing active dependencies", async () => {
+  const f = fixture({ delayed: true })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  const first = f.store.attempts(planID)[0]!
+  f.completeWorker(first.session_id)
+  await drive(f.runtime, 3)
+  const node = f.store.nodes(planID)[0]!
+  const second = f.store.attempts(planID)[1]!
+  expect(node.state).toBe("accepted")
+  expect(second.state).toBe("running")
+  const command = {
+    requestID: "land-first",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "integrated",
+    taskID: node.task_id,
+    artifact: node.artifact!,
+    targetBranch: "main",
+    reason: "Reviewed accepted task and passing checks.",
+  }
+  await expect(f.runtime.command(command, "other")).rejects.toThrow("Only the plan owner")
+  await expect(f.runtime.command({ ...command, expectedVersion: 1 }, "owner")).rejects.toThrow(
+    "Stale plan version",
+  )
+  await expect(f.runtime.command({ ...command, taskID: second.task_id }, "owner")).rejects.toThrow(
+    "accepted task",
+  )
+  await expect(f.runtime.command({ ...command, artifact: f.base }, "owner")).rejects.toThrow(
+    "accepted task artifact",
+  )
+  await expect(f.runtime.command({ ...command, targetBranch: "other" }, "owner")).rejects.toThrow(
+    "reviewed target branch",
+  )
+  await expect(f.runtime.command(command, "owner")).rejects.toThrow()
+  git(f.root, ["merge", "--ff-only", node.artifact!])
+  const before = structuredClone({
+    plan: f.store.plan(planID),
+    nodes: f.store.nodes(planID),
+    attempts: f.store.attempts(planID),
+    sessions: [...f.sessions],
+    events: f.events,
+  })
+  const result = await f.runtime.command(command, "owner")
+  expect(result).toMatchObject({
+    status: "task-integration-recorded",
+    version: command.expectedVersion + 1,
+  })
+  expect(await f.runtime.command(command, "owner")).toEqual(result)
+  expect(f.store.plan(planID)).toEqual({ ...before.plan!, version: command.expectedVersion + 1 })
+  expect(f.store.nodes(planID)).toEqual(before.nodes)
+  expect(f.store.attempts(planID)).toEqual(before.attempts)
+  expect([...f.sessions]).toEqual(before.sessions)
+  expect(f.events).toEqual(before.events)
+  expect(existsSync(first.workspace)).toBe(true)
+  expect(existsSync(second.workspace)).toBe(true)
+  expect(
+    f.store
+      .activity(planID, node.task_id)
+      .filter((event) => event.event === "TASK_INTEGRATION_RECORDED"),
+  ).toHaveLength(1)
+})
+
 test("scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it", async () => {
   const f = fixture({ outside: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   const planID = f.receipt.planID

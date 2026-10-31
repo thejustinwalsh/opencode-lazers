@@ -128,6 +128,27 @@ export class TaskRuntime {
         return { status: "scope-amended", version: plan.version + 1, writeScope }
       }
       if (command.action === "integrated") {
+        if (command.taskID) {
+          const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+          if (node?.state !== "accepted" || !node.artifact)
+            throw new Error("Only an accepted task result can be recorded as integrated")
+          if (command.artifact !== node.artifact || !command.targetBranch || !command.reason)
+            throw new Error("Record the accepted task artifact, reviewed targetBranch and reason")
+          if (git(this.directory, ["branch", "--show-current"]) !== command.targetBranch)
+            throw new Error("The current checkout is not the reviewed target branch")
+          git(this.directory, ["merge-base", "--is-ancestor", node.artifact, "HEAD"])
+          const head = git(this.directory, ["rev-parse", "HEAD"])
+          this.store.record(plan.id, node.task_id, "TASK_INTEGRATION_RECORDED", {
+            artifact: node.artifact,
+            branch: command.targetBranch,
+            head,
+            reason: command.reason,
+          })
+          db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+          // A task source landing is not combined acceptance. Keep its artifact
+          // and workspace available to dependencies until normal plan cleanup.
+          return { status: "task-integration-recorded", version: plan.version + 1, head }
+        }
         if (!["accepted", "cleanup-blocked"].includes(plan.state) || !plan.artifact)
           throw new Error("Only an accepted result can be integrated")
         if (command.artifact !== plan.artifact || !command.targetBranch || !command.reason)
