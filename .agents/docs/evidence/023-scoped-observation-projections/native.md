@@ -34,6 +34,10 @@ This is a live registered snapshot, not the design JSON or a new mock runner.
 The snapshot path does not call the native trajectory/history adapter; a throwing
 adapter regression protects that property. Selected rich trajectory/native-token
 reads and actual panel captures remain separate observations, not implied here.
+Root subsequently reported successful rich trajectory RPC reads for running
+Trajectory and accepted speech, with native context and five-event pages in
+95/106 ms; see the [incoming Trajectory review](../026-trajectory-panel/incoming-review.md).
+That evidence does not stand in for native panel captures or legacy comparisons.
 
 ## Supported maintenance, including retained failure
 
