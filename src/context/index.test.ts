@@ -101,7 +101,7 @@ test("worker packets honor cited line ranges and defer large source without bloc
     "outside-range\nRelevant contract.\nRelevant procedure.\n" +
       "unrelated guide prose ".repeat(5000),
   )
-  writeFileSync(join(f.root, "oversized.md"), "large context source ".repeat(5000))
+  writeFileSync(join(f.root, "oversized.md"), "large context source ".repeat(20000))
   const proposal = validProposal()
   proposal.context = [
     { reference: "guide.md:2-3: relevant integration", revision: null },
@@ -116,6 +116,6 @@ test("worker packets honor cited line ranges and defer large source without bloc
   expect(packet.text).not.toContain("outside-range")
   expect(packet.text).not.toContain("unrelated guide prose")
   expect(delivered.deferred).toContain("oversized.md")
-  expect(packet.metadata.tokens).toBeLessThanOrEqual(2000)
+  expect(packet.metadata.tokens).toBeLessThanOrEqual(24000)
   expect(delivered.entries.some((entry: { path: string }) => entry.path === "AGENTS.md")).toBe(true)
 })

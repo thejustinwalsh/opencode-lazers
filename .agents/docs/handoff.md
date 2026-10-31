@@ -1,5 +1,21 @@
 # LAZERS next phase handoff
 
+## Latest execution corrections
+
+The user rejected guessed execution budgets. There is no configured model-based
+budget policy. Preserve measured usage; do not enforce historical task token,
+time, tool-call or spend numbers or invent replacements. New tasks may omit
+limits. Budget policy belongs to future model selection. Schema validation,
+Architect self-review/System One, explicit cancellation, and bounded verification
+procedures remain useful and are retained.
+
+Use OpenCode's native `ctx.worktree.create/list/refresh/remove` lifecycle. The
+native API's `branch` field is the starting ref; its `directory` is a parent
+directory and its returned actual directory may differ after collision handling.
+LAZERS should not implement another worktree strategy. Runtime records the actual
+directory and starting ref. The current driver reviews and integrates accepted
+worker commits into main; the user waived PR and human-review stops for dogfooding.
+
 ## Governing correction — source hashing removed
 
 The user's latest direction supersedes historical source-hash, fingerprint and

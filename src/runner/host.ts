@@ -18,6 +18,8 @@ export type HostSession = {
 export type SkillSource = { id: string; path: string; content: string; revision: string }
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
+  worktree(input: { directory: string; base: string }): Promise<string>
+  worktrees(): Promise<string[]>
   session(id: string): Promise<HostSession | null>
   skills(sessionID: string, ids: string[]): Promise<SkillSource[]>
   assemble(input: {

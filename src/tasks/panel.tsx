@@ -665,20 +665,33 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                       </For>
                     </dd>
                   </Show>
-                  <dt>Recorded limits</dt>
-                  <dd>
-                    <p>
-                      {task().proposal.limits.maxTokens.toLocaleString()} tokens · $
-                      {task().proposal.limits.maxEstimatedCostUsd} estimated cost ·{" "}
-                      {task().proposal.limits.maxElapsedMs / 60000} minutes
-                    </p>
-                    <p>
-                      {task().proposal.limits.maxToolCalls} tool calls ·{" "}
-                      {task().proposal.limits.maxProviderRetries} provider retries ·{" "}
-                      {task().proposal.limits.maxRepairAttempts} repairs
-                    </p>
-                    <p>Limits are configured bounds, not measured usage.</p>
-                  </dd>
+                  <Show
+                    when={task().proposal.limits}
+                    fallback={
+                      <>
+                        <dt>Budget</dt>
+                        <dd>Not configured</dd>
+                      </>
+                    }
+                  >
+                    {(limits) => (
+                      <>
+                        <dt>Historical proposed limits</dt>
+                        <dd>
+                          <p>
+                            {limits().maxTokens.toLocaleString()} tokens · $
+                            {limits().maxEstimatedCostUsd} estimated cost ·{" "}
+                            {limits().maxElapsedMs / 60000} minutes
+                          </p>
+                          <p>
+                            {limits().maxToolCalls} tool calls · {limits().maxProviderRetries}{" "}
+                            provider retries · {limits().maxRepairAttempts} repairs
+                          </p>
+                          <p>Historical proposal; no model-based execution budget is configured.</p>
+                        </dd>
+                      </>
+                    )}
+                  </Show>
                 </dl>
                 <details>
                   <summary>Full specification</summary>

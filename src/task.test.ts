@@ -7,15 +7,14 @@ describe("task proposals", () => {
     expect(TaskProposalSchema.parse(validProposal())).toEqual(validProposal())
     expect(taskProposalJSONSchema.type).toBe("object")
     expect(taskProposalJSONSchema.additionalProperties).toBe(false)
-    expect(taskProposalJSONSchema.required).toContain("limits")
+    expect(taskProposalJSONSchema.required).not.toContain("limits")
   })
 
-  test("rejects drafts, unknown fields, empty intent, and missing evidence or limits", () => {
+  test("rejects drafts, unknown fields, empty intent, and missing evidence", () => {
     for (const change of [
       { objective: " " },
       { questions: ["Which database?"] },
       { acceptance: [] },
-      { limits: undefined },
       { acceptance: [{ id: "a", assertion: "Works", evidence: [] }] },
     ]) {
       expect(TaskProposalSchema.safeParse({ ...validProposal(), ...change }).success).toBe(false)
@@ -82,7 +81,9 @@ describe("task proposals", () => {
     expect(TaskProposalSchema.safeParse({ ...proposal, verification: [] }).success).toBe(false)
   })
 
-  test("requires finite explicit budgets and at most one repair", () => {
+  test("accepts tasks without guessed budgets and validates legacy limits when supplied", () => {
+    const { limits: _limits, ...withoutBudget } = validProposal()
+    expect(TaskProposalSchema.safeParse(withoutBudget).success).toBe(true)
     for (const limits of [
       { maxTokens: 0 },
       { maxElapsedMs: -1 },

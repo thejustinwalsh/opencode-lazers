@@ -91,7 +91,7 @@ export const CommandInput = z.strictObject({
   requestID: z.string().trim().min(1).max(200),
   planID: z.uuid(),
   expectedVersion: z.int().positive(),
-  action: z.enum(["run", "cancel", "audit", "reconcile", "reassign", "human-evidence"]),
+  action: z.enum(["run", "cancel", "audit", "reconcile", "reassign", "human-evidence", "resume"]),
   reason: z.string().min(1).max(2000).optional(),
   targetSessionID: z.string().min(1).max(200).optional(),
   taskID: z.uuid().optional(),

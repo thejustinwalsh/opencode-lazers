@@ -452,7 +452,7 @@ export class ProjectIndex {
       deferred,
       entries,
     }
-    const limit = Math.min(24000, Math.floor(proposal.limits.maxTokens / 2))
+    const limit = 24000
     for (const file of candidates) {
       const mandatory = required.includes(file.path) || references.has(file.path)
       const full = mandatory || /(?:test|spec)\./.test(file.path) || file.path.endsWith(".md")

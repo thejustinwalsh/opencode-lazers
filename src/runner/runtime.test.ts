@@ -85,6 +85,15 @@ function fixture(options: { fail?: boolean; human?: boolean; outside?: boolean }
   })
   const events: string[] = []
   const host: RunnerHost = {
+    worktree: async ({ directory, base }) => {
+      git(root, ["worktree", "add", "--detach", directory, base])
+      return directory
+    },
+    worktrees: async () =>
+      git(root, ["worktree", "list", "--porcelain"])
+        .split("\n")
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => line.slice(9)),
     session: async (id) => structuredClone(sessions.get(id) ?? null),
     skills: async () => [],
     assemble: async (input) => ({
@@ -265,4 +274,62 @@ test("schema rejects cycles, foreign dependency IDs and duplicate nodes before p
       "owner",
     ),
   ).toThrow()
+})
+
+test("historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage", async () => {
+  const f = fixture()
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.tokens = 65941
+  worker.outcome = "interrupted"
+  f.store.move(f.receipt.planID, attempt.task_id, "EXHAUST", "Historical guessed token cap")
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='exhausted',token_count=65941 WHERE id=?").run(
+      attempt.id,
+    )
+    db.query("UPDATE runner_plans SET state='blocked' WHERE id=?").run(f.receipt.planID)
+  })
+  const command = {
+    requestID: "resume-existing",
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "resume",
+    taskID: attempt.task_id,
+    reason: "No model-derived budget is configured",
+  }
+  const receipt = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(receipt)
+  expect(f.store.attempts(f.receipt.planID)[0]!.token_count).toBe(65941)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  const sameTask = f.store.attempts(f.receipt.planID).filter((a) => a.task_id === attempt.task_id)
+  expect(sameTask).toHaveLength(1)
+  expect(sameTask[0]!.session_id).toBe(attempt.session_id)
+  expect(sameTask[0]!.token_count).toBe(65941)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(2)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(3)
+})
+
+test("runtime retains the actual directory returned by the host worktree strategy", async () => {
+  const f = fixture()
+  const create = f.host.worktree
+  f.host.worktree = async ({ directory, base }) => create({ directory: directory + "-2", base })
+  await f.runtime.command(
+    { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+  expect(
+    f.store.attempts(f.receipt.planID).every((attempt) => attempt.workspace.endsWith("-2")),
+  ).toBe(true)
+  const graph = f.store
+    .effects(f.receipt.planID)
+    .find((effect) => effect.kind === "graph-worktree")!
+  expect(JSON.parse(graph.receipt!).workspace.endsWith("-2")).toBe(true)
 })

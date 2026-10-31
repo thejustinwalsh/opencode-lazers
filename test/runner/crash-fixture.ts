@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import { join } from "node:path"
 import { TaskRepository } from "../../src/storage.ts"
 import { RunnerStore } from "../../src/runner/store.ts"
+import { git } from "../../src/runner/artifacts.ts"
 import { TaskRuntime } from "../../src/runner/runtime.ts"
 import type { HostSession, RunnerHost } from "../../src/runner/host.ts"
 
@@ -20,6 +21,15 @@ function cut(boundary: string) {
   }
 }
 const host: RunnerHost = {
+  worktree: async ({ directory, base }) => {
+    git(root, ["worktree", "add", "--detach", directory, base])
+    return directory
+  },
+  worktrees: async () =>
+    git(root, ["worktree", "list", "--porcelain"])
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => line.slice(9)),
   session: async (id) => load().sessions[id] ?? null,
   skills: async () => [],
   assemble: async (input) => ({

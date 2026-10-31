@@ -62,38 +62,19 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
           return Effect.fail(
             new Tool.Error({ message: "Only the LAZERS runtime may dispatch agents" }),
           )
-        const max = store.repository.get(owned.task_id)!.proposal.limits.maxToolCalls
-        const reserved = store.atomic((db) => {
-          const count = db
-            .query<{ n: number }, [string]>(
-              "SELECT COALESCE(SUM(tool_count),0) AS n FROM runner_attempts WHERE task_id=?",
-            )
-            .get(owned.task_id)!.n
-          if (count >= max) return false
-          db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(owned.id)
-          return true
-        })
-        return reserved
-          ? Effect.void
-          : Effect.fail(new Tool.Error({ message: "Task tool-call budget exhausted" }))
+        store.atomic((db) =>
+          db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(owned.id),
+        )
+        return Effect.void
       }),
     )
     yield* ctx.session.hook("retry", (retry) =>
       Effect.sync(() => {
         const owned = attempt(retry.sessionID)
         if (!owned) return
-        const limit = store.repository.get(owned.task_id)!.proposal.limits.maxProviderRetries
-        const allow = store.atomic((db) => {
-          const used = db
-            .query<{ n: number }, [string]>(
-              "SELECT COALESCE(SUM(retry_count),0) AS n FROM runner_attempts WHERE task_id=?",
-            )
-            .get(owned.task_id)!.n
-          if (used >= limit) return false
-          db.query("UPDATE runner_attempts SET retry_count=retry_count+1 WHERE id=?").run(owned.id)
-          return true
-        })
-        if (!allow) retry.decision = { retry: false }
+        store.atomic((db) =>
+          db.query("UPDATE runner_attempts SET retry_count=retry_count+1 WHERE id=?").run(owned.id),
+        )
       }),
     )
   })

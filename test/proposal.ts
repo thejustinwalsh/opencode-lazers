@@ -1,6 +1,6 @@
 import type { TaskProposal } from "../src/task.ts"
 
-export function validProposal(): TaskProposal {
+export function validProposal(): TaskProposal & { limits: NonNullable<TaskProposal["limits"]> } {
   return {
     objective: "Keep submitted tasks after the plugin restarts",
     exclusions: ["Do not dispatch workers"],

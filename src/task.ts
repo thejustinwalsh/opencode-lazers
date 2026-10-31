@@ -56,14 +56,19 @@ export const TaskProposalSchema = z
         }),
       )
       .max(100),
-    limits: z.strictObject({
-      maxTokens: z.int().positive(),
-      maxEstimatedCostUsd: z.number().nonnegative(),
-      maxElapsedMs: z.int().positive(),
-      maxToolCalls: z.int().positive(),
-      maxProviderRetries: z.int().nonnegative(),
-      maxRepairAttempts: z.int().min(0).max(1),
-    }),
+    limits: z
+      .strictObject({
+        maxTokens: z.int().positive(),
+        maxEstimatedCostUsd: z.number().nonnegative(),
+        maxElapsedMs: z.int().positive(),
+        maxToolCalls: z.int().positive(),
+        maxProviderRetries: z.int().nonnegative(),
+        maxRepairAttempts: z.int().min(0).max(1),
+      })
+      .optional()
+      .describe(
+        "Legacy proposed limits. Execution budgets must come from resolved model policy; omit when no policy is configured.",
+      ),
   })
   .superRefine((proposal, ctx) => {
     for (const key of ["acceptance", "verification"] as const) {

@@ -27,7 +27,7 @@ This is the required product flow. Architect resolves requirements and submits w
 - **One implementation worker by default.** Split work only when independently verifiable increments or real dependencies justify it. Multiple files alone do not justify multiple workers. Optional investigator/researcher subagents have separate bounded assignments and model choices.
 - **Knowledge, policy, and procedure have different owners.** Skills supply knowledge; runtime rules enforce policy; executable checks produce evidence. Required behavior must not depend on the model remembering prose.
 - **Verify at meaningful boundaries.** Complete the scoped implementation, then run the necessary checks. Earlier targeted checks are appropriate when they inform implementation or protect a risky operation.
-- **Bound every loop.** Investigation, compilation, provider retries, implementation, verification, repair, and replanning consume explicit budgets. Default to one repair attempt, then return a precise unresolved outcome.
+- **Use model-based execution policy.** Record actual usage. Budget decisions come from resolved model policy; do not invent token, time, tool-call or spend caps. No execution budget is currently configured. Verification and self-review retain their specific bounded procedures.
 - **Make additions earn their cost.** Keep a capability only when evidence supports its benefit. Preserve useful decisions, checks, and tooling without imposing a retrospective on every task.
 
 ## Core contracts
@@ -60,7 +60,7 @@ Admission resolves a `TaskSpec` and versioned policy into a recorded `ExecutionP
 
 Required skills must resolve to the intended source and version and reach the worker before implementation. Record selection provenance. Missing or denied requirements stop admission. Apply this guarantee to delegated, synthetic, resumed, and compacted sessions as those paths become supported.
 
-Budgets cover tokens, money, elapsed time, tool calls, and retries, including compilation and repair. Reserve capacity before dispatch and stop further work at exhaustion. Prove cancellation and accounting behavior against the host; record in-flight overshoot and unavailable usage rather than promising unsupported hard limits.
+Budget policy belongs to model selection and resource planning. No model-based budget policy is configured yet; historical Architect-generated limits do not stop execution. Measure tokens, time, tool calls and retries, and report unavailable equivalent cost honestly. Future model-based policy must preserve consumed usage across continuation and repair.
 
 The worker returns an artifact reference, changed files, evidence references, and unresolved issues. It cannot certify its own completion or launch subagents. Implementors retain normal OpenCode coding capabilities, including Code Mode, shell, editing and available native LSP/diagnostics, under user/project policy. Their ContextPacket focuses the work; it does not limit permitted reads to writeScope. Runtime enforces actual write scope, budgets, verification and acceptance and owns all task dispatch and implementation parallelism.
 
@@ -180,12 +180,12 @@ Increment:      Smallest usable behavior added to the previous retained spike.
 Scope:          Starting revision, allowed writes, dependencies, and exclusions.
 Acceptance:     Observable result and the evidence required to prove it.
 Execution:      One worker, explicit model/skills/tools, and context references.
-Budget:         Numeric time/tool/token/spend caps and retry allowance.
+Usage:          Resolved model policy when configured; actual usage and unknown costs.
 Verification:   Checks at the completion boundary and invalidation conditions.
 Outcome:        Artifact, measurements, unresolved issues, retain/revise/discard.
 ```
 
-Use budgets appropriate to the experiment; establish them before execution. Ask only questions that change scope, acceptance, or authorization. Implement one increment, verify it once at the boundary, and use at most one bounded repair. Stop when accepted or when the budget ends. A discarded experiment still delivers evidence answering its question.
+Do not generate arbitrary caps to fill out a task. Ask only questions that change scope, acceptance, or authorization. Implement one increment, verify it at the completion boundary, and use at most one bounded verification repair by default. A discarded experiment still delivers evidence answering its question.
 
 Retain a small working increment or a useful finding before starting dependent work. Extend the previous retained slice; avoid speculative scaffolding. Record reusable knowledge only when it will reduce later work. Route any development or verification server through Portless, following repository guidance.
 

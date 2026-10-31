@@ -36,7 +36,7 @@ export const taskMachine = createMachine({
     accepted: { type: "final" },
     failed: { type: "final" },
     cancelled: { type: "final" },
-    exhausted: { type: "final" },
+    exhausted: { on: { RESUME: "running" } },
     incorporated: { type: "final" },
   },
 })

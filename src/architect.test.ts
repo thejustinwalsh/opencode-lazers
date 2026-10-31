@@ -34,7 +34,7 @@ test("the packaged definition registers a missing primary agent and isolates tra
   expect(first.mode).toBe("primary")
   expect(first.hidden).toBe(false)
   expect(first.system).toBeTruthy()
-  expect(first.steps).toBeGreaterThan(0)
+  expect(first.steps).toBeUndefined()
   expect(first.model).toBeUndefined()
   expect(first.permissions).toEqual(architect.permissions.map((rule) => ({ ...rule })))
 

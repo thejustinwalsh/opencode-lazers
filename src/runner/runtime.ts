@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
@@ -39,7 +39,7 @@ export class TaskRuntime {
     if (!old) throw new Error("Plan not found")
     const target = command.action === "reassign" ? command.targetSessionID : old.owner
     let ownerSession: HostSession | null | undefined
-    if (["run", "reassign", "reconcile"].includes(command.action)) {
+    if (["run", "reassign", "reconcile", "resume"].includes(command.action)) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
     }
@@ -115,6 +115,38 @@ export class TaskRuntime {
           artifact: command.artifact,
         })
         return { status: "recorded", version: this.store.plan(plan.id)!.version }
+      }
+      if (command.action === "resume") {
+        if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+        if (!command.taskID || !command.reason) throw new Error("Resume requires taskID and reason")
+        const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
+        const attempt = this.store
+          .attempts(plan.id)
+          .filter((a) => a.task_id === command.taskID)
+          .at(-1)
+        if (
+          plan.state !== "blocked" ||
+          node?.state !== "exhausted" ||
+          attempt?.state !== "exhausted"
+        )
+          throw new Error("Only an exhausted, stopped attempt can resume")
+        if (this.store.effects(plan.id).some((effect) => effect.state !== "completed"))
+          throw new Error("Reconcile uncertain effects first")
+        this.store.move(plan.id, node.task_id, "RESUME", command.reason)
+        db.query("UPDATE runner_attempts SET state='preparing',message_id=? WHERE id=?").run(
+          messageID(),
+          attempt.id,
+        )
+        db.query(
+          "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+        ).run(plan.id)
+        this.store.record(plan.id, node.task_id, "ATTEMPT_RESUMED", {
+          attemptID: attempt.id,
+          reason: command.reason,
+          usageRetained: true,
+          budget: null,
+        })
+        return { status: "resuming", version: this.store.plan(plan.id)!.version }
       }
       if (command.action === "reconcile") {
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
@@ -193,11 +225,11 @@ export class TaskRuntime {
         auditWatermark: audit.watermark,
         source: proposal.baseCommit,
         enforcement: {
-          tokens: "observed at request boundaries; in-flight overshoot possible",
+          budget: "unconfigured; historical proposed limits are not execution policy",
+          tokens: "measured usage only",
           cost: "API-equivalent price unavailable until resolved; never treated as zero",
-          elapsed: "interrupt at boundary and watchdog",
-          tools: "pre-execution counter",
-          repairs: "cumulative",
+          tools: "measured usage only",
+          repairs: "one bounded verification repair by default",
         },
       })
       return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
@@ -399,7 +431,7 @@ export class TaskRuntime {
   private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
-    if (attempts.length > task.proposal.limits.maxRepairAttempts) {
+    if (attempts.length > (task.proposal.limits?.maxRepairAttempts ?? 1)) {
       this.store.move(
         plan.id,
         task.id,
@@ -409,15 +441,6 @@ export class TaskRuntime {
       return
     }
     const first = attempts[0]
-    if (first && Date.now() - first.started_at >= task.proposal.limits.maxElapsedMs) {
-      this.store.move(
-        plan.id,
-        task.id,
-        node.state === "queued" ? "BLOCK" : "EXHAUST",
-        "Cumulative elapsed budget exhausted",
-      )
-      return
-    }
     const audit = this.store.audit()
     if (
       audit.findings.some(
@@ -458,7 +481,7 @@ export class TaskRuntime {
       contextHash: fingerprint(text),
       context: text,
       skills: skills.map(({ content: _content, ...s }) => s),
-      limits: task.proposal.limits,
+      budget: null,
       toolPolicy: "inherit host/user/project; delegation forbidden",
       costEstimate: { status: "unavailable", currency: "USD", kind: "equivalent-api" },
     }
@@ -484,9 +507,14 @@ export class TaskRuntime {
     })
     const effect = this.effect(plan.id, task.id, id, "worktree", { workspace, base }, fence)
     try {
-      mkdirSync(dirname(workspace), { recursive: true, mode: 0o700 })
-      git(this.directory, ["worktree", "add", "--detach", workspace, base])
-      this.receipt(effect, { workspace, base }, fence)
+      const actual = await this.host.worktree({ directory: workspace, base })
+      if (git(actual, ["rev-parse", "HEAD"]) !== base)
+        throw new Error("Host worktree did not use the admitted starting revision")
+      this.store.fenced(this.owner, fence, (db) =>
+        db.query("UPDATE runner_attempts SET workspace=? WHERE id=?").run(actual, id),
+      )
+      attempt.workspace = actual
+      this.receipt(effect, { workspace: actual, base }, fence)
     } catch (error) {
       this.uncertain(effect, error, fence)
       return
@@ -521,7 +549,14 @@ export class TaskRuntime {
         return
       }
     }
-    if (!existing.some((e) => e.attempt_id === attempt.id && e.kind === "prompt")) {
+    if (
+      !existing.some(
+        (e) =>
+          e.attempt_id === attempt.id &&
+          e.kind === "prompt" &&
+          JSON.parse(e.payload).messageID === attempt.message_id,
+      )
+    ) {
       if (!policy.packet) {
         const draft = JSON.parse(policy.context)
         try {
@@ -600,22 +635,6 @@ export class TaskRuntime {
         .query("UPDATE runner_attempts SET token_count=?,cost=?,tool_count=? WHERE id=?")
         .run(session.tokens, session.cost, Math.max(session.tools, attempt.tool_count), attempt.id),
     )
-    const all = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
-    const exhausted =
-      Date.now() - all[0]!.started_at >= task.proposal.limits.maxElapsedMs ||
-      all.reduce((sum, a) => sum + (a.token_count ?? 0), 0) >= task.proposal.limits.maxTokens ||
-      all.reduce((sum, a) => sum + a.tool_count, 0) >= task.proposal.limits.maxToolCalls
-    if (exhausted) {
-      if (session.busy) {
-        await this.host.interrupt(attempt.session_id)
-        return
-      }
-      this.store.move(plan.id, task.id, "EXHAUST", "Cumulative execution budget exhausted")
-      this.store.atomic((db) =>
-        db.query("UPDATE runner_attempts SET state='exhausted' WHERE id=?").run(attempt.id),
-      )
-      return
-    }
     if (session.busy || !session.outcome) return
     if (session.outcome !== "succeeded") {
       this.failAttempt(plan, attempt, `Worker ${session.outcome}`)
@@ -773,7 +792,7 @@ export class TaskRuntime {
     const node = this.store.nodes(plan.id).find((n) => n.task_id === task.id)!
     this.store.atomic((db) => {
       db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id)
-      if (node.state === "verifying" && count <= task.proposal.limits.maxRepairAttempts)
+      if (node.state === "verifying" && count <= (task.proposal.limits?.maxRepairAttempts ?? 1))
         this.store.move(plan.id, task.id, "REPAIR", reason)
       else this.store.move(plan.id, task.id, "FAIL", reason)
     })
@@ -786,8 +805,11 @@ export class TaskRuntime {
         .nodes(plan.id)
         .filter((n) => n.artifact)
         .at(-1)?.artifact ?? input.baseCommit
-    const workspace = join(this.dataDirectory, "graphs", plan.id)
     const known = this.store.effects(plan.id).find((e) => e.kind === "graph-worktree")
+    let workspace =
+      known?.state === "completed"
+        ? (JSON.parse(known.receipt!).workspace as string)
+        : join(this.dataDirectory, "graphs", plan.id)
     if (!known) {
       const effect = this.effect(
         plan.id,
@@ -798,8 +820,9 @@ export class TaskRuntime {
         fence,
       )
       try {
-        mkdirSync(dirname(workspace), { recursive: true, mode: 0o700 })
-        git(this.directory, ["worktree", "add", "--detach", workspace, artifact])
+        workspace = await this.host.worktree({ directory: workspace, base: artifact })
+        if (git(workspace, ["rev-parse", "HEAD"]) !== artifact)
+          throw new Error("Host integration worktree has the wrong starting revision")
         this.receipt(effect, { workspace, base: artifact }, fence)
       } catch (error) {
         this.uncertain(effect, error, fence)
@@ -885,15 +908,26 @@ export class TaskRuntime {
           return
         }
       } else if (effect.kind === "worktree" || effect.kind === "graph-worktree") {
-        if (
-          existsSync(payload.workspace) &&
-          git(payload.workspace, ["rev-parse", "HEAD"]) === payload.base
-        ) {
-          this.receipt(
-            effect,
-            { workspace: payload.workspace, base: payload.base, reconciled: true },
-            fence,
+        const candidates = (await this.host.worktrees())
+          .filter(
+            (directory) =>
+              directory === payload.workspace ||
+              (/^-[2-9]$|^-10$/.test(directory.slice(payload.workspace.length)) &&
+                directory.startsWith(payload.workspace)),
           )
+          .filter(
+            (directory) =>
+              existsSync(directory) && git(directory, ["rev-parse", "HEAD"]) === payload.base,
+          )
+        if (candidates.length === 1) {
+          const workspace = candidates[0]!
+          if (effect.attempt_id)
+            this.store.fenced(this.owner, fence, (db) =>
+              db
+                .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
+                .run(workspace, effect.attempt_id!),
+            )
+          this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
           return
         }
       } else if (effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:")) {

@@ -10,10 +10,28 @@ import { fingerprint } from "../identity.ts"
 import type { RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { ProjectIndex } from "../context/index.ts"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 
 export function nativeHost(ctx: Plugin.Context, repository: TaskRepository): RunnerHost {
   return {
+    async worktree(input) {
+      const result = await Effect.runPromise(
+        ctx.worktree.create({
+          projectID: ctx.location.project.id,
+          from: ctx.location.directory,
+          branch: input.base,
+          directory: AbsolutePath.make(dirname(input.directory)),
+          name: basename(input.directory),
+        }),
+      )
+      return result.directory
+    },
+    async worktrees() {
+      await Effect.runPromise(ctx.worktree.refresh({ projectID: ctx.location.project.id }))
+      return (
+        await Effect.runPromise(ctx.worktree.list({ projectID: ctx.location.project.id }))
+      ).map((entry) => entry.directory)
+    },
     async session(id) {
       const session = await Effect.runPromise(
         ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(

@@ -1,7 +1,6 @@
 ---
 description: Defines scoped tasks and acceptance evidence from repository findings
 mode: primary
-steps: 24
 color: "#6c8cff"
 permissions:
   - action: "*"
@@ -72,3 +71,5 @@ Once requirements are resolved, choose an idempotencyKey before submitting each 
 Return task IDs, acceptance evidence, and actual execution status. Retrieve existing tasks with `lazers_get_task` or `lazers_list_tasks` rather than resubmitting them.
 
 Completion evidence is passing checks and observed app behavior. Repository investigation does not require source hashes or evidence receipts.
+
+Do not invent token, time, tool-call or spend budgets. Omit proposed limits when model-based execution policy is not configured.
