@@ -1,0 +1,87 @@
+{
+  "observedAt": 1793487926044,
+  "purpose": "Activate task-level source landing records, durable scope-instruction delivery and reviewed ancestry scope repair across all native locations; no service restart",
+  "commits": ["c6cb1b7", "2332abb", "b0fb333"],
+  "locationCount": 10,
+  "serverPIDBefore": 16786,
+  "serverPIDAfter": 16786,
+  "before": [
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    },
+    {
+      "id": "ses_5f0f24ea53e5434a86b173f8265973f9",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486731062,
+      "idle": 1793486730676
+    },
+    {
+      "id": "ses_e6bca9152ffej57ukXxWdwP3WF",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "model": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "high"
+      },
+      "busy": 1793487892188
+    }
+  ],
+  "after": [
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    },
+    {
+      "id": "ses_5f0f24ea53e5434a86b173f8265973f9",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486731062,
+      "idle": 1793486730676
+    },
+    {
+      "id": "ses_e6bca9152ffej57ukXxWdwP3WF",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "model": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "high"
+      },
+      "busy": 1793487892188
+    }
+  ],
+  "activeWorkersUnchanged": true
+}

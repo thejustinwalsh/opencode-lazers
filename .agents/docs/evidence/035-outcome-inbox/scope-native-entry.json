@@ -1,0 +1,21 @@
+{
+  "observedAt": 1793488057650,
+  "id": "ses_2baf8e6b157b4ae781054408707ab8d7",
+  "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+  "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7513f29c-f4fd-44dd-88dc-9e9946c9f994",
+  "attemptID": "7513f29c-f4fd-44dd-88dc-9e9946c9f994",
+  "model": {
+    "id": "gpt-6-luna",
+    "providerID": "openai",
+    "variant": "max"
+  },
+  "busy": 1793485149838,
+  "idle": 1793487446208,
+  "entries": [
+    {
+      "key": "lazers-scope-7513f29c-f4fd-44dd-88dc-9e9946c9f994-e105f1664261409faab84f4409c4ff79bbea838d52332f9c9966f3c3cf56911d",
+      "value": "Architect-authorized additive execution scope for task 44fb4817-4826-481f-acac-7840caf14341, revision 1, attempt 7513f29c-f4fd-44dd-88dc-9e9946c9f994. The immutable specification is unchanged.\nAdded paths: [\"src/runner/store.test.ts\",\"test/runner/crash-fixture.ts\"]\nAuthorized cumulative write scope: [\"src/runner/runtime.ts\",\"src/runner/store.ts\",\"src/runner/host.ts\",\"src/runner/native.ts\",\"src/runner/outcome.ts\",\"src/runner/runtime.test.ts\",\"src/runner/native.test.ts\",\"src/runner/inbox*.ts\",\"test/runner/outcome-delivery.test.ts\",\"test/runner/recovery.test.ts\",\".agents/docs/spikes/035-outcome-inbox-coalescing.md\",\".agents/docs/evidence/035-outcome-inbox/**\",\"src/runner/store.test.ts\",\"test/runner/crash-fixture.ts\"]\nReason: Authorize only the two legitimate migration/recovery test dependencies identified in preserved first artifact c44d345, which must not be stripped to satisfy the original mistaken scope. Preserve immutable revision1 and both attempt histories. This does not authorize the107 inherited main files: reviewed canonical ancestry is handled by2332abb. Deliver the additive authorization through the durable native instruction lane to existing retained attempt7513f29c-f4fd-44dd-88dc-9e9946c9f994; no new worker or repair.\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance."
+    }
+  ],
+  "claim": "Durable native scope instruction entry, not model consumption or task acceptance"
+}

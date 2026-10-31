@@ -1,0 +1,63 @@
+{
+  "observedAt": 1793489004528,
+  "serverPID": 16786,
+  "sessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+  "ownerBusy": 1793485730484,
+  "ownerIdle": 1793485712541,
+  "inbox": [
+    {
+      "id": "msg_adae6fcdbd2a4fcea02a1d6b736cea26",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_2c009dc68e364b49a39dc0b8303b0cd7",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_965b1e71b94c4ef69a8d3b8252fa2c8d",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_1944562cc001Q5eMREnVYB1RQq",
+      "type": "synthetic",
+      "delivery": "steer",
+      "metadata": {
+        "source": "subagent",
+        "childID": "ses_e6bca9152ffej57ukXxWdwP3WF",
+        "agent": "Explore",
+        "state": "completed"
+      }
+    },
+    {
+      "id": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+      "type": "synthetic",
+      "delivery": "queue",
+      "metadata": {
+        "lazersKind": "runner-outcome",
+        "lazersProjectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+        "lazersProjectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "lazersPlanID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "lazersOutboxID": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d",
+        "lazersMessageID": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+        "lazersSessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+        "lazersStatus": "integrated",
+        "lazersVersion": 27
+      }
+    }
+  ],
+  "oldAcceptedQueued": false,
+  "grouping": {
+    "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+    "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+    "model": {
+      "id": "gpt-6-luna",
+      "providerID": "openai",
+      "variant": "max"
+    },
+    "busy": 1793486728952,
+    "idle": 1793486728576
+  }
+}

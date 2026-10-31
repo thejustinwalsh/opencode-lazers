@@ -1,0 +1,105 @@
+{
+  "observedAt": 1793488805619,
+  "purpose": "Activate reviewed wake merge and all-location outbox schema migration; preserve workers, no service restart",
+  "commits": ["a6c5877", "0c5de84", "ad01f67"],
+  "locationCount": 8,
+  "serverPIDBefore": 16786,
+  "serverPIDAfter": 16786,
+  "before": [
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    }
+  ],
+  "after": [
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    }
+  ],
+  "activeWorkersUnchanged": true,
+  "inboxBefore": [
+    {
+      "id": "msg_adae6fcdbd2a4fcea02a1d6b736cea26",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_2c009dc68e364b49a39dc0b8303b0cd7",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_965b1e71b94c4ef69a8d3b8252fa2c8d",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+      "type": "synthetic",
+      "delivery": "queue",
+      "metadata": {
+        "lazersKind": "runner-outcome",
+        "lazersProjectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+        "lazersProjectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "lazersPlanID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "lazersOutboxID": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff",
+        "lazersMessageID": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+        "lazersSessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+        "lazersStatus": "accepted",
+        "lazersVersion": 25
+      }
+    }
+  ],
+  "inboxAfter": [
+    {
+      "id": "msg_adae6fcdbd2a4fcea02a1d6b736cea26",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_2c009dc68e364b49a39dc0b8303b0cd7",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_965b1e71b94c4ef69a8d3b8252fa2c8d",
+      "type": "synthetic",
+      "delivery": "queue"
+    },
+    {
+      "id": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+      "type": "synthetic",
+      "delivery": "queue",
+      "metadata": {
+        "lazersKind": "runner-outcome",
+        "lazersProjectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+        "lazersProjectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "lazersPlanID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "lazersOutboxID": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff",
+        "lazersMessageID": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+        "lazersSessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+        "lazersStatus": "accepted",
+        "lazersVersion": 25
+      }
+    }
+  ]
+}

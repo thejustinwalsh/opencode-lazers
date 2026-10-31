@@ -1,0 +1,64 @@
+{
+  "observedAt": 1793488136010,
+  "purpose": "Preserve Root product landings in existing active assembly/grouping attempts, native instructions only",
+  "results": [
+    {
+      "sessionID": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "attemptID": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "taskID": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
+      "key": "lazers-root-reviewed-product-landings-ff4a717",
+      "value": "Root preservation handoff for existing task f09ad402-f70b-4cde-a531-958fec8bfa1a, same owned attempt f0eee1ec-7ec3-489d-aadf-77443df8d7a8. No scope/acceptance expansion and no new assignment. Root already merged Radar498b0dd as710814a and Trajectory4a518cb as9b0dcdc; native GUI wiring bc2f7e9/9e6ae92, attribution ad97182, Terra/native fixes dec6088/c22af24/ee586a6, quiet live refresh631b45e and reference adapter correction1f9fb6a are in canonical main. Preserve653e2c4 cancelled-plan Open filtering, required TaskSummary.reference and LZ resolution before Session membership. Do not duplicate or revert Root UI/Trajectory/Radar/reference fixes in your eventual assembly/grouping result. Read ff4a717:.agents/docs/evidence/027-observation-panels/native-root-review.md for actual mounted native observations, Terra review and explicit remaining coverage; do not claim unobserved330px/themes/reconnect/audio/performance. Runtime production repairs c6cb1b7,2332abb,b0fb333 must also survive any later merge; keep changes within your original task authorization. Continue existing work, preserve six inference switches and speech repairs; Auto stays off; no cancelled inference restoration, restart, extra worker or permission drift.",
+      "nativeEntryConfirmed": true,
+      "modelConsumption": "unknown",
+      "before": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+        "model": {
+          "id": "gpt-6-luna",
+          "providerID": "openai",
+          "variant": "max"
+        },
+        "busy": 1793486728952,
+        "idle": 1793486728576
+      },
+      "after": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+        "model": {
+          "id": "gpt-6-luna",
+          "providerID": "openai",
+          "variant": "max"
+        },
+        "busy": 1793486728952,
+        "idle": 1793486728576
+      }
+    },
+    {
+      "sessionID": "ses_5f0f24ea53e5434a86b173f8265973f9",
+      "attemptID": "0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "taskID": "8db1b281-c288-4c2e-abaa-f846dd642246",
+      "key": "lazers-root-reviewed-product-landings-ff4a717",
+      "value": "Root preservation handoff for existing task 8db1b281-c288-4c2e-abaa-f846dd642246, same owned attempt 0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30. No scope/acceptance expansion and no new assignment. Root already merged Radar498b0dd as710814a and Trajectory4a518cb as9b0dcdc; native GUI wiring bc2f7e9/9e6ae92, attribution ad97182, Terra/native fixes dec6088/c22af24/ee586a6, quiet live refresh631b45e and reference adapter correction1f9fb6a are in canonical main. Preserve653e2c4 cancelled-plan Open filtering, required TaskSummary.reference and LZ resolution before Session membership. Do not duplicate or revert Root UI/Trajectory/Radar/reference fixes in your eventual assembly/grouping result. Read ff4a717:.agents/docs/evidence/027-observation-panels/native-root-review.md for actual mounted native observations, Terra review and explicit remaining coverage; do not claim unobserved330px/themes/reconnect/audio/performance. Runtime production repairs c6cb1b7,2332abb,b0fb333 must also survive any later merge; keep changes within your original task authorization. Continue existing work, preserve six inference switches and speech repairs; Auto stays off; no cancelled inference restoration, restart, extra worker or permission drift.",
+      "nativeEntryConfirmed": true,
+      "modelConsumption": "unknown",
+      "before": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+        "model": {
+          "id": "gpt-6-luna",
+          "providerID": "openai",
+          "variant": "max"
+        },
+        "busy": 1793486731062,
+        "idle": 1793486730676
+      },
+      "after": {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+        "model": {
+          "id": "gpt-6-luna",
+          "providerID": "openai",
+          "variant": "max"
+        },
+        "busy": 1793486731062,
+        "idle": 1793486730676
+      }
+    }
+  ]
+}

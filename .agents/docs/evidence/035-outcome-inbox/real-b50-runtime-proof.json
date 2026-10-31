@@ -1,0 +1,311 @@
+{
+  "observedAt": 1793489045242,
+  "plan": {
+    "id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+    "state": "integrated",
+    "version": 27,
+    "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1"
+  },
+  "delivery": [
+    {
+      "id": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+      "payload": {
+        "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "planRevision": 2,
+        "version": 25,
+        "status": "accepted",
+        "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+        "evidence": [
+          {
+            "id": "focused",
+            "command": "bun test src/observability test/observability src/radar test/radar src/trajectory-panel test/trajectory-panel test/observation-panels src/trajectory test/trajectory src/webgpu/speech.test.ts src/webgpu/speech-playback.test.ts src/webgpu/speech-events.test.ts test/speech",
+            "cwd": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+            "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "inputIdentity": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "environmentIdentity": "{\"bun\":\"38afee6c84fcf48c0edb2466aa4b27d287a59c30\",\"platform\":\"darwin\"}",
+            "startedAt": 1793488507944,
+            "endedAt": 1793488511489,
+            "exitCode": 0,
+            "timedOut": false,
+            "stdout": "bun test v1.4.4-canary.1 (da867c60b)\n",
+            "stderr": "\nsrc/webgpu/speech-events.test.ts:\n(pass) raw deltas and phase-marked commentary never become speech [0.36ms]\n(pass) identified final parts speak as available and retain split code-fence state [1.94ms]\n(pass) unmarked providers wait for successful final completion and use only the final step [0.10ms]\n(pass) replayed event parts, inactive sessions, and stopped turns cannot start stale playback [0.11ms]\n(pass) successful completion does not infer unmarked speech after commentary metadata [0.04ms]\n(pass) a comment and a fence split between parts remain excluded [0.23ms]\n\nsrc/webgpu/speech-playback.test.ts:\n(pass) speech prepares exactly one chunk ahead during ordered playback [0.42ms]\n(pass) a prefetched generation failure waits for current speech to finish before surfacing [0.14ms]\n(pass) stop cancels current playback and prefetched inference without starting later chunks [0.41ms]\n\nsrc/webgpu/speech.test.ts:\n(pass) a very long unpunctuated reply retains every word within bounded speech chunks [1.23ms]\n(pass) read aloud honors native final-answer phase and excludes commentary, reasoning and tools [0.14ms]\n(pass) unmarked providers use only final-step text after tools, including steered input [0.04ms]\n(pass) active, failed, interrupted and tool-only turns never fall back to older answers [0.06ms]\n(pass) manual replay retains the latest successful final while newer work is active or failed [0.20ms]\n(pass) speech cleans Markdown without reading fenced code, comments, image paths or link destinations [0.06ms]\n(pass) long answers are spoken in bounded segments without dropping words [0.12ms]\n(pass) speech preserves complete larger sentences and decimal numbers [0.03ms]\n(pass) oversized sentences prefer clause boundaries and retain the entire reply [0.08ms]\n\nsrc/observability/read.test.ts:\n(pass) session snapshots expose actual machine topology and recorded transitions separately, read-only [22.96ms]\n(pass) trajectory projection preserves unique-session effort and refuses out-of-scope attempts [18.03ms]\n\nsrc/observability/changes.test.ts:\n(pass) native usage and tool events invalidate, deduplicate, and require resnapshot on gaps [7.62ms]\n(pass) runner tool-count changes invalidate even when the repository watermark is unchanged [10.59ms]\n\nsrc/trajectory/store.test.ts:\n(pass) trajectory store opens the project database read-only and rejects SQL mutations [12.34ms]\n\nsrc/trajectory/read.test.ts:\n(pass) trajectory specifications preserve legacy policy references and omit absent ones [52.60ms]\n(pass) task reports include unsuccessful and accepted attempts, usage categories, checks and unknown cost [19.38ms]\n(pass) bounded pages preserve exact event order and reject stale or foreign continuations [64.48ms]\n(pass) visible export redacts nested credentials before truncation and fails closed on private parts [14.24ms]\n(pass) attempt lookup rejects foreign IDs and session identity mismatches without exporting data [27.04ms]\n(pass) continuation cursors are bound to the project-owned source snapshot [59.31ms]\n(pass) native session errors are redacted before appearing in the report [18.07ms]\n(pass) trajectory reads do not create audits or change tasks, attempts, transitions, or watermarks [18.85ms]\n\nsrc/trajectory/native.test.ts:\n(pass) native adapter reads only the owned session context and projects public times/usage [5.18ms]\n(pass) native adapter refuses a foreign project before reading its transcript [0.15ms]\n(pass) native context access failures remain explicit and redact credentials [0.66ms]\n\nsrc/trajectory/privacy.test.ts:\n(pass) visible text redacts OpenCode credentials including embedded quoted JSON [0.04ms]\n\nsrc/radar/projection.test.ts:\n(pass) Flow uses projected topology and only highlights a matching persisted snapshot [21.82ms]\n(pass) statechart positions remain stable when only the current snapshot changes [11.40ms]\n(pass) unsupported machine versions do not expose an active state [9.87ms]\n\nsrc/radar/presentation.test.ts:\n(pass) independent pane scroll restores once for each selection key [0.14ms]\n(pass) a pending restoration cannot write into a later scope [0.03ms]\n\nsrc/radar/state.test.ts:\n(pass) late session responses cannot replace a switched project observation [15.58ms]\n(pass) duplicates are ignored, event gaps invalidate, and a closed stream reconnects by resnapshot [23.41ms]\n(pass) wrong-project and wrong-scope snapshot responses remain unavailable [16.06ms]\n\nsrc/radar/layout.test.ts:\n(pass) Radar split uses live wrapped-header geometry and explicit percentage bounds [0.33ms]\n(pass) multiple pointer moves, short panels, and boundary keys stay in range [0.05ms]\n\nsrc/radar/timeline.test.ts:\n(pass) Timeline projects only selected-plan attempts, executions, checks and ordered transitions [21.18ms]\n(pass) Timeline retains reversed recorded endpoints and unknown times without inventing dates [48.31ms]\n\nsrc/radar/transport.test.ts:\n(pass) RPC adapter sends the explicit scope, directory, and abort signal [26.48ms]\n\ntest/observability/registered.test.ts:\n(pass) registered Tasks RPC discovers durable worker links without widening project scope [43.04ms]\n(pass) registered observation RPC resolves scope through native sessions and enforces permission [30.54ms]\n\ntest/observability/state.test.ts:\n(pass) scope switches and reconnects reject late snapshots from the previous generation [0.08ms]\n(pass) duplicate and late events are ignored while gaps and live changes require resync [0.05ms]\n\ntest/observation-panels/root.test.ts:\n(pass) shipped GUI setup registers both observation panels exactly once [1861.78ms]\n\ntest/speech/read-aloud.test.tsx:\n(pass) registered speaker replays the last completed reply during new work and Stop cancels it [1.01ms]\n(pass) native menu and command enable final-only auto speech, deduplicate parts, and stop playback [503.10ms]\n\ntest/trajectory/registered.test.ts:\n(pass) registered trajectory tool is permission-first, structured, and pages exact stable events [23.23ms]\n(pass) permission denial precedes input validation, database reopen, and native session reads [11.69ms]\n(pass) Architect, implementor, and another permitted agent can read owned reports [14.89ms]\n(pass) retained callback survives setup connection disposal without changing durable read state [12.23ms]\n\ntest/trajectory-panel/registration.test.ts:\n(pass) Trajectory registers as a closable optional panel with command and session menu entry [0.17ms]\n\ntest/trajectory-panel/panel-state.test.ts:\n(pass) projection-backed panel retains failed-attempt selection and all-attempt unique-session totals on late updates [26.12ms]\n(pass) scope reconnect keeps an in-scope task/attempt and rejects late responses from the previous scope [14.72ms]\n(pass) disconnected transport retains scoped data and a reconnect refreshes it [15.98ms]\n(pass) explicit projection gaps resnapshot even when their sequence is not newer [16.43ms]\n\ntest/trajectory-panel/projection.test.ts:\n(pass) timeline includes plan checks from every plan containing the task and excludes other plans [0.50ms]\n(pass) attempt timeline shares first-reservation origin and leaves recorded end unknown [0.07ms]\n(pass) execution with neither recorded endpoint is not assigned a reservation-time marker [0.03ms]\n(pass) task choices retain objective and state from all scoped plans [0.05ms]\n(pass) transport adapts scoped observation RPC calls without widening task trajectory reads [0.36ms]\n(pass) timeline split supports repeated pointer moves, keyboard steps and compact bounds [0.10ms]\n\ntest/radar/panel.test.ts:\n(pass) native registration exposes its closable tab and renders through real observation adapters [11.65ms]\n\n 71 pass\n 0 fail\n 411 expect() calls\nRan 71 tests across 24 files. [3.52s]\n",
+            "unchanged": true
+          },
+          {
+            "id": "build",
+            "command": "bun run build:gui",
+            "cwd": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+            "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "inputIdentity": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "environmentIdentity": "{\"bun\":\"38afee6c84fcf48c0edb2466aa4b27d287a59c30\",\"platform\":\"darwin\"}",
+            "startedAt": 1793488511514,
+            "endedAt": 1793488513838,
+            "exitCode": 0,
+            "timedOut": false,
+            "stdout": "Pinned LiquidAI WebGPU engine verified\nvite v8.3.5 building client environment for production...\ntransforming...\n✓ 154 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/gui-experimental.cjs  40,441.19 kB │ gzip: 11,139.80 kB\n\n✓ built in 1.91s\n",
+            "stderr": "$ bun scripts/prepare-engine.ts && vite build\n\n WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.\n\n\u001b[33m[EMPTY_IMPORT_META] \u001b[0m`import.meta` may not be a valid syntax with the `cjs` output format.\n - This `import.meta` will be replaced with an empty object (`{}`) automatically. If this is desired, you can suppress this warning by adding `transform.define: { 'import.meta': {} }`. If `import.meta` needs to be kept as-is, you need to set the output format to `esm`. in node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs at 23521..23532\n \u001b[38;5;240m │\u001b[0m \n \u001b[38;5;240m │\u001b[0m \u001b[38;5;115mHelp\u001b[0m: If you want to polyfill `import.meta.url` like Rollup does, check out the Document: https://rolldown.rs/in-depth/non-esm-output-formats#well-known-import-meta-properties\n\n\u001b[33m[EMPTY_IMPORT_META] \u001b[0m`import.meta` may not be a valid syntax with the `cjs` output format.\n - This `import.meta` will be replaced with an empty object (`{}`) automatically. If this is desired, you can suppress this warning by adding `transform.define: { 'import.meta': {} }`. If `import.meta` needs to be kept as-is, you need to set the output format to `esm`. in node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs at 23546..23557\n \u001b[38;5;240m │\u001b[0m \n \u001b[38;5;240m │\u001b[0m \u001b[38;5;115mHelp\u001b[0m: If you want to polyfill `import.meta.url` like Rollup does, check out the Document: https://rolldown.rs/in-depth/non-esm-output-formats#well-known-import-meta-properties\n\n\u001b[33m[EMPTY_IMPORT_META] \u001b[0m`import.meta` may not be a valid syntax with the `cjs` output format.\n - This `import.meta` will be replaced with an empty object (`{}`) automatically. If this is desired, you can suppress this warning by adding `transform.define: { 'import.meta': {} }`. If `import.meta` needs to be kept as-is, you need to set the output format to `esm`. in node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs at 23645..23656\n \u001b[38;5;240m │\u001b[0m \n \u001b[38;5;240m │\u001b[0m \u001b[38;5;115mHelp\u001b[0m: If you want to polyfill `import.meta.url` like Rollup does, check out the Document: https://rolldown.rs/in-depth/non-esm-output-formats#well-known-import-meta-properties\n\n\u001b[33m[EMPTY_IMPORT_META] \u001b[0m`import.meta` may not be a valid syntax with the `cjs` output format.\n - This `import.meta` will be replaced with an empty object (`{}`) automatically. If this is desired, you can suppress this warning by adding `transform.define: { 'import.meta': {} }`. If `import.meta` needs to be kept as-is, you need to set the output format to `esm`. in node_modules/onnxruntime-web/dist/ort.webgpu.min.mjs at 23683..23694\n \u001b[38;5;240m │\u001b[0m \n \u001b[38;5;240m │\u001b[0m \u001b[38;5;115mHelp\u001b[0m: If you want to polyfill `import.meta.url` like Rollup does, check out the Document: https://rolldown.rs/in-depth/non-esm-output-formats#well-known-import-meta-properties\n\n",
+            "unchanged": true
+          },
+          {
+            "id": "all",
+            "command": "bun test",
+            "cwd": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+            "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "inputIdentity": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "environmentIdentity": "{\"bun\":\"38afee6c84fcf48c0edb2466aa4b27d287a59c30\",\"platform\":\"darwin\"}",
+            "startedAt": 1793488513860,
+            "endedAt": 1793488558314,
+            "exitCode": 0,
+            "timedOut": false,
+            "stdout": "bun test v1.4.4-canary.1 (da867c60b)\n",
+            "stderr": "\nsrc/architect.test.ts:\n(pass) the packaged definition registers a missing primary agent and isolates transform replays [0.78ms]\n\nsrc/submission.test.ts:\n(pass) lost receipts and reordered nested objects replay the unchanged original after reopening [14.44ms]\n(pass) changed values and array order conflict; distinct exact keys and canonical repositories are independent [8.69ms]\n(pass) invalid keys/proposals and provenance failures never reserve a key [5.52ms]\n(pass) a failed association write rolls back task, key and change stream; retry succeeds [5.92ms]\n(pass) fresh native-tool processes recover a lost receipt across session/worktree/HEAD changes [341.24ms]\n(pass) independent native-tool connections racing the same content commit one task and association [187.10ms]\n(pass) independent native-tool connections racing changed content produce one winner and one conflict [194.47ms]\n(pass) genuine v1 data migrates transactionally and mappings survive repeated reopening [11.81ms]\n(pass) migration failure preserves v1 metadata/body and can be retried without partial DDL [6.16ms]\n\nsrc/task.test.ts:\n(pass) submission keys are required transport identity, bounded and never normalized [1.41ms]\n(pass) task proposals > accepts a scoped task and emits strict JSON Schema from Zod [0.16ms]\n(pass) task proposals > rejects drafts, unknown fields, empty intent, and missing evidence [0.20ms]\n(pass) task proposals > rejects scope paths that escape or ambiguously redefine the repository boundary [0.22ms]\n(pass) task proposals > exported path pattern works without Unicode regex flags used outside JSON Schema [0.22ms]\n(pass) task proposals > rejects duplicate identifiers and missing verification references [0.09ms]\n(pass) task proposals > accepts tasks without guessed budgets and validates legacy limits when supplied [0.99ms]\n(pass) submitted envelopes distinguish unborn provenance from a missing revision [0.20ms]\n\nsrc/storage.test.ts:\n(pass) a validated submission survives closing and reopening SQLite with runtime provenance [5.65ms]\n(pass) invalid submissions return field guidance, save nothing, and do not collect provenance [4.14ms]\n(pass) worktrees sharing canonical project identity see tasks; other projects cannot retrieve them [5.08ms]\n(pass) a newer database version fails without resetting migration metadata [1.57ms]\n(pass) SQLite itself enforces key uniqueness and task association referential integrity [4.30ms]\n(pass) task dispositions are project-local, durable, idempotent, and hide retired records by default [7.19ms]\n(pass) a disposition cannot hide active execution or claim failed work was fulfilled [5.14ms]\n(pass) storage path honors an explicit directory and rejects a relative override [0.07ms]\n(pass) Git provenance distinguishes unborn HEAD, committed HEAD, and an inaccessible repository [78.78ms]\n\nsrc/tools.test.ts:\n(pass) pinned Code Mode resultValue prefers defined output and joins text only as fallback [0.37ms]\n(pass) registered tools submit, retrieve, and list the same durable task [19.47ms]\n(pass) Architect can durably retire a legacy task and replay the same disposition [16.28ms]\n(pass) task disposition is Architect-only even when native permission allows the tool [6.09ms]\n(pass) permission denial prevents task writes [5.79ms]\n(pass) retained tool callbacks survive disposal of the registration connection [22.95ms]\n(pass) tool execution returns validation guidance without persisting an invalid task [5.17ms]\n(pass) task reads expose structured Code Mode outputs and require their own permissions [19.31ms]\n(pass) registered Code Mode implementor fetch yields readable instructions before typed data [14.62ms]\n(pass) readable task fetch handles missing and unavailable revisions [15.81ms]\n(pass) native schema/runtime require keys, validate before database access, and leave rejected keys reusable [16.33ms]\n(pass) permission denial precedes every lookup/write for first, replay, conflict and read invocations [31.82ms]\n(pass) native retries and conflicts skip inaccessible Git; canonical project scope crosses worktrees but not repositories [28.59ms]\n\nsrc/tasks/read.test.ts:\n(pass) older records, literal filters, sessions and keyset snapshots stay bounded and isolated [42.55ms]\n(pass) read observers cannot invalidate a committed receipt and a fresh process preserves the watermark [66.86ms]\n(pass) unplanned detail is encodable by the native JSON RPC boundary [6.48ms]\n(pass) retired tasks disappear from open queries but direct detail preserves disposition [7.13ms]\n\nsrc/tasks/panel-state.test.ts:\n(pass) old session/project/server/filter responses and old detail selections cannot replace the current view [4.53ms]\n(pass) duplicate Start clicks share a request, while reconnect retries through the new transport [0.40ms]\n(pass) invalidations during snapshot acquisition are caught up, foreign and duplicate events are ignored [7.18ms]\n(pass) read failures retain stale scoped data and recovery preserves the selected task [2.03ms]\n\nsrc/tasks/panel-view.test.ts:\n(pass) late Start failures/completions cannot affect another task or scope [0.13ms]\n(pass) scroll restoration waits for detail content independently of the list [0.12ms]\n(pass) default scroll restoration respects the browser scheduler receiver [0.28ms]\n(pass) planned queued work exposes Start, but ended or held work does not [0.07ms]\n\nsrc/tasks/rpc.test.ts:\n(pass) RPC invalidations catch independent connections and survive a failed delivery after commit [3314.25ms]\n(pass) Start RPC checks actor ownership and native permission before entering runtime [6.35ms]\n\nsrc/tasks/instructions.test.ts:\n(pass) task instructions preserve goal, acceptance, boundaries, guidance, verification, and sources [0.15ms]\n(pass) task instructions retain readable missing-task and unavailable-revision outcomes [0.02ms]\n\nsrc/tasks/panel-layout.test.ts:\n(pass) split geometry subtracts the live wrapped header and separator [0.07ms]\n(pass) multiple pointer moves and short panes stay within the usable split range [0.03ms]\n\nsrc/context/index.test.ts:\n(pass) explicit refresh uses pinned Repomix and preserves ignore, secret, permission, and symlink protections [852.43ms]\n(pass) read selections and service reopen reuse one snapshot without collection, processing, or cache writes [354.39ms]\n(pass) readers and later permission revocations are checked against cached files on every read [343.01ms]\n(pass) failed refresh leaves the published snapshot intact; refresh updates changed, added, deleted, and ignored files atomically [1093.43ms]\n(pass) queries during a refresh see the prior complete snapshot until atomic publication [1469.38ms]\n(pass) cross-process publication and eviction cannot remove bytes selected by an in-flight reader [1366.59ms]\n(pass) refresh requires Architect authority and foreign workspaces do not inherit another index [337.66ms]\n(pass) focused multi-file reads return complete source beyond the former response cap [364.25ms]\n(pass) manifest and evidence retain their source-count response bounds [939.21ms]\n(pass) worker packets use the reusable snapshot, cited ranges, and bounded source deferral [529.21ms]\n\nsrc/context/tools.test.ts:\n(pass) read tools report an absent index without building, and an explicit Architect refresh publishes it [276.12ms]\n(pass) native permission and Architect role both gate refresh; reads remain available to permitted implementors [294.69ms]\n(pass) native permission denial prevents Architect refresh from creating a snapshot [22.43ms]\n\nsrc/runner/store.test.ts:\n(pass) authored plan titles survive persistence, reopen, and idempotent replay unchanged [12.93ms]\n(pass) new and legacy untitled plan bodies remain title-absent across reopen and replay [8.63ms]\n\nsrc/runner/native.test.ts:\n(pass) native worktrees use the host lifecycle with the admitted ref and returned directory [0.37ms]\n(pass) child prompt uses native move and verifies location before any model work [0.25ms]\n(pass) worker guidance teaches focused LAZERS discovery and optional progressive skill use [0.02ms]\n(pass) optional skills are not resolved, and only the legacy LAZERS entry is removed before prompting [0.14ms]\n(pass) a host that fails to move the child cannot receive its work prompt [0.07ms]\n(pass) native worker selection survives role registration and reaches native creation unchanged [0.51ms]\n(pass) actionable notifications use native queued synthetic resume with the durable message identity [0.07ms]\n\nsrc/runner/schema.test.ts:\n(pass) PlanInput accepts and preserves an optional authored title verbatim [0.20ms]\n(pass) PlanInput keeps the title absent for untitled and legacy plan bodies [0.07ms]\n\nsrc/runner/catalog.test.ts:\n(pass) worker route advice reads live native choices without gating catalog metadata [0.33ms]\n\nsrc/runner/artifacts.test.ts:\n(pass) worker commits are retained and their committed changes remain subject to scope checks [229.76ms]\n\nsrc/runner/roles.test.ts:\n(pass) worker personas retain read-only catalog access but cannot delegate [0.55ms]\n\nsrc/runner/tools.test.ts:\n(pass) authorized callers read native catalog advice; only orchestration requires Architect [1.95ms]\n\nsrc/runner/runtime.test.ts:\n(pass) inspector Start admits one real runtime plan and returns record-backed task state [251.94ms]\n(pass) Start recovers a lost native continuation-create response after restart [243.40ms]\n(pass) run authorizes and validates the original command before creating a continuation [121.53ms]\n(pass) continued run retains original caller/version replay identity across concurrent calls and restart [69.20ms]\n(pass) Start admits an existing queued plan, keeps its selected worker route and respects dependencies [116.82ms]\n(pass) continued run recovers a crash before its receipt without changing caller identity [64.81ms]\n(pass) a concurrent reassignment cannot be overwritten by continuation completion [58.41ms]\n(pass) Start cannot adopt a stale continuation after an explicit owner round trip [113.38ms]\n(pass) a lost continuation-create response is reconciled by stable native session ID [252.09ms]\n(pass) a missing task owner gets a same-project continuation without foreign parent context [244.90ms]\n(pass) Start admits the configured route independently of the Architect model [187.14ms]\n(pass) Go and configured routes reach native execution unchanged alongside independent personas [685.43ms]\n(pass) a native route failure stays visible and is never retried with a substitute [75.36ms]\n(pass) Start rejects stale, foreign and ended work without changing runtime state [63.99ms]\n(pass) an archived Architect is replaced by one linked owner and uncertain delivery reuses its message ID [393.92ms]\n(pass) real Git worktrees execute a dependency graph, verify combined content and retain origin [427.77ms]\n(pass) independent isolated Git branches overlap and combined verification includes every artifact [504.46ms]\n(pass) dependencies wait for accepted inputs and wildcard ancestor scopes serialize [871.35ms]\n(pass) independent plans overlap while a second reconciler cannot duplicate dispatch [649.72ms]\n(pass) accepted task handoff resumes review and its plan finishes while another worker stays active [451.51ms]\n(pass) completed shared plan verifies its exact artifact without touching an advanced shared checkout [337.51ms]\n(pass) shared resume waits for another plan's worker and cancellation retains final usage [495.53ms]\n(pass) reconciliation retains legacy advanced-checkout receipts and verifies the exact artifact afresh [306.77ms]\n(pass) explicit reconcile retries conclusive combined checks after environment repair without erasing evidence [297.41ms]\n(pass) uncertain prompt cannot prevent cancellation of an admitted sibling [119.75ms]\n(pass) two conflicting shared resumes use current prompt identities and cannot deadlock [473.03ms]\n(pass) combined worktree completion cannot overwrite a concurrent cancellation [548.20ms]\n(pass) one failed branch blocks combined acceptance without losing sibling verification or usage [353.31ms]\n(pass) conflicting accepted branches hold integration and preserve both real Git artifacts [391.51ms]\n(pass) lost worktree creation response reconciles without dispatching a blocked worker [132.69ms]\n(pass) cancelling overlapping workers waits for every native session and preserves usage [124.31ms]\n(pass) reviewed combined merge removes only owned Git worktrees and preserves foreign work [676.03ms]\n(pass) repairing one parallel branch retains its failed check and usage while its sibling is accepted [555.53ms]\n(pass) missing and permission-denied skill suggestions never block admission or dispatch [1900.77ms]\n(pass) repair handoffs do not copy legacy skill bodies into a new attempt [221.21ms]\n(pass) verification failure and scope violations cannot unblock a successor [718.77ms]\n(pass) lost host response reconciles a real accepted prompt without creating another worker [92.93ms]\n(pass) leases fence stale owners; expiration does not replay an uncertain effect [57.51ms]\n(pass) schema rejects cycles, foreign dependency IDs and duplicate nodes before persistence [58.47ms]\n(pass) historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage [412.02ms]\n(pass) runtime retains the actual directory returned by the host worktree strategy [420.57ms]\n(pass) an explicitly cancelled worker can continue through its owner without replacing its worktree [92.88ms]\n(pass) serial shared children commit in the current checkout without creating worktrees [430.21ms]\n(pass) explicit retry starts a fresh native child and retains the old attempt and usage [160.93ms]\n(pass) a shared node's first attempt starts at reviewed HEAD, not an older accepted predecessor [482.99ms]\n(pass) an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes [587.61ms]\n(pass) retry without a newly selected baseline continues from the failed artifact and retains history [531.33ms]\n(pass) native cleanup follows verified integration, preserves dirty work, and retries explicitly [681.19ms]\n(pass) explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance [434.34ms]\n(pass) cleanup preserves clean worktrees with commits outside the reviewed integration [624.42ms]\n(pass) cleanup preserves a dirty owned worktree even after its accepted commit was merged [525.92ms]\n(pass) priority orders conflicting plans without rejecting their overlapping scopes [106.73ms]\n(pass) cross-plan dependencies wait for integration and dispatch from the integrated source [461.91ms]\n(pass) schedule updates are versioned, retry-safe and reject dependency cycles or foreign plans [82.85ms]\n(pass) runtime shutdown joins an in-flight native operation before storage may close [106.67ms]\n\nsrc/runner/outcome.test.ts:\n(pass) notifications carry a concise action and identity, not full check logs [0.18ms]\n\nsrc/webgpu/cache.test.ts:\n(pass) verified files persist across cache instances without another network request [5.35ms]\n(pass) corrupted files are reverified and replaced; incomplete downloads never become cached [2.69ms]\n(pass) cleanup only removes named model files, preserving task records and unrelated files [1.53ms]\n(pass) cache refuses directory symlinks and respects cancellation before downloading [0.66ms]\n(pass) verified reads reject subsequent file replacement, same-size mutation and symlinks [2.93ms]\n(pass) stopping a download drains its partial file before a new owner can verify [0.76ms]\n\nsrc/webgpu/decisions.test.ts:\n(pass) d1 probabilities use pinned temperature and preserve ambiguous nouls [0.14ms]\n(pass) typed and server callers reject plausible but mismatched decision payloads [2.25ms]\n(pass) System One preserves named options, rubric positions, and actual distributions [0.09ms]\n(pass) unsupported primitives, empty question maps, and invalid convenience schemas fail explicitly [0.33ms]\n\nsrc/webgpu/resources.test.ts:\n(pass) failed inference and partially constructed feeds dispose every owned tensor [0.27ms]\n(pass) late microphone cleanup belongs to the cancelled capture, never to a newer recording [0.10ms]\n\nsrc/webgpu/task-review.test.ts:\n(pass) self-review questions cover unnecessary requirements and repetition as well as completeness [0.18ms]\n(pass) structural errors and oversized tasks never invoke the model or save a review [1.31ms]\n(pass) one focused concern advances on equal score after a changed-state repair, retaining the concern [2.11ms]\n(pass) three worsening rounds continue with concerns; restart preserves budget, terminal replay and stale-draft protection [2.18ms]\n(pass) later revisions reopen regressed checks and return only the next focused correction [1.29ms]\n(pass) inference errors remain explicit and may retry identical state within the same three-round bound [1.39ms]\n(pass) review IDs are scoped and concurrent resumptions cannot consume another round [0.74ms]\n(pass) one review round splits a larger question collection into bounded complete batches [2.35ms]\n(pass) interrupted attempts retain their reserved rounds and exhaust with an explicit limitation [1.28ms]\n\nsrc/webgpu/lease.test.ts:\n(pass) cache cleanup and retirement exclude new allocations until asynchronous work drains [0.31ms]\n(pass) a failed retirement retains ownership; a failed cleanup releases the maintenance barrier [0.13ms]\n\nsrc/webgpu/features.test.ts:\n(pass) master and dependency switches mask features while retaining individual preferences [0.88ms]\n(pass) concurrent partial settings writes preserve each other; failed persistence does not apply a toggle [0.28ms]\n\nsrc/webgpu/speech-events.test.ts:\n(pass) raw deltas and phase-marked commentary never become speech [0.30ms]\n(pass) identified final parts speak as available and retain split code-fence state [1.65ms]\n(pass) unmarked providers wait for successful final completion and use only the final step [0.08ms]\n(pass) replayed event parts, inactive sessions, and stopped turns cannot start stale playback [0.09ms]\n(pass) successful completion does not infer unmarked speech after commentary metadata [0.02ms]\n(pass) a comment and a fence split between parts remain excluded [0.10ms]\n\nsrc/webgpu/speech-playback.test.ts:\n(pass) speech prepares exactly one chunk ahead during ordered playback [0.27ms]\n(pass) a prefetched generation failure waits for current speech to finish before surfacing [0.11ms]\n(pass) stop cancels current playback and prefetched inference without starting later chunks [0.15ms]\n\nsrc/webgpu/tools.test.ts:\n(pass) agent tools enforce permissions before RPC and apply bounded defaults [1.05ms]\n\nsrc/webgpu/audio.test.ts:\n(pass) bounded PCM transport round-trips without retaining recording files [0.51ms]\n(pass) maximum-duration audio stays bounded and malformed long encodings fail [63.86ms]\n\nsrc/webgpu/feature-server.test.ts:\n(pass) saved switches enforce public RPC, cancel only disabled work, and remove native tools and review guidance [2.45ms]\n\nsrc/webgpu/runtime.test.ts:\n(pass) actual renderer lifecycle survives repeated loss, concurrent unload and failed disposal [5139.03ms]\n\nsrc/webgpu/lifecycle.test.ts:\n(pass) model switching releases the previous GPU before any next allocation, including concurrent calls [1.32ms]\n(pass) cleanup failure prevents another allocation; cancellation disposes a newly loaded model [1.40ms]\n(pass) loading retries only a bounded transient error and never retries invalid models [755.26ms]\n\nsrc/webgpu/review-tool.test.ts:\n(pass) the native review tool checks permission before reading review state and returns next-step guidance [2.93ms]\n\nsrc/webgpu/speech.test.ts:\n(pass) a very long unpunctuated reply retains every word within bounded speech chunks [0.84ms]\n(pass) read aloud honors native final-answer phase and excludes commentary, reasoning and tools [0.27ms]\n(pass) unmarked providers use only final-step text after tools, including steered input [0.07ms]\n(pass) active, failed, interrupted and tool-only turns never fall back to older answers [0.08ms]\n(pass) manual replay retains the latest successful final while newer work is active or failed [0.37ms]\n(pass) speech cleans Markdown without reading fenced code, comments, image paths or link destinations [0.16ms]\n(pass) long answers are spoken in bounded segments without dropping words [0.35ms]\n(pass) speech preserves complete larger sentences and decimal numbers [0.07ms]\n(pass) oversized sentences prefer clause boundaries and retain the entire reply [0.26ms]\n\nsrc/webgpu/broker.test.ts:\n(pass) FIFO requests run serially, and a polling busy renderer cannot consume the next job [0.20ms]\n(pass) queued cancellation removes only that request; active cancellation waits for renderer acknowledgement [0.16ms]\n(pass) queue capacity and ownership are enforced; heartbeat loss fails only delivered work [0.24ms]\n(pass) idle unload preserves a racing queued request; failed model loading fails the waiters [0.09ms]\n(pass) deadlines include time waiting in the queue and release capacity [1011.76ms]\n(pass) a cold request queues before renderer attachment and wakes on demand [0.38ms]\n\nsrc/webgpu/files-fetch.test.ts:\n(pass) engine fetch reads pinned ranges through the cache and cannot fall back to the network [2.26ms]\n(pass) cancelling a cached response aborts all pending IPC reads without waiting for their data [0.58ms]\n(pass) a failed cache range aborts prefetched sibling reads and propagates the original failure [0.22ms]\n\nsrc/observability/read.test.ts:\n(pass) session snapshots expose actual machine topology and recorded transitions separately, read-only [23.53ms]\n(pass) trajectory projection preserves unique-session effort and refuses out-of-scope attempts [28.84ms]\n\nsrc/observability/changes.test.ts:\n(pass) native usage and tool events invalidate, deduplicate, and require resnapshot on gaps [20.96ms]\n(pass) runner tool-count changes invalidate even when the repository watermark is unchanged [14.30ms]\n\nsrc/trajectory/store.test.ts:\n(pass) trajectory store opens the project database read-only and rejects SQL mutations [12.96ms]\n\nsrc/trajectory/read.test.ts:\n(pass) trajectory specifications preserve legacy policy references and omit absent ones [25.59ms]\n(pass) task reports include unsuccessful and accepted attempts, usage categories, checks and unknown cost [6.27ms]\n(pass) bounded pages preserve exact event order and reject stale or foreign continuations [12.31ms]\n(pass) visible export redacts nested credentials before truncation and fails closed on private parts [7.14ms]\n(pass) attempt lookup rejects foreign IDs and session identity mismatches without exporting data [5.55ms]\n(pass) continuation cursors are bound to the project-owned source snapshot [10.57ms]\n(pass) native session errors are redacted before appearing in the report [5.30ms]\n(pass) trajectory reads do not create audits or change tasks, attempts, transitions, or watermarks [5.66ms]\n\nsrc/trajectory/native.test.ts:\n(pass) native adapter reads only the owned session context and projects public times/usage [0.50ms]\n(pass) native adapter refuses a foreign project before reading its transcript [0.09ms]\n(pass) native context access failures remain explicit and redact credentials [0.12ms]\n\nsrc/trajectory/privacy.test.ts:\n(pass) visible text redacts OpenCode credentials including embedded quoted JSON [0.03ms]\n\nsrc/radar/projection.test.ts:\n(pass) Flow uses projected topology and only highlights a matching persisted snapshot [7.21ms]\n(pass) statechart positions remain stable when only the current snapshot changes [5.89ms]\n(pass) unsupported machine versions do not expose an active state [5.49ms]\n\nsrc/radar/presentation.test.ts:\n(pass) independent pane scroll restores once for each selection key [0.16ms]\n(pass) a pending restoration cannot write into a later scope [0.03ms]\n\nsrc/radar/state.test.ts:\n(pass) late session responses cannot replace a switched project observation [11.27ms]\n(pass) duplicates are ignored, event gaps invalidate, and a closed stream reconnects by resnapshot [18.94ms]\n(pass) wrong-project and wrong-scope snapshot responses remain unavailable [9.40ms]\n\nsrc/radar/layout.test.ts:\n(pass) Radar split uses live wrapped-header geometry and explicit percentage bounds [0.10ms]\n(pass) multiple pointer moves, short panels, and boundary keys stay in range [0.05ms]\n\nsrc/radar/timeline.test.ts:\n(pass) Timeline projects only selected-plan attempts, executions, checks and ordered transitions [6.12ms]\n(pass) Timeline retains reversed recorded endpoints and unknown times without inventing dates [5.45ms]\n\nsrc/radar/transport.test.ts:\n(pass) RPC adapter sends the explicit scope, directory, and abort signal [5.37ms]\n\ntest/runner/recovery.test.ts:\n(pass) fresh processes recover accepted session/prompt effects without replay [733.73ms]\n(pass) uncertain dispatch or verifier crash stays blocked without repeating its effect [891.49ms]\n(pass) durable outbox survives process death before/after host delivery without duplicate notices [763.81ms]\n\ntest/observability/registered.test.ts:\n(pass) registered Tasks RPC discovers durable worker links without widening project scope [9.35ms]\n(pass) registered observation RPC resolves scope through native sessions and enforces permission [12.37ms]\n\ntest/observability/state.test.ts:\n(pass) scope switches and reconnects reject late snapshots from the previous generation [0.07ms]\n(pass) duplicate and late events are ignored while gaps and live changes require resync [0.04ms]\n\ntest/observation-panels/root.test.ts:\n(pass) shipped GUI setup registers both observation panels exactly once [859.88ms]\n\ntest/speech/read-aloud.test.tsx:\n(pass) registered speaker replays the last completed reply during new work and Stop cancels it [1.00ms]\n(pass) native menu and command enable final-only auto speech, deduplicate parts, and stop playback [502.51ms]\n\ntest/trajectory/registered.test.ts:\n(pass) registered trajectory tool is permission-first, structured, and pages exact stable events [23.49ms]\n(pass) permission denial precedes input validation, database reopen, and native session reads [7.95ms]\n(pass) Architect, implementor, and another permitted agent can read owned reports [12.41ms]\n(pass) retained callback survives setup connection disposal without changing durable read state [10.46ms]\n\ntest/trajectory-panel/registration.test.ts:\n(pass) Trajectory registers as a closable optional panel with command and session menu entry [0.15ms]\n\ntest/trajectory-panel/panel-state.test.ts:\n(pass) projection-backed panel retains failed-attempt selection and all-attempt unique-session totals on late updates [24.43ms]\n(pass) scope reconnect keeps an in-scope task/attempt and rejects late responses from the previous scope [12.88ms]\n(pass) disconnected transport retains scoped data and a reconnect refreshes it [13.29ms]\n(pass) explicit projection gaps resnapshot even when their sequence is not newer [12.14ms]\n\ntest/trajectory-panel/projection.test.ts:\n(pass) timeline includes plan checks from every plan containing the task and excludes other plans [0.35ms]\n(pass) attempt timeline shares first-reservation origin and leaves recorded end unknown [0.04ms]\n(pass) execution with neither recorded endpoint is not assigned a reservation-time marker [0.03ms]\n(pass) task choices retain objective and state from all scoped plans [0.03ms]\n(pass) transport adapts scoped observation RPC calls without widening task trajectory reads [0.23ms]\n(pass) timeline split supports repeated pointer moves, keyboard steps and compact bounds [0.05ms]\n\ntest/radar/panel.test.ts:\n(pass) native registration exposes its closable tab and renders through real observation adapters [9.89ms]\n\n 259 pass\n 0 fail\n 2397 expect() calls\nRan 259 tests across 61 files. [44.42s]\n",
+            "unchanged": true
+          },
+          {
+            "id": "quality",
+            "command": "bun run verify",
+            "cwd": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+            "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "inputIdentity": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "environmentIdentity": "{\"bun\":\"38afee6c84fcf48c0edb2466aa4b27d287a59c30\",\"platform\":\"darwin\"}",
+            "startedAt": 1793488558335,
+            "endedAt": 1793488558539,
+            "exitCode": 0,
+            "timedOut": false,
+            "stdout": "",
+            "stderr": "$ bun fmt --check && bun lint && bun check\nAll 287 files are formatted.\n✓ No problems in 164 files [9.56ms]\n✓ No type errors in 158 files [110.79ms]\n",
+            "unchanged": true
+          }
+        ],
+        "taskIDs": [
+          "efd8459f-1dbe-4472-968b-f26f59504291",
+          "3af64c61-ff16-43a9-8983-a11763ccf415",
+          "c1cc0d39-42d7-4845-bcce-8d91aee4935b",
+          "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd",
+          "8db1b281-c288-4c2e-abaa-f846dd642246"
+        ],
+        "currentPlan": {
+          "state": "accepted",
+          "reason": null
+        },
+        "reviewableTasks": [
+          {
+            "taskID": "efd8459f-1dbe-4472-968b-f26f59504291",
+            "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443",
+            "attemptID": "7eaa8182-bc03-4200-9086-78a28bf709f2",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "3af64c61-ff16-43a9-8983-a11763ccf415",
+            "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b",
+            "attemptID": "963f6a39-fadb-4de1-982b-22b548668e7c",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "c1cc0d39-42d7-4845-bcce-8d91aee4935b",
+            "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+            "attemptID": "3ed2dee4-f956-4a4a-90d6-d102707f8464",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd",
+            "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8",
+            "attemptID": "360ba25c-ae49-4994-9712-b6f050066284",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "8db1b281-c288-4c2e-abaa-f846dd642246",
+            "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "attemptID": "0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+            "evidence": ["focused", "build", "all", "quality"]
+          }
+        ]
+      },
+      "state": "superseded",
+      "resume": 1,
+      "metadata": {
+        "lazersKind": "runner-outcome",
+        "lazersProjectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+        "lazersProjectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "lazersPlanID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "lazersOutboxID": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff",
+        "lazersMessageID": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+        "lazersSessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+        "lazersStatus": "accepted",
+        "lazersVersion": 25
+      },
+      "receipt": {
+        "history": [
+          {
+            "kind": "native-admission-in-progress"
+          },
+          {
+            "kind": "host-admitted",
+            "consumption": "unknown",
+            "sessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l"
+          },
+          {
+            "kind": "native-cancellation-confirmed",
+            "inboxID": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+            "byOutboxID": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d",
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "session_id": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+      "message_id": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+      "payload": {
+        "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "planRevision": 2,
+        "version": 27,
+        "status": "integrated",
+        "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+        "worktreesRemoved": [
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7eaa8182-bc03-4200-9086-78a28bf709f2",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/963f6a39-fadb-4de1-982b-22b548668e7c",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3ed2dee4-f956-4a4a-90d6-d102707f8464",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/360ba25c-ae49-4994-9712-b6f050066284",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30"
+        ],
+        "currentPlan": {
+          "state": "integrated",
+          "reason": null
+        },
+        "reviewableTasks": [
+          {
+            "taskID": "efd8459f-1dbe-4472-968b-f26f59504291",
+            "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443",
+            "attemptID": "7eaa8182-bc03-4200-9086-78a28bf709f2",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "3af64c61-ff16-43a9-8983-a11763ccf415",
+            "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b",
+            "attemptID": "963f6a39-fadb-4de1-982b-22b548668e7c",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "c1cc0d39-42d7-4845-bcce-8d91aee4935b",
+            "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+            "attemptID": "3ed2dee4-f956-4a4a-90d6-d102707f8464",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd",
+            "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8",
+            "attemptID": "360ba25c-ae49-4994-9712-b6f050066284",
+            "evidence": ["focused", "all", "quality"]
+          },
+          {
+            "taskID": "8db1b281-c288-4c2e-abaa-f846dd642246",
+            "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+            "attemptID": "0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+            "evidence": ["focused", "build", "all", "quality"]
+          }
+        ]
+      },
+      "state": "admitted",
+      "resume": 0,
+      "metadata": {
+        "lazersKind": "runner-outcome",
+        "lazersProjectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+        "lazersProjectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "lazersPlanID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+        "lazersOutboxID": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d",
+        "lazersMessageID": "msg_af4d7f6a5e4f4c12b9e760749e1a7a08",
+        "lazersSessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
+        "lazersStatus": "integrated",
+        "lazersVersion": 27
+      },
+      "receipt": {
+        "history": [
+          {
+            "kind": "native-admission-in-progress"
+          },
+          {
+            "kind": "host-admitted",
+            "consumption": "unknown",
+            "sessionID": "ses_e6e0e6239ffdtzIePMeJ1sHA4l"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": 1390,
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": null,
+      "version": 25,
+      "event": "OUTCOME_SUPERSEDED",
+      "payload": {
+        "outboxID": "97163e34d03dc22dcf614d5693987afdab13e0361a41914fc9eec7c50650d522",
+        "messageID": "msg_9796f36654c24a919273cb84898a0128",
+        "from": "pending",
+        "to": "superseded",
+        "receipt": {
+          "kind": "superseded-before-native-admission",
+          "byOutboxID": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff"
+        }
+      },
+      "created_at": 1793488558689
+    },
+    {
+      "id": 1393,
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": null,
+      "version": 25,
+      "event": "INTEGRATION_RECORDED",
+      "payload": {
+        "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+        "branch": "main",
+        "head": "0c5de84e3ee3be6208aa3f77dc073749b06ecb8d",
+        "reason": "Reviewed all five accepted task artifacts and normal focused/build/all/quality graph receipts. ce270c5 is now ancestry-preservingly merged as0c5de84, preserving Root GUI wiring, reference correction, Terra refinements, quiet Radar refresh and narrow/theme fixes ad01f67. Socket-free root registration plus store checks pass5 tests/40 assertions and quality passes; Root's actual native observations are recorded in native-root-review.md and linked captures. Current backend merge focused suite passes102 tests/1554 assertions; fresh full merged suite/build remains separately in flight, not claimed passed. Request normal owned idle clean merged worktree cleanup without force; grouping continues untouched. Exact coalescer a6c5877 is active at all8 currently loaded locations, PID16786 unchanged; observe this genuine integration outcome superseding queued b50 accepted msg_fa4727e7b7344416a4f4eef24a1b4384 instead of any synthetic toy task."
+      },
+      "created_at": 1793488973092
+    },
+    {
+      "id": 1404,
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": null,
+      "version": 27,
+      "event": "WORKTREES_RECONCILED",
+      "payload": {
+        "directories": [
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7eaa8182-bc03-4200-9086-78a28bf709f2",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/963f6a39-fadb-4de1-982b-22b548668e7c",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/3ed2dee4-f956-4a4a-90d6-d102707f8464",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/360ba25c-ae49-4994-9712-b6f050066284",
+          "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30"
+        ],
+        "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1"
+      },
+      "created_at": 1793488987382
+    },
+    {
+      "id": 1405,
+      "plan_id": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "task_id": null,
+      "version": 27,
+      "event": "OUTCOME_SUPERSEDED",
+      "payload": {
+        "outboxID": "693890c6451d0b3b2b6f04427b5c2e5db6d106d168c3c71211285930c57160ff",
+        "messageID": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+        "from": "admitted",
+        "to": "superseded",
+        "receipt": {
+          "kind": "native-cancellation-confirmed",
+          "inboxID": "msg_fa4727e7b7344416a4f4eef24a1b4384",
+          "byOutboxID": "ae18dd6aea88b580c994ab98274d57572894e3dca0dad01378cff18e14025d7d"
+        }
+      },
+      "created_at": 1793488987595
+    }
+  ]
+}

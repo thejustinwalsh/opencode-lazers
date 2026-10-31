@@ -1,0 +1,80 @@
+{
+  "observedAt": 1793487012352,
+  "purpose": "Activate additive scope authorization and retained scope-decision waits across location runtimes; no schema migration in these commits",
+  "commits": ["eb4c723", "a1c22e3"],
+  "evictedMissingLocations": [
+    "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/c10f8cdc-33e2-4c89-af36-69750437f192"
+  ],
+  "serverPIDBefore": 16786,
+  "serverPIDAfter": 16786,
+  "before": [
+    {
+      "id": "ses_2baf8e6b157b4ae781054408707ab8d7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7513f29c-f4fd-44dd-88dc-9e9946c9f994",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793485149838,
+      "idle": 1793485149391
+    },
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    },
+    {
+      "id": "ses_5f0f24ea53e5434a86b173f8265973f9",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486731062,
+      "idle": 1793486730676
+    }
+  ],
+  "after": [
+    {
+      "id": "ses_2baf8e6b157b4ae781054408707ab8d7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/7513f29c-f4fd-44dd-88dc-9e9946c9f994",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793485149838,
+      "idle": 1793485149391
+    },
+    {
+      "id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486728952,
+      "idle": 1793486728576
+    },
+    {
+      "id": "ses_5f0f24ea53e5434a86b173f8265973f9",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0bd64a2f-c81d-4b61-b1b5-c6af0bf75a30",
+      "model": {
+        "id": "gpt-6-luna",
+        "providerID": "openai",
+        "variant": "max"
+      },
+      "busy": 1793486731062,
+      "idle": 1793486730676
+    }
+  ]
+}
