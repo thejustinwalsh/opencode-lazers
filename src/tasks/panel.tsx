@@ -24,6 +24,7 @@ import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
+import { ExecutionPlanGroupView } from "./execution-list-view.tsx"
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
@@ -656,7 +657,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">
             <Ui.Menu
-              label={`${prefs().scope === "session" ? "Session" : "Project"}${prefs().history ? " · History" : ""}`}
+              label={prefs().scope === "session" ? "Session" : "Project"}
               trigger="button"
               icon="chevron-down"
               items={[
@@ -806,20 +807,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   <div aria-label={`${stateLabel(stateFilter())} tasks`}>
                     <Keyed each={executionList().plans} by={(group) => group.planID}>
                       {(group) => (
-                        <section
-                          class="lazers-tasks-plan"
-                          aria-label={`${group().title}, ${group().activeCount} active of ${group().totalCount} tasks`}
-                        >
-                          <div class="lazers-tasks-plan-heading">
-                            <span>{group().title}</span>
-                            <span>
-                              {group().activeCount}/{group().totalCount}
-                            </span>
-                          </div>
+                        <ExecutionPlanGroupView group={group()} stateFilter={stateFilter()}>
                           <Keyed each={group().rows} by={(taskRow) => taskRow.taskID}>
                             {(taskRow) => renderTaskRow(taskRow, group)}
                           </Keyed>
-                        </section>
+                        </ExecutionPlanGroupView>
                       )}
                     </Keyed>
                     <Keyed each={executionList().unplanned} by={(taskRow) => taskRow.taskID}>
