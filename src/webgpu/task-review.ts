@@ -118,10 +118,16 @@ export class TaskReviewer {
           status: "invalid",
           error: "Unknown review ID. Start a new review only for a new task.",
         }
-      if (saved && (saved.version !== REVIEW_VERSION || saved.owner !== owner))
+      if (saved && saved.owner !== owner)
         return {
           status: "invalid",
-          error: "This review is unavailable in this project/session/agent or checklist version.",
+          error: "This review is unavailable in this project/session/agent.",
+        }
+      if (saved && saved.version !== REVIEW_VERSION)
+        return {
+          status: "invalid",
+          error:
+            "The review checklist changed. Call lazers_verify_task with the same task, original request and evidence, omitting reviewID to start the current checklist.",
         }
       if (saved && saved.request !== state.request)
         return {

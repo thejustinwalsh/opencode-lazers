@@ -8,6 +8,12 @@ Give the primary agent a cheap opportunity to improve a task before submission. 
 
 The reviewer is advisory. The main agent remains responsible for the specification and user intent. Ordinary `lazers_submit_task` performs its existing strict structural validation and persistence. Its API is unchanged; this increment guides Architect to verify before submission, rather than adding an opaque semantic veto to task persistence. Direct submission clients are not forcibly intercepted. Review completion never authorizes execution or establishes acceptance.
 
+Coverage is task-local: judge acceptance against the task objective and its
+boundaries, not every outcome in the parent roadmap. Cancellation/performance
+checks apply when this task owns that behavior. Retain the original request as
+intent evidence; combined feature coverage belongs to the plan. Checklist changes
+invalidate prior judgments and return guidance to start a fresh review.
+
 ## Agreed state machine
 
 At most **three verification rounds total per review ID**, including the initial round. Each changed-state round evaluates the independent checks together (split into bounded transport batches if necessary), then chooses one pending concern in checklist order for feedback.
