@@ -16,6 +16,9 @@ afterAll(() => vite.close())
 const { setupTaskPanel } = (await vite.ssrLoadModule(
   "/src/tasks/panel.tsx",
 )) as typeof import("../../src/tasks/panel.tsx")
+const { ExecutionPlanGroupView } = (await vite.ssrLoadModule(
+  "/src/tasks/execution-list-view.tsx",
+)) as typeof import("../../src/tasks/execution-list-view.tsx")
 const disposers: Array<() => void> = []
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose()
@@ -71,6 +74,47 @@ const panelTab = () => {
 }
 
 describe("tasks native affordances", () => {
+  test("plan counts stay visible only in Open while every filter has a meaningful group name", () => {
+    const group = (title: string, activeCount: number, totalCount: number) => ({
+      planID: title,
+      planVersion: 1,
+      planRevision: 1,
+      title,
+      hasRecordedTitle: true,
+      activeCount,
+      totalCount,
+      rows: [],
+    })
+    const renderGroup = (
+      title: string,
+      activeCount: number,
+      totalCount: number,
+      stateFilter: "open" | "completed" | "cancelled",
+    ) =>
+      renderToString(() =>
+        createComponent(ExecutionPlanGroupView, {
+          group: group(title, activeCount, totalCount),
+          stateFilter,
+          children: "Visible task",
+        }),
+      )
+
+    const open = renderGroup("Open plan", 1, 2, "open")
+    expect(open).toContain('aria-label="Open plan, 1 active of 2 tasks"')
+    expect(open).toContain(">1/2</span>")
+    expect(open).toContain("Visible task")
+
+    const completed = renderGroup("Completed plan", 0, 1, "completed")
+    expect(completed).toContain('aria-label="Completed plan"')
+    expect(completed).not.toContain(">0/1</span>")
+    expect(completed).toContain("Visible task")
+
+    const cancelled = renderGroup("Cancelled plan", 1, 1, "cancelled")
+    expect(cancelled).toContain('aria-label="Cancelled plan"')
+    expect(cancelled).not.toContain(">1/1</span>")
+    expect(cancelled).toContain("Visible task")
+  })
+
   test("session.panel menu places Tasks after the native extra-panel entries", () => {
     const installed = install({ id: "ses_1", location: { directory: "/repo" } })
     const tasks = installed.find(gui.MenuItem)
