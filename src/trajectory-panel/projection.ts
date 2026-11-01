@@ -148,7 +148,7 @@ const Event = z
     usage: z.unknown().optional(),
     additive: z.boolean().optional(),
     outcome: z.string().nullable().optional(),
-    basis: z.string().optional(),
+    basis: z.string().nullable().optional(),
     delivery: z.string().nullable().optional(),
     commit: z.string().nullable().optional(),
     truncated: z.boolean().optional(),
