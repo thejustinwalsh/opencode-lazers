@@ -148,6 +148,38 @@ export class ArtifactScopeViolation extends Error {
   }
 }
 
+function singleMergeBase(directory: string, left: string, right: string): string {
+  const bases = git(directory, ["merge-base", "--all", left, right]).split(/\s+/).filter(Boolean)
+  if (bases.length !== 1 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(bases[0] ?? ""))
+    throw new Error(`Cannot safely determine a unique merge base for ${left} and ${right}`)
+  return bases[0]!
+}
+
+function mergedScopeTree(directory: string, base: string, incorporated: string): string {
+  // Check the merge base first: Git can synthesize one when the history is
+  // criss-crossed, but that would make the scope exemption ambiguous.
+  singleMergeBase(directory, base, incorporated)
+  const result = spawnSync("git", ["merge-tree", "--write-tree", base, incorporated], {
+    cwd: directory,
+    encoding: "utf8",
+    timeout: 30000,
+    maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  })
+  if (result.status !== 0) {
+    const detail = (result.stdout || result.stderr || result.error?.message || "unknown").trim()
+    throw new Error(
+      `Cannot safely construct a conflict-free reviewed artifact baseline: ${detail.slice(0, 1500)}`,
+    )
+  }
+  const tree = result.stdout.trim()
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tree))
+    throw new Error("Git did not return a tree for the reviewed artifact baseline")
+  if (git(directory, ["cat-file", "-t", tree]) !== "tree")
+    throw new Error("Git did not return a tree for the reviewed artifact baseline")
+  return tree
+}
+
 /** Only a private runtime-created worktree may be snapshotted. Never stages origin. */
 export function commitArtifact(
   directory: string,
@@ -160,8 +192,10 @@ export function commitArtifact(
   git(directory, ["merge-base", "--is-ancestor", base, head])
   let scopeBase = base
   if (snapshot && reviewedHead) {
-    const common = git(directory, ["merge-base", head, reviewedHead])
-    if (git(directory, ["merge-base", base, common]) === base) scopeBase = common
+    const common = singleMergeBase(directory, head, reviewedHead)
+    const baseRelation = singleMergeBase(directory, base, common)
+    if (baseRelation === base) scopeBase = common
+    else if (baseRelation !== common) scopeBase = mergedScopeTree(directory, base, common)
   }
   const paths = changedPaths(directory, scopeBase)
   const violations = scopeViolations(paths, scope)
