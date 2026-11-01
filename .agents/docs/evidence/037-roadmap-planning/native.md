@@ -113,3 +113,38 @@ location reload was forced into active generation. Root also sent this workflow
 correction through Desktop's native Steer action. It is the first user follow-up
 after the natural roadmap prompt; it changes delegation routing, not task
 breakdown or the product plan. Subsequent observation must verify compliance.
+
+## History integration and active-session compaction — 15:20 UTC
+
+LZ-32 completed actual Desktop filtering/history/navigation and Tera visual
+review after the same-attempt correction `b21e3e3`. Runtime recorded exact task
+and combined human evidence, completed combined checks, integrated the plan v25,
+and removed its owned worktree through the native non-forced path. The completed
+remove receipt reports `removed: true, native: true`; the filesystem agrees.
+Detailed observations/screenshots are in `../task-history-navigation/native.md`.
+
+Architect independently specified LZ-36 stable live Trajectory. Its native Luna
+Max worker `ses_63fe4a90c94a4d85aeb2f78bc11232a4` started in attempt
+`83daf09a-0112-484e-af40-57ff1ff6e554` after history integration, alongside the
+existing lifecycle worker `ses_0837d798635a4b10a58e1fdc9175854f`. Both current
+busy/idle timestamps and new native tool activity confirm live work. Radar's
+source prerequisites are integrated; its projection scope actually overlaps
+lifecycle's progress/index paths and Trajectory's observation paths, so it has
+not dispatched. Removing the former lifecycle plan prerequisite did not remove
+real write-scope serialization.
+
+Desktop then displayed native automatic compaction at about 424k active
+Architect context. It returned Working at about 46k, without Root resetting or
+replaying the request. Native messages `msg_197b203c2001AtD5ryPiXH8BHo` and
+`msg_197b263cb001SJP1WgYg3HC3N1` show accurate completed-history/remaining-work
+status, an execution-ledger correction, and reads of the four-phase roadmap,
+current handoff and explicit GPU-refactor cancellation. Existing worker handles
+and routes remain active; no duplicate task/worker was created at this checkpoint.
+This is observed active-session compaction continuity, not completion of idle
+Architect renewal/archival and not measured cache-cost savings.
+
+The earlier GUI activation interrupted an in-flight local task self-review by
+unloading the GUI engine. Architect explicitly retained the interruption, rather
+than claiming a semantic review pass. Local inference returned Ready/enabled.
+Coordinate later GUI rebuilds at a quiet inference boundary; do not disable local
+features to avoid this development-time reload interaction.
