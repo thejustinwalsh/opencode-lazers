@@ -46,8 +46,11 @@ an outcome before transfer, an outcome admitted during archival, successor input
 unchanged workers, and explicit continuity across reopen. A retired predecessor
 cannot reclaim a transferred plan through `reassign`, while the current owner can
 still deliberately reassign it. Native adapter tests exercise the public archive
-route/readback and paginated message-list contract using injected client responses;
-they do not substitute for live-host evidence.
+route/readback and paginated message-list contract using injected client responses.
+The pinned OpenCode 2.2.5 message handler rejects `cursor` combined with `order`;
+the adapter regression enforces that constraint, checks the ascending first-page
+request and confirms cursor pages rely on the order embedded in the cursor. This
+does not substitute for live-host evidence.
 
 The retained-source review corrections also cover cancellation interrupting
 workers while archival recovery continues to fail; continuity checkpoints bound to
@@ -59,6 +62,13 @@ aggregate tool counts only. No tool arguments, outputs, reasoning, or transcript
 bodies enter successor references. The artifact-specific resumed-commit receipt
 selection from `2536084` remains present in `runtime.ts` and its regression.
 
+The final retained-source regressions also make cancellation advance while both
+archive recovery and predecessor-history reads fail, and require each complete
+pre-transfer preparation sweep to reach its last history page before ownership can
+move. A user input found only on page three invalidates the uncovered checkpoint
+before successor creation or predecessor archival; pagination cursors are checked
+for cycles rather than silently looping.
+
 `src/runner/store.test.ts` continues to cover legacy database migrations for
 continuity and the old unique continuation-session constraint.
 
@@ -66,11 +76,12 @@ continuity and the old unique continuation-session constraint.
 
 On the current working candidate:
 
-- `bun test src/runner test/runner test/architect-lifecycle` — 147 passed, 0 failed across 13 files.
-- `bun test` — 421 passed, 0 failed across 76 files.
-- `bun run verify` — formatting, lint, and TypeScript checks passed.
-- `bun fmt` on the changed source/test/evidence files — 3 files formatted; subsequent `bun run verify` confirmed all 404 files are formatted.
-- `git diff --check` — run after the final documentation update.
+- `bun test src/runner test/runner test/architect-lifecycle` — 165 passed, 0 failed across 15 files.
+- `bun test` — 472 passed, 0 failed across 84 files.
+- `bun fmt --check` on the five changed source/test/evidence files — passed.
+- `bun lint` — no problems in 210 files; `bun check` — no type errors in 202 files.
+- `git diff --check` — passed.
+- `bun run verify` remains blocked by the formatter reporting the unchanged baseline `.agents/docs/handoff.md`, outside this task's write scope. The file matches `HEAD`; it was not modified to avoid an out-of-scope edit.
 
 ## Still required: exact-artifact native dogfood
 

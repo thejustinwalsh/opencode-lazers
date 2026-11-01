@@ -5517,6 +5517,13 @@ test("cancellation interrupts workers while a transferred renewal still has fail
     },
     renewal.successor_session_id,
   )
+  expect(f.store.plan(plan.id)?.state).toBe("cancelling")
+  expect(f.store.architectRenewalForPlan(plan.id)?.id).toBe(renewal.id)
+  let failedHistoryReads = 0
+  f.host.architectInputPage = async () => {
+    failedHistoryReads++
+    throw new Error("retained predecessor history is temporarily unavailable")
+  }
 
   await f.runtime.tick()
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(false)
@@ -5526,10 +5533,14 @@ test("cancellation interrupts workers while a transferred renewal still has fail
   await f.runtime.tick()
 
   expect(f.store.plan(plan.id)?.state).toBe("cancelled")
-  expect(f.store.architectRenewal(renewal.id)?.state).toBe("archiving")
+  expect(f.store.architectRenewal(renewal.id)).toMatchObject({
+    state: "archiving",
+    error: "retained predecessor history is temporarily unavailable",
+  })
   expect(f.store.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
   expect(f.sessions.get("owner")?.archived).toBe(false)
-  expect(archiveAttempts).toBeGreaterThan(1)
+  expect(archiveAttempts).toBe(1)
+  expect(failedHistoryReads).toBeGreaterThanOrEqual(6)
   expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
 })
 
@@ -5578,6 +5589,40 @@ test("a continuity checkpoint cannot outlive a later observed user input", async
     .map((row) => JSON.parse(row.payload))
     .find((payload) => payload.status === "architect-handoff")
   expect(handoff.continuityCoverage).toMatchObject({ revision: 2, inputCount: 1 })
+})
+
+test("renewal finishes all preparation pages before transferring a checkpoint", async () => {
+  const now = 2_000_000_515_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "page-three-checkpoint.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const cursors: (string | undefined)[] = []
+  f.host.architectInputPage = async (_sessionID, cursor) => {
+    cursors.push(cursor)
+    if (cursor === undefined) return { inbox: [], messages: [], nextCursor: "page-two" }
+    if (cursor === "page-two") return { inbox: [], messages: [], nextCursor: "page-three" }
+    return {
+      inbox: [],
+      messages: [{ id: "msg_page_three_user", type: "user" }],
+      nextCursor: null,
+    }
+  }
+
+  await f.runtime.tick()
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(cursors).toEqual([undefined, "page-two", "page-three"])
+  expect(renewal.state).toBe("deferred")
+  expect(renewal.input_message_id).toBe("msg_page_three_user")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
+  expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(0)
 })
 
 test("late and mutable assistant tool results are durably referenced by safe revision", async () => {

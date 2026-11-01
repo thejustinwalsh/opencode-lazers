@@ -869,6 +869,31 @@ export class TaskRuntime {
     return result
   }
 
+  private async inspectArchitectSourceSweep(renewal: ArchitectRenewalRow, fence: number) {
+    const requestedCursors = new Set<string>()
+    for (;;) {
+      const source = this.store.architectSource(renewal.previous_session_id)
+      if (!source) throw new Error("Durable Architect predecessor source is unavailable")
+      const cursor = source.scan_cursor
+      if (cursor !== null) {
+        if (requestedCursors.has(cursor))
+          throw new Error("Native Architect input/history pagination did not advance")
+        requestedCursors.add(cursor)
+      }
+      try {
+        const result = await this.inspectArchitectSourcePage(renewal, fence)
+        if (result.nextCursor === null) return
+        if (result.nextCursor === cursor || requestedCursors.has(result.nextCursor))
+          throw new Error("Native Architect input/history pagination did not advance")
+      } catch (error) {
+        // A prompt hook can defer preparation between the page read and its journal
+        // write. That expected state change ends the sweep without masking read errors.
+        if (this.store.architectRenewal(renewal.id)?.state !== "creating") return
+        throw error
+      }
+    }
+  }
+
   private async reconcileArchitectSources(fence: number) {
     if (!this.host.architectInputPage) return
     for (const source of this.store.architectSources()) {
@@ -1153,7 +1178,9 @@ export class TaskRuntime {
           }
         }
         if (renewal.state === "creating") {
-          await this.inspectArchitectSourcePage(renewal, fence)
+          // A checkpoint is only safe to transfer after its complete current history
+          // sweep has been journaled and checked for uncovered user input.
+          await this.inspectArchitectSourceSweep(renewal, fence)
           renewal = this.store.architectRenewal(renewal.id)!
           if (renewal.state !== "creating") return
           let successor = await this.host.session(renewal.successor_session_id)
@@ -1183,7 +1210,9 @@ export class TaskRuntime {
             throw new Error("Native Architect renewal is unavailable or foreign")
           renewal = this.store.architectRenewal(renewal.id)!
           if (renewal.state !== "creating") return
-          await this.inspectArchitectSourcePage(renewal, fence)
+          // Repeat the complete sweep after successor creation to include inputs
+          // observed while the native create call was in flight, before transfer.
+          await this.inspectArchitectSourceSweep(renewal, fence)
           renewal = this.store.architectRenewal(renewal.id)!
           if (renewal.state !== "creating") return
 
@@ -1622,12 +1651,33 @@ export class TaskRuntime {
     }, 10000)
     try {
       // A lease only selects a reconciler; it never proves an old side effect stopped.
-      for (const renewal of this.store.architectRenewalsNeedingRecovery())
-        await this.continueArchitectRenewal(renewal, fence)
+      for (const renewal of this.store.architectRenewalsNeedingRecovery()) {
+        try {
+          await this.continueArchitectRenewal(renewal, fence)
+        } catch (error) {
+          // The renewal has durably recorded its failed recovery phase. Do not let
+          // a retained-history read failure starve cancellation of transferred work.
+          const cancellationWasRequested = this.store
+            .plans()
+            .some(
+              (plan) =>
+                ["cancelling", "cancelled"].includes(plan.state) &&
+                this.store.architectRenewalForPlan(plan.id)?.id === renewal.id,
+            )
+          const recordedFailure = this.store.architectRenewal(renewal.id)
+          if (
+            !cancellationWasRequested ||
+            recordedFailure?.state !== renewal.state ||
+            recordedFailure.error !== errorText(error)
+          )
+            throw error
+        }
+      }
       await this.reconcileArchitectSources(fence)
       for (let plan of this.store
         .plans()
-        .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))) {
+        .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))
+        .sort((a, b) => Number(b.state === "cancelling") - Number(a.state === "cancelling"))) {
         if (plan.state === "draft") {
           const taskID = this.taskStartID(plan)!
           await this.command(

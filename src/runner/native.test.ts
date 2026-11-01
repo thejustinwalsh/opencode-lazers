@@ -466,6 +466,8 @@ function nativeOutcomeFixture(options: {
   const entries = options.inbox ?? []
   let listCalls = 0
   let archived = false
+  const messageQueries: { sessionID?: string; cursor?: string; order?: string; limit?: number }[] =
+    []
   const client = {
     server: { info: async () => ({ pid: options.pid ?? 42, version: "2.2.5" }) },
     session: {
@@ -500,8 +502,17 @@ function nativeOutcomeFixture(options: {
       },
     },
     message: {
-      list: async (input: { cursor?: string }) =>
-        options.messagePage?.(input.cursor) ?? { data: [], cursor: { next: null } },
+      list: async (input: {
+        sessionID?: string
+        cursor?: string
+        order?: string
+        limit?: number
+      }) => {
+        messageQueries.push(structuredClone(input))
+        if (input.cursor !== undefined && input.order !== undefined)
+          throw new Error("Cursor cannot be combined with order")
+        return options.messagePage?.(input.cursor) ?? { data: [], cursor: { next: null } }
+      },
     },
   } as unknown as NativeInboxClient
   const dependencies = {
@@ -524,6 +535,7 @@ function nativeOutcomeFixture(options: {
     get listCalls() {
       return listCalls
     },
+    messageQueries,
   }
 }
 
@@ -657,6 +669,10 @@ test("native Architect input reconciliation follows public message pagination an
   const first = await fixture.host.architectInputPage!("ses_owner")
   const second = await fixture.host.architectInputPage!("ses_owner", first.nextCursor ?? undefined)
   expect(cursors).toEqual([undefined, "page-2"])
+  expect(fixture.messageQueries).toEqual([
+    { sessionID: "ses_owner", limit: 100, order: "asc" },
+    { sessionID: "ses_owner", limit: 100, cursor: "page-2" },
+  ])
   expect(first.inbox.map((entry) => entry.id)).toEqual(["msg_queued"])
   expect(first.messages.map((entry) => entry.id)).toEqual([
     "msg_history",

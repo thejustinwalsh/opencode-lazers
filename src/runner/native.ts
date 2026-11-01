@@ -231,8 +231,7 @@ export function nativeHost(
         client.message.list({
           sessionID,
           limit: 100,
-          order: "asc",
-          ...(cursor ? { cursor } : {}),
+          ...(cursor ? { cursor } : { order: "asc" }),
         }),
       ])
       return {
