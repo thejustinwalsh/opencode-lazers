@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-01, 18:42 UTC checkpoint. Runtime records are authoritative; recheck before
+2026-11-01, 19:18 UTC checkpoint. Runtime records are authoritative; recheck before
 acting. Full goal: all four phases in `design/roadmap.md`, then an observation-based
 improvements plan. This is not completion. Read [README contracts](../../README.md),
 [pinned API](opencode-api.md), [phase decisions](phase-review-plan.md) and
@@ -21,50 +21,48 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
 
 ## Current work
 
-| Ref      | State                                 | Next boundary                                                                       |
-| -------- | ------------------------------------- | ----------------------------------------------------------------------------------- |
-| LZ-28    | Resume queued; same attempt preparing | Scope conflict with active Radar; retained repair and native lifecycle proof remain |
-| LZ-31/35 | Integrated and cleaned                | Privacy evidence retained                                                           |
-| LZ-32    | Integrated and cleaned                | Historical navigation/filter proof retained                                         |
-| LZ-33/34 | 33 running; 34 queued                 | Data worker 213639c4 on Luna Max, then SVG/ELK UI and native/Tera review            |
-| LZ-36    | Resume queued; same attempt preparing | Concise brief delivered; waits on real scope conflicts before expiry repair         |
-| LZ-37    | Integrated                            | Trace clocks are diagnostics, not a freeze fix                                      |
-| LZ-38    | Accepted retained source; on main     | Same-attempt resume worked; graph native compatibility remains open                 |
-| LZ-39    | Verifying; native observation hold    | Reviewed 351a04f prepared on main b77d981; ordinary Desktop proof remains           |
-| LZ-40    | Integrated                            | Directory evidence support, no acceptance waiver                                    |
-| LZ-41    | Integrated v11; cleaned               | Effective backend activation confirmed by real retained LZ-38 resume                |
-| LZ-42    | Integrated v11; cleaned               | Failed-to-resume transition exercised by the original LZ-38 worker                  |
-| LZ-43    | Running on Luna Max                   | Healthy-time profiler controls, then actual correlated Desktop capture              |
+| Ref      | State                                            | Next boundary                                                                       |
+| -------- | ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| LZ-28    | Retained stop for LZ-45; native gate open        | e704bc4 returned; same attempt must explicitly resume after recovery fix            |
+| LZ-31/35 | Integrated and cleaned                           | Privacy evidence retained                                                           |
+| LZ-32    | Integrated and cleaned                           | Historical navigation/filter proof retained                                         |
+| LZ-33/34 | 33 resume preparing; 34 cancelled, never started | Repair recent activity window; LZ-45 restores original successor without cloning    |
+| LZ-36    | Reviewed repair prepared; native gate open       | f5a3344 on main 76395c6; backend/GUI activation and real expiry proof pending       |
+| LZ-37    | Integrated                                       | Trace clocks are diagnostics, not a freeze fix                                      |
+| LZ-38    | Accepted retained source; on main                | Same-attempt resume worked; graph native compatibility remains open                 |
+| LZ-39    | Verifying; native observation hold               | Reviewed 351a04f prepared on main b77d981; ordinary Desktop proof remains           |
+| LZ-40    | Integrated                                       | Directory evidence support, no acceptance waiver                                    |
+| LZ-41    | Integrated v11; cleaned                          | Effective backend activation confirmed by real retained LZ-38 resume                |
+| LZ-42    | Integrated v11; cleaned                          | Failed-to-resume transition exercised by the original LZ-38 worker                  |
+| LZ-43    | Source prepared and activated; native gate open  | Real healthy arm succeeded, but no-job expiry and later profiler-start stall remain |
+| LZ-44    | Integrated v11 and cleaned                       | Engine-independent registration test landed in 7e38bf8                              |
+| LZ-45    | Running on Luna Max                              | Original-plan recovery for a never-started cancelled successor                      |
 
 - **LZ-28** plan `8253ff59-57a5-45fd-8847-acd971438af8`, same attempt
-  `941526b0-62de-4578-b82e-f2a458c95358`, session
-  `ses_0837d798635a4b10a58e1fdc9175854f`. Root answered the native scheduling question:
-  pause briefly for LZ-41, then resume this same worker/session/workspace/history.
-  Resume is recorded at v37; the attempt is preparing behind active scope conflicts,
-  not executing model work yet. Its dirty partial repair remains preserved.
-  Candidate `7e02ce0` is unsafe; independent native review reproduced cancellation
-  stalled by recovery, invisible mutable results, concurrent admission stranding
-  identity, cross-project recovery and stale checkpoint coverage. Repair is in the
-  retained tree, not accepted. Preserve `2536084` receipt lookup repair. See
-  [review](evidence/architect-context-lifecycle/retained-source-review.md) and
-  [protocol](evidence/architect-context-lifecycle/reconciliation-plan.md).
+  `941526b0-62de-4578-b82e-f2a458c95358`, native session
+  `ses_0837d798635a4b10a58e1fdc9175854f`, returned **e704bc4**. Root's five
+  previously reproduced renewal cases and public pagination checks pass; broader
+  review and real lifecycle/input proof remain. Do not accept old `7e02ce0`.
+  Root answered the native question to briefly stop its retained verification
+  reservation for LZ-45. Runtime uses reversible cancellation, not a paused state:
+  latest plan v42/node/attempt are cancelled. Explicitly resume this same attempt,
+  session/workspace/history/checks and native gate after LZ-45. Preserve `2536084`.
+  See [retained review](evidence/architect-context-lifecycle/retained-source-review.md)
+  and [protocol](evidence/architect-context-lifecycle/reconciliation-plan.md).
 - **LZ-36** task `68a72431-87af-4bce-8e7b-77f430aeb100`, plan
   `1fab1396-5f6b-45cc-a148-5eff48182ed9`, same second attempt
   `29659c51-4151-4c61-8951-4482b6089b7e`, session
-  `ses_d82453d7170e4facb78c60fcc89cdbc1`. Candidate `c1e2977` fixed selected live
-  payloads. Mounted combined source `214adcb` additionally fixes actual native
-  `basis: null` report decoding; LZ-38 and old LZ-9 now render. Loaded history
-  persisted, but expired Load more shows `[object Object]`, then healthy status
-  erases the error; Retry does not recapture. Actual native RPC probe returns only
-  RpcInternalError “RPC call failed”. Architect acknowledged retained repair using
-  the existing typed native RPC error surface. No mounted acceptance. See
-  [observations](evidence/stable-live-trajectory/native-observations.md) and
-  [remaining checklist](evidence/stable-live-trajectory/native-checklist.md).
-  The concise expiry brief is now installed with exact native keyed readback;
-  previous instruction, identity/route and busy/idle timestamps were preserved.
-  See [delivery receipt](evidence/stable-live-trajectory/expiry-instruction-delivery.md).
-  Instruction delivery itself did not prove consumption. Explicit resume is now
-  recorded at v18; the same attempt remains preparing behind scope conflicts.
+  `ses_d82453d7170e4facb78c60fcc89cdbc1`, returned **f5a3344**. Typed native
+  history errors, persistent separate history failure and explicit recapture are
+  prepared on main **76395c6**. Root independently passed 17 tests/162 assertions
+  and found no source blocker in those paths; Architect's merged checks also pass.
+  Latest plan v20 is blocked on `stable-history:human`, same attempt verifying.
+  Root asked Architect to activate the backend through supported native APIs,
+  then coordinate canonical GUI build for real expiry/recapture/live-selection
+  observation. No mounted pass yet. Old GUI basis-null fix `214adcb` remains.
+  See [observations](evidence/stable-live-trajectory/native-observations.md),
+  [checklist](evidence/stable-live-trajectory/native-checklist.md) and
+  [concise brief delivery](evidence/stable-live-trajectory/expiry-instruction-delivery.md).
 - **LZ-38→39** plan `e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a`, v19, is held only
   for `native-recovery:human`. LZ-38 continued in original second attempt
   `2f9e5b2e-8fc8-488b-a778-5f9610b5fcdb`, session
@@ -99,20 +97,47 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
   quality passing. Runtime reached integrated v11; Root verified the owned worktree
   removed. Backend activation and actual retained LZ-38 RESUME succeeded.
   No GUI build/reload accompanied either harness source merge.
-- **Radar** plan `b0eb89b4-a071-49e2-a238-c474d53cc42f`, LZ-33→34. LZ-33 is
-  coding in attempt `213639c4-fa4c-466f-8ae7-b6b869f7c1ca`, native session
-  `ses_b60b5730aa0e43ac82e86d004f6ec2f4`, OpenAI Luna Max. Root observed actual
-  native tools and the worktree in Desktop. LZ-34 has no attempt yet. Narrow panel,
-  details below, native fonts/theme, C4 SVG/off-renderer ELK and evidence-linked
-  activity remain the target; Tera screenshot review follows mounted UI.
-- **LZ-43** healthy-time profiling, task `a357012b-1ace-434f-beb5-235623f30154`,
-  plan `2af3a7c6-f1ea-4c7e-a455-9b6b7a4c094d`, attempt
+- **Radar** plan `b0eb89b4-a071-49e2-a238-c474d53cc42f`, original LZ-33→34.
+  LZ-33 attempt `213639c4-fa4c-466f-8ae7-b6b869f7c1ca`, native session
+  `ses_b60b5730aa0e43ac82e86d004f6ec2f4`, returned **10fb92b**. Runtime all-test
+  failure was a missing ignored engine: exact GUI registration test reproduced
+  RED before prepare-engine, GREEN after, unchanged full suite 420/3939 passed.
+  Keep the restored asset. Root found a separate live-view defect: first-5000
+  progress window excludes newer workers (actual project >8300 records), and a
+  read-only native-backed projection returned no model/tool flows. Architect sent
+  the concise repair to the original worker and resumed it; latest v45 attempt is
+  preparing behind real scope reservations. Plan cancellation also cancelled
+  never-started LZ-34; it still has no attempt and must be restored in this same
+  plan by LZ-45. No duplicate tasks/plans. Source review/native SVG/ELK UI/Tera
+  screenshot review remain. Narrow panel, details below, native fonts/theme.
+- **LZ-43** task `a357012b-1ace-434f-beb5-235623f30154`, plan
+  `2af3a7c6-f1ea-4c7e-a455-9b6b7a4c094d`, original attempt
   `42379578-3c87-4434-ae2d-19a5721684e5`, session
-  `ses_50fc4d5372be4244b316e7f4989b7fc4`, is running on Luna Max. This addresses
-  the real automatic capture's too-late Profiler.enable timeout. Architect
-  researched, specified and dispatched from Root's ordinary feature request.
-  Root's measured profile-size finding was attached as optional native guidance.
-  A usable correlated profile from real Desktop work is still required.
+  `ses_50fc4d5372be4244b316e7f4989b7fc4`, returned **b09f163**, prepared on
+  main **fc1a5aa**. Root reviewed and passed 28 capture tests/135 assertions;
+  merged full suite 433/4021 passed. Canonical GUI was built and activated through
+  native Desktop Restart after rebuild left new main IPC unavailable. All six
+  settings survived, original workers stayed busy; native Reload model recovered
+  startup disconnect to Ready. Actual healthy arm acknowledged in ~1.05 seconds,
+  but expired before the review tool finished streaming arguments. The real review
+  then completed eight-question/1867-token work and focused follow-ups. Later
+  re-arm timed out at Profiler.start and preceded 38.503s renderer lag after
+  inference had completed. Export Logs + Keep Waiting recovered interaction
+  without another relaunch. No valid profile or native compatibility pass. Keep
+  inference ON; do not infer the old freeze's cause. Detailed [native report](evidence/renderer-profiler-start-stall/report.md).
+- **LZ-44** task `72f6a045-1b47-440f-92f5-3379e2de2487`, plan
+  `ae4cea99-bfc1-47d9-a11e-8c99714e40d0`, returned **240f1e2**, integrated
+  **7e38bf8**, runtime v11 and non-forced cleanup verified by Architect. Root
+  source review and two focused tests/14 assertions pass. Native fresh engine-free
+  checkout verification passed; the test substitutes only the unused inference
+  import, retaining real root/panels/store/navigation coverage.
+- **LZ-45** task `5f18c175-6d8d-4ca9-8036-4fcc67c73644`, plan
+  `45c80906-d616-4bed-94f2-d9f0aa36a24c`, original attempt
+  `a1616d0a-6c4a-4bd9-8579-f41203abaa39`, native worker
+  `ses_6068c8f68c1140bb9d7782805f37475f`, is running on Luna Max. It adds a
+  supported retry/requeue path for an owned cancelled node with no attempt, using
+  existing transitions and receipts. Use it on original LZ-34 after reviewed
+  integration; restore LZ-28's retained attempt as promised.
 
 Owned trees: `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attempt>`.
 Retain unmerged work; native runtime cleanup only after reviewed integration.
