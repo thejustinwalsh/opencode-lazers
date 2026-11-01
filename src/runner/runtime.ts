@@ -1496,14 +1496,26 @@ export class TaskRuntime {
     const receipts: CheckReceipt[] = []
     for (const check of proposal.verification) {
       if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
-      const known = this.store
-        .effects(plan.id)
-        .find((e) => e.attempt_id === attempt.id && e.kind === `verify:${check.id}`)
+      const known = this.store.effects(plan.id).find((e) => {
+        if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
+        const payload = JSON.parse(e.payload)
+        return (
+          payload.artifact === artifact.commit &&
+          payload.identity === artifact.identity &&
+          payload.workspace === attempt.workspace &&
+          fingerprint(payload.check) === fingerprint(check)
+        )
+      })
       if (known?.state === "completed") {
         receipts.push(JSON.parse(known.receipt!).check)
         continue
       }
-      const receiptPath = join(this.dataDirectory, "receipts", attempt.id, `${check.id}.json`)
+      const receiptPath = join(
+        this.dataDirectory,
+        "receipts",
+        attempt.id,
+        `${check.id}-${artifact.commit}.json`,
+      )
       const effect = this.effect(
         plan.id,
         attempt.task_id,
