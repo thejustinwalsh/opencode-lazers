@@ -224,10 +224,11 @@ export class InferenceTraceSpan {
     readonly request: InferenceTraceStart,
     readonly sink: InferenceTraceSink,
     readonly now: () => number = () => performance.now(),
+    initialStage: TraceStage | null = "queued",
   ) {
     this.#start = now()
     this.#last = this.#start
-    this.mark("queued")
+    if (initialStage) this.mark(initialStage)
   }
 
   mark(stage: TraceStage, mark?: InferenceTraceMark) {
@@ -293,4 +294,5 @@ export const startInferenceTrace = (
   request: InferenceTraceStart,
   sink: InferenceTraceSink,
   now?: () => number,
-) => new InferenceTraceSpan(request, sink, now)
+  initialStage?: TraceStage | null,
+) => new InferenceTraceSpan(request, sink, now, initialStage)
