@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-01, 15:50 UTC checkpoint. Runtime records are authoritative; recheck before
+2026-11-01, 16:16 UTC checkpoint. Runtime records are authoritative; recheck before
 acting. Read [README contracts](../../README.md), [pinned OpenCode API](opencode-api.md),
 [reviewed phase plan](phase-review-plan.md) and [roadmap execution](roadmap-execution.md).
 The full requested outcome remains all four phases in `design/roadmap.md`, then
@@ -42,16 +42,18 @@ responsiveness acceptance.
 
 ## Current execution
 
-| Ref   | State at checkpoint                            | Next boundary                                                                     |
-| ----- | ---------------------------------------------- | --------------------------------------------------------------------------------- |
-| LZ-28 | Running, original task/latest retained attempt | Retain-and-reconcile implementation, review and real renewal/archival proof       |
-| LZ-31 | Integrated v9                                  | Corrected privacy source retained; native cleanup complete                        |
-| LZ-32 | Integrated v25                                 | Native history/filter/navigation review passed; native cleanup complete           |
-| LZ-33 | Queued                                         | Radar operational projection; actual progress/index write conflict waits on LZ-28 |
-| LZ-34 | Queued after LZ-33                             | SVG/ELK map and native/design review                                              |
-| LZ-35 | Integrated v9                                  | Privacy correction retained; native cleanup complete                              |
-| LZ-36 | Running                                        | Stable economical live Trajectory, independent of lifecycle                       |
-| LZ-37 | Running                                        | Coherent diagnostic trace clocks; not a freeze fix                                |
+| Ref   | State at checkpoint                         | Next boundary                                                                     |
+| ----- | ------------------------------------------- | --------------------------------------------------------------------------------- |
+| LZ-28 | Returned `7e02ce0`, native evidence pending | Independent review and real renewal/archival/input/outcome proof                  |
+| LZ-31 | Integrated v9                               | Corrected privacy source retained; native cleanup complete                        |
+| LZ-32 | Integrated v25                              | Native history/filter/navigation review passed; native cleanup complete           |
+| LZ-33 | Queued                                      | Radar operational projection; actual progress/index write conflict waits on LZ-28 |
+| LZ-34 | Queued after LZ-33                          | SVG/ELK map and native/design review                                              |
+| LZ-35 | Integrated v9                               | Privacy correction retained; native cleanup complete                              |
+| LZ-36 | Running                                     | Stable economical live Trajectory, independent of lifecycle                       |
+| LZ-37 | Returned `097eab9`, evidence-reference hold | Resolve directory/file validator mismatch; diagnostic clocks only                 |
+| LZ-38 | Running                                     | Actual decision-adapter cleanup ownership, including failed load                  |
+| LZ-39 | Queued after LZ-38                          | Positively identified loss retirement and repeated native compatibility proof     |
 
 - **LZ-28** task `239f45a9-3247-4cba-b339-19c8267d0800`, plan
   `8253ff59-57a5-45fd-8847-acd971438af8` v25. Active retained attempt
@@ -104,6 +106,42 @@ responsiveness acceptance.
   trajectory payloads. See `evidence/034-renderer-trace/report.md`; Architect
   supplied this baseline to LZ-36 without changing acceptance. Earlier current-200
   traffic was not evidence about the later matched freeze.
+
+## Returned candidates and new bounded recovery work
+
+LZ-28 returned `7e02ce000b4add82e31165625f67c625c22f3064`; the worker reports
+402 tests and quality passing. The exact artifact's live native gate remains
+unfulfilled. Architect delegated independent native review to
+`ses_e681b42b4ffeEkEylmWlst85JM`; do not duplicate or restart the retained worker.
+
+LZ-37 returned `097eab95e592f4e6122c44aa525ef911c94bb9a7`; worker reports
+81 focused / 391 full tests, quality and GUI packaging passing. Root reviewed
+production timer/span changes and fake-clock fixture with no blocker found;
+Architect's independent reviewer is `ses_e681b42b2ffe7jPqnSkyYtwBdv`. This is
+not a freeze fix. Root reproduced its current hold: committed `verification.md`
+is present, but the immutable evidence reference names its directory and
+`artifactExists` only accepts files. Architect has the finding and is researching
+a compatible validator repair, without repeating LZ-37 or waiving checks.
+
+Native investigation reproduced two cleanup-ownership bypasses and known-loss
+reuse, recorded at `f331b7e`. Architect split recovery into LZ-38 then LZ-39 in
+plan `e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a` (running v4):
+
+- LZ-38 `9a9ff061-b95a-409d-a43e-710dd04bfd30`, attempt
+  `789d156b-4714-4913-8ffb-936a0a6fdc2d`, native Luna Max session
+  `ses_7bf6e0f1ce484eccbfed6a287051a59a` is running. Correct resident and
+  failed-load cleanup uncertainty using actual-adapter/lifecycle tests.
+- LZ-39 `99d6b8cf-1eea-4f6c-98ff-27afcd8a6240` waits for LZ-38; positively
+  identified loss must retire the old decision session through existing recovery,
+  without generic-error classification or replay. Its native combined gate
+  preserves ordinary repeated review/navigation, question/decision/speech/model
+  switching, enabled features and original worker history. A compatible recovery
+  repair is not proof of the sampled freeze's cause.
+
+LZ-36 remains live in the same original native worker; latest observed work was
+focused tests and read-count regressions. No returned artifact or mounted UI pass
+is claimed. Root is ready to drive native gates after reviewed activation at a
+quiet local-inference boundary; no GUI build/reload during active local review.
 
 Native-owned worktrees are under
 `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attempt>`. Never remove
