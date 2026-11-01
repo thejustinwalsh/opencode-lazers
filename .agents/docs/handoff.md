@@ -27,7 +27,7 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
 | LZ-31/35 | Integrated and cleaned                           | Privacy evidence retained                                                           |
 | LZ-32    | Integrated and cleaned                           | Historical navigation/filter proof retained                                         |
 | LZ-33/34 | 33 resume preparing; 34 cancelled, never started | Repair recent activity window; LZ-45 restores original successor without cloning    |
-| LZ-36    | Reviewed repair prepared; native gate open       | f5a3344 on main 76395c6; backend/GUI activation and real expiry proof pending       |
+| LZ-36    | Reviewed repair prepared; native gate open       | 76395c6 activation held: initial-recovery and unchanged-cursor blockers; retained repair       |
 | LZ-37    | Integrated                                       | Trace clocks are diagnostics, not a freeze fix                                      |
 | LZ-38    | Accepted retained source; on main                | Same-attempt resume worked; graph native compatibility remains open                 |
 | LZ-39    | Verifying; native observation hold               | Reviewed 351a04f prepared on main b77d981; ordinary Desktop proof remains           |
@@ -57,9 +57,14 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
   prepared on main **76395c6**. Root independently passed 17 tests/162 assertions
   and found no source blocker in those paths; Architect's merged checks also pass.
   Latest plan v20 is blocked on `stable-history:human`, same attempt verifying.
-  Root asked Architect to activate the backend through supported native APIs,
-  then coordinate canonical GUI build for real expiry/recapture/live-selection
-  observation. No mounted pass yet. Old GUI basis-null fix `214adcb` remains.
+  **Hold 76395c6 activation.** Completed native independent review
+  `ses_e677726d3ffedsnUi6XJntqZRi` reproduced two blockers: failed initial
+  capture plus disconnect can strand the Recapture action behind Retry status;
+  an empty unchanged-cursor continuation can loop indefinitely. Architect is
+  returning the concise repair to the same retained worker and releasing its
+  verification reservation. Root acknowledged the hold and did not build it.
+  Typed RPC/expiry handling otherwise cleared that review. No mounted pass yet;
+  real expiry/recapture/live-selection observation follows repaired activation.
   See [observations](evidence/stable-live-trajectory/native-observations.md),
   [checklist](evidence/stable-live-trajectory/native-checklist.md) and
   [concise brief delivery](evidence/stable-live-trajectory/expiry-instruction-delivery.md).
