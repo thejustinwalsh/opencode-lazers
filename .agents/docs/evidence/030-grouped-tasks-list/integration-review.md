@@ -122,3 +122,10 @@ Focused grouping/observation/reference checks pass 53 tests / 373 assertions;
 whole-repository formatter/lint/types and the GUI rebuild pass. Root's removal of
 the bundle-hash sentence and its audit snapshot formatting are preserved. Native
 scroll/focus/accessibility retest and Terra completion remain pending.
+
+Identity repair `f2beb81` was rebuilt from committed source including Terra's
+dependency-spacing `bdc9137`. Its full background checks completed: **354 passed,
+0 failed, 3,318 assertions across 72 files**, followed by passing whole-repository
+formatter, lint and strict types (358 files formatted). Native review is still a
+separate pending boundary; these results do not close Root's reported scroll or
+accessibility behavior.
