@@ -57,6 +57,10 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
   the existing typed native RPC error surface. No mounted acceptance. See
   [observations](evidence/stable-live-trajectory/native-observations.md) and
   [remaining checklist](evidence/stable-live-trajectory/native-checklist.md).
+  The concise expiry brief is now installed with exact native keyed readback;
+  previous instruction, identity/route and busy/idle timestamps were preserved.
+  See [delivery receipt](evidence/stable-live-trajectory/expiry-instruction-delivery.md).
+  This did not start the worker or prove model consumption.
 - **LZ-38→39** plan `e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a`. Latest LZ-38 attempt
   `2f9e5b2e-8fc8-488b-a778-5f9610b5fcdb`, session
   `ses_179e4f628f2f4ba8a4e22e99214adddd`, prepared HEAD `071b5c1`. Its old quality
