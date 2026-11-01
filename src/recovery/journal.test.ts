@@ -104,7 +104,8 @@ test("journal captures inserts and in-place modifications, ignores replay, and s
     expect(JSON.stringify(modifiedPage)).not.toContain("api_key=not-retained")
     journal.advance(modifiedPage)
 
-    // An identical source write is not a new modification fact.
+    // Replaying an older delivery after persistence changed is ignored upstream,
+    // not recorded as another persisted modification.
     fixture.store.atomic((db) => {
       db.query("UPDATE runner_progress SET payload=? WHERE dedupe_key=?").run(
         JSON.stringify({ status: "failed", error: "api_key=not-retained" }),
@@ -127,6 +128,15 @@ test("journal captures inserts and in-place modifications, ignores replay, and s
         input.payload,
       )
     })
+    const persistedPayload = fixture.store.atomic(
+      (db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_progress WHERE dedupe_key=?",
+          )
+          .get(input.dedupeKey)!.payload,
+    )
+    expect(JSON.parse(persistedPayload)).toMatchObject({ status: "failed" })
     const unchanged = journal.page("rule-engine", 10)
     expect(unchanged.facts).toEqual([])
     expect(unchanged.metrics).toEqual({
@@ -184,8 +194,9 @@ test("pre-journal rows are represented by an explicit starting boundary, not fab
     const page = journal.page("consumer", 10)
     expect(journal.coverage()).toMatchObject({
       kind: "legacy-or-unavailable",
+      afterChangeID: 0,
       sourceSequence: legacySequence,
-      reason: expect.stringContaining("no modification history"),
+      reason: expect.stringContaining("unavailable history"),
     })
     expect(page.coverage.sourceSequence).toBe(legacySequence)
     expect(page.facts).toEqual([])
@@ -203,6 +214,82 @@ test("pre-journal rows are represented by an explicit starting boundary, not fab
       status: "failed",
     })
   } finally {
+    fixture.close()
+  }
+})
+
+test("late project initialization retains facts captured by another project's triggers", () => {
+  const fixture = makeFixture()
+  let otherRepository: TaskRepository | undefined
+  let reopenedRepository: TaskRepository | undefined
+  try {
+    const otherDirectory = `${fixture.directory}/other`
+    const legacySequence = fixture.store.atomic((db) => {
+      insertProgress(db, {
+        ...factInput(fixture, "late-project-legacy"),
+        projectDirectory: otherDirectory,
+        projectID: "other-project",
+      })
+      return db
+        .query<{ seq: number }, [string, string]>(
+          "SELECT seq FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
+        )
+        .get(otherDirectory, "late-project-legacy")!.seq
+    })
+
+    // This installation creates database-wide triggers but only records
+    // project-specific coverage for the fixture project.
+    new RecoveryJournal(fixture.repository)
+    const capturedSequence = fixture.store.atomic((db) => {
+      insertProgress(db, {
+        ...factInput(fixture, "late-project-captured"),
+        projectDirectory: otherDirectory,
+        projectID: "other-project",
+      })
+      const sequence = db
+        .query<{ seq: number }, [string, string]>(
+          "SELECT seq FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
+        )
+        .get(otherDirectory, "late-project-captured")!.seq
+      db.query(
+        "UPDATE runner_progress SET payload=? WHERE project_directory=? AND dedupe_key=?",
+      ).run(JSON.stringify({ status: "failed" }), otherDirectory, "late-project-captured")
+      return sequence
+    })
+
+    otherRepository = new TaskRepository(fixture.repository.path, otherDirectory)
+    new RunnerStore(otherRepository)
+    const otherJournal = new RecoveryJournal(otherRepository)
+    const page = otherJournal.page("late-project-consumer", 10)
+    expect(page.coverage.afterChangeID).toBe(0)
+    expect(page.coverage.reason).toContain(
+      "facts captured before this project's initialization remain eligible",
+    )
+    expect(page.coverage.sourceSequence).toBe(capturedSequence)
+    expect(
+      page.facts.map(({ changeKind, sourceSequence, status }) => [
+        changeKind,
+        sourceSequence,
+        status,
+      ]),
+    ).toEqual([
+      ["inserted", capturedSequence, "running"],
+      ["modified", capturedSequence, "failed"],
+    ])
+    expect(page.facts.some((fact) => fact.sourceSequence === legacySequence)).toBe(false)
+
+    otherJournal.advance(page)
+    const dbPath = otherRepository.path
+    otherRepository.close()
+    otherRepository = undefined
+    reopenedRepository = new TaskRepository(dbPath, otherDirectory)
+    new RunnerStore(reopenedRepository)
+    const reopenedJournal = new RecoveryJournal(reopenedRepository)
+    expect(reopenedJournal.page("late-project-consumer", 10).facts).toEqual([])
+    expect(reopenedJournal.page("late-project-new-consumer", 10).facts).toEqual(page.facts)
+  } finally {
+    reopenedRepository?.close()
+    otherRepository?.close()
     fixture.close()
   }
 })
@@ -382,6 +469,81 @@ test("project isolation and stale cursor checks cannot skip journal facts", () =
     expect(otherJournal.page("project-consumer", 10).facts.map((fact) => fact.projectID)).toEqual([
       "other-project",
     ])
+  } finally {
+    otherRepository?.close()
+    fixture.close()
+  }
+})
+
+test("advance rejects forged IDs, substituted facts, and invalid boundaries atomically", () => {
+  const fixture = makeFixture()
+  let otherRepository: TaskRepository | undefined
+  try {
+    const journal = new RecoveryJournal(fixture.repository)
+    const otherDirectory = `${fixture.directory}/other`
+    otherRepository = new TaskRepository(fixture.repository.path, otherDirectory)
+    new RunnerStore(otherRepository)
+
+    fixture.store.atomic((db) => {
+      insertProgress(db, factInput(fixture, "exact-page-first"))
+      insertProgress(db, factInput(fixture, "exact-page-second", 1235))
+      insertProgress(db, {
+        ...factInput(fixture, "exact-page-foreign", 1236),
+        projectDirectory: otherDirectory,
+        projectID: "other-project",
+      })
+    })
+    const foreignChangeID = fixture.store.atomic(
+      (db) =>
+        db
+          .query<{ change_id: number }, [string]>(
+            "SELECT change_id FROM recovery_progress_facts WHERE project_directory=?",
+          )
+          .get(otherDirectory)!.change_id,
+    )
+    const page = journal.page("exact-page-consumer", 2)
+    expect(page.facts.map((fact) => fact.changeID)).toHaveLength(2)
+    expect(foreignChangeID).toBeGreaterThan(page.facts[1]!.changeID)
+
+    fixture.store.atomic((db) =>
+      db.exec("CREATE TABLE recovery_result_probe (id INTEGER PRIMARY KEY)"),
+    )
+    const probeCount = () =>
+      fixture.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, []>("SELECT count(*) AS count FROM recovery_result_probe")
+            .get()!.count,
+      )
+    const rejectWithoutResult = (candidate: typeof page) => {
+      expect(() =>
+        fixture.store.atomic((db) => {
+          db.query("INSERT INTO recovery_result_probe(id) VALUES(1)").run()
+          journal.advanceIn(db, candidate)
+        }),
+      ).toThrow()
+      expect(probeCount()).toBe(0)
+      expect(journal.page("exact-page-consumer", 2).facts).toEqual(page.facts)
+    }
+
+    rejectWithoutResult({
+      ...page,
+      facts: [page.facts[0]!, { ...page.facts[1]!, changeID: foreignChangeID }],
+      throughChangeID: foreignChangeID,
+    })
+    rejectWithoutResult({
+      ...page,
+      facts: [page.facts[0]!, { ...page.facts[1]!, status: "failed" }],
+    })
+    rejectWithoutResult({ ...page, throughChangeID: page.facts[1]!.changeID - 1 })
+    rejectWithoutResult({ ...page, fromChangeID: -1 })
+
+    fixture.store.atomic((db) => {
+      db.query("INSERT INTO recovery_result_probe(id) VALUES(1)").run()
+      journal.advanceIn(db, page)
+    })
+    expect(probeCount()).toBe(1)
+    expect(journal.page("exact-page-consumer", 2).facts).toEqual([])
   } finally {
     otherRepository?.close()
     fixture.close()

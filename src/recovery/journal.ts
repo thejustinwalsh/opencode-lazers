@@ -61,7 +61,9 @@ export type RecoveryCoverage = {
   projectDirectory: string
   kind: "legacy-or-unavailable"
   source: "runner_progress"
+  /** Cursor boundary for new consumers; zero preserves any already-captured facts. */
   afterChangeID: number
+  /** Highest existing source sequence observed; captured journal facts remain eligible. */
   sourceSequence: number
   reason: string
 }
@@ -95,7 +97,9 @@ export type RecoveryPage = {
   facts: RecoveryFact[]
   metrics: {
     pageCount: number
+    /** UTF-8 bytes in the returned facts' JSON, not SQLite bytes or total I/O. */
     serializedBytesRead: number
+    /** Source progress payloads selected; page reads do not select those payloads. */
     sourcePayloadsRead: number
   }
 }
@@ -151,7 +155,7 @@ function changedFieldsExpression() {
 }
 
 function validateConsumerID(consumerID: string) {
-  if (!/^[A-Za-z0-9._:-]{1,120}$/.test(consumerID))
+  if (typeof consumerID !== "string" || !/^[A-Za-z0-9._:-]{1,120}$/.test(consumerID))
     throw new Error("Recovery journal consumer ID must be 1–120 safe ASCII characters")
 }
 
@@ -191,11 +195,46 @@ function factFromRow(row: FactRow): RecoveryFact {
   }
 }
 
+function sameFact(left: RecoveryFact, right: RecoveryFact): boolean {
+  return (
+    left.changeID === right.changeID &&
+    left.projectDirectory === right.projectDirectory &&
+    left.projectID === right.projectID &&
+    left.planID === right.planID &&
+    left.taskID === right.taskID &&
+    left.attemptID === right.attemptID &&
+    left.sessionID === right.sessionID &&
+    left.sourceSequence === right.sourceSequence &&
+    left.sourceAt === right.sourceAt &&
+    left.changeKind === right.changeKind &&
+    left.sourceKind === right.sourceKind &&
+    left.source === right.source &&
+    left.previousStatus === right.previousStatus &&
+    left.status === right.status &&
+    Array.isArray(right.changedFields) &&
+    left.changedFields.length === right.changedFields.length &&
+    left.changedFields.every((field, index) => field === right.changedFields[index])
+  )
+}
+
+function sameCoverage(left: RecoveryCoverage, right: RecoveryCoverage): boolean {
+  return (
+    left.projectDirectory === right.projectDirectory &&
+    left.kind === right.kind &&
+    left.source === right.source &&
+    left.afterChangeID === right.afterChangeID &&
+    left.sourceSequence === right.sourceSequence &&
+    left.reason === right.reason
+  )
+}
+
 /**
- * A transactional, privacy-minimal change journal over runner_progress. SQLite
- * triggers make every progress insertion or real modification commit and roll
- * back with its source write; page consumers advance their cursor in that same
- * caller-owned transaction as their result.
+ * A transactional, privacy-minimal journal over progress rows that SQLite
+ * actually inserts or materially updates. Deliveries discarded before a source
+ * write (including ignored duplicate inserts) cannot become journal facts.
+ * Captured facts roll back with their source write; page consumers advance only
+ * after the returned facts are rechecked against storage in the caller's
+ * transaction as their result.
  */
 export class RecoveryJournal {
   constructor(readonly repository: TaskRepository) {
@@ -291,12 +330,6 @@ export class RecoveryJournal {
       )
       .get(this.repository.projectDirectory)
     if (!coverage) {
-      const maxChangeID = db
-        .query<{ value: number }, [string]>(
-          `SELECT COALESCE(MAX(change_id),0) AS value FROM recovery_progress_facts
-           WHERE project_directory=?`,
-        )
-        .get(this.repository.projectDirectory)!.value
       const maxSourceSequence = db
         .query<{ value: number }, [string]>(
           "SELECT COALESCE(MAX(seq),0) AS value FROM runner_progress WHERE project_directory=?",
@@ -308,9 +341,9 @@ export class RecoveryJournal {
          VALUES(?,'legacy-or-unavailable','runner_progress',?,?,?)`,
       ).run(
         this.repository.projectDirectory,
-        maxChangeID,
+        0,
         maxSourceSequence,
-        "Progress rows before this starting boundary have no modification history and are not reconstructed as journal facts.",
+        "Legacy progress rows without captured facts have unavailable history and are not reconstructed; facts captured before this project's initialization remain eligible.",
       )
     }
   }
@@ -386,37 +419,76 @@ export class RecoveryJournal {
   }
 
   /**
-   * Advance only the exact cursor from which a page was read. A stale page,
-   * foreign-project page, or fabricated skip is rejected rather than skipping
-   * durable facts.
+   * Advance only a page whose cursor, ordered facts, and boundaries still match
+   * storage. A stale, foreign, or tampered page is rejected rather than
+   * skipping or misrepresenting durable facts.
    */
   advanceIn(db: Database, page: RecoveryPage): void {
+    if (!page || typeof page !== "object") throw new Error("Invalid recovery journal page")
     if (page.projectDirectory !== this.repository.projectDirectory)
       throw new Error("Recovery journal page belongs to a different project")
     validateConsumerID(page.consumerID)
     validatePageSize(page.limit)
-    if (page.facts.length > page.limit)
+    if (
+      !Number.isSafeInteger(page.fromChangeID) ||
+      page.fromChangeID < 0 ||
+      !Number.isSafeInteger(page.throughChangeID) ||
+      page.throughChangeID < 0
+    )
+      throw new Error("Recovery journal page has an invalid cursor boundary")
+    if (!Array.isArray(page.facts) || page.facts.length > page.limit)
       throw new Error("Recovery journal page exceeds its declared bound")
-    let expectedThrough = page.fromChangeID
-    for (const fact of page.facts) {
-      if (fact.projectDirectory !== this.repository.projectDirectory)
-        throw new Error("Recovery journal page contains a foreign-project fact")
-      if (fact.changeID <= expectedThrough)
-        throw new Error("Recovery journal page facts are not strictly ordered")
-      expectedThrough = fact.changeID
-    }
+    const cursor = db
+      .query<{ change_id: number }, [string, string]>(
+        `SELECT change_id FROM recovery_progress_consumers
+         WHERE project_directory=? AND consumer_id=?`,
+      )
+      .get(page.projectDirectory, page.consumerID)
+    if (!cursor || cursor.change_id !== page.fromChangeID)
+      throw new Error("Stale recovery journal cursor")
+
+    const coverage = this.coverageIn(db)
+    if (!page.coverage || !sameCoverage(page.coverage, coverage))
+      throw new Error("Recovery journal page coverage does not match storage")
+
+    const rows = db
+      .query<FactRow, [string, number, number]>(
+        `SELECT change_id,project_directory,project_id,plan_id,task_id,attempt_id,session_id,
+                source_seq,source_at,change_kind,source_kind,source,previous_status,status,changed_fields
+         FROM recovery_progress_facts
+         WHERE project_directory=? AND change_id>? ORDER BY change_id LIMIT ?`,
+      )
+      .all(page.projectDirectory, page.fromChangeID, page.limit)
+    const expectedFacts = rows.map(factFromRow)
+    if (
+      page.facts.length !== expectedFacts.length ||
+      page.facts.some((fact, index) => !fact || !sameFact(expectedFacts[index]!, fact))
+    )
+      throw new Error("Recovery journal page does not match the stored ordered facts")
+
+    const expectedThrough = expectedFacts.at(-1)?.changeID ?? cursor.change_id
     if (page.throughChangeID !== expectedThrough)
       throw new Error("Recovery journal page has an invalid advancement boundary")
-    if (!page.facts.length) return
 
-    const journalFactCount = db
-      .query<{ count: number }, [string, number, number]>(
-        `SELECT count(*) AS count FROM recovery_progress_facts
-         WHERE project_directory=? AND change_id>? AND change_id<=?`,
+    const more = db
+      .query<{ found: number }, [string, number]>(
+        `SELECT 1 AS found FROM recovery_progress_facts
+         WHERE project_directory=? AND change_id>? LIMIT 1`,
       )
-      .get(page.projectDirectory, page.fromChangeID, page.throughChangeID)!.count
-    if (journalFactCount !== page.facts.length)
-      throw new Error("Recovery journal page does not cover every fact through its boundary")
+      .get(page.projectDirectory, expectedThrough)
+    const expectedBytes = expectedFacts.length
+      ? new TextEncoder().encode(JSON.stringify(expectedFacts)).byteLength
+      : 0
+    if (page.hasMore !== (more !== null))
+      throw new Error("Recovery journal page has an invalid continuation boundary")
+    if (
+      !page.metrics ||
+      page.metrics.pageCount !== 1 ||
+      page.metrics.serializedBytesRead !== expectedBytes ||
+      page.metrics.sourcePayloadsRead !== 0
+    )
+      throw new Error("Recovery journal page metrics do not match the returned facts")
+    if (!expectedFacts.length) return
 
     const result = db
       .query(
