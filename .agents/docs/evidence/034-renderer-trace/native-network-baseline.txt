@@ -1,0 +1,139 @@
+													75 text 0 ms
+													76 text 10,000 ms
+													77 text 20,000 ms
+													78 text 30,000 ms
+													79 text 40,000 ms
+													80 text 50,000 ms
+													81 text 60,000 ms
+														101 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														104 cell 200 OK
+														111 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															114 text 3 ms
+														116 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														119 cell 200 OK
+														126 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															129 text 41 ms
+														131 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														134 cell 200 OK
+														141 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															144 text 3 ms
+														146 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														149 cell 200 OK
+														156 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															159 text 1 ms
+														161 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														164 cell 200 OK
+														171 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															174 text 4 ms
+														176 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														179 cell 200 OK
+														186 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															189 text 2 ms
+														191 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														194 cell 200 OK
+														201 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															204 text 2 ms
+														206 cell http://127.0.0.1:49374/api/rpc/lazers.observability/snapshot?location%5Bdirectory%5D=%2FUsers%2Ftjw%2FDocuments%2FChatGPT%2Fopencode-lazers
+														209 cell 200 OK
+														216 cell 48.5 kB transferred over network, resource size: 586 kB
+															219 text 72 ms
+														221 cell http://127.0.0.1:49374/api/rpc/lazers.observability/trajectory?location%5Bdirectory%5D=%2FUsers%2Ftjw%2FDocuments%2FChatGPT%2Fopencode-lazers
+														224 cell 200 OK
+														231 cell 31.3 kB transferred over network, resource size: 219 kB
+															234 text 141 ms
+														236 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														239 cell 200 OK
+														246 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															249 text 11 ms
+														251 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														254 cell 200 OK
+														261 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															264 text 9 ms
+														266 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														269 cell 200 OK
+														276 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															279 text 2 ms
+														281 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														284 cell 200 OK
+														291 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															294 text 32 ms
+														296 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														299 cell 200 OK
+														306 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															309 text 4 ms
+														311 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														314 cell 200 OK
+														321 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															324 text 1 ms
+														326 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														329 cell 200 OK
+														336 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															339 text 6 ms
+														341 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														344 cell 200 OK
+														351 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															354 text 3 ms
+														356 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														359 cell 200 OK
+														366 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															369 text 2 ms
+														371 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														374 cell 200 OK
+														381 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															384 text 188 ms
+														386 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														389 cell 200 OK
+														396 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															399 text 91 ms
+														401 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														404 cell 200 OK
+														411 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															414 text 2 ms
+														416 cell http://127.0.0.1:49374/api/rpc/lazers.observability/snapshot?location%5Bdirectory%5D=%2FUsers%2Ftjw%2FDocuments%2FChatGPT%2Fopencode-lazers
+														419 cell 200 OK
+														426 cell 48.5 kB transferred over network, resource size: 586 kB
+															429 text 62 ms
+														431 cell http://127.0.0.1:49374/api/rpc/lazers.observability/trajectory?location%5Bdirectory%5D=%2FUsers%2Ftjw%2FDocuments%2FChatGPT%2Fopencode-lazers
+														434 cell 200 OK
+														441 cell 31.3 kB transferred over network, resource size: 219 kB
+															444 text 140 ms
+														446 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														449 cell 200 OK
+														456 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															459 text 5 ms
+														461 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														464 cell 200 OK
+														471 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															474 text 2 ms
+														476 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														479 cell 200 OK
+														486 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															489 text 2 ms
+														491 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														494 cell 200 OK
+														501 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															504 text 5 ms
+														506 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														509 cell 200 OK
+														516 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															519 text 3 ms
+														521 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														524 cell 200 OK
+														531 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															534 text 2 ms
+														536 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu/settings
+														539 cell 200 OK
+														546 cell 0.3 kB transferred over network, resource size: 0.1 kB
+															549 text 5 ms
+														551 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														554 cell 200 OK
+														561 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															564 text 2 ms
+														569 cell 200 OK
+														576 cell 0.4 kB transferred over network, resource size: 0.2 kB
+															579 text 2 ms
+														581 cell http://127.0.0.1:49374/api/rpc/lazers.webgpu-worker/poll
+														584 cell 200 OK
+														591 cell 0.3 kB transferred over network, resource size: 0.0 kB
+															594 text 8 ms
+												596 text 365 requests

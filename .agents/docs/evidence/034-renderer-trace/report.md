@@ -117,3 +117,30 @@ focused debugger/lifecycle tests, native formatter, lint, strict typecheck and
 GUI build pass. Tests include profile graph/sample consistency, preserving -1
 locations, existing-inspector skips, stop timeout, active abort, failed artifact
 writes and once-per-freeze hookup.
+
+## Healthy native network baseline — 2026-11-01 15:24 UTC
+
+Root opened Desktop's own View → Toggle Developer Tools and inspected Console
+and Network while the real roadmap workers ran and the mounted Trajectory
+remained on historical LZ-9. This was normal product use, not an inference
+benchmark or a reproduced freeze. No runtime code, inference settings, service,
+listener or debugger flag was changed.
+
+The Console retained historical removed-worktree 404s and WebGPU bridge 500s;
+those entries do not establish a current failure. Current visible Network rows
+for bridge poll/settings and observation snapshot/trajectory returned 200. The
+captured visible-row sample contains no 4xx/5xx. Repeated unchanged-task reads
+showed about 586 kB decoded / 48.5 kB transferred for snapshot and 219 kB decoded /
+31.3 kB transferred for trajectory. This is a real pre-LZ-36 payload baseline,
+not proof of native-context call counts, sustained throughput or a CPU-hang cause.
+[Captured request/status/size rows](native-network-baseline.txt) contain no
+request headers, response bodies, transcript text or console inline bundles.
+
+Developer Tools was then closed and the full Desktop layout restored. The existing
+automatic unresponsive-event profiler is intentionally skipped while DevTools is
+open, so leaving it closed preserves that route. The current main-process log
+`20261031T205316/main.log` at 10:09:15.816 local recorded the deployed diagnostics
+directory, 500 ms profile and 2,000 ms deadline. No later unresponsive/debugger
+capture was found in this inspection; the diagnostics directory is still absent
+(it is created on capture). Do not turn this healthy observation into a freeze
+fix claim. The next actual freeze still needs its correlated native evidence.
