@@ -47,7 +47,7 @@ function install(session: FakeSession | undefined) {
         value: ctx as never,
         get children() {
           return createComponent(() => {
-            setupTaskPanel(ctx as unknown as Parameters<typeof setupTaskPanel>[0])
+            setupTaskPanel(ctx as unknown as Parameters<typeof setupTaskPanel>[0], () => {})
             return null
           }, {})
         },

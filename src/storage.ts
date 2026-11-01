@@ -9,6 +9,8 @@ import {
   TaskSpecSchema,
 } from "./task.ts"
 import type { TaskSpec } from "./task.ts"
+import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
+import type { TaskQueryState } from "./tasks/state-filter.ts"
 import { canonical, fingerprint } from "./identity.ts"
 import {
   dispositionPayload,
@@ -334,6 +336,7 @@ export class TaskRepository {
     limit: number
     snapshot?: number
     before?: number
+    state?: TaskQueryState
     includeCompleted?: boolean
     includeRetired?: boolean
   }) {
@@ -352,11 +355,11 @@ export class TaskRepository {
       }
       const clauses = ["tasks.project_directory = ?", "tasks.created_version <= ?"]
       const values: (string | number)[] = [this.projectDirectory, version]
-      if (input.includeCompleted === false)
-        clauses.push(
-          "NOT EXISTS (SELECT 1 FROM runner_nodes n WHERE n.task_id=tasks.id AND n.state IN ('accepted','incorporated','cancelled'))",
-          "NOT EXISTS (SELECT 1 FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE n.task_id=tasks.id AND p.project_directory=tasks.project_directory AND p.state='cancelled')",
-        )
+      const statePredicate = taskStatePredicate(
+        effectiveTaskStateFilter(input.state, input.includeCompleted),
+        "tasks",
+      )
+      if (statePredicate) clauses.push(statePredicate)
       if (input.includeRetired !== true)
         clauses.push(
           "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)",

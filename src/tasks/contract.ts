@@ -3,6 +3,7 @@ import { z } from "zod"
 import { TaskReferenceSchema, TaskSpecSchema } from "../task.ts"
 import { TaskState } from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
+import { TaskStateFilter } from "./state-filter.ts"
 
 export const QueryInput = z.strictObject({
   search: z.string().max(200).default(""),
@@ -10,6 +11,7 @@ export const QueryInput = z.strictObject({
   sessionID: z.string().min(1).max(200).optional(),
   limit: z.int().min(1).max(100).default(30),
   cursor: z.string().min(1).max(2_048).optional(),
+  state: TaskStateFilter.optional(),
   includeCompleted: z.boolean().default(false),
   includeRetired: z.boolean().default(false),
 })

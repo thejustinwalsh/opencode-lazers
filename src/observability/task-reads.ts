@@ -8,6 +8,7 @@ import { GetInput, GetOutput, QueryInput, QueryOutput } from "../tasks/contract.
 import type { TaskPage, TaskSummary } from "../tasks/contract.ts"
 import { TaskReads } from "../tasks/read.ts"
 import { sessionAssociations } from "./associations.ts"
+import { effectiveTaskStateFilter, taskStatePredicate } from "../tasks/state-filter.ts"
 
 const Cursor = z.strictObject({
   filter: z.string(),
@@ -78,7 +79,7 @@ export class AssociationTaskReads extends TaskReads {
           sessionID,
           query.search,
           query.scopePath,
-          query.includeCompleted,
+          effectiveTaskStateFilter(query.state, query.includeCompleted),
           query.includeRetired,
         ]),
       )
@@ -131,11 +132,11 @@ export class AssociationTaskReads extends TaskReads {
         this.repository.projectDirectory,
         sessionID,
       ]
-      if (!query.includeCompleted)
-        clauses.push(
-          "NOT EXISTS (SELECT 1 FROM runner_nodes n WHERE n.task_id=t.id AND n.state IN ('accepted','incorporated','cancelled'))",
-          "NOT EXISTS (SELECT 1 FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE n.task_id=t.id AND p.project_directory=t.project_directory AND p.state='cancelled')",
-        )
+      const statePredicate = taskStatePredicate(
+        effectiveTaskStateFilter(query.state, query.includeCompleted),
+        "t",
+      )
+      if (statePredicate) clauses.push(statePredicate)
       if (!query.includeRetired)
         clauses.push(
           "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=t.project_directory AND d.task_id=t.id)",
@@ -196,7 +197,7 @@ export class AssociationTaskReads extends TaskReads {
       snapshot: page.version,
       count: page.count,
       tasks: visible.map(({ task, reference }) => {
-        const execution = this.runner.execution(task.id)
+        const execution = this.effectiveExecution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
         return {
           ...summarize(task, reference, query.search, query.scopePath),
