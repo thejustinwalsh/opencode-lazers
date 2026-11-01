@@ -1,93 +1,104 @@
 # LAZERS current handoff
 
-2026-11-01, 04:41 UTC checkpoint. Read [README contracts](../../README.md),
-[pinned OpenCode API](opencode-api.md), [delivery audit](completed-task-audit.md)
-and the [new audit and next phases](production-audit-and-next-phases.md).
-The durable snapshot below is timestamped; inspect current state before acting.
-Current reviewed priorities and decisions are in [the phase plan](phase-review-plan.md).
-LZ-28 returned with a retained input-safety finding; the new roadmap Architect
-subsequently adopted its plan and cancelled unsafe verification to prepare repair.
-See [its review](evidence/architect-context-lifecycle/review.md) and the newer
-[natural roadmap observation](evidence/037-roadmap-planning/native.md).
-That new Desktop Architect owns ses_e68a9ed37ffeVqzPWRXN5SB7Uw; it dispatched
-LZ-31 privacy repair through the scheduler to a real Luna Max Systems implementor.
-The checkpoint below predates this work.
+2026-11-01, 14:23 UTC checkpoint. Runtime records are authoritative; recheck before
+acting. Read [README contracts](../../README.md), [pinned OpenCode API](opencode-api.md),
+[reviewed phase plan](phase-review-plan.md) and the Architect's
+[roadmap execution map](roadmap-execution.md). Historical delivery evidence is in
+[the completed-task audit](completed-task-audit.md); this file describes current work.
+
+## Active goal and native Architect
+
+Keep driving OpenCode Desktop while it dogfoods all four reviewed phases. Observe,
+repair real blockers, review and integrate artifacts, verify working behavior,
+then prepare an evidence-based improvements plan for user review. Do not stop at
+planning or a single returned worker.
+
+Current Architect: `ses_e68a9ed37ffeVqzPWRXN5SB7Uw`, “Build LAZERS roadmap”,
+`openai/gpt-6.1-sol#high`. Exact sole user prompt:
+
+> Here is the agreed plan: design/roadmap.md. Let's build it.
+
+No decomposition coaching was added. Root represents the user in interviews;
+reusable behavior belongs in the concise agent definition/skills. Architect
+recognizes scope, researches/interviews, submits small tasks/dependency graphs
+and requests execution. Scheduler dispatches/tracks workers and returns outcomes
+for Architect review, repair, integration and replanning. Native worker routes
+are `openai/gpt-6-luna#max` in isolated native worktrees. No replacement workers
+should be created merely because a run is taking time.
 
 ## Current execution
 
-Architect ses_e6e0e6239ffdtzIePMeJ1sHA4l uses openai/gpt-6.1-sol#high.
-Implementors use openai/gpt-6-luna#max. At this checkpoint: 15 integrated plans,
-22 accepted nodes, one running lifecycle node/attempt. Cancelled/failed history
-and five retired broad records remain preserved.
+| Ref   | State at checkpoint                | Next boundary                                                                       |
+| ----- | ---------------------------------- | ----------------------------------------------------------------------------------- |
+| LZ-28 | Running repair in original lineage | Source review, exact-artifact native lifecycle observation, integration             |
+| LZ-31 | Runtime accepted; integration held | Two reproduced leaks require LZ-35 correction                                       |
+| LZ-32 | Running                            | Independent state filters + exact historical Trajectory navigation, native UI proof |
+| LZ-33 | Queued                             | Operational Radar projection after integrated prerequisites                         |
+| LZ-34 | Queued after LZ-33                 | Stable SVG/ELK operational map, native interaction/design review                    |
+| LZ-35 | Running from LZ-31 candidate       | Multipart/depth-string privacy fixes with safe-content retention                    |
 
-- LZ-13 progress plan b9e55d09 is integrated v16. Repaired source a6e05e3/9d341de
-  was activated before integration through supported native reload. Original
-  accepted artifact b7f036b and attempt d543a0f7 remain in history; its idle owned
-  worktree was removed natively without force.
-- The existing LZ-28 lifecycle plan 8253ff59 is running in original attempt
-  33e6b86d-edda-41dc-9ac4-93d195f537ea, session
-  ses_930ecf3fd619489993f8b98167853ac1. It is editing its own native isolated tree.
-  Do not create a replacement worker or edit that tree concurrently.
-- Its real lazers_report_progress call succeeded and coalesced to one commentary
-  row alongside automatic facts. [Native proof](evidence/018-durable-progress/native.md).
-  This does not establish lifecycle acceptance.
-- Review the lifecycle artifact, preserve current main, activate supported native
-  plugin changes when required, then observe busy reuse, idle renewal, pending
-  input preservation, current-owner outcome routing and native safe archival.
-  Finish normal runtime integration and non-forced cleanup.
+All six records' plans now belong to the current Architect. Three workers are
+active; Architect idle while they run is expected. Radar waits for integrated
+lifecycle, privacy, history/navigation and privacy-correction plans, reflecting
+shared source boundaries. See the execution map for complete IDs and subsequent
+Phase 1–4 scope. Later phases remain pending, not delivered or forgotten.
 
-## Delivered and observed
+- LZ-28 plan `8253ff59-57a5-45fd-8847-acd971438af8`, worker
+  `ses_930ecf3fd619489993f8b98167853ac1`, original attempt
+  `33e6b86d-edda-41dc-9ac4-93d195f537ea`. Unsafe `e127d1a` was not activated.
+  Original worker is repairing queued synthetic-input races and durable
+  decisions/questions handoff. Preserve current main's concise Architect changes
+  when reviewing its older-base `src/architect.md` edit.
+- LZ-31 artifact `2fff6bbc94baeece2b3629c40632642082671316` passed tests but review
+  reproduced multipart JSON and nesting-limit string leaks. LZ-35 plan
+  `6a7c2c02-31b5-4a7b-8733-1384b6beeba0` repairs these from that candidate in attempt
+  `fb269bb9-ff48-4eff-9546-d599950302b9`, session
+  `ses_8d6874c7d3054f4a9815955f08907b57`. Review the corrected descendant before
+  integrating either privacy plan. Runtime accepted alone is not source-review proof.
+- LZ-32 plan `c4be742b-4d11-485f-a657-48bbbd0cd554`, attempt
+  `a059f222-eb59-4e7b-b083-b5a38da86b2a`, session
+  `ses_cd6622d07eb74169bd1b753cff71511d`. Observe separate scope/state controls,
+  completed selection and exact reference/attempt continuity in both mounted and
+  newly opened Trajectory at narrow native panel width. Tera review guidance is
+  `/private/tmp/lazers-phase1-native-review-ready.md`.
+- Radar plan `b0eb89b4-a071-49e2-a238-c474d53cc42f` owns LZ-33 → LZ-34.
 
-References/grouping 58146c54 is integrated v20; task links, real b50 fork/join,
-hidden prerequisites, stable scrolled keyboard disclosure, 330/450 widths and
-close/reopen passed Root/Terra review. All three owned worktrees were removed.
-Product b50, wake 1d4a866e and isolated context reuse caa8c80c are integrated.
-Their prior native evidence and Git history remain linked from the delivery audit.
+## Recent evidence and remaining risks
 
-Radar inspector repair 5a2b39c was natively observed across plan switches.
-Tasks, Radar and Trajectory are optional closable native panels. Tab icons
-53a6e69 were observed in Desktop. The native reload preserved PID 16786 and the
-running lifecycle worker's identity, route and busy timestamp.
+[Natural roadmap observation](evidence/037-roadmap-planning/native.md) records
+research, task creation and actual scheduler handoff. Current guidance recognizes
+task/plan/roadmap shape without tasking epics. Task self-review coverage now tests
+its own objective, preserving parent intent and plan acceptance (9d043bf).
+377 tests / 3,454 assertions and Bun formatter/linter/strict types passed for that
+change. Current main also contains Architect's execution/hold documentation.
 
-Fresh source checkpoint 53a6e69: 376 tests / 3,449 assertions, formatter,
-lint and strict types pass. The GUI was built and the icon change observed.
-The package-content dry-run is not fresh-machine installation proof.
+The task reviews observed so far repeatedly use three rounds and finish with
+concerns; collect actual quality/cost evidence before changing calibration. Native
+`horde` skill loading introduced a large generic playbook, but actual dispatch
+still used LAZERS and Luna Max; no causal failure is established.
 
-## New audit findings and proposed order
-
-The [audit](production-audit-and-next-phases.md) contains source references,
-current statuses, a real isolated redaction reproduction and task-sized proposals.
-These candidates have not been submitted as new runtime tasks.
-
-1. Finish existing lifecycle work.
-2. Fix the reproduced trajectory read-side nested private-content omission gap.
-   Progress's new projection is narrower than the older native trajectory reader.
-3. Diagnose the existing failed LZ-14 renderer-responsiveness task from captured
-   stages; preserve enabled local inference.
-4. Make live trajectory refresh/pagination stable and cheaper.
-5. Complete whole-feature usage/cost accounting, then guided route selection and
-   measured real-app dogfood. General revisions, optional research specialists
-   and distribution readiness are explicit future work.
-
-README no longer claims runtime-managed research specialists already exist.
-No such dispatcher or internal research roles are registered in current source.
+Existing failed LZ-14 responsiveness remains unresumed. Preserve the explicitly
+cancelled isolation refactor/stash and enabled inference. Establish the actual
+blocking boundary before focused repair. Live Trajectory stability/read cost,
+whole-feature measurement, Models/persona routing, revisions/research and release
+readiness remain in the reviewed roadmap. Tests/builds are not fresh-machine
+installation or actual Desktop interaction proof.
 
 ## Operating rules
 
-Use Desktop computer use for model prompts and visual acceptance. Read-only SDK
-inspection and supported native maintenance are authorized. Keep original work
-moving; answer already-authorized routine continuation questions. Do not create
-replacement work or approval loops for closed increments.
+Desktop computer use for model prompts and visual acceptance; read-only SDK and
+supported native maintenance are authorized. `location.reload()` can interrupt
+generation: avoid casually reloading while agents work. Older sessions can retain
+`succeeded` outcome while busy; use current busy/idle timestamps and tool state.
 
-Use pinned OpenCode 2.2.5 V2 APIs and native worktree lifecycle. Ordinary tools and
-Code Mode remain available; workers do not launch subagents. No model catalog
-veto, silent fallback, invented spend limits or source fingerprint evidence gates.
-Keep schema validation and lazers_verify_task as Architect self-review.
+Use pinned OpenCode 2.2.5 V2 APIs and native session/worktree lifecycle. One plugin,
+no custom daemon. Normal tools and Code Mode remain available; implementors do not
+launch subagents. No catalog veto, silent fallback, invented spend limits or
+source-fingerprint evidence gates. Preserve schema checks and `lazers_verify_task`
+Architect self-review. Evidence is code, passing discriminating checks and working
+native behavior. Keep local inference enabled.
 
-LAZERS is one plugin in native OpenCode, with no custom daemon. Inference remains
-enabled; the earlier freeze root cause remains unresolved. Fresh production
-dependency audit still flags two moderate host-transitive advisories. Distribution
-and host compatibility work are detailed in the new audit.
-
-Use /Users/tjw/.bun/bin/bun. Load Portless before project listening servers;
-one-shot socket-free checks are exempt.
+Use `/Users/tjw/.bun/bin/bun`. Load Portless before project listening servers;
+one-shot socket-free checks are exempt. `.agents` and Git writes require the
+supported sandbox escalation. Never print service credentials. Model prompts stay
+in Desktop; SDK inspection is read-only unless supported maintenance is necessary.

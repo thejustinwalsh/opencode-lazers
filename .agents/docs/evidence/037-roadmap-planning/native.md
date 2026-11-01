@@ -68,3 +68,29 @@ assertions and all quality checks pass. The native reload happened between tool
 calls and marked a generation interrupted, but native work resumed. Root cleared
 an unsent Continue draft; native context still contains only the original natural
 user prompt. No coaching follow-up was sent in this session.
+
+## Durable graph and review checkpoint — 14:23 UTC
+
+Both investigators completed. The uncoached Architect created LZ-32 history/state
+filters, LZ-33 operational Radar projection and dependent LZ-34 SVG/ELK UI. The
+Radar graph waits for integrated LZ-28, LZ-31, LZ-32 and LZ-35 plans; their write
+boundaries overlap. This is actual durable multi-task sequencing, with three
+independent isolated native Luna Max implementors running lifecycle, history and
+privacy correction. Architect idle while these execute is expected. Native
+context still contains the original sole user prompt, without a coaching follow-up.
+
+LZ-28 was resumed in its original worker/attempt after a native repair instruction
+entry; unsafe e127d1a remains unactivated. LZ-31 returned accepted 2fff6bb, but
+Architect independently reproduced multipart JSON and nesting-limit string leaks
+and held integration. It created focused LZ-35 on that candidate, preserving the
+accepted ancestor/history. This demonstrates a real repair/review response;
+source correctness and native final acceptance remain pending. The separate
+accepted-repair record reflects the current runtime terminal-state rule, an
+observation for later workflow review rather than evidence of final completion.
+
+Root read back native routes (`openai/gpt-6-luna#max`), workspaces and busy/tool
+state for all three workers, and independently reviewed the working diffs without
+editing their trees. The history worker edits the scoped read/UI paths; privacy
+correction touches four trajectory files. Repeated full-test runs initially need
+the ignored pinned engine cache in each isolated tree; no inference setting was
+disabled. Future measurement should distinguish setup overhead from implementation.
