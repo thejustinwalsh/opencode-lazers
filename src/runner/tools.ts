@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { z } from "zod"
 import { nativeWorkerOptions } from "./catalog.ts"
 import { InspectPlanInput, inspectPlan } from "./inspection.ts"
-import { CommandInput, PlanInput } from "./schema.ts"
+import { ArchitectContinuityInput, CommandInput, PlanInput } from "./schema.ts"
 import type { TaskRuntime } from "./runtime.ts"
 
 export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
@@ -34,6 +34,14 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         },
       },
       {
+        name: "lazers_record_architect_continuity",
+        description:
+          "Replace the active Architect owner session's durable continuity checkpoint with exact, still-relevant decisions and unresolved questions from the conversation (maximum 12 KB). This is authored structured state, not a transcript summary. Call after material decisions or changes to open questions; use empty arrays to explicitly record that none remain.",
+        schema: ArchitectContinuityInput,
+        run: (input: unknown, sessionID: string) =>
+          runtime.recordArchitectContinuity(sessionID, input),
+      },
+      {
         name: "lazers_worker_catalog",
         description:
           "Read the live native OpenCode model catalog, current implementor selection, listed prices, variants and capability metadata to advise the user. Informational only: does not infer a ranking, validate or change a route, or launch model inference.",
@@ -60,7 +68,11 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
                   try: async () => {
                     if (
                       call.agent !== "architect" &&
-                      ["lazers_submit_plan", "lazers_plan_command"].includes(definition.name)
+                      [
+                        "lazers_submit_plan",
+                        "lazers_plan_command",
+                        "lazers_record_architect_continuity",
+                      ].includes(definition.name)
                     )
                       throw new Error("Plan orchestration is restricted to Architect")
                     const output = await definition.run(input, call.sessionID)

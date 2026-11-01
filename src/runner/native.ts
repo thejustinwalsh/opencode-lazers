@@ -73,6 +73,9 @@ export function nativeHost(
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost {
   return {
+    // OpenCode 2.2.5 session.synthetic admits directly through SessionInbox and
+    // does not run the prompt hook. The public API has no inbox/archive barrier.
+    architectInputAdmissionSafe: false,
     async workerModel() {
       const agent = await Effect.runPromise(
         ctx.agent.get({ agentID: Agent.ID.make("lazers-implementor") }),

@@ -14,7 +14,13 @@ import {
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
-import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
+import {
+  ArchitectContinuityInput,
+  CommandInput,
+  ModelPolicy,
+  PlanInput,
+  WorkerPersona,
+} from "./schema.ts"
 import type {
   PlanRow,
   NodeRow,
@@ -26,7 +32,7 @@ import type {
 import { appendOutboxReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
-import type { OutcomeOwnership } from "./inbox.ts"
+import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -745,6 +751,56 @@ export class TaskRuntime {
     if (renewal) await this.restorePredecessorForInput(renewal)
   }
 
+  async recordArchitectContinuity(sessionID: string, input: unknown) {
+    const continuity = ArchitectContinuityInput.parse(input)
+    const session = await this.host.session(sessionID)
+    if (!this.validArchitect(session))
+      throw new Error("Architect continuity can only be recorded by the current active Architect")
+    const saved = this.store.saveArchitectContinuity({
+      sessionID,
+      decisions: continuity.decisions,
+      unresolvedQuestions: continuity.unresolvedQuestions,
+      now: this.now(),
+    })
+    return {
+      status: "recorded",
+      sessionID,
+      revision: saved.revision,
+      decisionCount: continuity.decisions.length,
+      unresolvedQuestionCount: continuity.unresolvedQuestions.length,
+    }
+  }
+
+  private async inspectArchitectInbox(renewal: ArchitectRenewalRow, fence: number) {
+    if (!this.host.outcomeInbox)
+      throw new Error("Native Architect inbox observation is unavailable")
+    const entries = await this.host.outcomeInbox(renewal.previous_session_id)
+    if (!entries.length) return entries
+    const observedAt = this.now()
+    for (const entry of entries)
+      this.store.observeArchitectInput(renewal.previous_session_id, entry.id, observedAt)
+    this.renewalEvent(
+      renewal,
+      "ARCHITECT_RENEWAL_NATIVE_INPUT_OBSERVED",
+      {
+        renewalID: renewal.id,
+        inputIDs: entries.map((entry) => entry.id),
+        types: entries.map((entry) => entry.type),
+      },
+      fence,
+    )
+    return entries
+  }
+
+  private async preserveQueuedArchitectInputs(renewal: ArchitectRenewalRow, fence: number) {
+    const entries = await this.inspectArchitectInbox(renewal, fence)
+    if (!entries.length) return false
+    const current = this.store.architectRenewal(renewal.id)
+    if (current && ["archiving", "recovering-input", "rolling-back"].includes(current.state))
+      await this.restorePredecessorForInput(current, fence)
+    return true
+  }
+
   private async withRenewalLock<T>(key: string, run: () => Promise<T>): Promise<T> {
     const previous = this.renewalLocks.get(key) ?? Promise.resolve()
     let release!: () => void
@@ -832,6 +888,19 @@ export class TaskRuntime {
     return input.title ?? input.objective.slice(0, 120)
   }
 
+  private renewalContinuity(renewal: ArchitectRenewalRow) {
+    if (!renewal.continuity_json)
+      throw new Error("Architect renewal has no explicit continuity checkpoint")
+    const parsed = JSON.parse(renewal.continuity_json) as { revision?: unknown }
+    const content = ArchitectContinuityInput.parse({
+      decisions: (parsed as Record<string, unknown>).decisions,
+      unresolvedQuestions: (parsed as Record<string, unknown>).unresolvedQuestions,
+    })
+    if (typeof parsed.revision !== "number" || !Number.isSafeInteger(parsed.revision))
+      throw new Error("Architect continuity checkpoint revision is invalid")
+    return { revision: parsed.revision, ...content }
+  }
+
   private renewalWakeContext(renewal: ArchitectRenewalRow, payload: unknown) {
     const text = outcomeText(JSON.stringify(payload))
     return {
@@ -885,12 +954,14 @@ export class TaskRuntime {
       !this.architectPromptHook ||
       !this.host.updateSession ||
       !this.host.outcomeInbox ||
+      !this.host.architectInputAdmissionSafe ||
       owner.idleAt === undefined ||
       owner.busy ||
       !owner.model ||
       this.now() - owner.idleAt < this.architectIdleWindowMs
     )
       return false
+    if (!this.store.architectContinuity(owner.id)) return false
     const inbox = await this.host.outcomeInbox(owner.id)
     if (inbox.length) return false
     const labelPlan = PlanInput.parse(JSON.parse(plan.body))
@@ -920,30 +991,61 @@ export class TaskRuntime {
       return await this.withRenewalLock(initial.id, async () => {
         let renewal = this.store.architectRenewal(initial.id)
         if (!renewal) return
-        if (!this.architectPromptHook || !this.host.updateSession || !this.host.outcomeInbox) {
+        if (
+          !this.architectPromptHook ||
+          !this.host.updateSession ||
+          !this.host.outcomeInbox ||
+          !this.host.architectInputAdmissionSafe
+        ) {
           if (renewal.state === "creating") {
-            this.store.setArchitectRenewalState(
-              this.owner,
-              fence,
-              renewal.id,
-              ["creating"],
-              "deferred",
-              "Native input observation is unavailable",
-            )
+            let observedIDs: string[] = []
+            if (this.host.outcomeInbox) {
+              try {
+                observedIDs = (await this.inspectArchitectInbox(renewal, fence)).map(
+                  (entry) => entry.id,
+                )
+              } catch {
+                // The owner stays live; inbox uncertainty is itself a reason to defer.
+              }
+            }
+            const current = this.store.architectRenewal(renewal.id)
+            if (current?.state === "creating")
+              this.store.setArchitectRenewalState(
+                this.owner,
+                fence,
+                renewal.id,
+                ["creating"],
+                "deferred",
+                "Native input admission cannot be fenced during Architect renewal",
+              )
             this.renewalEvent(
               renewal,
               "ARCHITECT_RENEWAL_DEFERRED",
-              { renewalID: renewal.id, reason: "Native input observation is unavailable" },
+              {
+                renewalID: renewal.id,
+                reason: "Native input admission cannot be fenced during Architect renewal",
+                observedInputIDs: observedIDs,
+              },
               fence,
             )
             return
           }
           if (renewal.state === "archiving") {
             if (this.host.updateSession) {
+              let observationError: string | null = null
+              if (this.host.outcomeInbox) {
+                try {
+                  await this.inspectArchitectInbox(renewal, fence)
+                } catch (error) {
+                  observationError = errorText(error)
+                }
+              }
               await this.rollbackArchitectRenewal(
                 renewal,
                 "deferred",
-                "Native input observation is unavailable",
+                observationError
+                  ? `Native input admission cannot be fenced; inbox snapshot failed: ${observationError}`
+                  : "Native input admission cannot be fenced during Architect renewal",
                 fence,
               )
             } else {
@@ -963,6 +1065,37 @@ export class TaskRuntime {
           return
         }
         if (renewal.state === "committed" || renewal.state === "deferred") return
+        if (!renewal.continuity_json) {
+          if (renewal.state === "creating") {
+            this.store.setArchitectRenewalState(
+              this.owner,
+              fence,
+              renewal.id,
+              ["creating"],
+              "deferred",
+              "No explicit Architect decisions/questions checkpoint was recorded",
+            )
+            this.renewalEvent(
+              renewal,
+              "ARCHITECT_RENEWAL_DEFERRED",
+              {
+                renewalID: renewal.id,
+                reason: "No explicit Architect decisions/questions checkpoint was recorded",
+              },
+              fence,
+            )
+            return
+          }
+          if (renewal.state === "archiving") {
+            await this.rollbackArchitectRenewal(
+              renewal,
+              "deferred",
+              "No explicit Architect decisions/questions checkpoint was recorded",
+              fence,
+            )
+            return
+          }
+        }
         if (renewal.state === "creating") {
           let successor = await this.host.session(renewal.successor_session_id)
           if (successor && !this.renewalSuccessorMatches(successor, renewal))
@@ -989,6 +1122,9 @@ export class TaskRuntime {
           }
           if (!this.renewalSuccessorMatches(successor, renewal))
             throw new Error("Native Architect renewal is unavailable or foreign")
+          if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
+          renewal = this.store.architectRenewal(renewal.id)!
+          if (renewal.state !== "creating") return
 
           const predecessor = await this.host.session(renewal.previous_session_id)
           const tooRecent =
@@ -1022,6 +1158,7 @@ export class TaskRuntime {
 
           const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
           const label = knownLabel ?? this.renewalLabel(renewal)
+          const continuity = this.renewalContinuity(renewal)
           const anchor = this.store.plan(renewal.anchor_plan_id)
           if (!anchor) throw new Error("Architect renewal plan disappeared")
           const payload = {
@@ -1030,6 +1167,7 @@ export class TaskRuntime {
             version: anchor.version + 1,
             planIDs,
             label,
+            continuity,
             predecessorSessionID: renewal.previous_session_id,
             successorSessionID: renewal.successor_session_id,
           }
@@ -1049,6 +1187,9 @@ export class TaskRuntime {
             lazersStatus: "architect-handoff",
             lazersVersion: anchor.version + 1,
           }
+          if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
+          renewal = this.store.architectRenewal(renewal.id)!
+          if (renewal.state !== "creating") return
           if (
             !this.store.transferArchitectRenewal({
               schedulerOwner: this.owner,
@@ -1066,6 +1207,9 @@ export class TaskRuntime {
           renewal = this.store.architectRenewal(renewal.id)!
         }
 
+        if (renewal.state !== "archiving") return
+        if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
+        renewal = this.store.architectRenewal(renewal.id)!
         if (renewal.state !== "archiving") return
         let successor: HostSession | null
         try {
@@ -1149,6 +1293,9 @@ export class TaskRuntime {
           )
           return
         }
+        if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
+        renewal = this.store.architectRenewal(renewal.id)!
+        if (renewal.state !== "archiving") return
         let archiveError: string | null = null
         if (!predecessorBeforeArchive.archived) {
           try {
@@ -1201,7 +1348,19 @@ export class TaskRuntime {
             fence,
           )
         }
-        if (inputSeen()) {
+        let nativeInputs: OutcomeInboxEntry[]
+        try {
+          nativeInputs = await this.inspectArchitectInbox(renewal, fence)
+        } catch (error) {
+          await this.rollbackArchitectRenewal(
+            renewal,
+            "deferred",
+            `Native inbox could not be verified after archival: ${errorText(error)}`,
+            fence,
+          )
+          return
+        }
+        if (nativeInputs.length || inputSeen()) {
           await this.restorePredecessorForInput(renewal, fence)
           return
         }
@@ -1210,6 +1369,7 @@ export class TaskRuntime {
           planID: renewal.anchor_plan_id,
           planIDs: this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id),
           label: knownLabel ?? this.renewalLabel(renewal),
+          continuity: this.renewalContinuity(renewal),
           predecessorSessionID: renewal.previous_session_id,
           successorSessionID: renewal.successor_session_id,
         }

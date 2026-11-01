@@ -83,6 +83,8 @@ export interface RunnerHost {
   }): Promise<void>
   /** Exact native session archive control; renewal requires this and input observation. */
   updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
+  /** True only when the host prevents every native inbox admission from racing renewal. */
+  architectInputAdmissionSafe?: boolean
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>

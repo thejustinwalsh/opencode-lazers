@@ -9,6 +9,16 @@ import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
 
+test("pinned native adapter does not claim a barrier for synthetic inbox admission", () => {
+  const host = nativeHost(
+    {
+      location: { directory: "/project", project: { id: "project" } },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  expect(host.architectInputAdmissionSafe).toBe(false)
+})
+
 test("native worktrees use the host lifecycle with the admitted ref and returned directory", async () => {
   let removed: unknown
   let created: unknown

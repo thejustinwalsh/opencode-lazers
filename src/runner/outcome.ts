@@ -7,11 +7,29 @@ export function outcomeText(serialized: string) {
       const planIDs = Array.isArray(payload.planIDs)
         ? payload.planIDs.filter((id: unknown): id is string => typeof id === "string")
         : [payload.planID].filter((id: unknown): id is string => typeof id === "string")
+      const continuity =
+        typeof payload.continuity === "object" && payload.continuity !== null
+          ? (payload.continuity as Record<string, unknown>)
+          : {}
+      const decisions = Array.isArray(continuity.decisions)
+        ? continuity.decisions.filter((item: unknown): item is string => typeof item === "string")
+        : []
+      const unresolvedQuestions = Array.isArray(continuity.unresolvedQuestions)
+        ? continuity.unresolvedQuestions.filter(
+            (item: unknown): item is string => typeof item === "string",
+          )
+        : []
       return [
         "LAZERS Architect continuity handoff",
         `Purpose: ${typeof payload.label === "string" ? payload.label : "Continue the existing project work"}`,
         `Predecessor: ${String(payload.predecessorSessionID ?? "unknown")} (archived; linked as parent).`,
         `Plan IDs: ${planIDs.join(", ") || "none recorded"}.`,
+        ...(decisions.length
+          ? ["Recorded decisions:", ...decisions.map((item) => `- ${item}`)]
+          : ["Recorded decisions: none."]),
+        ...(unresolvedQuestions.length
+          ? ["Unresolved questions:", ...unresolvedQuestions.map((item) => `- ${item}`)]
+          : ["Unresolved questions: none."]),
         "No prior transcript was replayed. Fetch current durable state with lazers_inspect_plan for these IDs and review the current outcomes before deciding.",
         "Existing workers continue unchanged; do not restart them.",
       ].join("\n")

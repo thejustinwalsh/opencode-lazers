@@ -31,6 +31,7 @@ test("authorized callers read native catalog advice; only orchestration requires
     remove: () => {},
   }
   const permissionChecks: string[] = []
+  const continuityCalls: { sessionID: string; input: unknown }[] = []
   let catalogCalls = 0
   let denied = false
   const ctx = {
@@ -75,7 +76,13 @@ test("authorized callers read native catalog advice; only orchestration requires
         }),
     },
   } as unknown as Plugin.Context
-  await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, {} as TaskRuntime)))
+  const runtime = {
+    recordArchitectContinuity: async (sessionID: string, input: unknown) => {
+      continuityCalls.push({ sessionID, input })
+      return { status: "recorded", sessionID, revision: 1 }
+    },
+  } as unknown as TaskRuntime
+  await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
 
   const catalog = tools.get("lazers_worker_catalog")!
   expect(catalog.options).toMatchObject({ codemode: false, permission: "lazers_worker_catalog" })
@@ -98,6 +105,31 @@ test("authorized callers read native catalog advice; only orchestration requires
   expect({ ...workerAdvice, observedAt: advice.observedAt }).toEqual(advice)
   expect(permissionChecks).toEqual(["lazers_worker_catalog", "lazers_worker_catalog"])
   expect(catalogCalls).toBe(2)
+  const continuity = tools.get("lazers_record_architect_continuity")!
+  expect(continuity.options).toMatchObject({
+    codemode: false,
+    permission: "lazers_record_architect_continuity",
+  })
+  const checkpoint = {
+    decisions: ["Keep the accepted direction."],
+    unresolvedQuestions: ["Confirm rollout."],
+  }
+  const recorded = await Effect.runPromise(continuity.execute(checkpoint, callContext("architect")))
+  expect(JSON.parse(String(recorded.content))).toMatchObject({
+    status: "recorded",
+    sessionID: "ses_test",
+    revision: 1,
+  })
+  expect(continuityCalls).toEqual([{ sessionID: "ses_test", input: checkpoint }])
+  await expect(
+    Effect.runPromise(continuity.execute(checkpoint, callContext("lazers-implementor"))),
+  ).rejects.toThrow("Plan orchestration is restricted to Architect")
+  denied = true
+  await expect(
+    Effect.runPromise(continuity.execute(checkpoint, callContext("architect"))),
+  ).rejects.toThrow("permission denied")
+  expect(continuityCalls).toHaveLength(1)
+  denied = false
   for (const name of ["lazers_submit_plan", "lazers_plan_command"])
     await expect(
       Effect.runPromise(tools.get(name)!.execute({}, callContext("lazers-implementor"))),

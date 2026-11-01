@@ -7,11 +7,17 @@ scheduler or worker-progress work.
 
 The user selected a configurable **30-minute** idle default; busy/recent Architects
 are reused. Durable handoff and current-owner transfer precede native archival.
-No automatic old-transcript summary or replay is permitted. The implementation
-uses the pinned OpenCode 2.2.5 prompt hook to record native input IDs before inbox
-admission and `session.update({ archived })` for native archival/recovery. It fails
-closed when prompt observation or native update is unavailable. Automated race,
-reopen and multi-scheduler coverage is recorded in
+No automatic old-transcript summary or replay is permitted. The pinned OpenCode
+2.2.5 prompt hook records prompt IDs, but queued synthetic input with `resume:false`
+can bypass that hook. The public host API exposes inbox snapshots and
+`session.update({ archived })`, but no atomic admission/archive barrier. Therefore
+the native adapter explicitly reports input-admission safety as unsupported and
+automatic idle renewal is disabled on this host; snapshots do not close the race.
+Hosts without an explicit all-input barrier must fail closed without transferring
+ownership or archiving. Conversation-only decisions and open questions are
+recorded explicitly through `lazers_record_architect_continuity` and copied into the
+durable successor handoff; no transcript replay or automatic summary is used.
+Automated race, reopen and multi-scheduler coverage is recorded in
 `.agents/docs/evidence/architect-context-lifecycle/implementation.md`.
 
 **Native dogfood remains unresolved.** Root must verify the exact committed
@@ -25,15 +31,21 @@ them. Cumulative session usage must not be presented as wake-attributed.
 ## Pinned host input/archive behavior
 
 At OpenCode commit `9bbb8ce18c80f099e0e448775f59d965ead40a21` (2.2.5), the
-session prompt hook runs before native inbox admission and exposes readonly
-`sessionID`/`messageID`; it cannot retarget input. `Session.prompt` does not reject
-an archived session. Consequently, the hook durably marks the input ID and
-unarchives the predecessor before returning; the scheduler then recovers/rolls
-back ownership and suppresses an unconsumed handoff. The scheduler checks the
-input marker on both sides of native archival. The implementation never copies
-prompt text into its lifecycle input table.
+session prompt hook exposes readonly `sessionID`/`messageID`; it cannot retarget
+input. This is not a complete admission observer: `session.synthetic` can enqueue
+with `resume:false` directly through `SessionInbox`, bypassing the prompt hook.
+Inbox listing is a snapshot, not an atomic barrier with archival, so repeated
+snapshots and prompt-hook checks cannot prove that no input arrived between the
+last snapshot and archive. The native adapter does not claim that guarantee and
+does not start automatic renewal. Recovery remains fail-closed for an already
+persisted renewal on an unsafe host: queued IDs are durably observed when possible,
+ownership is rolled back, the predecessor is left live, and the handoff is
+suppressed. Conversation continuity is separate from transcript history: Architect
+records exact decisions and unresolved questions in a project database checkpoint,
+which is snapshotted into the renewal/outbox before transfer.
 
 - [Pinned `session.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/session.ts)
+- [Pinned `inbox.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/inbox.ts)
 - [Pinned `prompt.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/prompt.ts)
 - [Pinned plugin `SessionPrompt`](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/effect/session.ts)
 

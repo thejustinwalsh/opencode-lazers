@@ -80,7 +80,16 @@ export type ArchitectRenewalRow = {
   handoff_outbox_id: string | null
   input_message_id: string | null
   error: string | null
+  continuity_json: string | null
   started_at: number
+}
+export type ArchitectContinuityRow = {
+  project_directory: string
+  session_id: string
+  revision: number
+  decisions: string
+  unresolved_questions: string
+  updated_at: number
 }
 export type ArchitectRenewalPlanRow = {
   renewal_id: string
@@ -207,7 +216,8 @@ export class RunnerStore {
         previous_session_id TEXT NOT NULL, successor_session_id TEXT NOT NULL,
         directory TEXT NOT NULL, model TEXT NOT NULL, idle_at INTEGER NOT NULL,
         generation INTEGER NOT NULL, state TEXT NOT NULL, handoff_message_id TEXT NOT NULL,
-        handoff_outbox_id TEXT, input_message_id TEXT, error TEXT, started_at INTEGER NOT NULL
+        handoff_outbox_id TEXT, input_message_id TEXT, error TEXT, continuity_json TEXT,
+        started_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS runner_architect_renewals_source
         ON runner_architect_renewals(previous_session_id,started_at);
@@ -224,6 +234,11 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_architect_inputs_recent
         ON runner_architect_inputs(session_id,observed_at);
+      CREATE TABLE IF NOT EXISTS runner_architect_continuity (
+        project_directory TEXT NOT NULL, session_id TEXT NOT NULL, revision INTEGER NOT NULL,
+        decisions TEXT NOT NULL, unresolved_questions TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY(project_directory,session_id)
+      );
       CREATE TABLE IF NOT EXISTS runner_audits (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
@@ -298,6 +313,12 @@ export class RunnerStore {
       )
       if (!columns.has("metadata")) db.exec("ALTER TABLE runner_outbox ADD COLUMN metadata TEXT")
       if (!columns.has("receipt")) db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt TEXT")
+      const renewalColumns = db
+        .query<{ name: string }, []>("PRAGMA table_info(runner_architect_renewals)")
+        .all()
+        .map((column) => column.name)
+      if (!renewalColumns.includes("continuity_json"))
+        db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN continuity_json TEXT")
       // Version-1 delivered meant native admission, never proven model consumption.
       db.query(
         "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
@@ -347,6 +368,58 @@ export class RunnerStore {
         .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
         .get(id),
     )
+  }
+  architectContinuity(sessionID: string) {
+    return this.atomic((db) =>
+      db
+        .query<ArchitectContinuityRow, [string, string]>(
+          "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+        )
+        .get(this.repository.projectDirectory, sessionID),
+    )
+  }
+  saveArchitectContinuity(input: {
+    sessionID: string
+    decisions: string[]
+    unresolvedQuestions: string[]
+    now: number
+  }) {
+    return this.atomic((db) => {
+      const plan = db
+        .query<{ id: string }, [string, string]>(
+          `SELECT id FROM runner_plans WHERE project_directory=? AND owner=?
+           ORDER BY rowid LIMIT 1`,
+        )
+        .get(this.repository.projectDirectory, input.sessionID)
+      if (!plan) throw new Error("Architect continuity requires a currently owned LAZERS plan")
+      const previous = db
+        .query<{ revision: number }, [string, string]>(
+          "SELECT revision FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+        )
+        .get(this.repository.projectDirectory, input.sessionID)
+      const revision = (previous?.revision ?? 0) + 1
+      db.query(
+        `INSERT INTO runner_architect_continuity(
+          project_directory,session_id,revision,decisions,unresolved_questions,updated_at
+        ) VALUES(?,?,?,?,?,?) ON CONFLICT(project_directory,session_id) DO UPDATE SET
+          revision=excluded.revision,decisions=excluded.decisions,
+          unresolved_questions=excluded.unresolved_questions,updated_at=excluded.updated_at`,
+      ).run(
+        this.repository.projectDirectory,
+        input.sessionID,
+        revision,
+        JSON.stringify(input.decisions),
+        JSON.stringify(input.unresolvedQuestions),
+        input.now,
+      )
+      this.record(plan.id, null, "ARCHITECT_CONTINUITY_RECORDED", {
+        sessionID: input.sessionID,
+        revision,
+        decisionCount: input.decisions.length,
+        unresolvedQuestionCount: input.unresolvedQuestions.length,
+      })
+      return this.architectContinuity(input.sessionID)!
+    })
   }
   architectRenewalForPlan(planID: string) {
     return this.atomic((db) =>
@@ -428,6 +501,18 @@ export class RunnerStore {
         .all(this.repository.projectDirectory, input.previousSessionID)
       if (!plans.length || !plans.some((plan) => plan.id === input.anchorPlanID)) return null
 
+      const continuity = db
+        .query<ArchitectContinuityRow, [string, string]>(
+          "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+        )
+        .get(this.repository.projectDirectory, input.previousSessionID)
+      if (!continuity) return null
+      const continuityJSON = JSON.stringify({
+        revision: continuity.revision,
+        decisions: JSON.parse(continuity.decisions) as string[],
+        unresolvedQuestions: JSON.parse(continuity.unresolved_questions) as string[],
+      })
+
       const recentInput = db
         .query<{ message_id: string }, [string, number]>(
           "SELECT message_id FROM runner_architect_inputs WHERE session_id=? AND observed_at>=? LIMIT 1",
@@ -456,8 +541,9 @@ export class RunnerStore {
         }
         db.query(
           `UPDATE runner_architect_renewals SET idle_at=?,state='creating',handoff_message_id=?,
-             handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,started_at=? WHERE id=? AND state IN ('deferred','archive-failed')`,
-        ).run(input.idleAt, input.handoffMessageID, input.now, latest.id)
+             handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,continuity_json=?,started_at=?
+           WHERE id=? AND state IN ('deferred','archive-failed')`,
+        ).run(input.idleAt, input.handoffMessageID, continuityJSON, input.now, latest.id)
         for (const plan of plans) {
           const continuation = db
             .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
@@ -489,8 +575,8 @@ export class RunnerStore {
       db.query(
         `INSERT INTO runner_architect_renewals(
           id,anchor_plan_id,previous_session_id,successor_session_id,directory,model,idle_at,
-          generation,state,handoff_message_id,handoff_outbox_id,input_message_id,error,started_at
-        ) VALUES(?,?,?,?,?,?,?,?,'creating',?,NULL,NULL,NULL,?)`,
+          generation,state,handoff_message_id,handoff_outbox_id,input_message_id,error,continuity_json,started_at
+        ) VALUES(?,?,?,?,?,?,?,?,'creating',?,NULL,NULL,NULL,?,?)`,
       ).run(
         id,
         input.anchorPlanID,
@@ -501,6 +587,7 @@ export class RunnerStore {
         input.idleAt,
         generation,
         input.handoffMessageID,
+        continuityJSON,
         input.now,
       )
       for (const plan of plans) {
@@ -612,6 +699,31 @@ export class RunnerStore {
         .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
         .get(input.renewalID)
       if (!renewal || renewal.state !== "creating") return false
+      if (!renewal.continuity_json)
+        throw new Error("Architect renewal requires an explicit durable continuity checkpoint")
+      const continuity = db
+        .query<ArchitectContinuityRow, [string, string]>(
+          "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+        )
+        .get(this.repository.projectDirectory, renewal.previous_session_id)
+      const currentContinuity = continuity
+        ? JSON.stringify({
+            revision: continuity.revision,
+            decisions: JSON.parse(continuity.decisions) as string[],
+            unresolvedQuestions: JSON.parse(continuity.unresolved_questions) as string[],
+          })
+        : null
+      if (currentContinuity !== renewal.continuity_json) {
+        db.query(
+          `UPDATE runner_architect_renewals SET state='deferred',error=?
+           WHERE id=? AND state='creating'`,
+        ).run("Architect continuity changed during renewal preparation", renewal.id)
+        this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
+          renewalID: renewal.id,
+          reason: "Architect continuity changed during renewal preparation",
+        })
+        return false
+      }
       const recentInput = db
         .query<{ message_id: string }, [string, number]>(
           "SELECT message_id FROM runner_architect_inputs WHERE session_id=? AND observed_at>=? LIMIT 1",
@@ -710,6 +822,26 @@ export class RunnerStore {
       }
       if (!transferred) return false
 
+      db.query(
+        `INSERT INTO runner_architect_continuity(
+          project_directory,session_id,revision,decisions,unresolved_questions,updated_at
+        ) VALUES(?,?,?,?,?,?) ON CONFLICT(project_directory,session_id) DO UPDATE SET
+          revision=excluded.revision,decisions=excluded.decisions,
+          unresolved_questions=excluded.unresolved_questions,updated_at=excluded.updated_at`,
+      ).run(
+        this.repository.projectDirectory,
+        renewal.successor_session_id,
+        continuity!.revision,
+        continuity!.decisions,
+        continuity!.unresolved_questions,
+        continuity!.updated_at,
+      )
+      this.record(renewal.anchor_plan_id, null, "ARCHITECT_CONTINUITY_TRANSFERRED", {
+        from: renewal.previous_session_id,
+        to: renewal.successor_session_id,
+        revision: continuity!.revision,
+      })
+
       const ownership = JSON.parse(input.metadata) as {
         lazersSessionID?: string
         lazersMessageID?: string
@@ -750,7 +882,13 @@ export class RunnerStore {
       const renewal = db
         .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
         .get(id)
-      if (!renewal || renewal.state !== "archiving" || renewal.input_message_id) return false
+      if (
+        !renewal ||
+        renewal.state !== "archiving" ||
+        renewal.input_message_id ||
+        !renewal.continuity_json
+      )
+        return false
       const changed = db
         .query(
           "UPDATE runner_architect_renewals SET state='committed',error=NULL WHERE id=? AND state='archiving' AND input_message_id IS NULL",

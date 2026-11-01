@@ -10,6 +10,36 @@ import { RunnerStore } from "./store.ts"
 const directories: string[] = []
 const repositories: TaskRepository[] = []
 
+test("legacy Architect renewal rows migrate to store an explicit continuity snapshot", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-architect-continuity-migration-"))
+  directories.push(directory)
+  const projectDirectory = join(directory, "project")
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), projectDirectory)
+  repositories.push(repository)
+  repository.atomic((db) =>
+    db.exec(`
+      CREATE TABLE runner_architect_renewals (
+        id TEXT PRIMARY KEY, anchor_plan_id TEXT NOT NULL, previous_session_id TEXT NOT NULL,
+        successor_session_id TEXT NOT NULL, directory TEXT NOT NULL, model TEXT NOT NULL,
+        idle_at INTEGER NOT NULL, generation INTEGER NOT NULL, state TEXT NOT NULL,
+        handoff_message_id TEXT NOT NULL, handoff_outbox_id TEXT, input_message_id TEXT,
+        error TEXT, started_at INTEGER NOT NULL
+      )
+    `),
+  )
+
+  new RunnerStore(repository)
+
+  expect(
+    repository.atomic((db) =>
+      db
+        .query<{ name: string }, []>("PRAGMA table_info(runner_architect_renewals)")
+        .all()
+        .map((column) => column.name),
+    ),
+  ).toContain("continuity_json")
+})
+
 function fixture(requestID = "plan-title-store") {
   const directory = mkdtempSync(join(tmpdir(), "lazers-plan-title-"))
   directories.push(directory)

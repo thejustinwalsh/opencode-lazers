@@ -50,6 +50,7 @@ function fixture(
     loseWorktreeResponse?: boolean | "empty-error"
     architectIdleWindowMs?: number
     architectPromptHook?: boolean
+    architectInputAdmissionSafe?: boolean
     now?: () => number
   } = {},
 ) {
@@ -145,6 +146,7 @@ function fixture(
   const inbox = new Map<string, OutcomeInboxEntry[]>()
   const admissionOwners = new Map<string, string>()
   const host: RunnerHost = {
+    architectInputAdmissionSafe: options.architectInputAdmissionSafe ?? true,
     workerModel: async () => options.workerModel ?? { providerID: "openai", id: "test-model" },
     worktree: async ({ directory, base }) => {
       git(root, ["worktree", "add", "--detach", directory, base])
@@ -3851,6 +3853,10 @@ async function prepareIdleArchitect(f: ReturnType<typeof fixture>, now: number, 
   const owner = f.sessions.get("owner")!
   owner.busy = false
   owner.idleAt = now - idleFor
+  await f.runtime.recordArchitectContinuity(owner.id, {
+    decisions: ["Keep the existing approved implementation direction."],
+    unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
+  })
   return f.store.attempts(f.receipt.planID)[0]!
 }
 
@@ -3913,6 +3919,11 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(owner.archived).toBe(true)
   expect(successor.parentID).toBe(owner.id)
   expect(successor.model).toEqual(owner.model)
+  expect(f.store.architectContinuity(successor.id)).toMatchObject({
+    revision: 1,
+    decisions: JSON.stringify(["Keep the existing approved implementation direction."]),
+    unresolved_questions: JSON.stringify(["Confirm whether the follow-up needs additional scope."]),
+  })
   expect(successor.metadata?.lazersPlanID).toBe(f.receipt.planID)
   expect(successor.metadata?.lazersPlanIDs).toContain(f.receipt.planID)
   expect(createInputs).toHaveLength(1)
@@ -3930,6 +3941,8 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   ])
   const wake = f.notifications.find((notice) => notice.sessionID === successor.id)!
   expect(wake.text).toContain("lazers_inspect_plan")
+  expect(wake.text).toContain("Keep the existing approved implementation direction.")
+  expect(wake.text).toContain("Confirm whether the follow-up needs additional scope.")
   expect(wake.text).not.toContain("SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY")
   expect(f.inbox.get(successor.id)).toHaveLength(1)
   const committed = f.store.latestTransition<{ wakeContext: { bytes: number; tokens: null } }>(
@@ -3939,6 +3952,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   )!
   expect(committed.wakeContext.bytes).toBe(new TextEncoder().encode(wake.text).byteLength)
   expect(committed.wakeContext.tokens).toBeNull()
+  expect(committed.wakeContext.bytes).toBeGreaterThan(0)
 })
 
 test("idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed", async () => {
@@ -3993,6 +4007,51 @@ test("idle-window overrides, busy sessions, unsupported hooks, and pre-create in
   }
 })
 
+test("renewal requires an explicit decisions/questions checkpoint and an all-input host guarantee", async () => {
+  const now = 2_000_000_125_000
+  const missingCheckpoint = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await runPlan(missingCheckpoint)
+  await drive(missingCheckpoint.runtime, 2)
+  missingCheckpoint.sessions.get("owner")!.idleAt = now - 1_000
+  await missingCheckpoint.runtime.tick()
+  expect(
+    missingCheckpoint.store.architectRenewalForPlan(missingCheckpoint.receipt.planID),
+  ).toBeNull()
+  expect(missingCheckpoint.events.some((event) => event.startsWith("create-architect:"))).toBe(
+    false,
+  )
+  expect(missingCheckpoint.sessions.get("owner")?.archived).toBe(false)
+
+  const unsafeHost = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectInputAdmissionSafe: false,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(unsafeHost, now, 1_000)
+  const foreign = {
+    id: "msg_external_queue_before_creation",
+    type: "synthetic",
+    delivery: "queue",
+    metadata: { source: "another-plugin" },
+  }
+  unsafeHost.inbox.set("owner", [foreign])
+  await unsafeHost.runtime.tick()
+  expect(unsafeHost.store.architectRenewalForPlan(unsafeHost.receipt.planID)).toBeNull()
+  expect(unsafeHost.events.some((event) => event.startsWith("create-architect:"))).toBe(false)
+  expect(unsafeHost.events.some((event) => event.startsWith("update-session:"))).toBe(false)
+  expect(unsafeHost.inbox.get("owner")).toEqual([foreign])
+  expect(unsafeHost.sessions.get("owner")?.archived).toBe(false)
+})
+
 test("one successor receives every live plan owned by the same Architect", async () => {
   const now = 2_000_000_150_000
   const f = fixture({
@@ -4008,6 +4067,10 @@ test("one successor receives every live plan owned by the same Architect", async
   await runPlan(f)
   await runPlan(f, planB.planID, "run-second-owner-plan")
   await drive(f.runtime, 2)
+  await f.runtime.recordArchitectContinuity("owner", {
+    decisions: ["Keep both task plans under the current Architect."],
+    unresolvedQuestions: ["Confirm cross-plan ordering after integration."],
+  })
   const attempts = [f.store.attempts(f.receipt.planID)[0]!, f.store.attempts(planB.planID)[0]!]
   expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
   f.sessions.get("owner")!.idleAt = now - 5_000
@@ -4031,6 +4094,11 @@ test("one successor receives every live plan owned by the same Architect", async
     .outboxForDelivery()
     .find((row) => JSON.parse(row.payload).status === "architect-handoff")!
   expect(JSON.parse(handoff.payload).planIDs).toEqual([f.receipt.planID, planB.planID].sort())
+  expect(JSON.parse(handoff.payload).continuity).toEqual({
+    revision: 1,
+    decisions: ["Keep both task plans under the current Architect."],
+    unresolvedQuestions: ["Confirm cross-plan ordering after integration."],
+  })
 })
 
 test("input during a deferred native create prevents transfer and predecessor archival", async () => {
@@ -4068,6 +4136,101 @@ test("input during a deferred native create prevents transfer and predecessor ar
   expect(f.sessions.get("owner")?.archived).toBe(false)
   expect(f.events.filter((event) => event.startsWith("update-session:")).length).toBe(0)
   expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+})
+
+test("a continuity edit during successor creation blocks stale ownership transfer", async () => {
+  const now = 2_000_000_205_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const create = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    await create(input)
+    await f.runtime.recordArchitectContinuity("owner", {
+      decisions: ["Use the revised approved direction."],
+      unresolvedQuestions: ["Confirm the revised rollout."],
+    })
+  }
+
+  await f.runtime.tick()
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("deferred")
+  expect(renewal.error).toContain("continuity changed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(f.store.architectContinuity("owner")).toMatchObject({
+    revision: 2,
+    decisions: JSON.stringify(["Use the revised approved direction."]),
+    unresolved_questions: JSON.stringify(["Confirm the revised rollout."]),
+  })
+  expect(f.store.architectContinuity(renewal.successor_session_id)).toBeNull()
+  expect(f.notifications).toHaveLength(0)
+})
+
+test("native queued synthetic input is preserved when admitted during creation, transfer, or archive", async () => {
+  const phases = ["creation", "transfer", "archive"] as const
+  for (const [index, phase] of phases.entries()) {
+    const now = 2_000_000_210_000 + index * 10_000
+    const f = fixture({
+      delayed: true,
+      architectPromptHook: true,
+      architectIdleWindowMs: 1_000,
+      now: () => now,
+      taskFiles: [{ name: "a", path: `a-${phase}.txt` }],
+    })
+    await prepareIdleArchitect(f, now, 1_000)
+    const foreign = {
+      id: `msg_synthetic_${phase}`,
+      type: "synthetic",
+      delivery: "queue",
+      metadata: { source: "another-plugin" },
+    }
+    if (phase === "creation") {
+      const create = f.host.createArchitect
+      f.host.createArchitect = async (input) => {
+        await create(input)
+        f.inbox.set("owner", [foreign])
+      }
+    } else if (phase === "transfer") {
+      const transfer = f.store.transferArchitectRenewal.bind(f.store)
+      f.store.transferArchitectRenewal = (input) => {
+        const result = transfer(input)
+        f.inbox.set("owner", [foreign])
+        return result
+      }
+    } else {
+      const update = f.host.updateSession!
+      f.host.updateSession = async (input) => {
+        if (input.sessionID === "owner" && input.archived) f.inbox.set("owner", [foreign])
+        await update(input)
+      }
+    }
+
+    await f.runtime.tick()
+
+    const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+    expect(renewal.state).toBe("deferred")
+    expect(renewal.input_message_id).toBe(foreign.id)
+    expect(f.inbox.get("owner")).toEqual([foreign])
+    expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+    expect(f.sessions.get("owner")?.archived).toBe(false)
+    expect(f.store.architectRenewalHasInput(renewal.id)).toBe(true)
+    expect(f.events.filter((event) => event === "update-session:owner:true").length).toBe(
+      phase === "archive" ? 1 : 0,
+    )
+    if (phase !== "creation")
+      expect(
+        (f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]).find(
+          (row) => JSON.parse(row.payload).status === "architect-handoff",
+        )?.state,
+      ).toBe("superseded")
+  }
 })
 
 test("input racing native archival is restored, ownership rolls back, and its handoff is suppressed", async () => {
@@ -4383,6 +4546,7 @@ test("a reopened scheduler recovers a durable transfer before archival without c
     version: plan.version + 1,
     planIDs: [plan.id],
     label: "reopened plan",
+    continuity: JSON.parse(renewal.continuity_json!),
     predecessorSessionID: renewal.previous_session_id,
     successorSessionID: renewal.successor_session_id,
   }
@@ -4427,6 +4591,16 @@ test("a reopened scheduler recovers a durable transfer before archival without c
   await reopened.tick()
 
   expect(reopenedStore.architectRenewal(renewal.id)?.state).toBe("committed")
+  expect(JSON.parse(reopenedStore.architectRenewal(renewal.id)!.continuity_json!)).toEqual({
+    revision: 1,
+    decisions: ["Keep the existing approved implementation direction."],
+    unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
+  })
+  expect(reopenedStore.architectContinuity(renewal.successor_session_id)).toMatchObject({
+    revision: 1,
+    decisions: JSON.stringify(["Keep the existing approved implementation direction."]),
+    unresolved_questions: JSON.stringify(["Confirm whether the follow-up needs additional scope."]),
+  })
   expect(reopenedStore.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
   expect(f.sessions.get(renewal.previous_session_id)?.archived).toBe(true)
   expect(reopenedStore.attempts(plan.id)[0]?.session_id).toBe(attempt.session_id)
@@ -4435,11 +4609,12 @@ test("a reopened scheduler recovers a durable transfer before archival without c
   expect(f.notifications).toHaveLength(1)
 })
 
-test("a restarted scheduler without input observation rolls back and never archives", async () => {
+test("a reopened two-scheduler runtime preserves queued synthetic input and rolls back without archiving", async () => {
   const now = 2_000_000_450_000
   const f = fixture({
     delayed: true,
-    architectPromptHook: false,
+    architectPromptHook: true,
+    architectInputAdmissionSafe: false,
     architectIdleWindowMs: 1_000,
     now: () => now,
     taskFiles: [{ name: "a", path: "a.txt" }],
@@ -4500,15 +4675,48 @@ test("a restarted scheduler without input observation rolls back and never archi
       metadata: JSON.stringify(metadata),
     }),
   ).toBe(true)
+  const foreign = {
+    id: "msg_synthetic_during_process_restart",
+    type: "synthetic",
+    delivery: "queue",
+    metadata: { source: "another-plugin" },
+  }
+  f.inbox.set(predecessor.id, [foreign])
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
 
-  await f.runtime.tick()
+  const reopenedRepository = new TaskRepository(f.repository.path, f.root)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  const first = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectPromptHook: true,
+    now: () => now,
+  })
+  const second = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectPromptHook: true,
+    now: () => now,
+  })
+  cleanup.push(() => {
+    void first.stop()
+    void second.stop()
+    reopenedRepository.close()
+  })
 
-  expect(f.store.architectRenewal(renewal.id)?.state).toBe("deferred")
-  expect(f.store.plan(plan.id)?.owner).toBe(predecessor.id)
+  await Promise.all([first.tick(), second.tick()])
+
+  expect(reopenedStore.architectRenewal(renewal.id)?.state).toBe("deferred")
+  expect(reopenedStore.architectRenewal(renewal.id)?.input_message_id).toBe(foreign.id)
+  expect(JSON.parse(reopenedStore.architectRenewal(renewal.id)!.continuity_json!)).toEqual({
+    revision: 1,
+    decisions: ["Keep the existing approved implementation direction."],
+    unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
+  })
+  expect(reopenedStore.plan(plan.id)?.owner).toBe(predecessor.id)
   expect(predecessor.archived).toBe(false)
   expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(0)
+  expect(f.inbox.get(predecessor.id)).toEqual([foreign])
+  expect(reopenedStore.architectRenewalHasInput(renewal.id)).toBe(true)
   expect(
-    (f.store.detail(plan.id).delivery as { id: string; state: string }[]).find(
+    (reopenedStore.detail(plan.id).delivery as { id: string; state: string }[]).find(
       (row) => row.id === "unsupported-hook-outbox",
     )?.state,
   ).toBe("superseded")
