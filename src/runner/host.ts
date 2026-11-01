@@ -8,6 +8,23 @@ export type HostMessage = {
   metadata?: Record<string, unknown>
 }
 
+export type ArchitectSourceResult = {
+  state: "running" | "completed" | "failed"
+  finish: "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown" | null
+  toolCounts: { running: number; completed: number; failed: number; other: number }
+}
+
+export type ArchitectInputPage = {
+  inbox: Array<Pick<OutcomeInboxEntry, "id" | "type" | "delivery" | "metadata">>
+  messages: Array<{
+    id: string
+    type: string
+    metadata?: Record<string, unknown>
+    result?: ArchitectSourceResult
+  }>
+  nextCursor: string | null
+}
+
 export type HostSession = {
   id: string
   parentID?: string
@@ -17,8 +34,17 @@ export type HostSession = {
   metadata?: Record<string, unknown>
   archived: boolean
   busy: boolean
+  idleAt?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   model?: ModelPolicy
+  usage?: {
+    input: number
+    output: number
+    reasoning: number
+    cacheRead: number
+    cacheWrite: number
+    provenance: string
+  }
   tokens: number | null
   tools: number
   cost: number | null
@@ -47,6 +73,8 @@ export interface RunnerHost {
   session(id: string, options?: { messages?: boolean }): Promise<HostSession | null>
   /** Public native inbox snapshot; the adapter verifies it belongs to this process. */
   outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
+  /** One ordered page of original Architect inputs plus the current native inbox. */
+  architectInputPage?(sessionID: string, cursor?: string): Promise<ArchitectInputPage>
   /** Revalidates ownership and queued state immediately before native cancellation. */
   cancelOutcome?(input: {
     sessionID: string
@@ -69,8 +97,11 @@ export interface RunnerHost {
     model?: ModelPolicy
     title: string
     planID: string
+    planIDs?: string[]
     sourceSessionID: string
   }): Promise<void>
+  /** Exact native session archive control; renewal requires this and input observation. */
+  updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>

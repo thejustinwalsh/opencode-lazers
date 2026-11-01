@@ -22,6 +22,44 @@ export const ModelPolicy = z.strictObject({
   variant: z.string().optional().describe("Optional native variant or reasoning-effort ID."),
 })
 export type ModelPolicy = z.infer<typeof ModelPolicy>
+export const ArchitectContinuityInput = z
+  .strictObject({
+    decisions: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(1000)
+          .refine((value) => value.trim().length > 0),
+      )
+      .max(10)
+      .describe("Exact, still-relevant conversation decisions; do not summarize the transcript."),
+    unresolvedQuestions: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(1000)
+          .refine((value) => value.trim().length > 0),
+      )
+      .max(10)
+      .describe("Exact, still-open questions that still need a user decision."),
+  })
+  .superRefine((input, context) => {
+    if (
+      new TextEncoder().encode(
+        JSON.stringify({
+          decisions: input.decisions,
+          unresolvedQuestions: input.unresolvedQuestions,
+        }),
+      ).byteLength > 12_000
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Architect continuity checkpoint must fit 12 KB",
+      })
+  })
+export type ArchitectContinuityInput = z.infer<typeof ArchitectContinuityInput>
 export const PlanInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),

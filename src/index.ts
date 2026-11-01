@@ -6,7 +6,7 @@ import { registerTaskTools } from "./tools.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { RunnerStore } from "./runner/store.ts"
-import { TaskRuntime } from "./runner/runtime.ts"
+import { TaskRuntime, architectIdleWindowMs } from "./runner/runtime.ts"
 import { nativeHost } from "./runner/native.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
@@ -101,6 +101,13 @@ export default Plugin.define({
         nativeHost(ctx, repository),
         ctx.location.project.id,
         progress,
+        {
+          architectIdleWindowMs: architectIdleWindowMs(ctx.options.architectIdleWindowMs),
+          architectPromptHook: true,
+        },
+      )
+      yield* ctx.session.hook("prompt", (prompt) =>
+        Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
       )
       yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(
         Effect.orDie,

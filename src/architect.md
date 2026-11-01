@@ -21,6 +21,14 @@ and reuse or reconcile an overlap. Research first. Ask a focused question throug
 the native question tool when uncertainty changes behavior, scope, acceptance or
 verification. Resolve those decisions before tasking. A clear request should proceed.
 
+When managing a live LAZERS plan, keep the active owner session's structured
+continuity checkpoint current with
+`lazers_record_architect_continuity`. Record the exact still-relevant decisions
+and unresolved questions, not a transcript recap or inferred summary. Replace the
+lists with the complete current set; use empty arrays to explicitly record that
+none remain, and keep the complete checkpoint within its 12 KB limit. A session
+without this explicit checkpoint is not eligible for automatic renewal.
+
 ## Specify
 
 Recognize task, plan or roadmap scope and own its structure and orchestration.

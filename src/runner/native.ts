@@ -8,7 +8,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { AbsolutePath } from "@opencode/schema/schema"
 import { DateTime, Effect } from "effect"
-import type { RunnerHost } from "./host.ts"
+import type { ArchitectInputPage, ArchitectSourceResult, RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
@@ -17,7 +17,11 @@ import { isOwnedQueuedOutcome } from "./inbox.ts"
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
   server: Pick<ReturnType<typeof OpenCode.make>["server"], "info">
-  session: Pick<ReturnType<typeof OpenCode.make>["session"], "get" | "synthetic" | "inbox">
+  session: Pick<
+    ReturnType<typeof OpenCode.make>["session"],
+    "get" | "synthetic" | "inbox" | "update"
+  >
+  message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
 }
 export type NativeInboxDependencies = {
   discover: typeof Service.discover
@@ -58,13 +62,48 @@ async function assertArchitectTarget(
 function inboxEntry(
   entry: Awaited<ReturnType<NativeInboxClient["session"]["inbox"]["list"]>>[number],
 ) {
-  const metadata = entry.type === "synthetic" ? entry.payload.metadata : undefined
+  const metadata =
+    entry.type === "synthetic" || entry.type === "user" ? entry.payload.metadata : undefined
   return {
     id: entry.id,
     type: entry.type,
     ...("delivery" in entry ? { delivery: entry.delivery } : {}),
     ...(metadata ? { metadata } : {}),
   } satisfies OutcomeInboxEntry
+}
+
+function architectSourceResult(
+  message: Awaited<ReturnType<NativeInboxClient["message"]["list"]>>["data"][number],
+): ArchitectSourceResult | undefined {
+  if (message.type !== "assistant") return undefined
+  const toolCounts = { running: 0, completed: 0, failed: 0, other: 0 }
+  for (const part of message.content ?? []) {
+    if (part.type !== "tool") continue
+    switch (part.state.status) {
+      case "running":
+      case "streaming":
+        toolCounts.running++
+        break
+      case "completed":
+        toolCounts.completed++
+        break
+      case "error":
+        toolCounts.failed++
+        break
+      default:
+        toolCounts.other++
+    }
+  }
+  const finish = message.finish ?? null
+  const state =
+    message.error || finish === "error" || toolCounts.failed > 0
+      ? "failed"
+      : message.time?.completed === undefined || toolCounts.running > 0 || toolCounts.other > 0
+        ? "running"
+        : "completed"
+  // Return only a bounded status projection; never retain tool inputs/outputs or reasoning.
+  const result = { state, finish, toolCounts } satisfies ArchitectSourceResult
+  return result
 }
 
 export function nativeHost(
@@ -136,8 +175,17 @@ export function nativeHost(
         metadata: session.metadata,
         archived: session.time.archived !== undefined,
         busy: busy > idle,
+        ...(idle ? { idleAt: idle } : {}),
         outcome: session.outcome,
         model: session.model,
+        usage: {
+          input: session.tokens.input,
+          output: session.tokens.output,
+          reasoning: session.tokens.reasoning,
+          cacheRead: session.tokens.cache.read,
+          cacheWrite: session.tokens.cache.write,
+          provenance: "OpenCode 2.2.5 session.get cumulative token snapshot",
+        },
         tokens:
           session.tokens.input +
           session.tokens.output +
@@ -174,6 +222,40 @@ export function nativeHost(
       const client = await inboxClient(ctx, dependencies)
       await assertArchitectTarget(ctx, client, sessionID)
       return (await client.session.inbox.list({ sessionID })).map(inboxEntry)
+    },
+    async architectInputPage(sessionID, cursor): Promise<ArchitectInputPage> {
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, sessionID)
+      const [inbox, page] = await Promise.all([
+        client.session.inbox.list({ sessionID }),
+        client.message.list({
+          sessionID,
+          limit: 100,
+          ...(cursor ? { cursor } : { order: "asc" }),
+        }),
+      ])
+      return {
+        inbox: inbox
+          .filter((entry) => entry.type === "user" || entry.type === "synthetic")
+          .map((entry) => ({
+            id: entry.id,
+            type: entry.type,
+            ...("payload" in entry && entry.payload.metadata
+              ? { metadata: entry.payload.metadata }
+              : {}),
+            ...("delivery" in entry ? { delivery: entry.delivery } : {}),
+          })),
+        messages: page.data.map((entry) => {
+          const result = architectSourceResult(entry)
+          return {
+            id: entry.id,
+            type: entry.type,
+            ...(entry.metadata ? { metadata: entry.metadata } : {}),
+            ...(result ? { result } : {}),
+          }
+        }),
+        nextCursor: page.cursor.next ?? null,
+      }
     },
     async cancelOutcome(input) {
       if (
@@ -234,10 +316,39 @@ export function nativeHost(
           metadata: {
             lazersContinuation: true,
             lazersPlanID: input.planID,
+            ...(input.planIDs ? { lazersPlanIDs: input.planIDs } : {}),
             lazersSourceSessionID: input.sourceSessionID,
           },
         }),
       )
+    },
+    async updateSession(input) {
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, input.sessionID)
+      let updateError: unknown
+      try {
+        await client.session.update({ sessionID: input.sessionID, archived: input.archived })
+      } catch (error) {
+        updateError = error
+      }
+      let readback: Awaited<ReturnType<typeof client.session.get>>
+      try {
+        readback = await client.session.get({ sessionID: input.sessionID })
+      } catch (error) {
+        throw new Error(
+          `Native Architect archival readback is unavailable${updateError ? ` after update error: ${String(updateError)}` : ""}: ${String(error)}`,
+          { cause: error },
+        )
+      }
+      if ((readback.time.archived !== undefined) !== input.archived)
+        throw new Error(
+          `Native Architect archival did not match public session readback${updateError ? ` after update error: ${String(updateError)}` : ""}`,
+        )
+      if (updateError && input.archived)
+        throw new Error(
+          `Native Architect archive response was uncertain but archived state was confirmed by public readback: ${String(updateError)}`,
+          { cause: updateError },
+        )
     },
     async prompt(input) {
       const id = Session.ID.make(input.sessionID)
