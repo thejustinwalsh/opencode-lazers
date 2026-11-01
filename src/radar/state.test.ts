@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "../observability/changes.ts"
-import { ObservationReads } from "../observability/read.ts"
 import type {
   ObservationChange,
   ObservationScope,
+  RadarResponse,
   SnapshotResponse,
 } from "../observability/contract.ts"
 import { makeFixture } from "../../test/trajectory/fixture.ts"
+import { operationalReads } from "../../test/radar/operational.ts"
 import { RadarPanelState } from "./state.ts"
 import type { RadarTransport } from "./transport.ts"
 
@@ -74,28 +75,42 @@ function deferred<T>() {
 function snapshots() {
   const fixture = makeFixture()
   const secret = new Uint8Array(32).fill(5)
-  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
+  const reads = operationalReads(fixture, "project", secret)
   const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
   tracker.initialize()
   return {
     fixture,
     session: reads.snapshot({ kind: "session", sessionID: "ses-failed" }, tracker),
     project: reads.snapshot({ kind: "project", sessionID: "ses-failed" }, tracker),
+    sessionRadar: reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    ),
+    projectRadar: reads.radar(
+      { scope: { kind: "project", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    ),
   }
 }
 
 test("late session responses cannot replace a switched project observation", async () => {
-  const { fixture, session, project } = snapshots()
+  const { fixture, session, project, sessionRadar, projectRadar } = snapshots()
   try {
+    const [sessionData, projectData] = await Promise.all([sessionRadar, projectRadar])
     const first = deferred<SnapshotResponse>()
+    const firstRadar = deferred<RadarResponse>()
     const queue = new EventQueue<ObservationChange>()
     const late: RadarTransport = {
       snapshot: () => first.promise,
+      radar: () => firstRadar.promise,
       changes: (signal) => changesFrom(queue, signal),
       online: () => true,
     }
     const current: RadarTransport = {
       snapshot: async () => project,
+      radar: async () => projectData,
       changes: (signal) => changesFrom(queue, signal),
       online: () => true,
     }
@@ -105,12 +120,14 @@ test("late session responses cannot replace a switched project observation", asy
     )
     state.connect("session-view", "project", { kind: "session", sessionID: "ses-failed" }, late)
     state.connect("project-view", "project", { kind: "project", sessionID: "ses-failed" }, current)
-    await until(() => state.data.snapshot?.scope.kind === "project")
+    await until(() => state.data.radar?.scope.kind === "project")
     first.resolve(session)
+    firstRadar.resolve(sessionData)
     await new Promise((resolve) => setTimeout(resolve, 2))
     expect(state.data.key).toBe("project-view")
     expect(state.data.snapshot?.scope).toEqual({ kind: "project" })
     expect(state.data.snapshot?.plans).toEqual(project.plans)
+    expect(state.data.radar?.scope.kind).toBe("project")
     state.close()
   } finally {
     fixture.close()
@@ -118,8 +135,9 @@ test("late session responses cannot replace a switched project observation", asy
 })
 
 test("duplicates are ignored, event gaps invalidate, and a closed stream reconnects by resnapshot", async () => {
-  const { fixture, session } = snapshots()
+  const { fixture, session, sessionRadar } = snapshots()
   try {
+    const radar = await sessionRadar
     const queues = [new EventQueue<ObservationChange>(), new EventQueue<ObservationChange>()]
     let streamCalls = 0
     let snapshotCalls = 0
@@ -133,6 +151,10 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
           boundary: { ...session.boundary, eventSequence },
         }
       },
+      radar: async (_scope, _includeUnmanaged, _signal) => ({
+        ...radar,
+        boundary: { ...radar.boundary, eventSequence },
+      }),
       changes: (signal) => {
         const queue = queues[Math.min(streamCalls++, queues.length - 1)]!
         return changesFrom(queue, signal)
@@ -149,7 +171,9 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
       { kind: "session", sessionID: "ses-failed" },
       transport,
     )
-    await until(() => Boolean(state.data.snapshot) && !state.data.stale)
+    await until(
+      () => Boolean(state.data.radar) && Boolean(state.data.snapshot) && !state.data.stale,
+    )
     expect(snapshotCalls).toBe(1)
 
     const emit = (sequence: number, resnapshotRequired = false) => {
@@ -196,33 +220,74 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
 })
 
 test("wrong-project and wrong-scope snapshot responses remain unavailable", async () => {
-  const { fixture, session, project } = snapshots()
+  const { fixture, session, project, sessionRadar, projectRadar } = snapshots()
   try {
+    const [radarSession, radarProject] = await Promise.all([sessionRadar, projectRadar])
     const queue = new EventQueue<ObservationChange>()
     for (const [wrong, scope, message] of [
       [
-        { ...session, projectID: "other-project" },
+        { ...radarSession, projectID: "other-project" },
         { kind: "session", sessionID: "ses-failed" },
         "another project",
       ],
-      [project, { kind: "session", sessionID: "ses-failed" }, "another scope"],
+      [radarProject, { kind: "session", sessionID: "ses-failed" }, "another scope"],
     ] as const) {
       const state = new RadarPanelState(
         () => {},
         async () => {},
       )
       const transport: RadarTransport = {
-        snapshot: async () => wrong,
+        snapshot: async () => (wrong === radarProject ? project : session),
+        radar: async () => wrong,
         changes: (signal) => changesFrom(queue, signal),
         online: () => true,
       }
       const target = scope as ObservationScope
       state.connect("wrong", "project", target, transport)
       await until(() => Boolean(state.data.error))
-      expect(state.data.snapshot).toBeUndefined()
+      expect(state.data.radar).toBeUndefined()
       expect(state.data.error).toContain(message)
       state.close()
     }
+  } finally {
+    fixture.close()
+  }
+})
+
+test("operational and lifecycle snapshots do not publish mixed repository revisions", async () => {
+  const { fixture, session, sessionRadar } = snapshots()
+  try {
+    const radar = await sessionRadar
+    const queue = new EventQueue<ObservationChange>()
+    let calls = 0
+    const transport: RadarTransport = {
+      snapshot: async () => session,
+      radar: async () => {
+        calls++
+        return {
+          ...radar,
+          boundary: { ...radar.boundary, sourceRevision: radar.boundary.sourceRevision + 1 },
+        }
+      },
+      changes: (signal) => changesFrom(queue, signal),
+      online: () => true,
+    }
+    const state = new RadarPanelState(
+      () => {},
+      async () => {},
+    )
+    state.connect(
+      "session-view",
+      "project",
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+    )
+    await until(() => calls === 3)
+    expect(state.data.radar).toBeUndefined()
+    expect(state.data.snapshot).toBeUndefined()
+    expect(state.data.stale).toBe(true)
+    expect(state.data.error).toContain("changed while reading")
+    state.close()
   } finally {
     fixture.close()
   }

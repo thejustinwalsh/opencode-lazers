@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "verify": "bun fmt --check && bun lint && bun check",
-    "build:gui": "bun scripts/prepare-engine.ts && vite build"
+    "build:gui": "bun scripts/prepare-engine.ts && bun scripts/build-radar-layout.ts && vite build"
   },
   "peerDependencies": {
     "@opencode/plugin": "2.2.5",
@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.2.0",
+    "elkjs": "0.12.1",
     "ignore": "7.0.14",
     "onnxruntime-web": "1.31.1",
     "repomix": "1.18.1",

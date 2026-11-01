@@ -131,6 +131,21 @@
   background: var(--border-selected);
   content: "";
 }
+.lazers-radar-other-sessions {
+  min-height: 28px;
+  flex: 0 1 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-weak);
+  font-size: 0.82em;
+  cursor: pointer;
+}
+.lazers-radar-other-sessions[aria-pressed="true"] {
+  border-color: var(--border-selected);
+  color: var(--text-strong);
+}
 .lazers-radar-visual,
 .lazers-radar-detail {
   min-width: 0;
@@ -418,6 +433,335 @@
   margin: 4px 0;
   padding-left: 18px;
   color: var(--text-weak);
+}
+.lazers-radar-map-freshness {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 12px;
+  padding: 3px 0 10px;
+  color: var(--text-weak);
+  font-size: 0.78em;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-map-freshness time {
+  color: var(--text-base);
+  font-variant-numeric: tabular-nums;
+}
+.lazers-radar-map-frame {
+  min-width: max-content;
+  width: max-content;
+  max-width: none;
+}
+.lazers-radar-map {
+  display: block;
+  max-width: none;
+  font: inherit;
+  overflow: visible;
+}
+.lazers-radar-map-group rect {
+  fill: color-mix(in srgb, var(--surface-base) 38%, var(--background-base));
+  stroke: var(--border-weak-base);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+.lazers-radar-map-group text {
+  fill: var(--text-weak);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+.lazers-radar-map-edge-line,
+.lazers-radar-map-edge-arrow {
+  fill: none;
+  stroke: var(--text-weak);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+.lazers-radar-map-edge-arrow {
+  stroke-width: 1.7;
+}
+.lazers-radar-map-edge[data-kind="architecture"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="architecture"] .lazers-radar-map-edge-arrow {
+  stroke: var(--border-base);
+  stroke-dasharray: 2 4;
+}
+.lazers-radar-map-edge[data-kind="dependency"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="dependency"] .lazers-radar-map-edge-arrow {
+  stroke: var(--icon-info-base);
+  stroke-dasharray: 7 4;
+}
+.lazers-radar-map-edge[data-kind="ancestry"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="ancestry"] .lazers-radar-map-edge-arrow {
+  stroke: var(--text-weak);
+  stroke-dasharray: 2 3 8 3;
+}
+.lazers-radar-map-edge[data-kind="association"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="association"] .lazers-radar-map-edge-arrow,
+.lazers-radar-map-edge[data-kind="observation"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="observation"] .lazers-radar-map-edge-arrow {
+  stroke: var(--text-weak);
+  stroke-dasharray: 1 5;
+}
+.lazers-radar-map-edge[data-kind="assignment"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="assignment"] .lazers-radar-map-edge-arrow {
+  stroke: var(--border-selected);
+  stroke-width: 2;
+}
+.lazers-radar-map-edge[data-kind="prompt"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="prompt"] .lazers-radar-map-edge-arrow,
+.lazers-radar-map-edge[data-kind="outcome"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="outcome"] .lazers-radar-map-edge-arrow {
+  stroke: var(--icon-success-base);
+  stroke-width: 1.8;
+  stroke-dasharray: 6 3;
+}
+.lazers-radar-map-edge[data-kind="model-request"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="model-request"] .lazers-radar-map-edge-arrow,
+.lazers-radar-map-edge[data-kind="tool-call"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="tool-call"] .lazers-radar-map-edge-arrow {
+  stroke: var(--icon-warning-base);
+  stroke-width: 1.8;
+}
+.lazers-radar-map-edge[data-kind="model-response"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="model-response"] .lazers-radar-map-edge-arrow,
+.lazers-radar-map-edge[data-kind="tool-result"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="tool-result"] .lazers-radar-map-edge-arrow {
+  stroke: var(--icon-success-base);
+  stroke-width: 1.8;
+  stroke-dasharray: 8 3 2 3;
+}
+.lazers-radar-map-edge[data-kind="selected-route"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="selected-route"] .lazers-radar-map-edge-arrow {
+  stroke: var(--border-selected);
+  stroke-dasharray: 3 2;
+}
+.lazers-radar-map-edge[data-kind="configured-route"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="configured-route"] .lazers-radar-map-edge-arrow {
+  stroke: var(--text-weak);
+  stroke-dasharray: 2 5;
+}
+.lazers-radar-map-edge[data-kind="contains"] .lazers-radar-map-edge-line,
+.lazers-radar-map-edge[data-kind="contains"] .lazers-radar-map-edge-arrow {
+  stroke: var(--border-weak-base);
+  stroke-dasharray: 3 4;
+}
+.lazers-radar-map-edge-label {
+  fill: var(--text-weak);
+  stroke: var(--background-base);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  font-family: inherit;
+  font-size: 10px;
+  pointer-events: none;
+}
+.lazers-radar-map-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.lazers-radar-map-edge-hit:focus-visible {
+  stroke: color-mix(in srgb, var(--border-selected) 38%, transparent);
+  outline: none;
+}
+.lazers-radar-map-node {
+  cursor: pointer;
+}
+.lazers-radar-map-node rect {
+  fill: var(--background-base);
+  stroke: var(--border-base);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+.lazers-radar-map-node[data-kind="component"] rect {
+  stroke-width: 1.6;
+}
+.lazers-radar-map-node[data-kind="session"] rect {
+  stroke-dasharray: 7 2;
+}
+.lazers-radar-map-node[data-kind="route"] rect {
+  stroke: var(--border-selected);
+}
+.lazers-radar-map-node[data-kind="tool"] rect {
+  stroke-dasharray: 2 3;
+}
+.lazers-radar-map-node[data-state="busy"] rect {
+  stroke: var(--border-selected);
+  stroke-width: 2.5;
+}
+.lazers-radar-map-node[data-state="idle"] rect {
+  stroke-dasharray: 8 3;
+}
+.lazers-radar-map-node[data-state="unknown"] rect {
+  stroke: var(--icon-warning-base);
+  stroke-dasharray: 2 3;
+}
+.lazers-radar-map-node[data-state="critical"] rect {
+  stroke: var(--icon-critical-base);
+  stroke-width: 2;
+}
+.lazers-radar-map-node[data-state="success"] rect {
+  stroke: var(--icon-success-base);
+  stroke-width: 2;
+}
+.lazers-radar-map-node[data-selected="true"] rect,
+.lazers-radar-map-node:focus-visible rect {
+  fill: var(--surface-base-hover);
+  stroke: var(--border-selected);
+  stroke-width: 2.5;
+}
+.lazers-radar-map-node:focus-visible {
+  outline: none;
+}
+.lazers-radar-map-node-label {
+  fill: var(--text-strong);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.lazers-radar-map-node-subtitle {
+  fill: var(--text-weak);
+  font-family: inherit;
+  font-size: 10px;
+  pointer-events: none;
+}
+.lazers-radar-map-node-status {
+  fill: var(--text-base);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  pointer-events: none;
+}
+.lazers-radar-map-pulse {
+  fill: var(--icon-success-base);
+  stroke: var(--background-base);
+  stroke-width: 1.5;
+  pointer-events: none;
+  animation: lazers-radar-pulse 800ms ease-out both;
+}
+@keyframes lazers-radar-pulse {
+  0% {
+    opacity: 0.1;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+.lazers-radar-map-pending {
+  min-width: 240px;
+  padding: 8px 0;
+  color: var(--text-weak);
+  font-size: 0.86em;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-map-accessible {
+  min-width: 0;
+  margin-top: 10px;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-radar-map-accessible summary {
+  padding: 8px 0;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.lazers-radar-map-accessible section {
+  min-width: 0;
+}
+.lazers-radar-map-accessible h4,
+.lazers-radar-map-related-heading {
+  margin: 12px 0 5px;
+  color: var(--text-weak);
+  font-size: 0.84em;
+  font-weight: 600;
+}
+.lazers-radar-map-accessible ol,
+.lazers-radar-map-evidence {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+}
+.lazers-radar-map-accessible li,
+.lazers-radar-map-evidence li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.lazers-radar-map-accessible button,
+.lazers-radar-map-related button {
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-base);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.lazers-radar-map-accessible button:hover,
+.lazers-radar-map-related button:hover {
+  background: var(--surface-base-hover);
+}
+.lazers-radar-map-related {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+.lazers-radar-map-key {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin-top: 8px;
+  color: var(--text-weak);
+  font-size: 0.72em;
+}
+.lazers-radar-map-key span {
+  padding: 2px 5px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 3px;
+  background: var(--background-base);
+}
+.lazers-radar-map-key [data-kind="dependency"] {
+  border-style: dashed;
+}
+.lazers-radar-map-key [data-kind="assignment"] {
+  border-color: var(--border-selected);
+}
+.lazers-radar-map-key [data-kind="prompt"],
+.lazers-radar-map-key [data-kind="outcome"] {
+  border-style: dashed;
+}
+.lazers-radar-map-key [data-kind="model-request"],
+.lazers-radar-map-key [data-kind="tool-call"] {
+  border-color: var(--icon-warning-base);
+}
+.lazers-radar-map-key [data-kind="model-response"],
+.lazers-radar-map-key [data-kind="tool-result"] {
+  border-color: var(--icon-success-base);
+}
+.lazers-radar-map-key [data-kind="observation"] {
+  border-style: dotted;
+}
+.lazers-radar-detail h4 {
+  margin: 16px 0 5px;
+  color: var(--text-weak);
+  font-size: 0.88em;
+  font-weight: 600;
+}
+.lazers-radar-map-evidence dl {
+  margin: 6px 0 12px;
 }
 .lazers-radar-chart {
   min-width: 0;

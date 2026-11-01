@@ -1,6 +1,7 @@
 import type {
   ObservationChange,
   ObservationScope,
+  RadarResponse,
   SnapshotResponse,
 } from "../observability/contract.ts"
 import { ObservationSyncState } from "../observability/state.ts"
@@ -8,10 +9,12 @@ import type { RadarTransport } from "./transport.ts"
 
 export type RadarPanelData = {
   key: string
+  radar?: RadarResponse
   snapshot?: SnapshotResponse
   loading: boolean
   stale: boolean
   error: string
+  snapshotError?: string
 }
 
 const blank = (key = ""): RadarPanelData => ({
@@ -41,8 +44,9 @@ export class RadarPanelState {
   private controller = new AbortController()
   private transport?: RadarTransport
   private scope?: ObservationScope
+  private includeUnmanagedSessions = false
   private poll?: ReturnType<typeof setInterval>
-  private readonly snapshotRuns = new Map<number, { pending: boolean }>()
+  private readonly snapshotRuns = new Map<number, { pending: boolean; retries: number }>()
 
   constructor(
     private readonly changed: (data: RadarPanelData) => void,
@@ -58,10 +62,17 @@ export class RadarPanelState {
     return this.epoch === epoch && this.transport === transport && !signal.aborted
   }
 
-  connect(key: string, projectID: string, scope: ObservationScope, transport: RadarTransport) {
+  connect(
+    key: string,
+    projectID: string,
+    scope: ObservationScope,
+    transport: RadarTransport,
+    includeUnmanagedSessions = false,
+  ) {
     this.close()
     this.transport = transport
     this.scope = scope
+    this.includeUnmanagedSessions = includeUnmanagedSessions
     this.controller = new AbortController()
     const epoch = this.epoch
     const generation = this.sync.connect(projectID, scope)
@@ -82,17 +93,18 @@ export class RadarPanelState {
       pending.pending = true
       return
     }
-    const run = { pending: false }
+    const run = { pending: false, retries: 0 }
     this.snapshotRuns.set(generation, run)
     do {
       run.pending = false
+      run.retries++
       if (!transport.online()) {
         if (this.current(epoch, transport, signal) && generation === this.sync.generation) {
           this.sync.stale = true
           this.update({
-            loading: !this.data.snapshot,
+            loading: !this.data.radar,
             stale: true,
-            error: this.data.snapshot
+            error: this.data.radar
               ? "Server disconnected; showing the last observation."
               : "Server disconnected; observations are unavailable.",
           })
@@ -100,36 +112,89 @@ export class RadarPanelState {
         break
       }
       try {
-        const snapshot = await transport.snapshot(this.scope, signal)
+        const scope = this.scope!
+        const [radarResult, snapshotResult] = await Promise.allSettled([
+          transport.radar(this.scope, this.includeUnmanagedSessions, signal),
+          transport.snapshot(this.scope, signal),
+        ])
         if (!this.current(epoch, transport, signal) || generation !== this.sync.generation) break
-        if (snapshot.projectID !== this.sync.projectID) {
+
+        const radar = radarResult.status === "fulfilled" ? radarResult.value : undefined
+        const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : undefined
+        const scopeMatches = (value: RadarResponse | SnapshotResponse) =>
+          value.projectID === this.sync.projectID &&
+          value.scope.kind === scope.kind &&
+          (scope.kind === "project" ||
+            (value.scope.kind === "session" && value.scope.sessionID === scope.sessionID))
+        const radarError =
+          radarResult.status === "rejected"
+            ? String(radarResult.reason)
+            : radar && !scopeMatches(radar)
+              ? radar.projectID !== this.sync.projectID
+                ? "The operational observation belongs to another project."
+                : "The operational observation belongs to another scope."
+              : ""
+        const snapshotError =
+          snapshotResult.status === "rejected"
+            ? String(snapshotResult.reason)
+            : snapshot && !scopeMatches(snapshot)
+              ? snapshot.projectID !== this.sync.projectID
+                ? "The lifecycle observation belongs to another project."
+                : "The lifecycle observation belongs to another scope."
+              : ""
+
+        if (radar && snapshot && !radarError && !snapshotError) {
+          if (JSON.stringify(radar.boundary) !== JSON.stringify(snapshot.boundary)) {
+            this.sync.stale = true
+            if (run.retries < 3) run.pending = true
+            this.update({
+              loading: false,
+              stale: true,
+              error:
+                "Operational and lifecycle observations changed while reading; resynchronizing.",
+              snapshotError: "",
+            })
+            if (run.pending) continue
+            break
+          }
+        }
+
+        let acceptedRadar = false
+        let acceptedSnapshot = false
+        if (radar && !radarError) {
+          acceptedRadar = this.sync.acceptRadar(generation, radar)
+          if (!acceptedRadar && radar.boundary.eventSequence < (this.sync.eventSequence ?? 0))
+            run.pending = true
+        }
+        if (snapshot && !snapshotError) {
+          acceptedSnapshot = this.sync.acceptSnapshot(generation, snapshot)
+          if (!acceptedSnapshot && snapshot.boundary.eventSequence < (this.sync.eventSequence ?? 0))
+            run.pending = true
+        }
+        if (acceptedRadar || acceptedSnapshot) {
+          run.retries = 0
+          this.update({
+            ...(acceptedRadar ? { radar } : {}),
+            ...(acceptedSnapshot ? { snapshot } : {}),
+            loading: false,
+            stale: !acceptedRadar,
+            error: radarError,
+            snapshotError,
+          })
+        } else {
           this.sync.stale = true
           this.update({
             loading: false,
             stale: true,
-            error: "The observation belongs to another project.",
+            error: radarError || "Operational observation is not current.",
+            snapshotError,
           })
-          break
+          if (!run.pending) break
+          if (run.retries >= 3) {
+            run.pending = false
+            break
+          }
         }
-        const responseScopeMatches =
-          snapshot.scope.kind === this.scope.kind &&
-          (this.scope.kind === "project" ||
-            (snapshot.scope.kind === "session" &&
-              snapshot.scope.sessionID === this.scope.sessionID))
-        if (!responseScopeMatches) {
-          this.sync.stale = true
-          this.update({
-            loading: false,
-            stale: true,
-            error: "The observation belongs to another scope.",
-          })
-          break
-        }
-        if (!this.sync.acceptSnapshot(generation, snapshot)) {
-          if (run.pending) continue
-          break
-        }
-        this.update({ snapshot, loading: false, stale: false, error: "" })
       } catch (error) {
         if (!this.current(epoch, transport, signal) || generation !== this.sync.generation) break
         this.sync.stale = true
@@ -176,7 +241,7 @@ export class RadarPanelState {
         if (!this.current(epoch, transport, signal)) return
         this.sync.stale = true
         this.update({
-          loading: !this.data.snapshot,
+          loading: !this.data.radar,
           stale: true,
           error: transport.online()
             ? `Update stream disconnected; resynchronizing. ${String(error)}`

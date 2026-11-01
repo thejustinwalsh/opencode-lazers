@@ -23,6 +23,7 @@ import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
 import { LocalInference } from "./webgpu/rpc.ts"
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
+import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 
 const formatBytes = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(2)} GB`
 
@@ -44,8 +45,18 @@ export default Plugin.define({
       { keepAliveMs: -1 },
     ),
   },
-  main(ctx) {
-    return setupMain(ctx)
+  async main(ctx) {
+    const cleanupInference = await setupMain(ctx)
+    try {
+      const cleanupRadarLayout = setupRadarLayoutMain(ctx)
+      return async () => {
+        await cleanupRadarLayout()
+        if (cleanupInference) await cleanupInference()
+      }
+    } catch (error) {
+      if (cleanupInference) await cleanupInference()
+      throw error
+    }
   },
   setup(ctx) {
     const openTaskTrajectory: TaskTrajectoryOpener = (session, request) => {
