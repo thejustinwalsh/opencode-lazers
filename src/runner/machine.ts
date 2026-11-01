@@ -35,7 +35,7 @@ export const taskMachine = createMachine({
     },
     blocked: { on: { RECONCILE: "queued", CANCEL: "cancelled", RETRY: "ready" } },
     accepted: { type: "final" },
-    failed: { on: { RETRY: "ready" } },
+    failed: { on: { RESUME: "running", RETRY: "ready" } },
     cancelled: { on: { RESUME: "running", RETRY: "ready" } },
     exhausted: { on: { RESUME: "running", RETRY: "ready" } },
     incorporated: { type: "final" },
