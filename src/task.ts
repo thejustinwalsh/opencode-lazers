@@ -40,7 +40,12 @@ export const TaskProposalSchema = z
             .array(
               z.discriminatedUnion("kind", [
                 z.strictObject({ kind: z.literal("verification"), verificationID: identifier }),
-                z.strictObject({ kind: z.literal("artifact"), reference: text }),
+                z.strictObject({
+                  kind: z.literal("artifact"),
+                  reference: text.describe(
+                    "One workspace-relative file or directory path, used verbatim. Put explanatory prose in the assertion.",
+                  ),
+                }),
                 z.strictObject({ kind: z.literal("human"), decision: text }),
               ]),
             )

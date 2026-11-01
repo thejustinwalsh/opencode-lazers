@@ -466,17 +466,24 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
             }
           />
         </div>
-        <Show when={currentData()?.error || (!report() && currentData()?.historyError)}>
+        <Show when={currentData()?.error}>
           <div class="lazers-trajectory-error" role="alert">
-            {currentData()?.error || currentData()?.historyError}
+            {currentData()?.error}
+            <Ui.Button variant="ghost" size="small" onClick={() => void state.refresh()}>
+              Retry status
+            </Ui.Button>
+          </div>
+        </Show>
+        <Show when={!report() && currentData()?.historyError}>
+          <div class="lazers-trajectory-error" role="alert">
+            {currentData()?.historyError}
             <Ui.Button
               variant="ghost"
               size="small"
-              onClick={() =>
-                currentData()?.error ? void state.refresh() : void state.recaptureActivity()
-              }
+              busy={currentData()?.recapturingHistory}
+              onClick={() => void state.recaptureActivity()}
             >
-              {currentData()?.error ? "Retry status" : "Recapture history"}
+              Recapture history
             </Ui.Button>
           </div>
         </Show>
