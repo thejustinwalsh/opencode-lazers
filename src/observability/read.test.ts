@@ -1015,6 +1015,170 @@ test("Radar separates configured, selected, and observed routes and links dedupl
   }
 })
 
+test("Radar keeps newest progress and chronological model/tool evidence at the truncation boundary", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(18)
+    const planID = fixture.receipt.planID
+    const addFillers = (prefix: string, count: number) =>
+      fixture.store.atomic((db) => {
+        const insert = db.query(
+          `INSERT INTO runner_progress
+           (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+            sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        for (let index = 0; index < count; index++)
+          insert.run(
+            fixture.directory,
+            "project",
+            planID,
+            taskID,
+            firstAttemptID,
+            "ses-failed",
+            1,
+            "test",
+            '["test"]',
+            "commentary",
+            "[]",
+            null,
+            null,
+            `${prefix}:${index}`,
+            '{"text":""}',
+          )
+      })
+    const initialCount = fixture.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT count(*) AS count FROM runner_progress WHERE plan_id=?",
+          )
+          .get(planID)!.count,
+    )
+    addFillers("before-window-flow", Math.max(0, 5_001 - initialCount))
+
+    const host = radarHost([
+      radarSession("ses-owner"),
+      radarSession("ses-failed", { parentID: "ses-owner", directory: fixture.directory }),
+      radarSession("ses-accepted", { parentID: "ses-owner", directory: fixture.directory }),
+    ])
+    const reads = radarReads(fixture, host, secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const emit = (id: string, type: string, created: number, data: Record<string, unknown>) => {
+      const event = {
+        id,
+        type,
+        created,
+        data: { sessionID: "ses-failed", ...data },
+      }
+      recorder.recordNativeEvent(event)
+      tracker.native(event)
+    }
+    emit("evt-window-step-start", "session.step.started", 30_100, {
+      assistantMessageID: "msg-window-boundary",
+      agent: "lazers-implementor",
+      model: { providerID: "anthropic", id: "window-model", variant: "high" },
+      started: 30_000,
+    })
+    emit("evt-window-step-end", "session.step.ended", 30_200, {
+      assistantMessageID: "msg-window-boundary",
+    })
+    emit("evt-window-tool-start", "session.tool.input.started", 30_300, {
+      assistantMessageID: "msg-window-boundary",
+      id: "call-window-boundary",
+      name: "Read",
+    })
+    emit("evt-window-tool-call", "session.tool.called", 30_400, {
+      assistantMessageID: "msg-window-boundary",
+      id: "call-window-boundary",
+      executed: true,
+    })
+    emit("evt-window-tool-result", "session.tool.success", 30_500, {
+      assistantMessageID: "msg-window-boundary",
+      id: "call-window-boundary",
+    })
+
+    // Place the model fact at the first row retained by the newest-5000 window;
+    // its start and end observations share one coalesced record.
+    addFillers("after-window-flow", 4_998)
+    const boundary = fixture.store.atomic((db) => ({
+      firstRetained: db
+        .query<{ seq: number }, [string]>(
+          "SELECT seq FROM runner_progress WHERE plan_id=? ORDER BY seq DESC LIMIT 1 OFFSET 4999",
+        )
+        .get(planID)!.seq,
+      step: db
+        .query<{ seq: number }, [string, string]>(
+          "SELECT seq FROM runner_progress WHERE plan_id=? AND dedupe_key=?",
+        )
+        .get(planID, "step:ses-failed:msg-window-boundary")!.seq,
+      count: db
+        .query<{ count: number }, [string]>(
+          "SELECT count(*) AS count FROM runner_progress WHERE plan_id=?",
+        )
+        .get(planID)!.count,
+    }))
+    expect(boundary.count).toBeGreaterThan(5_000)
+    expect(boundary.step).toBe(boundary.firstRetained)
+    tracker.refreshSource()
+
+    const result = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(result.coverage.progressTruncated).toBe(true)
+
+    const request = result.edges.find(
+      (edge) => edge.kind === "model-request" && edge.messageID === "msg-window-boundary",
+    )
+    const response = result.edges.find(
+      (edge) => edge.kind === "model-response" && edge.messageID === "msg-window-boundary",
+    )
+    expect(request).toMatchObject({
+      routeID: expect.any(String),
+      startedAt: 30_000,
+      observedAt: 30_100,
+      live: true,
+      evidence: [{ source: "native-event", eventID: "evt-window-step-start", at: 30_100 }],
+    })
+    expect(response).toMatchObject({
+      routeID: request?.routeID,
+      startedAt: 30_000,
+      observedAt: 30_200,
+      live: true,
+      evidence: [{ source: "native-event", eventID: "evt-window-step-end", at: 30_200 }],
+    })
+
+    const toolCall = result.edges.find(
+      (edge) => edge.kind === "tool-call" && edge.callID === "call-window-boundary",
+    )
+    const toolResult = result.edges.find(
+      (edge) => edge.kind === "tool-result" && edge.callID === "call-window-boundary",
+    )
+    expect(toolCall).toMatchObject({
+      observedAt: 30_400,
+      live: true,
+      evidence: [{ source: "native-event", eventID: "evt-window-tool-call", at: 30_400 }],
+    })
+    expect(toolResult).toMatchObject({
+      observedAt: 30_500,
+      live: true,
+      evidence: [{ source: "native-event", eventID: "evt-window-tool-result", at: 30_500 }],
+    })
+    expect([
+      request?.observedAt,
+      response?.observedAt,
+      toolCall?.observedAt,
+      toolResult?.observedAt,
+    ]).toEqual([30_100, 30_200, 30_400, 30_500])
+  } finally {
+    fixture.close()
+  }
+})
+
 test("Radar keeps durable effect and outbox delivery stages distinct from structural links", async () => {
   const fixture = makeFixture()
   try {

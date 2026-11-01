@@ -370,15 +370,16 @@ function loadRadarSource(
        WHERE plan_id IN (${placeholders}) ORDER BY rowid LIMIT 10001`,
     )
     .all(...planIDs)
-  const progress = db
+  const progressRows = db
     .query<ProgressRow, (string | number)[]>(
       `SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
               g.session_id,g.at,g.source,g.sources_json,g.kind,g.event_ids_json,g.call_id,
               g.message_id,g.dedupe_key,g.payload
-       FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
-       WHERE p.project_directory=? AND g.plan_id IN (${placeholders}) ORDER BY g.seq LIMIT 5001`,
+        FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
+        WHERE p.project_directory=? AND g.plan_id IN (${placeholders}) ORDER BY g.seq DESC LIMIT 5001`,
     )
     .all(projectDirectory, ...planIDs)
+  const progress = progressRows.slice(0, 5_000).reverse()
 
   for (const plan of radarPlans) managedSessionIDs.add(plan.owner)
   for (const attempt of radarAttempts) managedSessionIDs.add(attempt.session_id)
@@ -395,7 +396,7 @@ function loadRadarSource(
     continuations,
     outbox: outbox.slice(0, 10_000),
     progress: progress.slice(0, 5_000),
-    progressTruncated: progress.length > 5_000,
+    progressTruncated: progressRows.length > 5_000,
     workTruncated:
       projection.tasks.length > 1000 ||
       radarPlans.length > 1000 ||
