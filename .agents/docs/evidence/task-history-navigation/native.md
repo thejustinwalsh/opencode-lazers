@@ -48,3 +48,37 @@ accepted work, and `1/1` above one cancelled task). See
 Architect for correction; recheck the affected live presentation before recording
 `native-usable:human` against the corrected artifact. This observation does not
 claim the correction is implemented or accepted.
+
+## Corrected artifact recheck — passed
+
+Candidate `b21e3e30309616713a206278de7b5011cb7f7953` was independently
+reviewed and activated by merge `73f77838d20dd3d0ecc424d24334052323e3c072`.
+Its delta changes the group-heading presentation and scope label, adds the
+rendered component and checks, and updates worker evidence. Main's focused Tasks
+checks passed 41 tests / 284 assertions; formatter/linter/strict types and GUI
+build passed. Scheduler receipts independently report focused/all/quality/build
+exit 0, no timeout and unchanged input for this exact candidate. The earlier
+388-test combined-main result was not rerun or relabelled as this correction's
+full-suite result.
+
+Fresh Computer Use after GUI hot reload observed the narrow Project Completed
+view without active/total fractions, then Project Cancelled without the formerly
+misleading count on LZ-14. Both retain meaningful title-only accessible group
+names. Scope now reads Project. Switching back to Open restores the existing
+active counts and truthful running/verifying/queued icons. Local inference
+returned to Ready without changing its setting.
+
+[Corrected Completed](completed-corrected.png) and
+[corrected Cancelled](cancelled-corrected.png) were re-reviewed by Tera 6.1 High:
+[visual follow-up](terra-follow-up.md) passes the prior blocker. The screenshot
+review does not substitute for driver functional evidence.
+
+On the corrected candidate, the driver again selected Completed, searched LZ-9,
+selected that exact task and opened the mounted Trajectory. It identified
+`LZ-9 · 970b0feb · r1`, all four recorded attempts, 267 tool calls and 4/4
+available native contexts. The earlier full filter/scope, mounted/reopened-target
+and keyboard observations remain applicable to the unchanged underlying logic.
+
+Root's native usability review is now satisfied for this candidate. Runtime
+acceptance/integration must still be recorded through Architect's tools; this
+paragraph is observation evidence, not a direct task-state mutation.
