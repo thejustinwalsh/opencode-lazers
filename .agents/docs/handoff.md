@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-01, 19:57 UTC checkpoint. Recheck runtime records before acting.
+2026-11-01, 20:13 UTC checkpoint. Recheck runtime records before acting.
 Full goal remains all four phases in `design/roadmap.md`, followed by an
 observation-based improvements plan. This is progress, not completion.
 
@@ -52,18 +52,39 @@ and discriminating repair check), `lazers-worker-steering` (same-worker guidance
 follow-up and handoff). Name/description suggestions only; load progressively.
 Native skills researcher: `ses_e675d2fc1ffeYFk5TtDZZYM8lk`. No mandatory core manual.
 
+## Implementer-run live product verification
+
+User also authorized `design/live-product-verification.md`; Root sent the full
+feature ask through Desktop. It extends the roadmap alongside proactive recovery,
+not instead of current work. Required delivery includes durable live-probe phases
+and evidence in runtime acceptance, project runbook, usable native skills/tools,
+full OpenCode instance verification, owned temporary fixture cleanup, and at least
+two implementer-run walkthroughs including correction/reprobe. Preserve identity;
+probe runs are not replacement implementation attempts. Driver-only interaction
+or tool availability is not implementer capability proof. Product failures and
+environment blockages stay distinct. Full implementation/observation remains open.
+
+Native research: full-instance path `ses_e6749a61bffeKWDVdOepfZPYVy`; durable phases
+`ses_e67483f79ffeVuSvI8d9TGTEy2`. Installed 2.2.5 source was extracted read-only to
+`/private/tmp/lazers-installed-main-20261101.js` and
+`/private/tmp/lazers-installed-desktop-CO4e8d3H.js`. It exposes a test-root path;
+source alone does not prove isolated services or worker tools. Root answered the
+native interview to authorize the controlled owned trial with protocol-handler
+state recorded/restored, isolation verified and cleanup; no driver credentials
+copied. No full test instance has yet been observed by Root.
+
 ## Active execution and next boundaries
 
-| Work     | Actual state at checkpoint                                                | Next boundary                                                                                                |
-| -------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| LZ-28    | Running v44, retained second attempt                                      | Repair three remaining renewal review blockers, then native lifecycle proof                                  |
-| LZ-33/34 | Original plan running v50; 33 accepted, 34 ready with no attempt          | Radar read correction plus original SVG/ELK UI; preserve IDs/dependency                                      |
-| LZ-36    | Corrected source merged and mounted; plan v27 verifying behind human gate | Native unrequested recapture/disclosure reset returned for investigation                                     |
-| LZ-38/39 | v19 blocked on native-recovery gate; 38 accepted, 39 verifying            | Ordinary real review/navigation/local-feature compatibility proof                                            |
-| LZ-43    | Source accepted/activated, v8 native-profile-ready gate open              | Diagnostic repair and honest native observation; no further arming now                                       |
-| LZ-45    | Source merged/active; plan accepted v10                                   | Record final integration/cleanup through runtime                                                             |
-| LZ-46    | Original worker running v4                                                | Preserve edits/candidate; correct invalid artifact-reference contract without another implementation attempt |
-| LZ-47    | Superseded, no plan or implementation attempt                             | Corrected immutable Radar supplement pending submission                                                      |
+| Work     | Actual state at checkpoint                                             | Next boundary                                                                                                |
+| -------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| LZ-28    | Failed v47, retained second attempt                                    | Reconcile old handoff formatting, review 7f47913 and retain native lifecycle gate                            |
+| LZ-33/34 | Original plan running v50; 33 accepted, 34 ready with no attempt       | Radar read correction plus original SVG/ELK UI; preserve IDs/dependency                                      |
+| LZ-36    | Corrected source mounted; same attempt cancelled v30 for scope release | Clean native expiry/recapture passed; active selected-tool completion still unobserved                       |
+| LZ-38/39 | v19 blocked on native-recovery gate; 38 accepted, 39 verifying         | Ordinary real review/navigation/local-feature compatibility proof                                            |
+| LZ-43    | Source accepted/activated, v8 native-profile-ready gate open           | Diagnostic repair and honest native observation; no further arming now                                       |
+| LZ-45    | Integrated v12                                                         | Record final integration/cleanup through runtime                                                             |
+| LZ-46    | Returned 271ba11; verifying v6 behind invalid path                     | Preserve edits/candidate; correct invalid artifact-reference contract without another implementation attempt |
+| LZ-47    | Superseded, linked to corrected LZ-48                                  | Corrected LZ-48 is running in its own plan                                                                   |
 
 ### Renewal — LZ-28
 
@@ -72,7 +93,11 @@ Plan `8253ff59-57a5-45fd-8847-acd971438af8`, attempt
 `ses_0837d798635a4b10a58e1fdc9175854f`. LZ-45's temporary stop ended;
 Architect merged reviewed main into the retained workspace and explicitly resumed
 this same attempt. Do not RETRY or replace it. Preserve `2536084` receipt lookup.
-Returned `e704bc4` is not cleared: broader native review
+Latest candidate is `7f47913652bcc65348780f99830102ff208648ee`. Runtime focused/all
+checks pass; quality failed only because the retained old `.agents/docs/handoff.md`
+is unformatted (exit 1, unchanged=true). Root supplied the exact receipt; reviewed
+main has the formatted handoff. Reconcile the ordinary baseline without replacing
+the attempt or weakening checks. Earlier `e704bc4` was not cleared: broader native review
 `ses_e6775cbe6ffedpY71H18jQdEZm` reproduced cursor+order incompatibility with pinned
 pagination, cancellation starvation when recovery reads fail, and uncovered later
 history pages before checkpoint transfer. Repair instructions are installed.
@@ -98,7 +123,9 @@ updated after the newest 5,000 inserted rows disappear, and verified ancestor
 association expansion happens after task/node/transition hydration. Corrective
 supplement LZ-47 was caught before execution: its artifact reference appended prose
 to a filename, which the actual resolver correctly rejected. Architect superseded
-it and is creating a corrected immutable specification. Keep this two-file read
+it and submitted corrected LZ-48 `446fc27e-2ae3-438e-8ada-a498939f7fe4`, now running
+in plan `9ae669d7-f1a8-434f-8272-a9ace9251d48`, attempt
+`acdae83e-9a2d-4ca8-8b17-97537630c2fe`. Keep this two-file read
 repair separate from proactive detector modification tracking.
 
 LZ-34 remains real C4-style SVG/ELK operational Radar, activity above lower details,
@@ -120,12 +147,16 @@ Root built `81660d3`, used native Reload Webview, opened LZ-9
 `970b0feb-1fd3-40bb-a61d-f8decccb8a9f`, observed four attempts, loaded another
 history page and selected the 10:01:41 read-error payload. Selection and loaded
 activity survived settings navigation; do not infer an exact page-union count from
-offscreen AX rows. A further native continuity failure remains: after ordinary chat work, no task/scope
-change or explicit recapture, the disclosure closed and capture changed again from
-14:53:54 to 14:56:12 EST. The expiry deadline reset. Root returned this to Architect;
-the host/session reactive connection boundary is only a lead. Do not accept LZ-36
-or claim meaningful expiry recovery. Continue the separate recovery tasking. Screenshot before expiry is local:
-`/private/tmp/lazers-trajectory-81660d3-before-expiry.png`.
+offscreen AX rows. The 14:56:12 reset coincided with setupMain initialization at
+14:56:11.995 after Root saved src/task.ts at 14:55:59. Ordinary chat causality was
+premature; source/plugin replacement is the evidenced confound, returned to the
+investigator before a code repair. Later chat-only observation retained that same
+capture past expiry. Actual expired Load more produced a persistent human-readable
+recapture message. Explicit Recapture at 15:07:54 restored Connected and retained
+the selected second-page event and expanded payload. Selected active live-tool
+completion remains unobserved, so native acceptance stays open. The clean-observation
+source hold is released. Local screenshots are
+`/private/tmp/lazers-trajectory-81660d3-{expiry-confirmed,recaptured}.png`.
 [Observations](evidence/stable-live-trajectory/native-observations.md) and
 [checklist](evidence/stable-live-trajectory/native-checklist.md) retain the gate.
 
@@ -149,7 +180,10 @@ arm again while LZ-46 repairs diagnostic uncertainty/fallback ownership.
 
 LZ-46 plan `c819c4cf-79d7-4bd9-a5d6-b8f4c2ee43e0`, attempt
 `3a16ff72-2c86-4d0e-9749-fe1c427ac260`, session
-`ses_a07744b93acc4b05b81b6c6da3539e18`, Luna Max. Its original contract also has
+`ses_a07744b93acc4b05b81b6c6da3539e18`, Luna Max, returned `271ba11`; blocked v6 on the known invalid artifact reference.
+Root source review found no blocker in the intended changes and independently
+passed 31 profiler/armed/main-trace tests / 158 assertions. No activation or native
+profiling claim. Its original contract also has
 annotated/multiple artifact paths. Architect will retain its returning candidate
 and correct the immutable contract; missing evidence is a hold, not an automatic
 code-repair attempt. Do not fabricate filenames or waive acceptance.
