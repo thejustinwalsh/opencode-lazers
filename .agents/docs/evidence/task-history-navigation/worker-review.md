@@ -8,10 +8,20 @@ effective task states. The selected task's UUID, LZ reference, and project ident
 are staged before opening Trajectory; mounted history requests replace older
 requests and do not fall back to another task.
 
+## Legacy query compatibility repair
+
+Unspecified `state` with omitted or false `includeCompleted` now preserves the
+original query behavior: accepted, incorporated, and cancelled work is excluded,
+while failed/exhausted work remains visible. This is distinct from explicit
+`state: "open"`; `includeCompleted: true` still selects all states. Both project
+and session-association tests verify exact legacy page unions/counts and cursor
+continuity for omitted versus false, plus rejection when a legacy cursor is reused
+with explicit `open`.
+
 ## Automated verification
 
-- Focused task/history checks: 72 passed, 0 failed, 531 assertions.
-- Full test suite: 382 passed, 0 failed, 3,545 assertions.
+- Focused task/history checks: 72 passed, 0 failed, 576 assertions.
+- Full test suite: 382 passed, 0 failed, 3,590 assertions.
 - `bun run verify`: formatting, lint, and strict TypeScript passed.
 - `bun run build:gui`: passed; Vite emitted existing import-meta/deprecation
   warnings for the pinned GUI bundle.

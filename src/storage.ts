@@ -10,7 +10,7 @@ import {
 } from "./task.ts"
 import type { TaskSpec } from "./task.ts"
 import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
-import type { TaskStateFilter } from "./tasks/state-filter.ts"
+import type { TaskQueryState } from "./tasks/state-filter.ts"
 import { canonical, fingerprint } from "./identity.ts"
 import {
   dispositionPayload,
@@ -336,7 +336,7 @@ export class TaskRepository {
     limit: number
     snapshot?: number
     before?: number
-    state?: TaskStateFilter
+    state?: TaskQueryState
     includeCompleted?: boolean
     includeRetired?: boolean
   }) {

@@ -6,6 +6,8 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
 import { TaskReads } from "../tasks/read.ts"
+import type { TaskPage } from "../tasks/contract.ts"
+import type { TaskStateFilter } from "../tasks/state-filter.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -77,19 +79,16 @@ function addExecution(
   })
 }
 
+type PageFilter = { state?: TaskStateFilter; includeCompleted?: boolean }
 function collectPages(
-  read: (input: {
-    state: "open" | "completed" | "failed" | "cancelled" | "all"
-    limit: number
-    cursor?: string
-  }) => ReturnType<AssociationTaskReads["query"]>,
-  state: "open" | "completed" | "failed" | "cancelled" | "all",
+  read: (input: PageFilter & { limit: number; cursor?: string }) => TaskPage,
+  filter: PageFilter,
 ) {
   const ids: string[] = []
   let cursor: string | undefined
   let count = -1
   do {
-    const page = read({ state, limit: 2, ...(cursor ? { cursor } : {}) })
+    const page = read({ ...filter, limit: 2, ...(cursor ? { cursor } : {}) })
     if (count === -1) count = page.count
     expect(page.count).toBe(count)
     ids.push(...page.tasks.map((task) => task.taskID))
@@ -135,11 +134,6 @@ test("state filters paginate exact effective task states in project and associat
     { sessionID: "architect", agent: "architect" },
   )
 
-  const associatedInput = (state: "open" | "completed" | "failed" | "cancelled" | "all") => ({
-    state,
-    sessionID: "session-a",
-    limit: 2,
-  })
   for (const [state, expected] of [
     ["open", [unplannedA.id, blockedPlan.id, running.id]],
     ["completed", [accepted.id, incorporated.id]],
@@ -161,8 +155,8 @@ test("state filters paginate exact effective task states in project and associat
     ],
   ] as const) {
     const found = collectPages(
-      (input) => associationReads.query({ ...associatedInput(input.state), ...input }),
-      state,
+      (input) => associationReads.query({ ...input, sessionID: "session-a" }),
+      { state },
     )
     expect(found).toEqual(new Set(expected))
   }
@@ -188,9 +182,37 @@ test("state filters paginate exact effective task states in project and associat
       ],
     ],
   ] as const) {
-    const found = collectPages((input) => reads.query(input), state)
+    const found = collectPages((input) => reads.query(input), { state })
     expect(found).toEqual(new Set(expected))
   }
+
+  const legacySessionIDs = new Set([
+    unplannedA.id,
+    failed.id,
+    exhausted.id,
+    blockedPlan.id,
+    running.id,
+  ])
+  expect(
+    collectPages((input) => associationReads.query({ ...input, sessionID: "session-a" }), {}),
+  ).toEqual(legacySessionIDs)
+  expect(
+    collectPages((input) => associationReads.query({ ...input, sessionID: "session-a" }), {
+      includeCompleted: false,
+    }),
+  ).toEqual(legacySessionIDs)
+  const legacyProjectIDs = new Set([
+    unplannedA.id,
+    unplannedB.id,
+    failed.id,
+    exhausted.id,
+    blockedPlan.id,
+    running.id,
+  ])
+  expect(collectPages((input) => reads.query(input), {})).toEqual(legacyProjectIDs)
+  expect(collectPages((input) => reads.query(input), { includeCompleted: false })).toEqual(
+    legacyProjectIDs,
+  )
 
   const sessionAll = associationReads.query({ sessionID: "session-a", state: "all", limit: 100 })
   expect(sessionAll.count).toBe(9)
@@ -225,8 +247,35 @@ test("state filters paginate exact effective task states in project and associat
       cursor: firstOpenPage.nextCursor!,
     }),
   ).toThrow("does not match")
+  const firstLegacyPage = associationReads.query({ sessionID: "session-a", limit: 2 })
+  expect(firstLegacyPage.nextCursor).toBeTruthy()
+  expect(
+    associationReads.query({
+      sessionID: "session-a",
+      includeCompleted: false,
+      limit: 2,
+      cursor: firstLegacyPage.nextCursor!,
+    }).count,
+  ).toBe(firstLegacyPage.count)
+  expect(() =>
+    associationReads.query({
+      sessionID: "session-a",
+      state: "open",
+      limit: 2,
+      cursor: firstLegacyPage.nextCursor!,
+    }),
+  ).toThrow("does not match")
   const firstProjectOpenPage = reads.query({ state: "open", limit: 2 })
   expect(() =>
     reads.query({ state: "cancelled", limit: 2, cursor: firstProjectOpenPage.nextCursor! }),
+  ).toThrow("does not match")
+  const firstProjectLegacyPage = reads.query({ limit: 2 })
+  expect(firstProjectLegacyPage.nextCursor).toBeTruthy()
+  expect(() =>
+    reads.query({
+      state: "open",
+      limit: 2,
+      cursor: firstProjectLegacyPage.nextCursor!,
+    }),
   ).toThrow("does not match")
 })

@@ -224,6 +224,13 @@ test("open, failed and cancelled filters separate effective plan and node states
     for (const sessionID of [undefined, "session-a"]) {
       const open = reader.query({ sessionID, state: "open" })
       expect(open.count).toBe(0)
+      const legacyDefault = reader.query({ sessionID, limit: 10 })
+      const legacyFalse = reader.query({ sessionID, includeCompleted: false, limit: 10 })
+      const legacyTaskIDs = new Set(tasks.slice(1).map((task) => task.id))
+      expect(legacyDefault.count).toBe(4)
+      expect(legacyFalse.count).toBe(4)
+      expect(new Set(legacyDefault.tasks.map((task) => task.taskID))).toEqual(legacyTaskIDs)
+      expect(new Set(legacyFalse.tasks.map((task) => task.taskID))).toEqual(legacyTaskIDs)
       const failed = reader.query({ sessionID, state: "failed" })
       expect(failed.count).toBe(4)
       expect(new Set(failed.tasks.map((task) => task.taskID))).toEqual(
