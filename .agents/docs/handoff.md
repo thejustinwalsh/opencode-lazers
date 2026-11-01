@@ -34,6 +34,7 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
 | LZ-40    | Integrated                            | Directory evidence support, no acceptance waiver                                    |
 | LZ-41    | Integrated v11; cleaned               | Effective backend activation confirmed by real retained LZ-38 resume                |
 | LZ-42    | Integrated v11; cleaned               | Failed-to-resume transition exercised by the original LZ-38 worker                  |
+| LZ-43    | Running on Luna Max                   | Healthy-time profiler controls, then actual correlated Desktop capture              |
 
 - **LZ-28** plan `8253ff59-57a5-45fd-8847-acd971438af8`, same attempt
   `941526b0-62de-4578-b82e-f2a458c95358`, session
@@ -144,9 +145,11 @@ or manual inference-setting change was made. This is recovery, not causal proof.
 
 LZ-39 also confirmed a fresh-worktree setup failure: full tests initially lacked
 ignored `.cache/lfm3-engine.js`, then passed after build preparation. Native
-Project.commands.start is currently unset. Architect is investigating/configuring
-native development-project startup; do not invent a plugin-wide Bun installer or
-add agent reminders for mechanical setup. Check actual native state before acting.
+Project.commands.start is now configured for dependencies and the pinned engine
+in this development project. Architect reported clean-checkout validation passing
+420 tests / 3,945 assertions; Root independently read back the native configuration.
+Actual hook execution remains to be observed on the next worktree creation.
+This is project setup, not a plugin-wide Bun installer or added agent reminder.
 
 All remaining roadmap phases remain: Radar/stable Trajectory/compatible freeze
 repair; whole-feature measurement and dated OpenRouter fallback market pricing;
