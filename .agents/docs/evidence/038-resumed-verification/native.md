@@ -31,3 +31,14 @@ linter and strict typechecker passed. Native activation is pending the next
 supported reload alongside reviewed UI work, avoiding interruption of active
 Architect/reviewer generation. This source fix does not retroactively erase the
 historical false failure or certify lifecycle feature acceptance.
+
+## Native activation and first live result
+
+Architect used supported location reload to activate 2536084 while retaining the
+worker identities. Native agent readback also confirms the packaged native-lane
+instruction. LZ-32 then resumed its original attempt and returned 74ffb3a after
+legacy compatibility repair. Runtime ignored its completed b49116e receipts and
+created fresh focused/all check effects with 74ffb3a-specific receipt filenames;
+focused completed successfully while full verification was still running at this
+checkpoint. The original attempt/session remains, and earlier receipts remain.
+Final task acceptance and Desktop UI evidence are still pending.
