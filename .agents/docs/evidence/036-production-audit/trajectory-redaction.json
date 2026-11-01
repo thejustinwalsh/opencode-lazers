@@ -1,0 +1,9 @@
+{
+  "fixture": "Existing isolated temporary SQLite trajectory fixture",
+  "boundary": "Real inspectTrajectory report",
+  "retainsNestedInputReasoning": true,
+  "retainsNestedResultReasoning": true,
+  "retainsFullResultInput": true,
+  "applicationDataRead": false,
+  "applicationDataModified": false
+}

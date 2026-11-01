@@ -1,89 +1,85 @@
 # LAZERS current handoff
 
-2026-11-01, 00:17 UTC checkpoint. Read [README contracts](../../README.md),
-[pinned OpenCode API](opencode-api.md), and [current audit](completed-task-audit.md).
-The [durable snapshot](evidence/033-completed-task-audit/live-state-latest.json)
-is timestamped; inspect current state before acting. Original intent and research
-remain in [the brief](sources/original-design-brief.md), [Repomix strategy](repomix-strategy.md)
-and [implementor profiles](implementor-profiles.md).
+2026-11-01, 04:41 UTC checkpoint. Read [README contracts](../../README.md),
+[pinned OpenCode API](opencode-api.md), [delivery audit](completed-task-audit.md)
+and the [new audit and next phases](production-audit-and-next-phases.md).
+The durable snapshot is timestamped; inspect current state before acting.
 
-## Native operation
+## Current execution
 
-Architect `ses_e6e0e6239ffdtzIePMeJ1sHA4l` uses `openai/gpt-6.1-sol#high`.
-Implementors use `openai/gpt-6-luna#max`. The durable snapshot records 14 integrated plans and 21 accepted task nodes.
-References/grouping are integrated with all three owned worktrees cleaned. Progress
-is running in its original attempt, and lifecycle is queued behind its integration. Failed/cancelled history
-and five retired broad task records remain preserved.
+Architect ses_e6e0e6239ffdtzIePMeJ1sHA4l uses openai/gpt-6.1-sol#high.
+Implementors use openai/gpt-6-luna#max. At this checkpoint: 15 integrated plans,
+22 accepted nodes, one running lifecycle node/attempt. Cancelled/failed history
+and five retired broad records remain preserved.
 
-LAZERS is one plugin: scheduler/storage in OpenCode's service, native agent
-sessions/worktrees, panels and local inference in Desktop. No LAZERS daemon or
-standalone inference service. Driver SDK inspections and maintenance are one-shot
-and not runtime dependencies.
+- LZ-13 progress plan b9e55d09 is integrated v16. Repaired source a6e05e3/9d341de
+  was activated before integration through supported native reload. Original
+  accepted artifact b7f036b and attempt d543a0f7 remain in history; its idle owned
+  worktree was removed natively without force.
+- The existing LZ-28 lifecycle plan 8253ff59 is running in original attempt
+  33e6b86d-edda-41dc-9ac4-93d195f537ea, session
+  ses_930ecf3fd619489993f8b98167853ac1. It is editing its own native isolated tree.
+  Do not create a replacement worker or edit that tree concurrently.
+- Its real lazers_report_progress call succeeded and coalesced to one commentary
+  row alongside automatic facts. [Native proof](evidence/018-durable-progress/native.md).
+  This does not establish lifecycle acceptance.
+- Review the lifecycle artifact, preserve current main, activate supported native
+  plugin changes when required, then observe busy reuse, idle renewal, pending
+  input preservation, current-owner outcome routing and native safe archival.
+  Finish normal runtime integration and non-forced cleanup.
 
 ## Delivered and observed
 
-- Product plan `b50a1a71` is integrated. Observation projection, speech, Radar,
-  Trajectory and GUI assembly are on main. All five owned worktrees were removed
-  through native non-forced cleanup. [Desktop evidence](evidence/027-observation-panels/native-root-review.md)
-  includes real timelines, state selection, split persistence, narrow layout and
-  light-theme adaptation; System/Ayu and the wider panel were restored.
-- Wake plan `1d4a866e` is integrated. Real b50 integration cancelled the exact
-  owned queued accepted notice, retained history/unrelated inputs and queued the
-  current non-resuming update. [Native proof](evidence/035-outcome-inbox/root-native-review.md).
-  Scope amendments, same-candidate recovery and source-landing records remain.
-- Context plan `caa8c80c` is integrated. A native isolated worker reused the
-  published Architect snapshot without recollection. [Evidence](evidence/isolated-context-reuse/native.md).
-- Go/Qwen Tasks affordances `8d505ab3` are integrated and natively reviewed.
-  Manual Start, exact model routes, three optional personas, task references,
-  readable instructions and permission-based trajectory inspection are implemented.
+References/grouping 58146c54 is integrated v20; task links, real b50 fork/join,
+hidden prerequisites, stable scrolled keyboard disclosure, 330/450 widths and
+close/reopen passed Root/Terra review. All three owned worktrees were removed.
+Product b50, wake 1d4a866e and isolated context reuse caa8c80c are integrated.
+Their prior native evidence and Git history remain linked from the delivery audit.
 
-## Continue the existing work
+Radar inspector repair 5a2b39c was natively observed across plan switches.
+Tasks, Radar and Trajectory are optional closable native panels. Tab icons
+53a6e69 were observed in Desktop. The native reload preserved PID 16786 and the
+running lifecycle worker's identity, route and busy timestamp.
 
-- `58146c54` is integrated v20. Root drove real task-link navigation, recorded
-  sequential/parallel groups, hidden prerequisites, stable scrolled keyboard
-  disclosure, 330/450 widths and close/reopen persistence. Terra 6.1 High passed
-  the shown screenshots. Repair `f2beb81` preserves render identities; spacing
-  `bdc9137` is included. [Native report](evidence/030-grouped-tasks-list/native.md).
-  Do not create another UI review worker for this closed increment.
-- `b9e55d09`: durable progress/hooks attempt `d543a0f7-670a-46eb-8a91-0ca590a0f848`,
-  session `ses_043f3b7202dd41b8bd9bbb7c0b69c805`, is running after recovery of its
-  original native worktree reservation. No extra model attempt was spent.
-- `8253ff59`: lifecycle renewal follows progress integration. Use provider/model/
-  options-sensitive cache policy, override/fallback, durable handoff and pending
-  input preservation before native archival. It need not reuse the same Architect.
+Fresh source checkpoint 53a6e69: 376 tests / 3,449 assertions, formatter,
+lint and strict types pass. The GUI was built and the icon change observed.
+The package-content dry-run is not fresh-machine installation proof.
 
-`b4fcd61` fixes the observed startup-recovery cancellation race. Conclusive recovery
-of an attempt's own worktree uncertainty resumes preparation; unrelated blocked
-reasons still stop it. Empty host errors are no longer blank. Runtime/artifact/
-process-recovery checks passed 84 tests / 1,490 assertions; the final helper reuse
-also passed focused positive/negative regressions and quality checks. Supported
-all-location activation preserved PID 16786 and both active workers. Proof:
-`evidence/035-outcome-inbox/startup-recovery-activation.json`.
+## New audit findings and proposed order
 
-`5d9be1f` retains fully recovered superseded wake/reference commit ancestry without
-reapplying old code. Old driver review changes were preserved in Git and their two
-worktrees removed through the SDK, without force. No dirty/unmerged work was lost.
+The [audit](production-audit-and-next-phases.md) contains source references,
+current statuses, a real isolated redaction reproduction and task-sized proposals.
+These candidates have not been submitted as new runtime tasks.
 
-## Driver rules and actual limits
+1. Finish existing lifecycle work.
+2. Fix the reproduced trajectory read-side nested private-content omission gap.
+   Progress's new projection is narrower than the older native trajectory reader.
+3. Diagnose the existing failed LZ-14 renderer-responsiveness task from captured
+   stages; preserve enabled local inference.
+4. Make live trajectory refresh/pagination stable and cheaper.
+5. Complete whole-feature usage/cost accounting, then guided route selection and
+   measured real-app dogfood. General revisions, optional research specialists
+   and distribution readiness are explicit future work.
+
+README no longer claims runtime-managed research specialists already exist.
+No such dispatcher or internal research roles are registered in current source.
+
+## Operating rules
 
 Use Desktop computer use for model prompts and visual acceptance. Read-only SDK
-inspection and supported native maintenance are authorized. Keep Architect and
-workers moving while reviewing returned artifacts; do not create replacement
-work or stopgap handoffs for already specified increments.
+inspection and supported native maintenance are authorized. Keep original work
+moving; answer already-authorized routine continuation questions. Do not create
+replacement work or approval loops for closed increments.
 
-Use production tools/current versions, pinned OpenCode 2.2.5 V2 APIs and native
-worktree lifecycle. Normal tools/Code Mode remain available; workers do not launch
-subagents. No model catalog veto, fallback substitution, invented spend limits,
-source hashes/fingerprint ceremony or model approval gate. Keep schema validation
-and `lazers_verify_task` as Architect self-review.
+Use pinned OpenCode 2.2.5 V2 APIs and native worktree lifecycle. Ordinary tools and
+Code Mode remain available; workers do not launch subagents. No model catalog
+veto, silent fallback, invented spend limits or source fingerprint evidence gates.
+Keep schema validation and lazers_verify_task as Architect self-review.
 
-Latest full merged checkpoint `f2beb81`: 354 tests / 3,318 assertions, formatter,
-lint and strict types passed. GUI rebuilt and natively observed; receipts are
-recorded in `evidence/030-grouped-tasks-list/integration-review.md`.
-Use `/Users/tjw/.bun/bin/bun`; load Portless before any project listening server.
+LAZERS is one plugin in native OpenCode, with no custom daemon. Inference remains
+enabled; the earlier freeze root cause remains unresolved. Fresh production
+dependency audit still flags two moderate host-transitive advisories. Distribution
+and host compatibility work are detailed in the new audit.
 
-Inference remains enabled. Bounded tracing and next-freeze Electron CPU capture
-are armed; the earlier renderer freeze cause remains unresolved. Do not infer a
-fix or change the engine from the Radar startup error that was separately fixed.
-Current speech regressions pass; OpenCode exposes no fixed-right ComposerPill
-slot or modifier-click event, so the supported pill/menu/shortcut is used.
+Use /Users/tjw/.bun/bin/bun. Load Portless before project listening servers;
+one-shot socket-free checks are exempt.

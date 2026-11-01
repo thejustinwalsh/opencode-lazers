@@ -76,7 +76,7 @@ Measure tokens, time, tool calls and retries, and report unavailable equivalent 
 
 The worker returns an artifact reference, changed files, evidence references, and unresolved issues. It cannot certify its own completion or launch subagents. Implementors retain normal OpenCode coding capabilities, including Code Mode, shell, editing and available native LSP/diagnostics, under user/project policy. Their ContextPacket focuses the work; it does not limit permitted reads to writeScope. Runtime enforces actual write scope, verification and acceptance and owns all task dispatch and implementation parallelism.
 
-Architect can request bounded code investigation or current-web research from internal specialist roles. Runtime dispatches the selected agent/model/variant through the native child boundary. Specialists are subagent profiles, not extra human-facing primary agents. They do not recursively delegate. Research and implementation use the same admitted-dispatch boundary; unrestricted native child spawning is not a cost-control substitute.
+Architect currently investigates the repository and uses current-web research through normal OpenCode tools. Runtime-managed investigator/researcher roles and their dedicated dispatch boundary are not implemented. They remain an optional next increment when delegation can save useful work; existing model selection, context publication and native sessions provide the building blocks. Keep research roles internal and non-recursive when that increment is specified.
 
 ### Worker route and persona choice
 
