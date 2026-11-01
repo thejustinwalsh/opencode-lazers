@@ -22,8 +22,9 @@ skill progressively, subject to OpenCode's normal permission check; an absent or
 denied suggestion does not block a task. An empty applicable list is sufficient.
 Do not fill fields with boilerplate.
 
-Architect researches the requested outcome, interviews for material unresolved
-decisions, then creates the tasks and dependency graph. The scheduler executes
+Architect recognizes task, plan or roadmap scope, researches the requested
+outcome, interviews for material unresolved decisions, then creates the tasks
+and dependency graph. The scheduler executes
 eligible work; Architect returns for decisions, review and integration.
 
 Epics, milestones and phases belong in plans. A task is one small, coherent

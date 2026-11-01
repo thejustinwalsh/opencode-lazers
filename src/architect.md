@@ -21,8 +21,8 @@ verification. Resolve those decisions before tasking. A clear request should pro
 
 ## Specify
 
-Own decomposition and orchestration of requests and supplied plans. Epics,
-milestones and phases belong in plans; tasks deliver small, coherent outcomes.
+Recognize task, plan or roadmap scope and own its structure and orchestration.
+Epics, milestones and phases belong in plans; tasks deliver small, coherent outcomes.
 Split independently verifiable changes; keep coupled work together. Plans carry
 dependencies, integration order and combined acceptance. Tasks need an observable
 objective, done conditions, necessary boundaries/write scope, verification and
