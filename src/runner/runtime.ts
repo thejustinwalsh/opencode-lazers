@@ -15,7 +15,14 @@ import {
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
-import type { PlanRow, NodeRow, AttemptRow, EffectRow, OutboxRow } from "./store.ts"
+import type {
+  PlanRow,
+  NodeRow,
+  AttemptRow,
+  EffectRow,
+  OutboxRow,
+  ArchitectRenewalRow,
+} from "./store.ts"
 import { appendOutboxReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
@@ -38,6 +45,20 @@ const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message || String(error) : String(error)
+export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
+
+export type TaskRuntimeOptions = {
+  architectIdleWindowMs?: number
+  now?: () => number
+  architectPromptHook?: boolean
+}
+
+export function architectIdleWindowMs(value: unknown): number {
+  if (value === undefined) return DEFAULT_ARCHITECT_IDLE_WINDOW_MS
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
+    throw new Error("architectIdleWindowMs must be a positive integer number of milliseconds")
+  return value
+}
 
 export class TaskRuntime {
   readonly owner = crypto.randomUUID()
@@ -45,13 +66,21 @@ export class TaskRuntime {
   private running = false
   private stopped = false
   private readonly idleWaiters: (() => void)[] = []
+  private readonly renewalLocks = new Map<string, Promise<void>>()
+  private readonly now: () => number
+  private readonly architectIdleWindowMs: number
+  private readonly architectPromptHook: boolean
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
     readonly projectID: string,
     progress?: ProgressRecorder,
+    options: TaskRuntimeOptions = {},
   ) {
     this.progress = progress ?? new ProgressRecorder(store, projectID)
+    this.now = options.now ?? Date.now
+    this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
+    this.architectPromptHook = options.architectPromptHook ?? false
   }
   get directory() {
     return this.store.repository.projectDirectory
@@ -690,6 +719,7 @@ export class TaskRuntime {
 
   private matchesContinuation(session: HostSession | null | undefined, planID: string) {
     const continuation = this.store.continuation(planID)
+    const listedPlans = session?.metadata?.lazersPlanIDs
     return (
       Boolean(continuation) &&
       session?.agent === "architect" &&
@@ -697,8 +727,542 @@ export class TaskRuntime {
       session.directory === this.directory &&
       session.parentID === (continuation?.parent_id ?? undefined) &&
       session.metadata?.lazersContinuation === true &&
-      session.metadata.lazersPlanID === planID
+      (session.metadata.lazersPlanID === planID ||
+        (Array.isArray(listedPlans) && listedPlans.includes(planID)))
     )
+  }
+
+  /** Called by the native prompt hook before OpenCode admits the input to its inbox. */
+  async observeArchitectPrompt(sessionID: string, nativeMessageID: string) {
+    const observation = this.store.observeArchitectInput(sessionID, nativeMessageID, this.now())
+    if (
+      !observation.renewal ||
+      observation.role !== "predecessor" ||
+      !["archiving", "recovering-input", "rolling-back"].includes(observation.state ?? "")
+    )
+      return
+    const renewal = this.store.architectRenewal(observation.renewal)
+    if (renewal) await this.restorePredecessorForInput(renewal)
+  }
+
+  private async withRenewalLock<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.renewalLocks.get(key) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => (release = resolve))
+    this.renewalLocks.set(key, current)
+    await previous
+    try {
+      return await run()
+    } finally {
+      release()
+      if (this.renewalLocks.get(key) === current) this.renewalLocks.delete(key)
+    }
+  }
+
+  private async restorePredecessorForInput(renewal: ArchitectRenewalRow, fence?: number) {
+    if (!this.host.updateSession)
+      throw new Error(
+        "Cannot preserve input during Architect renewal: native session update is unavailable",
+      )
+    const predecessor = await this.host.session(renewal.previous_session_id)
+    if (!predecessor)
+      throw new Error(
+        "Cannot preserve input during Architect renewal: predecessor session is unavailable",
+      )
+    if (predecessor.archived) {
+      await this.host.updateSession({ sessionID: predecessor.id, archived: false })
+      const restored = await this.host.session(predecessor.id)
+      if (!restored || restored.archived)
+        throw new Error(
+          "Cannot preserve input during Architect renewal: predecessor did not unarchive",
+        )
+    }
+    if (fence !== undefined) {
+      const changed = this.store.rollbackArchitectRenewal(
+        this.owner,
+        fence,
+        renewal.id,
+        "deferred",
+        null,
+      )
+      if (!changed) {
+        const current = this.store.architectRenewal(renewal.id)
+        if (current && ["archiving", "recovering-input", "rolling-back"].includes(current.state))
+          throw new Error(
+            "Cannot preserve input during Architect renewal: ownership rollback was not recorded",
+          )
+      }
+    }
+  }
+
+  private renewalSuccessorMatches(
+    session: HostSession | null,
+    renewal: ArchitectRenewalRow,
+    allowArchived = false,
+  ) {
+    const model = JSON.parse(renewal.model) as NonNullable<HostSession["model"]>
+    const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
+    const metadataPlanIDs = session?.metadata?.lazersPlanIDs
+    const ownsEveryPlan =
+      Array.isArray(metadataPlanIDs) &&
+      planIDs.every((id) => (metadataPlanIDs as unknown[]).includes(id))
+    const singlePlanIdentity =
+      planIDs.length === 1 && session?.metadata?.lazersPlanID === renewal.anchor_plan_id
+    return Boolean(
+      session &&
+      (allowArchived || !session.archived) &&
+      session.agent === "architect" &&
+      session.id === renewal.successor_session_id &&
+      session.projectID === this.projectID &&
+      session.directory === renewal.directory &&
+      session.parentID === renewal.previous_session_id &&
+      session.model?.id === model.id &&
+      session.model.providerID === model.providerID &&
+      session.model.variant === model.variant &&
+      session.metadata?.lazersContinuation === true &&
+      session.metadata.lazersSourceSessionID === renewal.previous_session_id &&
+      (ownsEveryPlan || singlePlanIdentity),
+    )
+  }
+
+  private renewalLabel(renewal: ArchitectRenewalRow) {
+    const plan = this.store.plan(renewal.anchor_plan_id)
+    if (!plan) return `Continue LAZERS plan ${renewal.anchor_plan_id.slice(0, 8)}`
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    return input.title ?? input.objective.slice(0, 120)
+  }
+
+  private renewalWakeContext(renewal: ArchitectRenewalRow, payload: unknown) {
+    const text = outcomeText(JSON.stringify(payload))
+    return {
+      bytes: new TextEncoder().encode(text).byteLength,
+      tokens: null,
+      tokenProvenance:
+        "unknown: OpenCode exposes session-cumulative token counts, not a message-level count for this wake",
+      cache: {
+        uncachedInput: null,
+        read: null,
+        write: null,
+        provenance:
+          "unknown until the native successor reports a public session usage snapshot; no cache hit or savings are inferred",
+      },
+      sessionID: renewal.successor_session_id,
+      sessionUsageProvenance: "OpenCode 2.2.5 session.get cumulative snapshot, not wake-attributed",
+    }
+  }
+
+  private renewalEvent(
+    renewal: ArchitectRenewalRow,
+    event: string,
+    payload: unknown,
+    fence: number,
+  ) {
+    this.store.fenced(this.owner, fence, () =>
+      this.store.record(renewal.anchor_plan_id, null, event, payload),
+    )
+  }
+
+  private renewalIssue(
+    renewal: ArchitectRenewalRow,
+    event: string,
+    error: string,
+    payload: Record<string, unknown>,
+    fence: number,
+  ) {
+    this.store.setArchitectRenewalState(
+      this.owner,
+      fence,
+      renewal.id,
+      [renewal.state],
+      renewal.state,
+      error,
+    )
+    this.renewalEvent(renewal, event, { renewalID: renewal.id, error, ...payload }, fence)
+  }
+
+  private async considerArchitectRenewal(plan: PlanRow, owner: HostSession, fence: number) {
+    if (
+      !this.architectPromptHook ||
+      !this.host.updateSession ||
+      !this.host.outcomeInbox ||
+      owner.idleAt === undefined ||
+      owner.busy ||
+      !owner.model ||
+      this.now() - owner.idleAt < this.architectIdleWindowMs
+    )
+      return false
+    const inbox = await this.host.outcomeInbox(owner.id)
+    if (inbox.length) return false
+    const labelPlan = PlanInput.parse(JSON.parse(plan.body))
+    const label = labelPlan.title ?? labelPlan.objective.slice(0, 120)
+    const renewal = this.store.beginArchitectRenewal({
+      schedulerOwner: this.owner,
+      fence,
+      anchorPlanID: plan.id,
+      previousSessionID: owner.id,
+      directory: owner.directory,
+      model: JSON.stringify(owner.model),
+      idleAt: owner.idleAt,
+      now: this.now(),
+      handoffMessageID: messageID(),
+    })
+    if (!renewal) return false
+    await this.continueArchitectRenewal(renewal, fence, label)
+    return true
+  }
+
+  private async continueArchitectRenewal(
+    initial: ArchitectRenewalRow,
+    fence: number,
+    knownLabel?: string,
+  ) {
+    try {
+      return await this.withRenewalLock(initial.id, async () => {
+        let renewal = this.store.architectRenewal(initial.id)
+        if (!renewal) return
+        if (!this.architectPromptHook || !this.host.updateSession || !this.host.outcomeInbox) {
+          if (renewal.state === "creating") {
+            this.store.setArchitectRenewalState(
+              this.owner,
+              fence,
+              renewal.id,
+              ["creating"],
+              "deferred",
+              "Native input observation is unavailable",
+            )
+            this.renewalEvent(
+              renewal,
+              "ARCHITECT_RENEWAL_DEFERRED",
+              { renewalID: renewal.id, reason: "Native input observation is unavailable" },
+              fence,
+            )
+            return
+          }
+          if (renewal.state === "archiving") {
+            if (this.host.updateSession) {
+              await this.rollbackArchitectRenewal(
+                renewal,
+                "deferred",
+                "Native input observation is unavailable",
+                fence,
+              )
+            } else {
+              this.renewalIssue(
+                renewal,
+                "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
+                "Native input observation and session restoration are unavailable",
+                {},
+                fence,
+              )
+            }
+            return
+          }
+        }
+        if (["recovering-input", "rolling-back"].includes(renewal.state)) {
+          await this.restorePredecessorForInput(renewal, fence)
+          return
+        }
+        if (renewal.state === "committed" || renewal.state === "deferred") return
+        if (renewal.state === "creating") {
+          let successor = await this.host.session(renewal.successor_session_id)
+          if (successor && !this.renewalSuccessorMatches(successor, renewal))
+            throw new Error("Native Architect renewal ID belongs to another session or route")
+          if (!successor) {
+            const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
+            await this.host
+              .createArchitect({
+                id: renewal.successor_session_id,
+                parentID: renewal.previous_session_id,
+                directory: renewal.directory,
+                model: JSON.parse(renewal.model),
+                title: `LAZERS · ${knownLabel ?? this.renewalLabel(renewal)}`.slice(0, 120),
+                planID: renewal.anchor_plan_id,
+                planIDs,
+                sourceSessionID: renewal.previous_session_id,
+              })
+              .catch(async (error) => {
+                const recovered = await this.host.session(renewal!.successor_session_id)
+                if (!this.renewalSuccessorMatches(recovered, renewal!)) throw error
+                successor = recovered
+              })
+            successor ??= await this.host.session(renewal.successor_session_id)
+          }
+          if (!this.renewalSuccessorMatches(successor, renewal))
+            throw new Error("Native Architect renewal is unavailable or foreign")
+
+          const predecessor = await this.host.session(renewal.previous_session_id)
+          const tooRecent =
+            predecessor?.idleAt === undefined ||
+            this.now() - predecessor.idleAt < this.architectIdleWindowMs
+          if (
+            !this.validArchitect(predecessor) ||
+            predecessor.busy ||
+            tooRecent ||
+            this.store.architectRenewalHasInput(renewal.id)
+          ) {
+            this.store.setArchitectRenewalState(
+              this.owner,
+              fence,
+              renewal.id,
+              ["creating"],
+              "deferred",
+            )
+            this.renewalEvent(
+              renewal,
+              "ARCHITECT_RENEWAL_DEFERRED",
+              {
+                renewalID: renewal.id,
+                inputSeen: this.store.architectRenewalHasInput(renewal.id),
+                busy: predecessor?.busy ?? null,
+              },
+              fence,
+            )
+            return
+          }
+
+          const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
+          const label = knownLabel ?? this.renewalLabel(renewal)
+          const anchor = this.store.plan(renewal.anchor_plan_id)
+          if (!anchor) throw new Error("Architect renewal plan disappeared")
+          const payload = {
+            status: "architect-handoff",
+            planID: renewal.anchor_plan_id,
+            version: anchor.version + 1,
+            planIDs,
+            label,
+            predecessorSessionID: renewal.previous_session_id,
+            successorSessionID: renewal.successor_session_id,
+          }
+          const outboxID = fingerprint({
+            kind: "architect-handoff",
+            renewalID: renewal.id,
+            messageID: renewal.handoff_message_id,
+          })
+          const metadata: OutcomeOwnership = {
+            lazersKind: "runner-outcome",
+            lazersProjectID: this.projectID,
+            lazersProjectDirectory: this.directory,
+            lazersPlanID: renewal.anchor_plan_id,
+            lazersOutboxID: outboxID,
+            lazersMessageID: renewal.handoff_message_id,
+            lazersSessionID: renewal.successor_session_id,
+            lazersStatus: "architect-handoff",
+            lazersVersion: anchor.version + 1,
+          }
+          if (
+            !this.store.transferArchitectRenewal({
+              schedulerOwner: this.owner,
+              fence,
+              renewalID: renewal.id,
+              outboxID,
+              payload: JSON.stringify(payload),
+              metadata: JSON.stringify(metadata),
+            })
+          ) {
+            renewal = this.store.architectRenewal(renewal.id)
+            if (renewal?.state === "deferred") return
+            throw new Error("Architect ownership transfer lost its durable compare-and-swap")
+          }
+          renewal = this.store.architectRenewal(renewal.id)!
+        }
+
+        if (renewal.state !== "archiving") return
+        let successor: HostSession | null
+        try {
+          successor = await this.host.session(renewal.successor_session_id)
+        } catch (error) {
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
+            errorText(error),
+            { successorSessionID: renewal.successor_session_id },
+            fence,
+          )
+          return
+        }
+        if (!successor || !this.renewalSuccessorMatches(successor, renewal, true)) {
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
+            "Durable Architect successor is missing or has a conflicting identity",
+            { successorSessionID: renewal.successor_session_id },
+            fence,
+          )
+          return
+        }
+        if (successor.archived) {
+          await this.host.updateSession!({ sessionID: successor.id, archived: false })
+          successor = await this.host.session(successor.id)
+          if (!this.renewalSuccessorMatches(successor, renewal)) {
+            this.renewalIssue(
+              renewal,
+              "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
+              "Durable Architect successor did not become active",
+              { successorSessionID: renewal.successor_session_id },
+              fence,
+            )
+            return
+          }
+        }
+        const inputSeen = () =>
+          Boolean(this.store.architectRenewal(renewal!.id)?.input_message_id) ||
+          this.store.architectRenewalHasInput(renewal!.id)
+        if (inputSeen()) {
+          await this.restorePredecessorForInput(renewal, fence)
+          return
+        }
+        const predecessorBeforeArchive = await this.host.session(renewal.previous_session_id)
+        if (!predecessorBeforeArchive) {
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
+            "Predecessor session is unavailable before archival",
+            {},
+            fence,
+          )
+          return
+        }
+        if (
+          predecessorBeforeArchive.agent !== "architect" ||
+          predecessorBeforeArchive.projectID !== this.projectID ||
+          predecessorBeforeArchive.directory !== renewal.directory
+        ) {
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
+            "Predecessor identity changed before archival",
+            {},
+            fence,
+          )
+          return
+        }
+        if (
+          predecessorBeforeArchive.busy ||
+          predecessorBeforeArchive.idleAt === undefined ||
+          this.now() - predecessorBeforeArchive.idleAt < this.architectIdleWindowMs
+        ) {
+          await this.rollbackArchitectRenewal(
+            renewal,
+            "deferred",
+            "Predecessor became busy or recent before archival",
+            fence,
+          )
+          return
+        }
+        let archiveError: string | null = null
+        if (!predecessorBeforeArchive.archived) {
+          try {
+            await this.host.updateSession!({
+              sessionID: renewal.previous_session_id,
+              archived: true,
+            })
+          } catch (error) {
+            archiveError = errorText(error)
+          }
+        }
+
+        let predecessor: HostSession | null
+        try {
+          predecessor = await this.host.session(renewal.previous_session_id)
+        } catch (error) {
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
+            errorText(error),
+            { archiveError },
+            fence,
+          )
+          return
+        }
+        if (!predecessor) {
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
+            "Predecessor session is unavailable",
+            { archiveError },
+            fence,
+          )
+          return
+        }
+        if (!predecessor.archived) {
+          await this.rollbackArchitectRenewal(
+            renewal,
+            "archive-failed",
+            archiveError ?? "Native archive was not observed",
+            fence,
+          )
+          return
+        }
+        if (archiveError) {
+          this.renewalEvent(
+            renewal,
+            "ARCHITECT_RENEWAL_ARCHIVE_RECONCILED",
+            { renewalID: renewal.id, error: archiveError, archived: true },
+            fence,
+          )
+        }
+        if (inputSeen()) {
+          await this.restorePredecessorForInput(renewal, fence)
+          return
+        }
+        const payload = {
+          status: "architect-handoff",
+          planID: renewal.anchor_plan_id,
+          planIDs: this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id),
+          label: knownLabel ?? this.renewalLabel(renewal),
+          predecessorSessionID: renewal.previous_session_id,
+          successorSessionID: renewal.successor_session_id,
+        }
+        const committed = this.store.finishArchitectRenewal(
+          this.owner,
+          fence,
+          renewal.id,
+          this.renewalWakeContext(renewal, payload),
+        )
+        if (!committed) {
+          const current = this.store.architectRenewal(renewal.id)
+          if (current?.input_message_id || this.store.architectRenewalHasInput(renewal.id))
+            await this.restorePredecessorForInput(current ?? renewal, fence)
+        }
+      })
+    } catch (error) {
+      const current = this.store.architectRenewal(initial.id)
+      if (
+        current &&
+        ["creating", "archiving", "recovering-input", "rolling-back"].includes(current.state)
+      ) {
+        this.store.setArchitectRenewalState(
+          this.owner,
+          fence,
+          current.id,
+          [current.state],
+          current.state,
+          errorText(error),
+        )
+        this.renewalEvent(
+          current,
+          "ARCHITECT_RENEWAL_RECOVERY_FAILED",
+          { renewalID: current.id, state: current.state, error: errorText(error) },
+          fence,
+        )
+      }
+      throw error
+    }
+  }
+
+  private async rollbackArchitectRenewal(
+    renewal: ArchitectRenewalRow,
+    state: "deferred" | "archive-failed",
+    error: string | null,
+    fence: number,
+  ) {
+    if (!this.host.updateSession)
+      throw new Error("Cannot recover Architect renewal without native session update")
+    await this.host.updateSession({ sessionID: renewal.previous_session_id, archived: false })
+    const restored = await this.host.session(renewal.previous_session_id)
+    if (!restored || restored.archived)
+      throw new Error("Architect renewal rollback did not restore the predecessor")
+    this.store.rollbackArchitectRenewal(this.owner, fence, renewal.id, state, error)
   }
 
   private hold(plan: PlanRow, reason: string, allowedActions = ["audit", "reconcile", "cancel"]) {
@@ -840,6 +1404,8 @@ export class TaskRuntime {
     }, 10000)
     try {
       // A lease only selects a reconciler; it never proves an old side effect stopped.
+      for (const renewal of this.store.architectRenewalsNeedingRecovery())
+        await this.continueArchitectRenewal(renewal, fence)
       for (let plan of this.store
         .plans()
         .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))) {
@@ -873,11 +1439,30 @@ export class TaskRuntime {
   private async step(initialPlan: PlanRow, fence: number) {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
+    const planRenewal = this.store.architectRenewalForPlan(plan.id)
+    if (
+      planRenewal &&
+      ["creating", "archiving", "recovering-input", "rolling-back"].includes(planRenewal.state)
+    ) {
+      await this.continueArchitectRenewal(planRenewal, fence)
+      return
+    }
     if (plan.state === "cleaning") {
       await this.cleanupWorktrees(plan, fence)
       return
     }
     const owner = await this.host.session(plan.owner)
+    if (this.validArchitect(owner)) {
+      const renewal = this.store.architectRenewalForSource(owner.id)
+      if (
+        renewal &&
+        ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state)
+      ) {
+        await this.continueArchitectRenewal(renewal, fence)
+        return
+      }
+      if (await this.considerArchitectRenewal(plan, owner, fence)) return
+    }
     if (!this.validArchitect(owner)) {
       await this.ensureArchitectOwner(plan, owner)
       plan = this.store.plan(plan.id)!
@@ -2570,6 +3155,7 @@ export class TaskRuntime {
     }
     for (const group of groups.values()) {
       const ordered = group.toSorted((a, b) => a.version - b.version || a.sequence - b.sequence)
+      if (this.store.architectRenewalBlocksDelivery(ordered[0]!.plan_id)) continue
       const plan = this.store.plan(ordered[0]!.plan_id)
       if (!plan) continue
       const ready = new Map<string, boolean>()

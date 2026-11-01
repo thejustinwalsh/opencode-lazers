@@ -15,7 +15,7 @@ import { TaskRepository } from "../storage.ts"
 import { combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
-import { TaskRuntime } from "./runtime.ts"
+import { DEFAULT_ARCHITECT_IDLE_WINDOW_MS, TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
 import type { WorkerPersona } from "./schema.ts"
@@ -48,6 +48,9 @@ function fixture(
     taskFiles?: { name: string; path: string; scope?: string[] }[]
     requireVerifierPreparation?: boolean
     loseWorktreeResponse?: boolean | "empty-error"
+    architectIdleWindowMs?: number
+    architectPromptHook?: boolean
+    now?: () => number
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -137,6 +140,7 @@ function fixture(
     messages: [],
   })
   const events: string[] = []
+  const notifications: { sessionID: string; id: string; text: string }[] = []
   const instructions = new Map<string, Map<string, string>>()
   const inbox = new Map<string, OutcomeInboxEntry[]>()
   const admissionOwners = new Map<string, string>()
@@ -189,6 +193,7 @@ function fixture(
         metadata: {
           lazersContinuation: true,
           lazersPlanID: input.planID,
+          ...(input.planIDs ? { lazersPlanIDs: input.planIDs } : {}),
           lazersSourceSessionID: input.sourceSessionID,
         },
         model: input.model,
@@ -199,6 +204,12 @@ function fixture(
         cost: null,
         messages: [],
       })
+    },
+    updateSession: async ({ sessionID, archived }) => {
+      const session = sessions.get(sessionID)
+      if (!session) throw new Error("Native session not found")
+      events.push(`update-session:${sessionID}:${archived}`)
+      session.archived = archived
     },
     prompt: async (input) => {
       events.push(`prompt:${input.id}`)
@@ -284,6 +295,7 @@ function fixture(
         throw new Error("Native lifecycle conflict: message ID belongs to another session")
       admissionOwners.set(input.id, input.sessionID)
       events.push(`notify:${input.id}`)
+      notifications.push({ sessionID: input.sessionID, id: input.id, text: input.text })
       const entries = inbox.get(input.sessionID) ?? []
       if (!entries.some((entry) => entry.id === input.id))
         entries.push({
@@ -300,7 +312,11 @@ function fixture(
       events.push(`stop:${id}`)
     },
   }
-  const runtime = new TaskRuntime(store, host, "project")
+  const runtime = new TaskRuntime(store, host, "project", undefined, {
+    architectIdleWindowMs: options.architectIdleWindowMs,
+    architectPromptHook: options.architectPromptHook,
+    now: options.now,
+  })
   const inputFor = (
     selected: typeof tasks,
     config: {
@@ -383,6 +399,7 @@ function fixture(
     tasks,
     sessions,
     events,
+    notifications,
     instructions,
     host,
     inbox,
@@ -3826,4 +3843,673 @@ test("heartbeat avoids context and rechecks a stopped worker after detailed acco
   await f.runtime.tick()
   expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)[0]!.tool_count).toBe(9)
+})
+
+async function prepareIdleArchitect(f: ReturnType<typeof fixture>, now: number, idleFor: number) {
+  await runPlan(f)
+  await drive(f.runtime, 2)
+  const owner = f.sessions.get("owner")!
+  owner.busy = false
+  owner.idleAt = now - idleFor
+  return f.store.attempts(f.receipt.planID)[0]!
+}
+
+test("the registered scheduler reuses recent/busy Architects and renews at the default threshold", async () => {
+  const now = 2_000_000_000_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  expect(architectIdleWindowMs(undefined)).toBe(30 * 60 * 1000)
+  expect(DEFAULT_ARCHITECT_IDLE_WINDOW_MS).toBe(30 * 60 * 1000)
+  expect(() => architectIdleWindowMs(0)).toThrow("positive integer")
+  const attempt = await prepareIdleArchitect(f, now, 0)
+  const owner = f.sessions.get("owner")!
+  owner.messages.push({ id: "old-transcript", text: "SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY" })
+  owner.idleAt = now - DEFAULT_ARCHITECT_IDLE_WINDOW_MS + 1
+
+  await f.runtime.tick()
+  expect(f.store.architectRenewalsNeedingRecovery()).toHaveLength(0)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(0)
+  expect(owner.archived).toBe(false)
+
+  owner.idleAt = now - DEFAULT_ARCHITECT_IDLE_WINDOW_MS
+  const peer = new TaskRuntime(f.store, f.host, "project", undefined, {
+    architectPromptHook: true,
+    now: () => now,
+  })
+  cleanup.push(() => peer.stop())
+  const createInputs: Parameters<RunnerHost["createArchitect"]>[0][] = []
+  const create = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    createInputs.push(input)
+    await create(input)
+  }
+  const update = f.host.updateSession!
+  let archiveSawDurableTransfer = false
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived) {
+      const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+      const handoff = f.store
+        .outboxForDelivery()
+        .find((row) => row.id === renewal.handoff_outbox_id)
+      expect(renewal.state).toBe("archiving")
+      expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+      expect(handoff?.state).toBe("pending")
+      archiveSawDurableTransfer = true
+    }
+    await update(input)
+  }
+
+  await Promise.all([f.runtime.tick(), peer.tick()])
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const successor = f.sessions.get(renewal.successor_session_id)!
+  expect(renewal.state).toBe("committed")
+  expect(archiveSawDurableTransfer).toBe(true)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(successor.id)
+  expect(owner.archived).toBe(true)
+  expect(successor.parentID).toBe(owner.id)
+  expect(successor.model).toEqual(owner.model)
+  expect(successor.metadata?.lazersPlanID).toBe(f.receipt.planID)
+  expect(successor.metadata?.lazersPlanIDs).toContain(f.receipt.planID)
+  expect(createInputs).toHaveLength(1)
+  expect(createInputs[0]).toMatchObject({
+    parentID: "owner",
+    planID: f.receipt.planID,
+    sourceSessionID: "owner",
+    title: expect.stringContaining("Implement a"),
+    model: owner.model,
+  })
+  expect(f.store.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  expect(owner.messages).toEqual([
+    { id: "old-transcript", text: "SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY" },
+  ])
+  const wake = f.notifications.find((notice) => notice.sessionID === successor.id)!
+  expect(wake.text).toContain("lazers_inspect_plan")
+  expect(wake.text).not.toContain("SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY")
+  expect(f.inbox.get(successor.id)).toHaveLength(1)
+  const committed = f.store.latestTransition<{ wakeContext: { bytes: number; tokens: null } }>(
+    f.receipt.planID,
+    null,
+    "ARCHITECT_RENEWAL_COMMITTED",
+  )!
+  expect(committed.wakeContext.bytes).toBe(new TextEncoder().encode(wake.text).byteLength)
+  expect(committed.wakeContext.tokens).toBeNull()
+})
+
+test("idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed", async () => {
+  const now = 2_000_000_100_000
+  expect(architectIdleWindowMs(5_000)).toBe(5_000)
+
+  const overridden = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 5_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(overridden, now, 4_999)
+  await overridden.runtime.tick()
+  expect(overridden.events.filter((event) => event.startsWith("create-architect:")).length).toBe(0)
+  overridden.sessions.get("owner")!.idleAt = now - 5_000
+  await overridden.runtime.tick()
+  expect(overridden.store.architectRenewalForPlan(overridden.receipt.planID)?.state).toBe(
+    "committed",
+  )
+
+  for (const scenario of ["busy", "unsupported-hook", "input-before-create"] as const) {
+    const f = fixture({
+      delayed: true,
+      architectPromptHook: scenario !== "unsupported-hook",
+      architectIdleWindowMs: 5_000,
+      now: () => now,
+      taskFiles: [{ name: "a", path: "a.txt" }],
+    })
+    await prepareIdleArchitect(f, now, 5_000)
+    const owner = f.sessions.get("owner")!
+    if (scenario === "busy") owner.busy = true
+    if (scenario === "input-before-create") {
+      await f.runtime.observeArchitectPrompt(owner.id, "pre-create-user-message")
+      await f.runtime.observeArchitectPrompt(owner.id, "pre-create-user-message")
+      expect(
+        f.store.atomic(
+          (db) =>
+            db
+              .query<{ count: number }, [string]>(
+                "SELECT count(*) AS count FROM runner_architect_inputs WHERE session_id=?",
+              )
+              .get(owner.id)!.count,
+        ),
+      ).toBe(1)
+    }
+    await f.runtime.tick()
+    expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(0)
+    expect(f.events.filter((event) => event.startsWith("update-session:")).length).toBe(0)
+    expect(owner.archived).toBe(false)
+  }
+})
+
+test("one successor receives every live plan owned by the same Architect", async () => {
+  const now = 2_000_000_150_000
+  const f = fixture({
+    delayed: true,
+    independent: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 5_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a/a.txt" }],
+  })
+  const taskB = f.createTask("b", "b/b.txt")
+  const planB = f.store.submit(f.inputFor([taskB], { requestID: "second-owner-plan" }), "owner")
+  await runPlan(f)
+  await runPlan(f, planB.planID, "run-second-owner-plan")
+  await drive(f.runtime, 2)
+  const attempts = [f.store.attempts(f.receipt.planID)[0]!, f.store.attempts(planB.planID)[0]!]
+  expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
+  f.sessions.get("owner")!.idleAt = now - 5_000
+
+  await f.runtime.tick()
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const successor = f.sessions.get(renewal.successor_session_id)!
+  expect(renewal.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(successor.id)
+  expect(f.store.plan(planB.planID)?.owner).toBe(successor.id)
+  expect(successor.metadata?.lazersPlanIDs).toEqual([f.receipt.planID, planB.planID].sort())
+  expect(f.store.continuation(f.receipt.planID)?.session_id).toBe(successor.id)
+  expect(f.store.continuation(planB.planID)?.session_id).toBe(successor.id)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+  expect(attempts.map((attempt) => f.store.attempts(attempt.plan_id)[0]?.session_id)).toEqual(
+    attempts.map((attempt) => attempt.session_id),
+  )
+  expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
+  const handoff = f.store
+    .outboxForDelivery()
+    .find((row) => JSON.parse(row.payload).status === "architect-handoff")!
+  expect(JSON.parse(handoff.payload).planIDs).toEqual([f.receipt.planID, planB.planID].sort())
+})
+
+test("input during a deferred native create prevents transfer and predecessor archival", async () => {
+  const now = 2_000_000_200_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const create = f.host.createArchitect
+  let startCreate!: () => void
+  let releaseCreate!: () => void
+  const started = new Promise<void>((resolve) => (startCreate = resolve))
+  const gate = new Promise<void>((resolve) => (releaseCreate = resolve))
+  f.host.createArchitect = async (input) => {
+    startCreate()
+    await gate
+    await create(input)
+  }
+
+  const tick = f.runtime.tick()
+  await started
+  await f.runtime.observeArchitectPrompt("owner", "input-during-create")
+  f.sessions.get("owner")!.messages.push({ id: "input-during-create", text: "Keep this input" })
+  releaseCreate()
+  await tick
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("deferred")
+  expect(renewal.input_message_id).toBe("input-during-create")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(f.events.filter((event) => event.startsWith("update-session:")).length).toBe(0)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+})
+
+test("input racing native archival is restored, ownership rolls back, and its handoff is suppressed", async () => {
+  const now = 2_000_000_300_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const update = f.host.updateSession!
+  let startArchive!: () => void
+  let releaseArchive!: () => void
+  const started = new Promise<void>((resolve) => (startArchive = resolve))
+  const gate = new Promise<void>((resolve) => (releaseArchive = resolve))
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived) {
+      startArchive()
+      await gate
+    }
+    await update(input)
+  }
+
+  const tick = f.runtime.tick()
+  await started
+  await f.runtime.observeArchitectPrompt("owner", "input-during-archive")
+  f.sessions.get("owner")!.messages.push({ id: "input-during-archive", text: "Keep this input" })
+  releaseArchive()
+  await tick
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const handoff = f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]
+  expect(renewal.state).toBe("deferred")
+  expect(renewal.input_message_id).toBe("input-during-archive")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(f.sessions.get("owner")?.messages.at(-1)?.id).toBe("input-during-archive")
+  expect(handoff.find((row) => JSON.parse(row.payload).status === "architect-handoff")?.state).toBe(
+    "superseded",
+  )
+  expect(f.notifications).toHaveLength(0)
+  expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(1)
+  expect(f.events.filter((event) => event === "update-session:owner:false")).toHaveLength(1)
+})
+
+test("input on the reserved successor is preserved there without reversing predecessor transfer", async () => {
+  const now = 2_000_000_325_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const update = f.host.updateSession!
+  let startArchive!: () => void
+  let releaseArchive!: () => void
+  const started = new Promise<void>((resolve) => (startArchive = resolve))
+  const gate = new Promise<void>((resolve) => (releaseArchive = resolve))
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived) {
+      startArchive()
+      await gate
+    }
+    await update(input)
+  }
+
+  const tick = f.runtime.tick()
+  await started
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  await f.runtime.observeArchitectPrompt(renewal.successor_session_id, "successor-user-input")
+  const successor = f.sessions.get(renewal.successor_session_id)!
+  successor.busy = true
+  successor.messages.push({ id: "successor-user-input", text: "Keep input on successor" })
+  expect(f.store.architectRenewalHasInput(renewal.id)).toBe(false)
+  releaseArchive()
+  await tick
+
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(successor.id)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(successor.messages.at(-1)?.id).toBe("successor-user-input")
+  expect(successor.busy).toBe(true)
+  expect(
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ session_id: string }, [string]>(
+            "SELECT session_id FROM runner_architect_inputs WHERE message_id=?",
+          )
+          .get("successor-user-input")?.session_id,
+    ),
+  ).toBe(successor.id)
+})
+
+test("an outcome admitted during archival is blocked then retargeted to the renewed owner", async () => {
+  const now = 2_000_000_350_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const beforeCreatePlan = f.store.plan(f.receipt.planID)!
+  f.store.atomic((db) =>
+    db
+      .query(
+        "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES(?,?,?,?,?,'pending',1,?,NULL)",
+      )
+      .run(
+        "task-outcome-before-create",
+        beforeCreatePlan.id,
+        "owner",
+        "task-outcome-before-create-message",
+        JSON.stringify({
+          planID: beforeCreatePlan.id,
+          version: beforeCreatePlan.version,
+          status: "task-accepted",
+          taskID: f.tasks[0]!.id,
+          artifact: "worker-artifact",
+        }),
+        JSON.stringify({
+          lazersKind: "runner-outcome",
+          lazersProjectID: "project",
+          lazersProjectDirectory: f.root,
+          lazersPlanID: beforeCreatePlan.id,
+          lazersOutboxID: "task-outcome-before-create",
+          lazersMessageID: "task-outcome-before-create-message",
+          lazersSessionID: "owner",
+          lazersStatus: "task-accepted",
+          lazersVersion: beforeCreatePlan.version,
+        }),
+      ),
+  )
+  const update = f.host.updateSession!
+  let startArchive!: () => void
+  let releaseArchive!: () => void
+  const started = new Promise<void>((resolve) => (startArchive = resolve))
+  const gate = new Promise<void>((resolve) => (releaseArchive = resolve))
+  let oldOutcomeID = ""
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived) {
+      const plan = f.store.plan(f.receipt.planID)!
+      const renewal = f.store.architectRenewalForPlan(plan.id)!
+      oldOutcomeID = "task-outcome-during-archive"
+      const oldPayload = {
+        planID: plan.id,
+        version: plan.version,
+        status: "task-accepted",
+        taskID: f.tasks[0]!.id,
+        artifact: "worker-artifact",
+      }
+      const oldMetadata = {
+        lazersKind: "runner-outcome",
+        lazersProjectID: "project",
+        lazersProjectDirectory: f.root,
+        lazersPlanID: plan.id,
+        lazersOutboxID: oldOutcomeID,
+        lazersMessageID: "old-task-outcome-message",
+        lazersSessionID: "owner",
+        lazersStatus: "task-accepted",
+        lazersVersion: plan.version,
+      }
+      f.store.atomic((db) =>
+        db
+          .query(
+            "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES(?,?,?,?,?,'pending',1,?,NULL)",
+          )
+          .run(
+            oldOutcomeID,
+            plan.id,
+            "owner",
+            "old-task-outcome-message",
+            JSON.stringify(oldPayload),
+            JSON.stringify(oldMetadata),
+          ),
+      )
+      expect(renewal.state).toBe("archiving")
+      expect(plan.owner).toBe(renewal.successor_session_id)
+      expect(f.notifications).toHaveLength(0)
+      expect(f.store.outboxForDelivery().find((row) => row.id === oldOutcomeID)?.state).toBe(
+        "pending",
+      )
+      startArchive()
+      await gate
+    }
+    await update(input)
+  }
+
+  const tick = f.runtime.tick()
+  await started
+  expect(f.notifications).toHaveLength(0)
+  releaseArchive()
+  await tick
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const successor = renewal.successor_session_id
+  let oldOutcome = f.store.outboxForDelivery().find((row) => row.id === oldOutcomeID)!
+  expect(renewal.state).toBe("committed")
+  expect(
+    (f.store.detail(f.receipt.planID).delivery as { id: string; state: string }[]).find(
+      (row) => row.id === "task-outcome-before-create",
+    )?.state,
+  ).toBe("superseded")
+  expect(oldOutcome.session_id).toBe(successor)
+  expect(oldOutcome.message_id).not.toBe("old-task-outcome-message")
+  expect(JSON.parse(oldOutcome.receipt!).history).toContainEqual(
+    expect.objectContaining({ kind: "owner-retargeted-current-outcome", toSessionID: successor }),
+  )
+  expect(f.notifications).toHaveLength(2)
+  expect(f.notifications.every((notice) => notice.sessionID === successor)).toBe(true)
+
+  await f.runtime.tick()
+  oldOutcome = f.store.outboxForDelivery().find((row) => row.id === oldOutcomeID)!
+  expect(oldOutcome.state).toBe("admitted")
+  expect(f.notifications.some((notice) => notice.text.includes('"status":"task-accepted"'))).toBe(
+    true,
+  )
+  expect(f.notifications.every((notice) => notice.sessionID === successor)).toBe(true)
+})
+
+test("native archive failure remains visible and retries the same successor safely", async () => {
+  const now = 2_000_000_375_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const update = f.host.updateSession!
+  let failArchive = true
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived && failArchive) {
+      failArchive = false
+      throw new Error("native archive temporarily unavailable")
+    }
+    await update(input)
+  }
+
+  await f.runtime.tick()
+
+  const failed = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const successorID = failed.successor_session_id
+  expect(failed.state).toBe("archive-failed")
+  expect(failed.error).toContain("native archive temporarily unavailable")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(
+    f.store.latestTransition<{ error: string }>(
+      f.receipt.planID,
+      null,
+      "ARCHITECT_RENEWAL_ROLLED_BACK",
+    )?.error,
+  ).toContain("native archive temporarily unavailable")
+
+  f.sessions.get("owner")!.idleAt = now - 1_000
+  f.host.updateSession = update
+  await f.runtime.tick()
+
+  const recovered = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(recovered.id).toBe(failed.id)
+  expect(recovered.state).toBe("committed")
+  expect(recovered.successor_session_id).toBe(successorID)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(successorID)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+})
+
+test("a reopened scheduler recovers a durable transfer before archival without changing workers", async () => {
+  const now = 2_000_000_400_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const attempt = await prepareIdleArchitect(f, now, 1_000)
+  const ownerID = f.runtime.owner
+  const fence = f.store.claim(ownerID, now)!
+  const plan = f.store.plan(f.receipt.planID)!
+  const renewal = f.store.beginArchitectRenewal({
+    schedulerOwner: ownerID,
+    fence,
+    anchorPlanID: plan.id,
+    previousSessionID: plan.owner,
+    directory: f.sessions.get(plan.owner)!.directory,
+    model: JSON.stringify(f.sessions.get(plan.owner)!.model),
+    idleAt: f.sessions.get(plan.owner)!.idleAt!,
+    now,
+    handoffMessageID: "reopen-handoff-message",
+  })!
+  await f.host.createArchitect({
+    id: renewal.successor_session_id,
+    parentID: renewal.previous_session_id,
+    directory: renewal.directory,
+    model: JSON.parse(renewal.model),
+    title: "LAZERS · reopened plan",
+    planID: renewal.anchor_plan_id,
+    planIDs: f.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id),
+    sourceSessionID: renewal.previous_session_id,
+  })
+  const payload = {
+    status: "architect-handoff",
+    planID: plan.id,
+    version: plan.version + 1,
+    planIDs: [plan.id],
+    label: "reopened plan",
+    predecessorSessionID: renewal.previous_session_id,
+    successorSessionID: renewal.successor_session_id,
+  }
+  const metadata = {
+    lazersKind: "runner-outcome",
+    lazersProjectID: "project",
+    lazersProjectDirectory: f.root,
+    lazersPlanID: plan.id,
+    lazersOutboxID: "reopen-handoff-outbox",
+    lazersMessageID: renewal.handoff_message_id,
+    lazersSessionID: renewal.successor_session_id,
+    lazersStatus: "architect-handoff",
+    lazersVersion: plan.version + 1,
+  }
+  expect(
+    f.store.transferArchitectRenewal({
+      schedulerOwner: ownerID,
+      fence,
+      renewalID: renewal.id,
+      outboxID: "reopen-handoff-outbox",
+      payload: JSON.stringify(payload),
+      metadata: JSON.stringify(metadata),
+    }),
+  ).toBe(true)
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("archiving")
+  expect(f.store.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get(renewal.previous_session_id)?.archived).toBe(false)
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+
+  const reopenedRepository = new TaskRepository(f.repository.path, f.root)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  const reopened = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectIdleWindowMs: 1_000,
+    architectPromptHook: true,
+    now: () => now,
+  })
+  cleanup.push(() => {
+    void reopened.stop()
+    reopenedRepository.close()
+  })
+  await reopened.tick()
+
+  expect(reopenedStore.architectRenewal(renewal.id)?.state).toBe("committed")
+  expect(reopenedStore.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get(renewal.previous_session_id)?.archived).toBe(true)
+  expect(reopenedStore.attempts(plan.id)[0]?.session_id).toBe(attempt.session_id)
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+  expect(f.notifications).toHaveLength(1)
+})
+
+test("a restarted scheduler without input observation rolls back and never archives", async () => {
+  const now = 2_000_000_450_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: false,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const schedulerOwner = f.runtime.owner
+  const fence = f.store.claim(schedulerOwner, now)!
+  const plan = f.store.plan(f.receipt.planID)!
+  const predecessor = f.sessions.get(plan.owner)!
+  const renewal = f.store.beginArchitectRenewal({
+    schedulerOwner,
+    fence,
+    anchorPlanID: plan.id,
+    previousSessionID: predecessor.id,
+    directory: predecessor.directory,
+    model: JSON.stringify(predecessor.model),
+    idleAt: predecessor.idleAt!,
+    now,
+    handoffMessageID: "unsupported-hook-handoff",
+  })!
+  await f.host.createArchitect({
+    id: renewal.successor_session_id,
+    parentID: predecessor.id,
+    directory: renewal.directory,
+    model: JSON.parse(renewal.model),
+    title: "LAZERS · unsupported-hook case",
+    planID: plan.id,
+    planIDs: [plan.id],
+    sourceSessionID: predecessor.id,
+  })
+  const payload = {
+    status: "architect-handoff",
+    planID: plan.id,
+    version: plan.version + 1,
+    planIDs: [plan.id],
+    label: "unsupported-hook case",
+    predecessorSessionID: predecessor.id,
+    successorSessionID: renewal.successor_session_id,
+  }
+  const metadata = {
+    lazersKind: "runner-outcome",
+    lazersProjectID: "project",
+    lazersProjectDirectory: f.root,
+    lazersPlanID: plan.id,
+    lazersOutboxID: "unsupported-hook-outbox",
+    lazersMessageID: renewal.handoff_message_id,
+    lazersSessionID: renewal.successor_session_id,
+    lazersStatus: "architect-handoff",
+    lazersVersion: plan.version + 1,
+  }
+  expect(
+    f.store.transferArchitectRenewal({
+      schedulerOwner,
+      fence,
+      renewalID: renewal.id,
+      outboxID: "unsupported-hook-outbox",
+      payload: JSON.stringify(payload),
+      metadata: JSON.stringify(metadata),
+    }),
+  ).toBe(true)
+
+  await f.runtime.tick()
+
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("deferred")
+  expect(f.store.plan(plan.id)?.owner).toBe(predecessor.id)
+  expect(predecessor.archived).toBe(false)
+  expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(0)
+  expect(
+    (f.store.detail(plan.id).delivery as { id: string; state: string }[]).find(
+      (row) => row.id === "unsupported-hook-outbox",
+    )?.state,
+  ).toBe("superseded")
 })

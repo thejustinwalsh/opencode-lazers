@@ -136,8 +136,17 @@ export function nativeHost(
         metadata: session.metadata,
         archived: session.time.archived !== undefined,
         busy: busy > idle,
+        ...(idle ? { idleAt: idle } : {}),
         outcome: session.outcome,
         model: session.model,
+        usage: {
+          input: session.tokens.input,
+          output: session.tokens.output,
+          reasoning: session.tokens.reasoning,
+          cacheRead: session.tokens.cache.read,
+          cacheWrite: session.tokens.cache.write,
+          provenance: "OpenCode 2.2.5 session.get cumulative token snapshot",
+        },
         tokens:
           session.tokens.input +
           session.tokens.output +
@@ -234,8 +243,17 @@ export function nativeHost(
           metadata: {
             lazersContinuation: true,
             lazersPlanID: input.planID,
+            ...(input.planIDs ? { lazersPlanIDs: input.planIDs } : {}),
             lazersSourceSessionID: input.sourceSessionID,
           },
+        }),
+      )
+    },
+    async updateSession(input) {
+      await Effect.runPromise(
+        ctx.session.update({
+          sessionID: Session.ID.make(input.sessionID),
+          archived: input.archived,
         }),
       )
     },

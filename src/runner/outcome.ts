@@ -3,6 +3,19 @@ export function outcomeText(serialized: string) {
   const payload = JSON.parse(serialized)
   let action: string
   switch (payload.status) {
+    case "architect-handoff": {
+      const planIDs = Array.isArray(payload.planIDs)
+        ? payload.planIDs.filter((id: unknown): id is string => typeof id === "string")
+        : [payload.planID].filter((id: unknown): id is string => typeof id === "string")
+      return [
+        "LAZERS Architect continuity handoff",
+        `Purpose: ${typeof payload.label === "string" ? payload.label : "Continue the existing project work"}`,
+        `Predecessor: ${String(payload.predecessorSessionID ?? "unknown")} (archived; linked as parent).`,
+        `Plan IDs: ${planIDs.join(", ") || "none recorded"}.`,
+        "No prior transcript was replayed. Fetch current durable state with lazers_inspect_plan for these IDs and review the current outcomes before deciding.",
+        "Existing workers continue unchanged; do not restart them.",
+      ].join("\n")
+    }
     case "task-accepted":
       action =
         "Review the accepted task artifact now; repair defects, integrate the reviewed result through runtime commands, and continue the existing backlog. Do not wait for plan finalization or disturb active workers."

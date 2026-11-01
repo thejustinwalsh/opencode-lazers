@@ -1,17 +1,41 @@
-# Architect lifecycle follow-up — held
+# Architect lifecycle follow-up — implementation and dogfood gate
 
-Task `239f45a9-3247-4cba-b339-19c8267d0800` is queued in draft plan
-`8253ff59-57a5-45fd-8847-acd971438af8`. It has not run. Keep it behind scheduler
-integration, supported native reload and actionable wake-up verification. Its
-execution baseline must preserve intervening reviewed work.
+Task `239f45a9-3247-4cba-b339-19c8267d0800` (LZ-28) is implementing the lifecycle
+increment from the reviewed `d9ef198` baseline, after scheduler plan
+`6ed421e4-88cc-4324-b521-8f9a32d5de43` integrated. This does not redispatch
+scheduler or worker-progress work.
 
 The user selected a configurable **30-minute** idle default; busy/recent Architects
 are reused. Durable handoff and current-owner transfer precede native archival.
-No automatic old-transcript summary is permitted. Input/ownership safety during
-renewal is unproven on the pinned host API; if it cannot be established, retain
-the live owner and block archival rather than lose input. Exact-artifact native
-dogfood must observe input/outcome races, archive visibility, workers continuing,
-wake-context size and public cache usage before acceptance.
+No automatic old-transcript summary or replay is permitted. The implementation
+uses the pinned OpenCode 2.2.5 prompt hook to record native input IDs before inbox
+admission and `session.update({ archived })` for native archival/recovery. It fails
+closed when prompt observation or native update is unavailable. Automated race,
+reopen and multi-scheduler coverage is recorded in
+`.agents/docs/evidence/architect-context-lifecycle/implementation.md`.
+
+**Native dogfood remains unresolved.** Root must verify the exact committed
+artifact against live sessions: busy reuse, idle renewal, visible archived
+predecessor, current-owner outcome routing, input arriving during transfer/archive,
+and workers continuing. No such native observations are claimed here. The handoff
+byte count is measured from the exact wake text; wake-attributed tokens and cache
+read/write categories remain unknown unless a public native observation proves
+them. Cumulative session usage must not be presented as wake-attributed.
+
+## Pinned host input/archive behavior
+
+At OpenCode commit `9bbb8ce18c80f099e0e448775f59d965ead40a21` (2.2.5), the
+session prompt hook runs before native inbox admission and exposes readonly
+`sessionID`/`messageID`; it cannot retarget input. `Session.prompt` does not reject
+an archived session. Consequently, the hook durably marks the input ID and
+unarchives the predecessor before returning; the scheduler then recovers/rolls
+back ownership and suppresses an unconsumed handoff. The scheduler checks the
+input marker on both sides of native archival. The implementation never copies
+prompt text into its lifecycle input table.
+
+- [Pinned `session.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/session.ts)
+- [Pinned `prompt.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/prompt.ts)
+- [Pinned plugin `SessionPrompt`](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/effect/session.ts)
 
 ## Cache research, checked 2026-10-31
 

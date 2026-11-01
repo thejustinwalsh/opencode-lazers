@@ -112,6 +112,57 @@ test("legacy delivered outbox schema migrates across an actual close and reopen 
   expect(JSON.parse(row.receipt)).toEqual({ kind: "legacy-host-admitted", consumption: "unknown" })
 })
 
+test("legacy continuation session uniqueness migrates so one renewal can own multiple plans", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-continuation-migration-"))
+  directories.push(directory)
+  const projectDirectory = join(directory, "project")
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), projectDirectory)
+  repositories.push(repository)
+  repository.atomic((db) => {
+    db.exec(`
+      CREATE TABLE runner_plans (
+        id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
+        revision INTEGER NOT NULL, version INTEGER NOT NULL, state TEXT NOT NULL,
+        body TEXT NOT NULL, model TEXT, reason TEXT, artifact TEXT
+      );
+      CREATE TABLE runner_continuations (
+        plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
+        parent_id TEXT, directory TEXT NOT NULL, model TEXT, generation INTEGER NOT NULL
+      );
+    `)
+    for (const id of ["legacy-plan-a", "legacy-plan-b"])
+      db.query("INSERT INTO runner_plans VALUES(?,?,?,1,1,'running','{}',NULL,NULL,NULL)").run(
+        id,
+        projectDirectory,
+        "owner",
+      )
+    db.query("INSERT INTO runner_continuations VALUES(?,?,?,?,?,1)").run(
+      "legacy-plan-a",
+      "ses_shared-architect",
+      null,
+      projectDirectory,
+      null,
+    )
+  })
+
+  const store = new RunnerStore(repository)
+  store.atomic((db) =>
+    db
+      .query("INSERT INTO runner_continuations VALUES(?,?,?,?,?,1)")
+      .run("legacy-plan-b", "ses_shared-architect", null, projectDirectory, null),
+  )
+  expect(
+    store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT count(*) AS count FROM runner_continuations WHERE session_id=?",
+          )
+          .get("ses_shared-architect")!.count,
+    ),
+  ).toBe(2)
+})
+
 function revisions(store: RunnerStore, planID: string) {
   return store.atomic((db) =>
     db

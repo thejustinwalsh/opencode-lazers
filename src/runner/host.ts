@@ -17,8 +17,17 @@ export type HostSession = {
   metadata?: Record<string, unknown>
   archived: boolean
   busy: boolean
+  idleAt?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   model?: ModelPolicy
+  usage?: {
+    input: number
+    output: number
+    reasoning: number
+    cacheRead: number
+    cacheWrite: number
+    provenance: string
+  }
   tokens: number | null
   tools: number
   cost: number | null
@@ -69,8 +78,11 @@ export interface RunnerHost {
     model?: ModelPolicy
     title: string
     planID: string
+    planIDs?: string[]
     sourceSessionID: string
   }): Promise<void>
+  /** Exact native session archive control; renewal requires this and input observation. */
+  updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>
