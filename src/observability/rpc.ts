@@ -11,6 +11,17 @@ import { ObservationChangeTracker } from "./changes.ts"
 type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
 
 const NATIVE_EVENT_TYPES = [
+  "session.created",
+  "session.deleted",
+  "session.agent.selected",
+  "session.model.selected",
+  "session.moved",
+  "session.archived",
+  "session.unarchived",
+  "session.inbox.enqueued",
+  "session.inbox.delivered",
+  "session.inbox.cancelled",
+  "session.inbox.delivery.changed",
   "session.usage.updated",
   "session.execution.started",
   "session.execution.succeeded",
@@ -22,6 +33,7 @@ const NATIVE_EVENT_TYPES = [
   "session.text.ended",
   "session.synthetic",
   "session.tool.called",
+  "session.tool.input.started",
   "session.tool.progress",
   "session.tool.success",
   "session.tool.failed",
@@ -89,6 +101,20 @@ export function registerObservability(
               "read",
             )
             return reads.snapshot(input.scope, tracker)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
+      radar: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.radar(input, tracker, signal)
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),

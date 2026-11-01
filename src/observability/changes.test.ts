@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "./changes.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
 
 test("filtered native sequences deduplicate without inventing gaps; disconnect requires resnapshot", () => {
   const fixture = makeFixture()
@@ -46,6 +47,96 @@ test("filtered native sequences deduplicate without inventing gaps; disconnect r
       resnapshotRequired: true,
       nativeRevision: 4,
     })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("progress, continuation, and outbox inserts and updates change Radar source fingerprints", () => {
+  const fixture = makeFixture()
+  try {
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(31),
+      "project",
+    )
+    tracker.initialize()
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const stepStart = {
+      id: "evt-fingerprint-step-start",
+      type: "session.step.started",
+      created: 10_000,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-fingerprint",
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: "gpt-6-luna" },
+        started: 9_999,
+      },
+    }
+    const assertChanged = (previous: number) => {
+      tracker.refreshSource()
+      expect(tracker.sourceRevision).toBe(previous + 1)
+      return tracker.sourceRevision
+    }
+
+    let revision = tracker.sourceRevision
+    recorder.recordNativeEvent(stepStart)
+    revision = assertChanged(revision)
+    recorder.recordNativeEvent(stepStart)
+    tracker.refreshSource()
+    expect(tracker.sourceRevision).toBe(revision)
+    recorder.recordNativeEvent({
+      id: "evt-fingerprint-step-end",
+      type: "session.step.ended",
+      created: 10_100,
+      data: { sessionID: "ses-failed", assistantMessageID: "msg-fingerprint" },
+    })
+    revision = assertChanged(revision)
+
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_continuations(plan_id,session_id,parent_id,directory,model,generation)
+         VALUES(?,?,?,?,?,?)`,
+        )
+        .run(
+          fixture.receipt.planID,
+          "ses-continuation",
+          "ses-owner",
+          fixture.directory,
+          JSON.stringify({ providerID: "openai", id: "gpt-6-luna" }),
+          1,
+        ),
+    )
+    revision = assertChanged(revision)
+    fixture.store.atomic((db) =>
+      db
+        .query("UPDATE runner_continuations SET generation=generation+1 WHERE plan_id=?")
+        .run(fixture.receipt.planID),
+    )
+    revision = assertChanged(revision)
+
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_outbox
+         (id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt)
+         VALUES(?,?,?,?,?,'pending',0,NULL,NULL)`,
+        )
+        .run(
+          "outbox-fingerprint",
+          fixture.receipt.planID,
+          "ses-owner",
+          "msg-outbox-fingerprint",
+          "private payload",
+        ),
+    )
+    revision = assertChanged(revision)
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_outbox SET state='admitted' WHERE id=?").run("outbox-fingerprint"),
+    )
+    assertChanged(revision)
   } finally {
     fixture.close()
   }

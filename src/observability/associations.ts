@@ -37,6 +37,14 @@ export function sessionAssociations(
     taskIDs.add(row.task_id)
     planIDs.add(row.plan_id)
   }
+  for (const row of db
+    .query<{ id: string }, [string, string, string]>(
+      `SELECT c.plan_id AS id FROM runner_continuations c
+       JOIN runner_plans p ON p.id=c.plan_id
+       WHERE p.project_directory=? AND (c.session_id=? OR c.parent_id=?)`,
+    )
+    .all(projectDirectory, sessionID, sessionID))
+    planIDs.add(row.id)
 
   if (taskIDs.size > 0) {
     const ids = [...taskIDs]
@@ -103,5 +111,14 @@ export function associatedSessionIDs(db: Database, projectDirectory: string) {
     )
     .all(projectDirectory))
     ids.add(row.session_id)
+  for (const row of db
+    .query<{ session_id: string | null; parent_id: string | null }, [string]>(
+      `SELECT c.session_id,c.parent_id FROM runner_continuations c
+       JOIN runner_plans p ON p.id=c.plan_id WHERE p.project_directory=?`,
+    )
+    .all(projectDirectory)) {
+    if (row.session_id) ids.add(row.session_id)
+    if (row.parent_id) ids.add(row.parent_id)
+  }
   return ids
 }

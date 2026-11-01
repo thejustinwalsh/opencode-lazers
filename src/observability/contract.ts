@@ -135,6 +135,205 @@ export const SnapshotOutput = z.strictObject({
   checks: z.array(TimelineCheck).max(10_000),
 })
 
+const RadarRoute = z.strictObject({
+  id: z.string().min(1).max(512),
+  providerID: z.string().min(1).max(200),
+  modelID: z.string().min(1).max(300),
+  variant: z.string().max(200).nullable(),
+  source: z.enum(["attempt-policy", "session-selection", "step-event"]),
+  sessionID: z.string().max(200).nullable(),
+  attemptID: z.uuid().nullable(),
+  messageID: z.string().max(200).nullable(),
+  eventID: z.string().max(200).nullable(),
+  observedAt: z.number().finite().nullable(),
+})
+
+const RadarSession = z.strictObject({
+  id: z.string().min(1).max(512),
+  sessionID: z.string().min(1).max(200),
+  projectID: z.string().min(1).max(200),
+  parentSessionID: z.string().max(200).nullable(),
+  classification: z.enum(["managed", "associated", "unmanaged"]),
+  associations: z
+    .array(
+      z.enum([
+        "attempt",
+        "continuation",
+        "plan-owner",
+        "task-submitter",
+        "scope-anchor",
+        "native-ancestry",
+      ]),
+    )
+    .max(20),
+  availability: z.enum(["available", "missing", "archived", "moved", "unavailable"]),
+  freshness: z.enum(["current", "stale", "unknown"]),
+  agent: z.string().max(200).nullable(),
+  state: z.enum(["busy", "idle", "unknown"]),
+  currentRouteID: z.string().max(512).nullable(),
+  configuredRouteIDs: z.array(z.string().max(512)).max(100),
+  planIDs: z.array(z.uuid()).max(100),
+  taskIDs: z.array(z.uuid()).max(100),
+  attemptIDs: z.array(z.uuid()).max(100),
+  updatedAt: z.number().finite().nullable(),
+  observedAt: z.number().finite().nullable(),
+})
+
+const RadarEvidence = z.discriminatedUnion("source", [
+  z.strictObject({
+    source: z.literal("native-event"),
+    eventID: z.string().min(1).max(200),
+    eventType: z.string().min(1).max(120),
+    sessionID: z.string().min(1).max(200),
+    messageID: z.string().max(200).nullable(),
+    callID: z.string().max(200).nullable(),
+    at: z.number().finite(),
+  }),
+  z.strictObject({
+    source: z.literal("runner-transition"),
+    sequence: z.int().positive(),
+    event: z.string().min(1).max(120),
+    effectID: z.string().max(200).nullable(),
+    outboxID: z.string().max(200).nullable(),
+    messageID: z.string().max(200).nullable(),
+    at: z.number().finite(),
+  }),
+  z.strictObject({
+    source: z.literal("runner-record"),
+    recordID: z.string().min(1).max(200),
+    messageID: z.string().max(200).nullable(),
+    callID: z.string().max(200).nullable(),
+    at: z.number().finite().nullable(),
+  }),
+  z.strictObject({
+    source: z.literal("native-read"),
+    sessionID: z.string().min(1).max(200),
+    at: z.number().finite(),
+  }),
+  z.strictObject({
+    source: z.literal("code"),
+    reference: z.string().min(1).max(300),
+    at: z.null(),
+  }),
+])
+
+const RadarEdge = z.strictObject({
+  id: z.string().min(1).max(1024),
+  kind: z.enum([
+    "architecture",
+    "ancestry",
+    "association",
+    "dependency",
+    "assignment",
+    "prompt",
+    "outcome",
+    "model-request",
+    "model-response",
+    "tool-call",
+    "tool-result",
+    "observation",
+  ]),
+  from: z.string().min(1).max(512),
+  to: z.string().min(1).max(512),
+  status: z.string().min(1).max(80),
+  agentID: z.string().max(200).nullable(),
+  deliveryStage: z
+    .enum(["persisted", "admitted", "consumed", "unknown", "rejected", "superseded"])
+    .nullable(),
+  planID: z.uuid().nullable(),
+  taskID: z.uuid().nullable(),
+  attemptID: z.uuid().nullable(),
+  messageID: z.string().max(200).nullable(),
+  callID: z.string().max(200).nullable(),
+  routeID: z.string().max(512).nullable(),
+  startedAt: z.number().finite().nullable(),
+  observedAt: z.number().finite().nullable(),
+  live: z.boolean(),
+  evidence: z.array(RadarEvidence).max(100),
+})
+
+export const RadarInput = z.strictObject({
+  scope: ObservationScope,
+  includeUnmanagedSessions: z.boolean().default(false),
+})
+export const RadarOutput = z.strictObject({
+  schemaVersion: z.literal(1),
+  projectID: z.string().min(1),
+  scope: ObservationScopeView,
+  observedAt: z.iso.datetime(),
+  boundary: Boundary,
+  freshness: z.strictObject({
+    runner: z.literal("current"),
+    nativeInventory: z.enum(["managed-only", "complete", "bounded", "unavailable"]),
+    nativeEvents: z.enum(["connected", "gap-or-unavailable"]),
+  }),
+  coverage: z.strictObject({
+    sessionCount: z.int().nonnegative(),
+    managedSessionCount: z.int().nonnegative(),
+    includeUnmanagedSessions: z.boolean(),
+    inventoryTruncated: z.boolean(),
+    workTruncated: z.boolean(),
+    progressTruncated: z.boolean(),
+    routeTruncated: z.boolean(),
+    toolTruncated: z.boolean(),
+    edgeTruncated: z.boolean(),
+  }),
+  components: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(200),
+        name: z.string().min(1).max(120),
+        responsibility: z.string().min(1).max(400),
+        sourceFile: z.string().min(1).max(200),
+      }),
+    )
+    .max(20),
+  sessions: z.array(RadarSession).max(500),
+  routes: z.array(RadarRoute).max(20_000),
+  tools: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(512),
+        name: z.string().min(1).max(160),
+      }),
+    )
+    .max(200),
+  plans: z
+    .array(
+      z.strictObject({
+        id: z.uuid(),
+        state: z.string().max(80),
+        ownerSessionID: z.string().max(200),
+        title: z.string().max(120).nullable(),
+      }),
+    )
+    .max(1000),
+  tasks: z
+    .array(
+      z.strictObject({
+        id: z.uuid(),
+        planID: z.uuid().nullable(),
+        state: TaskState.or(z.literal("submitted")),
+      }),
+    )
+    .max(1000),
+  attempts: z
+    .array(
+      z.strictObject({
+        id: z.uuid(),
+        planID: z.uuid(),
+        taskID: z.uuid(),
+        sessionID: z.string().min(1).max(200),
+        number: z.int().positive(),
+        state: z.string().max(80),
+        startedAt: z.number().finite(),
+        configuredRouteID: z.string().max(512).nullable(),
+      }),
+    )
+    .max(10_000),
+  edges: z.array(RadarEdge).max(20_000),
+})
+
 export const TrajectoryInput = z
   .strictObject({
     scope: ObservationScope,
@@ -196,6 +395,7 @@ export const Observability = Rpc.define({
   id: "lazers.observability",
   methods: {
     snapshot: { input: SnapshotInput, output: SnapshotOutput },
+    radar: { input: RadarInput, output: RadarOutput },
     trajectory: { input: TrajectoryInput, output: TrajectoryOutput },
     trajectoryHistory: {
       input: TrajectoryHistoryInput,
@@ -211,6 +411,9 @@ export type ObservationScope = z.infer<typeof ObservationScope>
 export type ObservationScopeView = z.infer<typeof ObservationScopeView>
 export type SnapshotRequest = z.infer<typeof SnapshotInput>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>
+export type RadarRequest = z.infer<typeof RadarInput>
+export type RadarRequestInput = z.input<typeof RadarInput>
+export type RadarResponse = z.infer<typeof RadarOutput>
 export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
 export type TrajectoryResponse = z.infer<typeof TrajectoryOutput>
 export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
