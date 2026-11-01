@@ -200,6 +200,93 @@ test("readers and later permission revocations are checked against cached files 
   expect(f.permissionChecks.some((check) => check.agent === worker.agent)).toBe(true)
 })
 
+test("focused reads authorize only distinct path/search matches in snapshot order", async () => {
+  const f = fixture()
+  for (let number = 0; number < 125; number++)
+    writeFileSync(join(f.root, `unrelated-${number}.txt`), `unrelated ${number}`)
+  writeFileSync(join(f.root, "candidate-a.txt"), "needle match A")
+  writeFileSync(join(f.root, "candidate-b.txt"), "needle match B")
+  writeFileSync(join(f.root, "candidate-c.txt"), "different content")
+  const snapshot = await f.index.refresh(architect)
+  const candidatePaths = snapshot.files
+    .filter((file) => file.path.startsWith("candidate-"))
+    .map((file) => file.path)
+  expect(snapshot.files.length).toBeGreaterThan(125)
+  f.denied.set(worker.agent, new Set(["candidate-b.txt"]))
+
+  f.permissionChecks.length = 0
+  const manifest = await f.index.manifest(worker, ["candidate-*", "candidate-b.txt"])
+  expect(f.permissionChecks).toEqual(candidatePaths.map((path) => ({ path, agent: worker.agent })))
+  expect(manifest.totalFiles).toBe(2)
+  expect(manifest.files.map((file) => file.path)).toEqual(["candidate-a.txt", "candidate-c.txt"])
+  expect(manifest.truncated).toBe(false)
+
+  f.permissionChecks.length = 0
+  const evidence = await f.index.evidence(worker, {
+    paths: ["candidate-*"],
+    search: "NEEDLE",
+    level: "structure",
+  })
+  expect(f.permissionChecks).toEqual(
+    candidatePaths
+      .filter((path) => path !== "candidate-c.txt")
+      .map((path) => ({ path, agent: worker.agent })),
+  )
+  expect(evidence.sources.map((source) => source.path)).toEqual(["candidate-a.txt"])
+  expect(JSON.stringify(evidence)).not.toContain("candidate-b.txt")
+  expect(JSON.stringify(evidence)).not.toContain("needle match B")
+
+  f.permissionChecks.length = 0
+  const noMatch = await f.index.evidence(worker, {
+    paths: ["candidate-*"],
+    search: "not present",
+  })
+  expect(f.permissionChecks).toEqual([])
+  expect(noMatch.sources).toEqual([])
+})
+
+test("focused result totals and truncation use authorized matches before response limits", async () => {
+  const f = fixture()
+  for (let number = 0; number < 105; number++)
+    writeFileSync(
+      join(f.root, `focus-${number.toString().padStart(3, "0")}.txt`),
+      "selected source",
+    )
+  const snapshot = await f.index.refresh(architect)
+  const candidatePaths = snapshot.files
+    .filter((file) => file.path.startsWith("focus-"))
+    .map((file) => file.path)
+  const denied = new Set(candidatePaths.slice(0, 55))
+  f.denied.set(worker.agent, denied)
+
+  f.permissionChecks.length = 0
+  const manifest = await f.index.manifest(worker, ["focus-*"])
+  expect(f.permissionChecks.map(({ path }) => path)).toEqual(candidatePaths)
+  expect(manifest.totalFiles).toBe(50)
+  expect(manifest.files).toHaveLength(50)
+  expect(manifest.truncated).toBe(false)
+
+  f.permissionChecks.length = 0
+  const evidence = await f.index.evidence(worker, { paths: ["focus-*"], search: "SELECTED" })
+  expect(f.permissionChecks.map(({ path }) => path)).toEqual(candidatePaths)
+  expect(evidence.sources).toHaveLength(50)
+  expect(evidence.truncated).toBe(false)
+
+  denied.clear()
+  f.permissionChecks.length = 0
+  const allManifest = await f.index.manifest(worker, ["focus-*"])
+  expect(f.permissionChecks.map(({ path }) => path)).toEqual(candidatePaths)
+  expect(allManifest.totalFiles).toBe(105)
+  expect(allManifest.files).toHaveLength(100)
+  expect(allManifest.truncated).toBe(true)
+
+  f.permissionChecks.length = 0
+  const allEvidence = await f.index.evidence(worker, { paths: ["focus-*"], search: "selected" })
+  expect(f.permissionChecks.map(({ path }) => path)).toEqual(candidatePaths)
+  expect(allEvidence.sources).toHaveLength(50)
+  expect(allEvidence.truncated).toBe(true)
+})
+
 test("failed refresh leaves the published snapshot intact; refresh updates changed, added, deleted, and ignored files atomically", async () => {
   const f = fixture()
   const built = await f.index.refresh(architect)
