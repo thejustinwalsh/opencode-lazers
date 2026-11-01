@@ -57,3 +57,20 @@ test("structured projection omits tagged private content and unsupported values 
   expect(stats.omittedReasoning).toBeGreaterThan(0)
   expect(stats.unknown).toBeGreaterThan(0)
 })
+
+test("structured JSON strings at the nesting limit fail closed without hiding safe siblings", () => {
+  const stats = privacyStats()
+  const privateJson = JSON.stringify({ type: "reasoning", text: "DEPTH_STRING_PRIVATE_CANARY" })
+  let belowLimit: unknown = privateJson
+  for (let index = 0; index < 6; index++) belowLimit = { child: belowLimit }
+
+  let atLimit: unknown = JSON.stringify(privateJson)
+  for (let index = 0; index < 7; index++) atLimit = { child: atLimit }
+
+  const serialized = JSON.stringify(
+    safeValue({ summary: "visible safe summary", belowLimit, atLimit }, stats),
+  )
+  expect(serialized).not.toContain("DEPTH_STRING_PRIVATE_CANARY")
+  expect(serialized).toContain("visible safe summary")
+  expect(stats.unknown).toBeGreaterThan(0)
+})

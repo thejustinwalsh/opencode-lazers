@@ -25,6 +25,26 @@ const MAX_ARRAY_ITEMS = 40
 const MAX_OBJECT_FIELDS = 60
 const MAX_DEPTH = 8
 const OMITTED_UNSUPPORTED = "[omitted: unsupported value]"
+const OMITTED_NESTING = "[omitted: nesting limit]"
+
+function isStructuredJsonText(value: string) {
+  let candidate = value
+  for (let depth = 0; depth <= MAX_DEPTH; depth++) {
+    const trimmed = candidate.trimStart()
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[") && !trimmed.startsWith('"'))
+      return false
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (typeof parsed === "object" && parsed !== null) return true
+      if (typeof parsed !== "string") return false
+      candidate = parsed
+    } catch {
+      return false
+    }
+  }
+  const trimmed = candidate.trimStart()
+  return trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"')
+}
 
 const sensitiveKey = (key: string) => {
   const normalized = key.toLowerCase().replaceAll(/[^a-z0-9]/g, "")
@@ -113,10 +133,12 @@ export function safeText(
 ): string {
   let output = value
   const trimmed = value.trimStart()
-  if (
-    depth < MAX_DEPTH &&
-    (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"'))
-  ) {
+  const looksStructured =
+    trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"')
+  if (depth >= MAX_DEPTH && looksStructured && isStructuredJsonText(value)) {
+    stats.unknown++
+    output = OMITTED_NESTING
+  } else if (depth < MAX_DEPTH && looksStructured) {
     try {
       const parsed: unknown = JSON.parse(value)
       if (typeof parsed === "object" && parsed !== null) {
@@ -170,7 +192,7 @@ function projectSafeValue(value: unknown, stats: PrivacyStats, depth: number): u
   if (typeof value === "string") return safeText(value, stats, MAX_STRING_LENGTH, depth)
   if (depth >= MAX_DEPTH) {
     stats.unknown++
-    return "[omitted: nesting limit]"
+    return OMITTED_NESTING
   }
   if (Array.isArray(value)) {
     const length = value.length

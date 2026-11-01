@@ -171,7 +171,8 @@ function safeToolContent(value: unknown, stats: PrivacyStats) {
     const length = value.length
     for (let index = 0; index < Math.min(length, 40); index++) {
       const entry = object(value[index])
-      if (entry?.type === "text" && typeof entry.text === "string") output.push(entry.text)
+      if (entry?.type === "text" && typeof entry.text === "string")
+        output.push(safeText(entry.text, stats))
       else if (entry?.type === "file") stats.omittedAttachments++
       else stats.omittedUnsupportedParts++
     }
