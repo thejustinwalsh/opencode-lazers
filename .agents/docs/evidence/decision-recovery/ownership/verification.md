@@ -11,14 +11,14 @@ The probe verifies:
 
 Verification on the task revision:
 
-| Check | Result |
-| --- | --- |
-| `bun test src/webgpu` | Passed: 80 tests |
-| `bun test` | Passed: 390 tests |
-| `bun lint` | Passed |
-| `bun check` | Passed |
-| `bun fmt --check` on the four changed TypeScript files | Passed |
-| `bun run build:gui` | Passed |
-| `bun run verify` | Blocked at the repository-wide formatter check by the existing `.agents/docs/evidence/renderer-freeze-20261101T1540/automatic-capture.json`; that unrelated, out-of-scope evidence file was left unchanged. |
+| Check                                                  | Result                                                                                                                                                                                                      |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun test src/webgpu`                                  | Passed: 80 tests                                                                                                                                                                                            |
+| `bun test`                                             | Passed: 390 tests                                                                                                                                                                                           |
+| `bun lint`                                             | Passed                                                                                                                                                                                                      |
+| `bun check`                                            | Passed                                                                                                                                                                                                      |
+| `bun fmt --check` on the four changed TypeScript files | Passed                                                                                                                                                                                                      |
+| `bun run build:gui`                                    | Passed                                                                                                                                                                                                      |
+| `bun run verify`                                       | Blocked at the repository-wide formatter check by the existing `.agents/docs/evidence/renderer-freeze-20261101T1540/automatic-capture.json`; that unrelated, out-of-scope evidence file was left unchanged. |
 
 The GUI build emitted existing Vite warnings about deprecated `inlineDynamicImports` and CommonJS `import.meta`; the build completed successfully. This evidence makes no renderer-freeze or responsiveness claim.
