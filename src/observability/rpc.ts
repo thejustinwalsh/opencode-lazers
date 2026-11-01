@@ -105,6 +105,34 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
+      trajectoryHistory: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "lazers_inspect_trajectory",
+            )
+            return reads.trajectoryHistory(input, tracker)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
+      trajectoryStatus: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "lazers_inspect_trajectory",
+            )
+            return reads.trajectoryStatus(input, tracker)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
     })
 
     tracker.initialize((change) => {
