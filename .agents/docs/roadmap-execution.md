@@ -132,9 +132,13 @@ authorized by that correction. See `evidence/renderer-trace-clocks/investigation
 
 During local task review, ordinary enabled inference reported GPU device loss,
 then renderer-heartbeat loss; no semantic pass was established or settings changed.
-A read-only native follow-up is checking existing automatic diagnostics for that
-new incident. It does not establish the earlier freeze's cause or complete any
-native usability gate.
+The read-only native follow-up found a failed inference trace and an unfinished
+retry candidate, but no matching automatic capture or current renderer PID.
+Broker heartbeat expiry is not an Electron unresponsive event. Root's healthy
+Network payload sample and native Activity pagination-reset before-case were
+retained separately and supplied to LZ-36 without changing its gates. See
+`evidence/034-renderer-trace/review-incident-follow-up.md`; none of these facts
+establishes a freeze cause or completes a native usability gate.
 
 The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not

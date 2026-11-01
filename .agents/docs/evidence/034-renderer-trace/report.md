@@ -207,3 +207,9 @@ Current primary-source research, checked 2026-11-01:
 No recovery, model, provider, context-capacity or inference setting was changed
 by this inspection/research. The new case should inform the existing scoped
 responsiveness investigation; its result remains unproven.
+
+The [native read-only follow-up](review-incident-follow-up.md) correlates the
+four completed review jobs, the failed request and the unfinished retry candidate.
+It distinguishes aggregate usage from per-job input, tool device-loss error from
+trace classification, and broker heartbeat expiry from an Electron unresponsive
+event. No matched automatic capture or current renderer PID was established.
