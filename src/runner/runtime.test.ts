@@ -1519,6 +1519,21 @@ async function runPlan(
     "owner",
   )
 }
+async function cancelUnstartedPlan(f: ReturnType<typeof fixture>, planID = f.receipt.planID) {
+  await runPlan(f, planID, `run-${planID}`)
+  const plan = f.store.plan(planID)!
+  await f.runtime.command(
+    {
+      requestID: `cancel-${planID}`,
+      planID,
+      expectedVersion: plan.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  return f.store.plan(planID)!
+}
 async function failSecondSharedTask(f: ReturnType<typeof fixture>) {
   await f.runtime.command(
     { requestID: "run", planID: f.receipt.planID, expectedVersion: 1, action: "run" },
@@ -3258,6 +3273,405 @@ test("an explicitly cancelled worker can continue through its owner without repl
   expect(f.store.attempts(f.receipt.planID)[0]!.workspace).toBe(attempt.workspace)
   expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+})
+
+test("retry requeues a cancelled unstarted successor in the admitted graph and waits for dependencies and scope", async () => {
+  const f = fixture({ delayed: true })
+  const planID = f.receipt.planID
+  const predecessorID = f.tasks[0]!.id
+  const successorID = f.tasks[1]!.id
+  const originalGraph = {
+    body: f.store.plan(planID)!.body,
+    nodes: f.store.nodes(planID).map((node) => node.task_id),
+    dependencies: f.store.atomic((db) =>
+      db
+        .query<{ prerequisite: string; successor: string }, [string]>(
+          "SELECT prerequisite,successor FROM runner_dependencies WHERE plan_id=? ORDER BY rowid",
+        )
+        .all(planID),
+    ),
+  }
+  await runPlan(f)
+  await f.runtime.tick()
+  const original = f.store.attempts(planID)[0]!
+  expect(original.task_id).toBe(predecessorID)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+
+  await f.runtime.command(
+    {
+      requestID: "cancel-running-graph",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(planID)!.state).toBe("cancelled")
+  expect(f.store.nodes(planID).map((node) => node.state)).toEqual(["cancelled", "cancelled"])
+
+  await f.runtime.command(
+    {
+      requestID: "resume-original-predecessor",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: predecessorID,
+      reason: "Continue the admitted prerequisite",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(planID)!.state).toBe("running")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: original.id,
+    session_id: original.session_id,
+    number: original.number,
+    state: "running",
+  })
+
+  const requeue = {
+    requestID: "requeue-unstarted-successor",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "retry" as const,
+    taskID: successorID,
+    reason: "Restore the original dependent task",
+  }
+  const receipt = await f.runtime.command(requeue, "owner")
+  expect(receipt).toMatchObject({ status: "requeued" })
+  expect(f.store.plan(planID)!.state).toBe("running")
+  expect(f.store.plan(planID)!.body).toBe(originalGraph.body)
+  expect(f.store.nodes(planID).map((node) => node.task_id)).toEqual(originalGraph.nodes)
+  expect(
+    f.store.atomic((db) =>
+      db
+        .query<{ prerequisite: string; successor: string }, [string]>(
+          "SELECT prerequisite,successor FROM runner_dependencies WHERE plan_id=? ORDER BY rowid",
+        )
+        .all(planID),
+    ),
+  ).toEqual(originalGraph.dependencies)
+  expect(f.store.nodes(planID).find((node) => node.task_id === successorID)?.state).toBe("ready")
+  expect(f.store.execution(successorID)?.waitingOn).toEqual([predecessorID])
+  expect(
+    f.store.attempts(planID).filter((attempt) => attempt.task_id === successorID),
+  ).toHaveLength(0)
+
+  const requeuedHistory = f.store.activity(planID, successorID).length
+  const reopenedRepository = new TaskRepository(f.repository.path, f.repository.projectDirectory)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  const reopened = new TaskRuntime(reopenedStore, f.host, "project")
+  try {
+    expect(await reopened.command(requeue, "owner")).toEqual(receipt)
+    await expect(
+      reopened.command({ ...requeue, reason: "Different recovery intent" }, "owner"),
+    ).rejects.toThrow("identity conflict")
+    await expect(reopened.command(requeue, "not-the-owner")).rejects.toThrow("identity conflict")
+    expect(reopenedStore.activity(planID, successorID)).toHaveLength(requeuedHistory)
+  } finally {
+    await reopened.stop()
+    reopenedRepository.close()
+  }
+  expect(f.store.activity(planID, successorID)).toHaveLength(requeuedHistory)
+
+  const scopeBlocker = f.createTask("c", "c.txt", ["b.txt", "c.txt"])
+  const blockerPlan = f.store.submit(
+    f.inputFor([scopeBlocker], { requestID: "scope-blocker-plan" }),
+    "owner",
+  )
+  await f.runtime.command(
+    {
+      requestID: "run-scope-blocker",
+      planID: blockerPlan.planID,
+      expectedVersion: blockerPlan.version,
+      action: "run",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const blockerAttempt = f.store.attempts(blockerPlan.planID)[0]!
+  expect(f.sessions.get(blockerAttempt.session_id)?.busy).toBe(true)
+
+  f.completeWorker(original.session_id)
+  await f.runtime.tick()
+  expect(f.store.nodes(planID).find((node) => node.task_id === predecessorID)?.state).toBe(
+    "accepted",
+  )
+  expect(f.store.execution(successorID)?.waitingOn).toEqual([])
+  expect(
+    f.store.attempts(planID).filter((attempt) => attempt.task_id === successorID),
+  ).toHaveLength(0)
+
+  f.completeWorker(blockerAttempt.session_id)
+  await f.runtime.tick()
+  expect(f.store.plan(blockerPlan.planID)?.state).toBe("accepted")
+  expect(
+    f.store.attempts(planID).filter((attempt) => attempt.task_id === successorID),
+  ).toHaveLength(0)
+
+  await f.runtime.tick()
+  const successorAttempts = f.store
+    .attempts(planID)
+    .filter((attempt) => attempt.task_id === successorID)
+  expect(successorAttempts).toHaveLength(1)
+  expect(successorAttempts[0]).toMatchObject({ number: 1, state: "running" })
+  expect(successorAttempts[0]!.base_commit).toBe(f.store.attempts(planID)[0]!.artifact!)
+  expect(
+    f.store.attempts(planID).filter((attempt) => attempt.task_id === predecessorID),
+  ).toHaveLength(1)
+  expect(f.store.activity(planID, predecessorID).map((entry) => entry.event)).toContain("RESUME")
+  expect(f.store.activity(planID, predecessorID).map((entry) => entry.event)).toContain("CANCEL")
+
+  f.completeWorker(successorAttempts[0]!.session_id)
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+})
+
+test("requeued unstarted work can be cancelled again before normal dispatch", async () => {
+  const f = fixture()
+  const planID = f.receipt.planID
+  const cancelled = await cancelUnstartedPlan(f)
+  expect(cancelled.state).toBe("cancelled")
+  const taskID = f.tasks[1]!.id
+  const requeue = {
+    requestID: "requeue-then-cancel",
+    planID,
+    expectedVersion: cancelled.version,
+    action: "retry" as const,
+    taskID,
+    reason: "Restore, then stop before dispatch",
+  }
+  const receipt = await f.runtime.command(requeue, "owner")
+  expect(receipt).toMatchObject({ status: "requeued" })
+  expect(f.store.attempts(planID)).toHaveLength(0)
+  await f.runtime.command(
+    {
+      requestID: "cancel-requeued-before-dispatch",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(planID)!.state).toBe("cancelled")
+  expect(f.store.nodes(planID).find((node) => node.task_id === taskID)?.state).toBe("cancelled")
+  expect(f.store.attempts(planID)).toHaveLength(0)
+  expect(f.events.some((event) => event.startsWith("create:") || event.startsWith("prompt:"))).toBe(
+    false,
+  )
+})
+
+test("unstarted recovery rejects unauthorized, stale, missing, archived and foreign owners without writes", async () => {
+  for (const denial of ["unauthorized", "stale", "missing", "archived", "foreign"] as const) {
+    const f = fixture()
+    const stopped = await cancelUnstartedPlan(f)
+    const planID = stopped.id
+    const taskID = f.tasks[1]!.id
+    const beforePlan = f.store.plan(planID)!
+    const beforeNode = f.store.nodes(planID).find((node) => node.task_id === taskID)!
+    const beforeHistory = f.store.activity(planID, taskID)
+    const recovery = {
+      requestID: `denied-recovery-${denial}`,
+      planID,
+      expectedVersion: denial === "stale" ? beforePlan.version - 1 : beforePlan.version,
+      action: "retry" as const,
+      taskID,
+      reason: "Attempt a denied recovery",
+    }
+    if (denial === "missing") f.sessions.delete("owner")
+    if (denial === "archived") f.sessions.get("owner")!.archived = true
+    if (denial === "foreign") f.sessions.get("owner")!.projectID = "another-project"
+
+    await expect(
+      f.runtime.command(recovery, denial === "unauthorized" ? "not-the-owner" : "owner"),
+    ).rejects.toThrow(
+      denial === "unauthorized"
+        ? "Only the plan owner"
+        : denial === "stale"
+          ? "Stale plan version"
+          : denial === "foreign"
+            ? "Foreign owner session"
+            : "Owner unavailable",
+    )
+    expect(f.store.plan(planID)).toEqual(beforePlan)
+    expect(f.store.nodes(planID).find((node) => node.task_id === taskID)).toEqual(beforeNode)
+    expect(f.store.activity(planID, taskID)).toEqual(beforeHistory)
+    expect(f.store.attempts(planID)).toHaveLength(0)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string, string]>(
+              "SELECT count(*) AS count FROM runner_commands WHERE project_directory=? AND request_id=?",
+            )
+            .get(f.store.repository.projectDirectory, recovery.requestID)!.count,
+      ),
+    ).toBe(0)
+    expect(
+      f.events.some((event) => event.startsWith("create:") || event.startsWith("prompt:")),
+    ).toBe(false)
+  }
+})
+
+test("unstarted recovery rechecks the plan version after owner lookup races with reassignment", async () => {
+  const f = fixture()
+  const stopped = await cancelUnstartedPlan(f)
+  const planID = stopped.id
+  const taskID = f.tasks[1]!.id
+  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner" })
+  const recovery = {
+    requestID: "racing-unstarted-recovery",
+    planID,
+    expectedVersion: stopped.version,
+    action: "retry" as const,
+    taskID,
+    reason: "Recover only if ownership remains current",
+  }
+  const beforeHistory = f.store.activity(planID, taskID)
+  const originalSession = f.host.session
+  let announceLookup!: () => void
+  let releaseLookup!: () => void
+  const lookupStarted = new Promise<void>((resolve) => (announceLookup = resolve))
+  const lookupGate = new Promise<void>((resolve) => (releaseLookup = resolve))
+  f.host.session = async (id, options) => {
+    if (id === "owner") {
+      announceLookup()
+      await lookupGate
+    }
+    return originalSession(id, options)
+  }
+
+  const pendingRecovery = f.runtime.command(recovery, "owner")
+  await lookupStarted
+  await f.runtime.command(
+    {
+      requestID: "reassign-during-unstarted-recovery",
+      planID,
+      expectedVersion: stopped.version,
+      action: "reassign",
+      targetSessionID: "new-owner",
+      reason: "Explicitly change the plan owner",
+    },
+    "owner",
+  )
+  releaseLookup()
+  await expect(pendingRecovery).rejects.toThrow("Stale plan version")
+
+  expect(f.store.plan(planID)).toMatchObject({ owner: "new-owner", state: "cancelled" })
+  expect(f.store.nodes(planID).find((node) => node.task_id === taskID)?.state).toBe("cancelled")
+  expect(f.store.activity(planID, taskID)).toEqual(beforeHistory)
+  expect(f.store.attempts(planID)).toHaveLength(0)
+  expect(
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            "SELECT count(*) AS count FROM runner_commands WHERE project_directory=? AND request_id=?",
+          )
+          .get(f.store.repository.projectDirectory, recovery.requestID)!.count,
+    ),
+  ).toBe(0)
+})
+
+test("unstarted recovery rejects invalid node/plan states and unreconciled effects", async () => {
+  const queued = fixture()
+  await runPlan(queued)
+  const queuedPlan = queued.store.plan(queued.receipt.planID)!
+  const queuedTask = queued.tasks[1]!.id
+  await expect(
+    queued.runtime.command(
+      {
+        requestID: "retry-still-queued-node",
+        planID: queuedPlan.id,
+        expectedVersion: queuedPlan.version,
+        action: "retry",
+        taskID: queuedTask,
+        reason: "Do not recover a non-cancelled node",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("Only an exhausted or cancelled, stopped attempt can resume")
+  expect(queued.store.nodes(queuedPlan.id).find((node) => node.task_id === queuedTask)?.state).toBe(
+    "queued",
+  )
+  expect(queued.store.attempts(queuedPlan.id)).toHaveLength(0)
+
+  const integrated = fixture()
+  const integratedPlan = await cancelUnstartedPlan(integrated)
+  integrated.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='integrated' WHERE id=?").run(integratedPlan.id),
+  )
+  const integratedNode = integrated.store
+    .nodes(integratedPlan.id)
+    .find((node) => node.task_id === integrated.tasks[1]!.id)!
+  const integratedHistory = integrated.store.activity(integratedPlan.id, integratedNode.task_id)
+  await expect(
+    integrated.runtime.command(
+      {
+        requestID: "retry-integrated-plan",
+        planID: integratedPlan.id,
+        expectedVersion: integrated.store.plan(integratedPlan.id)!.version,
+        action: "retry",
+        taskID: integratedNode.task_id,
+        reason: "Do not revive an integrated plan",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("Only an admitted, nonintegrated plan can requeue an unstarted task")
+  expect(
+    integrated.store
+      .nodes(integratedPlan.id)
+      .find((node) => node.task_id === integratedNode.task_id),
+  ).toEqual(integratedNode)
+  expect(integrated.store.activity(integratedPlan.id, integratedNode.task_id)).toEqual(
+    integratedHistory,
+  )
+  expect(integrated.store.attempts(integratedPlan.id)).toHaveLength(0)
+
+  const unresolved = fixture()
+  const unresolvedPlan = await cancelUnstartedPlan(unresolved)
+  const unresolvedTask = unresolved.tasks[1]!.id
+  unresolved.store.atomic((db) =>
+    db
+      .query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)")
+      .run(
+        crypto.randomUUID(),
+        unresolvedPlan.id,
+        unresolvedTask,
+        null,
+        "recovery-test-effect",
+        "{}",
+      ),
+  )
+  const unresolvedNode = unresolved.store
+    .nodes(unresolvedPlan.id)
+    .find((node) => node.task_id === unresolvedTask)!
+  const unresolvedHistory = unresolved.store.activity(unresolvedPlan.id, unresolvedTask)
+  await expect(
+    unresolved.runtime.command(
+      {
+        requestID: "retry-with-unresolved-effect",
+        planID: unresolvedPlan.id,
+        expectedVersion: unresolved.store.plan(unresolvedPlan.id)!.version,
+        action: "retry",
+        taskID: unresolvedTask,
+        reason: "Reconcile the outstanding effect first",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("Reconcile uncertain effects first")
+  expect(
+    unresolved.store.nodes(unresolvedPlan.id).find((node) => node.task_id === unresolvedTask),
+  ).toEqual(unresolvedNode)
+  expect(unresolved.store.activity(unresolvedPlan.id, unresolvedTask)).toEqual(unresolvedHistory)
+  expect(unresolved.store.attempts(unresolvedPlan.id)).toHaveLength(0)
+  expect(
+    unresolved.store.effects(unresolvedPlan.id).some((effect) => effect.state === "intended"),
+  ).toBe(true)
 })
 
 test("serial shared children commit in the current checkout without creating worktrees", async () => {
