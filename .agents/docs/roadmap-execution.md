@@ -14,7 +14,7 @@ acceptance evidence. Runtime records remain authoritative for current status.
 | Stable SVG/ELK Radar                             | LZ-34                                              | Actual operational map, unchanged-topology updates without relayout, real native flows and off-renderer layout proof.           |
 
 LZ-33 precedes LZ-34 in plan `b0eb89b4-a071-49e2-a238-c474d53cc42f`.
-That graph waits for integrated LZ-28, LZ-31 and LZ-32 plans, then consumes the
+That graph waits for integrated LZ-28, LZ-31, LZ-32 and LZ-35 plans, then consumes the
 reviewed checkout. Initial privacy/history work uses isolated native workers.
 All new plans inherit the configured implementor; nodes select Systems or UI
 personas independently of the model.
@@ -30,6 +30,23 @@ entry `lazers-lifecycle-review-repair-20261101` was installed and read back on
 review/reproducer and requires native synthetic-admission races and durable
 decision/question handoff. Do not create a replacement task or waive native proof.
 
+### Privacy review hold and correction
+
+LZ-31 returned runtime-accepted `2fff6bb`; task and combined privacy/full/quality
+checks passed. Independent review then reproduced two remaining leaks in its
+disposable fixtures: `safeToolContent` joins separate JSON parts before semantic
+filtering, and structured strings bypass omission at exhausted recursion depth.
+Both private multipart and depth-string canaries remained. No application data
+was used. **Do not merge/integrate this candidate alone.**
+
+LZ-35 (`bde43cbd-4ecc-4385-8bca-94de50fddab0`) is the minimal review-repair
+supplement, plan `6a7c2c02-31b5-4a7b-8733-1384b6beeba0`, based directly on
+`2fff6bb` in an isolated worker. It preserves LZ-31's record/history and requires
+real-report multipart/depth variants with positive safe siblings. The Radar
+schedule explicitly waits for this correction's integration too. Review and
+merge only the corrected descendant, rerun relevant checks on the resulting
+checkout, then record both accepted ancestor artifacts through runtime.
+
 ### Remaining Phase 1 work
 
 - Stable live Trajectory: specify after inspecting retained LZ-31/LZ-32 output;
@@ -40,9 +57,14 @@ decision/question handoff. Do not create a replacement task or waive native proo
   and panel-state writes with Radar. Do not restore the privacy defect.
 - Existing failed LZ-14 renderer responsiveness: retain its task/attempt history,
   inspect captured stages and establish the actual blocking boundary before
-  repair. Keep local inference enabled. Its old plan is shared-workspace mode;
-  do not resume it into concurrent, uncommitted WebGPU work in the main checkout.
-  No replacement task or speculative engine swap is authorized by this note.
+  repair. Keep local inference enabled. Ownership was reassigned for investigation,
+  but execution was not resumed. The explicit human cancellation in the retained
+  `019-desktop-inference-isolation/triage.md` prohibits restoring/refining that
+  abandoned refactor/stash. The newer roadmap authorizes the responsiveness goal,
+  not an unproven root-cause claim or automatic resurrection of that implementation.
+  No new debugger capture exists in the documented diagnostics directory at this
+  checkpoint. Establish causal evidence and a compatible bounded repair before
+  requesting execution; do not conflate absence of a new capture with resolution.
 
 The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not
