@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-01, 15:17 UTC checkpoint. Runtime records are authoritative; recheck before
+2026-11-01, 15:50 UTC checkpoint. Runtime records are authoritative; recheck before
 acting. Read [README contracts](../../README.md), [pinned OpenCode API](opencode-api.md),
 [reviewed phase plan](phase-review-plan.md) and [roadmap execution](roadmap-execution.md).
 The full requested outcome remains all four phases in `design/roadmap.md`, then
@@ -21,6 +21,25 @@ dependency graphs, requests execution and returns for decisions/review/integrati
 Scheduler owns worker dispatch and task state. Workers use native OpenCode
 sessions/worktrees; current implementor is `openai/gpt-6-luna#max`.
 
+## Latest matched freeze and recovery
+
+A real local-review retry stalled Desktop. At 15:40:49 UTC the native alert and
+main-process hook matched window 1/PID 77897 to request/job
+`11a8cb1f-ce2c-45db-ae91-949094f3f1ff`, last stage `run`. Automatic CPU profiling
+timed out at enable; Root preserved the exact-PID five-second OS sample (9.2 GB
+physical footprint / 11 GB peak), native alert, correlation JSON and local log
+export before using native Desktop Relaunch. See
+[evidence](evidence/renderer-freeze-20261101T1540/report.md), commit `0f75340`.
+The prior no-matched-freeze follow-up describes an earlier inspection and is
+superseded on that point. Root verified responsive Tasks interaction, all six
+local features ON/Ready with existing idle-unload Never, and original LZ-28/36/37
+worker sessions/attempts/routes/workspaces with new activity after recovery.
+No background service, model route or feature setting was changed. Recovery is
+not a freeze fix. Through Desktop, Architect has received the matched case and
+is asked to investigate a scoped compatible repair while independent work continues.
+The cancelled LZ-14 refactor/stash remains cancelled; LZ-37 clock repair is not
+responsiveness acceptance.
+
 ## Current execution
 
 | Ref   | State at checkpoint                            | Next boundary                                                                     |
@@ -32,6 +51,7 @@ sessions/worktrees; current implementor is `openai/gpt-6-luna#max`.
 | LZ-34 | Queued after LZ-33                             | SVG/ELK map and native/design review                                              |
 | LZ-35 | Integrated v9                                  | Privacy correction retained; native cleanup complete                              |
 | LZ-36 | Running                                        | Stable economical live Trajectory, independent of lifecycle                       |
+| LZ-37 | Running                                        | Coherent diagnostic trace clocks; not a freeze fix                                |
 
 - **LZ-28** task `239f45a9-3247-4cba-b339-19c8267d0800`, plan
   `8253ff59-57a5-45fd-8847-acd971438af8` v25. Active retained attempt
@@ -71,6 +91,19 @@ sessions/worktrees; current implementor is `openai/gpt-6-luna#max`.
   stable while lightweight status/progress refreshes; repeated status/cached pages
   add zero native context reads. Preserve default inspect-tool cursor behavior,
   privacy and exact historical target. Native mounted interaction remains required.
+
+- **LZ-37** task `4971ffe9-9d50-49cd-bdd7-775ffc681c39`, plan
+  `8332f91a-b697-4697-993e-8be4740ed9d6` v4. Attempt
+  `27667b0c-aadd-4ec5-804b-bcc9af770642`, native Luna Max session
+  `ses_f34b22b676264c88852c3cf86b77284d`. Source investigation proved request
+  and runtime clocks were mixed in lag events. Its scoped repair is independent
+  of lifecycle/Trajectory; native task and real freeze outcome remain distinct.
+- Real LZ-9 Activity pagination before-case: 50 rows → 99 after Load more → 50
+  after six seconds, disclosure still open. Check output survives that interval.
+  Healthy Network sample showed repeated ~586 kB decoded snapshot and ~219 kB
+  trajectory payloads. See `evidence/034-renderer-trace/report.md`; Architect
+  supplied this baseline to LZ-36 without changing acceptance. Earlier current-200
+  traffic was not evidence about the later matched freeze.
 
 Native-owned worktrees are under
 `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attempt>`. Never remove
