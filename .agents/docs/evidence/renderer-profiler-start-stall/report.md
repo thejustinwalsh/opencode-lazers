@@ -26,8 +26,10 @@ busy OpenAI Luna Max sessions. This is not native acceptance of LZ-39 or LZ-43.
   Last recorded inference stage was already `complete`, request
   `bc66f310-c9ff-4ce3-9b24-19d6b6a9de84`.
 - A subsequent renderer-lag trace recorded 38,503 ms lag, with no active job.
-  JS heap was about 370 MB. A later five-second OS sample reported 2.5 GB
-  physical footprint / 4.9 GB peak; these are distinct measurements and times.
+  JS heap was about 370 MB. The five-second OS sample began at
+  19:10:14.670, after the recorded responsive event, and reported 2.5 GB physical
+  footprint / 4.9 GB peak. It is a post-stall sample, not a blocked-renderer stack;
+  these are distinct measurements and times.
 - Native Export Logs succeeded. Its recovery dialog repeats after export by
   design. Keep Waiting dismissed it; Desktop was Ready without another relaunch.
 
