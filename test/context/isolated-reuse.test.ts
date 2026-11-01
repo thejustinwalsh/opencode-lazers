@@ -284,6 +284,7 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
   const f = setup()
   await f.sourceIndex.refresh({ sessionID: "ses_architect", agent: "architect" })
   const before = f.sessionReads.length
+  const beforePermissions = f.permissionReads.length
   const deniedTools = await register(f.workerIndex, f.worker, "lazers_project_read")
   await expect(
     Effect.runPromise(
@@ -296,6 +297,7 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
     ),
   ).rejects.toThrow("Permission denied")
   expect(f.sessionReads.length).toBe(before)
+  expect(f.permissionReads.length).toBe(beforePermissions)
 
   const key = `${f.source}/README.md`
   f.denied.add(key)
@@ -344,6 +346,52 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
       )
     ).output.sources,
   ).toEqual([])
+})
+
+test("focused native reads check only cached matches against the worker and publication workspace", async () => {
+  const f = setup()
+  for (let number = 0; number < 125; number++)
+    writeFileSync(join(f.source, `unrelated-${number}.txt`), `unrelated ${number}`)
+  await f.sourceIndex.refresh({ sessionID: "ses_architect", agent: "architect" })
+  const tools = await register(f.workerIndex, f.worker)
+  const index = tools.tools.get("lazers_project_index")!
+  const read = tools.tools.get("lazers_project_read")!
+
+  f.permissionReads.length = 0
+  const manifest = await Effect.runPromise(
+    index.execute(
+      { paths: ["README.md", "README*"] },
+      callContext("ses_worker", "lazers-implementor"),
+    ),
+  )
+  expect(manifest.output.files.map((file: { path: string }) => file.path)).toEqual(["README.md"])
+  expect(f.permissionReads).toEqual([
+    { path: "README.md", workspace: f.source, agent: "lazers-implementor" },
+  ])
+
+  f.permissionReads.length = 0
+  const evidence = await Effect.runPromise(
+    read.execute(
+      { paths: ["README.md", "src.ts"], search: "PUBLISHED SOURCE", level: "full" },
+      callContext("ses_worker", "lazers-implementor"),
+    ),
+  )
+  expect(evidence.output.sources.map((source: { path: string }) => source.path)).toEqual([
+    "README.md",
+  ])
+  expect(f.permissionReads).toEqual([
+    { path: "README.md", workspace: f.source, agent: "lazers-implementor" },
+  ])
+
+  f.permissionReads.length = 0
+  const noMatch = await Effect.runPromise(
+    read.execute(
+      { paths: ["README.md", "src.ts"], search: "not present" },
+      callContext("ses_worker", "lazers-implementor"),
+    ),
+  )
+  expect(noMatch.output.sources).toEqual([])
+  expect(f.permissionReads).toEqual([])
 })
 
 test("a worker reads its parent's pinned snapshot, not a later workspace publication", async () => {

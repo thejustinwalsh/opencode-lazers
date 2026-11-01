@@ -546,9 +546,23 @@ export class ProjectIndex {
     return this.loadSnapshot()
   }
 
-  private async permittedFiles(snapshot: Snapshot, principal: Principal) {
+  private selectedFiles(snapshot: Snapshot, paths: string[], search?: string) {
+    const query = search?.toLowerCase()
+    return snapshot.files.filter(
+      (file) =>
+        validSourcePath(file.path) &&
+        (!paths.length || paths.some((path) => matchesPath(path, file.path))) &&
+        (!query || file.content.toLowerCase().includes(query)),
+    )
+  }
+
+  private async permittedFiles(
+    snapshot: Snapshot,
+    principal: Principal,
+    candidates: FileRecord[] = snapshot.files,
+  ) {
     const files: FileRecord[] = []
-    for (const file of snapshot.files)
+    for (const file of candidates)
       if (
         validSourcePath(file.path) &&
         (await this.allow(file.path, principal, snapshot.workspace))
@@ -559,11 +573,9 @@ export class ProjectIndex {
 
   async manifest(principal: Principal, paths: string[] = []) {
     const snapshot = await this.snapshotFor(principal)
-    const visible = await this.permittedFiles(snapshot, principal)
-    const allMatches = visible.filter(
-      (f) => !paths.length || paths.some((p) => matchesPath(p, f.path)),
-    )
-    const matches = allMatches.slice(0, 100)
+    const selected = this.selectedFiles(snapshot, paths)
+    const matches = await this.permittedFiles(snapshot, principal, selected)
+    const limited = matches.slice(0, 100)
     return {
       snapshotID: snapshot.id,
       freshness: "as-of-refresh" as const,
@@ -571,23 +583,19 @@ export class ProjectIndex {
       workspace: snapshot.workspace,
       repomix: snapshot.repomix,
       encoding: snapshot.encoding,
-      totalFiles: visible.length,
+      totalFiles: matches.length,
       packedTokens: snapshot.tokens,
-      files: matches.map(({ path, bytes }) => ({ path, bytes })),
-      truncated: allMatches.length > matches.length,
+      files: limited.map(({ path, bytes }) => ({ path, bytes })),
+      truncated: matches.length > limited.length,
     }
   }
   async evidence(principal: Principal, focus: Focus) {
     const snapshot = await this.snapshotFor(principal)
     const paths = focus.paths ?? []
-    const visible = await this.permittedFiles(snapshot, principal)
-    const allMatches = visible.filter(
-      (f) =>
-        (!paths.length || paths.some((p) => matchesPath(p, f.path))) &&
-        (!focus.search || f.content.toLowerCase().includes(focus.search.toLowerCase())),
-    )
-    const matches = allMatches.slice(0, 50)
-    const sources = matches.map((f) => {
+    const selected = this.selectedFiles(snapshot, paths, focus.search)
+    const matches = await this.permittedFiles(snapshot, principal, selected)
+    const limited = matches.slice(0, 50)
+    const sources = limited.map((f) => {
       const lines = f.content.split("\n"),
         start = focus.startLine ?? 1,
         end = Math.min(focus.endLine ?? lines.length, lines.length)
@@ -612,7 +620,7 @@ export class ProjectIndex {
       workspace: snapshot.workspace,
       encoding: snapshot.encoding,
       sources,
-      truncated: allMatches.length > matches.length,
+      truncated: matches.length > limited.length,
     }
   }
 

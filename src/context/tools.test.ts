@@ -93,7 +93,12 @@ test("read tools report an absent index without building, and an explicit Archit
     workspace: f.index.root,
     totalFiles: 1,
   })
-  expect(f.tools.get("lazers_project_index")!.output).toBeDefined()
+  const indexTool = f.tools.get("lazers_project_index")!
+  expect(indexTool.output).toBeDefined()
+  expect(indexTool.description).toContain(
+    "totalFiles counts authorized matches before the 100-file response limit",
+  )
+  expect(indexTool.description).toContain("without paths, it counts all currently permitted files")
 })
 
 test("native permission and Architect role both gate refresh; reads remain available to permitted implementors", async () => {

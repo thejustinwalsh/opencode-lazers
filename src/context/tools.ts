@@ -30,7 +30,12 @@ const IndexOutput = z.strictObject({
   ...base,
   workspace: z.string(),
   repomix: z.literal("1.18.1"),
-  totalFiles: z.int().nonnegative(),
+  totalFiles: z
+    .int()
+    .nonnegative()
+    .describe(
+      "With paths specified, the number of authorized matching files before the 100-file response limit; without paths, the number of all authorized files.",
+    ),
   packedTokens: z.int().nonnegative(),
   files: z.array(z.strictObject({ path: z.string(), bytes: z.int().nonnegative() })).max(100),
 })
@@ -63,7 +68,7 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
     editor.add({
       name: "lazers_project_index",
       description:
-        "Read the Architect-selected workspace snapshot for this owned implementor, or this workspace's snapshot when no owned publication is available. Returns up to 100 currently permitted file paths and structural metrics. The response identifies the source workspace and is as-of-refresh, not a live view of the worker tree.",
+        "Read the Architect-selected workspace snapshot for this owned implementor, or this workspace's snapshot when no owned publication is available. Returns up to 100 currently permitted matching file paths and structural metrics. With paths specified, totalFiles counts authorized matches before the 100-file response limit; without paths, it counts all currently permitted files. The response identifies the source workspace and is as-of-refresh, not a live view of the worker tree.",
       input: IndexInput,
       output: IndexOutput,
       options: { codemode: true, pinned: true, permission: "lazers_project_index" },
