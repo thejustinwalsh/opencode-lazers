@@ -74,14 +74,12 @@ continuity and the old unique continuation-session constraint.
 
 ## Verification run
 
-On the current working candidate:
+On reviewed merged source candidate `f6b0978` (including renewal repair `7f47913`):
 
 - `bun test src/runner test/runner test/architect-lifecycle` — 165 passed, 0 failed across 15 files.
-- `bun test` — 472 passed, 0 failed across 84 files.
-- `bun fmt --check` on the five changed source/test/evidence files — passed.
-- `bun lint` — no problems in 210 files; `bun check` — no type errors in 202 files.
+- `bun test` — 474 passed, 0 failed across 84 files.
+- `bun run verify` — all 435 files formatted; lint found no problems in 210 files; typecheck found no errors in 202 files.
 - `git diff --check` — passed.
-- `bun run verify` remains blocked by the formatter reporting the unchanged baseline `.agents/docs/handoff.md`, outside this task's write scope. The file matches `HEAD`; it was not modified to avoid an out-of-scope edit.
 
 ## Still required: exact-artifact native dogfood
 
