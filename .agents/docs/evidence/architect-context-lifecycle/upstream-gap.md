@@ -20,6 +20,60 @@ arrivals and outcomes with stable IDs without replaying executed business work.
 Crash recovery, two schedulers and visible native archival remain acceptance
 requirements. Do not promote the stronger fence assumption into task acceptance.
 
+## Source-supported reconciliation candidate
+
+The revised native investigation recommends retaining native originals instead
+of cancel-and-copy migration:
+
+1. Persist a renewal identity, fixed successor/route, continuity checkpoint,
+   stable handoff and predecessor reconciliation-source registration before
+   native effects. Transfer covered plans, checkpoint linkage and source
+   responsibility in the existing fenced transaction.
+2. Create/get the successor idempotently. Transfer ownership before archive;
+   observe/defer known busy work without interrupting it. Archive via the working
+   public client path and verify through session readback.
+3. Retain the predecessor after archival as a recovery source. Reconcile its
+   inbox and paginated full message history—not only compacted context—using
+   stable native input IDs and separate pending/steering/delivered/terminal states.
+   Empty inbox or unchanged idle time never retires that obligation.
+4. Preserve already executing work and `resume:false` pause semantics on the
+   source. Send deduplicated pending/result references to the current owner,
+   never executable copies of original requests or completed tools.
+5. Retain ambiguous delivery attempts with their original target/message IDs.
+   Resolve later owners from live durable state without model-forwarding chains.
+
+This addresses the old late-input counterexample through eventual discovery,
+not a sealed-cutover claim. Archival does not delete pending rows; promotion
+atomically moves a pending input into persisted message history under its ID.
+
+Native adversarial design review `ses_e6868bad6ffe02yqDT5GF8lorc` found the
+approach compatible with original acceptance, with required corrections:
+
+- Current `reassign` bypasses ordinary owner checks. Retired predecessor lineage
+  must not use that exception to reclaim transferred plans; retain legitimate
+  explicitly authorized recovery by another active caller.
+- Delivery and busy-period terminal markers are accounting observations, not
+  proof each instruction or external action completed. Keep uncertain/failed
+  obligations and existing worker attempt/result identities distinct.
+- Rescan mutable assistant/tool rows at terminal readback before finalizing a
+  busy period; shutdown is not a native terminal marker.
+- Preserve conversation-only decisions/questions with explicit checkpoint
+  coverage. Paused inputs need visible pending-source accounting even if no new
+  terminal marker ever arrives; a reference does not authorize executing them.
+- Fence ownership/checkpoint/source transfer and notification admission/recovery
+  separately. Detect plans added during preparation and retain lost-response
+  attempts rather than blindly resending to a newer owner.
+- Authenticate generated IDs against the ledger; avoid notification-only loops
+  without suppressing mixed substantive input. Persist pagination/dirty-row
+  cursors and use fair incremental scans in native order.
+- Preserve effective permissions and outstanding consent; source references do
+  not transfer native grants or authorize answering another session's forms.
+
+These are protocol/test requirements, not implemented or natively passed cases.
+The remaining focused investigation is whether the live supported host durably
+retains an admission that was cancelled before LAZERS first observed it. That is
+a narrower journal/retention question, not evidence that a fence is mandatory.
+
 ## Two separate upstream defects
 
 1. **No safe retirement/admission fence.** Archival and input admission are
