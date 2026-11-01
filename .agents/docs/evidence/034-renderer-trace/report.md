@@ -164,3 +164,46 @@ pre-LZ-36 implementation. It does not establish why the intermediate row count
 was 99 rather than 100, a complete page-union proof, or a renderer freeze cause.
 LZ-36 already targets this stability issue; this observation adds a real native
 before case rather than changing its scope or creating another task.
+
+## Real local-review device-loss case — 2026-11-01
+
+A real Architect review, ID `a2bad597-ad99-45aa-b240-c128e7062a5d`, returned an
+ORT buffer-download failure: device lost before MapAsync completed, status 4.
+The local trace for request/job `324b3c9e-485a-45c6-9254-d0ba5a8004f8` records
+2,078 actual input tokens, shape `[1,2078]`, three questions and configured
+8,192-token capacity. At 10:31:20.864 local it entered run; at 10:31:25.903 it
+recorded error, about 5,045 ms total, with approximately 2.06 GB JS heap against
+4.40 GB limit. Configured EP is WebGPU; observed operator EP remains unknown.
+The tool reported partial aggregate usage and no semantic pass, then requested a
+bounded retry of the same review. This is not a context-overflow error or proof
+of the historical renderer-hang cause. Desktop was responsive/Ready when Root
+inspected it; no new unresponsive capture was observed.
+
+Existing code already owns a fresh decision GPUDevice and registers its lost
+promise in `src/webgpu/decision-runtime.ts:56-99`; `src/webgpu/runtime.ts:216-281`
+already marks loss, aborts without replay and attempts model recovery. Do not
+claim loss handling is absent or replace it without evaluating that code.
+
+Current primary-source research, checked 2026-11-01:
+
+- The [WebGPU specification](https://gpuweb.github.io/gpuweb/#devices) says loss
+  invalidates a device and resources created from it; its recovery example obtains
+  a new adapter/device and recreates resources. The loss message is descriptive,
+  not a machine-readable reason to parse. This establishes lifecycle semantics,
+  not why this device was lost.
+- [ORT WebGpuFlags](https://onnxruntime.ai/docs/api/js/interfaces/Env.WebGpuFlags.html#device)
+  documents device access and providing a device before the first session.
+  Installed `onnxruntime-common/lib/env.ts` exposes matching getter/setter types;
+  any dependency-specific recovery change still needs the pinned implementation.
+- [ORT issue 33753](https://github.com/microsoft/onnxruntime/issues/33753) reports
+  single-pass prefill/device loss on iOS Safari and an application chunking
+  workaround. It is a reporter's platform-specific case, not evidence that its
+  watchdog explanation or token threshold applies to this Electron/Mac incident.
+- [ORT issue 32257](https://github.com/microsoft/onnxruntime/issues/32257) documents
+  a separate custom-device synchronization defect closed by 32259. A similar
+  buffer-download label alone does not identify this case or justify changing
+  the working provider/stack.
+
+No recovery, model, provider, context-capacity or inference setting was changed
+by this inspection/research. The new case should inform the existing scoped
+responsiveness investigation; its result remains unproven.
