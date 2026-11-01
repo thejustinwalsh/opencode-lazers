@@ -26,9 +26,20 @@ annotations, not evidence or lifecycle authority.
 The registered tool rejects extra task/token fields and checks native permission
 before writing. Hook, event, and retained public-message observations coalesce
 by stable native call/message identity. Tool inputs and hidden context are not
-persisted. Measured step usage is marked additive; session snapshots are kept
+persisted. Arbitrary structured tool output and JSON-shaped structured tool
+content are deliberately omitted; the log retains bounded public prose/errors,
+not context envelopes. Legacy structured outputs are also omitted on reads.
+Measured step usage is marked additive; session snapshots are kept
 separate and non-additive. Failed checks and incomplete recovery are represented
 as observations or explicit gaps, not acceptance decisions.
+
+Integration review repairs keep cumulative payloads and timestamps together when
+older recovery races newer live usage. Terminal events and retained idle markers
+coalesce by OpenCode's exact event-to-message ID mapping, not timestamp guesses.
+Session `outcome` exposes no terminal ID and `time.idle` can advance monotonically
+within one millisecond, so it is retained separately as one non-additive latest
+`outcome-snapshot`, never counted as another execution or keyed by unrelated
+`time.updated`. Distinct identified turns remain distinct, even at equal times.
 
 Reminder admission stores an exact synthetic message ID and ownership metadata
 before sending. Completion is conditional on that claim's attempt/session/

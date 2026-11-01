@@ -1,5 +1,6 @@
 import type { ProgressRow } from "../runner/store.ts"
-import { privacyStats, safeText, safeValue } from "../trajectory/privacy.ts"
+import { privacyStats, safeText } from "../trajectory/privacy.ts"
+import { publicProgressError, visibleProgressText } from "./privacy.ts"
 
 type JsonObject = Record<string, unknown>
 
@@ -64,9 +65,9 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     case "tool":
       view.tool = typeof value.tool === "string" ? safeText(value.tool, stats, 160) : null
       view.status = string(value.status)
-      if (typeof value.content === "string") view.result = safeText(value.content, stats)
-      if (value.output !== undefined) view.output = safeValue(value.output, stats)
-      if (value.error !== undefined) view.error = safeValue(value.error, stats)
+      if (typeof value.content === "string") view.result = visibleProgressText(value.content, stats)
+      // Legacy arbitrary structured output is not exported either.
+      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       break
     case "visible-text":
       view.text = typeof value.text === "string" ? safeText(value.text, stats) : ""
@@ -86,7 +87,7 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
             costUSD: number(usage.costUSD),
           }
         : null
-      if (value.error !== undefined) view.error = safeValue(value.error, stats)
+      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       break
     }
     case "usage-snapshot": {
@@ -107,13 +108,19 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     }
     case "provider-retry":
       view.attempt = number(value.attempt)
-      if (value.error !== undefined) view.error = safeValue(value.error, stats)
+      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       break
     case "execution-outcome":
       view.outcome = string(value.outcome)
       view.basis = string(value.basis)
-      if (value.error !== undefined) view.error = safeValue(value.error, stats)
+      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       if (typeof value.reason === "string") view.reason = safeText(value.reason, stats, 500)
+      break
+    case "outcome-snapshot":
+      view.outcome = string(value.outcome)
+      view.basis = "cumulative-session-outcome-snapshot"
+      view.additive = false
+      view.turnIdentity = "unavailable"
       break
     case "shell":
       view.shellID = typeof value.shellID === "string" ? safeText(value.shellID, stats, 128) : null
@@ -132,7 +139,7 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       view.unchanged = typeof value.unchanged === "boolean" ? value.unchanged : null
       if (typeof value.artifact === "string") view.artifact = safeText(value.artifact, stats, 128)
       if (typeof value.command === "string") view.command = safeText(value.command, stats)
-      if (value.error !== undefined) view.error = safeValue(value.error, stats)
+      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       break
     case "artifact":
       view.commit = typeof value.commit === "string" ? safeText(value.commit, stats, 128) : null

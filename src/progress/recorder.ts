@@ -3,7 +3,8 @@ import type { Database } from "bun:sqlite"
 import type { Tool } from "@opencode/schema/tool"
 import { TaskSpecSchema } from "../task.ts"
 import type { RunnerStore } from "../runner/store.ts"
-import { privacyStats, safeError, safeText, safeValue } from "../trajectory/privacy.ts"
+import { privacyStats, safeError, safeText } from "../trajectory/privacy.ts"
+import { publicProgressError, visibleProgressText } from "./privacy.ts"
 import { ProgressInput } from "./schema.ts"
 
 export type ProgressSource =
@@ -17,6 +18,7 @@ export type ProgressKind =
   | "usage-snapshot"
   | "provider-retry"
   | "execution-outcome"
+  | "outcome-snapshot"
   | "shell"
   | "verification"
   | "artifact"
@@ -104,25 +106,19 @@ function visibleContent(
   value: unknown,
   stats: ReturnType<typeof privacyStats>,
 ): string | undefined {
-  if (typeof value === "string") return safeText(value, stats)
+  if (typeof value === "string") return visibleProgressText(value, stats)
   if (!Array.isArray(value)) return undefined
   const visible = value.flatMap((part) => {
     const entry = object(part)
     return entry?.type === "text" && typeof entry.text === "string" ? [entry.text] : []
   })
-  return visible.length ? safeText(visible.join("\n"), stats) : undefined
+  return visible.length
+    ? safeText(visible.map((part) => visibleProgressText(part, stats)).join("\n"), stats)
+    : undefined
 }
 
 function errorView(value: unknown, stats: ReturnType<typeof privacyStats>) {
-  const error = object(value)
-  if (!error) return value instanceof Error ? safeError(value, stats) : undefined
-  const type = text(error.type)
-  const message = text(error.message)
-  if (!type && !message) return undefined
-  return {
-    ...(type ? { type: safeText(type, stats, 160) } : {}),
-    ...(message ? { message: safeText(message, stats, 1000) } : {}),
-  }
+  return publicProgressError(value, stats)
 }
 
 function measuredUsage(value: unknown, costValue?: unknown) {
@@ -389,14 +385,19 @@ export class ProgressRecorder {
     }
     const nextKind =
       existing.kind === "tool" && fact.kind === "commentary" ? "commentary" : existing.kind
-    const nextPayload = mergeFactPayload(nextKind as ProgressKind, priorPayload, fact.payload)
+    const cumulative = fact.kind === "usage-snapshot" || fact.kind === "outcome-snapshot"
+    const replaceCumulative = cumulative && fact.at >= existing.at
+    const nextPayload = cumulative
+      ? replaceCumulative
+        ? fact.payload
+        : priorPayload
+      : mergeFactPayload(nextKind as ProgressKind, priorPayload, fact.payload)
     const sources = [
       ...new Set([...parseSources(existing.sources_json), existing.source, fact.source]),
     ]
     const eventIDs = [
       ...new Set([...parseIDs(existing.event_ids_json), ...(fact.eventID ? [fact.eventID] : [])]),
     ]
-    const replaceCumulative = fact.kind === "usage-snapshot" && fact.at >= existing.at
     db.query(
       `UPDATE runner_progress SET kind=?,payload=?,sources_json=?,event_ids_json=?,
        call_id=COALESCE(call_id,?),message_id=COALESCE(message_id,?),at=? WHERE seq=?`,
@@ -464,7 +465,7 @@ export class ProgressRecorder {
     } else if (call.result) {
       const content = visibleContent(call.result.content, stats)
       if (content !== undefined) payload.content = content
-      if (call.result.output !== undefined) payload.output = safeValue(call.result.output, stats)
+      // Tool.Result.output is arbitrary data, not a public-content contract.
     }
     return this.appendForSession(call.sessionID, {
       source: "tool-hook",
@@ -588,13 +589,19 @@ export class ProgressRecorder {
       const outcome = type.slice("session.execution.".length)
       if (!new Set(["started", "succeeded", "failed", "interrupted"]).has(outcome)) return undefined
       const error = errorView(data.error, stats)
+      // Pinned OpenCode creates terminal idle messages from this exact event ID
+      // (schema SessionMessage.ID.fromEvent; core session/message-updater.ts).
+      const terminalMessageID = eventID?.replace(/^evt_/, "msg_")
       fact = {
         source: "native-event",
         kind: "execution-outcome",
-        dedupeKey: `execution-event:${sessionID}:${eventID ?? `${outcome}:${at}`}`,
+        dedupeKey:
+          outcome !== "started" && terminalMessageID
+            ? `turn:${sessionID}:${terminalMessageID}`
+            : `execution-event:${sessionID}:${eventID ?? `${outcome}:${at}`}`,
         at,
         eventID,
-        messageID,
+        messageID: outcome === "started" ? messageID : terminalMessageID,
         payload: {
           outcome,
           ...(error !== undefined ? { error } : {}),
@@ -861,13 +868,26 @@ export class ProgressRecorder {
     const session = object(value)
     const outcome = text(session?.outcome)
     if (!outcome || !["succeeded", "failed", "interrupted"].includes(outcome)) return undefined
-    const at = dateMillis(object(session?.time)?.updated) ?? Date.now()
+    const at = dateMillis(object(session?.time)?.idle)
+    if (at === undefined)
+      return this.markRecoveryGap(
+        sessionID,
+        "Session outcome has no native idle boundary; no execution identity is inferred.",
+        "outcome-identity",
+      )
     return this.appendForSession(sessionID, {
       source: "recovery",
-      kind: "execution-outcome",
-      dedupeKey: `session-outcome:${sessionID}:${at}:${outcome}`,
+      kind: "outcome-snapshot",
+      dedupeKey: `outcome-snapshot:${sessionID}`,
       at,
-      payload: { outcome, basis: "native-session-state" },
+      // A session aggregate exposes no terminal event ID. Keep it non-additive,
+      // separate from identified executions; time.idle can advance within 1 ms.
+      payload: {
+        outcome,
+        basis: "cumulative-session-outcome-snapshot",
+        additive: false,
+        turnIdentity: "unavailable",
+      },
     })
   }
 
