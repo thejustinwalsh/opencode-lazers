@@ -76,6 +76,18 @@ selection snapshot, including on reselection. That repair is instructed on the
 active second session, alongside removal of checksum-as-proof wording, without
 restart. See `evidence/stable-live-trajectory/selected-live-review.md`. Actual
 observation-file conflicts with Radar remain serialized through runtime.
+The second attempt has now returned `c1e297760fbb042221396b714dce11ae8ad9e0d5`:
+its focused/all/quality/build receipts pass unchanged, no effects are pending and
+runtime holds for `stable-history:human`. Independent source review is underway;
+`evidence/stable-live-trajectory/native-checklist.md` prepares the original mounted
+gate, not a pass. Do not activate before source blockers clear or record human
+evidence from test results.
+Root and independent native review have now cleared source blockers in `c1e2977`;
+the selected-live correction is covered by selected-payload/reselection tests.
+Native mounted disclosure/anchor/paging evidence is still required. Reviewed
+configuration was subsequently propagated through normal main merges; see
+`evidence/worker-role-precedence/propagation.md` for preserved source identities
+and effective native-role readbacks, not historical prompt or usability claims.
 It preserves loaded history/disclosures/reading anchor while status/progress
 refreshes independently; repeated status and captured-page reads must add zero
 native context loads. Existing default inspection cursor behavior remains.
