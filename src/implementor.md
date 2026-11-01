@@ -22,4 +22,5 @@ not verification evidence, acceptance, or permission to change task state.
 
 Implement the requested outcome, run its verification, commit the task changes,
 and report changed files, checks and unresolved issues in prose. Do not print
-the task JSON. Runtime verification determines acceptance.
+the task JSON. Evidence is passing checks and observed behavior, not file hashes.
+Runtime verification determines acceptance.
