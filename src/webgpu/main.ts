@@ -10,6 +10,13 @@ import {
   RENDERER_DEBUG_PROFILE_MS,
   RENDERER_DEBUG_TIMEOUT_MS,
 } from "./renderer-debug.ts"
+import {
+  RendererArmedCaptureManager,
+  RENDERER_ARMED_NEXT_JOB_MS,
+  RENDERER_ARMED_RECORDING_MS,
+  RENDERER_ARMED_SAMPLING_INTERVAL_US,
+  RENDERER_ARMED_STOP_MS,
+} from "./renderer-armed-capture.ts"
 
 const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) => {
   try {
@@ -48,6 +55,25 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
       // Diagnostics must never interrupt inference or lease cleanup.
     }
   }
+  const armedCaptures = new RendererArmedCaptureManager({
+    directory: diagnosticsDirectory,
+    onFinalized: (status) =>
+      writeLog(status.captured ? "info" : "warn", "LAZERS armed renderer CPU capture", {
+        ...(status.captureID ? { captureID: status.captureID } : {}),
+        ...(status.lastStage ? { lastStage: status.lastStage } : {}),
+        ...(status.lastRequestID ? { lastRequestID: status.lastRequestID } : {}),
+        ...(status.lastJobID ? { lastJobID: status.lastJobID } : {}),
+        captured: status.captured ?? false,
+        ...(status.reason ? { reason: status.reason } : {}),
+        ...(status.failure ? { failure: status.failure } : {}),
+        ...(status.path ? { path: status.path } : {}),
+        ...(status.profilePath ? { profilePath: status.profilePath } : {}),
+        ...(status.stopTrigger ? { stopTrigger: status.stopTrigger } : {}),
+        ...(status.outcome ? { outcome: status.outcome } : {}),
+        stageCount: status.stageCount,
+        ...(status.stageHistoryDropped ? { stageHistoryDropped: status.stageHistoryDropped } : {}),
+      }),
+  })
   const lifecycleData = (window: NonNullable<ReturnType<typeof ctx.windows.get>>) => {
     const trace = lastTrace.get(window.id)
     const rendererPID = safeRendererPID(window)
@@ -72,6 +98,10 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     const unresponsive = () => {
       const correlation = lifecycleData(window)
       writeLog("warn", "LAZERS WebGPU renderer unresponsive", correlation)
+      if (armedCaptures.hasActive(window.id)) {
+        void armedCaptures.lifecycleLost(window.id, "unresponsive")
+        return
+      }
       if (freezeCaptures.has(window.id)) return
       freezeCaptures.add(window.id)
       void captureRendererDebug({
@@ -105,13 +135,16 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
       freezeCaptures.delete(window.id)
       writeLog("info", "LAZERS WebGPU renderer responsive", lifecycleData(window))
     }
-    const rendererGone = (_event: unknown, details: { reason?: string }) =>
+    const rendererGone = (_event: unknown, details: { reason?: string }) => {
+      void armedCaptures.lifecycleLost(window.id, "lifecycle-loss")
       writeLog("error", "LAZERS WebGPU renderer process gone", {
         ...lifecycleData(window),
         ...(details.reason ? { reason: details.reason.slice(0, 80) } : {}),
       })
+    }
     const navigated = () => {
       writeLog("info", "LAZERS WebGPU renderer navigated", lifecycleData(window))
+      void armedCaptures.lifecycleLost(window.id, "lifecycle-loss")
       disconnected()
     }
     window.on("unresponsive", unresponsive)
@@ -133,6 +166,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
   ctx.windows.on("close", (window) => {
     lastTrace.delete(window.id)
     freezeCaptures.delete(window.id)
+    void armedCaptures.close(window.id)
     lost(window.id)
   })
   ctx.provide(ModelFiles, {
@@ -165,11 +199,19 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     },
     trace: (event, caller) => {
       lastTrace.set(caller.window, event)
+      armedCaptures.trace(caller.window, event)
       writeLog("info", "LAZERS WebGPU inference trace", {
         windowID: caller.window,
         ...event,
       })
     },
+    rendererCaptureStatus: (_, caller) => armedCaptures.status(caller.window),
+    armRendererCapture: async (_, caller) => {
+      const window = ctx.windows.get(caller.window)
+      if (!window) throw new Error("The renderer window is unavailable")
+      return armedCaptures.arm(caller.window, window.webContents, lifecycleData(window))
+    },
+    stopRendererCapture: (_, caller) => armedCaptures.stop(caller.window),
     clear: async () => {
       await lease.clear(async () => {
         await cache.clear()
@@ -182,8 +224,13 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     diagnosticsDirectory,
     rendererDebugProfileMs: RENDERER_DEBUG_PROFILE_MS,
     rendererDebugTimeoutMs: RENDERER_DEBUG_TIMEOUT_MS,
+    rendererArmedNextJobMs: RENDERER_ARMED_NEXT_JOB_MS,
+    rendererArmedRecordingMs: RENDERER_ARMED_RECORDING_MS,
+    rendererArmedSamplingIntervalUs: RENDERER_ARMED_SAMPLING_INTERVAL_US,
+    rendererArmedStopMs: RENDERER_ARMED_STOP_MS,
   })
   return async () => {
+    await armedCaptures.shutdown()
     await Promise.all([cache.stop(), decisions.stop()])
   }
 }

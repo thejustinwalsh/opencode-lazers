@@ -6,11 +6,12 @@ import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
 import { clampSplit, splitFromKey, splitFromPointer, visibleTicks } from "./panel-layout.ts"
 import type { PanelData, PanelPreferences, Selection } from "./panel-state.ts"
-import { selectedAttemptFor, TrajectoryPanelState } from "./panel-state.ts"
+import { selectedAttemptFor, selectedEventFor, TrajectoryPanelState } from "./panel-state.ts"
 import {
   buildTimeline,
   checkKey,
   detailedChecks,
+  eventTitle,
   eventPayload,
   sourceReferences,
 } from "./projection.ts"
@@ -68,16 +69,39 @@ function formatTime(value: number | null, origin: number | null) {
   return `${absolute} · +${minutes}:${String(seconds).padStart(2, "0")}`
 }
 
-function eventTitle(event: TrajectoryEvent) {
-  if (event.kind === "tool") return `${event.tool ?? "Tool"} · ${event.status ?? "unknown"}`
-  if (event.kind === "verification")
-    return `Check ${event.checkID ?? ""} · ${event.status ?? "unknown"}`
-  if (event.kind === "runner-transition")
-    return `${event.event ?? "Transition"}${event.to ? ` · ${event.to}` : ""}`
-  if (event.kind === "runner-effect")
-    return `${event.effect ?? "Runner effect"} · ${event.state ?? "unknown"}`
-  if (event.kind === "assistant-text") return "Worker message"
-  return event.kind
+type ScrollAnchor = { key: string; offset: number; scrollTop: number } | undefined
+
+function captureScrollAnchor(element: HTMLElement | undefined): ScrollAnchor {
+  if (!element) return undefined
+  const bounds = element.getBoundingClientRect()
+  const anchor = [...element.querySelectorAll<HTMLElement>("[data-scroll-anchor]")].find((item) => {
+    const rect = item.getBoundingClientRect()
+    return rect.bottom > bounds.top && rect.top < bounds.bottom
+  })
+  return anchor?.dataset.scrollAnchor
+    ? {
+        key: anchor.dataset.scrollAnchor,
+        offset: anchor.getBoundingClientRect().top - bounds.top,
+        scrollTop: element.scrollTop,
+      }
+    : { key: "", offset: 0, scrollTop: element.scrollTop }
+}
+
+function restoreScrollAnchor(element: HTMLElement | undefined, anchor: ScrollAnchor) {
+  if (!element || !anchor) return
+  if (!anchor.key) {
+    element.scrollTop = anchor.scrollTop
+    return
+  }
+  const target = [...element.querySelectorAll<HTMLElement>("[data-scroll-anchor]")].find(
+    (item) => item.dataset.scrollAnchor === anchor.key,
+  )
+  if (!target) {
+    element.scrollTop = anchor.scrollTop
+    return
+  }
+  element.scrollTop +=
+    target.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
 }
 
 function eventTime(event: TrajectoryEvent) {
@@ -109,8 +133,14 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     taskReference: null,
     selection: null,
     events: [],
+    liveEvents: [],
+    capturedEventIDs: [],
     eventCursor: null,
     totalEvents: 0,
+    historyCapturedAt: null,
+    historyExpiresAt: null,
+    historyError: "",
+    recapturingHistory: false,
     loading: true,
     loadingActivity: false,
     stale: false,
@@ -119,13 +149,29 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   const [split, setSplit] = createSignal(initial.split)
   const [axisWidth, setAxisWidth] = createSignal(0)
   let axisObserver: ResizeObserver | undefined
-  const state = new TrajectoryPanelState(setData, (preferences: PanelPreferences) => {
-    save({
-      selectedTaskID: preferences.taskID,
-      selectedKind: preferences.selection?.kind ?? "",
-      selectedRecordID: preferences.selection?.id ?? "",
-    })
-  })
+  let topPane: HTMLDivElement | undefined
+  let inspectorPane: HTMLDivElement | undefined
+  const state = new TrajectoryPanelState(
+    (next) => {
+      const previous = data()
+      const preserve = previous.key === next.key && previous.taskID === next.taskID
+      const topAnchor = preserve ? captureScrollAnchor(topPane) : undefined
+      const inspectorAnchor = preserve ? captureScrollAnchor(inspectorPane) : undefined
+      setData(next)
+      if (preserve)
+        queueMicrotask(() => {
+          restoreScrollAnchor(topPane, topAnchor)
+          restoreScrollAnchor(inspectorPane, inspectorAnchor)
+        })
+    },
+    (preferences: PanelPreferences) => {
+      save({
+        selectedTaskID: preferences.taskID,
+        selectedKind: preferences.selection?.kind ?? "",
+        selectedRecordID: preferences.selection?.id ?? "",
+      })
+    },
+  )
   let root: HTMLDivElement | undefined
   let separator: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
@@ -251,12 +297,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   const selectedTask = () =>
     currentData()?.tasks.find((task) => task.taskID === currentData()?.taskID)
   const allTaskChecks = () => (report() ? detailedChecks(report()!) : [])
-  const selectedEvent = () => {
-    const selection = currentData()?.selection
-    return selection?.kind === "event"
-      ? currentData()?.events.find((event) => event.id === selection.id)
-      : undefined
-  }
+  const selectedEvent = () => selectedEventFor(currentData())
   const selectedCheck = () => {
     const selection = currentData()?.selection
     return selection?.kind === "check"
@@ -380,7 +421,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         "--trajectory-inspector-fr": `${100 - split()}fr`,
       }}
     >
-      <div class="lazers-trajectory-top">
+      <div
+        class="lazers-trajectory-top"
+        ref={(element) => {
+          topPane = element
+        }}
+      >
         <div class="lazers-trajectory-controls">
           <span class="lazers-trajectory-task-menu">
             <Ui.Menu
@@ -420,11 +466,17 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
             }
           />
         </div>
-        <Show when={currentData()?.error}>
+        <Show when={currentData()?.error || (!report() && currentData()?.historyError)}>
           <div class="lazers-trajectory-error" role="alert">
-            {currentData()?.error}
-            <Ui.Button variant="ghost" size="small" onClick={() => void state.refresh()}>
-              Retry
+            {currentData()?.error || currentData()?.historyError}
+            <Ui.Button
+              variant="ghost"
+              size="small"
+              onClick={() =>
+                currentData()?.error ? void state.refresh() : void state.recaptureActivity()
+              }
+            >
+              {currentData()?.error ? "Retry status" : "Recapture history"}
             </Ui.Button>
           </div>
         </Show>
@@ -658,7 +710,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         }}
       />
 
-      <div class="lazers-trajectory-inspector">
+      <div
+        class="lazers-trajectory-inspector"
+        ref={(element) => {
+          inspectorPane = element
+        }}
+      >
         <Show
           when={currentData()?.selection}
           fallback={<div class="lazers-trajectory-note">Select an attempt, check, or event.</div>}
@@ -880,13 +937,34 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       </div>
                     </section>
                     <details class="lazers-trajectory-activity">
-                      <summary>Activity · {currentData()?.totalEvents ?? 0}</summary>
+                      <summary>Captured activity · {currentData()?.totalEvents ?? 0}</summary>
                       <div class="lazers-trajectory-activity-list">
+                        <div class="lazers-trajectory-capture-note" role="status">
+                          <span>
+                            {currentData()?.historyCapturedAt
+                              ? `Captured ${new Date(currentData()!.historyCapturedAt!).toLocaleString()} · expires ${new Date(currentData()!.historyExpiresAt!).toLocaleTimeString()}`
+                              : "History capture time unavailable"}
+                          </span>
+                          <Ui.Button
+                            variant="ghost"
+                            size="small"
+                            busy={currentData()?.recapturingHistory}
+                            onClick={() => void state.recaptureActivity()}
+                          >
+                            Recapture history
+                          </Ui.Button>
+                        </div>
+                        <Show when={currentData()?.historyError}>
+                          <div class="lazers-trajectory-error" role="alert">
+                            {currentData()?.historyError}
+                          </div>
+                        </Show>
                         <For each={currentData()?.events ?? []}>
                           {(event) => (
                             <button
                               type="button"
                               class="lazers-trajectory-event"
+                              data-scroll-anchor={`history:${event.id}`}
                               aria-pressed={
                                 currentData()?.selection?.kind === "event" &&
                                 currentData()?.selection?.id === event.id
@@ -902,7 +980,9 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           <Ui.Button
                             variant="ghost"
                             size="small"
-                            busy={currentData()?.loadingActivity}
+                            busy={
+                              currentData()?.loadingActivity || currentData()?.recapturingHistory
+                            }
                             onClick={() => void state.loadMoreActivity()}
                           >
                             Load more activity
@@ -910,6 +990,36 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         </Show>
                       </div>
                     </details>
+                    <Show when={(currentData()?.liveEvents.length ?? 0) > 0}>
+                      <details class="lazers-trajectory-live">
+                        <summary>Live progress · {currentData()?.liveEvents.length ?? 0}</summary>
+                        <p class="lazers-trajectory-live-note">
+                          Current progress is shown separately; captured history stays as of its
+                          capture until you recapture it.
+                        </p>
+                        <div class="lazers-trajectory-activity-list">
+                          <For each={currentData()?.liveEvents ?? []}>
+                            {(event) => (
+                              <button
+                                type="button"
+                                class="lazers-trajectory-event"
+                                data-scroll-anchor={`live:${event.id}`}
+                                aria-pressed={
+                                  currentData()?.selection?.kind === "event" &&
+                                  currentData()?.selection?.id === event.id
+                                }
+                                onClick={() => state.selectEvent(event.id)}
+                              >
+                                <span class="lazers-trajectory-event-title">
+                                  {eventTitle(event)}
+                                </span>
+                                <time>{eventTime(event)}</time>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </details>
+                    </Show>
                   </>
                 )
               }}

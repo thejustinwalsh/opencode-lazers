@@ -18,6 +18,13 @@ const traceBytes = Schema.Number.check(
 const traceShape = Schema.Array(
   Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: 1_000_000_000 })),
 ).check(Schema.isBetweenLength(0, 8))
+const captureID = Schema.String.check(Schema.isBetweenLength(1, 100))
+const captureText = Schema.String.check(Schema.isBetweenLength(0, 2_048))
+const capturePath = Schema.String.check(Schema.isBetweenLength(0, 4_096))
+const captureCount = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 0, maximum: 10_000 }),
+)
 const TraceError = Schema.Struct({
   kind: Schema.Literals(["cancelled", "context-overflow", "device-lost", "deadline", "unknown"]),
   name: Schema.optionalKey(Schema.String.check(Schema.isBetweenLength(1, 80))),
@@ -74,6 +81,65 @@ export const InferenceTrace = Schema.Struct({
 })
 export type InferenceTrace = InferenceTraceEvent
 
+export const RendererCaptureStatus = Schema.Struct({
+  state: Schema.Literals(["idle", "preparing", "waiting", "recording", "stopping", "complete"]),
+  message: captureText,
+  captureID: Schema.optionalKey(captureID),
+  lastStage: Schema.optionalKey(captureText),
+  lastRequestID: Schema.optionalKey(captureID),
+  lastJobID: Schema.optionalKey(captureID),
+  stageCount: captureCount,
+  stageHistoryDropped: Schema.optionalKey(captureCount),
+  captured: Schema.optionalKey(Schema.Boolean),
+  reason: Schema.optionalKey(
+    Schema.Literals([
+      "devtools-open",
+      "debugger-attached",
+      "unavailable",
+      "timeout",
+      "aborted",
+      "error",
+      "profile-empty",
+      "profile-too-large",
+      "profile-invalid",
+      "job-not-seen",
+      "job-started-during-arming",
+      "manual-stop-before-job",
+      "lifecycle-lost",
+    ]),
+  ),
+  failure: Schema.optionalKey(
+    Schema.Literals([
+      "attach",
+      "profiler-enable",
+      "profiler-sampling",
+      "profiler-start",
+      "profiler-stop",
+      "job-wait",
+      "lifecycle",
+      "profile",
+    ]),
+  ),
+  path: Schema.optionalKey(capturePath),
+  profilePath: Schema.optionalKey(capturePath),
+  stopTrigger: Schema.optionalKey(
+    Schema.Literals([
+      "terminal",
+      "manual-stop",
+      "manual-disarm",
+      "next-job-timeout",
+      "recording-timeout",
+      "unresponsive",
+      "preparation-race",
+      "lifecycle-loss",
+      "cleanup",
+      "arming-failure",
+    ]),
+  ),
+  outcome: Schema.optionalKey(Schema.Literals(["captured", "failed"])),
+})
+export type RendererCaptureStatus = typeof RendererCaptureStatus.Type
+
 export const CacheStatus = Schema.Struct({
   phase: Schema.String,
   cachedBytes: Schema.Number,
@@ -112,6 +178,9 @@ export const ModelFiles = Ipc.define({
     release: { input: Schema.Struct({ owner: Schema.String }) },
     cancel: { input: Schema.Struct({ owner: Schema.String }) },
     trace: { input: InferenceTrace },
+    rendererCaptureStatus: { output: RendererCaptureStatus },
+    armRendererCapture: { output: RendererCaptureStatus },
+    stopRendererCapture: { output: RendererCaptureStatus },
     clear: {},
   },
 })

@@ -692,6 +692,7 @@ export async function inspectTrajectory(
   projectID: string,
   input: InspectTrajectoryInput,
   cursorSecret: Uint8Array,
+  options: { allEvents?: boolean; includeMessages?: boolean } = {},
 ) {
   const stats = privacyStats()
   let task: TaskSpec | undefined
@@ -744,6 +745,10 @@ export async function inspectTrajectory(
   )
     throw new Error("No project-owned attempt found")
 
+  const statusReader = options.includeMessages === false ? host.status : undefined
+  if (options.includeMessages === false && !statusReader)
+    throw new Error("Metadata-only trajectory status is unavailable")
+
   const allAttempts = rawPlans.flatMap((snapshot) =>
     snapshot.attempts.map((attempt) => ({ attempt, snapshot })),
   )
@@ -753,9 +758,17 @@ export async function inspectTrajectory(
   const sessions = new Map<string, TrajectorySession | null>()
   const sessionErrors = new Map<string, string>()
   const statuses = new Map<string, "available" | "missing" | "unavailable">()
+  const sessionsByID = new Map<string, Promise<TrajectorySession | null>>()
   for (const { attempt } of allAttempts) {
     try {
-      const session = await host.session(attempt.session_id)
+      let read = sessionsByID.get(attempt.session_id)
+      if (!read) {
+        const sessionID = attempt.session_id
+        read =
+          options.includeMessages === false ? statusReader!(sessionID) : host.session(sessionID)
+        sessionsByID.set(sessionID, read)
+      }
+      const session = await read
       if (session && (session.id !== attempt.session_id || session.projectID !== projectID))
         throw new TrajectoryIdentityError()
       sessions.set(attempt.id, session)
@@ -783,7 +796,11 @@ export async function inspectTrajectory(
     checksByPlan.set(snapshot.row.id, planChecks)
     for (const attempt of snapshot.attempts) {
       const session = sessions.get(attempt.id) ?? null
-      if (session?.messages && statuses.get(attempt.id) === "available")
+      if (
+        options.includeMessages !== false &&
+        session?.messages &&
+        statuses.get(attempt.id) === "available"
+      )
         rawEvents.push(...messageEvents(session.messages, attempt, session, stats))
     }
   }
@@ -983,7 +1000,10 @@ export async function inspectTrajectory(
       },
     },
     coverage: {
-      sessionRead: "OpenCode session.get followed by session.context",
+      sessionRead:
+        options.includeMessages === false
+          ? "OpenCode session.get only; native session.context was not read"
+          : "OpenCode session.get followed by session.context",
       transcript:
         "Only messages returned by session.context; plugin context does not expose client.message.list",
       availableSessionContexts: messageSessions,
@@ -1023,6 +1043,7 @@ export async function inspectTrajectory(
   const filterHash = hashSource({ targetScope, limit: input.limit })
   const snapshot = hashSource({ hash: snapshotHash, summary, events: visibleEvents })
   let offset = 0
+  if (input.cursor && options.allEvents) throw new Error("Invalid or stale trajectory cursor")
   if (input.cursor) {
     const cursor = readCursor(cursorSecret, input.cursor)
     if (cursor.scope !== filterHash || cursor.snapshot !== snapshot || cursor.limit !== input.limit)
@@ -1030,10 +1051,10 @@ export async function inspectTrajectory(
     offset = cursor.offset
   }
   if (offset > visibleEvents.length) throw new Error("Invalid or stale trajectory cursor")
-  const page = visibleEvents.slice(offset, offset + input.limit)
+  const page = options.allEvents ? visibleEvents : visibleEvents.slice(offset, offset + input.limit)
   const nextOffset = offset + page.length
   const nextCursor =
-    nextOffset < visibleEvents.length
+    !options.allEvents && nextOffset < visibleEvents.length
       ? makeCursor(cursorSecret, {
           v: 1,
           offset: nextOffset,
@@ -1054,4 +1075,29 @@ export async function inspectTrajectory(
       hasMore: nextCursor !== null,
     },
   }
+}
+
+/** Captures the complete sanitized event projection once for the panel page cache. */
+export function captureTrajectoryHistory(
+  store: RunnerStore,
+  host: TrajectoryHost,
+  projectID: string,
+  input: InspectTrajectoryInput,
+  cursorSecret: Uint8Array,
+) {
+  return inspectTrajectory(store, host, projectID, input, cursorSecret, { allEvents: true })
+}
+
+/** Reads current runner/session facts without invoking native session.context. */
+export function inspectTrajectoryStatus(
+  store: RunnerStore,
+  host: TrajectoryHost,
+  projectID: string,
+  taskID: string,
+  cursorSecret: Uint8Array,
+) {
+  return inspectTrajectory(store, host, projectID, { taskID, limit: 50 }, cursorSecret, {
+    allEvents: true,
+    includeMessages: false,
+  })
 }

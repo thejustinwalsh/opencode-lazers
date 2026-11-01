@@ -25,8 +25,8 @@ import type { SpeechVoice } from "./speech.ts"
 import { featureEnabled, usesGPU, needsChat } from "./features.ts"
 import type { Features, LocalFeature } from "./features.ts"
 
-import { startInferenceTrace } from "./inference-trace.ts"
 import type { InferenceTraceEvent, InferenceTraceMark, TraceStage } from "./inference-trace.ts"
+import { RuntimeTrace } from "./runtime-trace.ts"
 
 type ModelKind = "chat" | "decision"
 
@@ -35,6 +35,10 @@ export function createInferenceRuntime(
   keepAliveMs: () => number = () => -1,
   voice: () => SpeechVoice = () => DEFAULT_VOICE,
   features: () => Features,
+  timing: {
+    now?: () => number
+    schedule?: (callback: () => void, delayMs: number) => () => void
+  } = {},
 ) {
   const files = ctx.main(ModelFiles)
   let traceWrites = Promise.resolve()
@@ -45,24 +49,13 @@ export function createInferenceRuntime(
       })
       .catch(() => {})
   }
-  const runtimeStarted = performance.now()
-  const runtimeTraceID = `renderer:${crypto.randomUUID()}`
-  let activeTrace: ReturnType<typeof startInferenceTrace> | undefined
+  const now = timing.now ?? (() => performance.now())
+  const runtimeTrace = new RuntimeTrace(writeTrace, now)
   let activeInputTokens: number | undefined
   const traceStage = async (stage: TraceStage, metadata?: InferenceTraceMark) => {
-    if (activeTrace && metadata?.actualInputTokens !== undefined)
+    if (runtimeTrace.hasActiveRequest && metadata?.actualInputTokens !== undefined)
       activeInputTokens = metadata.actualInputTokens
-    if (activeTrace) activeTrace.mark(stage, metadata)
-    else
-      writeTrace({
-        requestID: runtimeTraceID,
-        stage,
-        elapsedMs: Math.min(86_400_000, Math.round(performance.now() - runtimeStarted)),
-        deltaMs: 0,
-        configuredEP: "webgpu",
-        observedEP: "unknown",
-        ...metadata,
-      })
+    runtimeTrace.mark(stage, metadata)
     await traceWrites
   }
   const heap = () => {
@@ -219,7 +212,7 @@ export function createInferenceRuntime(
                   signal,
                   setDetail,
                   () => {
-                    activeTrace?.mark("device-lost")
+                    runtimeTrace.mark("device-lost")
                     if (!disposed && !unloading) recover("decision")
                   },
                   traceStage,
@@ -279,19 +272,15 @@ export function createInferenceRuntime(
   }
 
   const run = async (job: InferenceJob, token: string, controller: AbortController) => {
-    const trace = startInferenceTrace(
-      {
-        requestID: job.requestID,
-        jobID: job.id,
-        mode: job.mode,
-        feature: job.feature,
-        configuredEP: "webgpu",
-        contextCapacityTokens: job.mode === "systemone" ? 8_192 : 4_096,
-        configuredMaxTokens: job.maxTokens,
-      },
-      writeTrace,
-    )
-    activeTrace = trace
+    const trace = runtimeTrace.begin({
+      requestID: job.requestID,
+      jobID: job.id,
+      mode: job.mode,
+      feature: job.feature,
+      configuredEP: "webgpu",
+      contextCapacityTokens: job.mode === "systemone" ? 8_192 : 4_096,
+      configuredMaxTokens: job.maxTokens,
+    })
     activeInputTokens = undefined
     trace.mark("polled", { active: true, inputChars: job.prompt.length, ...heap() })
     await traceWrites
@@ -420,7 +409,6 @@ export function createInferenceRuntime(
         })
       else trace.fail(failure, { active: false, ...heap() })
       await traceWrites
-      activeTrace = undefined
       await worker()
         .complete({ owner: token, id: job.id, result }, { signal: serviceSignal() })
         .catch(() => {})
@@ -633,32 +621,26 @@ export function createInferenceRuntime(
       checking = false
     }
   }
-  const started = performance.now()
+  const started = now()
   let lastTick = started
-  const timer = setInterval(() => {
-    const now = performance.now()
-    const lag = Math.max(0, now - lastTick - 500)
-    lastTick = now
-    if (lag >= 1_000)
-      writeTrace({
-        requestID: activeTrace?.request.requestID ?? runtimeTraceID,
-        ...(active ? { jobID: active.id } : {}),
-        stage: "renderer-lag",
-        elapsedMs: Math.min(86_400_000, Math.round(now - started)),
-        deltaMs: Math.min(86_400_000, Math.round(lag)),
-        rendererLagMs: Math.min(86_400_000, Math.round(lag)),
-        configuredEP: "unknown",
-        observedEP: "unknown",
-        active: Boolean(active),
-        ...heap(),
-      })
+  const stopTimer = (
+    timing.schedule ??
+    ((callback, delayMs) => {
+      const timer = setInterval(callback, delayMs)
+      return () => clearInterval(timer)
+    })
+  )(() => {
+    const current = now()
+    const lag = Math.max(0, current - lastTick - 500)
+    lastTick = current
+    if (lag >= 1_000) runtimeTrace.rendererLag(Math.min(86_400_000, Math.round(lag)), heap())
     void tick()
   }, 500)
   let disposal: Promise<void> | undefined
   const dispose = (): Promise<void> => {
     if (disposal) return disposal
     disposed = true
-    clearInterval(timer)
+    stopTimer()
     disposal = unload()
     return disposal
   }

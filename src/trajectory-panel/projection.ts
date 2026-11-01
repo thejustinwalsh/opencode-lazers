@@ -2,6 +2,7 @@ import type {
   ObservationScope,
   ObservationScopeView,
   SnapshotResponse,
+  TrajectoryHistoryResponse,
   TrajectoryResponse,
 } from "../observability/contract.ts"
 import type { ObservationChange } from "../observability/contract.ts"
@@ -14,6 +15,14 @@ export type ObservationRpc = {
   ): Promise<SnapshotResponse>
   trajectory(
     input: { scope: ObservationScope; taskID: string; limit: number; cursor?: string },
+    options: { location: { directory: string }; signal: AbortSignal },
+  ): Promise<TrajectoryResponse>
+  trajectoryHistory(
+    input: { scope: ObservationScope; taskID: string; limit: number; cursor?: string },
+    options: { location: { directory: string }; signal: AbortSignal },
+  ): Promise<TrajectoryHistoryResponse>
+  trajectoryStatus(
+    input: { scope: ObservationScope; taskID: string },
     options: { location: { directory: string }; signal: AbortSignal },
   ): Promise<TrajectoryResponse>
   events: {
@@ -32,6 +41,14 @@ export type TrajectoryTransport = {
     signal: AbortSignal,
     cursor?: string,
   ): Promise<TrajectoryResponse>
+  history(
+    scope: ObservationScope,
+    taskID: string,
+    signal: AbortSignal,
+    cursor?: string,
+    limit?: number,
+  ): Promise<TrajectoryHistoryResponse>
+  status(scope: ObservationScope, taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
   changes(signal: AbortSignal): AsyncIterable<ObservationChange>
   online(): boolean
 }
@@ -48,6 +65,13 @@ export function createTrajectoryTransport(
         { scope, taskID, limit: 50, ...(cursor ? { cursor } : {}) },
         { location: { directory }, signal },
       ),
+    history: (scope, taskID, signal, cursor, limit = 50) =>
+      rpc.trajectoryHistory(
+        { scope, taskID, limit, ...(cursor ? { cursor } : {}) },
+        { location: { directory }, signal },
+      ),
+    status: (scope, taskID, signal) =>
+      rpc.trajectoryStatus({ scope, taskID }, { location: { directory }, signal }),
     changes: (signal) =>
       (async function* () {
         for await (const event of rpc.events.subscribe("changed", { signal })) yield event.data
@@ -86,33 +110,52 @@ const Event = z
   .object({
     id: z.string(),
     at: NullableTime.optional(),
+    sequence: z.number().finite().optional(),
+    projectID: z.string().optional(),
+    planID: z.string().optional(),
+    taskID: z.string().optional(),
     attemptID: z.string().nullable().optional(),
     sessionID: z.string().nullable().optional(),
+    source: z.string().optional(),
+    sources: z.array(z.string()).optional(),
+    eventIDs: z.array(z.string()).optional(),
     kind: z.string(),
     event: z.string().optional(),
     from: z.string().optional(),
     to: z.string().optional(),
     version: z.number().finite().optional(),
     text: z.string().optional(),
-    tool: z.string().optional(),
-    status: z.string().optional(),
+    tool: z.string().nullable().optional(),
+    status: z.string().nullable().optional(),
     input: z.unknown().optional(),
     result: z.string().optional(),
     error: z.unknown().optional(),
     completedAt: NullableTime.optional(),
-    command: z.string().optional(),
+    command: z.string().nullable().optional(),
     exit: z.number().finite().nullable().optional(),
     output: z.string().optional(),
     outputTruncated: z.boolean().optional(),
     checkID: z.string().optional(),
     state: z.string().optional(),
     effect: z.string().optional(),
-    outcome: z.string().optional(),
     reason: z.string().optional(),
     model: Model.nullable().optional(),
     previous: Model.nullable().optional(),
     agent: z.string().nullable().optional(),
     location: z.string().optional(),
+    finish: z.string().nullable().optional(),
+    measurementBasis: z.string().nullable().optional(),
+    usage: z.unknown().optional(),
+    additive: z.boolean().optional(),
+    outcome: z.string().nullable().optional(),
+    basis: z.string().nullable().optional(),
+    delivery: z.string().nullable().optional(),
+    commit: z.string().nullable().optional(),
+    truncated: z.boolean().optional(),
+    exitCode: z.number().finite().nullable().optional(),
+    timedOut: z.boolean().nullable().optional(),
+    unchanged: z.boolean().nullable().optional(),
+    artifact: z.string().optional(),
   })
   .strip()
 const Report = z
@@ -174,8 +217,21 @@ const Report = z
       compacted: z.boolean(),
       ongoing: z.boolean(),
       attemptsWithoutRecordedSessions: z.number().int().nonnegative(),
+      workerProgress: z
+        .object({
+          facts: z.number().int().nonnegative(),
+          truncated: z.boolean(),
+          commentary: z.number().int().nonnegative(),
+          automaticFacts: z.number().int().nonnegative(),
+          recoveryGaps: z.number().int().nonnegative(),
+          additiveStepMeasurements: z.number().int().nonnegative(),
+          cumulativeUsageSnapshots: z.number().int().nonnegative(),
+        })
+        .optional(),
     }),
     trajectory: z.object({
+      page: z.number().int().positive().optional(),
+      limit: z.number().int().positive().optional(),
       totalEvents: z.number().int().nonnegative(),
       events: z.array(Event),
       nextCursor: z.string().nullable(),
@@ -279,6 +335,23 @@ export type TrajectoryReport = z.infer<typeof Report>
 export type TrajectoryAttempt = TrajectoryReport["attempts"][number]
 export type TrajectoryCheck = z.infer<typeof Check>
 export type TrajectoryEvent = z.infer<typeof Event>
+
+export function eventTitle(event: TrajectoryEvent) {
+  if (event.kind === "tool") return `${event.tool ?? "Tool"} · ${event.status ?? "unknown"}`
+  if (event.kind === "worker-tool")
+    return `${event.tool ?? "Worker tool"} · ${event.status ?? "updated"}`
+  if (event.kind === "commentary") return "Worker progress note"
+  if (event.kind === "worker-visible-text") return "Worker message"
+  if (event.kind === "worker-step") return `Worker step · ${event.status ?? "updated"}`
+  if (event.kind === "verification")
+    return `Check ${event.checkID ?? ""} · ${event.status ?? "unknown"}`
+  if (event.kind === "runner-transition")
+    return `${event.event ?? "Transition"}${event.to ? ` · ${event.to}` : ""}`
+  if (event.kind === "runner-effect")
+    return `${event.effect ?? "Runner effect"} · ${event.state ?? "unknown"}`
+  if (event.kind === "assistant-text") return "Worker message"
+  return event.kind
+}
 
 export function parseTrajectoryReport(response: TrajectoryResponse): TrajectoryReport {
   const parsed = Report.safeParse(response.report)
@@ -515,6 +588,13 @@ export function sourceReferences(text: string) {
 export function eventPayload(event: TrajectoryEvent) {
   const payload: Record<string, unknown> = { kind: event.kind }
   for (const key of [
+    "sequence",
+    "projectID",
+    "planID",
+    "taskID",
+    "source",
+    "sources",
+    "eventIDs",
     "event",
     "from",
     "to",
@@ -539,6 +619,18 @@ export function eventPayload(event: TrajectoryEvent) {
     "previous",
     "agent",
     "location",
+    "finish",
+    "measurementBasis",
+    "usage",
+    "additive",
+    "basis",
+    "delivery",
+    "commit",
+    "truncated",
+    "exitCode",
+    "timedOut",
+    "unchanged",
+    "artifact",
   ] as const)
     if (event[key] !== undefined) payload[key] = event[key]
   return payload

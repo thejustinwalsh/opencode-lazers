@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
 import { Schema } from "effect"
-import { InferenceTrace } from "./ipc.ts"
+import { InferenceTrace, RendererCaptureStatus } from "./ipc.ts"
+import type { RendererArmedCaptureStatus } from "./renderer-armed-capture.ts"
+import type { RendererDebugger } from "./renderer-debug.ts"
 import { setupMain } from "./main.ts"
 
 const decode = Schema.decodeUnknownSync(InferenceTrace, { onExcessProperty: "error" })
@@ -44,9 +46,34 @@ test("IPC rejects invalid and unbounded metadata", () => {
   ).toThrow()
 })
 
+test("armed-capture status IPC stays bounded and content-free", () => {
+  const decodeStatus = Schema.decodeUnknownSync(RendererCaptureStatus, {
+    onExcessProperty: "error",
+  })
+  expect(
+    decodeStatus({
+      state: "recording",
+      message: "Recording the targeted local inference job.",
+      captureID: "capture-1",
+      lastStage: "run",
+      lastRequestID: "request-1",
+      lastJobID: "job-1",
+      stageCount: 2,
+    }),
+  ).toMatchObject({ state: "recording", lastJobID: "job-1" })
+  expect(() =>
+    decodeStatus({ state: "recording", message: "x", stageCount: 2, prompt: "secret" }),
+  ).toThrow()
+  expect(() => decodeStatus({ state: "recording", message: "x", stageCount: 10_001 })).toThrow()
+})
+
 class FakeWebContents extends EventEmitter {
-  constructor(private readonly pid: number) {
+  constructor(
+    private readonly pid: number,
+    transport?: RendererDebugger,
+  ) {
     super()
+    if (transport) Object.defineProperty(this, "debugger", { value: transport })
   }
 
   getOSProcessId() {
@@ -60,9 +87,56 @@ class FakeBrowserWindow extends EventEmitter {
   constructor(
     readonly id: number,
     pid: number,
+    transport?: RendererDebugger,
   ) {
     super()
-    this.webContents = new FakeWebContents(pid)
+    this.webContents = new FakeWebContents(pid, transport)
+  }
+}
+
+class FakeDebugger implements RendererDebugger {
+  attached = false
+  readonly calls: string[] = []
+
+  isAttached() {
+    return this.attached
+  }
+
+  attach() {
+    this.calls.push("attach")
+    this.attached = true
+  }
+
+  detach() {
+    this.calls.push("detach")
+    this.attached = false
+  }
+
+  async sendCommand(method: string) {
+    this.calls.push(method)
+    if (method === "Profiler.stop")
+      return {
+        profile: {
+          nodes: [
+            {
+              id: 1,
+              callFrame: {
+                functionName: "root",
+                scriptId: "1",
+                url: "file:///runtime.js",
+                lineNumber: -1,
+                columnNumber: -1,
+              },
+              children: [],
+            },
+          ],
+          samples: [1],
+          timeDeltas: [10_000],
+          startTime: 1,
+          endTime: 10_001,
+        },
+      }
+    return {}
   }
 }
 
@@ -72,11 +146,25 @@ type LogEntry = {
   data: Record<string, unknown> | undefined
 }
 
-const makeMainFixture = (write: (entry: LogEntry) => void) => {
-  const window = new FakeBrowserWindow(17, 4242)
+const makeMainFixture = (write: (entry: LogEntry) => void, withDebugger = false) => {
+  const transport = withDebugger ? new FakeDebugger() : undefined
+  const window = new FakeBrowserWindow(17, 4242, transport)
+  const otherWindow = new FakeBrowserWindow(18, 4343)
   const cleanup: (() => void)[] = []
   const windowListeners = new Map<string, (...args: never[]) => void>()
-  let implementation!: { trace: (event: unknown, caller: { window: number }) => void }
+  type MainAPI = {
+    trace: (event: unknown, caller: { window: number }) => void
+    rendererCaptureStatus: (_: undefined, caller: { window: number }) => RendererArmedCaptureStatus
+    armRendererCapture: (
+      _: undefined,
+      caller: { window: number },
+    ) => Promise<RendererArmedCaptureStatus>
+    stopRendererCapture: (
+      _: undefined,
+      caller: { window: number },
+    ) => Promise<RendererArmedCaptureStatus>
+  }
+  let implementation!: MainAPI
   const ctx = {
     options: { dataDirectory: `/private/tmp/lazers-main-trace-${crypto.randomUUID()}` },
     log: {
@@ -84,8 +172,9 @@ const makeMainFixture = (write: (entry: LogEntry) => void) => {
         write({ level, message, data }),
     },
     windows: {
-      get: (id: number) => (id === window.id ? window : undefined),
-      list: () => [window],
+      get: (id: number) =>
+        id === window.id ? window : id === otherWindow.id ? otherWindow : undefined,
+      list: () => [window, otherWindow],
       focused: () => window,
       on: (event: "open" | "close", handler: (...args: never[]) => void) => {
         windowListeners.set(event, handler)
@@ -101,6 +190,8 @@ const makeMainFixture = (write: (entry: LogEntry) => void) => {
   const stop = setupMain(ctx)
   return {
     window,
+    otherWindow,
+    transport,
     cleanup,
     implementation,
     windowListeners,
@@ -177,6 +268,73 @@ test("host logging failures do not reject trace reporting or renderer callbacks"
   })
   expect(() => fixture.implementation.trace(traceEvent, { window: 17 })).not.toThrow()
   expect(() => fixture.window.emit("unresponsive")).not.toThrow()
+  for (const fn of fixture.cleanup.reverse()) fn()
+  if (typeof fixture.stop === "function") await fixture.stop()
+})
+
+test("main exposes idempotent caller-window arm/status/stop controls and preserves target identity", async () => {
+  const logs: LogEntry[] = []
+  const fixture = makeMainFixture((entry) => logs.push(entry), true)
+  const idle = fixture.implementation.rendererCaptureStatus(undefined, { window: 17 })
+  expect(idle.state).toBe("idle")
+  const armed = await fixture.implementation.armRendererCapture(undefined, { window: 17 })
+  expect(armed.state).toBe("waiting")
+  const duplicate = await fixture.implementation.armRendererCapture(undefined, { window: 17 })
+  expect(duplicate.captureID).toBe(armed.captureID)
+  expect(fixture.transport?.calls.filter((method) => method === "attach")).toHaveLength(1)
+  expect(fixture.implementation.rendererCaptureStatus(undefined, { window: 18 }).state).toBe("idle")
+
+  fixture.implementation.trace(
+    {
+      ...traceEvent,
+      requestID: "other-window-request",
+      jobID: "other-window-job",
+      stage: "queued",
+    },
+    { window: 18 },
+  )
+  expect(fixture.implementation.rendererCaptureStatus(undefined, { window: 17 }).state).toBe(
+    "waiting",
+  )
+  fixture.implementation.trace(
+    { ...traceEvent, requestID: "target-request", jobID: "target-job", stage: "queued" },
+    { window: 17 },
+  )
+  fixture.implementation.trace(
+    { ...traceEvent, requestID: "target-request", jobID: "target-job", stage: "complete" },
+    { window: 17 },
+  )
+  const result = await fixture.implementation.stopRendererCapture(undefined, { window: 17 })
+  expect(result).toMatchObject({
+    state: "complete",
+    captured: true,
+    lastRequestID: "target-request",
+    lastJobID: "target-job",
+    stopTrigger: "terminal",
+  })
+  expect(logs.some((entry) => entry.message === "LAZERS armed renderer CPU capture")).toBe(true)
+  expect(fixture.transport?.attached).toBe(false)
+  for (const fn of fixture.cleanup.reverse()) fn()
+  if (typeof fixture.stop === "function") await fixture.stop()
+})
+
+test("armed unresponsive capture finalizes its owner instead of starting automatic capture", async () => {
+  const logs: LogEntry[] = []
+  const fixture = makeMainFixture((entry) => logs.push(entry), true)
+  await fixture.implementation.armRendererCapture(undefined, { window: 17 })
+  fixture.window.emit("unresponsive")
+  const result = await fixture.implementation.stopRendererCapture(undefined, { window: 17 })
+  expect(result).toMatchObject({
+    state: "complete",
+    captured: false,
+    reason: "job-not-seen",
+    stopTrigger: "unresponsive",
+  })
+  expect(logs.filter((entry) => entry.message === "LAZERS renderer debugger capture")).toHaveLength(
+    0,
+  )
+  expect(fixture.transport?.calls.filter((method) => method === "Profiler.stop")).toHaveLength(1)
+  expect(fixture.transport?.calls.filter((method) => method === "detach")).toHaveLength(1)
   for (const fn of fixture.cleanup.reverse()) fn()
   if (typeof fixture.stop === "function") await fixture.stop()
 })

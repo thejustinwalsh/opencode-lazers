@@ -70,15 +70,31 @@ Stable live Trajectory is now LZ-36 (`68a72431-87af-4bce-8e7b-77f430aeb100`),
 plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. First attempt
 `83daf09a-0112-484e-af40-57ff1ff6e554` returned `08b2a47`; focused/all/build passed,
 but quality failed because report.md needed formatting. Runtime started repair
-attempt `29659c51-4151-4c61-8951-4482b6089b7e`. Root and native source review also
-confirmed a stale selected-live inspector: current completion loses to an old
-selection snapshot, including on reselection. That repair is instructed on the
-active second session, alongside removal of checksum-as-proof wording, without
-restart. See `evidence/stable-live-trajectory/selected-live-review.md`. Actual
-observation-file conflicts with Radar remain serialized through runtime.
-It preserves loaded history/disclosures/reading anchor while status/progress
-refreshes independently; repeated status and captured-page reads must add zero
-native context loads. Existing default inspection cursor behavior remains.
+attempt `29659c51-4151-4c61-8951-4482b6089b7e`, which returned reviewed `c1e2977`
+with the selected-live/reselection correction and no checksum-as-proof language.
+Root's real mounted wire response then exposed nullable execution-event basis;
+`214adcb` fixes that targeted schema path with an actual recorder→observation→parser
+regression, preserving null as unknown and rejecting object-valued basis.
+
+The same retained LZ-36 worktree fast-forwarded to **`214adcb`**, including all
+reviewed main/config. Its last verified artifact is `214adcb`; focused/all/quality/
+build checks passed unchanged with no pending effects. Runtime v13 held only for
+`stable-history:human`. This ordinary reviewed integration makes that graph
+an ancestor case; it does **not** repair the general divergent-baseline bug below.
+Root rebuilt/mounted `214adcb` at an observed Ready/quiet boundary. Actual LZ-38
+decoding and ordinary LZ-9 history retention worked; expiry exposed RPC/error-state
+recovery defects, not a data reset. The pass ended without acceptance, recorded in
+`evidence/stable-live-trajectory/native-observations.md` at `5dd5d17`. Runtime v16
+is stopped for repair in the same retained attempt. Use concise
+`expiry-repair-brief.md`; deeper research is optional, not a prescribed test harness.
+The next GUI activation needs a coordinated Ready/quiet boundary.
+
+See `evidence/stable-live-trajectory/native-checklist.md` for the original mounted
+gate and `evidence/worker-role-precedence/propagation.md` for effective native-role
+readbacks (1,642 characters, unchanged Luna Max), not historical prompt or usability
+proof. Loaded history/disclosures/anchor must survive real updates; captured
+history stays as-of, live selection stays current, repeated cached/status reads
+must add zero native context loads and default inspection cursor behavior remains.
 
 ### Privacy review hold and correction
 
@@ -169,10 +185,14 @@ cannot be treated as terminated merely because its caller timed out.
 
 Plan `e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a` is admitted for compatible repairs:
 
-- LZ-38 (`9a9ff061-b95a-409d-a43e-710dd04bfd30`) is running: preserve resident and
-  failed-load cleanup uncertainty through the actual adapter, retryLoad, exclusive
-  ownership and main lease. Repeated/concurrent disposal must not falsely permit
-  replacement. Native release retry safety after partial failure is not assumed.
+- LZ-38 (`9a9ff061-b95a-409d-a43e-710dd04bfd30`) retains reviewed implementation
+  `2315b4a`, normally updated to `071b5c1`. Its v10 quality failure was only Root's
+  capture-JSON formatting, corrected without value changes in main `6f4d163` and
+  now present alongside the current role/config. Independent review passed 80
+  WebGPU tests and quality, including actual-adapter cleanup probes. A same-attempt
+  resume exposed the separate failed→RESUME mismatch (LZ-42 below); it did not
+  advance the plan or justify another attempt. Preserve resident/failed-load
+  cleanup uncertainty and main lease; do not blindly retry partial ORT release.
 - LZ-39 (`99d6b8cf-1eea-4f6c-98ff-27afcd8a6240`) waits for LZ-38: retire only
   positively lost decision sessions through existing recovery, with no replay,
   duplicate recovery or generic-error false positives. Actual-adapter/runtime/
@@ -189,18 +209,18 @@ all-six-ON/Ready apple-WebGPU idle-Never and preserved workers/history. Record
 completion, correlation and footprint across repetitions. These are recovery
 repairs, not a proven causal freeze fix.
 
-LZ-37 returned `097eab95e592f4e6122c44aa525ef911c94bb9a7`; Root and independent
-native review found no blocking source issue, and native review passed six focused
-tests. Original focused/all/quality/build receipts passed unchanged. Its hold is
-the artifact directory reference: committed verification.md is present, but
-artifactExists accepts only files. LZ-40 (`44715414-30fd-41cc-bdd4-5fdc7591ad5e`),
-plan `aee3ba37-ec68-4c4b-a2ad-b311a9643ff8`, is admitted to repair that generic
-contract mismatch while retaining confinement, rejecting placeholder directories
-and preserving all check/human gates. Do not rewrite LZ-37's immutable task,
-redispatch its worker or repeat its diagnostic implementation. After reviewed
-validator activation at a quiet inference boundary, reconcile existing matching
-receipts normally. Runtime owns actual runner-scope serialization with LZ-28.
-LZ-37 remains diagnostic clocks only, not the freeze fix.
+LZ-37 returned reviewed `097eab9`, normally updated to `be760cb`; its implementation
+was not repeated. The containing-directory reference caused the file-only evidence
+hold. LZ-40 (`44715414-30fd-41cc-bdd4-5fdc7591ad5e`), plan
+`aee3ba37-ec68-4c4b-a2ad-b311a9643ff8`, returned reviewed `00d91a9` and is now
+**integrated v9**, with its worktree absent after non-forced cleanup. Source landing
+`0bab792` preserved role/config and all definitions; independent combined checks
+passed 83 focused tests / 699 assertions, 409 full tests / 3,847 assertions,
+quality and GUI build. Root's later `214adcb` parser correction is retained too.
+LZ-37 task and combined acceptance cleared normally. `be760cb` is integrated v11
+with no pending effects; native registry and filesystem checks confirm its owned
+tree absent after non-forced cleanup. No extra GUI build/reload was performed.
+Preserve receipts/history; this remains clock diagnostics, not a freeze fix.
 
 LZ-28 returned `7e02ce0`; independent native review reproduced five blockers:
 cancellation stuck behind archive recovery, invisible mutable results, concurrent
@@ -212,6 +232,36 @@ Original live renewal/archival/input/outcome proof remains pending. Root is
 available for that proof and LZ-36's mounted UI proof once corrected, reviewed
 candidates can be activated at a quiet inference boundary. Independent retained
 workers must not be restarted.
+
+Root explicitly approved briefly pausing LZ-28 to free its broad runner scope for
+the harness repair. Runtime v35 is cancelled/stopped with no pending effects;
+the same attempt/session/workspace/route and six dirty runner source files remain
+preserved at HEAD `7b7232c`. Resume that same attempt explicitly after LZ-41 is
+reviewed/integrated, as agreed; do not create a new attempt or discard its edits.
+
+### Active harness corrections
+
+- LZ-41 (`312a2e4f-ec16-4608-bc66-2f428a6dbf07`), plan
+  `c4f5e9be-9b81-4914-a3a5-24dfd14f345c`, is integrated v11. Reviewed `bdb26a0`
+  landed in `63d828a`; merged focused checks passed 11 tests/92 assertions plus
+  quality. Reconciled combined checks passed normally; the earlier truncated
+  failed receipt remains, with no inferred cause. Native registry and filesystem
+  confirm non-forced cleanup of attempt `06d7c1b9-7592-43ed-9057-b3328b4169f7`.
+  Ordinary merge semantics retain admitted prerequisites and exclude only actually
+  incorporated reviewed history; unauthorized edits remain checked.
+- LZ-42 (`af0199a8-8c28-4fdd-b410-96f31eabf0c4`), plan
+  `bff93c8b-3be6-4b4e-8a51-affcf42a8b60`, is accepted v9 at `fd4e474` after normal
+  reconciliation. Source landed in `86835fb`; combined focused checks passed
+  17 tests/235 assertions, 418 full tests/3,939 assertions and quality.
+  Runtime integration recorded v10; non-forced cleanup requested and effective
+  activation remains. The additive
+  failed→RESUME preserves the same attempt and existing gates. Actual retained
+  LZ-38 RESUME is still pending, not replaced by a fresh RETRY.
+
+Their implementation paths are disjoint; runtime dispatched both normally while
+LZ-28 is paused. These source merges did not rebuild/reload the mounted `214adcb`
+GUI; coordinate effective activation at an observed local-inference Ready/quiet boundary.
+Task checks focus on changed behavior; broad integration checks stay in plans.
 
 Root's main `6f4d163` concise task-verification guidance and `74974e9` implementor
 behavior-evidence guidance must survive integration. LZ-36 was instructed to drop

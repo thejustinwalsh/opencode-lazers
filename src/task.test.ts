@@ -80,6 +80,21 @@ describe("task proposals", () => {
     ).toBe("Reuse src/storage.ts.")
   })
 
+  test("preserves a workspace-relative directory artifact reference verbatim", () => {
+    const reference = ".agents/docs/evidence/037-artifact-evidence/"
+    const proposal = TaskProposalSchema.parse({
+      ...validProposal(),
+      acceptance: [
+        {
+          id: "directory",
+          assertion: "The evidence directory contains its verification record",
+          evidence: [{ kind: "artifact", reference }],
+        },
+      ],
+    })
+    expect(proposal.acceptance[0]?.evidence[0]).toEqual({ kind: "artifact", reference })
+  })
+
   test("rejects drafts, unknown fields, empty intent, and missing evidence", () => {
     for (const change of [
       { objective: " " },

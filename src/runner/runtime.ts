@@ -386,6 +386,33 @@ export class TaskRuntime {
           .attempts(plan.id)
           .filter((a) => a.task_id === command.taskID)
           .at(-1)
+        if (retry && node?.state === "cancelled" && !attempt) {
+          if (
+            !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
+            !plan.model ||
+            plan.artifact !== null
+          )
+            throw new Error("Only an admitted, nonintegrated plan can requeue an unstarted task")
+          if (ownerSession.id !== plan.owner || ownerSession.projectID !== this.projectID)
+            throw new Error("Foreign owner session")
+          if (
+            this.store
+              .effects(plan.id)
+              .some((effect) => ["intended", "uncertain"].includes(effect.state))
+          )
+            throw new Error("Reconcile uncertain effects first")
+
+          this.store.move(plan.id, node.task_id, "RETRY", command.reason)
+          if (plan.state !== "running")
+            db.query(
+              "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?",
+            ).run(plan.id)
+          this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
+            caller,
+            reason: command.reason,
+          })
+          return { status: "requeued", version: this.store.plan(plan.id)!.version }
+        }
         if (
           !["blocked", "cancelled", "failed"].includes(plan.state) ||
           !node ||

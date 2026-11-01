@@ -14,6 +14,8 @@ import {
 import type { SystemOneInput, SystemOneOutput } from "./system-one.ts"
 import { withResources } from "./resources.ts"
 import type { TraceStage, InferenceTraceMark } from "./inference-trace.ts"
+import { CleanupUncertainError } from "./lifecycle.ts"
+import { isOrtWebGpuDeviceLoss } from "./decision-loss.ts"
 
 type DecisionTrace = (stage: TraceStage, mark?: InferenceTraceMark) => Promise<void>
 
@@ -66,11 +68,45 @@ export async function loadDecisionRuntime(
     })
   })
   let disposed = false
-  void device.lost.then(() => {
-    if (!disposed) lost()
-  })
+  let retired = false
+  let lossNotified = false
   let session: ort.InferenceSession | undefined
+  let disposal: Promise<void> | undefined
+  const notifyLost = () => {
+    retired = true
+    if (disposed || lossNotified) return
+    lossNotified = true
+    lost()
+  }
+  const dispose = () => {
+    if (disposal) return disposal
+    disposed = true
+    disposal = (async () => {
+      let failure: unknown
+      let failed = false
+      try {
+        await session?.release()
+      } catch (error) {
+        failure = error
+        failed = true
+      }
+      try {
+        device.destroy()
+      } catch (error) {
+        failure = failed
+          ? new AggregateError([failure, error], "Decision model cleanup failed")
+          : error
+        failed = true
+      }
+      if (failed) throw failure
+    })()
+    return disposal
+  }
+  void device.lost.then(() => {
+    notifyLost()
+  })
   try {
+    signal.throwIfAborted()
     await trace?.("session-create")
     session = await ort.InferenceSession.create(await bytes("decoder"), {
       executionProviders: [{ name: "webgpu", device }],
@@ -80,22 +116,12 @@ export async function loadDecisionRuntime(
     await trace?.("session-ready")
     signal.throwIfAborted()
   } catch (error) {
-    disposed = true
     try {
-      await session?.release()
-    } finally {
-      device.destroy()
+      await dispose()
+    } catch (cleanupError) {
+      throw new CleanupUncertainError({ dispose }, cleanupError, error)
     }
     throw error
-  }
-  const dispose = async () => {
-    if (disposed) return
-    disposed = true
-    try {
-      await session!.release()
-    } finally {
-      device.destroy()
-    }
   }
   return {
     dispose,
@@ -105,7 +131,8 @@ export async function loadDecisionRuntime(
       signal: AbortSignal,
       trace?: DecisionTrace,
     ): Promise<SystemOneOutput> {
-      if (disposed) throw new Error("Decision model is disposed")
+      if (disposed || retired)
+        throw new Error(disposed ? "Decision model is disposed" : "Decision model is retired")
       signal.throwIfAborted()
       const request = SystemOneRequest.parse(input)
       const entries = Object.entries(request.questions)
@@ -175,7 +202,13 @@ export async function loadDecisionRuntime(
         }
         signal.throwIfAborted()
         await trace?.("run", { actualInputTokens: ids.length, inputShape: [1, ids.length] })
-        const outputs = await session!.run(feeds, ["logits"])
+        let outputs: Awaited<ReturnType<ort.InferenceSession["run"]>>
+        try {
+          outputs = await session!.run(feeds, ["logits"])
+        } catch (error) {
+          if (isOrtWebGpuDeviceLoss(error)) notifyLost()
+          throw error
+        }
         await trace?.("readback", { outputShape: outputs.logits?.dims })
         Object.values(outputs).forEach(own)
         signal.throwIfAborted()

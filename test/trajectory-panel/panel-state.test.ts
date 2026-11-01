@@ -2,12 +2,23 @@ import { expect, test } from "bun:test"
 import type {
   ObservationChange,
   ObservationScope,
-  TrajectoryResponse,
+  TrajectoryHistoryResponse,
 } from "../../src/observability/contract.ts"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
-import { selectedAttemptFor, TrajectoryPanelState } from "../../src/trajectory-panel/panel-state.ts"
-import { checkKey, detailedChecks } from "../../src/trajectory-panel/projection.ts"
+import { ProgressRecorder } from "../../src/progress/recorder.ts"
+import type { TrajectoryHost } from "../../src/trajectory/native.ts"
+import {
+  selectedAttemptFor,
+  selectedEventFor,
+  TrajectoryPanelState,
+} from "../../src/trajectory-panel/panel-state.ts"
+import {
+  checkKey,
+  detailedChecks,
+  eventPayload,
+  eventTitle,
+} from "../../src/trajectory-panel/projection.ts"
 import type { TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
 import type { TaskTrajectoryTarget } from "../../src/trajectory-panel/panel-state.ts"
 import { firstAttemptID, makeFixture, secondAttemptID, taskID } from "../trajectory/fixture.ts"
@@ -41,7 +52,16 @@ function transportFor(
   tracker: ObservationChangeTracker,
   online = () => true,
 ) {
-  const reads = new ObservationReads(fixture.store, fixture.host, "project", cursorSecret)
+  const host: TrajectoryHost = {
+    session: (id) => fixture.host.session(id),
+    status: async (id) => {
+      const session = fixture.sessions.get(id)
+      return session
+        ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+        : null
+    },
+  }
+  const reads = new ObservationReads(fixture.store, host, "project", cursorSecret)
   let deliver: ((event: ObservationChange | null) => void) | undefined
   let snapshotCount = 0
   const transport: TrajectoryTransport = {
@@ -56,6 +76,17 @@ function transportFor(
         { scope, taskID: id, limit: 50, ...(cursor ? { cursor } : {}) },
         tracker,
       )
+    },
+    history: async (scope, id, signal, cursor, limit = 50) => {
+      if (signal.aborted) throw signal.reason
+      return reads.trajectoryHistory(
+        { scope, taskID: id, limit, ...(cursor ? { cursor } : {}) },
+        tracker,
+      )
+    },
+    status: async (scope, id, signal) => {
+      if (signal.aborted) throw signal.reason
+      return reads.trajectoryStatus({ scope, taskID: id }, tracker)
     },
     changes: (signal) =>
       (async function* () {
@@ -296,15 +327,15 @@ test("deferred task A cannot replace unavailable target B or fall back to A", as
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport } = transportFor(fixture, tracker)
-  const originalTrajectory = transport.trajectory
-  const aResponse = await originalTrajectory(
+  const originalHistory = transport.history
+  const aResponse = await originalHistory(
     { kind: "project", sessionID: "ses-owner" },
     taskID,
     new AbortController().signal,
   )
-  const pendingA = deferred<TrajectoryResponse>()
+  const pendingA = deferred<TrajectoryHistoryResponse>()
   const requested: string[] = []
-  transport.trajectory = async (_scope, id) => {
+  transport.history = async (_scope, id) => {
     requested.push(id)
     if (id === taskID) return pendingA.promise
     throw new Error("Task history is unavailable")
@@ -324,14 +355,14 @@ test("deferred task A cannot replace unavailable target B or fall back to A", as
     )
     await waitFor(state, () => requested.includes(taskID))
     state.selectTarget(targetB)
-    await waitFor(state, () => state.data.error.includes("LZ-2"))
+    await waitFor(state, () => state.data.historyError.includes("LZ-2"))
     pendingA.resolve(aResponse)
     await tick()
     expect(requested).toEqual([taskID, taskB])
     expect(state.data.taskID).toBe(taskB)
     expect(state.data.taskReference).toBe("LZ-2")
     expect(state.data.report).toBeUndefined()
-    expect(state.data.error).toContain("LZ-2")
+    expect(state.data.historyError).toContain("LZ-2")
     expect(state.data.tasks.some((task) => task.taskID === taskB && task.title === "LZ-2")).toBe(
       true,
     )
@@ -346,10 +377,10 @@ test("a historical project target is rejected after switching to a different sco
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
   tracker.initialize()
   const { transport } = transportFor(fixture, tracker)
-  let trajectoryCalls = 0
-  const original = transport.trajectory
-  transport.trajectory = async (...args) => {
-    trajectoryCalls++
+  let historyCalls = 0
+  const original = transport.history
+  transport.history = async (...args) => {
+    historyCalls++
     return original(...args)
   }
   const state = new TrajectoryPanelState(() => {})
@@ -369,7 +400,7 @@ test("a historical project target is rejected after switching to a different sco
     expect(state.data.taskID).toBe(taskID)
     expect(state.data.error).toContain("unavailable in this project or scope")
     expect(state.data.report).toBeUndefined()
-    expect(trajectoryCalls).toBe(0)
+    expect(historyCalls).toBe(0)
   } finally {
     state.close()
     fixture.close()
@@ -408,6 +439,211 @@ test("disconnected transport retains scoped data and a reconnect refreshes it", 
   }
 })
 
+test("expired history continuations retain old pages and require an explicit recapture", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalHistory = transport.history
+  const calls: Array<string | undefined> = []
+  transport.history = async (scope, id, signal, cursor, _limit) => {
+    calls.push(cursor)
+    if (cursor)
+      throw {
+        type: "trajectory_history_unavailable",
+        message: "Trajectory history expired; recapture explicitly",
+        data: { reason: "expired", recovery: "recapture" },
+      }
+    return originalHistory(scope, id, signal, cursor, 2)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "expired-history",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    const originalEvents = structuredClone(state.data.events)
+    const originalCursor = state.data.eventCursor!
+    const originalCapturedAt = state.data.historyCapturedAt
+    const originalExpiresAt = state.data.historyExpiresAt
+    state.selectEvent(originalEvents[0]!.id)
+    const originalSelection = state.data.selection
+    const originalPayload = structuredClone(state.data.selectionEventSnapshot)
+    expect(originalCursor).not.toBeNull()
+    await state.loadMoreActivity()
+    expect(state.data.events).toEqual(originalEvents)
+    expect(state.data.eventCursor).toBe(originalCursor)
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.historyError).not.toContain("[object Object]")
+    expect(state.data.selection).toEqual(originalSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(originalPayload)
+    expect(state.data.historyCapturedAt).toBe(originalCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(originalExpiresAt)
+    await state.refresh()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toBe(originalCursor)
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.stale).toBe(true)
+    expect(state.data.events).toEqual(originalEvents)
+    expect(state.data.eventCursor).toBe(originalCursor)
+    expect(state.data.selectionEventSnapshot).toEqual(originalPayload)
+    expect(state.data.historyCapturedAt).toBe(originalCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(originalExpiresAt)
+
+    await state.recaptureActivity()
+    expect(calls).toHaveLength(3)
+    expect(calls[2]).toBeUndefined()
+    expect(state.data.historyCapturedAt).not.toBeNull()
+    expect(state.data.events).toHaveLength(2)
+    expect(state.data.eventCursor).not.toBeNull()
+    expect(state.data.historyError).toBe("")
+    expect(state.data.stale).toBe(false)
+    expect(state.data.selection).toEqual(originalSelection)
+    expect(state.data.selectionEventSnapshot?.id).toBe(originalPayload?.id)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("failed explicit recapture keeps the old capture and page union after healthy status", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const initialHistory = transport.history
+  transport.history = (scope, id, signal, cursor) => initialHistory(scope, id, signal, cursor, 2)
+  const pageHistory = transport.history
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "recapture-preserves-old-history",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.events).toHaveLength(4)
+    state.selectEvent(state.data.events[0]!.id)
+    const oldReport = state.data.report
+    const oldEvents = structuredClone(state.data.events)
+    const oldCursor = state.data.eventCursor
+    const oldCapturedAt = state.data.historyCapturedAt
+    const oldExpiresAt = state.data.historyExpiresAt
+    const oldSelection = state.data.selection
+    const oldPayload = structuredClone(state.data.selectionEventSnapshot)
+    const calls: Array<string | undefined> = []
+    transport.history = async (scope, id, signal, cursor) => {
+      calls.push(cursor)
+      if (cursor)
+        throw {
+          type: "trajectory_history_unavailable",
+          message: "Trajectory history expired; recapture explicitly",
+          data: { reason: "expired", recovery: "recapture" },
+        }
+      return pageHistory(scope, id, signal, cursor, 2)
+    }
+
+    await state.recaptureActivity()
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toBeUndefined()
+    expect(calls[1]).toBeTypeOf("string")
+    expect(state.data.report).toBe(oldReport)
+    expect(state.data.events).toEqual(oldEvents)
+    expect(state.data.eventCursor).toBe(oldCursor)
+    expect(state.data.historyCapturedAt).toBe(oldCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(oldExpiresAt)
+    expect(state.data.selection).toEqual(oldSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(oldPayload)
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.recapturingHistory).toBe(false)
+
+    await state.refresh()
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.stale).toBe(true)
+    expect(state.data.events).toEqual(oldEvents)
+    expect(state.data.eventCursor).toBe(oldCursor)
+    expect(state.data.historyCapturedAt).toBe(oldCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(oldExpiresAt)
+    expect(state.data.selection).toEqual(oldSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(oldPayload)
+    expect(calls).toHaveLength(2)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("replayed or reordered history pages retain the old union and cursor for explicit recovery", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const pageHistory = transport.history
+  transport.history = (scope, id, signal, cursor) => pageHistory(scope, id, signal, cursor, 2)
+  const originalHistory = transport.history
+  let firstPage: TrajectoryHistoryResponse | undefined
+  transport.history = async (scope, id, signal, cursor, limit) => {
+    const response = await originalHistory(scope, id, signal, cursor, limit)
+    if (!cursor) {
+      firstPage = response
+      return response
+    }
+    const responseReport = response.report as { trajectory: Record<string, unknown> }
+    const firstReport = firstPage!.report as { trajectory: { events: unknown[] } }
+    return {
+      ...response,
+      report: {
+        ...responseReport,
+        trajectory: {
+          ...responseReport.trajectory,
+          events: firstReport.trajectory.events,
+          nextCursor: cursor,
+        },
+      },
+    }
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "replayed-page",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    const originalEvents = structuredClone(state.data.events)
+    const originalCursor = state.data.eventCursor
+    expect(firstPage).toBeDefined()
+    await state.loadMoreActivity()
+    expect(state.data.events).toEqual(originalEvents)
+    expect(state.data.eventCursor).toBe(originalCursor)
+    expect(state.data.historyError).toContain("page order changed or cursor did not advance")
+    expect(state.data.stale).toBe(true)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
 test("explicit projection gaps resnapshot even when their sequence is not newer", async () => {
   const fixture = makeFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
@@ -436,6 +672,133 @@ test("explicit projection gaps resnapshot even when their sequence is not newer"
       resnapshotRequired: true,
     })
     await waitFor(state, () => snapshotCount() > before)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("live status and progress do not cancel page-size-two history or rewrite its event selection", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const historyPage = transport.history
+  transport.history = (scope, id, signal, cursor) => historyPage(scope, id, signal, cursor, 2)
+  const enteringPage = deferred<void>()
+  const releasePage = deferred<void>()
+  let holdFirstContinuation = true
+  const stableHistoryPage = transport.history
+  transport.history = async (scope, id, signal, cursor, limit) => {
+    const result = stableHistoryPage(scope, id, signal, cursor, limit)
+    if (cursor && holdFirstContinuation) {
+      holdFirstContinuation = false
+      enteringPage.resolve()
+      const page = await result
+      await releasePage.promise
+      return page
+    }
+    return result
+  }
+  const state = new TrajectoryPanelState(() => {})
+  const scope = { kind: "project" as const, sessionID: "ses-owner" }
+  try {
+    state.connect("stable-pages", "project", fixture.directory, scope, transport, {
+      taskID,
+      selection: null,
+    })
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    expect(state.data.events).toHaveLength(2)
+    expect(state.data.report?.trajectory.limit).toBe(2)
+    const event = state.data.events[0]!
+    const capturedPage = structuredClone(state.data.events)
+    state.selectEvent(event.id)
+    const capturedPayload = structuredClone(state.data.selectionEventSnapshot)
+    const expectedIDs = state.data.capturedEventIDs
+
+    const pageOne = state.loadMoreActivity()
+    await enteringPage.promise
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const recordTool = (
+      type: "session.tool.called" | "session.tool.success",
+      eventID: string,
+      at: number,
+    ) =>
+      recorder.recordNativeEvent({
+        id: eventID,
+        type,
+        created: at,
+        data: {
+          sessionID: "ses-failed",
+          assistantMessageID: "msg-live",
+          id: "same-tool-call",
+          executed: true,
+          ...(type === "session.tool.success"
+            ? { content: [{ type: "text", text: "tool completed" }] }
+            : {}),
+        },
+      })
+    const sequence = recordTool("session.tool.called", "tool-running", 3000)
+    await state.refresh()
+    await waitFor(state, () =>
+      state.data.liveEvents.some((fact) => fact.id === `progress:${sequence}`),
+    )
+    const running = state.data.liveEvents.find((fact) => fact.id === `progress:${sequence}`)
+    expect(running?.status).toBe("running")
+    expect(state.data.events).toEqual(capturedPage)
+    expect(state.data.selection).toEqual({ kind: "event", id: event.id })
+    expect(state.data.selectionEventSnapshot).toEqual(capturedPayload)
+    expect(selectedEventFor(state.data)).toEqual(event)
+    const progressID = `progress:${sequence}`
+    expect(state.data.capturedEventIDs).not.toContain(progressID)
+    state.selectEvent(progressID)
+    const runningSnapshot = structuredClone(state.data.selectionEventSnapshot)
+    expect(selectedEventFor(state.data)).toMatchObject({ id: progressID, status: "running" })
+    releasePage.resolve()
+    await pageOne
+    expect(state.data.events.map((item) => item.id)).toEqual(expectedIDs.slice(0, 4))
+
+    recordTool("session.tool.success", "tool-completed", 3010)
+    await state.refresh()
+    await waitFor(
+      state,
+      () =>
+        state.data.liveEvents.find((fact) => fact.id === `progress:${sequence}`)?.status ===
+        "succeeded",
+    )
+    const completed = state.data.liveEvents.find((fact) => fact.id === `progress:${sequence}`)
+    expect(completed).toMatchObject({ status: "succeeded", result: "tool completed" })
+    const selectedCompleted = selectedEventFor(state.data)
+    expect(selectedCompleted).toMatchObject({ id: progressID, status: "succeeded" })
+    expect(eventPayload(selectedCompleted!)).toMatchObject({
+      status: "succeeded",
+      result: "tool completed",
+    })
+    expect(eventTitle(selectedCompleted!)).toBe("Worker tool · succeeded")
+    expect(state.data.selectionEventSnapshot).toEqual(runningSnapshot)
+    state.selectEvent(progressID)
+    expect(state.data.selectionEventSnapshot).toMatchObject({
+      id: progressID,
+      status: "succeeded",
+      result: "tool completed",
+    })
+    expect(selectedEventFor(state.data)).toMatchObject({ id: progressID, status: "succeeded" })
+    expect(selectedEventFor({ ...state.data, liveEvents: [] })).toEqual(
+      state.data.selectionEventSnapshot,
+    )
+    expect(state.data.events.map((item) => item.id)).toEqual(expectedIDs.slice(0, 4))
+    await state.loadMoreActivity()
+    await state.refresh()
+    await state.loadMoreActivity()
+    expect(state.data.events.map((item) => item.id)).toEqual(expectedIDs.slice(0, 8))
+    expect(new Set(state.data.events.map((item) => item.id)).size).toBe(8)
+    expect(state.data.eventCursor).not.toBeNull()
+
+    state.selectEvent(event.id)
+    await state.recaptureActivity()
+    expect(state.data.selection).toEqual({ kind: "event", id: event.id })
+    expect(state.data.selectionEventSnapshot?.id).toBe(event.id)
+    expect(state.data.events.map((item) => item.id)).toEqual(expectedIDs.slice(0, 8))
   } finally {
     state.close()
     fixture.close()

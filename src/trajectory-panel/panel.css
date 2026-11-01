@@ -459,7 +459,12 @@
   margin-top: 14px;
   border-top: 1px solid var(--border-weak-base);
 }
+.lazers-trajectory-live {
+  margin-top: 10px;
+  border-top: 1px solid var(--border-weak-base);
+}
 .lazers-trajectory-activity summary,
+.lazers-trajectory-live summary,
 .lazers-trajectory-payload summary {
   padding: 9px 0;
   color: var(--text-base);
@@ -469,6 +474,22 @@
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+.lazers-trajectory-capture-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 4px 0 8px;
+  color: var(--text-weak);
+  font-size: 0.82em;
+}
+.lazers-trajectory-live-note {
+  margin: 0 0 8px;
+  color: var(--text-weak);
+  font-size: 0.82em;
+  line-height: 1.5;
 }
 .lazers-trajectory-event {
   display: grid;

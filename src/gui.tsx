@@ -181,6 +181,10 @@ export default Plugin.define({
       const [speech, setSpeech] = createSignal("The local model is ready.")
       const [speechURL, setSpeechURL] = createSignal("")
       const [transcript, setTranscript] = createSignal("")
+      const [rendererCapture, setRendererCapture] =
+        createSignal<Awaited<ReturnType<typeof files.rendererCaptureStatus>>>()
+      const [rendererCaptureBusy, setRendererCaptureBusy] = createSignal(false)
+      const [rendererCaptureError, setRendererCaptureError] = createSignal("")
       const cachedBytes = () =>
         (cache()?.phase === "downloading"
           ? (cache()?.downloadedBytes ?? 0)
@@ -224,6 +228,7 @@ export default Plugin.define({
         try {
           setCache(await files.status({ signal: settingsSignal() }))
           setDecisionCache(await files.decisionStatus({ signal: settingsSignal() }))
+          setRendererCapture(await files.rendererCaptureStatus({ signal: settingsSignal() }))
         } catch (cause) {
           setError(String(cause))
         } finally {
@@ -280,6 +285,22 @@ export default Plugin.define({
           await runtime.unload()
           await files.clear()
         })
+      }
+      const updateRendererCapture = async (arm: boolean) => {
+        setRendererCaptureBusy(true)
+        setRendererCaptureError("")
+        try {
+          setRendererCapture(
+            await (arm
+              ? files.armRendererCapture({ signal: settingsSignal() })
+              : files.stopRendererCapture({ signal: settingsSignal() })),
+          )
+        } catch (cause) {
+          setRendererCaptureError(cause instanceof Error ? cause.message : String(cause))
+        } finally {
+          setRendererCaptureBusy(false)
+          await refresh()
+        }
       }
       const testDecision = () =>
         perform("decision", async () => {
@@ -464,9 +485,61 @@ export default Plugin.define({
               Remove downloaded models
             </Ui.Button>
           </section>
-          <Show when={features().enabled}>
-            <details class="lazers-local-diagnostics">
-              <summary>Diagnostics &amp; model tests</summary>
+          <details class="lazers-local-diagnostics">
+            <summary>Diagnostics &amp; model tests</summary>
+            <section aria-labelledby="lazers-renderer-capture-title">
+              <h2 id="lazers-renderer-capture-title">Renderer CPU capture</h2>
+              <p>
+                Arm the Electron profiler for the next local inference job in this window. It does
+                not start or cancel inference or change local settings. The capture disarms after 60
+                seconds without a job and stops after completion, manual stop, 120 seconds, or
+                renderer unresponsiveness.
+              </p>
+              <div class="lazers-local-actions">
+                <Ui.Button
+                  disabled={rendererCaptureBusy()}
+                  busy={rendererCaptureBusy()}
+                  onClick={() => {
+                    void updateRendererCapture(
+                      !["preparing", "waiting", "recording", "stopping"].includes(
+                        rendererCapture()?.state ?? "idle",
+                      ),
+                    )
+                  }}
+                >
+                  {["preparing", "waiting", "recording", "stopping"].includes(
+                    rendererCapture()?.state ?? "idle",
+                  )
+                    ? rendererCapture()?.state === "waiting"
+                      ? "Disarm capture"
+                      : "Stop capture"
+                    : "Arm next-job capture"}
+                </Ui.Button>
+              </div>
+              <p role="status" aria-live="polite">
+                {rendererCapture()?.message ?? "Checking this window’s renderer capture status…"}
+              </p>
+              <Show when={rendererCapture()?.lastJobID}>
+                <p class="lazers-local-meta">
+                  Target: request {rendererCapture()?.lastRequestID} · job{" "}
+                  {rendererCapture()?.lastJobID}
+                  {rendererCapture()?.lastStage ? ` · ${rendererCapture()?.lastStage}` : ""}
+                  {rendererCapture()?.stageCount
+                    ? ` · ${rendererCapture()?.stageCount} stages`
+                    : ""}
+                </p>
+              </Show>
+              <Show when={rendererCapture()?.path}>
+                <p class="lazers-local-path">Metadata: {rendererCapture()?.path}</p>
+              </Show>
+              <Show when={rendererCapture()?.profilePath}>
+                <p class="lazers-local-path">CPU profile: {rendererCapture()?.profilePath}</p>
+              </Show>
+              <Show when={rendererCaptureError()}>
+                <p role="alert">{rendererCaptureError()}</p>
+              </Show>
+            </section>
+            <Show when={features().enabled}>
               <section>
                 <h2>Runtime controls</h2>
                 <p>
@@ -702,8 +775,8 @@ export default Plugin.define({
                   <pre class="lazers-local-reply">{decisionReply()}</pre>
                 </Show>
               </section>
-            </details>
-          </Show>
+            </Show>
+          </details>
           <Show when={error() || cache()?.error || decisionCache()?.error}>
             <p role="alert">{error() || cache()?.error || decisionCache()?.error}</p>
           </Show>

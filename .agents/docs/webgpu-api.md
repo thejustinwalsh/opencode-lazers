@@ -79,6 +79,40 @@ Use Desktop's own local service. A remote server cannot access this Electron-mai
 
 The authenticated OpenCode service and installed plugins are trusted. The renderer mailbox is an internal transport convention, not a separate authorization sandbox for hostile authenticated clients. Native agent tools enforce permissions before inference. Do not expose this local worker service to untrusted remote clients. See the [adversarial review and release gates](webgpu-adversarial-review.md).
 
+## Explicit renderer CPU capture
+
+Settings → LAZERS → Diagnostics can arm a temporary Electron-main-process CPU
+profiler for the next local inference job in that caller window. It is independent
+of the local-inference switches: arming does not start, cancel, or reconfigure
+inference. Main-process IPC exposes caller-window-scoped status, arm, and
+stop/disarm operations. A repeated arm while preparation or capture is active is
+idempotent. The UI may close without ending the capture; the main process owns its
+deadlines and cleanup.
+
+Arming reports success only after `Profiler.enable`, the 10,000 μs sampling
+interval, and `Profiler.start` are acknowledged. DevTools or an existing debugger
+attachment is refused without detaching that owner. The profiler waits at most
+60 seconds for a new job with request and job IDs in that window; already active
+jobs, runtime-only events, and other windows are not candidates. The first target
+is immutable. If a job starts during preparation, the capture is explicitly a
+preparation-race failure rather than a full profile. Up to 64 target-job stages
+are retained (plus a dropped-stage count).
+
+Capture stops on the target's terminal trace, manual stop, renderer
+unresponsiveness, a 120-second recording deadline, a 60-second next-job deadline,
+or renderer/plugin lifecycle cleanup. Stop is bounded to two seconds. A successful
+profile and its metadata are saved separately as `.cpuprofile` and `.json` in the
+diagnostics directory. The bounded sanitizer accepts at most 8,192 profile nodes
+and 20,000 samples, and the standalone profile is capped at 2 MB; invalid, empty,
+oversized, stop-timeout, and persistence-failure cases remain failed metadata and
+never claim a successful artifact. Metadata correlates window/PID, request/job,
+bounded stage history and timing, stop trigger, and outcome. It does not retain
+prompt/context contents, audio, scopes, source text, or arbitrary object dumps.
+
+The existing automatic unresponsive-renderer capture continues when no explicit
+capture owns that window. An armed capture handles unresponsiveness itself so the
+two profiler paths cannot compete.
+
 ## General questions
 
 ```ts

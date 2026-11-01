@@ -21,13 +21,15 @@ export type TrajectorySession = {
   time: { created: number; updated: number; busy: number | null; idle: number | null }
   tokens: UsageSnapshot | null
   messages: ReadonlyArray<SessionMessage.Info> | null
-  messageStatus: "available" | "unavailable"
+  messageStatus: "available" | "unavailable" | "not-read"
   messageError: string | null
 }
 
 export interface TrajectoryHost {
   /** Called only with an ID obtained from an owned runner_attempt row. */
   session(id: string): Promise<TrajectorySession | null>
+  /** Reads live session metadata without loading transcript context. */
+  status?(id: string): Promise<TrajectorySession | null>
 }
 
 export class TrajectoryIdentityError extends Error {
@@ -46,62 +48,68 @@ export function nativeTrajectoryHost(
   ctx: Pick<Plugin.Context, "session">,
   projectID: string,
 ): TrajectoryHost {
-  return {
-    async session(id) {
-      const session = await Effect.runPromise(
-        ctx.session
-          .get({ sessionID: Session.ID.make(id) })
-          .pipe(
-            Effect.catch((error) => (notFound(error) ? Effect.succeed(null) : Effect.fail(error))),
-          ),
-      )
-      if (!session) return null
-      if (session.id !== id || session.projectID !== projectID) throw new TrajectoryIdentityError()
+  async function loadSession(id: string, includeContext: boolean) {
+    const session = await Effect.runPromise(
+      ctx.session
+        .get({ sessionID: Session.ID.make(id) })
+        .pipe(
+          Effect.catch((error) => (notFound(error) ? Effect.succeed(null) : Effect.fail(error))),
+        ),
+    )
+    if (!session) return null
+    if (session.id !== id || session.projectID !== projectID) throw new TrajectoryIdentityError()
 
-      let messages: ReadonlyArray<SessionMessage.Info> | null = null
-      let messageStatus: TrajectorySession["messageStatus"] = "available"
-      let messageError: string | null = null
+    let messages: ReadonlyArray<SessionMessage.Info> | null = null
+    let messageStatus: TrajectorySession["messageStatus"] = includeContext
+      ? "available"
+      : "not-read"
+    let messageError: string | null = null
+    if (includeContext) {
       try {
         messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
       } catch (error) {
         messageStatus = "unavailable"
         messageError = safeError(error, privacyStats())
       }
+    }
 
-      const busy = session.time.busy ? DateTime.toEpochMillis(session.time.busy) : null
-      const idle = session.time.idle ? DateTime.toEpochMillis(session.time.idle) : null
-      const tokens = session.tokens
-      return {
-        id: session.id,
-        projectID: session.projectID,
-        parentID: session.parentID ?? null,
-        model: session.model
-          ? {
-              providerID: session.model.providerID,
-              id: session.model.id,
-              ...(session.model.variant ? { variant: session.model.variant } : {}),
-            }
-          : null,
-        outcome: session.outcome ?? null,
-        busy: busy !== null && (idle === null || busy > idle),
-        time: {
-          created: DateTime.toEpochMillis(session.time.created),
-          updated: DateTime.toEpochMillis(session.time.updated),
-          busy,
-          idle,
-        },
-        tokens: tokens
-          ? {
-              input: tokens.input,
-              output: tokens.output,
-              reasoning: tokens.reasoning,
-              cache: { read: tokens.cache.read, write: tokens.cache.write },
-            }
-          : null,
-        messages,
-        messageStatus,
-        messageError,
-      }
-    },
+    const busy = session.time.busy ? DateTime.toEpochMillis(session.time.busy) : null
+    const idle = session.time.idle ? DateTime.toEpochMillis(session.time.idle) : null
+    const tokens = session.tokens
+    return {
+      id: session.id,
+      projectID: session.projectID,
+      parentID: session.parentID ?? null,
+      model: session.model
+        ? {
+            providerID: session.model.providerID,
+            id: session.model.id,
+            ...(session.model.variant ? { variant: session.model.variant } : {}),
+          }
+        : null,
+      outcome: session.outcome ?? null,
+      busy: busy !== null && (idle === null || busy > idle),
+      time: {
+        created: DateTime.toEpochMillis(session.time.created),
+        updated: DateTime.toEpochMillis(session.time.updated),
+        busy,
+        idle,
+      },
+      tokens: tokens
+        ? {
+            input: tokens.input,
+            output: tokens.output,
+            reasoning: tokens.reasoning,
+            cache: { read: tokens.cache.read, write: tokens.cache.write },
+          }
+        : null,
+      messages,
+      messageStatus,
+      messageError,
+    }
+  }
+  return {
+    session: (id) => loadSession(id, true),
+    status: (id) => loadSession(id, false),
   }
 }

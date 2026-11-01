@@ -160,6 +160,28 @@ export const TrajectoryOutput = z.strictObject({
   report: z.record(z.string(), z.unknown()),
 })
 
+export const TrajectoryHistoryInput = z.strictObject({
+  scope: ObservationScope,
+  taskID: z.uuid(),
+  limit: z.int().min(1).max(50).default(20),
+  cursor: z.string().min(1).max(4096).optional(),
+})
+export const TrajectoryHistoryOutput = z.strictObject({
+  schemaVersion: z.literal(1),
+  projectID: z.string().min(1),
+  scope: ObservationScopeView,
+  boundary: Boundary,
+  capturedAt: z.number().finite(),
+  expiresAt: z.number().finite(),
+  eventIDs: z.array(z.string()).max(10_000).optional(),
+  report: z.record(z.string(), z.unknown()),
+})
+export const TrajectoryHistoryErrorData = z.strictObject({
+  reason: z.enum(["expired", "evicted", "invalid-cursor"]),
+  recovery: z.literal("recapture"),
+})
+export const TrajectoryStatusInput = z.strictObject({ scope: ObservationScope, taskID: z.uuid() })
+
 export const Changed = z.strictObject({
   projectID: z.string().min(1),
   sequence: z.int().positive(),
@@ -175,6 +197,12 @@ export const Observability = Rpc.define({
   methods: {
     snapshot: { input: SnapshotInput, output: SnapshotOutput },
     trajectory: { input: TrajectoryInput, output: TrajectoryOutput },
+    trajectoryHistory: {
+      input: TrajectoryHistoryInput,
+      output: TrajectoryHistoryOutput,
+      errors: { trajectory_history_unavailable: TrajectoryHistoryErrorData },
+    },
+    trajectoryStatus: { input: TrajectoryStatusInput, output: TrajectoryOutput },
   },
   events: { changed: { schema: Changed } },
 })
@@ -185,4 +213,8 @@ export type SnapshotRequest = z.infer<typeof SnapshotInput>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>
 export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
 export type TrajectoryResponse = z.infer<typeof TrajectoryOutput>
+export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
+export type TrajectoryHistoryResponse = z.infer<typeof TrajectoryHistoryOutput>
+export type TrajectoryHistoryErrorReason = z.infer<typeof TrajectoryHistoryErrorData>["reason"]
+export type TrajectoryStatusRequest = z.infer<typeof TrajectoryStatusInput>
 export type ObservationChange = z.infer<typeof Changed>

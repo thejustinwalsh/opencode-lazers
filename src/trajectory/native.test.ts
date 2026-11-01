@@ -74,6 +74,55 @@ test("native adapter refuses a foreign project before reading its transcript", a
   expect(calls).toEqual(["get"])
 })
 
+test("lightweight native status reads current session facts without loading context", async () => {
+  const calls: string[] = []
+  const host = nativeTrajectoryHost(
+    {
+      session: {
+        get: ({ sessionID }: { sessionID: string }) =>
+          Effect.sync(() => {
+            calls.push(`get:${sessionID}`)
+            return sessionRecord()
+          }),
+        context: ({ sessionID }: { sessionID: string }) =>
+          Effect.sync(() => {
+            calls.push(`context:${sessionID}`)
+            return []
+          }),
+      },
+    } as unknown as Plugin.Context,
+    "project",
+  )
+  const status = await host.status!("ses-owned")
+  expect(calls).toEqual(["get:ses-owned"])
+  expect(status?.messageStatus).toBe("not-read")
+  expect(status?.messages).toBeNull()
+  expect(status?.tokens?.input).toBe(12)
+  expect(status?.model?.id).toBe("gpt-6-luna")
+})
+
+test("lightweight status rejects a foreign session before returning live metadata", async () => {
+  const calls: string[] = []
+  const host = nativeTrajectoryHost(
+    {
+      session: {
+        get: () =>
+          Effect.sync(() => {
+            calls.push("get")
+            return sessionRecord("foreign-project")
+          }),
+        context: () => {
+          calls.push("context")
+          return Effect.succeed([])
+        },
+      },
+    } as unknown as Plugin.Context,
+    "project",
+  )
+  await expect(host.status!("ses-owned")).rejects.toThrow("outside this project")
+  expect(calls).toEqual(["get"])
+})
+
 test("native context access failures remain explicit and redact credentials", async () => {
   const host = nativeTrajectoryHost(
     {

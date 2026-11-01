@@ -3,15 +3,37 @@ import { createComponent, createRoot } from "solid-js"
 import { Panel, Command, MenuItem } from "@opencode/plugin/gui"
 import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/internal.js"
 import { createServer } from "vite"
+import { fileURLToPath } from "node:url"
 
 test("shipped GUI setup registers both observation panels exactly once", async () => {
+  const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
+  const inferenceRuntimeModule = "\0lazers-test-unused-inference-runtime"
+  let replacedInferenceRuntime = false
   const vite = await createServer({
     configFile: "./vite.config.ts",
+    plugins: [
+      {
+        name: "test-unused-inference-runtime",
+        enforce: "pre",
+        resolveId(source, importer) {
+          if (source !== "./webgpu/runtime.ts" || importer !== guiRoot) return
+          replacedInferenceRuntime = true
+          return inferenceRuntimeModule
+        },
+        load(id) {
+          if (id !== inferenceRuntimeModule) return
+          return `export function createInferenceRuntime() {
+            throw new Error("The inference runtime is not used by this GUI registration test")
+          }`
+        },
+      },
+    ],
     server: { middlewareMode: true, ws: false },
     appType: "custom",
   })
   try {
     const { default: gui } = await vite.ssrLoadModule("/src/gui.tsx")
+    expect(replacedInferenceRuntime).toBe(true)
     const session = { id: "ses-observation", location: {} }
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const opened: unknown[][] = []
