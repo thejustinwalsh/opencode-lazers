@@ -3,7 +3,10 @@
 2026-11-01, 04:41 UTC checkpoint. Read [README contracts](../../README.md),
 [pinned OpenCode API](opencode-api.md), [delivery audit](completed-task-audit.md)
 and the [new audit and next phases](production-audit-and-next-phases.md).
-The durable snapshot is timestamped; inspect current state before acting.
+The durable snapshot below is timestamped; inspect current state before acting.
+Current reviewed priorities and decisions are in [the phase plan](phase-review-plan.md).
+LZ-28 has since returned and is blocked at v10 on the retained input-safety finding;
+see [its review](evidence/architect-context-lifecycle/review.md).
 
 ## Current execution
 
