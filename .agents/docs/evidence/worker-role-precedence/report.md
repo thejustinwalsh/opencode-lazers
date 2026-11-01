@@ -24,11 +24,14 @@ After the configuration watcher updated the main location, native `agent.get`
 returned 1,642 characters of system instructions, including task-instruction
 retrieval, final evidence notes before verification/commit, and checks/observed
 behavior as evidence. The model remained exactly `openai/gpt-6-luna#max`.
-The already-created LZ-40 worktree still returned an empty system because its
-checkout retained the old Markdown file. Propagate the reviewed configuration
-through normal worktree updates; main-location success alone is not proof that
-all active workers have the corrected role. Do not restart or duplicate tasks
-merely to apply this configuration repair.
+The already-created LZ-40 worktree initially still returned an empty system
+because its checkout retained the old Markdown file. Architect then merged
+reviewed main `54e4ecd` through normal worktree updates. Root independently read
+the effective role in retained LZ-28, LZ-36, LZ-38 and LZ-40 locations: each
+matched `src/implementor.md` exactly, with the same Luna Max route. No role body
+was copied into a configuration file and no task was restarted for this repair.
+These readbacks verify configuration, not a behavioral improvement or the
+contents of every model request.
 
 Quality checks passed after the configuration edit. No GUI build, inference,
 background-service restart or feature toggle was used for this observation.

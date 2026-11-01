@@ -112,7 +112,10 @@ proof. Keep JSON validation and `lazers_verify_task` Architect self-review.
 GUI build hot reload unloads the local engine: activate only at a quiet local
 inference boundary. Main `6f4d163` focuses task checks on changed behavior/material
 risks; `74974e9`/`2790457` keep file hashes out of proof and finish evidence notes
-before verification/commit. Registration activation is not yet claimed. Quality
-passed on main after these edits. Bun: `/Users/tjw/.bun/bin/bun`. Load Portless
+before verification/commit. The empty model-only Markdown override was removed in `54e4ecd`; its identical
+model preference now lives in JSON. Native readback confirms the packaged role
+in main and retained LZ-28/36/38/40 locations after normal worktree updates; see
+[configuration proof](evidence/worker-role-precedence/report.md). Quality passed
+on main after these edits. Bun: `/Users/tjw/.bun/bin/bun`. Load Portless
 before project listening servers. `.agents`/Git writes need sandbox escalation;
 never print native service credentials.
