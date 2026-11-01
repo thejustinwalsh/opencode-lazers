@@ -3,6 +3,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { Effect, Stream } from "effect"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
+import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { Observability } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
@@ -105,7 +106,7 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
-      trajectoryHistory: (input) =>
+      trajectoryHistory: (input, context) =>
         Effect.tryPromise({
           try: async () => {
             await authorize(
@@ -117,8 +118,19 @@ export function registerObservability(
             )
             return reads.trajectoryHistory(input, tracker)
           },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof TrajectoryHistoryUnavailableError
+              ? Effect.fail(
+                  context.error("trajectory_history_unavailable", error.message, {
+                    reason: error.reason,
+                    recovery: "recapture",
+                  }),
+                )
+              : Effect.die(new Error(safeError(error, privacyStats()))),
+          ),
+        ),
       trajectoryStatus: (input) =>
         Effect.tryPromise({
           try: async () => {

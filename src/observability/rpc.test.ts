@@ -31,10 +31,18 @@ test("history cache hits remain permission-first and continuation data stays sco
   )
   let handlers:
     | {
-        trajectoryHistory(input: unknown): Effect.Effect<unknown>
+        trajectoryHistory(
+          input: unknown,
+          context: {
+            error(type: string, message: string, data: unknown): unknown
+          },
+        ): Effect.Effect<unknown, unknown>
         trajectoryStatus(input: unknown): Effect.Effect<unknown>
       }
     | undefined
+  const rpcContext = {
+    error: (type: string, message: string, data: unknown) => ({ type, message, data }),
+  }
   const ctx = {
     rpc: {
       register: (_definition: unknown, methods: typeof handlers) => {
@@ -70,7 +78,7 @@ test("history cache hits remain permission-first and continuation data stays sco
     )
     const scope = { kind: "project" as const, sessionID: "ses-owner" }
     const first = (await Effect.runPromise(
-      handlers!.trajectoryHistory({ scope, taskID, limit: 2 }),
+      handlers!.trajectoryHistory({ scope, taskID, limit: 2 }, rpcContext),
     )) as {
       report: { trajectory: { events: unknown[]; nextCursor: string | null } }
       eventIDs: string[]
@@ -82,52 +90,80 @@ test("history cache hits remain permission-first and continuation data stays sco
     denied = true
     await expect(
       Effect.runPromise(
-        handlers!.trajectoryHistory({
-          scope,
-          taskID,
-          limit: 2,
-          cursor: first.report.trajectory.nextCursor,
-        }),
+        handlers!.trajectoryHistory(
+          {
+            scope,
+            taskID,
+            limit: 2,
+            cursor: first.report.trajectory.nextCursor,
+          },
+          rpcContext,
+        ),
       ),
     ).rejects.toThrow("native permission denied")
     expect(contextReads).toBe(2)
     denied = false
 
     const second = (await Effect.runPromise(
-      handlers!.trajectoryHistory({
-        scope,
-        taskID,
-        limit: 2,
-        cursor: first.report.trajectory.nextCursor,
-      }),
+      handlers!.trajectoryHistory(
+        {
+          scope,
+          taskID,
+          limit: 2,
+          cursor: first.report.trajectory.nextCursor,
+        },
+        rpcContext,
+      ),
     )) as { report: { trajectory: { page: number; events: unknown[] } } }
     expect(second.report.trajectory.page).toBe(2)
     expect(second.report.trajectory.events).toHaveLength(2)
     expect(contextReads).toBe(2)
 
+    const originalCursor = first.report.trajectory.nextCursor!
+    const tamperedCursor = `${originalCursor.slice(0, -1)}${originalCursor.endsWith("A") ? "B" : "A"}`
     await expect(
       Effect.runPromise(
-        handlers!.trajectoryHistory({
-          scope: { kind: "session", sessionID: "ses-unrelated" },
-          taskID,
-          limit: 2,
-          cursor: first.report.trajectory.nextCursor,
-        }),
+        handlers!.trajectoryHistory(
+          { scope, taskID, limit: 2, cursor: tamperedCursor },
+          rpcContext,
+        ),
+      ),
+    ).rejects.toMatchObject({
+      type: "trajectory_history_unavailable",
+      data: { reason: "invalid-cursor", recovery: "recapture" },
+    })
+    expect(contextReads).toBe(2)
+
+    await expect(
+      Effect.runPromise(
+        handlers!.trajectoryHistory(
+          {
+            scope: { kind: "session", sessionID: "ses-unrelated" },
+            taskID,
+            limit: 2,
+            cursor: first.report.trajectory.nextCursor,
+          },
+          rpcContext,
+        ),
       ),
     ).rejects.toThrow("No observation in this scope")
 
     foreignProject = true
     await expect(
       Effect.runPromise(
-        handlers!.trajectoryHistory({
-          scope,
-          taskID,
-          limit: 2,
-          cursor: first.report.trajectory.nextCursor,
-        }),
+        handlers!.trajectoryHistory(
+          {
+            scope,
+            taskID,
+            limit: 2,
+            cursor: first.report.trajectory.nextCursor,
+          },
+          rpcContext,
+        ),
       ),
     ).rejects.toThrow("Observation scope is unavailable")
     expect(permissionCalls).toEqual([
+      "lazers_inspect_trajectory",
       "lazers_inspect_trajectory",
       "lazers_inspect_trajectory",
       "lazers_inspect_trajectory",

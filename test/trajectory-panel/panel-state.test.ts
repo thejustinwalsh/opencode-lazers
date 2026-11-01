@@ -355,14 +355,14 @@ test("deferred task A cannot replace unavailable target B or fall back to A", as
     )
     await waitFor(state, () => requested.includes(taskID))
     state.selectTarget(targetB)
-    await waitFor(state, () => state.data.error.includes("LZ-2"))
+    await waitFor(state, () => state.data.historyError.includes("LZ-2"))
     pendingA.resolve(aResponse)
     await tick()
     expect(requested).toEqual([taskID, taskB])
     expect(state.data.taskID).toBe(taskB)
     expect(state.data.taskReference).toBe("LZ-2")
     expect(state.data.report).toBeUndefined()
-    expect(state.data.error).toContain("LZ-2")
+    expect(state.data.historyError).toContain("LZ-2")
     expect(state.data.tasks.some((task) => task.taskID === taskB && task.title === "LZ-2")).toBe(
       true,
     )
@@ -448,7 +448,12 @@ test("expired history continuations retain old pages and require an explicit rec
   const calls: Array<string | undefined> = []
   transport.history = async (scope, id, signal, cursor, _limit) => {
     calls.push(cursor)
-    if (cursor) throw new Error("Trajectory history expired; recapture explicitly")
+    if (cursor)
+      throw {
+        type: "trajectory_history_unavailable",
+        message: "Trajectory history expired; recapture explicitly",
+        data: { reason: "expired", recovery: "recapture" },
+      }
     return originalHistory(scope, id, signal, cursor, 2)
   }
   const state = new TrajectoryPanelState(() => {})
@@ -461,17 +466,38 @@ test("expired history continuations retain old pages and require an explicit rec
       transport,
       { taskID, selection: null },
     )
-    await waitFor(state, () => state.data.report !== undefined)
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
     const originalEvents = structuredClone(state.data.events)
     const originalCursor = state.data.eventCursor!
+    const originalCapturedAt = state.data.historyCapturedAt
+    const originalExpiresAt = state.data.historyExpiresAt
+    state.selectEvent(originalEvents[0]!.id)
+    const originalSelection = state.data.selection
+    const originalPayload = structuredClone(state.data.selectionEventSnapshot)
     expect(originalCursor).not.toBeNull()
     await state.loadMoreActivity()
     expect(state.data.events).toEqual(originalEvents)
     expect(state.data.eventCursor).toBe(originalCursor)
-    expect(state.data.error).toContain("expired; recapture explicitly")
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.historyError).not.toContain("[object Object]")
+    expect(state.data.selection).toEqual(originalSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(originalPayload)
+    expect(state.data.historyCapturedAt).toBe(originalCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(originalExpiresAt)
     await state.refresh()
     expect(calls).toHaveLength(2)
     expect(calls[1]).toBe(originalCursor)
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.stale).toBe(true)
+    expect(state.data.events).toEqual(originalEvents)
+    expect(state.data.eventCursor).toBe(originalCursor)
+    expect(state.data.selectionEventSnapshot).toEqual(originalPayload)
+    expect(state.data.historyCapturedAt).toBe(originalCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(originalExpiresAt)
 
     await state.recaptureActivity()
     expect(calls).toHaveLength(3)
@@ -479,6 +505,85 @@ test("expired history continuations retain old pages and require an explicit rec
     expect(state.data.historyCapturedAt).not.toBeNull()
     expect(state.data.events).toHaveLength(2)
     expect(state.data.eventCursor).not.toBeNull()
+    expect(state.data.historyError).toBe("")
+    expect(state.data.stale).toBe(false)
+    expect(state.data.selection).toEqual(originalSelection)
+    expect(state.data.selectionEventSnapshot?.id).toBe(originalPayload?.id)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("failed explicit recapture keeps the old capture and page union after healthy status", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const initialHistory = transport.history
+  transport.history = (scope, id, signal, cursor) => initialHistory(scope, id, signal, cursor, 2)
+  const pageHistory = transport.history
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "recapture-preserves-old-history",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.events).toHaveLength(4)
+    state.selectEvent(state.data.events[0]!.id)
+    const oldReport = state.data.report
+    const oldEvents = structuredClone(state.data.events)
+    const oldCursor = state.data.eventCursor
+    const oldCapturedAt = state.data.historyCapturedAt
+    const oldExpiresAt = state.data.historyExpiresAt
+    const oldSelection = state.data.selection
+    const oldPayload = structuredClone(state.data.selectionEventSnapshot)
+    const calls: Array<string | undefined> = []
+    transport.history = async (scope, id, signal, cursor) => {
+      calls.push(cursor)
+      if (cursor)
+        throw {
+          type: "trajectory_history_unavailable",
+          message: "Trajectory history expired; recapture explicitly",
+          data: { reason: "expired", recovery: "recapture" },
+        }
+      return pageHistory(scope, id, signal, cursor, 2)
+    }
+
+    await state.recaptureActivity()
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toBeUndefined()
+    expect(calls[1]).toBeTypeOf("string")
+    expect(state.data.report).toBe(oldReport)
+    expect(state.data.events).toEqual(oldEvents)
+    expect(state.data.eventCursor).toBe(oldCursor)
+    expect(state.data.historyCapturedAt).toBe(oldCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(oldExpiresAt)
+    expect(state.data.selection).toEqual(oldSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(oldPayload)
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.recapturingHistory).toBe(false)
+
+    await state.refresh()
+    expect(state.data.historyError).toBe(
+      "Captured history has expired. Recapture history to continue.",
+    )
+    expect(state.data.stale).toBe(true)
+    expect(state.data.events).toEqual(oldEvents)
+    expect(state.data.eventCursor).toBe(oldCursor)
+    expect(state.data.historyCapturedAt).toBe(oldCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(oldExpiresAt)
+    expect(state.data.selection).toEqual(oldSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(oldPayload)
+    expect(calls).toHaveLength(2)
   } finally {
     state.close()
     fixture.close()
@@ -531,7 +636,7 @@ test("replayed or reordered history pages retain the old union and cursor for ex
     await state.loadMoreActivity()
     expect(state.data.events).toEqual(originalEvents)
     expect(state.data.eventCursor).toBe(originalCursor)
-    expect(state.data.error).toContain("page order changed or cursor did not advance")
+    expect(state.data.historyError).toContain("page order changed or cursor did not advance")
     expect(state.data.stale).toBe(true)
   } finally {
     state.close()

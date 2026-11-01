@@ -1,4 +1,5 @@
 import type { ObservationScope } from "../observability/contract.ts"
+import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import {
   checkKey,
   detailedChecks,
@@ -47,6 +48,8 @@ export type PanelData = {
   totalEvents: number
   historyCapturedAt: number | null
   historyExpiresAt: number | null
+  historyError: string
+  recapturingHistory: boolean
   loading: boolean
   loadingActivity: boolean
   stale: boolean
@@ -80,6 +83,8 @@ const blank = (key = ""): PanelData => ({
   totalEvents: 0,
   historyCapturedAt: null,
   historyExpiresAt: null,
+  historyError: "",
+  recapturingHistory: false,
   loading: true,
   loadingActivity: false,
   stale: false,
@@ -125,6 +130,36 @@ function responseMatchesScope(
     response.scope.kind === scope.kind &&
     (scope.kind === "project" || response.scope.sessionID === scope.sessionID)
   )
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function historyFailureMessage(error: unknown) {
+  const value = record(error)
+  if (value?.type === "trajectory_history_unavailable") {
+    const data = record(value.data)
+    if (data?.recovery !== "recapture")
+      return "Captured history is unavailable. Recapture history to continue."
+    if (data.reason === "expired")
+      return "Captured history has expired. Recapture history to continue."
+    if (data.reason === "evicted")
+      return "Captured history is no longer cached. Recapture history to continue."
+    if (data.reason === "invalid-cursor")
+      return "This history continuation is invalid or stale. Recapture history to continue."
+    return "Captured history is unavailable. Recapture history to continue."
+  }
+  if (error instanceof Error)
+    return safeText(error.message, privacyStats(), 400) || "Captured history could not be loaded."
+  return "Captured history could not be loaded. Recapture history to try again."
+}
+
+function requestFailureMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return safeText(error.message, privacyStats(), 400) || fallback
+  return fallback
 }
 
 export class TrajectoryPanelState {
@@ -258,25 +293,35 @@ export class TrajectoryPanelState {
           totalEvents: 0,
           historyCapturedAt: null,
           historyExpiresAt: null,
+          historyError: "",
+          recapturingHistory: false,
           loading: false,
           loadingActivity: false,
           stale: false,
           error: "",
         })
+      } else if (
+        this.data.historyError &&
+        this.data.taskID === taskID &&
+        (!this.data.report || this.data.historyCapturedAt === null)
+      ) {
+        this.update({ loading: false, stale: true })
       } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
         await this.captureHistory(taskID, taskSignal, !taskChanged)
       } else {
         await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
       }
     } catch (error) {
-      if (generation === this.generation && request === this.snapshotRequest && !signal.aborted)
+      if (generation === this.generation && request === this.snapshotRequest && !signal.aborted) {
+        const message = requestFailureMessage(error, "Trajectory snapshot could not be refreshed.")
         this.update({
           loading: false,
           stale: true,
           error: this.target
-            ? `Trajectory for ${this.target.reference} is unavailable: ${String(error)}`
-            : String(error),
+            ? `Trajectory for ${this.target.reference} is unavailable: ${message}`
+            : message,
         })
+      }
     } finally {
       if (generation === this.generation) {
         this.refreshing = false
@@ -308,6 +353,8 @@ export class TrajectoryPanelState {
       totalEvents: 0,
       historyCapturedAt: null,
       historyExpiresAt: null,
+      historyError: "",
+      recapturingHistory: false,
       loading: taskID !== null,
       loadingActivity: false,
       error: "",
@@ -362,7 +409,7 @@ export class TrajectoryPanelState {
         tasks,
         liveEvents,
         loading: false,
-        stale: false,
+        stale: Boolean(this.data.historyError),
         error: "",
       })
       const selection = this.reconcileSelection(
@@ -393,11 +440,20 @@ export class TrajectoryPanelState {
         request === this.statusRequest &&
         !signal.aborted
       )
-        this.update({ loading: false, stale: true, error: String(error) })
+        this.update({
+          loading: false,
+          stale: true,
+          error: requestFailureMessage(error, "Live Trajectory status could not be refreshed."),
+        })
     }
   }
 
-  private async captureHistory(taskID: string, signal: AbortSignal, preserveSelection: boolean) {
+  private async captureHistory(
+    taskID: string,
+    signal: AbortSignal,
+    preserveSelection: boolean,
+    explicitRecapture = false,
+  ) {
     const transport = this.transport
     const scope = this.scope
     if (!transport || !scope || signal.aborted) return
@@ -405,7 +461,11 @@ export class TrajectoryPanelState {
     const taskRequest = this.taskRequest
     const request = ++this.historyRequest
     this.activityRequest++
-    this.update({ loading: !this.data.report, loadingActivity: false })
+    this.update({
+      loading: !this.data.report,
+      loadingActivity: false,
+      ...(explicitRecapture ? { recapturingHistory: true } : {}),
+    })
     try {
       const response = await transport.history(scope, taskID, signal)
       if (
@@ -507,10 +567,11 @@ export class TrajectoryPanelState {
         totalEvents: report.trajectory.totalEvents,
         historyCapturedAt: response.capturedAt,
         historyExpiresAt: response.expiresAt,
+        historyError: "",
+        recapturingHistory: false,
         loading: false,
         loadingActivity: false,
-        stale: false,
-        error: "",
+        stale: Boolean(this.data.error),
       })
       this.selected({ taskID, selection })
     } catch (error) {
@@ -523,11 +584,12 @@ export class TrajectoryPanelState {
         this.update({
           loading: false,
           loadingActivity: false,
+          recapturingHistory: false,
           stale: true,
-          error:
+          historyError:
             this.target?.taskID === taskID
-              ? `Trajectory for ${this.target.reference} is unavailable: ${String(error)}`
-              : String(error),
+              ? `Trajectory for ${this.target.reference} is unavailable: ${historyFailureMessage(error)}`
+              : historyFailureMessage(error),
         })
     }
   }
@@ -637,13 +699,23 @@ export class TrajectoryPanelState {
   async recaptureActivity() {
     const taskID = this.data.taskID
     const transport = this.transport
-    if (!taskID || !transport || !this.scope || this.controller.signal.aborted) return
+    if (
+      !taskID ||
+      !transport ||
+      !this.scope ||
+      this.controller.signal.aborted ||
+      this.data.recapturingHistory
+    )
+      return
     if (!transport.online()) {
-      this.update({ stale: true, error: "Trajectory updates are disconnected." })
+      this.update({
+        stale: true,
+        historyError: "Trajectory updates are disconnected. Reconnect and recapture history.",
+      })
       return
     }
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    await this.captureHistory(taskID, signal, true)
+    await this.captureHistory(taskID, signal, true, true)
   }
 
   async loadMoreActivity() {
@@ -651,7 +723,15 @@ export class TrajectoryPanelState {
     const scope = this.scope
     const taskID = this.data.taskID
     const cursor = this.data.eventCursor
-    if (!transport || !scope || !taskID || !cursor || this.data.loadingActivity) return
+    if (
+      !transport ||
+      !scope ||
+      !taskID ||
+      !cursor ||
+      this.data.loadingActivity ||
+      this.data.recapturingHistory
+    )
+      return
     const generation = this.generation
     const request = ++this.activityRequest
     const taskRequest = this.taskRequest
@@ -669,7 +749,7 @@ export class TrajectoryPanelState {
     ) {
       this.update({
         stale: true,
-        error: "Captured activity pages are inconsistent; recapture explicitly.",
+        historyError: "Captured activity pages are inconsistent. Recapture history to continue.",
       })
       return
     }
@@ -732,7 +812,11 @@ export class TrajectoryPanelState {
         request === this.activityRequest &&
         !signal.aborted
       )
-        this.update({ loadingActivity: false, stale: true, error: String(error) })
+        this.update({
+          loadingActivity: false,
+          stale: true,
+          historyError: historyFailureMessage(error),
+        })
     }
   }
 

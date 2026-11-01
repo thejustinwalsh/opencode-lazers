@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { ObservationScope } from "../observability/contract.ts"
-import { TrajectoryHistoryCache } from "./history.ts"
+import { TrajectoryHistoryCache, TrajectoryHistoryUnavailableError } from "./history.ts"
 
 const secret = new Uint8Array(32).fill(6)
 const scope: ObservationScope = { kind: "project", sessionID: "ses-owner" }
@@ -18,6 +18,15 @@ const boundary = {
   nativeRevision: 3,
   eventSequence: 4,
   transitionSequence: 5,
+}
+
+function thrown(action: () => unknown) {
+  try {
+    action()
+  } catch (error) {
+    return error
+  }
+  throw new Error("Expected history continuation to fail")
 }
 
 function report(count = 5) {
@@ -73,7 +82,9 @@ test("history cursors reject tampering and every foreign identity dimension", ()
   const first = cache.capture(identity, report(), boundary, 100)
   const cursor = first.report.trajectory.nextCursor!
   const tampered = `${cursor.slice(0, -1)}${cursor.endsWith("A") ? "B" : "A"}`
-  expect(() => cache.continue(identity, tampered, 101)).toThrow("Invalid or stale")
+  const tamperedFailure = thrown(() => cache.continue(identity, tampered, 101))
+  expect(tamperedFailure).toBeInstanceOf(TrajectoryHistoryUnavailableError)
+  expect(tamperedFailure).toMatchObject({ reason: "invalid-cursor" })
 
   const foreignIdentities = [
     { ...identity, projectID: "other-project" },
@@ -83,8 +94,11 @@ test("history cursors reject tampering and every foreign identity dimension", ()
     { ...identity, taskID: "00000000-0000-4000-8000-000000000001" },
     { ...identity, limit: 3 },
   ]
-  for (const foreign of foreignIdentities)
-    expect(() => cache.continue(foreign, cursor, 101)).toThrow("Invalid or stale")
+  for (const foreign of foreignIdentities) {
+    const failure = thrown(() => cache.continue(foreign, cursor, 101))
+    expect(failure).toBeInstanceOf(TrajectoryHistoryUnavailableError)
+    expect(failure).toMatchObject({ reason: "invalid-cursor" })
+  }
 })
 
 test("expired and evicted history cursors require explicit recapture", () => {
@@ -95,16 +109,20 @@ test("expired and evicted history cursors require explicit recapture", () => {
     maxBytes: 100_000,
   })
   const expired = cache.capture(identity, report(), boundary, 100)
-  expect(() => cache.continue(identity, expired.report.trajectory.nextCursor!, 110)).toThrow(
-    "expired; recapture explicitly",
+  const expiredFailure = thrown(() =>
+    cache.continue(identity, expired.report.trajectory.nextCursor!, 110),
   )
+  expect(expiredFailure).toBeInstanceOf(TrajectoryHistoryUnavailableError)
+  expect(expiredFailure).toMatchObject({ reason: "expired" })
 
   const retained = cache.capture(identity, report(), boundary, 200)
   const anotherIdentity = { ...identity, taskID: "00000000-0000-4000-8000-000000000002" }
   cache.capture(anotherIdentity, report(), boundary, 201)
-  expect(() => cache.continue(identity, retained.report.trajectory.nextCursor!, 202)).toThrow(
-    "expired or was evicted; recapture explicitly",
+  const evictedFailure = thrown(() =>
+    cache.continue(identity, retained.report.trajectory.nextCursor!, 202),
   )
+  expect(evictedFailure).toBeInstanceOf(TrajectoryHistoryUnavailableError)
+  expect(evictedFailure).toMatchObject({ reason: "evicted" })
 })
 
 test("history cache rejects duplicate or oversized projections rather than serving partial pages", () => {
