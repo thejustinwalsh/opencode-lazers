@@ -82,6 +82,8 @@ Architect currently investigates the repository and uses current-web research th
 
 Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. Catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lazers_worker_catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
 
+Set model-only defaults under `agents.lazers-implementor.model` in `opencode.json(c)`, leaving `system` unset so the packaged role remains active. A Markdown agent's body replaces its system prompt; an empty model-only file clears the role.
+
 Each plan node may independently select one optional persona: `ui`, `systems`, or `small-refactoring`. A persona contributes one short overlay to the shared implementor core and is independent of provider/model/effort. It does not remove normal coding tools or permit worker delegation. Existing plans without a persona or explicit `workerModel` keep their prior behavior; there is no separate persona/model settings engine.
 
 ### 4 Verification and completion

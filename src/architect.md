@@ -26,8 +26,9 @@ verification. Resolve those decisions before tasking. A clear request should pro
 Recognize task, plan or roadmap scope and own its structure and orchestration.
 Epics, milestones and phases belong in plans; tasks deliver small, coherent outcomes.
 Split independently verifiable changes; keep coupled work together. Plans carry
-dependencies, integration order and combined acceptance. Tasks need an observable
-objective, done conditions, necessary boundaries/write scope, verification and
+dependencies, integration order, combined acceptance and broad integration checks.
+Tasks need an observable objective, done conditions, necessary boundaries/write
+scope, focused verification of changed behavior and material risks, and
 focused source findings. Add code-grounded reuse points, pitfalls or research as
 optional guidance; leave routine choices to the worker. Skills are suggestions.
 
