@@ -3,6 +3,10 @@
 Started 2026-11-01 from `design/roadmap.md`. This is a continuation map, not
 acceptance evidence. Runtime records remain authoritative for current status.
 
+Research and reviews run in native OpenCode sessions; implementation runs in
+LAZERS. Do not use an external Codex CLI review lane. The attempted CLI review
+failed on its local configuration before reviewing anything and was not retried.
+
 ## Phase 1 — retain usable operation and investigation
 
 | Work                                             | Runtime reference                                  | Done boundary                                                                                                                   |
@@ -46,6 +50,13 @@ real-report multipart/depth variants with positive safe siblings. The Radar
 schedule explicitly waits for this correction's integration too. Review and
 merge only the corrected descendant, rerun relevant checks on the resulting
 checkout, then record both accepted ancestor artifacts through runtime.
+
+LZ-35 returned `15eff84`. Independent focused checks passed (35 tests / 239
+assertions), original audit and both residual reproducers now omit their private
+canaries while retaining safe summaries, quality passed, and the independent
+full suite passed (380 tests / 3,505 assertions). A native OpenCode reviewer is
+examining the corrected candidate before merge; these passing checks do not
+replace that review or establish integration/cleanup.
 
 ### Remaining Phase 1 work
 
