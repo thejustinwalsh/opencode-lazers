@@ -144,3 +144,23 @@ directory, 500 ms profile and 2,000 ms deadline. No later unresponsive/debugger
 capture was found in this inspection; the diagnostics directory is still absent
 (it is created on capture). Do not turn this healthy observation into a freeze
 fix claim. The next actual freeze still needs its correlated native evidence.
+
+## Native pagination regression baseline — 15:30 UTC
+
+With the same historical LZ-9 trajectory mounted and real workers continuing,
+Root opened Check output: its receipt/stdout content remained visible after a
+six-second interval. That disclosure path did not reproduce a reset.
+
+Root then closed Check output, expanded Activity and scrolled its inspector.
+The native accessibility tree exposed 50 Activity event toggle rows and Load more
+activity. Clicking Load more exposed 99 rows. After a six-second observation
+interval and a fresh complete native accessibility read, it had returned to 50
+rows, with Activity still expanded and Load more still present. No task/scope
+change or manual recapture occurred. Historical `read · error` event labels were
+old task data, not evidence of a new network error.
+
+This reproduces loaded-history loss across ordinary refresh on the deployed
+pre-LZ-36 implementation. It does not establish why the intermediate row count
+was 99 rather than 100, a complete page-union proof, or a renderer freeze cause.
+LZ-36 already targets this stability issue; this observation adds a real native
+before case rather than changing its scope or creating another task.
