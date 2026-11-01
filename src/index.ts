@@ -18,6 +18,8 @@ import { registerTrajectoryTools } from "./trajectory/tools.ts"
 import { AssociationTaskReads } from "./observability/task-reads.ts"
 import { ObservationReads } from "./observability/read.ts"
 import { registerObservability } from "./observability/rpc.ts"
+import { ProgressRecorder } from "./progress/recorder.ts"
+import { registerProgress } from "./progress/native.ts"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
@@ -91,16 +93,20 @@ export default Plugin.define({
       yield* registerContextTools(ctx, projectIndex)
       yield* registerTaskTools(ctx, repository)
       yield* registerArchitect(ctx)
+      const runnerStore = new RunnerStore(repository)
+      const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
       const runtime = new TaskRuntime(
-        new RunnerStore(repository),
+        runnerStore,
         nativeHost(ctx, repository),
         ctx.location.project.id,
+        progress,
       )
       yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(
         Effect.orDie,
       )
       yield* registerWorker(ctx, runtime.store)
       yield* registerRunnerTools(ctx, runtime)
+      yield* registerProgress(ctx, progress, ctx.location.project.id)
       const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
       yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)
       const observationSecret = crypto.getRandomValues(new Uint8Array(32))

@@ -455,6 +455,13 @@ test("active scope amendments durably update the same worker after it fetched ol
     await drive(runtime, 5)
     expect(store.plan(planID)!.state).toBe("accepted")
     expect(store.attempts(planID)).toHaveLength(1)
+    const progress = store.progressFacts([attempt.id])
+    expect(progress.map((fact) => fact.kind)).toContain("artifact")
+    expect(progress.map((fact) => fact.kind)).toContain("verification")
+    expect(progress.some((fact) => JSON.parse(fact.payload).outcome === "accepted")).toBe(true)
+    expect(JSON.parse(progress.find((fact) => fact.kind === "verification")!.payload).result).toBe(
+      "passed",
+    )
   } finally {
     await runtime.stop()
     repository.close()

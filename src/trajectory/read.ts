@@ -9,6 +9,7 @@ import { TrajectoryIdentityError } from "./native.ts"
 import type { TrajectoryHost, TrajectorySession } from "./native.ts"
 import { privacyStats, safeError, safeText, safeValue } from "./privacy.ts"
 import type { PrivacyStats } from "./privacy.ts"
+import { projectProgressFact } from "../progress/projection.ts"
 
 type TransitionRow = {
   id: number
@@ -723,6 +724,9 @@ export async function inspectTrajectory(
   const allAttempts = rawPlans.flatMap((snapshot) =>
     snapshot.attempts.map((attempt) => ({ attempt, snapshot })),
   )
+  const progressRows = store.progressFacts(allAttempts.map(({ attempt }) => attempt.id))
+  const progressTruncated = progressRows.length > 10_000
+  const visibleProgressRows = progressTruncated ? progressRows.slice(-10_000) : progressRows
   const sessions = new Map<string, TrajectorySession | null>()
   const sessionErrors = new Map<string, string>()
   const statuses = new Map<string, "available" | "missing" | "unavailable">()
@@ -760,6 +764,7 @@ export async function inspectTrajectory(
         rawEvents.push(...messageEvents(session.messages, attempt, session, stats))
     }
   }
+  rawEvents.push(...visibleProgressRows.map(projectProgressFact))
   rawEvents.sort((a, b) => {
     const left = typeof a.at === "number" ? a.at : Number.MAX_SAFE_INTEGER
     const right = typeof b.at === "number" ? b.at : Number.MAX_SAFE_INTEGER
@@ -966,6 +971,16 @@ export async function inspectTrajectory(
       attemptsWithoutRecordedSessions: attemptViews.filter(
         (attempt) => attempt.sessionStatus !== "available",
       ).length,
+      workerProgress: {
+        facts: visibleProgressRows.length,
+        truncated: progressTruncated,
+        commentary: visibleProgressRows.filter((row) => row.kind === "commentary").length,
+        automaticFacts: visibleProgressRows.filter((row) => row.kind !== "commentary").length,
+        recoveryGaps: visibleProgressRows.filter((row) => row.kind === "gap").length,
+        additiveStepMeasurements: visibleProgressRows.filter((row) => row.kind === "step").length,
+        cumulativeUsageSnapshots: visibleProgressRows.filter((row) => row.kind === "usage-snapshot")
+          .length,
+      },
     },
     privacy: {
       redactedValues: stats.redacted,

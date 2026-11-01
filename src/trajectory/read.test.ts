@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { inspectTrajectory } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
 
 function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
@@ -26,6 +27,64 @@ test("trajectory specifications preserve legacy policy references and omit absen
     } finally {
       fixture.close()
     }
+  }
+})
+
+test("trajectory presents commentary separately from automatic worker facts without granting authority", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+    )
+    const executionBefore = fixture.store.execution(taskID)
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    recorder.report({
+      sessionID: "ses-failed",
+      agent: "lazers-implementor",
+      callID: "read-progress-call",
+      messageID: "msg_progress_note",
+      message: "The implementation and checks are complete.",
+    })
+    recorder.recordNativeEvent({
+      id: "read-tool-event",
+      type: "session.tool.success",
+      created: 4000,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg_auto_tool",
+        id: "auto-tool-call",
+        executed: true,
+        content: [{ type: "text", text: "check completed" }],
+      },
+    })
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const commentary = report.trajectory.events.find((event) => event.kind === "commentary")
+    const automatic = report.trajectory.events.find((event) => event.kind === "worker-tool")
+    expect(commentary).toMatchObject({
+      attemptID: firstAttemptID,
+      text: "The implementation and checks are complete.",
+    })
+    expect(automatic).toMatchObject({
+      attemptID: firstAttemptID,
+      tool: null,
+      status: "succeeded",
+      result: "check completed",
+    })
+    expect(report.coverage.workerProgress).toMatchObject({
+      commentary: 1,
+      automaticFacts: 1,
+      recoveryGaps: expect.any(Number),
+      facts: expect.any(Number),
+    })
+    expect(fixture.store.execution(taskID)).toEqual(executionBefore)
+  } finally {
+    fixture.close()
   }
 })
 

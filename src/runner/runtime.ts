@@ -22,6 +22,7 @@ import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership }
 import type { OutcomeOwnership } from "./inbox.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
 
 const terminal = new Set([
   "accepted",
@@ -39,6 +40,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 
 export class TaskRuntime {
   readonly owner = crypto.randomUUID()
+  readonly progress: ProgressRecorder
   private running = false
   private stopped = false
   private readonly idleWaiters: (() => void)[] = []
@@ -46,7 +48,10 @@ export class TaskRuntime {
     readonly store: RunnerStore,
     readonly host: RunnerHost,
     readonly projectID: string,
-  ) {}
+    progress?: ProgressRecorder,
+  ) {
+    this.progress = progress ?? new ProgressRecorder(store, projectID)
+  }
   get directory() {
     return this.store.repository.projectDirectory
   }
@@ -1449,6 +1454,15 @@ export class TaskRuntime {
           : undefined,
       )
     } catch (error) {
+      try {
+        this.progress.recordAttemptOutcome(
+          attempt.id,
+          error instanceof ArtifactScopeViolation ? "artifact-scope-violation" : "artifact-error",
+          errorText(error),
+        )
+      } catch {
+        // The task state machine remains authoritative if annotation storage is unavailable.
+      }
       if (error instanceof ArtifactScopeViolation) {
         this.store.fenced(this.owner, fence, () => {
           this.store.record(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED", {
@@ -1473,6 +1487,11 @@ export class TaskRuntime {
         attempt.task_id,
       )
     })
+    try {
+      this.progress.recordArtifact(attempt.id, artifact.commit)
+    } catch {
+      // Artifact acceptance and its runner receipt remain independent of commentary.
+    }
     const receipts: CheckReceipt[] = []
     for (const check of proposal.verification) {
       if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
@@ -1500,6 +1519,11 @@ export class TaskRuntime {
       )
       try {
         const result = await runCheck(attempt.workspace, artifact.commit, check, receiptPath)
+        try {
+          this.progress.recordVerification(attempt.id, effect.id, result)
+        } catch {
+          // The runner receipt below is the authoritative verification record.
+        }
         this.receipt(effect, { check: result }, fence)
         this.store.atomic((db) =>
           db
@@ -1517,6 +1541,11 @@ export class TaskRuntime {
         receipts.push(result)
         if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
       } catch (error) {
+        try {
+          this.progress.recordVerificationError(attempt.id, effect.id, check.id, error)
+        } catch {
+          // The runner effect remains authoritative if annotation storage fails.
+        }
         this.uncertain(effect, error, fence)
         return
       }
@@ -1562,6 +1591,11 @@ export class TaskRuntime {
         true,
       )
     })
+    try {
+      this.progress.recordAttemptOutcome(attempt.id, "accepted")
+    } catch {
+      // Progress facts never grant or revoke acceptance.
+    }
   }
   private missingEvidence(
     planID: string,
@@ -1610,6 +1644,11 @@ export class TaskRuntime {
         this.store.move(plan.id, task.id, "REPAIR", reason)
       else this.store.move(plan.id, task.id, "FAIL", reason)
     })
+    try {
+      this.progress.recordAttemptOutcome(attempt.id, "failed", reason)
+    } catch {
+      // Runtime transitions remain authoritative if annotation storage is unavailable.
+    }
     if (this.store.execution(task.id)?.state === "failed") this.hold(plan, reason)
   }
   private async finish(plan: PlanRow, fence: number) {

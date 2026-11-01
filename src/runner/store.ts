@@ -80,6 +80,25 @@ export type OutboxRow = {
   sequence: number
 }
 
+export type ProgressRow = {
+  seq: number
+  project_directory: string
+  project_id: string
+  plan_id: string
+  task_id: string
+  attempt_id: string
+  session_id: string
+  at: number
+  source: string
+  sources_json: string
+  kind: string
+  event_ids_json: string
+  call_id: string | null
+  message_id: string | null
+  dedupe_key: string
+  payload: string
+}
+
 export function appendOutboxReceipt(previous: string | null, next: unknown) {
   let history: unknown[] = []
   if (previous) {
@@ -165,7 +184,46 @@ export class RunnerStore {
       CREATE TABLE IF NOT EXISTS runner_audits (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS runner_progress (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL, task_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+        session_id TEXT NOT NULL, at INTEGER NOT NULL, source TEXT NOT NULL,
+        sources_json TEXT NOT NULL, kind TEXT NOT NULL, event_ids_json TEXT NOT NULL,
+        call_id TEXT, message_id TEXT, dedupe_key TEXT NOT NULL, payload TEXT NOT NULL,
+        UNIQUE(project_directory,dedupe_key)
+      );
+      CREATE INDEX IF NOT EXISTS runner_progress_attempt_seq
+        ON runner_progress(project_directory,attempt_id,seq);
+      CREATE TABLE IF NOT EXISTS runner_progress_reminders (
+        attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
+        session_id TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE, ownership_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL
+      );
     `)
+      const reminderColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!reminderColumns.has("message_id"))
+        db.exec("ALTER TABLE runner_progress_reminders ADD COLUMN message_id TEXT")
+      if (!reminderColumns.has("ownership_json"))
+        db.exec("ALTER TABLE runner_progress_reminders ADD COLUMN ownership_json TEXT")
+      if (!reminderColumns.has("updated_at"))
+        db.exec(
+          "ALTER TABLE runner_progress_reminders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+        )
+      if (!reminderColumns.has("attempts"))
+        db.exec(
+          "ALTER TABLE runner_progress_reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1",
+        )
+      db.query(
+        `UPDATE runner_progress_reminders SET status='unknown'
+         WHERE message_id IS NULL OR ownership_json IS NULL`,
+      ).run()
       const columns = new Set(
         db
           .query<{ name: string }, []>("PRAGMA table_info(runner_outbox)")
@@ -648,6 +706,21 @@ export class RunnerStore {
           "SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
         )
         .all(planID),
+    )
+  }
+  progressFacts(attemptIDs: readonly string[], limit = 10_001): ProgressRow[] {
+    if (!attemptIDs.length) return []
+    const bounded = Math.max(1, Math.min(limit, 10_001))
+    const placeholders = attemptIDs.map(() => "?").join(",")
+    return this.atomic((db) =>
+      db
+        .query<ProgressRow, [string, ...string[], number]>(
+          `SELECT * FROM (
+             SELECT * FROM runner_progress WHERE project_directory=?
+               AND attempt_id IN (${placeholders}) ORDER BY seq DESC LIMIT ?
+           ) ORDER BY seq`,
+        )
+        .all(this.repository.projectDirectory, ...attemptIDs, bounded),
     )
   }
   effects(planID: string) {

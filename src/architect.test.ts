@@ -53,6 +53,7 @@ test("the packaged definition registers a missing primary agent and isolates tra
   expect(first.system).toContain("small-refactoring")
   expect(first.system).toContain("Runtime owns admission")
   expect(first.system).toContain("Evidence is passing")
+  expect(first.system).toContain("progress reports and observed session facts are annotations")
 
   first.permissions.push({ action: "edit", resource: "*", effect: "allow" })
   first.request.body.changed = true
