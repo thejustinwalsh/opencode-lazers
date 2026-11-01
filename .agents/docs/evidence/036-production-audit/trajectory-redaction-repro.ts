@@ -15,19 +15,32 @@ try {
         id: "audit-canary-call",
         name: "execute",
         state: {
-          status: "completed",
+          status: "error",
           input: {
-            context: { messages: [{ type: "reasoning", text: "AUDIT_PRIVATE_INPUT_CANARY" }] },
+            command: "bun test src/trajectory",
+            summary: "AUDIT_SAFE_ARGUMENT_CANARY",
+            arguments: {
+              context: { messages: [{ type: "reasoning", text: "AUDIT_PRIVATE_INPUT_CANARY" }] },
+              state: { input: "AUDIT_FULL_INPUT_CANARY" },
+            },
           },
           content: [
             {
               type: "text",
               text: JSON.stringify({
+                summary: "AUDIT_SAFE_RESULT_CANARY",
                 messages: [{ type: "reasoning", text: "AUDIT_PRIVATE_RESULT_CANARY" }],
                 state: { input: "AUDIT_FULL_INPUT_CANARY" },
               }),
             },
           ],
+          error: {
+            type: "ToolError",
+            message: JSON.stringify({
+              summary: "AUDIT_SAFE_ERROR_CANARY",
+              details: [{ type: "reasoning", text: "AUDIT_PRIVATE_ERROR_CANARY" }],
+            }),
+          },
         },
         time: { ran: 1100, completed: 1110 },
       },
@@ -48,6 +61,10 @@ try {
       retainsNestedInputReasoning: serialized.includes("AUDIT_PRIVATE_INPUT_CANARY"),
       retainsNestedResultReasoning: serialized.includes("AUDIT_PRIVATE_RESULT_CANARY"),
       retainsFullResultInput: serialized.includes("AUDIT_FULL_INPUT_CANARY"),
+      retainsNestedErrorReasoning: serialized.includes("AUDIT_PRIVATE_ERROR_CANARY"),
+      retainsSafeArgumentSummary: serialized.includes("AUDIT_SAFE_ARGUMENT_CANARY"),
+      retainsSafeResultSummary: serialized.includes("AUDIT_SAFE_RESULT_CANARY"),
+      retainsSafeErrorSummary: serialized.includes("AUDIT_SAFE_ERROR_CANARY"),
       applicationDataRead: false,
       applicationDataModified: false,
     }),

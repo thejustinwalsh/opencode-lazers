@@ -24,6 +24,7 @@ const MAX_STRING_LENGTH = 4000
 const MAX_ARRAY_ITEMS = 40
 const MAX_OBJECT_FIELDS = 60
 const MAX_DEPTH = 8
+const OMITTED_UNSUPPORTED = "[omitted: unsupported value]"
 
 const sensitiveKey = (key: string) => {
   const normalized = key.toLowerCase().replaceAll(/[^a-z0-9]/g, "")
@@ -52,7 +53,42 @@ const sensitiveKey = (key: string) => {
     "response",
     "rawbody",
     "responsebody",
+    "context",
+    "messages",
+    "input",
+    "state",
+    "skill",
   ].some((part) => normalized === part || normalized.includes(part))
+}
+
+function normalizedTag(value: unknown) {
+  return typeof value === "string" ? value.toLowerCase().replaceAll(/[^a-z0-9]/g, "") : null
+}
+
+/** Return null for ordinary/supported values and an omission marker for private tags. */
+export function privateTagOmission(value: unknown): string | null {
+  switch (normalizedTag(value)) {
+    case "reasoning":
+    case "analysis":
+    case "thinking":
+    case "chainofthought":
+      return "reasoning"
+    case "system":
+    case "skill":
+    case "instruction":
+    case "systeminstruction":
+    case "skillinstruction":
+      return "system"
+    case "file":
+    case "image":
+    case "audio":
+    case "video":
+    case "document":
+    case "attachment":
+      return "attachment"
+    default:
+      return null
+  }
 }
 
 const secretPatterns = [
@@ -77,11 +113,23 @@ export function safeText(
 ): string {
   let output = value
   const trimmed = value.trimStart()
-  if (depth < MAX_DEPTH && (trimmed.startsWith("{") || trimmed.startsWith("["))) {
+  if (
+    depth < MAX_DEPTH &&
+    (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"'))
+  ) {
     try {
       const parsed: unknown = JSON.parse(value)
-      if (typeof parsed === "object" && parsed !== null)
-        output = JSON.stringify(safeValue(parsed, stats, depth + 1))
+      if (typeof parsed === "object" && parsed !== null) {
+        const projected = safeValue(parsed, stats, depth + 1)
+        output =
+          typeof projected === "string" && projected.startsWith("[omitted:")
+            ? projected
+            : JSON.stringify(projected)
+      } else if (typeof parsed === "string") {
+        const nested = parsed.trimStart()
+        if (nested.startsWith("{") || nested.startsWith("[") || nested.startsWith('"'))
+          output = safeText(parsed, stats, maximum, depth + 1)
+      }
     } catch {
       // Ordinary prose may start with a brace; continue with pattern redaction.
     }
@@ -108,6 +156,15 @@ export function safeText(
  * metadata, credentials, attachments and unknown object types are never copied.
  */
 export function safeValue(value: unknown, stats: PrivacyStats, depth = 0): unknown {
+  try {
+    return projectSafeValue(value, stats, depth)
+  } catch {
+    stats.unknown++
+    return OMITTED_UNSUPPORTED
+  }
+}
+
+function projectSafeValue(value: unknown, stats: PrivacyStats, depth: number): unknown {
   if (value === null || typeof value === "boolean") return value
   if (typeof value === "number") return Number.isFinite(value) ? value : "[omitted]"
   if (typeof value === "string") return safeText(value, stats, MAX_STRING_LENGTH, depth)
@@ -116,20 +173,60 @@ export function safeValue(value: unknown, stats: PrivacyStats, depth = 0): unkno
     return "[omitted: nesting limit]"
   }
   if (Array.isArray(value)) {
-    const kept = value.slice(0, MAX_ARRAY_ITEMS).map((item) => safeValue(item, stats, depth + 1))
-    if (value.length > MAX_ARRAY_ITEMS) stats.truncated++
+    const length = value.length
+    const kept: unknown[] = []
+    for (let index = 0; index < Math.min(length, MAX_ARRAY_ITEMS); index++)
+      kept.push(safeValue(value[index], stats, depth + 1))
+    if (length > MAX_ARRAY_ITEMS) stats.truncated++
     return kept
   }
   if (typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
     stats.unknown++
-    return "[omitted: unsupported value]"
+    return OMITTED_UNSUPPORTED
   }
 
   const output: Record<string, unknown> = Object.create(null)
-  const entries = Object.entries(value)
-  for (const [key, item] of entries.slice(0, MAX_OBJECT_FIELDS)) {
+  const keys = Object.keys(value)
+  for (const discriminator of ["type", "kind"]) {
+    if (!keys.includes(discriminator)) continue
+    const descriptor = Object.getOwnPropertyDescriptor(value, discriminator)
+    if (!descriptor || !("value" in descriptor)) {
+      stats.unknown++
+      return OMITTED_UNSUPPORTED
+    }
+    if (typeof descriptor.value !== "string") {
+      stats.unknown++
+      return OMITTED_UNSUPPORTED
+    }
+    const tag = normalizedTag(descriptor.value)
+    const privateKind = privateTagOmission(descriptor.value)
+    if (privateKind === "reasoning") {
+      stats.omittedReasoning++
+      return "[omitted: private reasoning]"
+    }
+    if (privateKind === "system") {
+      stats.omittedSystem++
+      return "[omitted: private instructions]"
+    }
+    if (privateKind === "attachment") {
+      stats.omittedAttachments++
+      return "[omitted: attachment]"
+    }
+    if (tag !== null && tag !== "text" && tag !== "tool" && tag !== "error") {
+      stats.unknown++
+      return OMITTED_UNSUPPORTED
+    }
+  }
+
+  const boundedKeys = keys.slice(0, MAX_OBJECT_FIELDS)
+  for (const key of boundedKeys) {
     if (sensitiveKey(key)) {
       stats.redacted++
+      continue
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !("value" in descriptor)) {
+      stats.unknown++
       continue
     }
     const cleanKey = safeText(key, stats, 100)
@@ -137,9 +234,9 @@ export function safeValue(value: unknown, stats: PrivacyStats, depth = 0): unkno
       stats.redacted++
       continue
     }
-    output[cleanKey] = safeValue(item, stats, depth + 1)
+    output[cleanKey] = safeValue(descriptor.value, stats, depth + 1)
   }
-  if (entries.length > MAX_OBJECT_FIELDS) stats.truncated++
+  if (keys.length > MAX_OBJECT_FIELDS) stats.truncated++
 
   // The input is now fully redacted, so bounding the serialized detail cannot
   // allow a secret beyond the retained prefix to escape.
