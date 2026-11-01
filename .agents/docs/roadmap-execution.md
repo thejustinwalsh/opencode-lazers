@@ -61,13 +61,15 @@ activated by merge `73f7783`, with fresh corrected visuals and exact LZ-9 mounte
 navigation; Tera cleared its blocker. Complete evidence is in
 `evidence/task-history-navigation/native.md` at `d933204`. Task `native-usable`
 and combined `native-history` human evidence have now been recorded against that
-exact artifact. Original attempt is accepted; normal combined reconciliation
-is running. No duplicate activation was performed. Record integration/cleanup
-only after runtime combined acceptance.
+exact artifact. Original attempt and combined plan passed runtime acceptance;
+LZ-32 is integrated v25. The native registry and a subsequent filesystem check
+confirm its owned worktree was removed without force. No duplicate activation
+was performed.
 
 Stable live Trajectory is now LZ-36 (`68a72431-87af-4bce-8e7b-77f430aeb100`),
-plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. Execution is admitted but waits for
-LZ-32 integration, then serializes true observation-file conflicts with Radar.
+plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. Its first isolated worker is running,
+attempt `83daf09a-0112-484e-af40-57ff1ff6e554`, after LZ-32 integration. Actual
+observation-file conflicts with Radar remain serialized through runtime.
 It preserves loaded history/disclosures/reading anchor while status/progress
 refreshes independently; repeated status and captured-page reads must add zero
 native context loads. Existing default inspection cursor behavior remains.
@@ -102,12 +104,10 @@ clean verification tree was removed natively too. Evidence is in
 
 ### Remaining Phase 1 work
 
-- Stable live Trajectory: specify after inspecting retained LZ-31/LZ-32 output;
-  preserve old expanded pages/selections while new events arrive. Use durable
-  sequences/stable history boundaries and separate current status from history.
-  Measure native-context calls/read cost before and after; unchanged status
-  refresh must not rematerialize full context. Serialize overlapping observation
-  and panel-state writes with Radar. Do not restore the privacy defect.
+- Stable live Trajectory is executing as LZ-36 above. Native disclosure/reading
+  continuity remains a required future observation, not inferred from source or
+  read-count tests. Radar's integrated-plan prerequisites are now satisfied;
+  its actual observation/runtime write conflicts still serialize through runtime.
 - Existing failed LZ-14 renderer responsiveness: retain its task/attempt history,
   inspect captured stages and establish the actual blocking boundary before
   repair. Keep local inference enabled. Ownership was reassigned for investigation,
