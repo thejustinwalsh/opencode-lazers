@@ -270,6 +270,233 @@ test("visible export redacts nested credentials before truncation and fails clos
   }
 })
 
+test("native tool arguments, JSON results and errors omit nested private state", async () => {
+  const fixture = makeFixture()
+  try {
+    const arrayLimit: unknown[] = Array.from({ length: 45 }, (_, index) => ({ index }))
+    arrayLimit[39] = { type: "text", text: "safe array summary retained" }
+    arrayLimit[40] = { type: "reasoning", text: "ARRAY_LIMIT_PRIVATE_CANARY" }
+
+    let nestingLimit: unknown = { type: "reasoning", text: "NESTING_LIMIT_PRIVATE_CANARY" }
+    for (let index = 0; index < 9; index++) nestingLimit = { child: nestingLimit }
+
+    const fieldLimit = Object.fromEntries(
+      Array.from({ length: 60 }, (_, index) => [`field${index}`, index]),
+    )
+    Object.assign(fieldLimit, { late: "FIELD_LIMIT_PRIVATE_CANARY" })
+
+    const session = fixture.sessions.get("ses-failed")!
+    session.messages = [
+      ...(session.messages ?? []),
+      {
+        id: "nested-private-tool",
+        type: "assistant",
+        time: { created: 1150 },
+        content: [
+          {
+            type: "tool",
+            id: "nested-private-call",
+            name: "Inspect",
+            state: {
+              status: "error",
+              input: {
+                command: "bun test src/trajectory",
+                source: "src/trajectory/read.ts",
+                summary: "safe argument summary retained",
+                arguments: JSON.stringify({
+                  visible: "safe nested argument retained",
+                  context: {
+                    messages: [
+                      { type: "reasoning", text: "AUDIT_PRIVATE_INPUT_CANARY" },
+                      { type: "system", text: "AUDIT_PRIVATE_SYSTEM_CANARY" },
+                      { type: "skill", instructions: "AUDIT_PRIVATE_SKILL_CANARY" },
+                    ],
+                  },
+                  native: { replay: "AUDIT_PRIVATE_NATIVE_CANARY" },
+                  attachments: [{ type: "file", data: "AUDIT_PRIVATE_ATTACHMENT_CANARY" }],
+                  state: { input: "AUDIT_FULL_INPUT_CANARY" },
+                }),
+                arrayLimit,
+                nestingLimit,
+                fieldLimit,
+                unsupported: new Map([["private", "UNSUPPORTED_STRUCTURE_PRIVATE_CANARY"]]),
+              },
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    summary: "safe JSON result retained",
+                    details: [
+                      { type: "reasoning", text: "AUDIT_PRIVATE_RESULT_CANARY" },
+                      { type: "system", text: "JSON_RESULT_SYSTEM_PRIVATE_CANARY" },
+                      { type: "skill", instructions: "JSON_RESULT_SKILL_PRIVATE_CANARY" },
+                      {
+                        type: "tool",
+                        name: "nested-tool",
+                        state: { input: "AUDIT_FULL_INPUT_CANARY" },
+                      },
+                    ],
+                  }),
+                },
+              ],
+              error: {
+                type: "ToolError",
+                message: JSON.stringify({
+                  summary: "safe JSON error retained",
+                  details: [
+                    { kind: "reasoning", text: "AUDIT_PRIVATE_ERROR_CANARY" },
+                    { type: "skill", instructions: "JSON_ERROR_SKILL_PRIVATE_CANARY" },
+                    { arguments: { state: { input: "AUDIT_FULL_INPUT_CANARY" } } },
+                  ],
+                }),
+                response: { body: "AUDIT_PRIVATE_ERROR_BODY_CANARY" },
+              },
+            },
+            time: { ran: 1151, completed: 1160 },
+          },
+        ],
+      } as never,
+    ]
+
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 50 }),
+      cursorSecret,
+    )
+    const serialized = JSON.stringify(report)
+    for (const canary of [
+      "AUDIT_PRIVATE_INPUT_CANARY",
+      "AUDIT_PRIVATE_RESULT_CANARY",
+      "AUDIT_FULL_INPUT_CANARY",
+      "AUDIT_PRIVATE_ERROR_CANARY",
+      "AUDIT_PRIVATE_SYSTEM_CANARY",
+      "AUDIT_PRIVATE_SKILL_CANARY",
+      "AUDIT_PRIVATE_NATIVE_CANARY",
+      "AUDIT_PRIVATE_ATTACHMENT_CANARY",
+      "JSON_RESULT_SYSTEM_PRIVATE_CANARY",
+      "JSON_RESULT_SKILL_PRIVATE_CANARY",
+      "JSON_ERROR_SKILL_PRIVATE_CANARY",
+      "AUDIT_PRIVATE_ERROR_BODY_CANARY",
+      "ARRAY_LIMIT_PRIVATE_CANARY",
+      "NESTING_LIMIT_PRIVATE_CANARY",
+      "FIELD_LIMIT_PRIVATE_CANARY",
+      "UNSUPPORTED_STRUCTURE_PRIVATE_CANARY",
+    ])
+      expect(serialized).not.toContain(canary)
+
+    const toolEvent = report.trajectory.events.find(
+      (event) => event.id === "nested-private-tool:tool:nested-private-call",
+    )!
+    expect(toolEvent).toMatchObject({ tool: "Inspect", status: "error" })
+    expect(JSON.stringify(toolEvent.input)).toContain("bun test src/trajectory")
+    expect(JSON.stringify(toolEvent.input)).toContain("src/trajectory/read.ts")
+    expect(JSON.stringify(toolEvent.input)).toContain("safe argument summary retained")
+    expect(JSON.stringify(toolEvent.input)).toContain("safe nested argument retained")
+    expect(JSON.stringify(toolEvent.input)).toContain("safe array summary retained")
+    expect(toolEvent.result).toContain("safe JSON result retained")
+    expect(toolEvent.error).toMatchObject({ type: "ToolError" })
+    expect((toolEvent.error as { message?: string }).message).toContain("safe JSON error retained")
+    expect(report.plans[0]?.checks.map((check) => check.result)).toContain("passed")
+    expect(report.coverage.transcript).toContain("session.context")
+    expect(report.privacy.warnings.join(" ")).toContain("System instructions")
+    expect(report.privacy.truncatedValues).toBeGreaterThan(0)
+    expect(report.privacy.omittedUnknownParts).toBeGreaterThan(0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("tool multipart JSON and nesting-limit strings omit private reasoning while retaining safe siblings", async () => {
+  const fixture = makeFixture()
+  try {
+    const privateJson = JSON.stringify({
+      type: "reasoning",
+      text: "REVIEW_PRIVATE_MULTIPART_CANARY",
+    })
+    const encodedPrivateJson = JSON.stringify(privateJson)
+    let depthString: unknown = JSON.stringify({
+      type: "reasoning",
+      text: "REVIEW_DEPTH_STRING_CANARY",
+    })
+    for (let index = 0; index < 7; index++) depthString = { child: depthString }
+
+    let belowDepthLimit: unknown = JSON.stringify({
+      type: "reasoning",
+      text: "REVIEW_DEPTH_BELOW_LIMIT_CANARY",
+    })
+    for (let index = 0; index < 6; index++) belowDepthLimit = { child: belowDepthLimit }
+
+    const session = fixture.sessions.get("ses-failed")!
+    session.messages = [
+      ...(session.messages ?? []),
+      {
+        id: "multipart-private-tool",
+        type: "assistant",
+        time: { created: 1170 },
+        content: [
+          {
+            type: "tool",
+            id: "multipart-private-call",
+            name: "Inspect",
+            state: {
+              status: "completed",
+              input: {
+                command: "bun test src/trajectory/read.test.ts",
+                source: "src/trajectory/read.ts",
+                summary: "safe argument summary retained",
+                depthString,
+                belowDepthLimit,
+              },
+              content: [
+                { type: "text", text: "safe multipart prose retained" },
+                { type: "text", text: privateJson },
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    summary: "safe multipart JSON summary retained",
+                    details: [{ type: "reasoning", text: "REVIEW_PRIVATE_MULTIPART_CANARY" }],
+                  }),
+                },
+                { type: "text", text: encodedPrivateJson },
+                { type: "text", text: "Code: bun test src/trajectory/read.test.ts" },
+              ],
+            },
+            time: { ran: 1171, completed: 1180 },
+          },
+        ],
+      } as never,
+    ]
+
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 50 }),
+      cursorSecret,
+    )
+    const serialized = JSON.stringify(report)
+    expect(serialized).not.toContain("REVIEW_PRIVATE_MULTIPART_CANARY")
+    expect(serialized).not.toContain("REVIEW_DEPTH_STRING_CANARY")
+    expect(serialized).not.toContain("REVIEW_DEPTH_BELOW_LIMIT_CANARY")
+
+    const toolEvent = report.trajectory.events.find(
+      (event) => event.id === "multipart-private-tool:tool:multipart-private-call",
+    )!
+    expect(toolEvent).toMatchObject({ tool: "Inspect", status: "completed" })
+    expect(JSON.stringify(toolEvent.input)).toContain("bun test src/trajectory/read.test.ts")
+    expect(JSON.stringify(toolEvent.input)).toContain("src/trajectory/read.ts")
+    expect(JSON.stringify(toolEvent.input)).toContain("safe argument summary retained")
+    expect(toolEvent.result).toContain("safe multipart prose retained")
+    expect(toolEvent.result).toContain("safe multipart JSON summary retained")
+    expect(toolEvent.result).toContain("Code: bun test src/trajectory/read.test.ts")
+    expect(report.privacy.omittedReasoning).toBeGreaterThan(0)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("attempt lookup rejects foreign IDs and session identity mismatches without exporting data", async () => {
   const fixture = makeFixture()
   try {
