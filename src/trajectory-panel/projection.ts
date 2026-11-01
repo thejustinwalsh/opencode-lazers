@@ -336,6 +336,23 @@ export type TrajectoryAttempt = TrajectoryReport["attempts"][number]
 export type TrajectoryCheck = z.infer<typeof Check>
 export type TrajectoryEvent = z.infer<typeof Event>
 
+export function eventTitle(event: TrajectoryEvent) {
+  if (event.kind === "tool") return `${event.tool ?? "Tool"} · ${event.status ?? "unknown"}`
+  if (event.kind === "worker-tool")
+    return `${event.tool ?? "Worker tool"} · ${event.status ?? "updated"}`
+  if (event.kind === "commentary") return "Worker progress note"
+  if (event.kind === "worker-visible-text") return "Worker message"
+  if (event.kind === "worker-step") return `Worker step · ${event.status ?? "updated"}`
+  if (event.kind === "verification")
+    return `Check ${event.checkID ?? ""} · ${event.status ?? "unknown"}`
+  if (event.kind === "runner-transition")
+    return `${event.event ?? "Transition"}${event.to ? ` · ${event.to}` : ""}`
+  if (event.kind === "runner-effect")
+    return `${event.effect ?? "Runner effect"} · ${event.state ?? "unknown"}`
+  if (event.kind === "assistant-text") return "Worker message"
+  return event.kind
+}
+
 export function parseTrajectoryReport(response: TrajectoryResponse): TrajectoryReport {
   const parsed = Report.safeParse(response.report)
   if (!parsed.success)

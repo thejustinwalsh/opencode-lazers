@@ -6,11 +6,12 @@ import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
 import { clampSplit, splitFromKey, splitFromPointer, visibleTicks } from "./panel-layout.ts"
 import type { PanelData, PanelPreferences, Selection } from "./panel-state.ts"
-import { selectedAttemptFor, TrajectoryPanelState } from "./panel-state.ts"
+import { selectedAttemptFor, selectedEventFor, TrajectoryPanelState } from "./panel-state.ts"
 import {
   buildTimeline,
   checkKey,
   detailedChecks,
+  eventTitle,
   eventPayload,
   sourceReferences,
 } from "./projection.ts"
@@ -66,23 +67,6 @@ function formatTime(value: number | null, origin: number | null) {
   const minutes = Math.floor(elapsed / 60)
   const seconds = elapsed % 60
   return `${absolute} · +${minutes}:${String(seconds).padStart(2, "0")}`
-}
-
-function eventTitle(event: TrajectoryEvent) {
-  if (event.kind === "tool") return `${event.tool ?? "Tool"} · ${event.status ?? "unknown"}`
-  if (event.kind === "worker-tool")
-    return `${event.tool ?? "Worker tool"} · ${event.status ?? "updated"}`
-  if (event.kind === "commentary") return "Worker progress note"
-  if (event.kind === "worker-visible-text") return "Worker message"
-  if (event.kind === "worker-step") return `Worker step · ${event.status ?? "updated"}`
-  if (event.kind === "verification")
-    return `Check ${event.checkID ?? ""} · ${event.status ?? "unknown"}`
-  if (event.kind === "runner-transition")
-    return `${event.event ?? "Transition"}${event.to ? ` · ${event.to}` : ""}`
-  if (event.kind === "runner-effect")
-    return `${event.effect ?? "Runner effect"} · ${event.state ?? "unknown"}`
-  if (event.kind === "assistant-text") return "Worker message"
-  return event.kind
 }
 
 type ScrollAnchor = { key: string; offset: number; scrollTop: number } | undefined
@@ -311,18 +295,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   const selectedTask = () =>
     currentData()?.tasks.find((task) => task.taskID === currentData()?.taskID)
   const allTaskChecks = () => (report() ? detailedChecks(report()!) : [])
-  const selectedEvent = () => {
-    const selection = currentData()?.selection
-    if (selection?.kind !== "event") return undefined
-    const value = currentData()
-    return (
-      value?.events.find((event) => event.id === selection.id) ??
-      (value?.selectionEventSnapshot?.id === selection.id
-        ? value.selectionEventSnapshot
-        : undefined) ??
-      value?.liveEvents.find((event) => event.id === selection.id)
-    )
-  }
+  const selectedEvent = () => selectedEventFor(currentData())
   const selectedCheck = () => {
     const selection = currentData()?.selection
     return selection?.kind === "check"

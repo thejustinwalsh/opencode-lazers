@@ -63,11 +63,7 @@ export function selectedAttemptFor(data: PanelData | undefined) {
       ? selection.id
       : selection.kind === "check"
         ? detailedChecks(report).find((check) => checkKey(check) === selection.id)?.attemptID
-        : (
-            data.events.find((event) => event.id === selection.id) ??
-            data.liveEvents.find((event) => event.id === selection.id) ??
-            data.selectionEventSnapshot
-          )?.attemptID
+        : selectedEventFor(data)?.attemptID
   return id ? report.attempts.find((attempt) => attempt.id === id) : undefined
 }
 
@@ -89,6 +85,16 @@ const blank = (key = ""): PanelData => ({
   stale: false,
   error: "",
 })
+
+export function selectedEventFor(data: PanelData | undefined) {
+  const selection = data?.selection
+  if (!data || selection?.kind !== "event") return undefined
+  return (
+    data.events.find((event) => event.id === selection.id) ??
+    data.liveEvents.find((event) => event.id === selection.id) ??
+    (data.selectionEventSnapshot?.id === selection.id ? data.selectionEventSnapshot : undefined)
+  )
+}
 
 const delay = (signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -613,10 +619,8 @@ export class TrajectoryPanelState {
   selectEvent(id: string) {
     const event =
       this.data.events.find((item) => item.id === id) ??
-      (this.data.selectionEventSnapshot?.id === id
-        ? this.data.selectionEventSnapshot
-        : undefined) ??
-      this.data.liveEvents.find((item) => item.id === id)
+      this.data.liveEvents.find((item) => item.id === id) ??
+      (this.data.selectionEventSnapshot?.id === id ? this.data.selectionEventSnapshot : undefined)
     if (!event) return
     this.update({ selectionEventSnapshot: event })
     this.setSelection({ kind: "event", id })
@@ -653,15 +657,25 @@ export class TrajectoryPanelState {
     const taskRequest = this.taskRequest
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
     const capturedAt = this.data.historyCapturedAt
+    const expiresAt = this.data.historyExpiresAt
+    const limit = this.data.report?.trajectory.limit ?? 50
+    const capturedEventIDs = [...this.data.capturedEventIDs]
+    const loadedEventIDs = this.data.events.map((event) => event.id)
+    if (
+      capturedAt === null ||
+      expiresAt === null ||
+      loadedEventIDs.length > capturedEventIDs.length ||
+      loadedEventIDs.some((id, index) => capturedEventIDs[index] !== id)
+    ) {
+      this.update({
+        stale: true,
+        error: "Captured activity pages are inconsistent; recapture explicitly.",
+      })
+      return
+    }
     this.update({ loadingActivity: true })
     try {
-      const response = await transport.history(
-        scope,
-        taskID,
-        signal,
-        cursor,
-        this.data.report?.trajectory.limit ?? 50,
-      )
+      const response = await transport.history(scope, taskID, signal, cursor, limit)
       if (
         generation !== this.generation ||
         taskRequest !== this.taskRequest ||
@@ -674,14 +688,37 @@ export class TrajectoryPanelState {
         response.projectID !== this.projectID ||
         !responseMatchesScope(response, scope) ||
         report.task.id !== taskID ||
-        response.capturedAt !== capturedAt
+        response.capturedAt !== capturedAt ||
+        response.expiresAt !== expiresAt
       )
         throw new Error("Activity page belongs to another project or task")
-      const known = new Set(this.data.events.map((event) => event.id))
-      const events = [
-        ...this.data.events,
-        ...report.trajectory.events.filter((event) => !known.has(event.id)),
-      ]
+      const pageEvents = report.trajectory.events
+      const pageIDs = pageEvents.map((event) => event.id)
+      const offset = this.data.events.length
+      const expectedIDs = capturedEventIDs.slice(offset, offset + pageIDs.length)
+      const nextOffset = offset + pageIDs.length
+      const hasExpectedNextPage = nextOffset < capturedEventIDs.length
+      if (
+        report.trajectory.limit !== limit ||
+        report.trajectory.totalEvents !== capturedEventIDs.length ||
+        pageIDs.length === 0 ||
+        expectedIDs.length !== pageIDs.length ||
+        expectedIDs.some((id, index) => id !== pageIDs[index]) ||
+        (report.trajectory.page !== undefined &&
+          report.trajectory.page !== Math.floor(offset / limit) + 1) ||
+        Boolean(report.trajectory.nextCursor) !== hasExpectedNextPage ||
+        report.trajectory.nextCursor === cursor
+      )
+        throw new Error(
+          "Activity page order changed or cursor did not advance; recapture explicitly",
+        )
+      if (
+        response.eventIDs &&
+        (response.eventIDs.length !== capturedEventIDs.length ||
+          response.eventIDs.some((id, index) => id !== capturedEventIDs[index]))
+      )
+        throw new Error("Activity page belongs to another captured event sequence")
+      const events = [...this.data.events, ...pageEvents]
       this.update({
         events,
         eventCursor: report.trajectory.nextCursor,
