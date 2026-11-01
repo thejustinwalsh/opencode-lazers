@@ -1,13 +1,20 @@
 // Isolated candidate-code experiment. No native sessions, application database,
 // worker checkout, models or scheduler state are modified.
+import type { HostSession, RunnerHost } from "../../../../src/runner/host.ts"
+import type { PlanRow } from "../../../../src/runner/store.ts"
+
 const candidate = process.env.LAZERS_CANDIDATE_DIRECTORY
 if (!candidate) throw new Error("Set LAZERS_CANDIDATE_DIRECTORY to the retained e127d1a checkout")
+const expected = "e127d1a5836b65ca6d89dd19974f94249e9df1ed"
+const revision = Bun.spawnSync(["git", "-C", candidate, "rev-parse", "HEAD"])
+if (revision.exitCode !== 0 || revision.stdout.toString().trim() !== expected)
+  throw new Error("This reproduction requires the exact retained e127d1a candidate")
 const { makeFixture } = await import(`${candidate}/test/trajectory/fixture.ts`)
 const { TaskRuntime } = await import(`${candidate}/src/runner/runtime.ts`)
 const fixture = makeFixture()
 try {
   const now = 2_000_000_000_000
-  const owner = {
+  const owner: HostSession & { idleAt?: number } = {
     id: "ses-owner",
     agent: "architect",
     projectID: "project",
@@ -38,7 +45,9 @@ try {
       inboxReads++
       return id === owner.id ? queued : []
     },
-    createArchitect: async (input: any) => {
+    createArchitect: async (
+      input: Parameters<RunnerHost["createArchitect"]>[0] & { planIDs?: string[] },
+    ) => {
       sessions.set(input.id, {
         ...owner,
         id: input.id,
@@ -50,31 +59,36 @@ try {
           lazersPlanIDs: input.planIDs,
           lazersSourceSessionID: input.sourceSessionID,
         },
-      } as any)
+      })
       // session.synthetic({delivery: "queue", resume: false}) bypasses the prompt
       // hook on pinned OpenCode and may be admitted while create is outstanding.
       queued = [foreignInput]
     },
-    updateSession: async ({ sessionID, archived }: any) => {
+    updateSession: async ({ sessionID, archived }: { sessionID: string; archived: boolean }) => {
       sessions.get(sessionID)!.archived = archived
     },
   }
-  const runtime = new TaskRuntime(fixture.store, host as any, "project", undefined, {
-    architectPromptHook: true,
-    now: () => now,
-  })
+  const runtime = new TaskRuntime(
+    fixture.store,
+    host as unknown as RunnerHost,
+    "project",
+    undefined,
+    {
+      architectPromptHook: true,
+      now: () => now,
+    },
+  )
   const fence = fixture.store.claim(runtime.owner, now)!
   // Exercise the candidate renewal implementation without running unrelated
   // fixture tasks or calling any real native dispatch.
-  await (runtime as any).considerArchitectRenewal(
-    fixture.store.plan(fixture.receipt.planID),
-    owner,
-    fence,
-  )
+  const subject = runtime as unknown as {
+    considerArchitectRenewal(plan: PlanRow, session: HostSession, fence: number): Promise<boolean>
+  }
+  await subject.considerArchitectRenewal(fixture.store.plan(fixture.receipt.planID), owner, fence)
   const renewal = fixture.store.architectRenewalForPlan(fixture.receipt.planID)!
   const handoff = fixture.store
     .outboxForDelivery()
-    .find((row: any) => row.id === renewal.handoff_outbox_id)
+    .find((row: { id: string }) => row.id === renewal.handoff_outbox_id)
   console.log(
     JSON.stringify(
       {
