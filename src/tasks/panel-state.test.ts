@@ -3,6 +3,7 @@ import { TaskPanelState } from "./panel-state.ts"
 import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
 import type { SnapshotResponse } from "../observability/contract.ts"
+import { preferredTaskStateFilter } from "./state-filter.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -56,6 +57,14 @@ function transport(
   }
 }
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+test("state preferences remain independent while old history preferences retain their meaning", () => {
+  expect(preferredTaskStateFilter(undefined, undefined)).toBe("open")
+  expect(preferredTaskStateFilter(undefined, false)).toBe("open")
+  expect(preferredTaskStateFilter(undefined, true)).toBe("all")
+  expect(preferredTaskStateFilter("failed", true)).toBe("failed")
+  expect(preferredTaskStateFilter("completed", false)).toBe("completed")
+})
 
 test("old session/project/server/filter responses and old detail selections cannot replace the current view", async () => {
   const old = deferred<TaskPage>()

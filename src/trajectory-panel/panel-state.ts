@@ -20,6 +20,15 @@ export type Selection =
 export type PanelPreferences = {
   taskID: string | null
   selection: Selection | null
+  target?: TaskTrajectoryTarget | null
+}
+
+export type TaskTrajectoryTarget = {
+  requestID: string
+  taskID: string
+  reference: string
+  projectID: string
+  projectDirectory: string
 }
 
 export type PanelData = {
@@ -27,6 +36,7 @@ export type PanelData = {
   snapshot?: ProjectedSnapshot
   tasks: TaskChoice[]
   taskID: string | null
+  taskReference: string | null
   report?: TrajectoryReport
   selection: Selection | null
   events: TrajectoryEvent[]
@@ -56,6 +66,7 @@ const blank = (key = ""): PanelData => ({
   key,
   tasks: [],
   taskID: null,
+  taskReference: null,
   selection: null,
   events: [],
   eventCursor: null,
@@ -98,6 +109,9 @@ export class TrajectoryPanelState {
   private transport?: TrajectoryTransport
   private scope?: ObservationScope
   private projectID = ""
+  private projectDirectory = ""
+  private target?: TaskTrajectoryTarget
+  private targetError = ""
   private timer?: ReturnType<typeof setInterval>
   private refreshing = false
   private pendingRefresh = false
@@ -115,6 +129,7 @@ export class TrajectoryPanelState {
   connect(
     key: string,
     projectID: string,
+    projectDirectory: string,
     scope: ObservationScope,
     transport: TrajectoryTransport,
     preferences: PanelPreferences,
@@ -125,18 +140,32 @@ export class TrajectoryPanelState {
     this.transport = transport
     this.scope = scope
     this.projectID = projectID
+    this.projectDirectory = projectDirectory
+    this.target = preferences.target ?? undefined
+    this.targetError =
+      this.target &&
+      (this.target.projectID !== projectID ||
+        this.target.projectDirectory !== projectDirectory ||
+        scope.kind !== "project")
+        ? `Task ${this.target.reference} is unavailable in this project or scope.`
+        : ""
     this.data = blank(key)
-    this.update({ taskID: preferences.taskID, selection: preferences.selection })
+    this.update({
+      taskID: this.target?.taskID ?? preferences.taskID,
+      taskReference: this.target?.reference ?? null,
+      selection: this.target ? null : preferences.selection,
+      ...(this.targetError ? { loading: false, error: this.targetError } : {}),
+    })
     const generation = this.generation
     void this.watch(generation, transport, this.controller.signal)
-    void this.refresh()
+    if (!this.targetError) void this.refresh()
     this.timer = setInterval(() => void this.refresh(), 4_000)
   }
 
   async refresh() {
     const transport = this.transport
     const scope = this.scope
-    if (!transport || !scope || this.controller.signal.aborted) return
+    if (!transport || !scope || this.controller.signal.aborted || this.targetError) return
     if (this.refreshing) {
       this.pendingRefresh = true
       return
@@ -157,11 +186,13 @@ export class TrajectoryPanelState {
       if (response.projectID !== this.projectID)
         throw new Error("Observation belongs to another project")
       const snapshot = parseProjectedSnapshot(response)
-      const tasks = taskChoices(snapshot)
+      let tasks = taskChoices(snapshot)
       const previousTaskID = this.data.taskID
-      const taskID = tasks.some((task) => task.taskID === previousTaskID)
-        ? previousTaskID
-        : (tasks[0]?.taskID ?? null)
+      const taskID =
+        this.target?.taskID ??
+        (tasks.some((task) => task.taskID === previousTaskID)
+          ? previousTaskID
+          : (tasks[0]?.taskID ?? null))
       const taskChanged = taskID !== previousTaskID
       this.taskController.abort()
       this.taskController = new AbortController()
@@ -178,6 +209,16 @@ export class TrajectoryPanelState {
         taskSignal.aborted
       )
         return
+
+      if (this.target)
+        tasks = [
+          ...tasks.filter((task) => task.taskID !== this.target?.taskID),
+          {
+            taskID: this.target.taskID,
+            title: this.target.reference,
+            status: reportData.report?.task.status ?? "unavailable",
+          },
+        ]
 
       const previousSelection = this.data.selection
       const previousEvent =
@@ -201,6 +242,7 @@ export class TrajectoryPanelState {
         snapshot,
         tasks,
         taskID,
+        taskReference: this.target?.reference ?? null,
         report: reportData.report,
         selection,
         events,
@@ -214,8 +256,14 @@ export class TrajectoryPanelState {
       if (taskChanged || JSON.stringify(selection) !== JSON.stringify(previousSelection))
         this.selected({ taskID, selection })
     } catch (error) {
-      if (generation === this.generation && !signal.aborted)
-        this.update({ loading: false, stale: true, error: String(error) })
+      if (generation === this.generation && request === this.snapshotRequest && !signal.aborted)
+        this.update({
+          loading: false,
+          stale: true,
+          error: this.target
+            ? `Trajectory for ${this.target.reference} is unavailable: ${String(error)}`
+            : String(error),
+        })
     } finally {
       if (generation === this.generation) {
         this.refreshing = false
@@ -267,10 +315,14 @@ export class TrajectoryPanelState {
       return
     this.taskController.abort()
     this.taskController = new AbortController()
+    this.snapshotRequest++
     this.taskRequest++
     this.activityRequest++
+    this.target = undefined
+    this.targetError = ""
     this.update({
       taskID,
+      taskReference: null,
       report: undefined,
       selection: null,
       events: [],
@@ -284,6 +336,40 @@ export class TrajectoryPanelState {
     void this.loadSelectedTask(taskID)
   }
 
+  selectTarget(target: TaskTrajectoryTarget) {
+    this.taskController.abort()
+    this.taskController = new AbortController()
+    this.taskRequest++
+    this.activityRequest++
+    this.target = target
+    this.targetError =
+      target.projectID !== this.projectID ||
+      target.projectDirectory !== this.projectDirectory ||
+      this.scope?.kind !== "project"
+        ? `Task ${target.reference} is unavailable in this project or scope.`
+        : ""
+    this.update({
+      taskID: target.taskID,
+      taskReference: target.reference,
+      tasks: [
+        ...this.data.tasks.filter((task) => task.taskID !== target.taskID),
+        { taskID: target.taskID, title: target.reference, status: "loading" },
+      ],
+      report: undefined,
+      selection: null,
+      events: [],
+      eventCursor: null,
+      totalEvents: 0,
+      loading: !this.targetError,
+      loadingActivity: false,
+      stale: Boolean(this.targetError),
+      error: this.targetError,
+    })
+    this.selected({ taskID: target.taskID, selection: null })
+    this.snapshotRequest++
+    if (!this.targetError) void this.loadSelectedTask(target.taskID)
+  }
+
   private async loadSelectedTask(taskID: string) {
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
     const generation = this.generation
@@ -294,6 +380,18 @@ export class TrajectoryPanelState {
       const selection = report ? defaultSelection(report) : null
       this.update({
         report,
+        tasks:
+          this.target?.taskID === taskID
+            ? [
+                ...this.data.tasks.filter((task) => task.taskID !== taskID),
+                {
+                  taskID,
+                  title: this.target.reference,
+                  status: report?.task.status ?? "unavailable",
+                },
+              ]
+            : this.data.tasks,
+        taskReference: this.target?.taskID === taskID ? this.target.reference : null,
         selection,
         events: report?.trajectory.events ?? [],
         eventCursor: report?.trajectory.nextCursor ?? null,
@@ -304,8 +402,15 @@ export class TrajectoryPanelState {
       })
       this.selected({ taskID, selection })
     } catch (error) {
-      if (generation === this.generation && !signal.aborted)
-        this.update({ loading: false, stale: true, error: String(error) })
+      if (generation === this.generation && request === this.taskRequest && !signal.aborted)
+        this.update({
+          loading: false,
+          stale: true,
+          error:
+            this.target?.taskID === taskID
+              ? `Trajectory for ${this.target.reference} is unavailable: ${String(error)}`
+              : String(error),
+        })
     }
   }
 
@@ -415,6 +520,9 @@ export class TrajectoryPanelState {
     if (this.timer) clearInterval(this.timer)
     this.transport = undefined
     this.scope = undefined
+    this.projectDirectory = ""
+    this.target = undefined
+    this.targetError = ""
     this.refreshing = false
     this.pendingRefresh = false
   }

@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process"
 import { keyedProposal, validProposal } from "../test/proposal.ts"
 import { TaskRepository, taskDatabasePath } from "./storage.ts"
 import { startingRevision, submitTask } from "./submission.ts"
+import { RunnerStore } from "./runner/store.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -173,6 +174,59 @@ test("task dispositions are project-local, durable, idempotent, and hide retired
   const reopened = open(path)
   expect(reopened.taskDisposition(first.taskID)?.reason).toContain("integrated runner")
   expect(reopened.list()).toHaveLength(1)
+})
+
+test("repository pages filter execution state before counting while legacy history includes all states", () => {
+  const repository = open(join(directory(), "tasks.sqlite"))
+  const completed = submitTask(repository, keyedProposal(), provenance)
+  const running = submitTask(
+    repository,
+    { ...keyedProposal(), idempotencyKey: "running-storage-filter" },
+    provenance,
+  )
+  if (completed.status !== "submitted" || running.status !== "submitted")
+    throw new Error("Expected submitted tasks")
+  const runner = new RunnerStore(repository)
+  const plan = runner.submit(
+    {
+      requestID: "completed-storage-filter",
+      objective: "Completed repository filter fixture",
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: completed.taskID, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [completed.taskID],
+      verification: validProposal().verification,
+      acceptance: validProposal().acceptance,
+    },
+    "session",
+  )
+  const secondPlan = runner.submit(
+    {
+      requestID: "running-storage-filter",
+      objective: "Running repository filter fixture",
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: running.taskID, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [running.taskID],
+      verification: validProposal().verification,
+      acceptance: validProposal().acceptance,
+    },
+    "session",
+  )
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='accepted' WHERE id=?").run(plan.planID)
+    db.query("UPDATE runner_nodes SET state='accepted' WHERE plan_id=?").run(plan.planID)
+    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(secondPlan.planID)
+    db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=?").run(secondPlan.planID)
+  })
+
+  const completedPage = repository.readPage({ search: "", limit: 10, state: "completed" })
+  expect(completedPage.count).toBe(1)
+  expect(completedPage.rows.map(({ task }) => task.id)).toEqual([completed.taskID])
+  const openPage = repository.readPage({ search: "", limit: 10, state: "open" })
+  expect(openPage.count).toBe(1)
+  expect(openPage.rows.map(({ task }) => task.id)).toEqual([running.taskID])
+  expect(repository.readPage({ search: "", limit: 10, includeCompleted: true }).count).toBe(2)
 })
 
 test("a disposition cannot hide active execution or claim failed work was fulfilled", () => {

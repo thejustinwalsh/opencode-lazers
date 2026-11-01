@@ -1,14 +1,40 @@
 import { expect, test } from "bun:test"
-import type { ObservationChange, ObservationScope } from "../../src/observability/contract.ts"
+import type {
+  ObservationChange,
+  ObservationScope,
+  TrajectoryResponse,
+} from "../../src/observability/contract.ts"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
 import { selectedAttemptFor, TrajectoryPanelState } from "../../src/trajectory-panel/panel-state.ts"
 import { checkKey, detailedChecks } from "../../src/trajectory-panel/projection.ts"
 import type { TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
-import { makeFixture, secondAttemptID, taskID } from "../trajectory/fixture.ts"
+import type { TaskTrajectoryTarget } from "../../src/trajectory-panel/panel-state.ts"
+import { firstAttemptID, makeFixture, secondAttemptID, taskID } from "../trajectory/fixture.ts"
 
 const cursorSecret = new Uint8Array(32).fill(8)
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+const targetFor = (
+  fixture: ReturnType<typeof makeFixture>,
+  id: string,
+  reference: string,
+  requestID: string,
+): TaskTrajectoryTarget => ({
+  requestID,
+  taskID: id,
+  reference,
+  projectID: "project",
+  projectDirectory: fixture.directory,
+})
 
 function transportFor(
   fixture: ReturnType<typeof makeFixture>,
@@ -66,10 +92,17 @@ test("plan checks and unassociated events never inherit the latest worker attemp
   const { transport } = transportFor(fixture, tracker)
   const state = new TrajectoryPanelState(() => {})
   try {
-    state.connect("view", "project", { kind: "project", sessionID: "ses-owner" }, transport, {
-      taskID,
-      selection: null,
-    })
+    state.connect(
+      "view",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID,
+        selection: null,
+      },
+    )
     await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
     const planCheck = detailedChecks(state.data.report!).find((check) => check.scope === "plan")!
     expect(planCheck.attemptID).toBeNull()
@@ -101,6 +134,7 @@ test("projection-backed panel retains failed-attempt selection and all-attempt u
     state.connect(
       "project-view",
       "project",
+      fixture.directory,
       { kind: "project", sessionID: "ses-owner" },
       transport,
       { taskID, selection: null },
@@ -189,6 +223,7 @@ test("scope reconnect keeps an in-scope task/attempt and rejects late responses 
     state.connect(
       "old-project-scope",
       "project",
+      fixture.directory,
       { kind: "project", sessionID: "ses-owner" },
       oldTransport,
       { taskID, selection: { kind: "attempt", id: secondAttemptID } },
@@ -196,6 +231,7 @@ test("scope reconnect keeps an in-scope task/attempt and rejects late responses 
     state.connect(
       "new-worker-session-scope",
       "project",
+      fixture.directory,
       { kind: "session", sessionID: "ses-failed" },
       newTransport,
       { taskID, selection: { kind: "attempt", id: secondAttemptID } },
@@ -215,6 +251,131 @@ test("scope reconnect keeps an in-scope task/attempt and rejects late responses 
   }
 })
 
+test("an external historical target bypasses snapshot choices and loads its reference and every attempt", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalSnapshot = transport.snapshot
+  transport.snapshot = async (scope, signal) => {
+    const snapshot = await originalSnapshot(scope, signal)
+    return { ...snapshot, plans: [], unplannedTasks: [] }
+  }
+  const state = new TrajectoryPanelState(() => {})
+  const reference = fixture.repository.referenceFor(taskID)!
+  try {
+    state.connect(
+      "history",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID: null,
+        selection: null,
+        target: targetFor(fixture, taskID, reference, "request-history"),
+      },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    expect(state.data.taskID).toBe(taskID)
+    expect(state.data.taskReference).toBe(reference)
+    expect(state.data.report?.task.id).toBe(taskID)
+    expect(state.data.report?.attempts.map((attempt) => attempt.id)).toEqual([
+      firstAttemptID,
+      secondAttemptID,
+    ])
+    expect(state.data.tasks).toContainEqual(expect.objectContaining({ taskID, title: reference }))
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("deferred task A cannot replace unavailable target B or fall back to A", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const originalTrajectory = transport.trajectory
+  const aResponse = await originalTrajectory(
+    { kind: "project", sessionID: "ses-owner" },
+    taskID,
+    new AbortController().signal,
+  )
+  const pendingA = deferred<TrajectoryResponse>()
+  const requested: string[] = []
+  transport.trajectory = async (_scope, id) => {
+    requested.push(id)
+    if (id === taskID) return pendingA.promise
+    throw new Error("Task history is unavailable")
+  }
+  const state = new TrajectoryPanelState(() => {})
+  const targetA = targetFor(fixture, taskID, "LZ-1", "request-a")
+  const taskB = "00000000-0000-4000-8000-000000000002"
+  const targetB = targetFor(fixture, taskB, "LZ-2", "request-b")
+  try {
+    state.connect(
+      "history",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID: null, selection: null, target: targetA },
+    )
+    await waitFor(state, () => requested.includes(taskID))
+    state.selectTarget(targetB)
+    await waitFor(state, () => state.data.error.includes("LZ-2"))
+    pendingA.resolve(aResponse)
+    await tick()
+    expect(requested).toEqual([taskID, taskB])
+    expect(state.data.taskID).toBe(taskB)
+    expect(state.data.taskReference).toBe("LZ-2")
+    expect(state.data.report).toBeUndefined()
+    expect(state.data.error).toContain("LZ-2")
+    expect(state.data.tasks.some((task) => task.taskID === taskB && task.title === "LZ-2")).toBe(
+      true,
+    )
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a historical project target is rejected after switching to a different scope", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  let trajectoryCalls = 0
+  const original = transport.trajectory
+  transport.trajectory = async (...args) => {
+    trajectoryCalls++
+    return original(...args)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "session-scope",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-accepted" },
+      transport,
+      {
+        taskID,
+        selection: null,
+        target: targetFor(fixture, taskID, "LZ-1", "stale-project-target"),
+      },
+    )
+    expect(state.data.taskID).toBe(taskID)
+    expect(state.data.error).toContain("unavailable in this project or scope")
+    expect(state.data.report).toBeUndefined()
+    expect(trajectoryCalls).toBe(0)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
 test("disconnected transport retains scoped data and a reconnect refreshes it", async () => {
   const fixture = makeFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
@@ -226,6 +387,7 @@ test("disconnected transport retains scoped data and a reconnect refreshes it", 
     state.connect(
       "session-view",
       "project",
+      fixture.directory,
       { kind: "session", sessionID: "ses-failed" },
       transport,
       { taskID, selection: null },
@@ -256,6 +418,7 @@ test("explicit projection gaps resnapshot even when their sequence is not newer"
     state.connect(
       "session-view",
       "project",
+      fixture.directory,
       { kind: "session", sessionID: "ses-failed" },
       transport,
       { taskID, selection: null },

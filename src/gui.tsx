@@ -17,6 +17,7 @@ import { audioFilePCM16 } from "./webgpu/audio.ts"
 import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
+import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
 import { LocalInference } from "./webgpu/rpc.ts"
@@ -47,7 +48,29 @@ export default Plugin.define({
     return setupMain(ctx)
   },
   setup(ctx) {
-    setupTaskPanel(ctx)
+    const openTaskTrajectory: TaskTrajectoryOpener = (session, request) => {
+      const target = { ...request, requestID: crypto.randomUUID() }
+      ctx.stores.trajectoryView(session).update((draft) => {
+        const previous = draft.projects[request.projectDirectory] ?? {
+          scope: "session" as const,
+          selectedTaskID: null,
+          selectedKind: "" as const,
+          selectedRecordID: "",
+          split: 56,
+        }
+        draft.projects[request.projectDirectory] = {
+          ...previous,
+          scope: "project",
+          selectedTaskID: target.taskID,
+          selectedReference: target.reference,
+          target,
+          selectedKind: "",
+          selectedRecordID: "",
+        }
+      })
+      ctx.layout.open(`${ctx.id}:trajectory`, session, { tab: "select" })
+    }
+    setupTaskPanel(ctx, openTaskTrajectory)
     setupTrajectoryPanel(ctx)
     setupRadarPanel(ctx)
     const Ui = ctx.ui

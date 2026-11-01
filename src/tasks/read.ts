@@ -6,6 +6,7 @@ import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskSummary } from "./contract.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
+import { effectiveTaskStateFilter } from "./state-filter.ts"
 
 const Cursor = z.strictObject({
   filter: z.string(),
@@ -78,7 +79,7 @@ export class TaskReads {
           query.sessionID,
           query.search,
           query.scopePath,
-          query.includeCompleted,
+          effectiveTaskStateFilter(query.state, query.includeCompleted),
           query.includeRetired,
         ]),
       )
@@ -96,6 +97,7 @@ export class TaskReads {
     }
     const page = this.repository.readPage({
       ...query,
+      state: effectiveTaskStateFilter(query.state, query.includeCompleted),
       snapshot: cursor?.snapshot,
       before: cursor?.before,
     })
@@ -112,7 +114,7 @@ export class TaskReads {
       snapshot: page.version,
       count: page.count,
       tasks: visible.map(({ task, reference }) => {
-        const execution = this.runner.execution(task.id)
+        const execution = this.effectiveExecution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
         return {
           ...summarize(task, reference, query.search, query.scopePath, disposition),
@@ -137,7 +139,7 @@ export class TaskReads {
     const disposition = this.repository.taskDisposition(task.id)
     const reference = this.repository.referenceFor(task.id)
     if (!reference) throw new Error("Task reference is missing from this repository")
-    const execution = this.runner.execution(task.id)
+    const execution = this.effectiveExecution(task.id)
     if (!execution)
       return GetOutput.parse({
         status: "found",
@@ -173,5 +175,14 @@ export class TaskReads {
       attempts,
       activity,
     })
+  }
+
+  protected effectiveExecution(taskID: string) {
+    const execution = this.runner.execution(taskID)
+    if (!execution) return undefined
+    const plan = this.runner.plan(execution.planID)
+    return plan?.state === "cancelled"
+      ? { ...execution, state: "cancelled" as const, reason: execution.reason ?? plan.reason }
+      : execution
   }
 }
