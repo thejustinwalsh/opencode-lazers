@@ -22,6 +22,26 @@ Trajectory history should remain usable while live events arrive. Existing
 lifecycle, trajectory privacy and renderer responsiveness defects remain open;
 local inference stays enabled. Current findings are in the delivery audit.
 
+### Proactive worker recovery
+
+Add the reliability lane defined in [proactive worker recovery](proactive-worker-recovery.md)
+alongside the existing panel and lifecycle work. Deterministic incremental rules
+retain evidence of possible struggle and notify the current Architect without
+interrupting the worker. Architect can let it cook, schedule durable follow-up,
+or check in; investigate and steer the same worker; then reassess new evidence.
+Continued struggle exposes a safe handoff/reconciliation decision, followed by
+finishing scoped work or creating linked remaining tasks. Preserve identities,
+dirty work, history, authorization and ordinary verification throughout.
+
+Measure observation and intervention overhead, messages/wakes, attributable effort
+and outcomes, including unsuccessful recovery and explicit unknowns. Distinguish
+implemented behavior, fixture proof, native-observed branches and still-unproven
+recovery; delivery or passing tests alone does not establish recovery. Reuse the
+existing scheduler, notification and inspection paths, with optional progressively
+loaded diagnosis/steering skills rather than another supervisor service or
+mandatory prompt expansion. Serialize actual write conflicts without stranding
+independent roadmap work or waiving its native gates.
+
 ## 2. Personas, models and measurement
 
 Each task carries a persona/agent. Start with UI, Systems and Small task/refactoring
@@ -70,6 +90,7 @@ daemon or inference server.
 ## References
 
 - Research and decisions: `.agents/docs/phase-review-plan.md`
+- Proactive recovery behavior and acceptance: `design/proactive-worker-recovery.md`
 - Current delivery/defects: `.agents/docs/production-audit-and-next-phases.md`
   and `.agents/docs/evidence/architect-context-lifecycle/review.md`
 - Radar prior art: https://github.com/thejustinwalsh/gh-wat-dis
