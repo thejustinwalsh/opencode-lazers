@@ -273,6 +273,56 @@ The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not
 evidence that a repair passed. All new UI/native gates require real observation.
 
+## Recovery and live-verification execution boundary — 2026-11-01
+
+The dependency/priority sequence is now in `design/roadmap.md`; full requirements
+are retained in `design/live-product-verification.md` and
+`design/proactive-worker-recovery.md`. Planning commit `b35c1d3` preserves the other
+roadmap phases. R1 LZ-49, V1 LZ-50 and module-only V2 LZ-51 have admitted isolated
+plans; their IDs and later dependencies are recorded in the roadmap. No native
+recovery or runtime live-probe completion is claimed by those foundations.
+
+- Accepted LZ-33 source `6b370d7` and accepted LZ-48 correction `776a070` landed
+  in main `ab2dd5d` after independent source review. Merged checks passed 49
+  focused tests/452 assertions, 455 full tests/4,330 assertions and strict quality.
+  LZ-33 task landing is recorded without finalizing its original plan. Original
+  LZ-34 has its first running attempt `9da24dd0-2975-45b3-97cc-9eb30758bc1c`;
+  mounted C4/ELK UI and combined Radar acceptance remain open. LZ-48 non-forced
+  cleanup was requested; native inventory, Git inventory and filesystem confirm
+  its owned tree absent. Those same checks confirm prior LZ-45 cleanup too.
+- LZ-28's reviewed `7f47913` cleared the three source blockers. Its runtime
+  quality receipt failed only on old handoff formatting. Merging reviewed
+  `5a5f846` into the same retained checkout produced `f6b0978`; fresh quality
+  passed, and explicit same-attempt RESUME was requested at plan v47. No RETRY,
+  reset or replacement; final returned artifact and native dogfood still need
+  review/observation.
+- LZ-46 retains `271ba117` and its original attempt. Additional independent
+  fake-debugger review found late metadata-write failure can overwrite the original
+  diagnostic verdict while saved evidence retains it. A narrow same-worker
+  correction was requested through normal stop/RESUME with durable source guidance.
+  The malformed artifact-reference contract remains a separate immutable-spec
+  issue. No profiling or candidate GUI activation occurred here.
+- Root reviewed LZ-49 `890fa164` with no blocker and passed recovery plus
+  progress-recorder checks: 13 tests/98 assertions. Independent review is pending;
+  producer integration, deterministic concerns and actual native recovery are not
+  established by this journal API.
+
+**Driver assistance:** during the LZ-49 review Root reported local inference
+`Local model disconnected: ClientError: Transport: signal timed out`, with no
+resident model. One native **Reload model** restored Ready; all six switches
+remained ON and idle Never. No service restart or profiler arming. Cause remains
+unproven; attributable elapsed time and usage for this intervention are unavailable,
+not zero. Root saw LZ-49's real test shell in Live progress but did not select/open
+it before completion, so LZ-36's selected live-tool completion gate remains open.
+
+LZ-50 received the discovery/authentication distinction as durable worker guidance:
+registration PID/version matching does not establish working authentication, and
+`Service.discover()` returning undefined does not alone establish an absent service.
+Driver credential use for its already-running endpoint was identity-checked without
+printing/exporting credentials; no service was changed. The isolated trial must
+not copy driver credentials or repair/restart the driver. Instruction readback is
+not proof of consumption or a successful isolated trial.
+
 ## Phase 2 — personas, routes and measured value
 
 After retained Phase 1 evidence, inspect the then-current implementation and

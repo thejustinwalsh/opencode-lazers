@@ -84,7 +84,7 @@ tests, installed tooling and screenshots alone do not complete this lane.
 
 ### Delivery order for recovery and verification
 
-These are increment boundaries, not claims of submitted or accepted work. Higher
+These are increment boundaries, not claims of accepted work. Higher
 priority dispatches first when dependencies and actual write reservations permit.
 Use separate plans with integrated prerequisites where baselines must advance;
 do not accumulate dependent work on stale runner source. Keep LZ-28, LZ-34,
@@ -107,6 +107,13 @@ LZ-36, LZ-39, LZ-46 and LZ-48 identities, candidates and pending gates intact.
 | K1: packaged progressive skills and runbook         | 15       | V1, stable V4 tools and R4                      | Native discovery/loading of product-verification and focused diagnosis/steering guidance; usable platform references, no mandatory prompt expansion.                                                                                            |
 | N1: native walkthrough and closure                  | 10       | Integrated R4–R6, V5–V6 and K1                  | Two real implementer executions with correction/reprobe, native recovery/reassessment evidence, final integrated smoke, reviewed checks and confirmed owned cleanup. Unobserved branches remain explicit.                                       |
 
+The executable front of this sequence is R1 **LZ-49** (plan
+`59987993-9ec5-4f75-99cc-2a68f08e2b58`), V1 **LZ-50** (plan
+`b76de1a5-4c2b-423e-8867-0afa7e704c07`) and module-only V2 **LZ-51** (plan
+`1cf7467a-398f-4936-b5db-b541e749f39e`). All use isolated workspaces. V2 exposes
+no new authoring contract until V4 can enforce it; it does not retrofit active
+tasks. Remaining rows require their own reviewed specifications and admitted plans.
+
 Combined-probe ownership must be an explicit authorized continuation/assignment,
 not another implementation attempt fabricated for counting. Establish its narrow
 receipt authority before V5 dispatch. Environment generations change on relevant
@@ -114,6 +121,41 @@ candidate/procedure/configuration/target or ownership changes; uncertain externa
 effects require positive identity/readback reconciliation, not timeout-based reuse.
 Worker-reported results remain provenance-bearing claims until required tool
 observations and any explicit Architect judgment are satisfied.
+
+#### Verification reservations and safe writer release
+
+Observed LZ-28/LZ-36 friction is a design input, not authorization to bypass
+reservations. Current admission conservatively treats preparing/running/verifying
+attempts as full-scope occupants. A missing human gate therefore retains broad
+code scope even when no implementation turn is active. Git commits are immutable,
+but their checkouts, ignored build outputs and external processes are not;
+session idle or interruption acknowledgement alone cannot prove writer quiescence.
+
+V3 first distinguishes actual external UI/service/profile/fixture resources with
+durable conflict identities and ownership generations, without relaxing existing
+code admission. Aliases and different projects must not acquire the same actual
+resource independently. Separate uncoordinated databases/services cannot claim
+global exclusivity; expose unsupported coordination as blockage.
+
+V4 should add an opt-in isolated write-ownership → candidate-verification →
+write-reacquisition protocol only for a qualified boundary. Before releasing broad
+implementation scope, preserve the exact scoped candidate, reconcile pending
+write-capable effects/background work, establish safe isolation or quiescence,
+and prevent subsequent source writes without reacquisition. Retain ownership of
+the candidate execution workspace and mutable product/fixtures. Unknown/legacy
+attempts and shared checkouts keep conservative protection; isolated worktrees
+alone do not establish release safety. If the host cannot establish the required
+boundary, report that limitation rather than promising reduced contention.
+
+Repairs and executable fixture changes must reacquire code/checkout ownership
+before an edit-capable turn, through the same conflict predicate used for fresh
+dispatch, resume and scope amendment. Preserve the same worker and request/run
+generation, invalidate affected checks/probes, and never spend an implementation
+repair on environment waits. Test competing isolated writers, busy/background or
+uncertain owners, blocked repair reacquisition, shared-checkout serialization,
+cross-project resource aliases, crash/replay and cancellation cleanup. Existing
+candidate-bound receipt selection remains required. CANCEL/RESUME is not the new
+verification-phase protocol.
 
 ## 2. Personas, models and measurement
 
