@@ -8,7 +8,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { AbsolutePath } from "@opencode/schema/schema"
 import { DateTime, Effect } from "effect"
-import type { RunnerHost } from "./host.ts"
+import type { ArchitectInputPage, RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
@@ -17,7 +17,11 @@ import { isOwnedQueuedOutcome } from "./inbox.ts"
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
   server: Pick<ReturnType<typeof OpenCode.make>["server"], "info">
-  session: Pick<ReturnType<typeof OpenCode.make>["session"], "get" | "synthetic" | "inbox">
+  session: Pick<
+    ReturnType<typeof OpenCode.make>["session"],
+    "get" | "synthetic" | "inbox" | "update"
+  >
+  message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
 }
 export type NativeInboxDependencies = {
   discover: typeof Service.discover
@@ -58,7 +62,8 @@ async function assertArchitectTarget(
 function inboxEntry(
   entry: Awaited<ReturnType<NativeInboxClient["session"]["inbox"]["list"]>>[number],
 ) {
-  const metadata = entry.type === "synthetic" ? entry.payload.metadata : undefined
+  const metadata =
+    entry.type === "synthetic" || entry.type === "user" ? entry.payload.metadata : undefined
   return {
     id: entry.id,
     type: entry.type,
@@ -73,9 +78,6 @@ export function nativeHost(
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost {
   return {
-    // OpenCode 2.2.5 session.synthetic admits directly through SessionInbox and
-    // does not run the prompt hook. The public API has no inbox/archive barrier.
-    architectInputAdmissionSafe: false,
     async workerModel() {
       const agent = await Effect.runPromise(
         ctx.agent.get({ agentID: Agent.ID.make("lazers-implementor") }),
@@ -187,6 +189,37 @@ export function nativeHost(
       await assertArchitectTarget(ctx, client, sessionID)
       return (await client.session.inbox.list({ sessionID })).map(inboxEntry)
     },
+    async architectInputPage(sessionID, cursor): Promise<ArchitectInputPage> {
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, sessionID)
+      const [inbox, page] = await Promise.all([
+        client.session.inbox.list({ sessionID }),
+        client.message.list({
+          sessionID,
+          limit: 100,
+          order: "asc",
+          ...(cursor ? { cursor } : {}),
+        }),
+      ])
+      return {
+        inbox: inbox
+          .filter((entry) => entry.type === "user" || entry.type === "synthetic")
+          .map((entry) => ({
+            id: entry.id,
+            type: entry.type,
+            ...("payload" in entry && entry.payload.metadata
+              ? { metadata: entry.payload.metadata }
+              : {}),
+            ...("delivery" in entry ? { delivery: entry.delivery } : {}),
+          })),
+        messages: page.data.map((entry) => ({
+          id: entry.id,
+          type: entry.type,
+          ...(entry.metadata ? { metadata: entry.metadata } : {}),
+        })),
+        nextCursor: page.cursor.next ?? null,
+      }
+    },
     async cancelOutcome(input) {
       if (
         input.ownership.lazersSessionID !== input.sessionID ||
@@ -253,12 +286,32 @@ export function nativeHost(
       )
     },
     async updateSession(input) {
-      await Effect.runPromise(
-        ctx.session.update({
-          sessionID: Session.ID.make(input.sessionID),
-          archived: input.archived,
-        }),
-      )
+      const client = await inboxClient(ctx, dependencies)
+      await assertArchitectTarget(ctx, client, input.sessionID)
+      let updateError: unknown
+      try {
+        await client.session.update({ sessionID: input.sessionID, archived: input.archived })
+      } catch (error) {
+        updateError = error
+      }
+      let readback: Awaited<ReturnType<typeof client.session.get>>
+      try {
+        readback = await client.session.get({ sessionID: input.sessionID })
+      } catch (error) {
+        throw new Error(
+          `Native Architect archival readback is unavailable${updateError ? ` after update error: ${String(updateError)}` : ""}: ${String(error)}`,
+          { cause: error },
+        )
+      }
+      if ((readback.time.archived !== undefined) !== input.archived)
+        throw new Error(
+          `Native Architect archival did not match public session readback${updateError ? ` after update error: ${String(updateError)}` : ""}`,
+        )
+      if (updateError && input.archived)
+        throw new Error(
+          `Native Architect archive response was uncertain but archived state was confirmed by public readback: ${String(updateError)}`,
+          { cause: updateError },
+        )
     },
     async prompt(input) {
       const id = Session.ID.make(input.sessionID)

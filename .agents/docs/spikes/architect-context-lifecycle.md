@@ -7,17 +7,18 @@ scheduler or worker-progress work.
 
 The user selected a configurable **30-minute** idle default; busy/recent Architects
 are reused. Durable handoff and current-owner transfer precede native archival.
-No automatic old-transcript summary or replay is permitted. The pinned OpenCode
-2.2.5 prompt hook records prompt IDs, but queued synthetic input with `resume:false`
-can bypass that hook. The public host API exposes inbox snapshots and
-`session.update({ archived })`, but no atomic admission/archive barrier. Therefore
-the native adapter explicitly reports input-admission safety as unsupported and
-automatic idle renewal is disabled on this host; snapshots do not close the race.
-Hosts without an explicit all-input barrier must fail closed without transferring
-ownership or archiving. Conversation-only decisions and open questions are
-recorded explicitly through `lazers_record_architect_continuity` and copied into the
-durable successor handoff; no transcript replay or automatic summary is used.
-Automated race, reopen and multi-scheduler coverage is recorded in
+No automatic old-transcript summary or replay is permitted. OpenCode 2.2.5 has no
+atomic inbox-admission/archive fence: queued synthetic input can bypass the prompt
+hook. The revised implementation therefore retains the predecessor as a durable
+reconciliation source, journals stable input IDs/dispositions from inbox snapshots
+and paginated message history, and sends reference-only `resume:false` updates to
+the current owner. It does not cancel-and-copy or replay original requests. The
+native adapter uses the public client archival route and verifies archived state
+with readback. Missing or ambiguous observations remain recoverable/unknown; there
+is no claim that inputs cancelled before first observation can be audited.
+Conversation-only decisions and open questions are recorded explicitly through
+`lazers_record_architect_continuity` and carried with the labelled successor handoff.
+Automated lifecycle evidence is recorded in
 `.agents/docs/evidence/architect-context-lifecycle/implementation.md`.
 
 **Native dogfood remains unresolved.** Root must verify the exact committed
@@ -32,17 +33,17 @@ them. Cumulative session usage must not be presented as wake-attributed.
 
 At OpenCode commit `9bbb8ce18c80f099e0e448775f59d965ead40a21` (2.2.5), the
 session prompt hook exposes readonly `sessionID`/`messageID`; it cannot retarget
-input. This is not a complete admission observer: `session.synthetic` can enqueue
-with `resume:false` directly through `SessionInbox`, bypassing the prompt hook.
-Inbox listing is a snapshot, not an atomic barrier with archival, so repeated
-snapshots and prompt-hook checks cannot prove that no input arrived between the
-last snapshot and archive. The native adapter does not claim that guarantee and
-does not start automatic renewal. Recovery remains fail-closed for an already
-persisted renewal on an unsafe host: queued IDs are durably observed when possible,
-ownership is rolled back, the predecessor is left live, and the handoff is
-suppressed. Conversation continuity is separate from transcript history: Architect
-records exact decisions and unresolved questions in a project database checkpoint,
-which is snapshotted into the renewal/outbox before transfer.
+input. `session.synthetic` can enqueue with `resume:false` directly through
+`SessionInbox`, bypassing that hook. Inbox listing is a snapshot, not an atomic
+barrier with archival, so the implementation does not claim a sealed cutover. It
+persists the predecessor source before native effects, transfers its reconciliation
+responsibility atomically with plan ownership, archives by the public client API,
+and reads back the archived property. It keeps original pending IDs on the source
+and references them without authorizing execution. Paginated history scans persist
+their cursor and repeat sweeps so late inputs can be reconciled. A disappearing
+previously observed pending row without a matching transcript becomes `unknown`,
+not confirmed cancellation. Conversation continuity remains separate from native
+history and is explicitly recorded by the Architect.
 
 - [Pinned `session.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/session.ts)
 - [Pinned `inbox.ts`](https://raw.githubusercontent.com/anomalyco/opencode/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/inbox.ts)

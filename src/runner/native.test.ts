@@ -9,14 +9,14 @@ import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
 
-test("pinned native adapter does not claim a barrier for synthetic inbox admission", () => {
+test("native adapter exposes inbox and paginated history reconciliation without claiming a sealed cutover", () => {
   const host = nativeHost(
     {
       location: { directory: "/project", project: { id: "project" } },
     } as unknown as Plugin.Context,
     {} as TaskRepository,
   )
-  expect(host.architectInputAdmissionSafe).toBe(false)
+  expect(host.architectInputPage).toBeFunction()
 })
 
 test("native worktrees use the host lifecycle with the admitted ref and returned directory", async () => {
@@ -444,17 +444,34 @@ test("native worker selection survives role registration and reaches native crea
 function nativeOutcomeFixture(options: {
   pid?: number
   unavailable?: boolean
+  archiveReadback?: boolean
+  loseUpdateResponse?: boolean
   inbox?: OutcomeInboxEntry[]
+  messagePage?: (cursor?: string) => {
+    data: { id: string; type: string; metadata?: Record<string, unknown> }[]
+    cursor: { next?: string | null }
+  }
+  onUpdate?: (input: { sessionID: string; archived: boolean }) => void
   onCancel?: (inboxID: string) => void
   onSynthetic?: (input: unknown) => void
 }) {
   const entries = options.inbox ?? []
   let listCalls = 0
+  let archived = false
   const client = {
     server: { info: async () => ({ pid: options.pid ?? 42, version: "2.2.5" }) },
     session: {
-      get: async () => ({ projectID: "project", agent: "architect" }),
+      get: async () => ({
+        projectID: "project",
+        agent: "architect",
+        time: { ...(archived ? { archived: 1 } : {}) },
+      }),
       synthetic: async (input: unknown) => options.onSynthetic?.(input),
+      update: async (input: { sessionID: string; archived: boolean }) => {
+        options.onUpdate?.(input)
+        if (options.archiveReadback !== false) archived = input.archived
+        if (options.loseUpdateResponse) throw new Error("update response lost")
+      },
       inbox: {
         list: async () => {
           listCalls++
@@ -473,6 +490,10 @@ function nativeOutcomeFixture(options: {
           if (index >= 0) entries.splice(index, 1)
         },
       },
+    },
+    message: {
+      list: async (input: { cursor?: string }) =>
+        options.messagePage?.(input.cursor) ?? { data: [], cursor: { next: null } },
     },
   } as unknown as NativeInboxClient
   const dependencies = {
@@ -584,6 +605,59 @@ test("native inbox does not start or substitute an unavailable service", async (
     "Native outcome inbox is unavailable",
   )
   expect(fixture.listCalls).toBe(0)
+})
+
+test("native archive uses the public client route and requires archived-state readback", async () => {
+  const updates: { sessionID: string; archived: boolean }[] = []
+  const fixture = nativeOutcomeFixture({ onUpdate: (input) => updates.push(input) })
+  await fixture.host.updateSession!({ sessionID: "ses_owner", archived: true })
+  expect(updates).toEqual([{ sessionID: "ses_owner", archived: true }])
+
+  const noReadback = nativeOutcomeFixture({ archiveReadback: false })
+  await expect(
+    noReadback.host.updateSession!({ sessionID: "ses_owner", archived: true }),
+  ).rejects.toThrow("public session readback")
+
+  const lostResponse = nativeOutcomeFixture({ loseUpdateResponse: true })
+  await expect(
+    lostResponse.host.updateSession!({ sessionID: "ses_owner", archived: true }),
+  ).rejects.toThrow("confirmed by public readback")
+})
+
+test("native Architect input reconciliation follows public message pagination and keeps original IDs", async () => {
+  const cursors: (string | undefined)[] = []
+  const fixture = nativeOutcomeFixture({
+    inbox: [{ id: "msg_queued", type: "synthetic", delivery: "queue" }],
+    messagePage: (cursor) => {
+      cursors.push(cursor)
+      return cursor
+        ? {
+            data: [{ id: "msg_late", type: "user" }],
+            cursor: { next: null },
+          }
+        : {
+            data: [
+              { id: "msg_history", type: "user" },
+              { id: "msg_queued", type: "synthetic" },
+              { id: "msg_assistant", type: "assistant" },
+            ],
+            cursor: { next: "page-2" },
+          }
+    },
+  })
+
+  const first = await fixture.host.architectInputPage!("ses_owner")
+  const second = await fixture.host.architectInputPage!("ses_owner", first.nextCursor ?? undefined)
+  expect(cursors).toEqual([undefined, "page-2"])
+  expect(first.inbox.map((entry) => entry.id)).toEqual(["msg_queued"])
+  expect(first.messages.map((entry) => entry.id)).toEqual([
+    "msg_history",
+    "msg_queued",
+    "msg_assistant",
+  ])
+  expect(first.nextCursor).toBe("page-2")
+  expect(second.messages.map((entry) => entry.id)).toEqual(["msg_late"])
+  expect(second.nextCursor).toBeNull()
 })
 
 test("native session heartbeat reads metadata without context and opts into messages explicitly", async () => {

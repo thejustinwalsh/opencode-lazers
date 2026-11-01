@@ -40,6 +40,70 @@ test("legacy Architect renewal rows migrate to store an explicit continuity snap
   ).toContain("continuity_json")
 })
 
+test("legacy Architect input rows survive migration into the durable source journal", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-architect-input-migration-"))
+  directories.push(directory)
+  const projectDirectory = join(directory, "project")
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), projectDirectory)
+  repositories.push(repository)
+  repository.atomic((db) => {
+    db.exec(`
+      CREATE TABLE runner_architect_renewals (
+        id TEXT PRIMARY KEY, anchor_plan_id TEXT NOT NULL, previous_session_id TEXT NOT NULL,
+        successor_session_id TEXT NOT NULL, directory TEXT NOT NULL, model TEXT NOT NULL,
+        idle_at INTEGER NOT NULL, generation INTEGER NOT NULL, state TEXT NOT NULL,
+        handoff_message_id TEXT NOT NULL, handoff_outbox_id TEXT, input_message_id TEXT,
+        error TEXT, started_at INTEGER NOT NULL
+      );
+      CREATE TABLE runner_architect_inputs (
+        session_id TEXT NOT NULL, message_id TEXT NOT NULL, observed_at INTEGER NOT NULL,
+        renewal_id TEXT REFERENCES runner_architect_renewals(id),
+        PRIMARY KEY(session_id,message_id)
+      );
+      CREATE INDEX runner_architect_inputs_recent
+        ON runner_architect_inputs(session_id,observed_at);
+    `)
+    db.query(
+      "INSERT INTO runner_architect_inputs(session_id,message_id,observed_at,renewal_id) VALUES(?,?,?,NULL)",
+    ).run("ses_predecessor", "msg_observed_before_upgrade", 100)
+  })
+
+  const store = new RunnerStore(repository)
+  const migrated = store.atomic((db) =>
+    db
+      .query<
+        {
+          message_id: string
+          native_type: string | null
+          disposition: string
+          referenced_revision: number
+          last_seen_sweep: number
+        },
+        [string]
+      >(
+        `SELECT message_id,native_type,disposition,referenced_revision,last_seen_sweep
+         FROM runner_architect_inputs WHERE session_id=?`,
+      )
+      .get("ses_predecessor"),
+  )
+  const sourceTableExists = repository.atomic((db) =>
+    db
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='runner_architect_sources'",
+      )
+      .get(),
+  )
+
+  expect(migrated).toEqual({
+    message_id: "msg_observed_before_upgrade",
+    native_type: null,
+    disposition: "unknown",
+    referenced_revision: 0,
+    last_seen_sweep: 0,
+  })
+  expect(sourceTableExists?.name).toBe("runner_architect_sources")
+})
+
 function fixture(requestID = "plan-title-store") {
   const directory = mkdtempSync(join(tmpdir(), "lazers-plan-title-"))
   directories.push(directory)

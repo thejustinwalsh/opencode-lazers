@@ -8,6 +8,12 @@ export type HostMessage = {
   metadata?: Record<string, unknown>
 }
 
+export type ArchitectInputPage = {
+  inbox: Array<Pick<OutcomeInboxEntry, "id" | "type" | "delivery" | "metadata">>
+  messages: Array<{ id: string; type: string; metadata?: Record<string, unknown> }>
+  nextCursor: string | null
+}
+
 export type HostSession = {
   id: string
   parentID?: string
@@ -56,6 +62,8 @@ export interface RunnerHost {
   session(id: string, options?: { messages?: boolean }): Promise<HostSession | null>
   /** Public native inbox snapshot; the adapter verifies it belongs to this process. */
   outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
+  /** One ordered page of original Architect inputs plus the current native inbox. */
+  architectInputPage?(sessionID: string, cursor?: string): Promise<ArchitectInputPage>
   /** Revalidates ownership and queued state immediately before native cancellation. */
   cancelOutcome?(input: {
     sessionID: string
@@ -83,8 +91,6 @@ export interface RunnerHost {
   }): Promise<void>
   /** Exact native session archive control; renewal requires this and input observation. */
   updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
-  /** True only when the host prevents every native inbox admission from racing renewal. */
-  architectInputAdmissionSafe?: boolean
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>

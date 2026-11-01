@@ -19,11 +19,17 @@ export function outcomeText(serialized: string) {
             (item: unknown): item is string => typeof item === "string",
           )
         : []
+      const coverage =
+        typeof payload.sourceCoverage === "object" && payload.sourceCoverage !== null
+          ? (payload.sourceCoverage as Record<string, unknown>)
+          : {}
       return [
         "LAZERS Architect continuity handoff",
         `Purpose: ${typeof payload.label === "string" ? payload.label : "Continue the existing project work"}`,
         `Predecessor: ${String(payload.predecessorSessionID ?? "unknown")} (archived; linked as parent).`,
         `Plan IDs: ${planIDs.join(", ") || "none recorded"}.`,
+        `Predecessor input-history scan: ${coverage.complete === true ? "complete for the recorded pass" : `continuing at cursor ${String(coverage.cursor ?? "unknown")}`}; later scans remain required.`,
+        "Native input IDs and dispositions remain in the durable predecessor source journal; bounded reference-only updates are delivered separately as they are reconciled.",
         ...(decisions.length
           ? ["Recorded decisions:", ...decisions.map((item) => `- ${item}`)]
           : ["Recorded decisions: none."]),
@@ -32,6 +38,24 @@ export function outcomeText(serialized: string) {
           : ["Unresolved questions: none."]),
         "No prior transcript was replayed. Fetch current durable state with lazers_inspect_plan for these IDs and review the current outcomes before deciding.",
         "Existing workers continue unchanged; do not restart them.",
+      ].join("\n")
+    }
+    case "architect-source-reference": {
+      const inputs = Array.isArray(payload.inputIDs) ? payload.inputIDs : []
+      const references = inputs.flatMap((input: unknown) => {
+        if (typeof input !== "object" || input === null) return []
+        const row = input as { id?: unknown; disposition?: unknown; type?: unknown }
+        if (typeof row.id !== "string") return []
+        return [
+          `- ${row.id}: ${String(row.disposition ?? "unknown")} ${String(row.type ?? "input")}`,
+        ]
+      })
+      return [
+        "LAZERS retained Architect input update",
+        `Source session: ${String(payload.sourceSessionID ?? "unknown")} (reconciliation revision ${String(payload.sourceRevision ?? "unknown")}).`,
+        "Original native inputs remain on the predecessor. These references do not authorize execution, replay, cancellation, permission grants, or answering forms.",
+        ...(references.length ? references : ["- No input IDs in this update."]),
+        "Inspect current durable plan state and the original source session before deciding what to do.",
       ].join("\n")
     }
     case "task-accepted":

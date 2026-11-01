@@ -50,7 +50,6 @@ function fixture(
     loseWorktreeResponse?: boolean | "empty-error"
     architectIdleWindowMs?: number
     architectPromptHook?: boolean
-    architectInputAdmissionSafe?: boolean
     now?: () => number
   } = {},
 ) {
@@ -141,12 +140,11 @@ function fixture(
     messages: [],
   })
   const events: string[] = []
-  const notifications: { sessionID: string; id: string; text: string }[] = []
+  const notifications: { sessionID: string; id: string; text: string; resume: boolean }[] = []
   const instructions = new Map<string, Map<string, string>>()
   const inbox = new Map<string, OutcomeInboxEntry[]>()
   const admissionOwners = new Map<string, string>()
   const host: RunnerHost = {
-    architectInputAdmissionSafe: options.architectInputAdmissionSafe ?? true,
     workerModel: async () => options.workerModel ?? { providerID: "openai", id: "test-model" },
     worktree: async ({ directory, base }) => {
       git(root, ["worktree", "add", "--detach", directory, base])
@@ -282,6 +280,20 @@ function fixture(
       events.push(`instruction:${input.key}`)
     },
     outcomeInbox: async (targetSessionID) => structuredClone(inbox.get(targetSessionID) ?? []),
+    architectInputPage: async (targetSessionID) => ({
+      inbox: structuredClone(inbox.get(targetSessionID) ?? []).map((entry) => ({
+        id: entry.id,
+        type: entry.type,
+        ...(entry.delivery ? { delivery: entry.delivery } : {}),
+        ...(entry.metadata ? { metadata: entry.metadata } : {}),
+      })),
+      messages: (sessions.get(targetSessionID)?.messages ?? []).map((message) => ({
+        id: message.id,
+        type: message.type ?? "user",
+        ...(message.metadata ? { metadata: message.metadata } : {}),
+      })),
+      nextCursor: null,
+    }),
     cancelOutcome: async (input) => {
       const entries = inbox.get(input.sessionID) ?? []
       const index = entries.findIndex((entry) => entry.id === input.inboxID)
@@ -297,7 +309,12 @@ function fixture(
         throw new Error("Native lifecycle conflict: message ID belongs to another session")
       admissionOwners.set(input.id, input.sessionID)
       events.push(`notify:${input.id}`)
-      notifications.push({ sessionID: input.sessionID, id: input.id, text: input.text })
+      notifications.push({
+        sessionID: input.sessionID,
+        id: input.id,
+        text: input.text,
+        resume: input.resume,
+      })
       const entries = inbox.get(input.sessionID) ?? []
       if (!entries.some((entry) => entry.id === input.id))
         entries.push({
@@ -3939,12 +3956,21 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(owner.messages).toEqual([
     { id: "old-transcript", text: "SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY" },
   ])
-  const wake = f.notifications.find((notice) => notice.sessionID === successor.id)!
+  const wake = f.notifications.find(
+    (notice) =>
+      notice.sessionID === successor.id && notice.text.includes("Architect continuity handoff"),
+  )!
   expect(wake.text).toContain("lazers_inspect_plan")
   expect(wake.text).toContain("Keep the existing approved implementation direction.")
   expect(wake.text).toContain("Confirm whether the follow-up needs additional scope.")
   expect(wake.text).not.toContain("SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY")
-  expect(f.inbox.get(successor.id)).toHaveLength(1)
+  expect(f.inbox.get(successor.id)).toHaveLength(2)
+  expect(
+    f.notifications.find((notice) => notice.text.includes("retained Architect input update")),
+  ).toMatchObject({
+    resume: false,
+  })
+  expect(wake.resume).toBe(true)
   const committed = f.store.latestTransition<{ wakeContext: { bytes: number; tokens: null } }>(
     f.receipt.planID,
     null,
@@ -4007,7 +4033,7 @@ test("idle-window overrides, busy sessions, unsupported hooks, and pre-create in
   }
 })
 
-test("renewal requires an explicit decisions/questions checkpoint and an all-input host guarantee", async () => {
+test("renewal requires an explicit checkpoint and retains queued native inputs by ID", async () => {
   const now = 2_000_000_125_000
   const missingCheckpoint = fixture({
     delayed: true,
@@ -4028,28 +4054,38 @@ test("renewal requires an explicit decisions/questions checkpoint and an all-inp
   )
   expect(missingCheckpoint.sessions.get("owner")?.archived).toBe(false)
 
-  const unsafeHost = fixture({
+  const reconciledHost = fixture({
     delayed: true,
     architectPromptHook: true,
-    architectInputAdmissionSafe: false,
     architectIdleWindowMs: 1_000,
     now: () => now,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
-  await prepareIdleArchitect(unsafeHost, now, 1_000)
+  await prepareIdleArchitect(reconciledHost, now, 1_000)
   const foreign = {
     id: "msg_external_queue_before_creation",
     type: "synthetic",
     delivery: "queue",
     metadata: { source: "another-plugin" },
   }
-  unsafeHost.inbox.set("owner", [foreign])
-  await unsafeHost.runtime.tick()
-  expect(unsafeHost.store.architectRenewalForPlan(unsafeHost.receipt.planID)).toBeNull()
-  expect(unsafeHost.events.some((event) => event.startsWith("create-architect:"))).toBe(false)
-  expect(unsafeHost.events.some((event) => event.startsWith("update-session:"))).toBe(false)
-  expect(unsafeHost.inbox.get("owner")).toEqual([foreign])
-  expect(unsafeHost.sessions.get("owner")?.archived).toBe(false)
+  reconciledHost.inbox.set("owner", [foreign])
+  await reconciledHost.runtime.tick()
+  const renewal = reconciledHost.store.architectRenewalForPlan(reconciledHost.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+  expect(reconciledHost.store.plan(reconciledHost.receipt.planID)?.owner).toBe(
+    renewal.successor_session_id,
+  )
+  expect(
+    reconciledHost.events.filter((event) => event === "update-session:owner:true"),
+  ).toHaveLength(1)
+  expect(reconciledHost.inbox.get("owner")).toEqual([foreign])
+  expect(reconciledHost.sessions.get("owner")?.archived).toBe(true)
+  expect(reconciledHost.store.architectSourceInputs("owner")).toContainEqual(
+    expect.objectContaining({ message_id: foreign.id, disposition: "pending" }),
+  )
+  expect(
+    reconciledHost.notifications.some((notification) => notification.text.includes(foreign.id)),
+  ).toBe(true)
 })
 
 test("one successor receives every live plan owned by the same Architect", async () => {
@@ -4173,7 +4209,7 @@ test("a continuity edit during successor creation blocks stale ownership transfe
   expect(f.notifications).toHaveLength(0)
 })
 
-test("native queued synthetic input is preserved when admitted during creation, transfer, or archive", async () => {
+test("native queued synthetic input is retained and referenced across creation, transfer, and archive", async () => {
   const phases = ["creation", "transfer", "archive"] as const
   for (const [index, phase] of phases.entries()) {
     const now = 2_000_000_210_000 + index * 10_000
@@ -4215,25 +4251,263 @@ test("native queued synthetic input is preserved when admitted during creation, 
     await f.runtime.tick()
 
     const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
-    expect(renewal.state).toBe("deferred")
-    expect(renewal.input_message_id).toBe(foreign.id)
+    expect(renewal.state).toBe("committed")
     expect(f.inbox.get("owner")).toEqual([foreign])
-    expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
-    expect(f.sessions.get("owner")?.archived).toBe(false)
+    expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+    expect(f.sessions.get("owner")?.archived).toBe(true)
     expect(f.store.architectRenewalHasInput(renewal.id)).toBe(true)
-    expect(f.events.filter((event) => event === "update-session:owner:true").length).toBe(
-      phase === "archive" ? 1 : 0,
+    expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(1)
+    expect(
+      (f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]).find(
+        (row) => JSON.parse(row.payload).status === "architect-handoff",
+      )?.state,
+    ).toBe("admitted")
+    expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(
+      true,
     )
-    if (phase !== "creation")
-      expect(
-        (f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]).find(
-          (row) => JSON.parse(row.payload).status === "architect-handoff",
-        )?.state,
-      ).toBe("superseded")
   }
 })
 
-test("input racing native archival is restored, ownership rolls back, and its handoff is suppressed", async () => {
+test("late input on an archived predecessor is reconciled to the current owner without waking or replay", async () => {
+  const now = 2_000_000_275_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "late-input.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const currentOwner = renewal.successor_session_id
+  expect(renewal.state).toBe("committed")
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+
+  const late = {
+    id: "msg_late_after_archive",
+    type: "synthetic",
+    delivery: "queue",
+    metadata: { source: "another-plugin" },
+  }
+  f.inbox.set("owner", [late])
+  const before = f.notifications.length
+  await f.runtime.tick()
+
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(currentOwner)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(f.inbox.get("owner")).toEqual([late])
+  expect(f.store.architectSourceInputs("owner")).toContainEqual(
+    expect.objectContaining({ message_id: late.id, disposition: "pending" }),
+  )
+  const reference = f.notifications
+    .slice(before)
+    .find((notification) => notification.text.includes(late.id))
+  expect(reference).toMatchObject({ sessionID: currentOwner, resume: false })
+  await f.runtime.tick()
+  expect(
+    f.notifications.filter((notification) => notification.text.includes(late.id)),
+  ).toHaveLength(1)
+})
+
+test("predecessor reconciliation persists native message pagination across scheduler ticks", async () => {
+  const now = 2_000_000_280_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "paged-source.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const pages: (string | undefined)[] = []
+  f.host.architectInputPage = async (_sessionID, cursor) => {
+    pages.push(cursor)
+    return cursor
+      ? {
+          inbox: [],
+          messages: [{ id: "msg_page_two_input", type: "user" }],
+          nextCursor: null,
+        }
+      : { inbox: [], messages: [], nextCursor: "page-two" }
+  }
+
+  await f.runtime.tick()
+  expect(f.store.architectSource(renewal.previous_session_id)?.scan_cursor).toBe("page-two")
+  expect(f.store.architectSourceInputs(renewal.previous_session_id)).not.toContainEqual(
+    expect.objectContaining({ message_id: "msg_page_two_input" }),
+  )
+  await f.runtime.tick()
+
+  expect(pages).toEqual([undefined, "page-two"])
+  expect(f.store.architectSource(renewal.previous_session_id)?.scan_cursor).toBeNull()
+  expect(f.store.architectSourceInputs(renewal.previous_session_id)).toContainEqual(
+    expect.objectContaining({ message_id: "msg_page_two_input", disposition: "delivered" }),
+  )
+  expect(
+    f.notifications.some((notification) => notification.text.includes("msg_page_two_input")),
+  ).toBe(true)
+})
+
+test("large predecessor histories produce bounded reference-only notification batches", async () => {
+  const now = 2_000_000_281_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "bounded-references.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const ids = Array.from(
+    { length: 45 },
+    (_, index) => `msg_reference_${index.toString().padStart(2, "0")}`,
+  )
+  f.host.architectInputPage = async () => ({
+    inbox: [],
+    messages: ids.map((id) => ({ id, type: "user" })),
+    nextCursor: null,
+  })
+
+  await f.runtime.tick()
+  let rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
+  let references = rows
+    .map((row) => JSON.parse(row.payload))
+    .filter((payload) => payload.status === "architect-source-reference")
+  expect(references.length).toBeGreaterThanOrEqual(1)
+  expect(references.every((payload) => payload.inputIDs.length <= 20)).toBe(true)
+  await f.runtime.tick()
+  await f.runtime.tick()
+
+  rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
+  references = rows
+    .map((row) => JSON.parse(row.payload))
+    .filter((payload) => payload.status === "architect-source-reference")
+  const referencedIDs = references.flatMap((payload) =>
+    payload.inputIDs.map((input: { id: string }) => input.id),
+  )
+  expect(referencedIDs.toSorted()).toEqual(ids.toSorted())
+  expect(references.every((payload) => payload.inputIDs.length <= 20)).toBe(true)
+  const handoff = rows
+    .map((row) => JSON.parse(row.payload))
+    .find((payload) => payload.status === "architect-handoff")
+  expect(handoff).not.toHaveProperty("inputSources")
+  expect(
+    f.notifications.filter((notification) =>
+      notification.text.includes("retained Architect input update"),
+    ),
+  ).toHaveLength(references.length)
+})
+
+test("a previously seen pending input that disappears without history stays unknown, never cancelled or replayed", async () => {
+  const now = 2_000_000_282_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "unknown-input.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const late = {
+    id: "msg_disappeared_without_transcript",
+    type: "user",
+    delivery: "queue",
+  }
+  f.inbox.set("owner", [late])
+  await f.runtime.tick()
+  expect(f.store.architectSourceInputs("owner")).toContainEqual(
+    expect.objectContaining({ message_id: late.id, disposition: "pending" }),
+  )
+
+  f.inbox.set("owner", [])
+  await f.runtime.tick()
+
+  expect(f.store.architectSourceInputs("owner")).toContainEqual(
+    expect.objectContaining({ message_id: late.id, disposition: "unknown" }),
+  )
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(
+    f.notifications.filter((notification) => notification.text.includes(late.id)),
+  ).toHaveLength(2)
+  expect(f.notifications.at(-1)?.resume).toBe(false)
+})
+
+test("generated renewal notifications are authenticated and do not form A-to-B-to-C input loops", async () => {
+  const now = 2_000_000_284_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "notification-loop.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const first = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const middle = f.sessions.get(first.successor_session_id)!
+  expect(f.inbox.get(middle.id)).toHaveLength(1)
+
+  middle.idleAt = now - 1_000
+  await f.runtime.tick()
+  const second = f.store.architectRenewalForSource(middle.id)!
+
+  expect(second.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(second.successor_session_id)
+  expect(f.store.architectSourceInputs(middle.id)).toHaveLength(0)
+  expect(f.inbox.get(middle.id)).toHaveLength(0)
+  expect(
+    f.notifications.filter((notification) =>
+      notification.text.includes("retained Architect input update"),
+    ),
+  ).toHaveLength(0)
+})
+
+test("a retired Architect predecessor cannot reclaim a transferred plan through reassign", async () => {
+  const now = 2_000_000_285_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "reassign.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  const plan = f.store.plan(f.receipt.planID)!
+  f.sessions.set("active-target", {
+    ...f.sessions.get(renewal.successor_session_id)!,
+    id: "active-target",
+    parentID: undefined,
+    metadata: {},
+  })
+  const reassign = {
+    requestID: "retired-predecessor-reassign",
+    planID: plan.id,
+    expectedVersion: plan.version,
+    action: "reassign",
+    targetSessionID: "active-target",
+    reason: "Test the retired-owner guard",
+  }
+
+  await expect(f.runtime.command(reassign, "owner")).rejects.toThrow(
+    "retired Architect predecessor",
+  )
+  expect(f.store.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
+  await f.runtime.command(
+    { ...reassign, requestID: "active-owner-reassign" },
+    renewal.successor_session_id,
+  )
+  expect(f.store.plan(plan.id)?.owner).toBe("active-target")
+})
+
+test("input racing native archival remains on the retained source and is referenced to the new owner", async () => {
   const now = 2_000_000_300_000
   const f = fixture({
     delayed: true,
@@ -4265,17 +4539,19 @@ test("input racing native archival is restored, ownership rolls back, and its ha
 
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
   const handoff = f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]
-  expect(renewal.state).toBe("deferred")
+  expect(renewal.state).toBe("committed")
   expect(renewal.input_message_id).toBe("input-during-archive")
-  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
-  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
   expect(f.sessions.get("owner")?.messages.at(-1)?.id).toBe("input-during-archive")
   expect(handoff.find((row) => JSON.parse(row.payload).status === "architect-handoff")?.state).toBe(
-    "superseded",
+    "admitted",
   )
-  expect(f.notifications).toHaveLength(0)
+  expect(
+    f.notifications.some((notification) => notification.text.includes("input-during-archive")),
+  ).toBe(true)
   expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(1)
-  expect(f.events.filter((event) => event === "update-session:owner:false")).toHaveLength(1)
+  expect(f.events.filter((event) => event === "update-session:owner:false")).toHaveLength(0)
 })
 
 test("input on the reserved successor is preserved there without reversing predecessor transfer", async () => {
@@ -4457,7 +4733,7 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
   expect(f.notifications.every((notice) => notice.sessionID === successor)).toBe(true)
 })
 
-test("native archive failure remains visible and retries the same successor safely", async () => {
+test("native archive failure remains visible and retries without restoring predecessor authority", async () => {
   const now = 2_000_000_375_000
   const f = fixture({
     delayed: true,
@@ -4481,15 +4757,15 @@ test("native archive failure remains visible and retries the same successor safe
 
   const failed = f.store.architectRenewalForPlan(f.receipt.planID)!
   const successorID = failed.successor_session_id
-  expect(failed.state).toBe("archive-failed")
+  expect(failed.state).toBe("archiving")
   expect(failed.error).toContain("native archive temporarily unavailable")
-  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(successorID)
   expect(f.sessions.get("owner")?.archived).toBe(false)
   expect(
     f.store.latestTransition<{ error: string }>(
       f.receipt.planID,
       null,
-      "ARCHITECT_RENEWAL_ROLLED_BACK",
+      "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
     )?.error,
   ).toContain("native archive temporarily unavailable")
 
@@ -4609,12 +4885,11 @@ test("a reopened scheduler recovers a durable transfer before archival without c
   expect(f.notifications).toHaveLength(1)
 })
 
-test("a reopened two-scheduler runtime preserves queued synthetic input and rolls back without archiving", async () => {
+test("a reopened two-scheduler runtime archives only after durable transfer and reconciles queued input", async () => {
   const now = 2_000_000_450_000
   const f = fixture({
     delayed: true,
     architectPromptHook: true,
-    architectInputAdmissionSafe: false,
     architectIdleWindowMs: 1_000,
     now: () => now,
     taskFiles: [{ name: "a", path: "a.txt" }],
@@ -4688,10 +4963,12 @@ test("a reopened two-scheduler runtime preserves queued synthetic input and roll
   const reopenedRepository = new TaskRepository(f.repository.path, f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
   const first = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectIdleWindowMs: 1_000,
     architectPromptHook: true,
     now: () => now,
   })
   const second = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectIdleWindowMs: 1_000,
     architectPromptHook: true,
     now: () => now,
   })
@@ -4703,21 +4980,19 @@ test("a reopened two-scheduler runtime preserves queued synthetic input and roll
 
   await Promise.all([first.tick(), second.tick()])
 
-  expect(reopenedStore.architectRenewal(renewal.id)?.state).toBe("deferred")
-  expect(reopenedStore.architectRenewal(renewal.id)?.input_message_id).toBe(foreign.id)
+  expect(reopenedStore.architectRenewal(renewal.id)?.state).toBe("committed")
   expect(JSON.parse(reopenedStore.architectRenewal(renewal.id)!.continuity_json!)).toEqual({
     revision: 1,
     decisions: ["Keep the existing approved implementation direction."],
     unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
   })
-  expect(reopenedStore.plan(plan.id)?.owner).toBe(predecessor.id)
-  expect(predecessor.archived).toBe(false)
-  expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(0)
+  expect(reopenedStore.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
+  expect(predecessor.archived).toBe(true)
+  expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(1)
   expect(f.inbox.get(predecessor.id)).toEqual([foreign])
   expect(reopenedStore.architectRenewalHasInput(renewal.id)).toBe(true)
-  expect(
-    (reopenedStore.detail(plan.id).delivery as { id: string; state: string }[]).find(
-      (row) => row.id === "unsupported-hook-outbox",
-    )?.state,
-  ).toBe("superseded")
+  expect(reopenedStore.architectSourceInputs(predecessor.id)).toContainEqual(
+    expect.objectContaining({ message_id: foreign.id, disposition: "pending" }),
+  )
+  expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(true)
 })

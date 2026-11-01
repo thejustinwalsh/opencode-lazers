@@ -32,7 +32,7 @@ import type {
 import { appendOutboxReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
-import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
+import type { OutcomeOwnership } from "./inbox.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -301,6 +301,17 @@ export class TaskRuntime {
       if (command.action === "reassign") {
         if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
           throw new Error("Reassignment needs an unarchived same-project owner")
+        const retiredSource = db
+          .query<{ present: number }, [string, string, string]>(
+            `SELECT 1 AS present FROM runner_architect_renewals r
+             JOIN runner_architect_renewal_plans rp ON rp.renewal_id=r.id
+             WHERE r.previous_session_id=? AND rp.plan_id=? AND rp.transferred=1
+               AND EXISTS(SELECT 1 FROM runner_plans current WHERE current.id=rp.plan_id AND current.owner<>?)
+             LIMIT 1`,
+          )
+          .get(caller, plan.id, caller)
+        if (caller !== plan.owner && retiredSource)
+          throw new Error("A retired Architect predecessor cannot reassign a transferred plan")
         db.query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=?").run(
           ownerSession.id,
           plan.id,
@@ -740,15 +751,11 @@ export class TaskRuntime {
 
   /** Called by the native prompt hook before OpenCode admits the input to its inbox. */
   async observeArchitectPrompt(sessionID: string, nativeMessageID: string) {
-    const observation = this.store.observeArchitectInput(sessionID, nativeMessageID, this.now())
-    if (
-      !observation.renewal ||
-      observation.role !== "predecessor" ||
-      !["archiving", "recovering-input", "rolling-back"].includes(observation.state ?? "")
-    )
-      return
-    const renewal = this.store.architectRenewal(observation.renewal)
-    if (renewal) await this.restorePredecessorForInput(renewal)
+    this.store.observeArchitectInput(sessionID, nativeMessageID, this.now(), {
+      type: "user",
+      disposition: "prompt",
+      userPrompt: true,
+    })
   }
 
   async recordArchitectContinuity(sessionID: string, input: unknown) {
@@ -771,34 +778,58 @@ export class TaskRuntime {
     }
   }
 
-  private async inspectArchitectInbox(renewal: ArchitectRenewalRow, fence: number) {
-    if (!this.host.outcomeInbox)
-      throw new Error("Native Architect inbox observation is unavailable")
-    const entries = await this.host.outcomeInbox(renewal.previous_session_id)
-    if (!entries.length) return entries
-    const observedAt = this.now()
-    for (const entry of entries)
-      this.store.observeArchitectInput(renewal.previous_session_id, entry.id, observedAt)
-    this.renewalEvent(
-      renewal,
-      "ARCHITECT_RENEWAL_NATIVE_INPUT_OBSERVED",
-      {
-        renewalID: renewal.id,
-        inputIDs: entries.map((entry) => entry.id),
-        types: entries.map((entry) => entry.type),
-      },
-      fence,
+  private async inspectArchitectSourcePage(renewal: ArchitectRenewalRow, fence: number) {
+    if (!this.host.architectInputPage)
+      throw new Error("Native Architect input/history observation is unavailable")
+    const source = this.store.architectSource(renewal.previous_session_id)
+    if (!source) throw new Error("Durable Architect predecessor source is unavailable")
+    const page = await this.host.architectInputPage(
+      renewal.previous_session_id,
+      source.scan_cursor ?? undefined,
     )
-    return entries
+    const result = this.store.recordArchitectSourcePage({
+      schedulerOwner: this.owner,
+      fence,
+      sessionID: renewal.previous_session_id,
+      cursor: source.scan_cursor,
+      nextCursor: page.nextCursor,
+      inbox: page.inbox,
+      messages: page.messages,
+      now: this.now(),
+      projectID: this.projectID,
+    })
+    if (!result) throw new Error("Architect predecessor source changed during reconciliation")
+    if (result.changedInputs.length)
+      this.renewalEvent(
+        renewal,
+        "ARCHITECT_RENEWAL_NATIVE_INPUT_OBSERVED",
+        {
+          renewalID: renewal.id,
+          sourceRevision: result.revision,
+          inputs: result.changedInputs,
+          nextCursor: result.nextCursor,
+        },
+        fence,
+      )
+    return result
   }
 
-  private async preserveQueuedArchitectInputs(renewal: ArchitectRenewalRow, fence: number) {
-    const entries = await this.inspectArchitectInbox(renewal, fence)
-    if (!entries.length) return false
-    const current = this.store.architectRenewal(renewal.id)
-    if (current && ["archiving", "recovering-input", "rolling-back"].includes(current.state))
-      await this.restorePredecessorForInput(current, fence)
-    return true
+  private async reconcileArchitectSources(fence: number) {
+    if (!this.host.architectInputPage) return
+    for (const source of this.store.architectSources()) {
+      const renewal = this.store.architectRenewal(source.renewal_id)
+      if (!renewal) continue
+      try {
+        await this.inspectArchitectSourcePage(renewal, fence)
+      } catch (error) {
+        this.renewalEvent(
+          renewal,
+          "ARCHITECT_SOURCE_SCAN_FAILED",
+          { renewalID: renewal.id, sourceSessionID: source.session_id, error: errorText(error) },
+          fence,
+        )
+      }
+    }
   }
 
   private async withRenewalLock<T>(key: string, run: () => Promise<T>): Promise<T> {
@@ -953,8 +984,7 @@ export class TaskRuntime {
     if (
       !this.architectPromptHook ||
       !this.host.updateSession ||
-      !this.host.outcomeInbox ||
-      !this.host.architectInputAdmissionSafe ||
+      !this.host.architectInputPage ||
       owner.idleAt === undefined ||
       owner.busy ||
       !owner.model ||
@@ -962,8 +992,6 @@ export class TaskRuntime {
     )
       return false
     if (!this.store.architectContinuity(owner.id)) return false
-    const inbox = await this.host.outcomeInbox(owner.id)
-    if (inbox.length) return false
     const labelPlan = PlanInput.parse(JSON.parse(plan.body))
     const label = labelPlan.title ?? labelPlan.objective.slice(0, 120)
     const renewal = this.store.beginArchitectRenewal({
@@ -994,69 +1022,28 @@ export class TaskRuntime {
         if (
           !this.architectPromptHook ||
           !this.host.updateSession ||
-          !this.host.outcomeInbox ||
-          !this.host.architectInputAdmissionSafe
+          !this.host.architectInputPage
         ) {
+          const reason = "Native Architect source reconciliation or archival is unavailable"
           if (renewal.state === "creating") {
-            let observedIDs: string[] = []
-            if (this.host.outcomeInbox) {
-              try {
-                observedIDs = (await this.inspectArchitectInbox(renewal, fence)).map(
-                  (entry) => entry.id,
-                )
-              } catch {
-                // The owner stays live; inbox uncertainty is itself a reason to defer.
-              }
-            }
-            const current = this.store.architectRenewal(renewal.id)
-            if (current?.state === "creating")
-              this.store.setArchitectRenewalState(
-                this.owner,
-                fence,
-                renewal.id,
-                ["creating"],
-                "deferred",
-                "Native input admission cannot be fenced during Architect renewal",
-              )
+            this.store.setArchitectRenewalState(
+              this.owner,
+              fence,
+              renewal.id,
+              ["creating"],
+              "deferred",
+              reason,
+            )
             this.renewalEvent(
               renewal,
               "ARCHITECT_RENEWAL_DEFERRED",
-              {
-                renewalID: renewal.id,
-                reason: "Native input admission cannot be fenced during Architect renewal",
-                observedInputIDs: observedIDs,
-              },
+              { renewalID: renewal.id, reason },
               fence,
             )
             return
           }
           if (renewal.state === "archiving") {
-            if (this.host.updateSession) {
-              let observationError: string | null = null
-              if (this.host.outcomeInbox) {
-                try {
-                  await this.inspectArchitectInbox(renewal, fence)
-                } catch (error) {
-                  observationError = errorText(error)
-                }
-              }
-              await this.rollbackArchitectRenewal(
-                renewal,
-                "deferred",
-                observationError
-                  ? `Native input admission cannot be fenced; inbox snapshot failed: ${observationError}`
-                  : "Native input admission cannot be fenced during Architect renewal",
-                fence,
-              )
-            } else {
-              this.renewalIssue(
-                renewal,
-                "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-                "Native input observation and session restoration are unavailable",
-                {},
-                fence,
-              )
-            }
+            this.renewalIssue(renewal, "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN", reason, {}, fence)
             return
           }
         }
@@ -1087,16 +1074,20 @@ export class TaskRuntime {
             return
           }
           if (renewal.state === "archiving") {
-            await this.rollbackArchitectRenewal(
+            this.renewalIssue(
               renewal,
-              "deferred",
+              "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
               "No explicit Architect decisions/questions checkpoint was recorded",
+              {},
               fence,
             )
             return
           }
         }
         if (renewal.state === "creating") {
+          await this.inspectArchitectSourcePage(renewal, fence)
+          renewal = this.store.architectRenewal(renewal.id)!
+          if (renewal.state !== "creating") return
           let successor = await this.host.session(renewal.successor_session_id)
           if (successor && !this.renewalSuccessorMatches(successor, renewal))
             throw new Error("Native Architect renewal ID belongs to another session or route")
@@ -1122,7 +1113,9 @@ export class TaskRuntime {
           }
           if (!this.renewalSuccessorMatches(successor, renewal))
             throw new Error("Native Architect renewal is unavailable or foreign")
-          if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
+          renewal = this.store.architectRenewal(renewal.id)!
+          if (renewal.state !== "creating") return
+          await this.inspectArchitectSourcePage(renewal, fence)
           renewal = this.store.architectRenewal(renewal.id)!
           if (renewal.state !== "creating") return
 
@@ -1130,12 +1123,7 @@ export class TaskRuntime {
           const tooRecent =
             predecessor?.idleAt === undefined ||
             this.now() - predecessor.idleAt < this.architectIdleWindowMs
-          if (
-            !this.validArchitect(predecessor) ||
-            predecessor.busy ||
-            tooRecent ||
-            this.store.architectRenewalHasInput(renewal.id)
-          ) {
+          if (!this.validArchitect(predecessor) || predecessor.busy || tooRecent) {
             this.store.setArchitectRenewalState(
               this.owner,
               fence,
@@ -1148,7 +1136,6 @@ export class TaskRuntime {
               "ARCHITECT_RENEWAL_DEFERRED",
               {
                 renewalID: renewal.id,
-                inputSeen: this.store.architectRenewalHasInput(renewal.id),
                 busy: predecessor?.busy ?? null,
               },
               fence,
@@ -1161,6 +1148,8 @@ export class TaskRuntime {
           const continuity = this.renewalContinuity(renewal)
           const anchor = this.store.plan(renewal.anchor_plan_id)
           if (!anchor) throw new Error("Architect renewal plan disappeared")
+          const source = this.store.architectSource(renewal.previous_session_id)
+          if (!source) throw new Error("Architect predecessor source disappeared before handoff")
           const payload = {
             status: "architect-handoff",
             planID: renewal.anchor_plan_id,
@@ -1170,6 +1159,12 @@ export class TaskRuntime {
             continuity,
             predecessorSessionID: renewal.previous_session_id,
             successorSessionID: renewal.successor_session_id,
+            sourceRevision: source?.revision ?? 0,
+            sourceCoverage: {
+              sourceSessionID: renewal.previous_session_id,
+              cursor: source?.scan_cursor ?? null,
+              complete: (source?.scan_sweep ?? 0) > 0 && source?.scan_cursor === null,
+            },
           }
           const outboxID = fingerprint({
             kind: "architect-handoff",
@@ -1187,9 +1182,6 @@ export class TaskRuntime {
             lazersStatus: "architect-handoff",
             lazersVersion: anchor.version + 1,
           }
-          if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
-          renewal = this.store.architectRenewal(renewal.id)!
-          if (renewal.state !== "creating") return
           if (
             !this.store.transferArchitectRenewal({
               schedulerOwner: this.owner,
@@ -1208,7 +1200,7 @@ export class TaskRuntime {
         }
 
         if (renewal.state !== "archiving") return
-        if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
+        await this.inspectArchitectSourcePage(renewal, fence)
         renewal = this.store.architectRenewal(renewal.id)!
         if (renewal.state !== "archiving") return
         let successor: HostSession | null
@@ -1235,24 +1227,13 @@ export class TaskRuntime {
           return
         }
         if (successor.archived) {
-          await this.host.updateSession!({ sessionID: successor.id, archived: false })
-          successor = await this.host.session(successor.id)
-          if (!this.renewalSuccessorMatches(successor, renewal)) {
-            this.renewalIssue(
-              renewal,
-              "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
-              "Durable Architect successor did not become active",
-              { successorSessionID: renewal.successor_session_id },
-              fence,
-            )
-            return
-          }
-        }
-        const inputSeen = () =>
-          Boolean(this.store.architectRenewal(renewal!.id)?.input_message_id) ||
-          this.store.architectRenewalHasInput(renewal!.id)
-        if (inputSeen()) {
-          await this.restorePredecessorForInput(renewal, fence)
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
+            "Durable Architect successor was archived before renewal recovery",
+            { successorSessionID: renewal.successor_session_id },
+            fence,
+          )
           return
         }
         const predecessorBeforeArchive = await this.host.session(renewal.previous_session_id)
@@ -1285,17 +1266,15 @@ export class TaskRuntime {
           predecessorBeforeArchive.idleAt === undefined ||
           this.now() - predecessorBeforeArchive.idleAt < this.architectIdleWindowMs
         ) {
-          await this.rollbackArchitectRenewal(
+          this.renewalIssue(
             renewal,
-            "deferred",
+            "ARCHITECT_RENEWAL_ARCHIVE_DEFERRED",
             "Predecessor became busy or recent before archival",
+            { busy: predecessorBeforeArchive.busy, idleAt: predecessorBeforeArchive.idleAt },
             fence,
           )
           return
         }
-        if (await this.preserveQueuedArchitectInputs(renewal, fence)) return
-        renewal = this.store.architectRenewal(renewal.id)!
-        if (renewal.state !== "archiving") return
         let archiveError: string | null = null
         if (!predecessorBeforeArchive.archived) {
           try {
@@ -1332,10 +1311,11 @@ export class TaskRuntime {
           return
         }
         if (!predecessor.archived) {
-          await this.rollbackArchitectRenewal(
+          this.renewalIssue(
             renewal,
-            "archive-failed",
+            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
             archiveError ?? "Native archive was not observed",
+            { predecessorSessionID: renewal.previous_session_id },
             fence,
           )
           return
@@ -1348,22 +1328,20 @@ export class TaskRuntime {
             fence,
           )
         }
-        let nativeInputs: OutcomeInboxEntry[]
         try {
-          nativeInputs = await this.inspectArchitectInbox(renewal, fence)
+          await this.inspectArchitectSourcePage(renewal, fence)
         } catch (error) {
-          await this.rollbackArchitectRenewal(
+          this.renewalIssue(
             renewal,
-            "deferred",
+            "ARCHITECT_SOURCE_SCAN_FAILED",
             `Native inbox could not be verified after archival: ${errorText(error)}`,
+            { sourceSessionID: renewal.previous_session_id },
             fence,
           )
           return
         }
-        if (nativeInputs.length || inputSeen()) {
-          await this.restorePredecessorForInput(renewal, fence)
-          return
-        }
+        const source = this.store.architectSource(renewal.previous_session_id)
+        if (!source) throw new Error("Architect predecessor source disappeared before commit")
         const payload = {
           status: "architect-handoff",
           planID: renewal.anchor_plan_id,
@@ -1372,6 +1350,12 @@ export class TaskRuntime {
           continuity: this.renewalContinuity(renewal),
           predecessorSessionID: renewal.previous_session_id,
           successorSessionID: renewal.successor_session_id,
+          sourceRevision: source?.revision ?? 0,
+          sourceCoverage: {
+            sourceSessionID: renewal.previous_session_id,
+            cursor: source?.scan_cursor ?? null,
+            complete: source.scan_sweep > 0 && source.scan_cursor === null,
+          },
         }
         const committed = this.store.finishArchitectRenewal(
           this.owner,
@@ -1380,9 +1364,13 @@ export class TaskRuntime {
           this.renewalWakeContext(renewal, payload),
         )
         if (!committed) {
-          const current = this.store.architectRenewal(renewal.id)
-          if (current?.input_message_id || this.store.architectRenewalHasInput(renewal.id))
-            await this.restorePredecessorForInput(current ?? renewal, fence)
+          this.renewalIssue(
+            renewal,
+            "ARCHITECT_RENEWAL_COMMIT_UNCERTAIN",
+            "Durable renewal commit was not confirmed after native archival",
+            { predecessorSessionID: renewal.previous_session_id },
+            fence,
+          )
         }
       })
     } catch (error) {
@@ -1566,6 +1554,7 @@ export class TaskRuntime {
       // A lease only selects a reconciler; it never proves an old side effect stopped.
       for (const renewal of this.store.architectRenewalsNeedingRecovery())
         await this.continueArchitectRenewal(renewal, fence)
+      await this.reconcileArchitectSources(fence)
       for (let plan of this.store
         .plans()
         .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))) {
@@ -3176,6 +3165,56 @@ export class TaskRuntime {
         )
         return
       }
+      let safeToRetarget = message.state === "pending"
+      if (!safeToRetarget && priorObservation === "queued" && this.host.cancelOutcome) {
+        try {
+          const originalOwnership =
+            priorOwnership ?? this.createOwnership(message, message.session_id)
+          await this.host.cancelOutcome({
+            sessionID: message.session_id,
+            inboxID: message.message_id,
+            ownership: originalOwnership,
+          })
+          const afterCancellation = await this.outcomeObservation(
+            message,
+            message.session_id,
+            originalOwnership,
+          )
+          if (afterCancellation === "consumed") {
+            this.outcomeState(
+              message,
+              [message.state],
+              "consumed",
+              { kind: "cancellation-raced-with-consumption" },
+              "OUTCOME_CANCEL_RACED_WITH_CONSUMPTION",
+              fence,
+            )
+            return
+          }
+          safeToRetarget = afterCancellation === "missing"
+          if (safeToRetarget) priorObservation = "cancelled-confirmed-by-inbox-and-history-readback"
+        } catch (error) {
+          priorObservation = `cancellation-unconfirmed: ${errorText(error)}`
+        }
+      }
+      if (!safeToRetarget) {
+        this.outcomeState(
+          message,
+          [message.state],
+          priorObservation === "missing" || priorObservation === "unowned"
+            ? "unknown"
+            : message.state,
+          {
+            kind: "owner-changed-with-original-delivery-unresolved",
+            priorSessionID: message.session_id,
+            priorMessageID: message.message_id,
+            priorObservation,
+          },
+          "OUTCOME_OWNER_TRANSFER_UNCERTAIN",
+          fence,
+        )
+        return
+      }
       const owner = await this.ensureArchitectOwner(plan, target)
       // Native message IDs are global. Never reuse an admitted/uncertain ID in
       // another session; persist the replacement identity before host admission.
@@ -3324,6 +3363,13 @@ export class TaskRuntime {
         const older = JSON.parse(message.payload)
         const replacement = ordered.slice(index + 1).findLast((candidate) => {
           const next = JSON.parse(candidate.payload)
+          if (
+            older.status === "architect-handoff" ||
+            older.status === "architect-source-reference" ||
+            next.status === "architect-handoff" ||
+            next.status === "architect-source-reference"
+          )
+            return false
           // Current outcomes include the whole accepted-artifact review set.
           // Legacy partial notices cannot suppress a different actionable result.
           if (older.status === "task-accepted")

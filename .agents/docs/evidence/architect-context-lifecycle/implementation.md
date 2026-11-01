@@ -4,16 +4,20 @@ Task: LZ-28 (`239f45a9-3247-4cba-b339-19c8267d0800`). This records automated
 implementation evidence only; it is not native Desktop dogfood or acceptance of
 the live-session behavior.
 
-## Retained-candidate finding and repair
+## Retained-candidate finding and reconciliation repair
 
 Review of retained candidate `e127d1a5836b65ca6d89dd19974f94249e9df1ed` found
 that queued synthetic input (`resume:false`) can bypass the prompt hook and arrive
-after the last inbox check, leaving input on an archived predecessor. OpenCode
-2.2.5 exposes no atomic public admission/archive barrier. The native adapter now
-declares all-input admission safety unsupported, so automatic renewal does not
-start on this host. Recovery of a persisted renewal checks queued entries and
-rolls ownership back without archival when the barrier is unavailable; an inbox
-snapshot is not represented as an atomic guarantee.
+after the last inbox check. Candidate `8c8f86c` failed closed, but did not deliver
+renewal and is not accepted. The current candidate replaces that assumption with
+the user-approved retain-and-reconcile protocol. It registers the predecessor
+source before native effects, journals inbox/history input IDs and dispositions,
+transfers source responsibility with plan ownership, archives through the pinned
+public client route, and requires archived-state readback. Original queued inputs
+remain on the predecessor and are referenced—not copied—to the current owner with
+`resume:false`. A lost/negative archive response leaves transfer state recoverable
+without restoring predecessor authority. Previously observed queued rows that later
+disappear without a transcript are marked unknown, not cancelled.
 
 The Architect now explicitly records current conversation-only decisions and
 unresolved questions. The structured checkpoint is persisted by project/session,
@@ -32,46 +36,39 @@ worker sessions continuing unchanged. It also covers a shared successor for all
 plans owned by one Architect and concurrent schedulers.
 
 Deterministic races cover prompt input before transfer and queued synthetic input
-after successor creation, after durable transfer, and during native archival.
-Assertions check stable input IDs, inbox preservation, suppressed handoffs,
-current ownership, and predecessor restoration. A process-reopen/two-scheduler
-case preserves queued synthetic input, rolls back the handoff, and leaves the
-predecessor unarchived; a test also proves that the native adapter does not claim
-an admission barrier. Existing cases cover an outcome before transfer, an outcome
-admitted during archival, successor input, visible archive failure and retrying
-the same successor. Reopen recovery resumes a durable transfer without recreating
-the successor or changing workers. Exact continuity decisions/questions are
-asserted in the wake and across reopen. `src/runner/store.test.ts` covers legacy
-database migrations for continuity and the old unique continuation-session
-constraint.
+after successor creation, after durable transfer, during archival, and after the
+predecessor is archived. Tests assert unchanged original IDs/inbox rows, source
+references with `resume:false`, no ownership rollback, no repeated notification,
+and persistent paginated cursors. Two schedulers and process reopen exercise a
+transferred source with late queued input. An archive failure remains visible and
+retries the same successor without restoring old ownership. Existing cases cover
+an outcome before transfer, an outcome admitted during archival, successor input,
+unchanged workers, and explicit continuity across reopen. A retired predecessor
+cannot reclaim a transferred plan through `reassign`, while the current owner can
+still deliberately reassign it. Native adapter tests exercise the public archive
+route/readback and paginated message-list contract using injected client responses;
+they do not substitute for live-host evidence.
+
+`src/runner/store.test.ts` continues to cover legacy database migrations for
+continuity and the old unique continuation-session constraint.
 
 ## Verification run
 
-These checks were run on the retained pre-repair candidate only; they are not
-verification of the current repair:
+On the current working candidate:
 
-- `bun test` — 387 passed, 0 failed across 75 files.
-- `bun run verify` — formatting, lint, and typecheck passed.
-- `git diff --check` — passed.
-
-The GUI suite requires the ignored pinned engine artifact; it was prepared with
-`bun scripts/prepare-engine.ts` before the full test run.
-
-## Current repair verification
-
-- `bun test` — 393 passed, 0 failed across 75 files.
-- `bun run verify` — formatting, lint, and typecheck passed.
-- Focused scheduler/reopen and legacy migration tests passed.
-- `git diff --check` — passed before commit.
+- `bun test src/runner/store.test.ts src/runner/runtime.test.ts src/runner/native.test.ts` — 119 passed, 0 failed.
+- `bun test` — 402 passed, 0 failed across 75 files.
+- `bun run verify` — formatting, lint, and TypeScript checks passed.
+- `bun fmt` — no files changed on the final formatting pass.
+- `git diff --check` — run after the final documentation update.
 
 ## Still required: exact-artifact native dogfood
 
-No live Desktop observations are claimed. Since the pinned native adapter fails
-closed, native idle renewal cannot currently be dogfooded on OpenCode 2.2.5; Root
-must verify the exact artifact and resolve host support before treating renewal as
-available. Other lifecycle behaviors still require Root's exact-artifact checks
-for busy reuse, current-owner routing, input arriving during renewal/archive, and
-unchanged worker sessions. Wake bytes are measured from the exact handoff text. Wake-attributed
+No live Desktop observations are claimed. Root must verify the exact committed
+artifact against real sessions for busy reuse, idle renewal, visible predecessor
+archival, late input/outcome reconciliation, current-owner routing, and unchanged
+worker sessions. Wake bytes are measured from the exact handoff text. Wake-attributed
 tokens and public cache read/write categories remain unknown until a native public
 observation provides them; cumulative session totals are not wake-attributed, and
-no cache hit or savings claim is made.
+no cache hit or savings claim is made. Therefore native-dogfood acceptance remains
+unresolved.
