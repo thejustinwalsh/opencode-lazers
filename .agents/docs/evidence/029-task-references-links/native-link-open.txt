@@ -1,0 +1,297 @@
+Window: "LAZERS attempt trajectory and usage · OpenCode", App: OpenCode.
+0 standard window LAZERS attempt trajectory and usage · OpenCode, Secondary Actions: Raise
+	1 container LAZERS attempt trajectory and usage · OpenCode
+		2 container
+			3 HTML content LAZERS attempt trajectory and usage · OpenCode, URL: oc://renderer/index.html
+				4 container
+					5 container
+						6 button Toggle sidebar
+						7 toggle button Description: Home, Value: 0
+						8 button Search sessions
+						9 button New session
+						10 button O opencode 7h Global OpenCode language server setup
+							11 text O
+							12 text opencode
+							13 text 7h
+							14 text Global OpenCode language server setup
+						15 button O opencode-lazers 11h LAZERS task reconciliation and planning main
+							16 text O
+							17 text opencode-lazers
+							18 text 11h
+							19 text LAZERS task reconciliation and planning
+							20 text main
+						21 button O opencode-lazers 14h Repomix integration for Architect main
+							22 text O
+							23 text opencode-lazers
+							24 text 14h
+							25 text Repomix integration for Architect
+							26 text main
+						27 button O opencode-lazers 15h LAZERS’ durable XState task runner main
+							28 text O
+							29 text opencode-lazers
+							30 text 15h
+							31 text LAZERS’ durable XState task runner
+							32 text main
+						33 text Archived
+						34 button O opencode-lazers 17h LAZERS focused Tasks panel main
+							35 text O
+							36 text opencode-lazers
+							37 text 17h
+							38 text LAZERS focused Tasks panel
+							39 text main
+						40 button O opencode-lazers 17h Retry-safe LAZERS task submission (fork #1) main
+							41 text O
+							42 text opencode-lazers
+							43 text 17h
+							44 text Retry-safe LAZERS task submission (fork #1)
+							45 text main
+						46 button O opencode-lazers 17h Architect eval — Sol High final main
+							47 text O
+							48 text opencode-lazers
+							49 text 17h
+							50 text Architect eval — Sol High final
+							51 text main
+						52 button O opencode-lazers 17h Architect eval — Luna Low main
+							53 text O
+							54 text opencode-lazers
+							55 text 17h
+							56 text Architect eval — Luna Low
+							57 text main
+						58 button O opencode-lazers 17h Architect eval — Luna Max main
+							59 text O
+							60 text opencode-lazers
+							61 text 17h
+							62 text Architect eval — Luna Max
+							63 text main
+						64 button O opencode-lazers 18h Retry-safe LAZERS task submission (fork #2) main
+							65 text O
+							66 text opencode-lazers
+							67 text 18h
+							68 text Retry-safe LAZERS task submission (fork #2)
+							69 text main
+						70 button O opencode-lazers 18h LFM3-Omni-2B WebGPU inference spike main
+							71 text O
+							72 text opencode-lazers
+							73 text 18h
+							74 text LFM3-Omni-2B WebGPU inference spike
+							75 text main
+						76 button O opencode-lazers 18h Retry-safe LAZERS task submission (fork #2) main
+							77 text O
+							78 text opencode-lazers
+							79 text 18h
+							80 text Retry-safe LAZERS task submission (fork #2)
+							81 text main
+						82 button O opencode-lazers 18h Retry-safe LAZERS task submission main
+							83 text O
+							84 text opencode-lazers
+							85 text 18h
+							86 text Retry-safe LAZERS task submission
+							87 text main
+						88 button Working 1
+							89 text Working
+							90 text 1
+						91 button O opencode-lazers LAZERS attempt trajectory and usage main
+							92 text O
+							93 text opencode-lazers
+							94 text Working
+							95 text LAZERS attempt trajectory and usage
+							96 text main
+					97 container
+						98 button Toggle review
+						99 container
+							100 container
+								101 container scrollable content
+									102 container
+										103 pop up button opencode-lazers
+										104 heading LAZERS attempt trajectory and usage, Value: 1
+											105 text LAZERS attempt trajectory and usage
+										106 pop up button More options
+										107 button Local model settings — ready
+										108 button Toggle session context
+											109 image
+											110 text 221k
+										111 pop up button Session details
+									112 container
+										113 container
+											114 button Shell
+												115 container Shell
+											116 container scrollable content
+												117 button Copy
+												118 text git diff --check && git add .agents/docs/evidence/030-grouped-tasks-list/integration-review.md && git commit --only .agents/docs/evidence/030-grouped-tasks-list/integration-review.md -m 'Record passing combined checks and rebuilt native review bundle' && git status --short
+												119 button Copy output
+												120 text [main e3a6f56] Record passing combined checks and rebuilt native review bundle
+ 1 file changed, 13 insertions(+)
+ M .agents/docs/evidence/033-completed-task-audit/live-state-latest.json
+
+										121 button Used 1 lazers_inspect_plan
+											122 container Used 1 lazers_inspect_plan
+												123 text Used 1 lazers_inspect_plan
+										124 container
+											125 button Shell
+												126 container Shell
+											127 container scrollable content
+												128 button Copy
+												129 text bun -e 'import{OpenCode}from"@opencode/client";import{Service}from"@opencode/client/service";const e=await Service.discover();if(!e)throw Error("No existing service");const c=OpenCode.make({baseUrl:e.url,headers:Service.headers(e)});const sessionID="ses_043f3b7202dd41b8bd9bbb7c0b69c805";const s=await c.session.get({sessionID});if(s.metadata?.lazersAttemptID!=="d543a0f7-670a-46eb-8a91-0ca590a0f848"||s.projectID!=="b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df"||s.time.archived)throw Error("Ownership mismatch");if
+												130 button Copy output
+												131 text {
+  "sessionID": "ses_043f3b7202dd41b8bd9bbb7c0b69c805",
+  "messageID": "msg_6310523f64fd438797bfa563d4dd3cfb",
+  "delivery": "steer",
+  "consumption": "unknown",
+  "sameAttempt": true
+}
+
+										132 container
+											133 text GUI rebuilt again; all 353 tests and formatting/lint/types pass. Root’s audit formatting is untouched, grouping remains open for native review, and a focused continuation message went to the same Luna attempt without restarting it.
+											134 button Copy response
+											135 text Architect GPT-6.1 Sol High 1m 38s
+										136 container
+											137 text Respond with just this Markdown link so I can click it in Desktop: [LZ-23](.lazers/tasks/62356461346361646439376535316632663663383866663731646161313030366636613562376466/LZ-23)
+											138 text Architect GPT-6.1 Sol High
+											139 button Rewind to here
+											140 pop up button More actions
+										141 container
+											142 link LZ-23
+												143 text LZ-23
+											144 button Copy response
+											145 text Architect GPT-6.1 Sol High 5s
+							146 container
+								147 pop up button 1 subagent
+								148 button LAZERS microphone: start dictation. Hold ⌃+⇧+Space to talk; Escape cancels.
+								149 button LAZERS speaker: read latest completed response
+								150 pop up button LAZERS automatic read aloud off; shortcut ⌃+⌥+⇧+S
+								151 container
+									152 text entry area (settable) Description: Prompt, Value: ​
+									153 text Ask anything, / for commands, @ for context…
+									154 pop up button Add images and files
+									155 pop up button Choose agent
+									156 button OpenAI / GPT-6.1 Sol
+										157 text OpenAI
+										158 text /
+										159 text GPT-6.1 Sol
+									160 pop up button Choose model variant
+									161 button (disabled) Send
+						162 container Review and files
+							163 container
+								164 tab group
+									165 container
+										166 tab (settable, integer) Radar, Value: 0
+										167 button Close tab
+									168 container
+										169 tab (settable, integer) Trajectory, Value: 0
+										170 button Close tab
+									171 container
+										172 tab (selected) Tasks, Value: 1
+										173 button Close tab
+									174 button Add tab
+								175 button Open in Finder
+								176 pop up button Open options
+								177 container
+									178 heading Tasks, Value: 2
+										179 text Tasks
+									180 image Task updates connected
+									181 pop up button Project · History
+									182 toggle button Description: Search tasks, Value: 0
+								183 container Open tasks
+									184 container Plan 6d1d3afe, 0 active of 1 tasks
+										185 text Plan 6d1d3afe 0 / 1
+										186 toggle button Description: Make LAZERS task submission durably idempotent using an explicit…, accepted, Value: 0
+									187 container Plan 7d903c35, 0 active of 1 tasks
+										188 text Plan 7d903c35 0 / 1
+										189 toggle button Description: Add a read-only Architect tool for redacted worker-attempt trajectory…, accepted, Value: 0
+									190 container Plan bc4d5dc0, 0 active of 2 tasks
+										191 text Plan bc4d5dc0 0 / 2
+										192 toggle button Description: Make admitted workers retrieve readable task instructions as their…, accepted, Value: 0
+										193 toggle button Description: Make worker skills optional, progressively loaded suggestions and put…, accepted, Value: 0
+									194 container Plan e07cea4d, 0 active of 1 tasks
+										195 text Plan e07cea4d 0 / 1
+										196 toggle button Description: Allow any natively authorized caller, including implementation…, accepted, Value: 0
+									197 container Plan b22f1f04, 0 active of 1 tasks
+										198 text Plan b22f1f04 0 / 1
+										199 toggle button Description: Honor user-selected native provider/model/effort without a LAZERS…, cancelled, Value: 0
+									200 container Plan aa71e2c0, 0 active of 1 tasks
+										201 text Plan aa71e2c0 0 / 1
+										202 toggle button Description: Build and refresh one reusable Repomix workspace index as Architect,…, accepted, Value: 0
+									203 container Plan b9e55d09, 1 active of 1 tasks
+										204 text Plan b9e55d09 1 / 1
+										205 toggle button Value: 0, Description: Automatically retain worker execution facts and concise progress…, running: The original worktree effect is conclusively completed on original attempt d543a0f7-670a-46eb-8a91-0ca590a0f848; no native worker/session/prompt had been created. Runtime cancelled only the unsent reservation while its plan remained blocked. Resume that same attempt/worktree/session identity, not retry or a replacement task/worker. Before dispatch, its clean native-created checkout was fast-forwarded from recorded9ab588f to reviewed
+									206 container Plan 519b8e3c, 1 active of 1 tasks
+										207 text Plan 519b8e3c 1 / 1
+										208 toggle button Description: Keep Desktop responsive during local model loading, tokenization and…, failed: Worker interrupted, Value: 0
+									209 container Plan db24c4b4, 0 active of 2 tasks
+										210 text Plan db24c4b4 0 / 2
+										211 toggle button Description: Make an explicit corrected retry baseline govern the next worker…, accepted, Value: 0
+										212 toggle button Description: Honor any user-selected native provider/model/effort through OpenCode,…, accepted, Value: 0
+									213 container Plan 7b602667, 0 active of 1 tasks
+										214 text Plan 7b602667 0 / 1
+										215 toggle button Description: Make Tasks Start launch real work, with truthful state icons, a…, accepted, Value: 0
+									216 container Plan 6ed421e4, 0 active of 1 tasks
+										217 text Plan 6ed421e4 0 / 1
+										218 toggle button Description: Dispatch independent tasks concurrently in owned native isolated…, accepted, Value: 0
+									219 container Plan b50a1a71, 0 active of 5 tasks
+										220 text Plan b50a1a71 0 / 5
+										221 button Expand parallel work under Expose shared scoped read-only GUI projections for live Radar state…
+										222 toggle button Description: Expose shared scoped read-only GUI projections for live Radar state…, accepted, Value: 0
+										223 toggle button Description: Keep last completed final prose speakable during new work and add…, accepted, Value: 0
+										224 toggle button Description: Connect Radar and Trajectory to the shipped native GUI and verify…, accepted, Value: 1
+									225 container Plan 8d505ab3, 0 active of 1 tasks
+										226 text Plan 8d505ab3 0 / 1
+										227 toggle button Description: Place Tasks at the bottom of the extra-panel menu and add an icon to…, accepted, Value: 0
+									228 container Plan 58146c54, 0 active of 2 tasks
+										229 text Plan 58146c54 0 / 2
+										230 toggle button Description: Give tasks durable project-local references, compact submission…, accepted, Value: 0
+										231 toggle button Description: Show recorded sequential work and expandable unambiguous parallel…, accepted, Value: 0
+									232 container Plan 5074d494, 0 active of 1 tasks
+										233 text Plan 5074d494 0 / 1
+										234 toggle button Description: Allow an optional Architect-authored plan title in the versioned plan…, accepted, Value: 0
+									235 container Plan 8253ff59, 1 active of 1 tasks
+										236 text Plan 8253ff59 1 / 1
+										237 toggle button Description: Renew idle Architects through a durable scheduler-owned handoff and…, queued, Value: 0
+									238 container Share Architect context with isolated workers, 0 active of 1 tasks
+										239 text Share Architect context with isolated workers 0 / 1
+										240 toggle button Description: Make Architect-selected published Repomix context readable by an owned…, accepted, Value: 0
+									241 container Coalesce obsolete Architect inbox wakes, 0 active of 1 tasks
+										242 text Coalesce obsolete Architect inbox wakes 0 / 1
+										243 toggle button Description: Prevent obsolete queued LAZERS outcomes from causing redundant…, accepted, Value: 0
+								244 splitter Description: Resize task list, Value: 39
+								245 container
+									246 container Task reference LZ-23
+										247 text LZ-23
+									248 container accepted
+										249 text Accepted
+									250 button Copy task link
+									251 text Prerequisites
+									252 link LZ-20
+										253 text LZ-20
+									254 text ,
+									255 link LZ-21
+										256 text LZ-21
+									257 text ,
+									258 link LZ-22
+										259 text LZ-22
+									260 text Connect Radar and Trajectory to the shipped native GUI and verify their live behavior on actual scheduler work.
+									261 heading Done when, Value: 4
+										262 text Done when
+									263 content list
+										264 container
+											265 text Actual GUI entry registers both optional closable native panels and stores, production RPC data reaches mounted views, and selection/theme/scope/close-reopen/reconnect lifecycle works without duplicate registrations or stale foreign data. Combined GUI build, root integration tests, full tests and quality pass; Tasks and six enabled inference features remain unchanged.
+										266 container
+											267 text Driver observes actual ongoing scheduler task updates in Radar Flow/Timeline and Trajectory attempts/checks/tokens, including failed/retried history and unknown timing/cost. Wide/narrow330px/short pane, selection/search/resize/keyboard/independent scroll and reconnect captures return to Terra and concrete findings are resolved. Recorded overlapping native isolated product workers, all-branch reviewed integration and nonforced owned cleanup establish real fan-out dogfood; absent observations remain unresolve
+									268 disclosure triangle Details
+										269 text Details
+									270 disclosure triangle Activity
+										271 text Activity
+				272 container Notifications alt+T
+	273 close button
+	274 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	275 minimize button
+276 menu bar
+	277 OpenCode
+	278 File
+	279 Edit
+	280 View
+	281 Go
+	282 Window
+	283 Help
+
+The focused UI element is 142 link LZ-23

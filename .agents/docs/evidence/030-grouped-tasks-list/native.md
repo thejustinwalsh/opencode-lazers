@@ -1,5 +1,29 @@
-# Grouped Tasks list — native observation pending
+# Grouped Tasks native review
 
-This increment was not mounted and observed in OpenCode Desktop/Terra. The existing native captures and Terra review in `.agents/docs/evidence/027-observation-panels/native-root-review.md` cover Radar and Trajectory, not this grouped Tasks list; they do not establish its acceptance. No native capture for this increment is recorded here.
+2026-11-01. OpenCode Desktop 2.2.5, native Sol High Architect session
+`ses_e6e0e6239ffdtzIePMeJ1sHA4l`, rebuilt repaired GUI `53ba06f`/`e3a6f56`.
+The earlier Radar/Trajectory observations are separate.
 
-Before treating native acceptance as complete, observe real recorded chain and diamond plans with shared joins and cross-edges; verify session/project filtering, paging, search reveal and restore, completed-history access, keyboard disclosure without row selection, dependency navigation to a filtered prerequisite, and resize at 330 px. Alternate theme/font behavior and reconnect coverage also remain unobserved for this increment. Record the Desktop/Terra versions, screenshots, and any remaining issues here.
+Observed with real recorded project work:
+
+- Tasks remains the bottom extra-panel choice, has a themed icon and closes.
+- Completed history exposes real sequential plans and the five-task b50 plan.
+- Searching LZ-21 reveals its contextual projection parent and actual Radar child,
+  with the filtered sibling explicitly represented as hidden. Selecting that
+  child loads LZ-21, prerequisite LZ-19 and successor LZ-23.
+- Clicking LZ-19 from the filtered inspector clears the search and loads the
+  actual projection details and its LZ-21/22 successor links.
+- The unfiltered b50 root has a disclosure; expanding it records both real Radar
+  and Trajectory branches, retaining speech and assembly on the root lane.
+
+[Search and dependencies](grouped-search-450.png).
+
+**Observed defect:** after scrolling the full history down to b50, toggling its
+parallel disclosure jumps the list to the beginning. [Post-toggle capture](grouped-full-450.png)
+shows the retained LZ-19 inspector and unrelated first rows. Row/link accessibility
+identities also churn during refresh. Root reported the reproducible defect to
+the native Architect for repair in the same task; no replacement worker started.
+
+Whole-plan native review remains open for the repaired disclosure/scroll/focus
+behavior, narrow screenshot and Terra 6.1 High comparison. Paging, full custom-font
+and disconnect/reconnect matrices are not established by this pass.

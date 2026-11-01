@@ -94,8 +94,7 @@ no remaining formatting failure is claimed for this checkpoint. The additional
 repairs are committed as `53ba06f`.
 
 At Root's request the GUI was rebuilt again from that committed source for the
-next native pass. Bundle SHA-256:
-`63842245ee69f03e86220cc1008f49fd7f6d971d3772fee5014618c9fb88a0ff`.
-The build passed, retaining the existing warning boundary above. Root's request
+next native pass. The build passed, retaining the existing warning boundary
+above. Root's request
 to close Tasks/select Radar and click the emitted LZ-23 link is not itself proof
 of navigation; the actual click result remains pending Root's report.

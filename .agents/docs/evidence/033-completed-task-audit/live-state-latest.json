@@ -304,9 +304,7 @@
       "artifact": null,
       "title": null,
       "priority": 5,
-      "afterPlans": [
-        "b9e55d09-7f0d-446a-9a13-fe24133bea70"
-      ],
+      "afterPlans": ["b9e55d09-7f0d-446a-9a13-fe24133bea70"],
       "baseCommit": "9b0ab5efec71fa5935695b92bacf9592a745ef86",
       "workerModel": {
         "providerID": "openai",
