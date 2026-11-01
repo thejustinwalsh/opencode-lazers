@@ -70,3 +70,34 @@ test("keeps the trace ring bounded and clamps shapes and counters", () => {
   expect(events[0]!.actualInputTokens).toBe(10_000_000)
   expect(events[1]!.outputGeneratedTokens).toBe(10_000_000)
 })
+
+test("supports a clocked runtime trace without inventing a request-stage event", () => {
+  let time = 1_000
+  const events: ReturnType<InferenceTraceBuffer["snapshot"]>[number][] = []
+  const trace = startInferenceTrace(
+    {
+      requestID: "renderer:test",
+      configuredEP: "unknown",
+      observedEP: "unknown",
+    },
+    (event) => events.push(event),
+    () => time,
+    null,
+  )
+
+  time += 5_000
+  trace.mark("renderer-lag", { rendererLagMs: 4_500, active: false })
+
+  expect(events).toEqual([
+    {
+      requestID: "renderer:test",
+      stage: "renderer-lag",
+      elapsedMs: 5_000,
+      deltaMs: 5_000,
+      configuredEP: "unknown",
+      observedEP: "unknown",
+      rendererLagMs: 4_500,
+      active: false,
+    },
+  ])
+})

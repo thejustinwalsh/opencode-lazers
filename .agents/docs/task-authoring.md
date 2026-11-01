@@ -22,6 +22,12 @@ skill progressively, subject to OpenCode's normal permission check; an absent or
 denied suggestion does not block a task. An empty applicable list is sufficient.
 Do not fill fields with boilerplate.
 
+Artifact evidence references are workspace-relative paths and may name either a
+file or a directory. A directory establishes presence only when it contains at
+least one readable regular file, at any depth; empty and empty-subdirectory-only
+trees do not qualify. Keep the submitted reference verbatim, including any
+trailing slash. This checks presence, not file contents or Git tracking.
+
 Architect recognizes task, plan or roadmap scope, researches the requested
 outcome, interviews for material unresolved decisions, then creates the tasks
 and dependency graph. The scheduler executes

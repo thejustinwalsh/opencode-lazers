@@ -5,7 +5,12 @@ import { machineVersion, taskMachine } from "../runner/machine.ts"
 import type { RunnerStore } from "../runner/store.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TrajectoryHost } from "../trajectory/native.ts"
-import { inspectTrajectory } from "../trajectory/read.ts"
+import {
+  inspectTrajectory,
+  captureTrajectoryHistory,
+  inspectTrajectoryStatus,
+} from "../trajectory/read.ts"
+import { TrajectoryHistoryCache } from "../trajectory/history.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import type { ObservationChangeTracker } from "./changes.ts"
@@ -17,6 +22,9 @@ import type {
   SnapshotResponse,
   TrajectoryRequest,
   TrajectoryResponse,
+  TrajectoryHistoryRequest,
+  TrajectoryHistoryResponse,
+  TrajectoryStatusRequest,
 } from "./contract.ts"
 
 type PlanRecord = {
@@ -314,13 +322,16 @@ function stateTransitionSet() {
 export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
+  private readonly history: TrajectoryHistoryCache
 
   constructor(
     readonly store: RunnerStore,
     private readonly host: TrajectoryHost,
     private readonly projectID: string,
     readonly secret: Uint8Array,
-  ) {}
+  ) {
+    this.history = new TrajectoryHistoryCache(secret)
+  }
 
   snapshot(scope: ObservationScope, tracker: ObservationChangeTracker): SnapshotResponse {
     const connection = openReadOnlyTrajectoryStore(
@@ -540,6 +551,103 @@ export class ObservationReads {
         projectID: this.projectID,
         scope: scopeView(input.scope),
         boundary: tracker.boundary(after, transitionSequence),
+        report,
+      }
+    } finally {
+      connection.close()
+    }
+  }
+
+  async trajectoryHistory(
+    input: TrajectoryHistoryRequest,
+    tracker: ObservationChangeTracker,
+  ): Promise<TrajectoryHistoryResponse> {
+    const connection = openReadOnlyTrajectoryStore(
+      this.store.repository.path,
+      this.store.repository.projectDirectory,
+    )
+    try {
+      const source = connection.store.atomic((db) =>
+        loadProjectionSource(db, this.store.repository.projectDirectory, input.scope, this.secret),
+      )
+      if (!source.associations.taskIDs.has(input.taskID))
+        throw new Error("No observation in this scope")
+
+      const identity = {
+        projectID: this.projectID,
+        projectDirectory: this.store.repository.projectDirectory,
+        scope: input.scope,
+        taskID: input.taskID,
+        limit: input.limit,
+      }
+      if (input.cursor) return this.history.continue(identity, input.cursor)
+
+      tracker.observeStamp(source.stamp)
+      const nativeRevision = tracker.nativeRevision
+      const report = await captureTrajectoryHistory(
+        connection.store,
+        this.host,
+        this.projectID,
+        { taskID: input.taskID, limit: input.limit },
+        this.secret,
+      )
+      const after = connection.store.atomic((db) =>
+        sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
+      )
+      tracker.observeStamp(after)
+      if (
+        source.stamp.repositoryVersion !== after.repositoryVersion ||
+        source.stamp.sourceFingerprint !== after.sourceFingerprint ||
+        nativeRevision !== tracker.nativeRevision
+      )
+        throw new Error("Observation changed while capturing history; recapture explicitly")
+
+      const boundary = tracker.boundary(after, source.transitions.at(-1)?.id ?? 0)
+      return this.history.capture(identity, report, boundary)
+    } finally {
+      connection.close()
+    }
+  }
+
+  async trajectoryStatus(
+    input: TrajectoryStatusRequest,
+    tracker: ObservationChangeTracker,
+  ): Promise<TrajectoryResponse> {
+    const connection = openReadOnlyTrajectoryStore(
+      this.store.repository.path,
+      this.store.repository.projectDirectory,
+    )
+    try {
+      const source = connection.store.atomic((db) =>
+        loadProjectionSource(db, this.store.repository.projectDirectory, input.scope, this.secret),
+      )
+      if (!source.associations.taskIDs.has(input.taskID))
+        throw new Error("No observation in this scope")
+      tracker.observeStamp(source.stamp)
+      const nativeRevision = tracker.nativeRevision
+      const report = await inspectTrajectoryStatus(
+        connection.store,
+        this.host,
+        this.projectID,
+        input.taskID,
+        this.secret,
+      )
+      const after = connection.store.atomic((db) =>
+        sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
+      )
+      tracker.observeStamp(after)
+      if (
+        source.stamp.repositoryVersion !== after.repositoryVersion ||
+        source.stamp.sourceFingerprint !== after.sourceFingerprint ||
+        nativeRevision !== tracker.nativeRevision
+      )
+        throw new Error("Observation changed while reading status; retry the live update")
+
+      return {
+        schemaVersion: 1,
+        projectID: this.projectID,
+        scope: scopeView(input.scope),
+        boundary: tracker.boundary(after, source.transitions.at(-1)?.id ?? 0),
         report,
       }
     } finally {

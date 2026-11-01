@@ -1,14 +1,16 @@
 import { spawnSync } from "node:child_process"
 import {
   constants,
+  fstatSync,
   lstatSync,
   openSync,
   closeSync,
   mkdirSync,
+  readdirSync,
   renameSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { TaskProposal } from "../task.ts"
 
 export function git(
@@ -190,22 +192,70 @@ export function commitArtifact(
 }
 
 export function artifactExists(directory: string, reference: string): boolean {
-  if (isAbsolute(reference) || reference.includes("://")) return false
+  if (
+    !reference ||
+    isAbsolute(reference) ||
+    reference.startsWith("\\\\") ||
+    reference.includes("://") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(reference)
+  )
+    return false
   const path = resolve(directory, reference)
   const within = relative(directory, path)
   if (within.startsWith("..") || isAbsolute(within)) return false
-  let current = directory
   try {
-    for (const part of within.split("/")) {
+    let current = directory
+    for (const part of within ? within.split(sep) : []) {
       current = join(current, part)
       if (lstatSync(current).isSymbolicLink()) return false
     }
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    closeSync(fd)
-    return lstatSync(path).isFile()
+    const leaf = lstatSync(path)
+    if (leaf.isSymbolicLink()) return false
+    if (leaf.isFile()) return readableRegularFile(path)
+    return leaf.isDirectory() && hasReadableRegularFile(path)
   } catch {
     return false
   }
+}
+
+function readableRegularFile(path: string): boolean {
+  let fd: number | undefined
+  try {
+    const candidate = lstatSync(path)
+    if (candidate.isSymbolicLink() || !candidate.isFile()) return false
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    return fstatSync(fd).isFile()
+  } catch {
+    return false
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
+function hasReadableRegularFile(directory: string): boolean {
+  const pending = [directory]
+  while (pending.length) {
+    const current = pending.pop()!
+    let entries: string[]
+    try {
+      entries = readdirSync(current)
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const path = join(current, entry)
+      let candidate: ReturnType<typeof lstatSync>
+      try {
+        candidate = lstatSync(path)
+      } catch {
+        continue
+      }
+      if (candidate.isSymbolicLink()) continue
+      if (candidate.isDirectory()) pending.push(path)
+      else if (candidate.isFile() && readableRegularFile(path)) return true
+    }
+  }
+  return false
 }
 
 export type CheckReceipt = {

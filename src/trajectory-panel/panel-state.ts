@@ -40,8 +40,13 @@ export type PanelData = {
   report?: TrajectoryReport
   selection: Selection | null
   events: TrajectoryEvent[]
+  liveEvents: TrajectoryEvent[]
+  capturedEventIDs: string[]
+  selectionEventSnapshot?: TrajectoryEvent
   eventCursor: string | null
   totalEvents: number
+  historyCapturedAt: number | null
+  historyExpiresAt: number | null
   loading: boolean
   loadingActivity: boolean
   stale: boolean
@@ -58,7 +63,7 @@ export function selectedAttemptFor(data: PanelData | undefined) {
       ? selection.id
       : selection.kind === "check"
         ? detailedChecks(report).find((check) => checkKey(check) === selection.id)?.attemptID
-        : data.events.find((event) => event.id === selection.id)?.attemptID
+        : selectedEventFor(data)?.attemptID
   return id ? report.attempts.find((attempt) => attempt.id === id) : undefined
 }
 
@@ -69,13 +74,27 @@ const blank = (key = ""): PanelData => ({
   taskReference: null,
   selection: null,
   events: [],
+  liveEvents: [],
+  capturedEventIDs: [],
   eventCursor: null,
   totalEvents: 0,
+  historyCapturedAt: null,
+  historyExpiresAt: null,
   loading: true,
   loadingActivity: false,
   stale: false,
   error: "",
 })
+
+export function selectedEventFor(data: PanelData | undefined) {
+  const selection = data?.selection
+  if (!data || selection?.kind !== "event") return undefined
+  return (
+    data.events.find((event) => event.id === selection.id) ??
+    data.liveEvents.find((event) => event.id === selection.id) ??
+    (data.selectionEventSnapshot?.id === selection.id ? data.selectionEventSnapshot : undefined)
+  )
+}
 
 const delay = (signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -98,6 +117,16 @@ function defaultSelection(report: TrajectoryReport): Selection | null {
   return event ? { kind: "event", id: event.id } : null
 }
 
+function responseMatchesScope(
+  response: { scope: { kind: string; sessionID?: string } },
+  scope: ObservationScope,
+) {
+  return (
+    response.scope.kind === scope.kind &&
+    (scope.kind === "project" || response.scope.sessionID === scope.sessionID)
+  )
+}
+
 export class TrajectoryPanelState {
   data = blank()
   private controller = new AbortController()
@@ -106,6 +135,8 @@ export class TrajectoryPanelState {
   private snapshotRequest = 0
   private taskRequest = 0
   private activityRequest = 0
+  private statusRequest = 0
+  private historyRequest = 0
   private transport?: TrajectoryTransport
   private scope?: ObservationScope
   private projectID = ""
@@ -194,20 +225,10 @@ export class TrajectoryPanelState {
           ? previousTaskID
           : (tasks[0]?.taskID ?? null))
       const taskChanged = taskID !== previousTaskID
-      this.taskController.abort()
-      this.taskController = new AbortController()
-      const taskRequest = ++this.taskRequest
-      this.activityRequest++
+      if (taskChanged) this.beginTask(taskID)
       const taskSignal = AbortSignal.any([signal, this.taskController.signal])
-      const reportData = taskID
-        ? await this.readTask(taskID, taskSignal)
-        : { report: undefined, response: undefined }
-      if (
-        generation !== this.generation ||
-        request !== this.snapshotRequest ||
-        taskRequest !== this.taskRequest ||
-        taskSignal.aborted
-      )
+      const taskRequest = this.taskRequest
+      if (generation !== this.generation || request !== this.snapshotRequest || taskSignal.aborted)
         return
 
       if (this.target)
@@ -216,45 +237,37 @@ export class TrajectoryPanelState {
           {
             taskID: this.target.taskID,
             title: this.target.reference,
-            status: reportData.report?.task.status ?? "unavailable",
+            status: this.data.report?.task.status ?? "loading",
           },
         ]
-
-      const previousSelection = this.data.selection
-      const previousEvent =
-        this.data.selection?.kind === "event"
-          ? this.data.events.find((event) => event.id === this.data.selection!.id)
-          : undefined
-      const events = [...(reportData.report?.trajectory.events ?? [])]
-      if (previousEvent && !events.some((event) => event.id === previousEvent.id))
-        events.push(previousEvent)
-      events.sort((left, right) => {
-        const a = typeof left.at === "number" ? left.at : Number.MAX_SAFE_INTEGER
-        const b = typeof right.at === "number" ? right.at : Number.MAX_SAFE_INTEGER
-        return a - b || left.id.localeCompare(right.id)
-      })
-      const selection = this.reconcileSelection(
-        taskChanged ? null : this.data.selection,
-        reportData.report,
-        events,
-      )
       this.update({
         snapshot,
         tasks,
         taskID,
         taskReference: this.target?.reference ?? null,
-        report: reportData.report,
-        selection,
-        events,
-        eventCursor: reportData.report?.trajectory.nextCursor ?? null,
-        totalEvents: reportData.report?.trajectory.totalEvents ?? 0,
-        loading: false,
-        loadingActivity: false,
-        stale: false,
-        error: "",
       })
-      if (taskChanged || JSON.stringify(selection) !== JSON.stringify(previousSelection))
-        this.selected({ taskID, selection })
+
+      if (!taskID) {
+        this.update({
+          report: undefined,
+          selection: null,
+          events: [],
+          liveEvents: [],
+          capturedEventIDs: [],
+          eventCursor: null,
+          totalEvents: 0,
+          historyCapturedAt: null,
+          historyExpiresAt: null,
+          loading: false,
+          loadingActivity: false,
+          stale: false,
+          error: "",
+        })
+      } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
+        await this.captureHistory(taskID, taskSignal, !taskChanged)
+      } else {
+        await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
+      }
     } catch (error) {
       if (generation === this.generation && request === this.snapshotRequest && !signal.aborted)
         this.update({
@@ -275,22 +288,255 @@ export class TrajectoryPanelState {
     }
   }
 
-  private async readTask(taskID: string, signal: AbortSignal) {
-    const transport = this.transport!
-    const scope = this.scope!
-    const response = await transport.trajectory(scope, taskID, signal)
-    if (signal.aborted) return { report: undefined, response: undefined }
-    if (response.projectID !== this.projectID)
-      throw new Error("Trajectory belongs to another project")
-    const report = parseTrajectoryReport(response)
-    if (report.task.id !== taskID) throw new Error("Trajectory belongs to another task")
-    return { report, response }
+  private beginTask(taskID: string | null) {
+    this.taskController.abort()
+    this.taskController = new AbortController()
+    this.taskRequest++
+    this.statusRequest++
+    this.historyRequest++
+    this.activityRequest++
+    this.update({
+      taskID,
+      taskReference: this.target?.reference ?? null,
+      report: undefined,
+      selection: null,
+      selectionEventSnapshot: undefined,
+      events: [],
+      liveEvents: [],
+      capturedEventIDs: [],
+      eventCursor: null,
+      totalEvents: 0,
+      historyCapturedAt: null,
+      historyExpiresAt: null,
+      loading: taskID !== null,
+      loadingActivity: false,
+      error: "",
+    })
+  }
+
+  private async refreshStatus(
+    taskID: string,
+    signal: AbortSignal,
+    generation = this.generation,
+    taskRequest = this.taskRequest,
+  ) {
+    const transport = this.transport
+    const scope = this.scope
+    if (!transport || !scope || signal.aborted) return
+    const request = ++this.statusRequest
+    try {
+      const response = await transport.status(scope, taskID, signal)
+      if (
+        generation !== this.generation ||
+        taskRequest !== this.taskRequest ||
+        request !== this.statusRequest ||
+        signal.aborted
+      )
+        return
+      if (response.projectID !== this.projectID)
+        throw new Error("Trajectory status belongs to another project")
+      if (!responseMatchesScope(response, scope))
+        throw new Error("Trajectory status belongs to another scope")
+      const statusReport = parseTrajectoryReport(response)
+      if (statusReport.task.id !== taskID)
+        throw new Error("Trajectory status belongs to another task")
+      const captured = this.data.report
+      if (!captured || this.data.taskID !== taskID) return
+      const report: TrajectoryReport = {
+        ...statusReport,
+        coverage: {
+          ...statusReport.coverage,
+          ...captured.coverage,
+          workerProgress: statusReport.coverage.workerProgress,
+        },
+        trajectory: captured.trajectory,
+      }
+      const liveEvents = statusReport.trajectory.events.filter(
+        (event) => event.kind === "commentary" || event.kind.startsWith("worker-"),
+      )
+      const tasks = this.data.tasks.map((task) =>
+        task.taskID === taskID ? { ...task, status: statusReport.task.status } : task,
+      )
+      this.update({
+        report,
+        tasks,
+        liveEvents,
+        loading: false,
+        stale: false,
+        error: "",
+      })
+      const selection = this.reconcileSelection(
+        this.data.selection,
+        report,
+        [
+          ...this.data.events,
+          ...liveEvents,
+          ...(this.data.selectionEventSnapshot &&
+          this.data.selection?.kind === "event" &&
+          this.data.selectionEventSnapshot.id === this.data.selection.id
+            ? [this.data.selectionEventSnapshot]
+            : []),
+        ],
+        this.data.capturedEventIDs,
+      )
+      if (JSON.stringify(selection) !== JSON.stringify(this.data.selection)) {
+        this.update({
+          selection,
+          ...(selection?.kind === "event" ? {} : { selectionEventSnapshot: undefined }),
+        })
+        this.selected({ taskID, selection })
+      }
+    } catch (error) {
+      if (
+        generation === this.generation &&
+        taskRequest === this.taskRequest &&
+        request === this.statusRequest &&
+        !signal.aborted
+      )
+        this.update({ loading: false, stale: true, error: String(error) })
+    }
+  }
+
+  private async captureHistory(taskID: string, signal: AbortSignal, preserveSelection: boolean) {
+    const transport = this.transport
+    const scope = this.scope
+    if (!transport || !scope || signal.aborted) return
+    const generation = this.generation
+    const taskRequest = this.taskRequest
+    const request = ++this.historyRequest
+    this.activityRequest++
+    this.update({ loading: !this.data.report, loadingActivity: false })
+    try {
+      const response = await transport.history(scope, taskID, signal)
+      if (
+        generation !== this.generation ||
+        taskRequest !== this.taskRequest ||
+        request !== this.historyRequest ||
+        signal.aborted
+      )
+        return
+      if (response.projectID !== this.projectID)
+        throw new Error("Captured history belongs to another project")
+      if (!responseMatchesScope(response, scope))
+        throw new Error("Captured history belongs to another scope")
+      let report = parseTrajectoryReport(response)
+      if (report.task.id !== taskID) throw new Error("Captured history belongs to another task")
+      const previousSelection = preserveSelection ? this.data.selection : null
+      const previousEvent =
+        this.data.selection?.kind === "event"
+          ? (this.data.events.find((event) => event.id === this.data.selection!.id) ??
+            (this.data.selectionEventSnapshot?.id === this.data.selection.id
+              ? this.data.selectionEventSnapshot
+              : undefined))
+          : undefined
+      const eventIDs = response.eventIDs ?? report.trajectory.events.map((event) => event.id)
+      const previousIDs = preserveSelection ? this.data.events.map((event) => event.id) : []
+      const selectedID = previousSelection?.kind === "event" ? previousSelection.id : undefined
+      const targetCount = Math.max(
+        preserveSelection ? this.data.events.length : 0,
+        ...[...previousIDs, ...(selectedID ? [selectedID] : [])].flatMap((id) => {
+          const index = eventIDs.indexOf(id)
+          return index < 0 ? [] : [index + 1]
+        }),
+      )
+      const events = [...report.trajectory.events]
+      let eventCursor = report.trajectory.nextCursor
+      while (preserveSelection && events.length < targetCount && eventCursor) {
+        const continuation = await transport.history(
+          scope,
+          taskID,
+          signal,
+          eventCursor,
+          report.trajectory.limit ?? 50,
+        )
+        if (
+          generation !== this.generation ||
+          taskRequest !== this.taskRequest ||
+          request !== this.historyRequest ||
+          signal.aborted
+        )
+          return
+        const continuationReport = parseTrajectoryReport(continuation)
+        if (
+          continuation.projectID !== this.projectID ||
+          !responseMatchesScope(continuation, scope) ||
+          continuationReport.task.id !== taskID ||
+          continuation.capturedAt !== response.capturedAt ||
+          continuation.expiresAt !== response.expiresAt
+        )
+          throw new Error("Recaptured history continuation belongs to another capture")
+        const pageEvents = continuationReport.trajectory.events
+        const expectedIDs = eventIDs.slice(events.length, events.length + pageEvents.length)
+        if (
+          expectedIDs.length !== pageEvents.length ||
+          expectedIDs.some((id, index) => id !== pageEvents[index]?.id)
+        )
+          throw new Error("Recaptured history page order changed; recapture explicitly")
+        events.push(...pageEvents)
+        eventCursor = continuationReport.trajectory.nextCursor
+      }
+      if (preserveSelection)
+        report = {
+          ...report,
+          trajectory: {
+            ...report.trajectory,
+            page: Math.max(1, Math.ceil(events.length / (report.trajectory.limit ?? 50))),
+            events,
+            nextCursor: eventCursor,
+            hasMore: eventCursor !== null,
+          },
+        }
+      const selection = this.reconcileSelection(previousSelection, report, events, eventIDs)
+      const selectionEventSnapshot =
+        selection?.kind === "event"
+          ? (events.find((event) => event.id === selection.id) ??
+            (eventIDs.includes(selection.id) ? previousEvent : undefined))
+          : undefined
+      const tasks = this.data.tasks.map((task) =>
+        task.taskID === taskID ? { ...task, status: report.task.status } : task,
+      )
+      this.update({
+        report,
+        tasks,
+        selection,
+        selectionEventSnapshot,
+        events,
+        liveEvents: [],
+        capturedEventIDs: eventIDs,
+        eventCursor,
+        totalEvents: report.trajectory.totalEvents,
+        historyCapturedAt: response.capturedAt,
+        historyExpiresAt: response.expiresAt,
+        loading: false,
+        loadingActivity: false,
+        stale: false,
+        error: "",
+      })
+      this.selected({ taskID, selection })
+    } catch (error) {
+      if (
+        generation === this.generation &&
+        taskRequest === this.taskRequest &&
+        request === this.historyRequest &&
+        !signal.aborted
+      )
+        this.update({
+          loading: false,
+          loadingActivity: false,
+          stale: true,
+          error:
+            this.target?.taskID === taskID
+              ? `Trajectory for ${this.target.reference} is unavailable: ${String(error)}`
+              : String(error),
+        })
+    }
   }
 
   private reconcileSelection(
     selected: Selection | null,
     report: TrajectoryReport | undefined,
     events: TrajectoryEvent[],
+    knownEventIDs: string[] = [],
   ): Selection | null {
     if (!report) return null
     if (selected) {
@@ -299,7 +545,10 @@ export class TrajectoryPanelState {
         report.attempts.some((attempt) => attempt.id === selected.id)
       )
         return selected
-      if (selected.kind === "event" && events.some((event) => event.id === selected.id))
+      if (
+        selected.kind === "event" &&
+        (events.some((event) => event.id === selected.id) || knownEventIDs.includes(selected.id))
+      )
         return selected
       if (
         selected.kind === "check" &&
@@ -313,34 +562,15 @@ export class TrajectoryPanelState {
   selectTask(taskID: string) {
     if (!this.data.tasks.some((task) => task.taskID === taskID) || taskID === this.data.taskID)
       return
-    this.taskController.abort()
-    this.taskController = new AbortController()
     this.snapshotRequest++
-    this.taskRequest++
-    this.activityRequest++
     this.target = undefined
     this.targetError = ""
-    this.update({
-      taskID,
-      taskReference: null,
-      report: undefined,
-      selection: null,
-      events: [],
-      eventCursor: null,
-      totalEvents: 0,
-      loading: true,
-      loadingActivity: false,
-      error: "",
-    })
+    this.beginTask(taskID)
     this.selected({ taskID, selection: null })
     void this.loadSelectedTask(taskID)
   }
 
   selectTarget(target: TaskTrajectoryTarget) {
-    this.taskController.abort()
-    this.taskController = new AbortController()
-    this.taskRequest++
-    this.activityRequest++
     this.target = target
     this.targetError =
       target.projectID !== this.projectID ||
@@ -348,70 +578,28 @@ export class TrajectoryPanelState {
       this.scope?.kind !== "project"
         ? `Task ${target.reference} is unavailable in this project or scope.`
         : ""
+    this.snapshotRequest++
     this.update({
-      taskID: target.taskID,
-      taskReference: target.reference,
       tasks: [
         ...this.data.tasks.filter((task) => task.taskID !== target.taskID),
         { taskID: target.taskID, title: target.reference, status: "loading" },
       ],
-      report: undefined,
-      selection: null,
-      events: [],
-      eventCursor: null,
-      totalEvents: 0,
+      stale: Boolean(this.targetError),
+      error: this.targetError,
+    })
+    this.beginTask(target.taskID)
+    this.update({
       loading: !this.targetError,
-      loadingActivity: false,
       stale: Boolean(this.targetError),
       error: this.targetError,
     })
     this.selected({ taskID: target.taskID, selection: null })
-    this.snapshotRequest++
     if (!this.targetError) void this.loadSelectedTask(target.taskID)
   }
 
   private async loadSelectedTask(taskID: string) {
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    const generation = this.generation
-    const request = this.taskRequest
-    try {
-      const { report } = await this.readTask(taskID, signal)
-      if (generation !== this.generation || request !== this.taskRequest || signal.aborted) return
-      const selection = report ? defaultSelection(report) : null
-      this.update({
-        report,
-        tasks:
-          this.target?.taskID === taskID
-            ? [
-                ...this.data.tasks.filter((task) => task.taskID !== taskID),
-                {
-                  taskID,
-                  title: this.target.reference,
-                  status: report?.task.status ?? "unavailable",
-                },
-              ]
-            : this.data.tasks,
-        taskReference: this.target?.taskID === taskID ? this.target.reference : null,
-        selection,
-        events: report?.trajectory.events ?? [],
-        eventCursor: report?.trajectory.nextCursor ?? null,
-        totalEvents: report?.trajectory.totalEvents ?? 0,
-        loading: false,
-        stale: false,
-        error: "",
-      })
-      this.selected({ taskID, selection })
-    } catch (error) {
-      if (generation === this.generation && request === this.taskRequest && !signal.aborted)
-        this.update({
-          loading: false,
-          stale: true,
-          error:
-            this.target?.taskID === taskID
-              ? `Trajectory for ${this.target.reference} is unavailable: ${String(error)}`
-              : String(error),
-        })
-    }
+    await this.captureHistory(taskID, signal, false)
   }
 
   selectAttempt(id: string) {
@@ -429,13 +617,33 @@ export class TrajectoryPanelState {
   }
 
   selectEvent(id: string) {
-    if (!this.data.events.some((event) => event.id === id)) return
+    const event =
+      this.data.events.find((item) => item.id === id) ??
+      this.data.liveEvents.find((item) => item.id === id) ??
+      (this.data.selectionEventSnapshot?.id === id ? this.data.selectionEventSnapshot : undefined)
+    if (!event) return
+    this.update({ selectionEventSnapshot: event })
     this.setSelection({ kind: "event", id })
   }
 
   private setSelection(selection: Selection) {
-    this.update({ selection })
+    this.update({
+      selection,
+      ...(selection.kind === "event" ? {} : { selectionEventSnapshot: undefined }),
+    })
     this.selected({ taskID: this.data.taskID, selection })
+  }
+
+  async recaptureActivity() {
+    const taskID = this.data.taskID
+    const transport = this.transport
+    if (!taskID || !transport || !this.scope || this.controller.signal.aborted) return
+    if (!transport.online()) {
+      this.update({ stale: true, error: "Trajectory updates are disconnected." })
+      return
+    }
+    const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
+    await this.captureHistory(taskID, signal, true)
   }
 
   async loadMoreActivity() {
@@ -446,35 +654,71 @@ export class TrajectoryPanelState {
     if (!transport || !scope || !taskID || !cursor || this.data.loadingActivity) return
     const generation = this.generation
     const request = ++this.activityRequest
+    const taskRequest = this.taskRequest
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    const boundary = this.data.snapshot?.boundary
+    const capturedAt = this.data.historyCapturedAt
+    const expiresAt = this.data.historyExpiresAt
+    const limit = this.data.report?.trajectory.limit ?? 50
+    const capturedEventIDs = [...this.data.capturedEventIDs]
+    const loadedEventIDs = this.data.events.map((event) => event.id)
+    if (
+      capturedAt === null ||
+      expiresAt === null ||
+      loadedEventIDs.length > capturedEventIDs.length ||
+      loadedEventIDs.some((id, index) => capturedEventIDs[index] !== id)
+    ) {
+      this.update({
+        stale: true,
+        error: "Captured activity pages are inconsistent; recapture explicitly.",
+      })
+      return
+    }
     this.update({ loadingActivity: true })
     try {
-      const response = await transport.trajectory(scope, taskID, signal, cursor)
-      if (generation !== this.generation || request !== this.activityRequest || signal.aborted)
-        return
-      const latestBoundary = this.data.snapshot?.boundary
+      const response = await transport.history(scope, taskID, signal, cursor, limit)
       if (
-        boundary?.sourceFingerprint !== latestBoundary?.sourceFingerprint ||
-        boundary?.nativeRevision !== latestBoundary?.nativeRevision
-      ) {
-        this.update({ loadingActivity: false })
-        void this.refresh()
+        generation !== this.generation ||
+        taskRequest !== this.taskRequest ||
+        request !== this.activityRequest ||
+        signal.aborted
+      )
         return
-      }
       const report = parseTrajectoryReport(response)
-      if (response.projectID !== this.projectID || report.task.id !== taskID)
+      if (
+        response.projectID !== this.projectID ||
+        !responseMatchesScope(response, scope) ||
+        report.task.id !== taskID ||
+        response.capturedAt !== capturedAt ||
+        response.expiresAt !== expiresAt
+      )
         throw new Error("Activity page belongs to another project or task")
-      const known = new Set(this.data.events.map((event) => event.id))
-      const events = [
-        ...this.data.events,
-        ...report.trajectory.events.filter((event) => !known.has(event.id)),
-      ]
-      events.sort((left, right) => {
-        const a = typeof left.at === "number" ? left.at : Number.MAX_SAFE_INTEGER
-        const b = typeof right.at === "number" ? right.at : Number.MAX_SAFE_INTEGER
-        return a - b || left.id.localeCompare(right.id)
-      })
+      const pageEvents = report.trajectory.events
+      const pageIDs = pageEvents.map((event) => event.id)
+      const offset = this.data.events.length
+      const expectedIDs = capturedEventIDs.slice(offset, offset + pageIDs.length)
+      const nextOffset = offset + pageIDs.length
+      const hasExpectedNextPage = nextOffset < capturedEventIDs.length
+      if (
+        report.trajectory.limit !== limit ||
+        report.trajectory.totalEvents !== capturedEventIDs.length ||
+        pageIDs.length === 0 ||
+        expectedIDs.length !== pageIDs.length ||
+        expectedIDs.some((id, index) => id !== pageIDs[index]) ||
+        (report.trajectory.page !== undefined &&
+          report.trajectory.page !== Math.floor(offset / limit) + 1) ||
+        Boolean(report.trajectory.nextCursor) !== hasExpectedNextPage ||
+        report.trajectory.nextCursor === cursor
+      )
+        throw new Error(
+          "Activity page order changed or cursor did not advance; recapture explicitly",
+        )
+      if (
+        response.eventIDs &&
+        (response.eventIDs.length !== capturedEventIDs.length ||
+          response.eventIDs.some((id, index) => id !== capturedEventIDs[index]))
+      )
+        throw new Error("Activity page belongs to another captured event sequence")
+      const events = [...this.data.events, ...pageEvents]
       this.update({
         events,
         eventCursor: report.trajectory.nextCursor,
@@ -482,7 +726,12 @@ export class TrajectoryPanelState {
         loadingActivity: false,
       })
     } catch (error) {
-      if (generation === this.generation && !signal.aborted)
+      if (
+        generation === this.generation &&
+        taskRequest === this.taskRequest &&
+        request === this.activityRequest &&
+        !signal.aborted
+      )
         this.update({ loadingActivity: false, stale: true, error: String(error) })
     }
   }
@@ -515,6 +764,8 @@ export class TrajectoryPanelState {
     this.snapshotRequest++
     this.taskRequest++
     this.activityRequest++
+    this.statusRequest++
+    this.historyRequest++
     this.controller.abort()
     this.taskController.abort()
     if (this.timer) clearInterval(this.timer)

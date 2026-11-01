@@ -4,6 +4,20 @@ import { ObservationReads } from "./read.ts"
 import { SnapshotOutput } from "./contract.ts"
 import { makeFixture, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
+import type { TrajectoryHost } from "../trajectory/native.ts"
+
+function metadataOnlyHost(fixture: ReturnType<typeof makeFixture>): TrajectoryHost {
+  return {
+    session: (id) => fixture.host.session(id),
+    status: async (id) => {
+      const session = fixture.sessions.get(id)
+      return session
+        ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+        : null
+    },
+  }
+}
 
 test("session snapshots expose actual machine topology and recorded transitions separately, read-only", () => {
   const fixture = makeFixture()
@@ -222,6 +236,230 @@ test("associated task reads resolve references consistently for session queries 
     expect(reads.get({ taskID: "LZ-1", sessionID: "ses-unrelated" })).toEqual({
       status: "not_found",
     })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("captured history pages stay fixed while ten live status reads use no native context", async () => {
+  const fixture = makeFixture()
+  const secret = new Uint8Array(32).fill(5)
+  const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+  tracker.initialize()
+  let contextReads = 0
+  let statusReads = 0
+  const host: TrajectoryHost = {
+    session: async (id: string) => {
+      contextReads++
+      return fixture.host.session(id)
+    },
+    status: async (id: string) => {
+      statusReads++
+      const session = fixture.sessions.get(id)
+      return session
+        ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+        : null
+    },
+  }
+  const reads = new ObservationReads(fixture.store, host, "project", secret)
+  const scope = { kind: "project" as const, sessionID: "ses-owner" }
+  const pageView = (response: Awaited<ReturnType<typeof reads.trajectoryHistory>>) =>
+    response.report.trajectory as {
+      events: Array<{ id: string }>
+      nextCursor: string | null
+      totalEvents: number
+    }
+
+  try {
+    const first = await reads.trajectoryHistory({ scope, taskID, limit: 2 }, tracker)
+    const capturedIDs = first.eventIDs!
+    const contextMessages = [...fixture.sessions.values()].reduce(
+      (total, session) => total + (session.messages?.length ?? 0),
+      0,
+    )
+    expect(capturedIDs.length).toBeGreaterThanOrEqual(8)
+    expect(contextReads).toBe(2)
+
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+    )
+    const failedSession = fixture.sessions.get("ses-failed")!
+    failedSession.tokens = {
+      input: 11,
+      output: 4,
+      reasoning: 3,
+      cache: { read: 6, write: 1 },
+    }
+    failedSession.model = { providerID: "openai", id: "gpt-6.1-sol", variant: "high" }
+
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const native = (type: string, id: string, created: number, content?: string) =>
+      recorder.recordNativeEvent({
+        id,
+        type,
+        created,
+        data: {
+          sessionID: "ses-failed",
+          assistantMessageID: "msg-live",
+          id: "live-tool-call",
+          executed: true,
+          ...(content ? { content: [{ type: "text", text: content }] } : {}),
+        },
+      })
+
+    const loadedIDs = pageView(first).events.map((event) => event.id)
+    let cursor = pageView(first).nextCursor
+    let finalStatus: Awaited<ReturnType<typeof reads.trajectoryStatus>> | undefined
+    let runningSequence: number | undefined
+    for (let refresh = 0; refresh < 10; refresh++) {
+      if (refresh === 1) runningSequence = native("session.tool.called", "live-running", 3000)
+      if (refresh === 3) native("session.tool.success", "live-success", 3010, "finished safely")
+      finalStatus = await reads.trajectoryStatus({ scope, taskID }, tracker)
+      if (refresh === 1) {
+        const statusReport = finalStatus.report as {
+          trajectory: { events: Array<{ id: string; status?: string }> }
+        }
+        expect(
+          statusReport.trajectory.events.find((event) => event.id === `progress:${runningSequence}`)
+            ?.status,
+        ).toBe("running")
+      }
+      if (refresh === 3) {
+        const statusReport = finalStatus.report as {
+          trajectory: { events: Array<{ id: string; status?: string; result?: string }> }
+        }
+        expect(
+          statusReport.trajectory.events.find(
+            (event) => event.id === `progress:${runningSequence}`,
+          ),
+        ).toMatchObject({ status: "succeeded", result: "finished safely" })
+      }
+      if (refresh === 0 || refresh === 2 || refresh === 5) {
+        if (cursor) {
+          const page = await reads.trajectoryHistory({ scope, taskID, limit: 2, cursor }, tracker)
+          loadedIDs.push(...pageView(page).events.map((event) => event.id))
+          cursor = pageView(page).nextCursor
+        }
+      }
+    }
+    expect(statusReads).toBe(20)
+    expect(contextReads).toBe(2)
+    expect(loadedIDs).toEqual(capturedIDs.slice(0, 8))
+    expect(new Set(loadedIDs).size).toBe(loadedIDs.length)
+    expect(capturedIDs).not.toContain(`progress:${runningSequence}`)
+
+    const latest = finalStatus!.report as {
+      attempts: Array<{
+        id: string
+        observedCurrentModel: { providerID: string; id: string; variant?: string } | null
+      }>
+      effort: { tokenUsage: { totalSessions: number }; toolCalls: { count: number } }
+      plans: Array<{ checks: unknown[] }>
+      coverage: { sessionRead: string; fullSessionHistory: string }
+    }
+    expect(
+      latest.attempts.find((attempt) => attempt.id === firstAttemptID)?.observedCurrentModel,
+    ).toEqual({ providerID: "openai", id: "gpt-6.1-sol", variant: "high" })
+    expect(latest.effort.tokenUsage.totalSessions).toBe(2)
+    expect(latest.effort.toolCalls.count).toBe(5)
+    expect(latest.plans[0]?.checks.length).toBeGreaterThan(0)
+    expect(latest.coverage.sessionRead).toContain("session.context was not read")
+    expect(latest.coverage.fullSessionHistory).toBe(
+      "not guaranteed; use explicit warnings and do not infer omitted history",
+    )
+
+    const recaptured = await reads.trajectoryHistory({ scope, taskID, limit: 2 }, tracker)
+    expect(contextReads).toBe(4)
+    expect(recaptured.eventIDs).toContain(`progress:${runningSequence}`)
+    expect(pageView(recaptured).totalEvents).toBeGreaterThan(pageView(first).totalEvents)
+    expect({
+      initial: { contextCalls: 2, messages: contextMessages, events: capturedIDs.length },
+      statusAndPages: {
+        statusRefreshes: 10,
+        continuations: 3,
+        additionalContextCalls: contextReads - 4,
+      },
+      explicitRecapture: {
+        contextCalls: contextReads - 2,
+        messages: contextMessages,
+        events: recaptured.eventIDs!.length,
+      },
+    }).toEqual({
+      initial: { contextCalls: 2, messages: contextMessages, events: capturedIDs.length },
+      statusAndPages: { statusRefreshes: 10, continuations: 3, additionalContextCalls: 0 },
+      explicitRecapture: {
+        contextCalls: 2,
+        messages: contextMessages,
+        events: recaptured.eventIDs!.length,
+      },
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("history and status reads leave durable audits and repository watermarks unchanged", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(3)
+    const reads = new ObservationReads(fixture.store, metadataOnlyHost(fixture), "project", secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const before = fixture.repository.atomic((db) => ({
+      watermark: fixture.repository.version(),
+      audit: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
+        .count,
+      progress: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
+        .get()!.count,
+    }))
+    const scope = { kind: "project" as const, sessionID: "ses-owner" }
+    const first = await reads.trajectoryHistory({ scope, taskID, limit: 2 }, tracker)
+    const cursor = (first.report.trajectory as { nextCursor: string | null }).nextCursor
+    if (cursor) await reads.trajectoryHistory({ scope, taskID, limit: 2, cursor }, tracker)
+    await reads.trajectoryStatus({ scope, taskID }, tracker)
+    const after = fixture.repository.atomic((db) => ({
+      watermark: fixture.repository.version(),
+      audit: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
+        .count,
+      progress: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
+        .get()!.count,
+    }))
+    expect(after).toEqual(before)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("metadata status fails explicitly instead of falling back to session context", async () => {
+  const fixture = makeFixture()
+  try {
+    let fullSessionReads = 0
+    const reads = new ObservationReads(
+      fixture.store,
+      {
+        session: async (id) => {
+          fullSessionReads++
+          return fixture.host.session(id)
+        },
+      },
+      "project",
+      new Uint8Array(32).fill(4),
+    )
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(4),
+      "project",
+    )
+    tracker.initialize()
+    await expect(
+      reads.trajectoryStatus(
+        { scope: { kind: "project", sessionID: "ses-owner" }, taskID },
+        tracker,
+      ),
+    ).rejects.toThrow("Metadata-only trajectory status is unavailable")
+    expect(fullSessionReads).toBe(0)
   } finally {
     fixture.close()
   }
