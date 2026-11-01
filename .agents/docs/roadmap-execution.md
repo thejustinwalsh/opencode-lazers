@@ -76,14 +76,18 @@ Root's real mounted wire response then exposed nullable execution-event basis;
 `214adcb` fixes that targeted schema path with an actual recorder→observation→parser
 regression, preserving null as unknown and rejecting object-valued basis.
 
-The same retained LZ-36 worktree now fast-forwards to **`214adcb`**, including all
-reviewed main/config. Its current artifact is `214adcb`; focused/all/quality/build
-checks pass unchanged and no effects are pending. Runtime v13 holds only for
-`stable-history:human`. This ordinary reviewed integration makes the current graph
+The same retained LZ-36 worktree fast-forwarded to **`214adcb`**, including all
+reviewed main/config. Its last verified artifact is `214adcb`; focused/all/quality/
+build checks passed unchanged with no pending effects. Runtime v13 held only for
+`stable-history:human`. This ordinary reviewed integration makes that graph
 an ancestor case; it does **not** repair the general divergent-baseline bug below.
-Root already rebuilt/mounted `214adcb` at an observed Ready/quiet boundary and is
-checking real LZ-38/LZ-9 reports. **No further main GUI build/reload/activation while
-that mounted capture is in progress.** No human pass has yet been recorded.
+Root rebuilt/mounted `214adcb` at an observed Ready/quiet boundary. Actual LZ-38
+decoding and ordinary LZ-9 history retention worked; expiry exposed RPC/error-state
+recovery defects, not a data reset. The pass ended without acceptance, recorded in
+`evidence/stable-live-trajectory/native-observations.md` at `5dd5d17`. Runtime v16
+is stopped for repair in the same retained attempt. Use concise
+`expiry-repair-brief.md`; deeper research is optional, not a prescribed test harness.
+The next GUI activation needs a coordinated Ready/quiet boundary.
 
 See `evidence/stable-live-trajectory/native-checklist.md` for the original mounted
 gate and `evidence/worker-role-precedence/propagation.md` for effective native-role
@@ -213,9 +217,10 @@ hold. LZ-40 (`44715414-30fd-41cc-bdd4-5fdc7591ad5e`), plan
 `0bab792` preserved role/config and all definitions; independent combined checks
 passed 83 focused tests / 699 assertions, 409 full tests / 3,847 assertions,
 quality and GUI build. Root's later `214adcb` parser correction is retained too.
-LZ-37 task acceptance has now cleared normally; plan v8 reconciliation is completing
-combined verification. Preserve receipts/history and do not force acceptance.
-LZ-37 remains diagnostic clocks only, not a freeze fix.
+LZ-37 task and combined acceptance cleared normally. `be760cb` is integrated v11
+with no pending effects; native registry and filesystem checks confirm its owned
+tree absent after non-forced cleanup. No extra GUI build/reload was performed.
+Preserve receipts/history; this remains clock diagnostics, not a freeze fix.
 
 LZ-28 returned `7e02ce0`; independent native review reproduced five blockers:
 cancellation stuck behind archive recovery, invisible mutable results, concurrent

@@ -56,3 +56,13 @@ responsiveness improves. The regression uses a deterministic clock and isolated
 engine mocks; no diagnostic inference, induced hang, settings change, Desktop
 reload, or live profiler was used. Freeze cause and responsiveness improvement
 remain unproven.
+
+## Reviewed integration
+
+Root and independent native source review cleared `097eab9`; six focused tests
+were independently rerun. Its normal reviewed-main/config descendant `be760cb`
+passed task and combined focused/all/quality/build checks. Source landed in
+`0bab792`, remains in mounted `214adcb`, and runtime records integrated v11.
+Native registry/filesystem checks confirm the owned worker tree was removed
+without force. No additional GUI build/reload was performed for this cleanup.
+This completes clock diagnostics, not freeze or responsiveness proof.
