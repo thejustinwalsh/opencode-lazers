@@ -2,6 +2,22 @@ export interface DisposableModel {
   dispose(): Promise<void>
 }
 
+/** A failed load whose allocated GPU resource could not be proven clean. */
+export class CleanupUncertainError extends Error implements DisposableModel {
+  constructor(
+    private readonly model: DisposableModel,
+    readonly cleanupError: unknown,
+    cause: unknown,
+  ) {
+    super(`GPU cleanup failed; ownership is retained: ${String(cleanupError)}`, { cause })
+    this.name = "CleanupUncertainError"
+  }
+
+  dispose() {
+    return this.model.dispose()
+  }
+}
+
 /** Serializes disposal and allocation. A failed disposal never permits a second GPU allocation. */
 export class ExclusiveModels<M extends Record<string, DisposableModel>> {
   private entry: { kind: keyof M; value: DisposableModel } | undefined
@@ -45,7 +61,16 @@ export class ExclusiveModels<M extends Record<string, DisposableModel>> {
         if (existing) return existing
         await this.evict()
         signal.throwIfAborted()
-        const value = await load()
+        let value: M[K]
+        try {
+          value = await load()
+        } catch (error) {
+          if (error instanceof CleanupUncertainError) {
+            this.entry = { kind, value: error }
+            this.tainted = true
+          }
+          throw error
+        }
         this.entry = { kind, value }
         if (signal.aborted) {
           await this.evict()
@@ -80,7 +105,13 @@ export async function retryLoad<T>(
     try {
       return await run()
     } catch (error) {
-      if (attempt >= 1 || signal.aborted || !recoverable(error)) throw error
+      if (
+        attempt >= 1 ||
+        signal.aborted ||
+        error instanceof CleanupUncertainError ||
+        !recoverable(error)
+      )
+        throw error
       retry("Retrying model load (2/2)")
       await new Promise<void>((resolve, reject) => {
         const abort = () => {
