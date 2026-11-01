@@ -1,4 +1,4 @@
-# LZ-36 mounted observations — acceptance remains open
+# LZ-36 mounted observations — native branches observed
 
 Observed 2026-11-01 in OpenCode Desktop, main session
 `ses_e68a9ed37ffeVqzPWRXN5SB7Uw`, OpenAI GPT-6.1 Sol High.
@@ -100,7 +100,33 @@ error with no resident model recovered through native Reload model to Ready.
 No profiler was armed, service restarted or inference setting changed. This does
 not establish the wider LZ-39 compatibility gate.
 
-A genuinely active selected live-tool completion with its payload open is still
-unobserved. Root switched to the testing LZ-28 worker, but it returned before this
-interaction could be captured. Do not claim that branch or full LZ-36 acceptance.
-The temporary canonical-source hold for this clean observation has been released.
+At this stage a selected live-tool completion was still unobserved: the testing
+LZ-28 worker returned before Root could select it. That branch is now observed
+below. The temporary canonical-source hold for the clean historical observation
+was released; native observations do not themselves change runtime acceptance.
+
+## Genuine selected live-tool completion — observed
+
+Root selected the LIVE running full-test shell in the original LZ-51 worker
+session `ses_905ab276663345f49c74a294292e8c0b`, event sequence `1353381`, and opened
+Payload. Native call identity was `call_ca7bAo2uPjJ1z8kJaHfred0n`. Root then observed
+that same selected event change to **succeeded**, with Payload still expanded and
+the sequence unchanged. The persisted same-sequence completion reports 446 tests,
+4,267 assertions and 78.90 seconds. These are that real shell's results, not a
+replacement LZ-36 verification receipt or evidence of native recovery.
+
+Root made no recapture, task switch, GUI activation, settings change or source edit
+during the transition. Local evidence remains at:
+
+- `/private/tmp/lazers-lz51-selected-live-tool-initial.png`
+- `/private/tmp/lazers-lz51-selected-live-tool-initial.ax.txt`
+- `/private/tmp/lazers-lz51-selected-live-tool-completed.png`
+- `/private/tmp/lazers-lz51-selected-live-tool-completed.ax.txt`
+
+Together with the clean expiry/explicit recapture above, this closes the previously
+unobserved native selected-live-tool branch. Exact historical page union is still
+not inferred from accessibility rows; its ordered-union/bounds proof is supplied
+by focused state/read tests. Original retained attempt, full acceptance and exact
+artifact receipts must be reconciled through normal runtime commands before task
+or plan closure. No further implementation is requested merely to satisfy the
+legacy gate, and the separate inference compatibility gate remains open.

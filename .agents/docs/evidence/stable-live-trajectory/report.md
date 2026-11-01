@@ -26,6 +26,19 @@ The native adapter test separately asserts metadata-only status calls `session.g
 
 Expected expired, evicted, and invalid-cursor failures carry bounded reasons through the declared `trajectory_history_unavailable` RPC error after authorization. The panel decodes the native plain `{type, message, data}` error, retains a separate history-recovery message across healthy status polls, and offers explicit cursorless recapture separately from status retry, including after a transient disconnect before the first successful capture. Regressions verify a successful recapture replaces the old capture, while a failed recapture preserves the old pages, selected event/payload, capture metadata, and history error. Empty or nonadvancing recapture continuations now fail promptly instead of retrying indefinitely and leave the old capture intact. Existing permission-first, cursor-binding, privacy, and read-only checks remain in the focused/full suites.
 
-## Mounted Desktop acceptance — pending
+## Mounted Desktop observations — completed branches, runtime reconciliation pending
 
-The latest source candidate has not been activated or mounted. The previous mounted expiry reproduction on `214adcb` is documented in `native-observations.md`; it is historical evidence of the defect, not proof that this repair works in Desktop. Native RPC error delivery, exact-artifact disclosure/open-state, scroll-anchor, paging continuity during real activity, and expiry/recapture behavior remain unverified. Automated source/state tests and a GUI build do not substitute for those observations.
+Root built and activated reviewed `81660d3`, containing retained repair `3525b115`,
+and observed clean historical continuity, persistent meaningful expiry handling,
+explicit recapture and retained historical selection/expanded payload. The earlier
+14:56:12 capture reset is confounded by source-triggered plugin initialization,
+not established as an ordinary-chat defect. Root subsequently selected LZ-51's
+genuine running full-test shell, sequence `1353381`, opened Payload and observed
+same-sequence success with selection and expansion retained. Details, identities,
+local evidence paths and limitations are in `native-observations.md`.
+
+These are actual mounted observations, not source tests or build acknowledgements.
+Exact loaded-page union remains fixture-proven, not asserted from AX row counts.
+The original retained LZ-36 attempt and its focused/full/quality/build receipts
+still require supported runtime reconciliation and artifact-bound human evidence
+before closure. No new implementation or speculative continuity repair is needed.
