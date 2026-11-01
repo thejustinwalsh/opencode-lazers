@@ -119,6 +119,23 @@ clean verification tree was removed natively too. Evidence is in
   checkpoint. Establish causal evidence and a compatible bounded repair before
   requesting execution; do not conflate absence of a new capture with resolution.
 
+Independent native investigation `ses_e684cfd22ffeA75L4NDI0b8iwj` found a
+diagnostic defect, not a freeze cause: active lag records mix renderer-uptime
+elapsed values into request-relative spans and misuse lag magnitude as event
+delta. LZ-37 (`4971ffe9-9d50-49cd-bdd7-775ffc681c39`), plan
+`8332f91a-b697-4697-993e-8be4740ed9d6`, is admitted independently to correct only
+these trace clocks/correlation boundaries. Production timer-path fake-clock
+regressions, terminal/idle attribution, existing lifecycle/privacy tests and
+full/quality/GUI build are required. No engine/settings/provider/transport change,
+Desktop reload, cancelled-refactor revival or responsiveness improvement is
+authorized by that correction. See `evidence/renderer-trace-clocks/investigation.md`.
+
+During local task review, ordinary enabled inference reported GPU device loss,
+then renderer-heartbeat loss; no semantic pass was established or settings changed.
+A read-only native follow-up is checking existing automatic diagnostics for that
+new incident. It does not establish the earlier freeze's cause or complete any
+native usability gate.
+
 The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not
 evidence that a repair passed. All new UI/native gates require real observation.
