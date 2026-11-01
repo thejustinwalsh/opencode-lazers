@@ -67,8 +67,14 @@ confirm its owned worktree was removed without force. No duplicate activation
 was performed.
 
 Stable live Trajectory is now LZ-36 (`68a72431-87af-4bce-8e7b-77f430aeb100`),
-plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. Its first isolated worker is running,
-attempt `83daf09a-0112-484e-af40-57ff1ff6e554`, after LZ-32 integration. Actual
+plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. First attempt
+`83daf09a-0112-484e-af40-57ff1ff6e554` returned `08b2a47`; focused/all/build passed,
+but quality failed because report.md needed formatting. Runtime started repair
+attempt `29659c51-4151-4c61-8951-4482b6089b7e`. Root and native source review also
+confirmed a stale selected-live inspector: current completion loses to an old
+selection snapshot, including on reselection. That repair is instructed on the
+active second session, alongside removal of checksum-as-proof wording, without
+restart. See `evidence/stable-live-trajectory/selected-live-review.md`. Actual
 observation-file conflicts with Radar remain serialized through runtime.
 It preserves loaded history/disclosures/reading anchor while status/progress
 refreshes independently; repeated status and captured-page reads must add zero
@@ -152,12 +158,66 @@ application-function or `_OrtRun` attribution. Raw exported logs remain local.
 After preserving evidence, Root used Desktop Relaunch only. Real tab interaction
 recovered; all six features remain ON/Ready and idle unload Never. All three
 LZ-28/LZ-36/LZ-37 session/attempt/workspace/model identities survived with new
-activity. Recovery is not a fix. Two native read-only investigations now examine
-the retry/recovery ownership path (`ses_e6832f0c0ffe7SDOnJPdQvMIDh`) and sampled
-stack attribution (`ses_e6832f0b4ffehWZ5fxpIt8FVqd`) independently. No new repair
-scope, broad rewrite, LZ-14 resumption or feature disablement follows merely from
-the last `run` stage. LZ-37 remains diagnostic clocks only; native repeated
-responsiveness acceptance is still outstanding.
+activity. Recovery is not a fix. Native read-only investigations examined the
+retry/recovery ownership path (`ses_e6832f0c0ffe7SDOnJPdQvMIDh`) and sampled stack
+attribution (`ses_e6832f0b4ffehWZ5fxpIt8FVqd`). `sample-analysis.md` preserves the
+unresolved application-function attribution. `recovery-findings.md` records three
+separately reproduced source defects: known-loss rejection can leave a decision
+session reusable before its loss callback, rejected disposal can become later
+false success, and failed-load cleanup can escape ownership. Pending native work
+cannot be treated as terminated merely because its caller timed out.
+
+Plan `e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a` is admitted for compatible repairs:
+
+- LZ-38 (`9a9ff061-b95a-409d-a43e-710dd04bfd30`) is running: preserve resident and
+  failed-load cleanup uncertainty through the actual adapter, retryLoad, exclusive
+  ownership and main lease. Repeated/concurrent disposal must not falsely permit
+  replacement. Native release retry safety after partial failure is not assumed.
+- LZ-39 (`99d6b8cf-1eea-4f6c-98ff-27afcd8a6240`) waits for LZ-38: retire only
+  positively lost decision sessions through existing recovery, with no replay,
+  duplicate recovery or generic-error false positives. Actual-adapter/runtime/
+  broker tests cover callback ordering and pending-run cancellation/ownership.
+
+Shared adapter/tests serialize through that dependency. Scopes avoid LZ-37's
+runtime clock edits and LZ-28/LZ-36 source. Existing settings, engine/provider,
+context limits, loss circuit breaker, worker identities and cancelled LZ-14
+boundary are preserved. No broad rewrite or feature disablement is authorized.
+Repeated native verification on the exact combined artifact remains mandatory:
+three ordinary reviews near eight questions/~2,087 measured tokens with usable
+native navigation, normal question/decision/speech/model switching, unchanged
+all-six-ON/Ready apple-WebGPU idle-Never and preserved workers/history. Record
+completion, correlation and footprint across repetitions. These are recovery
+repairs, not a proven causal freeze fix.
+
+LZ-37 returned `097eab95e592f4e6122c44aa525ef911c94bb9a7`; Root and independent
+native review found no blocking source issue, and native review passed six focused
+tests. Original focused/all/quality/build receipts passed unchanged. Its hold is
+the artifact directory reference: committed verification.md is present, but
+artifactExists accepts only files. LZ-40 (`44715414-30fd-41cc-bdd4-5fdc7591ad5e`),
+plan `aee3ba37-ec68-4c4b-a2ad-b311a9643ff8`, is admitted to repair that generic
+contract mismatch while retaining confinement, rejecting placeholder directories
+and preserving all check/human gates. Do not rewrite LZ-37's immutable task,
+redispatch its worker or repeat its diagnostic implementation. After reviewed
+validator activation at a quiet inference boundary, reconcile existing matching
+receipts normally. Runtime owns actual runner-scope serialization with LZ-28.
+LZ-37 remains diagnostic clocks only, not the freeze fix.
+
+LZ-28 returned `7e02ce0`; independent native review reproduced five blockers:
+cancellation stuck behind archive recovery, invisible mutable results, concurrent
+admission identity conflict, foreign-project recovery and stale checkpoint input
+coverage. See `evidence/architect-context-lifecycle/retained-source-review.md`.
+Do not activate this candidate. Correct it in the same retained attempt and carry
+the user's `2536084` receipt selection fix into that source before final checks.
+Original live renewal/archival/input/outcome proof remains pending. Root is
+available for that proof and LZ-36's mounted UI proof once corrected, reviewed
+candidates can be activated at a quiet inference boundary. Independent retained
+workers must not be restarted.
+
+Root's main `6f4d163` concise task-verification guidance and `74974e9` implementor
+behavior-evidence guidance must survive integration. LZ-36 was instructed to drop
+bundle-checksum-as-mount/evidence language: use the committed candidate and actual
+mounted observations, not file-hash proof. This is an existing requirement, not
+a new acceptance gate or authority to skip already-specified checks.
 
 The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not
