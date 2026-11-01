@@ -519,6 +519,32 @@ export default Plugin.define({
               <p role="status" aria-live="polite">
                 {rendererCapture()?.message ?? "Checking this window’s renderer capture status…"}
               </p>
+              <Show when={rendererCapture()?.stopTrigger}>
+                <p class="lazers-local-meta">
+                  Trigger: {rendererCapture()?.stopTrigger} ·{" "}
+                  {rendererCapture()?.triggeredAt === undefined
+                    ? "time unavailable"
+                    : new Date(rendererCapture()!.triggeredAt!).toISOString()}
+                </p>
+              </Show>
+              <Show when={rendererCapture()?.profilerCommands?.length}>
+                <p class="lazers-local-meta">
+                  Profiler commands:{" "}
+                  {rendererCapture()
+                    ?.profilerCommands?.map(
+                      (command) =>
+                        `${command.method}: ${command.outcome}${command.nativePending ? " (native command pending)" : ""}${command.profilerStateUncertain ? " (profiler may still be running)" : ""} · ${new Date(command.startedAt).toISOString()}–${new Date(command.settledAt).toISOString()}${command.nativeSettledAt === undefined ? "" : ` · native settled ${new Date(command.nativeSettledAt).toISOString()} (${command.nativeOutcome})`}`,
+                    )
+                    .join("; ")}
+                </p>
+              </Show>
+              <Show when={rendererCapture()?.profilerCleanup}>
+                <p class="lazers-local-meta">
+                  Debugger cleanup: {rendererCapture()?.profilerCleanup?.outcome} ·{" "}
+                  {new Date(rendererCapture()!.profilerCleanup!.startedAt).toISOString()}–
+                  {new Date(rendererCapture()!.profilerCleanup!.settledAt).toISOString()}
+                </p>
+              </Show>
               <Show when={rendererCapture()?.lastJobID}>
                 <p class="lazers-local-meta">
                   Target: request {rendererCapture()?.lastRequestID} · job{" "}

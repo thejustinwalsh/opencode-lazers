@@ -29,6 +29,7 @@ class FakeDebugger implements RendererDebugger {
   readonly detachListeners = new Set<(event: unknown, reason: string) => void>()
   stopResponse: unknown = { profile: structuredClone(validProfile) }
   rejectMethod = ""
+  detachThrows = false
   holdStop = false
   resolveStop?: (result: unknown) => void
 
@@ -44,6 +45,7 @@ class FakeDebugger implements RendererDebugger {
 
   detach() {
     this.calls.push("detach")
+    if (this.detachThrows) throw new Error("detach refused")
     this.attached = false
   }
 
@@ -322,10 +324,207 @@ test("late stop replies after timeout cannot repeat detach or turn failure into 
   expect(manager.status(1).captured).toBe(false)
   expect(transport.attached).toBe(true)
   expect(transport.calls.filter((method) => method === "detach")).toHaveLength(1)
-  expect(JSON.parse(writes.find((write) => write.path.endsWith(".json"))!.data)).toMatchObject({
+  const metadata = JSON.parse(writes.filter((write) => write.path.endsWith(".json")).at(-1)!.data)
+  expect(metadata).toMatchObject({
     captured: false,
     failure: "profiler-stop",
   })
+})
+
+test("no-job expiry preserves a failed stop command instead of replacing it with job-not-seen", async () => {
+  const { manager, writes } = fixture({ nextJobMs: 10 })
+  const transport = new FakeDebugger()
+  transport.rejectMethod = "Profiler.stop"
+  await manager.arm(21, { debugger: transport }, { ...correlation, windowID: 21 })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  const result = manager.status(21)
+  expect(result).toMatchObject({
+    state: "complete",
+    captured: false,
+    reason: "error",
+    failure: "profiler-stop",
+    stopTrigger: "next-job-timeout",
+    triggeredAt: expect.any(Number),
+    profilerCommands: [
+      { method: "Profiler.enable", outcome: "succeeded" },
+      { method: "Profiler.setSamplingInterval", outcome: "succeeded" },
+      { method: "Profiler.start", outcome: "succeeded" },
+      {
+        method: "Profiler.stop",
+        outcome: "failed",
+        startedAt: expect.any(Number),
+        profilerStateUncertain: true,
+      },
+    ],
+    profilerCleanup: {
+      outcome: "detached",
+      startedAt: expect.any(Number),
+      settledAt: expect.any(Number),
+    },
+  })
+  const metadata = JSON.parse(writes.filter((write) => write.path.endsWith(".json")).at(-1)!.data)
+  expect(metadata).toMatchObject({
+    reason: "error",
+    failure: "profiler-stop",
+    armedCapture: {
+      stopTrigger: "next-job-timeout",
+      triggeredAt: expect.any(Number),
+      profilerCleanup: { outcome: "detached" },
+    },
+  })
+  expect(metadata.armedCapture.profilerCommands.at(-1)).toMatchObject({
+    method: "Profiler.stop",
+    outcome: "failed",
+    profilerStateUncertain: true,
+  })
+})
+
+test("a detach failure remains visible when no job was seen and cannot claim capture success", async () => {
+  const { manager, writes } = fixture()
+  const transport = new FakeDebugger()
+  transport.detachThrows = true
+  await manager.arm(22, { debugger: transport }, { ...correlation, windowID: 22 })
+
+  const result = await manager.stop(22)
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "cleanup-failed",
+    failure: "profiler-cleanup",
+    stopTrigger: "manual-disarm",
+    profilerCleanup: {
+      outcome: "failed",
+      startedAt: expect.any(Number),
+      settledAt: expect.any(Number),
+    },
+  })
+  expect(result.profilerCommands?.at(-1)).toMatchObject({
+    method: "Profiler.stop",
+    outcome: "succeeded",
+  })
+  const metadata = JSON.parse(writes.filter((write) => write.path.endsWith(".json")).at(-1)!.data)
+  expect(metadata).toMatchObject({
+    captured: false,
+    reason: "cleanup-failed",
+    failure: "profiler-cleanup",
+    armedCapture: {
+      stopTrigger: "manual-disarm",
+      profilerCleanup: { outcome: "failed" },
+    },
+  })
+  expect(writes.some((write) => write.path.endsWith(".cpuprofile"))).toBe(false)
+})
+
+test("disarm aborts diagnostic intent but retains pending CDP ownership through late start settlement", async () => {
+  const { manager, writes } = fixture()
+  const transport = new FakeDebugger()
+  let releaseEnable!: () => void
+  let reachedEnable!: () => void
+  let holdInitialEnable = true
+  const enableReached = new Promise<void>((resolve) => (reachedEnable = resolve))
+  transport.sendCommand = async (method) => {
+    transport.calls.push(method)
+    if (method === "Profiler.enable" && holdInitialEnable) {
+      holdInitialEnable = false
+      reachedEnable()
+      await new Promise<void>((resolve) => (releaseEnable = resolve))
+    }
+    return method === "Profiler.stop" ? { profile: structuredClone(validProfile) } : {}
+  }
+
+  const arming = manager.arm(23, { debugger: transport }, { ...correlation, windowID: 23 })
+  await enableReached
+  const disarmed = await manager.stop(23)
+  const firstCaptureID = disarmed.captureID
+  const firstPath = disarmed.path!
+  expect(disarmed).toMatchObject({
+    state: "complete",
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-enable",
+    stopTrigger: "manual-disarm",
+    profilerCommands: [{ method: "Profiler.enable", outcome: "aborted", nativePending: true }],
+    profilerCleanup: { outcome: "detached" },
+  })
+  expect(transport.calls.filter((method) => method === "Profiler.stop")).toHaveLength(0)
+
+  const blocked = await manager.arm(23, { debugger: transport }, { ...correlation, windowID: 23 })
+  expect(blocked).toMatchObject({ captured: false, reason: "profiler-command-pending" })
+  expect(transport.calls.filter((method) => method === "attach")).toHaveLength(1)
+
+  releaseEnable()
+  await arming
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const lateMetadata = JSON.parse(writes.filter((write) => write.path === firstPath).at(-1)!.data)
+  expect(lateMetadata.armedCapture.profilerCommands[0]).toMatchObject({
+    outcome: "aborted",
+    nativePending: false,
+    nativeOutcome: "succeeded",
+    nativeSettledAt: expect.any(Number),
+  })
+
+  const retried = await manager.arm(23, { debugger: transport }, { ...correlation, windowID: 23 })
+  expect(retried.state).toBe("waiting")
+  expect(retried.captureID).not.toBe(firstCaptureID)
+  expect(manager.status(23).captureID).toBe(retried.captureID)
+  expect(transport.calls.filter((method) => method === "attach")).toHaveLength(2)
+  expect(transport.calls.filter((method) => method === "detach")).toHaveLength(1)
+  expect(transport.attached).toBe(true)
+  await manager.stop(23)
+})
+
+test("a late successful Profiler.start keeps unresolved profiler ownership reserved", async () => {
+  const { manager, writes } = fixture()
+  const transport = new FakeDebugger()
+  let releaseStart!: () => void
+  let reachedStart!: () => void
+  const startReached = new Promise<void>((resolve) => (reachedStart = resolve))
+  transport.sendCommand = async (method) => {
+    transport.calls.push(method)
+    if (method === "Profiler.start") {
+      reachedStart()
+      await new Promise<void>((resolve) => (releaseStart = resolve))
+    }
+    return {}
+  }
+
+  const arming = manager.arm(24, { debugger: transport }, { ...correlation, windowID: 24 })
+  await startReached
+  const disarmed = await manager.stop(24)
+  const firstPath = disarmed.path!
+  expect(disarmed).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+    profilerCommands: [
+      { method: "Profiler.enable", outcome: "succeeded" },
+      { method: "Profiler.setSamplingInterval", outcome: "succeeded" },
+      {
+        method: "Profiler.start",
+        outcome: "aborted",
+        nativePending: true,
+        profilerStateUncertain: true,
+      },
+    ],
+    profilerCleanup: { outcome: "detached" },
+  })
+
+  releaseStart()
+  await arming
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const lateMetadata = JSON.parse(writes.filter((write) => write.path === firstPath).at(-1)!.data)
+  expect(lateMetadata.armedCapture.profilerCommands.at(-1)).toMatchObject({
+    method: "Profiler.start",
+    outcome: "aborted",
+    nativePending: false,
+    nativeOutcome: "succeeded",
+    profilerStateUncertain: true,
+  })
+
+  const retry = await manager.arm(24, { debugger: transport }, { ...correlation, windowID: 24 })
+  expect(retry).toMatchObject({ captured: false, reason: "profiler-state-uncertain" })
+  expect(transport.calls.filter((method) => method === "attach")).toHaveLength(1)
+  expect(transport.attached).toBe(false)
 })
 
 test("an external debugger detach finalizes without detaching a subsequent owner", async () => {

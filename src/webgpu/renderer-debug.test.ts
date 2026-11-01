@@ -4,6 +4,8 @@ import { captureRendererDebug } from "./renderer-debug.ts"
 class FakeDebugger {
   attached = false
   readonly calls: string[] = []
+  rejectMethod = ""
+  detachThrows = false
   stopResponse: unknown = {
     profile: {
       nodes: [
@@ -49,11 +51,13 @@ class FakeDebugger {
 
   detach() {
     this.calls.push("detach")
+    if (this.detachThrows) throw new Error("detach refused")
     this.attached = false
   }
 
   async sendCommand(method: string) {
     this.calls.push(method)
+    if (method === this.rejectMethod) throw new Error(`${method} refused`)
     if (method === "Profiler.stop") return this.stopResponse
     return {}
   }
@@ -167,6 +171,93 @@ test("persists profiler stop timeout as a failure and always detaches", async ()
     "Profiler.stop",
     "detach",
   ])
+})
+
+test("a stop-command rejection stays distinct from successful debugger cleanup", async () => {
+  const transport = new FakeDebugger()
+  transport.rejectMethod = "Profiler.stop"
+  const writes: { path: string; data: string }[] = []
+  const result = await captureRendererDebug(
+    options(transport, {
+      write: async (path: string, data: string) => writes.push({ path, data }),
+    }),
+  )
+
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "error",
+    failure: "profiler-stop",
+    profilerDiagnostics: {
+      commands: [
+        { method: "Profiler.enable", outcome: "succeeded" },
+        { method: "Profiler.start", outcome: "succeeded" },
+        {
+          method: "Profiler.stop",
+          outcome: "failed",
+          startedAt: expect.any(Number),
+          settledAt: expect.any(Number),
+          profilerStateUncertain: true,
+        },
+      ],
+      cleanup: {
+        outcome: "detached",
+        startedAt: expect.any(Number),
+        settledAt: expect.any(Number),
+      },
+    },
+  })
+  expect(JSON.parse(writes.find((write) => write.path.endsWith(".json"))!.data)).toMatchObject({
+    captured: false,
+    failure: "profiler-stop",
+    profilerDiagnostics: {
+      commands: [
+        { method: "Profiler.enable" },
+        { method: "Profiler.start" },
+        { method: "Profiler.stop", outcome: "failed", profilerStateUncertain: true },
+      ],
+      cleanup: { outcome: "detached" },
+    },
+  })
+})
+
+test("a detach failure prevents reporting a successful profile or cleanup", async () => {
+  const transport = new FakeDebugger()
+  transport.detachThrows = true
+  const writes: { path: string; data: string }[] = []
+  const result = await captureRendererDebug(
+    options(transport, {
+      write: async (path: string, data: string) => writes.push({ path, data }),
+    }),
+  )
+
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "cleanup-failed",
+    failure: "profiler-cleanup",
+    profilerDiagnostics: {
+      cleanup: {
+        outcome: "failed",
+        startedAt: expect.any(Number),
+        settledAt: expect.any(Number),
+      },
+    },
+  })
+  expect(result.profilerDiagnostics?.commands.at(-1)).toMatchObject({
+    method: "Profiler.stop",
+    outcome: "succeeded",
+  })
+  expect(writes.some((write) => write.path.endsWith(".cpuprofile"))).toBe(false)
+  const metadata = JSON.parse(writes.find((write) => write.path.endsWith(".json"))!.data)
+  expect(metadata).toMatchObject({
+    captured: false,
+    reason: "cleanup-failed",
+    failure: "profiler-cleanup",
+    profilerDiagnostics: { cleanup: { outcome: "failed" } },
+  })
+  expect(metadata.profilerDiagnostics.commands.at(-1)).toMatchObject({
+    method: "Profiler.stop",
+    outcome: "succeeded",
+  })
 })
 
 test("abort races the active profiler command and detaches", async () => {

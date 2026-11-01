@@ -59,8 +59,31 @@ test("armed-capture status IPC stays bounded and content-free", () => {
       lastRequestID: "request-1",
       lastJobID: "job-1",
       stageCount: 2,
+      stopTrigger: "manual-disarm",
+      outcome: "failed",
+      triggeredAt: 1_793_561_971_174,
+      profilerCommands: [
+        {
+          method: "Profiler.start",
+          outcome: "timed-out",
+          startedAt: 1_793_561_971_174,
+          settledAt: 1_793_561_973_174,
+          nativePending: true,
+          profilerStateUncertain: true,
+        },
+      ],
+      profilerCleanup: {
+        outcome: "detached",
+        startedAt: 1_793_561_973_174,
+        settledAt: 1_793_561_973_174,
+      },
     }),
-  ).toMatchObject({ state: "recording", lastJobID: "job-1" })
+  ).toMatchObject({
+    state: "recording",
+    lastJobID: "job-1",
+    profilerCommands: [{ outcome: "timed-out", nativePending: true, profilerStateUncertain: true }],
+    profilerCleanup: { outcome: "detached" },
+  })
   expect(() =>
     decodeStatus({ state: "recording", message: "x", stageCount: 2, prompt: "secret" }),
   ).toThrow()
@@ -97,6 +120,7 @@ class FakeBrowserWindow extends EventEmitter {
 class FakeDebugger implements RendererDebugger {
   attached = false
   readonly calls: string[] = []
+  rejectMethod = ""
 
   isAttached() {
     return this.attached
@@ -114,6 +138,7 @@ class FakeDebugger implements RendererDebugger {
 
   async sendCommand(method: string) {
     this.calls.push(method)
+    if (method === this.rejectMethod) throw new Error(`${method} refused`)
     if (method === "Profiler.stop")
       return {
         profile: {
@@ -335,6 +360,34 @@ test("armed unresponsive capture finalizes its owner instead of starting automat
   )
   expect(fixture.transport?.calls.filter((method) => method === "Profiler.stop")).toHaveLength(1)
   expect(fixture.transport?.calls.filter((method) => method === "detach")).toHaveLength(1)
+  for (const fn of fixture.cleanup.reverse()) fn()
+  if (typeof fixture.stop === "function") await fixture.stop()
+})
+
+test("failed armed startup suppresses automatic CDP fallback across unresponsive/responsive events", async () => {
+  const logs: LogEntry[] = []
+  const fixture = makeMainFixture((entry) => logs.push(entry), true)
+  fixture.transport!.rejectMethod = "Profiler.enable"
+  const failed = await fixture.implementation.armRendererCapture(undefined, { window: 17 })
+  expect(failed).toMatchObject({
+    state: "complete",
+    captured: false,
+    reason: "error",
+    failure: "profiler-enable",
+    stopTrigger: "arming-failure",
+  })
+
+  fixture.window.emit("unresponsive")
+  fixture.window.emit("responsive")
+  fixture.window.emit("unresponsive")
+  fixture.otherWindow.emit("unresponsive")
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  const automatic = logs.filter((entry) => entry.message === "LAZERS renderer debugger capture")
+  expect(automatic).toHaveLength(1)
+  expect(automatic[0]?.data?.windowID).toBe(18)
+  expect(fixture.transport?.calls.filter((method) => method === "attach")).toHaveLength(1)
+  expect(fixture.transport?.calls.filter((method) => method === "Profiler.enable")).toHaveLength(1)
   for (const fn of fixture.cleanup.reverse()) fn()
   if (typeof fixture.stop === "function") await fixture.stop()
 })
