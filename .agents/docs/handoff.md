@@ -5,8 +5,13 @@
 and the [new audit and next phases](production-audit-and-next-phases.md).
 The durable snapshot below is timestamped; inspect current state before acting.
 Current reviewed priorities and decisions are in [the phase plan](phase-review-plan.md).
-LZ-28 has since returned and is blocked at v10 on the retained input-safety finding;
-see [its review](evidence/architect-context-lifecycle/review.md).
+LZ-28 returned with a retained input-safety finding; the new roadmap Architect
+subsequently adopted its plan and cancelled unsafe verification to prepare repair.
+See [its review](evidence/architect-context-lifecycle/review.md) and the newer
+[natural roadmap observation](evidence/037-roadmap-planning/native.md).
+That new Desktop Architect owns ses_e68a9ed37ffeVqzPWRXN5SB7Uw; it dispatched
+LZ-31 privacy repair through the scheduler to a real Luna Max Systems implementor.
+The checkpoint below predates this work.
 
 ## Current execution
 

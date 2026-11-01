@@ -42,3 +42,29 @@ and mandatory detailed briefs. Its loading alone does not establish that those
 instructions changed this run's behavior. Inspect the actual resulting tasks and
 handoff before attributing a failure or changing skill discovery. Preserve the
 concise LAZERS runtime/agent ownership contract.
+
+## First actual handoff
+
+Architect submitted LZ-31 (`83a61fc2-88f5-40d2-97a7-f39c37b2bb13`), a focused
+trajectory-privacy repair with two acceptance assertions and concrete source
+findings. It submitted plan `fdba0229-dbe5-4ebf-8fb4-0c39c1e1390c`, then issued
+`lazers_plan_command(run)`; runtime acknowledged running v2. The scheduler created
+native implementor `ses_ca5a342d86d4441381f0077dca7b7b9d`, attempt
+`2d93160b-bb03-4354-beec-9c9e43121a33`, in its native isolated worktree. Native
+readback confirms openai/gpt-6-luna#max. The plan selects Systems persona.
+This proves a real scheduler handoff, not multi-task dependency quality yet.
+
+Architect also reassigned the retained LZ-28 plan to this session (v11), then
+cancelled unsafe candidate verification through a runtime command (v12), with
+explicit intent to repair the same task lineage. Desktop shows its node cancelled;
+a subsequent repair attempt has not yet been observed here.
+
+The first privacy self-review exposed an incorrect checklist scope: acceptance
+was compared against the entire parent request. Root corrected coverage and
+cancellation/performance applicability to this task's objective, retaining original
+intent and separate plan acceptance. Changed checklist records require a new
+review ID with an explicit recovery instruction. Commit 9d043bf: 377 tests / 3,454
+assertions and all quality checks pass. The native reload happened between tool
+calls and marked a generation interrupted, but native work resumed. Root cleared
+an unsent Continue draft; native context still contains only the original natural
+user prompt. No coaching follow-up was sent in this session.
