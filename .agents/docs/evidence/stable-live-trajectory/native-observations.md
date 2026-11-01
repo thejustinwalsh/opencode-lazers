@@ -58,3 +58,28 @@ the retained LZ-36 work. No mounted acceptance was recorded. Outstanding proof
 includes meaningful expiry recovery, selected live-tool completion with an open
 payload, historical reading continuity, and explicit recapture. The full native
 checklist remains the acceptance procedure.
+
+## Reviewed candidate 81660d3 — further native continuity failure
+
+Root built the reviewed source and used native Reload Webview on 2026-11-01.
+The retained LZ-9 target displayed all four attempts. A second history page loaded;
+the 10:01:41 read-error event was selected and its payload opened. Offscreen AX
+rows do not establish an exact loaded-page union. Source reviewers independently
+passed the corrected panel-state tests (14 tests / 143 assertions); the two prior
+recapture reachability/unchanged-cursor blockers are fixed in source.
+
+The first capture displayed 14:52:53–14:57:53 EST. Settings navigation retained the
+target and event selection, but the capture then displayed 14:53:54–14:58:54.
+Root reopened Captured activity, continued normal Architect chat and sent its
+activation observation. No later task/scope change, explicit Recapture history or
+GUI reload occurred. The disclosure later appeared closed. Reopening it displayed
+another capture, 14:56:12–15:01:12. Therefore the expiry deadline reset without an
+explicit recapture during ordinary work. This is a native continuity failure;
+its reactive/session-connection cause is not yet established. Root returned these
+facts through Desktop. Do not accept LZ-36 or claim expiry recovery from this pass.
+Local screenshot: `/private/tmp/lazers-trajectory-81660d3-before-expiry.png`.
+
+All six local inference switches remained ON and idle Never. A post-reload abort
+error with no resident model recovered through native Reload model to Ready.
+No profiler was armed, service restarted or inference setting changed. This
+recovery does not establish the wider LZ-39 compatibility gate.
