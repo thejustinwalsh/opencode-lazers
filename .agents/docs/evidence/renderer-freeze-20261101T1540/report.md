@@ -72,3 +72,8 @@ selecting a compatible repair and discriminating checks. Preserve working local
 features and independent workers. The earlier cancellation of the abandoned
 LZ-14 refactor/stash still stands; this evidence does not automatically revive it.
 Actual cause, repaired behavior and repeated native acceptance remain unfinished.
+
+Native [sample analysis](sample-analysis.md) records the dominant unsymbolized
+path, separates earlier JS-heap data from sample-time process footprint, and
+explains why existing source maps cannot recover missing JIT-address mappings.
+It provides no application-function attribution or freeze-fix claim.
