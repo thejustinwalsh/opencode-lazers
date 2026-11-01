@@ -1,3 +1,43 @@
+import type { SnapshotResponse } from "../observability/contract.ts"
+import { activeState } from "./projection.ts"
+import type { ObservationNode } from "./projection.ts"
+
+/** Retain live inputs even while the same selected-state Show stays mounted. */
+export function flowStateInspector(
+  node: () => ObservationNode | undefined,
+  snapshot: () => SnapshotResponse | undefined,
+  stateID: () => string,
+) {
+  return () => {
+    const currentNode = node()
+    const currentSnapshot = snapshot()
+    const selected = stateID()
+    let current = "Unavailable"
+    if (currentNode && currentSnapshot) {
+      if (
+        !currentNode.machineSupported ||
+        currentNode.machineVersion !== currentSnapshot.machine.version
+      )
+        current = "Unsupported machine"
+      else if (!currentNode.snapshot) current = "Snapshot unavailable"
+      else if (
+        !currentNode.snapshotMatchesState ||
+        currentNode.snapshot.value !== currentNode.state
+      )
+        current = "Snapshot mismatch"
+      else current = activeState(currentNode, currentSnapshot) === selected ? "Yes" : "No"
+    }
+    return {
+      current,
+      initial: currentSnapshot?.machine.initialState === selected ? "Yes" : "No",
+      matchesRecordedState: currentNode?.state === selected,
+      reason: currentNode?.reason ?? "Unavailable",
+      machine: currentSnapshot?.machine.version ?? "Unavailable",
+      taskID: currentNode?.taskID ?? "Unavailable",
+    }
+  }
+}
+
 /** Restore independent pane scrolling only after its current content has mounted. */
 export class ScrollRestoration {
   private generation = 0

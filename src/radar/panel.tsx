@@ -19,7 +19,7 @@ import {
 } from "./projection.ts"
 import type { TimelineAttempt, TimelineCheck } from "./projection.ts"
 import { clampSplit, splitFromPointer } from "./layout.ts"
-import { ScrollRestoration } from "./presentation.ts"
+import { flowStateInspector, ScrollRestoration } from "./presentation.ts"
 import { RadarPanelState } from "./state.ts"
 import type { RadarPanelData } from "./state.ts"
 import { createRadarTransport } from "./transport.ts"
@@ -1150,27 +1150,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
           </Show>
           <Show when={chosenState()}>
             {(machineState) => {
-              const currentNode = flowNode()
-              const currentSnapshot = snapshot()
-              const active = () =>
-                currentNode && currentSnapshot
-                  ? activeState(currentNode, currentSnapshot) === machineState().id
-                  : false
-              const currentLabel = () => {
-                if (!currentNode || !currentSnapshot) return "Unavailable"
-                if (
-                  !currentNode.machineSupported ||
-                  currentNode.machineVersion !== currentSnapshot.machine.version
-                )
-                  return "Unsupported machine"
-                if (!currentNode.snapshot) return "Snapshot unavailable"
-                if (
-                  !currentNode.snapshotMatchesState ||
-                  currentNode.snapshot.value !== currentNode.state
-                )
-                  return "Snapshot mismatch"
-                return active() ? "Yes" : "No"
-              }
+              const inspector = flowStateInspector(flowNode, snapshot, () => machineState().id)
               return (
                 <>
                   <h3>{machineState().id}</h3>
@@ -1178,20 +1158,18 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                     <dt>Type</dt>
                     <dd>{machineState().type}</dd>
                     <dt>Initial</dt>
-                    <dd>
-                      {currentSnapshot?.machine.initialState === machineState().id ? "Yes" : "No"}
-                    </dd>
+                    <dd>{inspector().initial}</dd>
                     <dt>Current</dt>
-                    <dd>{currentLabel()}</dd>
-                    <Show when={currentNode?.state === machineState().id}>
+                    <dd>{inspector().current}</dd>
+                    <Show when={inspector().matchesRecordedState}>
                       <dt>Recorded reason</dt>
-                      <dd>{currentNode?.reason ?? "Unavailable"}</dd>
+                      <dd>{inspector().reason}</dd>
                     </Show>
                     <dt>Machine</dt>
-                    <dd>{currentSnapshot?.machine.version ?? "Unavailable"}</dd>
+                    <dd>{inspector().machine}</dd>
                     <dt>Task</dt>
                     <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                      {currentNode?.taskID ?? "Unavailable"}
+                      {inspector().taskID}
                     </dd>
                   </dl>
                 </>
