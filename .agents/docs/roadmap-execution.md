@@ -67,8 +67,14 @@ confirm its owned worktree was removed without force. No duplicate activation
 was performed.
 
 Stable live Trajectory is now LZ-36 (`68a72431-87af-4bce-8e7b-77f430aeb100`),
-plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. Its first isolated worker is running,
-attempt `83daf09a-0112-484e-af40-57ff1ff6e554`, after LZ-32 integration. Actual
+plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. First attempt
+`83daf09a-0112-484e-af40-57ff1ff6e554` returned `08b2a47`; focused/all/build passed,
+but quality failed because report.md needed formatting. Runtime started repair
+attempt `29659c51-4151-4c61-8951-4482b6089b7e`. Root and native source review also
+confirmed a stale selected-live inspector: current completion loses to an old
+selection snapshot, including on reselection. That repair is instructed on the
+active second session, alongside removal of checksum-as-proof wording, without
+restart. See `evidence/stable-live-trajectory/selected-live-review.md`. Actual
 observation-file conflicts with Radar remain serialized through runtime.
 It preserves loaded history/disclosures/reading anchor while status/progress
 refreshes independently; repeated status and captured-page reads must add zero
