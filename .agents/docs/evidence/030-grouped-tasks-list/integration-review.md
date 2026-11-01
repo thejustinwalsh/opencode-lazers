@@ -98,3 +98,27 @@ next native pass. The build passed, retaining the existing warning boundary
 above. Root's request
 to close Tasks/select Radar and click the emitted LZ-23 link is not itself proof
 of navigation; the actual click result remains pending Root's report.
+
+## Repair from Root's actual native report
+
+Root subsequently verified rendered LZ-23 click reopening closed Tasks, LZ-21
+search revealing root/child and hidden LZ-19 prerequisite navigation clearing the
+filter on `53ba06f`. Root committed that partial observation and the outstanding
+full-history disclosure/scroll defect in `a245e0e`; `bdc9137` adjusts dependency
+spacing. Both remain preserved.
+
+Freshly allocated execution-list objects were being used as Solid `For` keys.
+Mounted groups, root rows, branches and children now use canonical plan/task/
+branch IDs, with live accessors for current data rather than captured snapshots.
+The same render owners survive disclosure/scroll preference saves and refresh;
+status, relationship count and expansion remain reactive. Dependency labels no
+longer capture a one-time label before linked detail resolves.
+
+A separate client-side Solid identity regression uses the production keyed
+mapping without a DOM/server: five fresh-model updates preserve owners and target
+identity, live state updates remain visible, reorder retains owners, and actual
+removal disposes exactly once. It is not proof of mounted Desktop scroll/focus.
+Focused grouping/observation/reference checks pass 53 tests / 373 assertions;
+whole-repository formatter/lint/types and the GUI rebuild pass. Root's removal of
+the bundle-hash sentence and its audit snapshot formatting are preserved. Native
+scroll/focus/accessibility retest and Terra completion remain pending.

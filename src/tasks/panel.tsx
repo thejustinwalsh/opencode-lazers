@@ -13,7 +13,7 @@ import {
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
-import type { JSX } from "solid-js"
+import type { Accessor, JSX } from "solid-js"
 import { Tasks } from "./contract.ts"
 import { Observability } from "../observability/contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
@@ -24,6 +24,7 @@ import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
+import { Keyed } from "./keyed.ts"
 import css from "./panel.css?inline"
 
 const View = Schema.Struct({
@@ -390,19 +391,23 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     visible()?.linkedDetails[taskID]?.reference ??
     taskID.slice(0, 8)
   const renderRelation = (taskID: string) => {
-    const reference = relationLabel(taskID)
-    const task = selectedTask()
-    if (reference.startsWith("LZ-") && task)
-      return <Ui.Markdown text={taskMarkdownLink(reference, task.provenance.projectID)} />
+    const reference = createMemo(() => relationLabel(taskID))
     return (
-      <button
-        type="button"
-        class="lazers-tasks-dependency-ref"
-        aria-label={`Open related task ${reference}`}
-        onClick={() => selectTask(taskID)}
+      <Show
+        when={reference().startsWith("LZ-") && selectedTask()}
+        fallback={
+          <button
+            type="button"
+            class="lazers-tasks-dependency-ref"
+            aria-label={`Open related task ${reference()}`}
+            onClick={() => selectTask(taskID)}
+          >
+            {reference()}
+          </button>
+        }
       >
-        {reference}
-      </button>
+        <Ui.Markdown text={taskMarkdownLink(reference(), selectedTask()!.provenance.projectID)} />
+      </Show>
     )
   }
   createEffect(() => {
@@ -442,70 +447,73 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     return taskID === focusTaskID() ? 0 : -1
   }
   const renderTaskRow = (
-    taskRow: ExecutionListRow,
-    group?: ExecutionPlanGroup,
+    taskRow: Accessor<ExecutionListRow>,
+    group?: Accessor<ExecutionPlanGroup>,
     depth = 0,
   ): JSX.Element => {
-    const expanded = () => Boolean(group && taskRow.fork && forkExpanded(group, taskRow))
-    const relationshipCount = new Set([...taskRow.prerequisites, ...taskRow.successors]).size
+    const expanded = () => Boolean(group && taskRow().fork && forkExpanded(group(), taskRow()))
+    const relationshipCount = () =>
+      new Set([...taskRow().prerequisites, ...taskRow().successors]).size
     return (
-      <div class="lazers-tasks-entry" data-context-only={taskRow.contextOnly}>
+      <div class="lazers-tasks-entry" data-context-only={taskRow().contextOnly}>
         <div class="lazers-tasks-entry-line" style={{ "padding-left": `${depth * 12}px` }}>
-          <Show when={taskRow.fork && group}>
+          <Show when={taskRow().fork && group}>
             <button
               type="button"
               class="lazers-tasks-disclosure"
-              aria-label={`${expanded() ? "Collapse" : "Expand"} parallel work under ${taskTitle(taskRow.title)}`}
+              aria-label={`${expanded() ? "Collapse" : "Expand"} parallel work under ${taskTitle(taskRow().title)}`}
               aria-expanded={expanded()}
               onClick={(event) => {
                 event.stopPropagation()
-                if (group) toggleFork(group, taskRow)
+                if (group) toggleFork(group(), taskRow())
               }}
             >
               <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
             </button>
           </Show>
-          <Show when={!taskRow.fork || !group}>
+          <Show when={!taskRow().fork || !group}>
             <span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />
           </Show>
           <button
             type="button"
             class="lazers-tasks-row"
-            data-task-id={taskRow.taskID}
-            aria-pressed={taskRow.taskID === visible()?.selectedID}
-            aria-label={`${taskTitle(taskRow.title)}, ${taskRow.status}${taskRow.contextOnly ? ", context" : ""}${taskRow.reason ? `: ${taskRow.reason}` : ""}`}
-            tabIndex={rowTabIndex(taskRow.taskID)}
+            data-task-id={taskRow().taskID}
+            aria-pressed={taskRow().taskID === visible()?.selectedID}
+            aria-label={`${taskTitle(taskRow().title)}, ${taskRow().status}${taskRow().contextOnly ? ", context" : ""}${taskRow().reason ? `: ${taskRow().reason}` : ""}`}
+            tabIndex={rowTabIndex(taskRow().taskID)}
             onKeyDown={rowKey}
-            onClick={() => selectTask(taskRow.taskID)}
+            onClick={() => selectTask(taskRow().taskID)}
           >
-            <span class="lazers-tasks-state" data-state={taskRow.status} aria-hidden="true" />
-            <span>{taskTitle(taskRow.title)}</span>
-            <Show when={relationshipCount > 0}>
+            <span class="lazers-tasks-state" data-state={taskRow().status} aria-hidden="true" />
+            <span>{taskTitle(taskRow().title)}</span>
+            <Show when={relationshipCount() > 0}>
               <span
                 class="lazers-tasks-dependency-count"
-                aria-label={`${relationshipCount} recorded dependencies`}
-                title={`${relationshipCount} recorded dependencies`}
+                aria-label={`${relationshipCount()} recorded dependencies`}
+                title={`${relationshipCount()} recorded dependencies`}
               >
-                {relationshipCount} links
+                {relationshipCount()} links
               </span>
             </Show>
           </button>
         </div>
-        <Show when={taskRow.fork && group && expanded()}>
+        <Show when={taskRow().fork && group && expanded()}>
           <div class="lazers-tasks-branches">
-            <For each={taskRow.fork?.branches ?? []}>
+            <Keyed each={taskRow().fork?.branches ?? []} by={(branch) => branch.id}>
               {(branch) => (
                 <div class="lazers-tasks-branch">
-                  <For each={branch.rows}>{(child) => renderTaskRow(child, group, depth + 1)}</For>
-                  <Show when={branch.hiddenCount > 0}>
+                  <Keyed each={branch().rows} by={(child) => child.taskID}>
+                    {(child) => renderTaskRow(child, group, depth + 1)}
+                  </Keyed>
+                  <Show when={branch().hiddenCount > 0}>
                     <div class="lazers-tasks-branch-note">
-                      {branch.hiddenCount} task{branch.hiddenCount === 1 ? "" : "s"} not shown in
-                      this page or filter
+                      {branch().hiddenCount} task{branch().hiddenCount === 1 ? "" : "s"} not shown
+                      in this page or filter
                     </div>
                   </Show>
                 </div>
               )}
-            </For>
+            </Keyed>
           </div>
         </Show>
       </div>
@@ -761,25 +769,27 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                   }
                 >
                   <div aria-label="Open tasks">
-                    <For each={executionList().plans}>
+                    <Keyed each={executionList().plans} by={(group) => group.planID}>
                       {(group) => (
                         <section
                           class="lazers-tasks-plan"
-                          aria-label={`${group.title}, ${group.activeCount} active of ${group.totalCount} tasks`}
+                          aria-label={`${group().title}, ${group().activeCount} active of ${group().totalCount} tasks`}
                         >
                           <div class="lazers-tasks-plan-heading">
-                            <span>{group.title}</span>
+                            <span>{group().title}</span>
                             <span>
-                              {group.activeCount}/{group.totalCount}
+                              {group().activeCount}/{group().totalCount}
                             </span>
                           </div>
-                          <For each={group.rows}>{(taskRow) => renderTaskRow(taskRow, group)}</For>
+                          <Keyed each={group().rows} by={(taskRow) => taskRow.taskID}>
+                            {(taskRow) => renderTaskRow(taskRow, group)}
+                          </Keyed>
                         </section>
                       )}
-                    </For>
-                    <For each={executionList().unplanned}>
+                    </Keyed>
+                    <Keyed each={executionList().unplanned} by={(taskRow) => taskRow.taskID}>
                       {(taskRow) => renderTaskRow(taskRow)}
-                    </For>
+                    </Keyed>
                   </div>
                   <Show when={value().page?.nextCursor}>
                     <Ui.Button variant="ghost" onClick={() => void state.more()}>

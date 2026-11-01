@@ -18,6 +18,7 @@ export type ExecutionListRow = {
 }
 
 export type ExecutionBranch = {
+  id: string
   taskIDs: string[]
   rows: ExecutionListRow[]
   hiddenCount: number
@@ -317,6 +318,7 @@ export function buildExecutionList(input: {
               return branchRow ? [branchRow] : []
             })
             return {
+              id: path[0]!,
               taskIDs: rows.map((branchRow) => branchRow.taskID),
               rows,
               hiddenCount: path.length - rows.length,
