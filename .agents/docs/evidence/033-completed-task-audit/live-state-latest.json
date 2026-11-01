@@ -1,6 +1,6 @@
 {
-  "observedAt": "2026-10-31T23:40:16.951Z",
-  "head": "c957446fb43d431deca6c86159330a5400af2d3a",
+  "observedAt": "2026-11-01T00:17:36.432Z",
+  "head": "5960e10cd75cd31868ca32b1bc4c7dd6e9b6c65a",
   "counts": {
     "plans": [
       {
@@ -9,17 +9,17 @@
       },
       {
         "state": "integrated",
-        "count": 13
+        "count": 14
       },
       {
         "state": "running",
-        "count": 3
+        "count": 2
       }
     ],
     "nodes": [
       {
         "state": "accepted",
-        "count": 20
+        "count": 21
       },
       {
         "state": "cancelled",
@@ -35,10 +35,6 @@
       },
       {
         "state": "running",
-        "count": 1
-      },
-      {
-        "state": "verifying",
         "count": 1
       }
     ]
@@ -264,10 +260,10 @@
     {
       "id": "58146c54-d236-4235-9704-630ad550c084",
       "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
-      "state": "running",
-      "version": 15,
+      "state": "integrated",
+      "version": 20,
       "reason": null,
-      "artifact": null,
+      "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8",
       "title": null,
       "priority": 10,
       "afterPlans": [],
@@ -388,8 +384,8 @@
       "plan_id": "58146c54-d236-4235-9704-630ad550c084",
       "task_id": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
       "ordinal": 1,
-      "state": "verifying",
-      "version": 4,
+      "state": "accepted",
+      "version": 5,
       "reason": null,
       "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8"
     },
@@ -575,14 +571,6 @@
     }
   ],
   "activeAttempts": [
-    {
-      "id": "f0eee1ec-7ec3-489d-aadf-77443df8d7a8",
-      "plan_id": "58146c54-d236-4235-9704-630ad550c084",
-      "task_id": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
-      "state": "verifying",
-      "session_id": "ses_11bec70c82f04bfdb265ce5b5eab40f7",
-      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/f0eee1ec-7ec3-489d-aadf-77443df8d7a8"
-    },
     {
       "id": "d543a0f7-670a-46eb-8a91-0ca590a0f848",
       "plan_id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",

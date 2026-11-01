@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-10-31, 23:40 UTC checkpoint. Read [README contracts](../../README.md),
+2026-11-01, 00:17 UTC checkpoint. Read [README contracts](../../README.md),
 [pinned OpenCode API](opencode-api.md), and [current audit](completed-task-audit.md).
 The [durable snapshot](evidence/033-completed-task-audit/live-state-latest.json)
 is timestamped; inspect current state before acting. Original intent and research
@@ -10,9 +10,9 @@ and [implementor profiles](implementor-profiles.md).
 ## Native operation
 
 Architect `ses_e6e0e6239ffdtzIePMeJ1sHA4l` uses `openai/gpt-6.1-sol#high`.
-Implementors use `openai/gpt-6-luna#max`. The durable snapshot records counts and phases at its own timestamp. Grouping
-has returned and is being reviewed, progress is running, and lifecycle is queued.
-References are source-landed within the active grouping plan. Failed/cancelled history
+Implementors use `openai/gpt-6-luna#max`. The durable snapshot records 14 integrated plans and 21 accepted task nodes.
+References/grouping are integrated with all three owned worktrees cleaned. Progress
+is running in its original attempt, and lifecycle is queued behind its integration. Failed/cancelled history
 and five retired broad task records remain preserved.
 
 LAZERS is one plugin: scheduler/storage in OpenCode's service, native agent
@@ -39,12 +39,12 @@ and not runtime dependencies.
 
 ## Continue the existing work
 
-- `58146c54`: reference task is accepted/source-landed; grouping artifact
-  `dcba900` is accepted and under source/native review in attempt `f0eee1ec-7ec3-489d-aadf-77443df8d7a8`,
-  session `ses_11bec70c82f04bfdb265ce5b5eab40f7`. Review, preserve Root fixes,
-  mount in Desktop and ask Terra 6.1 High to review actual screenshots against
-  `design/task-panel`. Complete native copied-Markdown-link click/routing; copy,
-  paste and rendered response are observed, clicking remains unverified.
+- `58146c54` is integrated v20. Root drove real task-link navigation, recorded
+  sequential/parallel groups, hidden prerequisites, stable scrolled keyboard
+  disclosure, 330/450 widths and close/reopen persistence. Terra 6.1 High passed
+  the shown screenshots. Repair `f2beb81` preserves render identities; spacing
+  `bdc9137` is included. [Native report](evidence/030-grouped-tasks-list/native.md).
+  Do not create another UI review worker for this closed increment.
 - `b9e55d09`: durable progress/hooks attempt `d543a0f7-670a-46eb-8a91-0ca590a0f848`,
   session `ses_043f3b7202dd41b8bd9bbb7c0b69c805`, is running after recovery of its
   original native worktree reservation. No extra model attempt was spent.
@@ -77,8 +77,9 @@ subagents. No model catalog veto, fallback substitution, invented spend limits,
 source hashes/fingerprint ceremony or model approval gate. Keep schema validation
 and `lazers_verify_task` as Architect self-review.
 
-Latest full merged checkpoint `0c5de84`: 339 tests / 3,214 assertions, formatter,
-lint and strict types passed. Later runtime changes have focused validation above.
+Latest full merged checkpoint `f2beb81`: 354 tests / 3,318 assertions, formatter,
+lint and strict types passed. GUI rebuilt and natively observed; receipts are
+recorded in `evidence/030-grouped-tasks-list/integration-review.md`.
 Use `/Users/tjw/.bun/bin/bun`; load Portless before any project listening server.
 
 Inference remains enabled. Bounded tracing and next-freeze Electron CPU capture
