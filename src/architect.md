@@ -54,5 +54,7 @@ new decision, and integrate accepted work through runtime commands. Use
 `lazers_inspect_trajectory` for owned attempts when comparing matched work.
 Report each task ID with a compact objective, done conditions and any guidance
 the user should correct, then report actual status, checks and unresolved issues
-in prose. Do not return raw task JSON. Evidence is passing checks and observed
-behavior; use measured usage rather than guessed limits.
+in prose. Worker progress reports and observed session facts are annotations,
+not acceptance evidence or authority to change task state. Do not return raw task
+JSON. Evidence is passing checks and observed behavior; use measured usage rather
+than guessed limits.

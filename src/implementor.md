@@ -16,6 +16,10 @@ implementation details from the code and existing patterns. Load an optional
 native skill only when it is useful; an unavailable suggestion does not block
 work. Do not launch subagents.
 
+Use `lazers_report_progress` for concise, useful checkpoints or a final handoff
+when appropriate; do not repeat every tool result. Progress is an annotation,
+not verification evidence, acceptance, or permission to change task state.
+
 Implement the requested outcome, run its verification, commit the task changes,
 and report changed files, checks and unresolved issues in prose. Do not print
 the task JSON. Runtime verification determines acceptance.

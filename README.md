@@ -170,6 +170,28 @@ unknown; a subscription-reported zero is not an API cost estimate. See
 [spike 012](.agents/docs/spikes/012-worker-inspection.md) and its [native read
 evidence](.agents/docs/evidence/012-worker-inspection/native-report.json).
 
+## Durable worker progress
+
+Each worker attempt has one ordered SQLite progress log shared by the
+`lazers_report_progress` tool, native tool/session events, retained-session
+recovery, and runtime verification/artifact observations. The tool accepts only
+concise commentary; identity is resolved from the assigned native worker
+session. Commentary is visibly distinct from automatic facts and is never
+verification evidence or permission to accept, schedule, or otherwise change
+task state.
+
+Visible results/errors, measured additive step usage, cumulative session usage
+snapshots, provider retries, execution outcomes, checks and artifacts are
+deduplicated by native/runtime identity. Cumulative snapshots remain separate
+from additive measurements. Recovery reconciles only retained public session
+facts; unavailable event history or compacted/incomplete context is recorded as
+a gap rather than replaying execution. Idle handoffs use one persisted synthetic
+message identity per attempt, reconcile ambiguous admission, and do not create
+recursive turns. Privacy filtering excludes tool inputs, hidden reasoning,
+credentials, transport data and raw contexts. See [spike
+018](.agents/docs/spikes/018-durable-progress.md) for implementation and
+verification evidence.
+
 ## Development scaffold
 
 An optional parallel [WebGPU experiment](.agents/docs/webgpu-api.md) adds a Desktop model cache, queued local questions and typed decisions, and native agent tools in this same package. Settings → LAZERS covers the whole plugin and provides a local-inference master switch plus independent capability switches; `options.webgpu: true` seeds the initial master preference. The core task workflow works with local inference off. This experiment is independent of the main Architect dogfooding sequence. Build its Desktop entry with `bun run build:gui`. The API document records the native voice integration gap in OpenCode 2.2.5; the experiment does not replace the built-in voice controls.
