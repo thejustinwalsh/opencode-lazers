@@ -242,20 +242,25 @@ reviewed/integrated, as agreed; do not create a new attempt or discard its edits
 ### Active harness corrections
 
 - LZ-41 (`312a2e4f-ec16-4608-bc66-2f428a6dbf07`), plan
-  `c4f5e9be-9b81-4914-a3a5-24dfd14f345c`, is running in attempt
-  `06d7c1b9-7592-43ed-9057-b3328b4169f7`. Fix the general divergent repair baseline
-  using admitted/prerequisite work plus reviewed history actually merged, without
-  scope expansion or dropping unauthorized changes. Ordinary merge semantics and
-  fail-closed conflict handling are bookkeeping, not file-hash/freshness proof.
+  `c4f5e9be-9b81-4914-a3a5-24dfd14f345c`, is integrated v11. Reviewed `bdb26a0`
+  landed in `63d828a`; merged focused checks passed 11 tests/92 assertions plus
+  quality. Reconciled combined checks passed normally; the earlier truncated
+  failed receipt remains, with no inferred cause. Native registry and filesystem
+  confirm non-forced cleanup of attempt `06d7c1b9-7592-43ed-9057-b3328b4169f7`.
+  Ordinary merge semantics retain admitted prerequisites and exclude only actually
+  incorporated reviewed history; unauthorized edits remain checked.
 - LZ-42 (`af0199a8-8c28-4fdd-b410-96f31eabf0c4`), plan
-  `bff93c8b-3be6-4b4e-8a51-affcf42a8b60`, is running in attempt
-  `e7ee71ef-75ad-4baa-a89e-796ed3c8376f`. Align explicitly authorized failed-attempt
-  RESUME with the existing runtime contract while preserving the same attempt and
-  all caller/idempotency/effect/scope/verification gates. This enables retained
-  LZ-38 continuation, not automatic retry or forced acceptance.
+  `bff93c8b-3be6-4b4e-8a51-affcf42a8b60`, is accepted v9 at `fd4e474` after normal
+  reconciliation. Source landed in `86835fb`; combined focused checks passed
+  17 tests/235 assertions, 418 full tests/3,939 assertions and quality.
+  Runtime integration recorded v10; non-forced cleanup requested and effective
+  activation remains. The additive
+  failed→RESUME preserves the same attempt and existing gates. Actual retained
+  LZ-38 RESUME is still pending, not replaced by a fresh RETRY.
 
 Their implementation paths are disjoint; runtime dispatched both normally while
-LZ-28 is paused. Do not change the main GUI during Root's mounted `214adcb` check.
+LZ-28 is paused. These source merges did not rebuild/reload the mounted `214adcb`
+GUI; coordinate effective activation at an observed local-inference Ready/quiet boundary.
 Task checks focus on changed behavior; broad integration checks stay in plans.
 
 Root's main `6f4d163` concise task-verification guidance and `74974e9` implementor

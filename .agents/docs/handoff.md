@@ -21,19 +21,19 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
 
 ## Current work
 
-| Ref      | State                                 | Next boundary                                                                               |
-| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------- |
-| LZ-28    | Temporarily paused, retained attempt  | Resume after narrow harness repairs; five reproduced defects and native lifecycle proof     |
-| LZ-31/35 | Integrated and cleaned                | Privacy evidence retained                                                                   |
-| LZ-32    | Integrated and cleaned                | Historical navigation/filter proof retained                                                 |
-| LZ-33/34 | Queued Radar graph                    | Projection then SVG/ELK UI and native/Tera review                                           |
-| LZ-36    | Paused retained repair                | Native expiry/recovery defect, then remaining mounted reading-continuity proof              |
-| LZ-37    | Integrated                            | Trace clocks are diagnostics, not a freeze fix                                              |
-| LZ-38    | Failed, retained prepared candidate   | Explicit same-attempt resume after LZ-42; verify without rediscovering corrected formatting |
-| LZ-39    | Queued after LZ-38                    | Confirmed-loss retirement and ordinary native compatibility proof                           |
-| LZ-40    | Integrated                            | Directory evidence support, no acceptance waiver                                            |
-| LZ-41    | Task accepted; combined check blocked | Focused and independent full rerun pass; reconcile real combined-check failure              |
-| LZ-42    | Task accepted; plan checks running    | Integrate additive failed-task resume, then actual retained resume                          |
+| Ref      | State                                   | Next boundary                                                                               |
+| -------- | --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| LZ-28    | Temporarily paused, retained attempt    | Resume after narrow harness repairs; five reproduced defects and native lifecycle proof     |
+| LZ-31/35 | Integrated and cleaned                  | Privacy evidence retained                                                                   |
+| LZ-32    | Integrated and cleaned                  | Historical navigation/filter proof retained                                                 |
+| LZ-33/34 | Queued Radar graph                      | Projection then SVG/ELK UI and native/Tera review                                           |
+| LZ-36    | Paused retained repair                  | Native expiry/recovery defect, then remaining mounted reading-continuity proof              |
+| LZ-37    | Integrated                              | Trace clocks are diagnostics, not a freeze fix                                              |
+| LZ-38    | Failed, retained prepared candidate     | Explicit same-attempt resume after LZ-42; verify without rediscovering corrected formatting |
+| LZ-39    | Queued after LZ-38                      | Confirmed-loss retirement and ordinary native compatibility proof                           |
+| LZ-40    | Integrated                              | Directory evidence support, no acceptance waiver                                            |
+| LZ-41    | Integrated v11; cleaned                 | Reviewed source in 63d828a; coordinate effective activation before retained continuations   |
+| LZ-42    | Integration recorded; cleanup requested | 86835fb checks pass; coordinate activation, then actual retained resume                     |
 
 - **LZ-28** plan `8253ff59-57a5-45fd-8847-acd971438af8`, same attempt
   `941526b0-62de-4578-b82e-f2a458c95358`, session
@@ -73,15 +73,21 @@ Implementors use native sessions/worktrees and `openai/gpt-6-luna#max` during tu
   baseline accounts for admitted prerequisites plus incorporated reviewed main;
   unauthorized worker edits remain checked. Root found no blocker, independently
   passed 11 focused tests/92 assertions and 415 full tests/3,886 assertions.
-  Runtime combined `all` failed with output truncated before cause; quality/build
-  passed. Full independent rerun log: `/private/tmp/lazers-lz41-full-suite.log`.
+  Runtime combined checks passed after normal reconciliation; the earlier failed
+  truncated receipt remains without an inferred cause. Source merged in `63d828a`;
+  runtime integrated v11 and native registry/filesystem confirm non-forced cleanup.
+  Full independent rerun log: `/private/tmp/lazers-lz41-full-suite.log`.
 - **LZ-42** plan `bff93c8b-3be6-4b4e-8a51-affcf42a8b60`, task
   `af0199a8-8c28-4fdd-b410-96f31eabf0c4`, session
   `ses_60b7ffe6a5ae4aa2ab5230b8230c8dbf`, attempt
   `e7ee71ef-75ad-4baa-a89e-796ed3c8376f`, returned `fd4e474`. Additive failed→RESUME
   fixes a real mismatch with the existing runtime command, without migration or
   a new retry lane. Root source review and six focused tests/143 assertions pass.
-  Architect received both independent reviews through Desktop.
+  Accepted v9 after normal reconciliation; source merged in `86835fb` with
+  17 combined focused tests/235 assertions, 418 full tests/3,939 assertions and
+  quality passing. Integration recorded v10 with non-forced cleanup requested;
+  effective activation and actual retained LZ-38 RESUME remain.
+  No GUI build/reload accompanied either harness source merge.
 - **Radar** plan `b0eb89b4-a071-49e2-a238-c474d53cc42f`, LZ-33→34 remains queued
   behind conflicting active scopes. Narrow panel, details below, native fonts and
   theme, C4 SVG/off-renderer ELK; animate actual evidence-linked activity.
