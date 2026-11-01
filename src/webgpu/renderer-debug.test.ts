@@ -218,7 +218,38 @@ test("rejects dangling samples and oversized profiles instead of corrupting timi
   expect(invalidResult).toMatchObject({ captured: false, reason: "profile-invalid" })
   const oversized = new FakeDebugger()
   const large = oversized.stopResponse as { profile: { nodes: unknown[] } }
-  large.profile.nodes = Array.from({ length: 2001 }, () => ({}))
+  large.profile.nodes = Array.from({ length: 8_193 }, () => ({}))
   const largeResult = await captureRendererDebug(options(oversized))
   expect(largeResult).toMatchObject({ captured: false, reason: "profile-too-large" })
+})
+
+test("retains a bounded profile at the observed multi-thousand-node scale", async () => {
+  const transport = new FakeDebugger()
+  const profileData = transport.stopResponse as {
+    profile: { nodes: unknown[]; samples: number[]; timeDeltas: number[] }
+  }
+  profileData.profile.nodes = Array.from({ length: 6_766 }, (_, index) => ({
+    id: index + 1,
+    callFrame: {
+      functionName: `work-${index}`,
+      scriptId: `${index}`,
+      url: `file:///runtime-${index}.js`,
+      lineNumber: 0,
+      columnNumber: 0,
+    },
+    children: [],
+  }))
+  profileData.profile.samples = [1]
+  profileData.profile.timeDeltas = [10_000]
+  const writes: { path: string; data: string }[] = []
+  const result = await captureRendererDebug(
+    options(transport, {
+      write: async (path: string, data: string) => writes.push({ path, data }),
+    }),
+  )
+  expect(result).toMatchObject({ captured: true })
+  const savedProfile = writes.find((write) => write.path.endsWith(".cpuprofile"))
+  expect(savedProfile).toBeDefined()
+  expect(Buffer.byteLength(savedProfile!.data)).toBeLessThan(2_000_000)
+  expect(JSON.parse(savedProfile!.data).nodes).toHaveLength(6_766)
 })
