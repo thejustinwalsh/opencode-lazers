@@ -6,6 +6,7 @@ import { scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
+import type { ArchitectSourceResult } from "./host.ts"
 
 export type PlanRow = {
   id: string
@@ -96,6 +97,21 @@ export type ArchitectRenewalPlanRow = {
   plan_id: string
   prior_continuation: string | null
 }
+export type ArchitectSourceResultRow = {
+  session_id: string
+  renewal_id: string
+  message_id: string
+  state: ArchitectSourceResult["state"]
+  finish: ArchitectSourceResult["finish"]
+  tool_running: number
+  tool_completed: number
+  tool_failed: number
+  tool_other: number
+  result_fingerprint: string
+  result_revision: number
+  referenced_revision: number
+  updated_at: number
+}
 export type ArchitectSourceRow = {
   session_id: string
   renewal_id: string
@@ -116,6 +132,7 @@ export type ArchitectObservedMessage = {
   id: string
   type: string
   metadata?: Record<string, unknown>
+  result?: ArchitectSourceResult
 }
 export type OutboxRow = {
   id: string
@@ -164,6 +181,26 @@ export function appendOutboxReceipt(previous: string | null, next: unknown) {
   }
   history.push(next)
   return JSON.stringify({ history })
+}
+
+function isGeneratedOutcome(
+  db: Database,
+  sessionID: string,
+  messageID: string,
+  metadata: Record<string, unknown> | undefined,
+) {
+  if (!metadata || metadata.lazersKind !== "runner-outcome") return false
+  const row = db
+    .query<{ metadata: string | null }, [string, string]>(
+      "SELECT metadata FROM runner_outbox WHERE session_id=? AND message_id=?",
+    )
+    .get(sessionID, messageID)
+  if (!row?.metadata) return false
+  try {
+    return fingerprint(JSON.parse(row.metadata) as unknown) === fingerprint(metadata)
+  } catch {
+    return false
+  }
 }
 
 export class RunnerStore {
@@ -266,6 +303,31 @@ export class RunnerStore {
         decisions TEXT NOT NULL, unresolved_questions TEXT NOT NULL, updated_at INTEGER NOT NULL,
         PRIMARY KEY(project_directory,session_id)
       );
+      CREATE TABLE IF NOT EXISTS runner_architect_continuity_inputs (
+        project_directory TEXT NOT NULL, session_id TEXT NOT NULL, continuity_revision INTEGER NOT NULL,
+        message_id TEXT NOT NULL, PRIMARY KEY(project_directory,session_id,continuity_revision,message_id)
+      );
+      CREATE TABLE IF NOT EXISTS runner_architect_continuity_coverage (
+        project_directory TEXT NOT NULL, session_id TEXT NOT NULL, continuity_revision INTEGER NOT NULL,
+        input_count INTEGER NOT NULL, input_fingerprint TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY(project_directory,session_id,continuity_revision)
+      );
+      CREATE TABLE IF NOT EXISTS runner_architect_renewal_coverage (
+        renewal_id TEXT NOT NULL REFERENCES runner_architect_renewals(id),
+        session_id TEXT NOT NULL, message_id TEXT NOT NULL,
+        PRIMARY KEY(renewal_id,message_id)
+      );
+      CREATE TABLE IF NOT EXISTS runner_architect_source_results (
+        session_id TEXT NOT NULL, renewal_id TEXT NOT NULL REFERENCES runner_architect_renewals(id),
+        message_id TEXT NOT NULL, state TEXT NOT NULL, finish TEXT,
+        tool_running INTEGER NOT NULL, tool_completed INTEGER NOT NULL,
+        tool_failed INTEGER NOT NULL, tool_other INTEGER NOT NULL,
+        result_fingerprint TEXT NOT NULL, result_revision INTEGER NOT NULL,
+        referenced_revision INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
+        PRIMARY KEY(session_id,message_id)
+      );
+      CREATE INDEX IF NOT EXISTS runner_architect_source_results_pending
+        ON runner_architect_source_results(session_id,referenced_revision,updated_at);
       CREATE TABLE IF NOT EXISTS runner_audits (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
@@ -420,8 +482,12 @@ export class RunnerStore {
   architectRenewal(id: string) {
     return this.atomic((db) =>
       db
-        .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
-        .get(id),
+        .query<ArchitectRenewalRow, [string, string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE r.id=? AND anchor.project_directory=?`,
+        )
+        .get(id, this.repository.projectDirectory),
     )
   }
   architectContinuity(sessionID: string) {
@@ -433,10 +499,45 @@ export class RunnerStore {
         .get(this.repository.projectDirectory, sessionID),
     )
   }
+  architectContinuityCoverage(sessionID: string, revision?: number) {
+    const checkpoint = this.architectContinuity(sessionID)
+    if (!checkpoint || (revision !== undefined && checkpoint.revision !== revision)) return []
+    return this.atomic((db) =>
+      db
+        .query<{ message_id: string }, [string, string, number]>(
+          `SELECT message_id FROM runner_architect_continuity_inputs
+           WHERE project_directory=? AND session_id=? AND continuity_revision=?
+           ORDER BY message_id`,
+        )
+        .all(this.repository.projectDirectory, sessionID, checkpoint.revision)
+        .map((row) => row.message_id),
+    )
+  }
+  architectRenewalCoverageEvidence(id: string) {
+    const renewal = this.architectRenewal(id)
+    if (!renewal?.continuity_json) return null
+    const parsed = JSON.parse(renewal.continuity_json) as { revision?: unknown }
+    if (typeof parsed.revision !== "number" || !Number.isSafeInteger(parsed.revision)) return null
+    return this.atomic((db) => {
+      const inputIDs = db
+        .query<{ message_id: string }, [string, string]>(
+          `SELECT message_id FROM runner_architect_renewal_coverage
+           WHERE renewal_id=? AND session_id=? ORDER BY message_id`,
+        )
+        .all(id, renewal.previous_session_id)
+        .map((row) => row.message_id)
+      return {
+        revision: parsed.revision as number,
+        inputCount: inputIDs.length,
+        inputFingerprint: fingerprint(inputIDs),
+      }
+    })
+  }
   saveArchitectContinuity(input: {
     sessionID: string
     decisions: string[]
     unresolvedQuestions: string[]
+    coverageInputs: Array<{ id: string; type: string; metadata?: Record<string, unknown> }>
     now: number
   }) {
     return this.atomic((db) => {
@@ -453,6 +554,19 @@ export class RunnerStore {
         )
         .get(this.repository.projectDirectory, input.sessionID)
       const revision = (previous?.revision ?? 0) + 1
+      const coverageIDs = new Set(
+        input.coverageInputs
+          .filter((item) => item.type === "user")
+          .filter((item) => !isGeneratedOutcome(db, input.sessionID, item.id, item.metadata))
+          .map((item) => item.id),
+      )
+      for (const row of db
+        .query<{ message_id: string }, [string]>(
+          `SELECT message_id FROM runner_architect_inputs
+           WHERE session_id=? AND disposition='prompt'`,
+        )
+        .all(input.sessionID))
+        coverageIDs.add(row.message_id)
       db.query(
         `INSERT INTO runner_architect_continuity(
           project_directory,session_id,revision,decisions,unresolved_questions,updated_at
@@ -467,74 +581,115 @@ export class RunnerStore {
         JSON.stringify(input.unresolvedQuestions),
         input.now,
       )
+      db.query(
+        "DELETE FROM runner_architect_continuity_inputs WHERE project_directory=? AND session_id=?",
+      ).run(this.repository.projectDirectory, input.sessionID)
+      db.query(
+        "DELETE FROM runner_architect_continuity_coverage WHERE project_directory=? AND session_id=?",
+      ).run(this.repository.projectDirectory, input.sessionID)
+      for (const messageID of coverageIDs)
+        db.query(
+          `INSERT INTO runner_architect_continuity_inputs(
+            project_directory,session_id,continuity_revision,message_id
+          ) VALUES(?,?,?,?)`,
+        ).run(this.repository.projectDirectory, input.sessionID, revision, messageID)
+      db.query(
+        `INSERT INTO runner_architect_continuity_coverage(
+          project_directory,session_id,continuity_revision,input_count,input_fingerprint,updated_at
+        ) VALUES(?,?,?,?,?,?)`,
+      ).run(
+        this.repository.projectDirectory,
+        input.sessionID,
+        revision,
+        coverageIDs.size,
+        fingerprint([...coverageIDs].toSorted()),
+        input.now,
+      )
       this.record(plan.id, null, "ARCHITECT_CONTINUITY_RECORDED", {
         sessionID: input.sessionID,
         revision,
         decisionCount: input.decisions.length,
         unresolvedQuestionCount: input.unresolvedQuestions.length,
+        inputCoverageCount: coverageIDs.size,
+        inputCoverageFingerprint: fingerprint([...coverageIDs].toSorted()),
       })
+      this.repository.changed()
       return this.architectContinuity(input.sessionID)!
     })
   }
   architectRenewalForPlan(planID: string) {
     return this.atomic((db) =>
       db
-        .query<ArchitectRenewalRow, [string]>(
+        .query<ArchitectRenewalRow, [string, string]>(
           `SELECT r.* FROM runner_architect_renewals r
            JOIN runner_architect_renewal_plans p ON p.renewal_id=r.id
-           WHERE p.plan_id=? ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE p.plan_id=? AND anchor.project_directory=?
+           ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
         )
-        .get(planID),
+        .get(planID, this.repository.projectDirectory),
     )
   }
   architectRenewalForSource(sessionID: string) {
     return this.atomic((db) =>
       db
-        .query<ArchitectRenewalRow, [string]>(
-          "SELECT * FROM runner_architect_renewals WHERE previous_session_id=? ORDER BY started_at DESC,generation DESC LIMIT 1",
+        .query<ArchitectRenewalRow, [string, string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE r.previous_session_id=? AND anchor.project_directory=?
+           ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
         )
-        .get(sessionID),
+        .get(sessionID, this.repository.projectDirectory),
     )
   }
   architectRenewalsNeedingRecovery() {
     return this.atomic((db) =>
       db
-        .query<ArchitectRenewalRow, []>(
-          `SELECT * FROM runner_architect_renewals
-           WHERE state IN ('creating','archiving','recovering-input','rolling-back')
-           ORDER BY started_at,generation,id`,
+        .query<ArchitectRenewalRow, [string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE anchor.project_directory=?
+             AND r.state IN ('creating','archiving','recovering-input','rolling-back')
+           ORDER BY r.started_at,r.generation,r.id`,
         )
-        .all(),
+        .all(this.repository.projectDirectory),
     )
   }
   architectRenewalPlans(id: string) {
     return this.atomic((db) =>
       db
-        .query<ArchitectRenewalPlanRow, [string]>(
-          "SELECT * FROM runner_architect_renewal_plans WHERE renewal_id=? ORDER BY plan_id",
+        .query<ArchitectRenewalPlanRow, [string, string]>(
+          `SELECT rp.* FROM runner_architect_renewal_plans rp
+           JOIN runner_architect_renewals r ON r.id=rp.renewal_id
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE rp.renewal_id=? AND anchor.project_directory=? ORDER BY rp.plan_id`,
         )
-        .all(id),
+        .all(id, this.repository.projectDirectory),
     )
   }
   architectSources() {
     return this.atomic((db) =>
       db
-        .query<ArchitectSourceRow, []>(
+        .query<ArchitectSourceRow, [string]>(
           `SELECT s.* FROM runner_architect_sources s
            JOIN runner_architect_renewals r ON r.id=s.renewal_id
-           WHERE s.state='active' AND r.state IN ('archiving','committed')
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE anchor.project_directory=? AND s.state='active'
+             AND r.state IN ('archiving','committed')
            ORDER BY s.updated_at,s.session_id`,
         )
-        .all(),
+        .all(this.repository.projectDirectory),
     )
   }
   architectSource(sessionID: string) {
     return this.atomic((db) =>
       db
-        .query<ArchitectSourceRow, [string]>(
-          "SELECT * FROM runner_architect_sources WHERE session_id=?",
+        .query<ArchitectSourceRow, [string, string]>(
+          `SELECT s.* FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND anchor.project_directory=?`,
         )
-        .get(sessionID),
+        .get(sessionID, this.repository.projectDirectory),
     )
   }
   architectSourceInputs(sessionID: string) {
@@ -547,26 +702,30 @@ export class RunnerStore {
             delivery: string | null
             disposition: string
           },
-          [string]
+          [string, string]
         >(
           `SELECT message_id,native_type,delivery,disposition FROM runner_architect_inputs
-           WHERE session_id=? ORDER BY observed_at,message_id`,
+           WHERE session_id=? AND EXISTS(
+             SELECT 1 FROM runner_architect_sources s JOIN runner_plans p ON p.id=s.anchor_plan_id
+             WHERE s.session_id=runner_architect_inputs.session_id AND p.project_directory=?
+           ) ORDER BY observed_at,message_id`,
         )
-        .all(sessionID),
+        .all(sessionID, this.repository.projectDirectory),
     )
   }
   retiredArchitectSourceForPlan(sessionID: string, planID: string) {
     return this.atomic((db) =>
       Boolean(
         db
-          .query<{ present: number }, [string, string, string]>(
+          .query<{ present: number }, [string, string, string, string]>(
             `SELECT 1 AS present FROM runner_architect_renewals r
              JOIN runner_architect_renewal_plans p ON p.renewal_id=r.id
              JOIN runner_plans current ON current.id=p.plan_id
+             JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
              WHERE r.previous_session_id=? AND p.plan_id=? AND p.transferred=1
-               AND current.owner<>? LIMIT 1`,
+               AND current.owner<>? AND anchor.project_directory=? LIMIT 1`,
           )
-          .get(sessionID, planID, sessionID),
+          .get(sessionID, planID, sessionID, this.repository.projectDirectory),
       ),
     )
   }
@@ -583,14 +742,20 @@ export class RunnerStore {
   }) {
     return this.fenced(input.schedulerOwner, input.fence, (db) => {
       const source = db
-        .query<ArchitectSourceRow, [string]>(
-          "SELECT * FROM runner_architect_sources WHERE session_id=? AND state IN ('active','preparing')",
+        .query<ArchitectSourceRow, [string, string]>(
+          `SELECT s.* FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND anchor.project_directory=? AND s.state IN ('active','preparing')`,
         )
-        .get(input.sessionID)
+        .get(input.sessionID, this.repository.projectDirectory)
       if (!source) return null
       const renewal = db
-        .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
-        .get(source.renewal_id)
+        .query<ArchitectRenewalRow, [string, string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE r.id=? AND anchor.project_directory=?`,
+        )
+        .get(source.renewal_id, this.repository.projectDirectory)
       if (
         !renewal ||
         (!(source.state === "preparing" && renewal.state === "creating") &&
@@ -600,6 +765,10 @@ export class RunnerStore {
       const sweep = input.cursor === null ? source.scan_sweep + 1 : source.scan_sweep
       const inboxByID = new Map(input.inbox.map((entry) => [entry.id, entry]))
       const changes = new Map<string, { id: string; type: string; disposition: string }>()
+      const changedResults = new Map<
+        string,
+        { id: string; revision: number; state: ArchitectSourceResult["state"] }
+      >()
 
       const generatedNotification = (id: string, metadata?: Record<string, unknown>) => {
         if (!metadata || metadata.lazersKind !== "runner-outcome") return false
@@ -723,7 +892,62 @@ export class RunnerStore {
           pending?.delivery ?? null,
         )
       }
+      for (const message of input.messages) {
+        if (message.type !== "assistant" || !message.result) continue
+        const result = message.result
+        const resultFingerprint = fingerprint(result)
+        const old = db
+          .query<
+            Pick<
+              ArchitectSourceResultRow,
+              "result_fingerprint" | "result_revision" | "referenced_revision"
+            >,
+            [string, string]
+          >(
+            `SELECT result_fingerprint,result_revision,referenced_revision
+             FROM runner_architect_source_results
+             WHERE session_id=? AND message_id=?`,
+          )
+          .get(input.sessionID, message.id)
+        const changed = old?.result_fingerprint !== resultFingerprint
+        const resultRevision = old ? old.result_revision + Number(changed) : 1
+        db.query(
+          `INSERT INTO runner_architect_source_results(
+            session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
+            tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,message_id) DO UPDATE SET
+            renewal_id=excluded.renewal_id,state=excluded.state,finish=excluded.finish,
+            tool_running=excluded.tool_running,tool_completed=excluded.tool_completed,
+            tool_failed=excluded.tool_failed,tool_other=excluded.tool_other,
+            result_fingerprint=excluded.result_fingerprint,result_revision=excluded.result_revision,
+            referenced_revision=CASE WHEN ?=1 THEN 0 ELSE runner_architect_source_results.referenced_revision END,
+            updated_at=excluded.updated_at`,
+        ).run(
+          input.sessionID,
+          source.renewal_id,
+          message.id,
+          result.state,
+          result.finish,
+          result.toolCounts.running,
+          result.toolCounts.completed,
+          result.toolCounts.failed,
+          result.toolCounts.other,
+          resultFingerprint,
+          resultRevision,
+          changed ? 0 : (old?.referenced_revision ?? 0),
+          input.now,
+          Number(changed),
+        )
+        if (changed) {
+          changedResults.set(message.id, {
+            id: message.id,
+            revision: resultRevision,
+            state: result.state,
+          })
+        }
+      }
 
+      let staleCheckpoint = false
       if (input.nextCursor === null) {
         const disappeared = db
           .query<{ message_id: string; native_type: string | null }, [string, number]>(
@@ -743,10 +967,39 @@ export class RunnerStore {
             disposition: "unknown",
           })
         }
+        if (source.state === "preparing" && renewal.state === "creating") {
+          const uncovered = db
+            .query<{ message_id: string }, [string, number, string]>(
+              `SELECT i.message_id FROM runner_architect_inputs i
+               WHERE i.session_id=? AND i.last_seen_sweep=?
+                 AND i.native_type='user'
+                 AND NOT EXISTS(
+                   SELECT 1 FROM runner_architect_renewal_coverage c
+                   WHERE c.renewal_id=? AND c.message_id=i.message_id
+                 )
+               ORDER BY i.message_id LIMIT 1`,
+            )
+            .get(input.sessionID, sweep, renewal.id)
+          if (uncovered) {
+            const error =
+              "Architect continuity checkpoint does not cover native input observed during renewal preparation"
+            db.query(
+              `UPDATE runner_architect_renewals SET state='deferred',input_message_id=?,error=?
+               WHERE id=? AND state='creating'`,
+            ).run(uncovered.message_id, error, renewal.id)
+            this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
+              renewalID: renewal.id,
+              inputMessageID: uncovered.message_id,
+              reason: error,
+              sourceSweep: sweep,
+            })
+            staleCheckpoint = true
+          }
+        }
       }
 
       let revision = source.revision
-      if (changes.size) revision++
+      if (changes.size || changedResults.size) revision++
       db.query(
         `UPDATE runner_architect_sources SET scan_cursor=?,scan_sweep=?,revision=?,updated_at=?
          WHERE session_id=? AND renewal_id=?`,
@@ -763,25 +1016,77 @@ export class RunnerStore {
           // in the durable source journal and are emitted by a later scan tick.
           const pendingReferences = db
             .query<
-              { message_id: string; native_type: string | null; disposition: string },
-              [string]
+              | {
+                  kind: "input"
+                  message_id: string
+                  native_type: string | null
+                  disposition: string
+                  updated_at: number
+                }
+              | {
+                  kind: "result"
+                  message_id: string
+                  state: string
+                  finish: string | null
+                  tool_running: number
+                  tool_completed: number
+                  tool_failed: number
+                  tool_other: number
+                  result_revision: number
+                  updated_at: number
+                },
+              [string, string]
             >(
-              `SELECT message_id,native_type,disposition FROM runner_architect_inputs
-               WHERE session_id=? AND referenced_revision=0
-               ORDER BY observed_at,message_id LIMIT 20`,
+              `SELECT * FROM (
+                 SELECT 'input' AS kind,message_id,native_type,disposition,NULL AS state,
+                   NULL AS finish,NULL AS tool_running,NULL AS tool_completed,NULL AS tool_failed,
+                   NULL AS tool_other,NULL AS result_revision,updated_at
+                 FROM runner_architect_inputs
+                 WHERE session_id=? AND referenced_revision=0
+                 UNION ALL
+                 SELECT 'result' AS kind,message_id,NULL AS native_type,NULL AS disposition,state,
+                   finish,tool_running,tool_completed,tool_failed,tool_other,result_revision,updated_at
+                 FROM runner_architect_source_results
+                 WHERE session_id=? AND referenced_revision=0
+               ) ORDER BY updated_at,message_id LIMIT 20`,
             )
-            .all(input.sessionID)
+            .all(input.sessionID, input.sessionID)
           if (pendingReferences.length) {
-            const inputIDs = pendingReferences.map((row) => ({
-              id: row.message_id,
-              type: row.native_type ?? "input",
-              disposition: row.disposition,
-            }))
+            const inputIDs = pendingReferences.flatMap((row) =>
+              row.kind === "input"
+                ? [
+                    {
+                      id: row.message_id,
+                      type: row.native_type ?? "input",
+                      disposition: row.disposition,
+                    },
+                  ]
+                : [],
+            )
+            const results = pendingReferences.flatMap((row) =>
+              row.kind === "result"
+                ? [
+                    {
+                      id: row.message_id,
+                      revision: row.result_revision,
+                      state: row.state,
+                      finish: row.finish,
+                      toolCounts: {
+                        running: row.tool_running,
+                        completed: row.tool_completed,
+                        failed: row.tool_failed,
+                        other: row.tool_other,
+                      },
+                    },
+                  ]
+                : [],
+            )
             const outboxID = fingerprint({
               kind: "architect-source-reference",
               sourceSessionID: input.sessionID,
               revision,
               inputIDs,
+              results,
             })
             const nativeMessageID = `msg_${fingerprint({ outboxID, owner: plan.owner }).slice(0, 32)}`
             const payload = {
@@ -790,6 +1095,7 @@ export class RunnerStore {
               sourceSessionID: input.sessionID,
               sourceRevision: revision,
               inputIDs,
+              results,
               preserveOriginalInput: true,
               planID: source.anchor_plan_id,
               currentPlanVersion: plan.version,
@@ -817,15 +1123,27 @@ export class RunnerStore {
               JSON.stringify(payload),
               JSON.stringify(metadata),
             )
-            const placeholders = pendingReferences.map(() => "?").join(",")
-            db.query(
-              `UPDATE runner_architect_inputs SET referenced_revision=?
-               WHERE session_id=? AND message_id IN (${placeholders}) AND referenced_revision=0`,
-            ).run(revision, input.sessionID, ...pendingReferences.map((row) => row.message_id))
+            const inputRows = pendingReferences.filter((row) => row.kind === "input")
+            if (inputRows.length) {
+              const placeholders = inputRows.map(() => "?").join(",")
+              db.query(
+                `UPDATE runner_architect_inputs SET referenced_revision=?
+                 WHERE session_id=? AND message_id IN (${placeholders}) AND referenced_revision=0`,
+              ).run(revision, input.sessionID, ...inputRows.map((row) => row.message_id))
+            }
+            const resultRows = pendingReferences.filter((row) => row.kind === "result")
+            if (resultRows.length) {
+              const placeholders = resultRows.map(() => "?").join(",")
+              db.query(
+                `UPDATE runner_architect_source_results SET referenced_revision=?
+                 WHERE session_id=? AND message_id IN (${placeholders}) AND referenced_revision=0`,
+              ).run(revision, input.sessionID, ...resultRows.map((row) => row.message_id))
+            }
             this.record(source.anchor_plan_id, null, "ARCHITECT_SOURCE_RECONCILED", {
               sourceSessionID: input.sessionID,
               sourceRevision: revision,
               inputIDs,
+              results,
               currentOwner: plan.owner,
             })
           }
@@ -835,8 +1153,10 @@ export class RunnerStore {
       return {
         revision,
         changedInputs: [...changes.values()],
+        changedResults: [...changedResults.values()],
         nextCursor: input.nextCursor,
         sweep,
+        staleCheckpoint,
       }
     })
   }
@@ -844,13 +1164,15 @@ export class RunnerStore {
     return this.atomic((db) =>
       Boolean(
         db
-          .query<{ present: number }, [string]>(
+          .query<{ present: number }, [string, string]>(
             `SELECT 1 AS present FROM runner_architect_inputs i
              JOIN runner_architect_renewals r ON r.id=i.renewal_id
-             WHERE r.id=? AND i.session_id=r.previous_session_id
+             JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+             WHERE r.id=? AND anchor.project_directory=?
+               AND i.session_id=r.previous_session_id
                AND i.observed_at>=r.idle_at LIMIT 1`,
           )
-          .get(id),
+          .get(id, this.repository.projectDirectory),
       ),
     )
   }
@@ -891,6 +1213,43 @@ export class RunnerStore {
         decisions: JSON.parse(continuity.decisions) as string[],
         unresolvedQuestions: JSON.parse(continuity.unresolved_questions) as string[],
       })
+      const coverage = db
+        .query<{ input_count: number; input_fingerprint: string }, [string, string, number]>(
+          `SELECT input_count,input_fingerprint FROM runner_architect_continuity_coverage
+           WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+        )
+        .get(this.repository.projectDirectory, input.previousSessionID, continuity.revision)
+      if (!coverage) return null
+      const coveredInputs = db
+        .query<{ message_id: string }, [string, string, number]>(
+          `SELECT message_id FROM runner_architect_continuity_inputs
+           WHERE project_directory=? AND session_id=? AND continuity_revision=?
+           ORDER BY message_id`,
+        )
+        .all(this.repository.projectDirectory, input.previousSessionID, continuity.revision)
+        .map((row) => row.message_id)
+      if (
+        coverage.input_count !== coveredInputs.length ||
+        coverage.input_fingerprint !== fingerprint(coveredInputs)
+      )
+        return null
+      const coveredInputSet = new Set(coveredInputs)
+      const uncoveredInput = db
+        .query<{ message_id: string }, [string]>(
+          `SELECT message_id FROM runner_architect_inputs
+           WHERE session_id=? AND native_type='user'
+           ORDER BY observed_at,message_id`,
+        )
+        .all(input.previousSessionID)
+        .find((row) => !coveredInputSet.has(row.message_id))
+      if (uncoveredInput) {
+        this.record(input.anchorPlanID, null, "ARCHITECT_RENEWAL_BLOCKED_STALE_CHECKPOINT", {
+          sessionID: input.previousSessionID,
+          continuityRevision: continuity.revision,
+          uncoveredInputID: uncoveredInput.message_id,
+        })
+        return null
+      }
 
       const recentInput = db
         .query<{ message_id: string }, [string, number]>(
@@ -901,10 +1260,13 @@ export class RunnerStore {
       if (recentInput) return null
 
       const latest = db
-        .query<ArchitectRenewalRow, [string]>(
-          "SELECT * FROM runner_architect_renewals WHERE previous_session_id=? ORDER BY started_at DESC,generation DESC LIMIT 1",
+        .query<ArchitectRenewalRow, [string, string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE r.previous_session_id=? AND anchor.project_directory=?
+           ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
         )
-        .get(input.previousSessionID)
+        .get(input.previousSessionID, this.repository.projectDirectory)
       if (
         latest &&
         ["creating", "archiving", "recovering-input", "rolling-back"].includes(latest.state)
@@ -924,11 +1286,17 @@ export class RunnerStore {
              handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,continuity_json=?,started_at=?
            WHERE id=? AND state IN ('deferred','archive-failed')`,
         ).run(input.idleAt, input.handoffMessageID, continuityJSON, input.now, latest.id)
+        db.query("DELETE FROM runner_architect_renewal_coverage WHERE renewal_id=?").run(latest.id)
+        for (const messageID of coveredInputs)
+          db.query(
+            "INSERT INTO runner_architect_renewal_coverage(renewal_id,session_id,message_id) VALUES(?,?,?)",
+          ).run(latest.id, input.previousSessionID, messageID)
         db.query(
           `INSERT INTO runner_architect_sources(
             session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
           ) VALUES(?,?,?,NULL,0,0,'preparing',?) ON CONFLICT(session_id) DO UPDATE SET
-            renewal_id=excluded.renewal_id,anchor_plan_id=excluded.anchor_plan_id,state='preparing',
+            renewal_id=excluded.renewal_id,anchor_plan_id=excluded.anchor_plan_id,
+            scan_cursor=NULL,scan_sweep=0,state='preparing',
             updated_at=excluded.updated_at`,
         ).run(input.previousSessionID, latest.id, input.anchorPlanID, input.now)
         db.query(
@@ -988,6 +1356,10 @@ export class RunnerStore {
       db.query(
         "UPDATE runner_architect_inputs SET renewal_id=COALESCE(renewal_id,?) WHERE session_id=?",
       ).run(id, input.previousSessionID)
+      for (const messageID of coveredInputs)
+        db.query(
+          "INSERT INTO runner_architect_renewal_coverage(renewal_id,session_id,message_id) VALUES(?,?,?)",
+        ).run(id, input.previousSessionID, messageID)
       for (const plan of plans) {
         const continuation = db
           .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
@@ -1003,6 +1375,9 @@ export class RunnerStore {
         generation,
         planIDs: plans.map((plan) => plan.id),
         idleAt: input.idleAt,
+        continuityRevision: continuity.revision,
+        continuityCoverageCount: coveredInputs.length,
+        continuityCoverageFingerprint: coverage.input_fingerprint,
       })
       return db
         .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
@@ -1023,12 +1398,14 @@ export class RunnerStore {
   ) {
     return this.atomic((db) => {
       const renewal = db
-        .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT * FROM runner_architect_renewals
-           WHERE previous_session_id=? OR successor_session_id=?
-           ORDER BY started_at DESC,generation DESC LIMIT 1`,
+        .query<ArchitectRenewalRow, [string, string, string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE (r.previous_session_id=? OR r.successor_session_id=?)
+             AND anchor.project_directory=?
+           ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
         )
-        .get(sessionID, sessionID)
+        .get(sessionID, sessionID, this.repository.projectDirectory)
       const ownedPlan = db
         .query<{ id: string }, [string, string]>(
           "SELECT id FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid LIMIT 1",
@@ -1119,8 +1496,12 @@ export class RunnerStore {
   }) {
     return this.fenced(input.schedulerOwner, input.fence, (db) => {
       const renewal = db
-        .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
-        .get(input.renewalID)
+        .query<ArchitectRenewalRow, [string, string]>(
+          `SELECT r.* FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE r.id=? AND anchor.project_directory=?`,
+        )
+        .get(input.renewalID, this.repository.projectDirectory)
       if (!renewal || renewal.state !== "creating") return false
       if (!renewal.continuity_json)
         throw new Error("Architect renewal requires an explicit durable continuity checkpoint")
@@ -1147,6 +1528,59 @@ export class RunnerStore {
         })
         return false
       }
+      const checkpoint = db
+        .query<{ input_count: number; input_fingerprint: string }, [string, string, number]>(
+          `SELECT input_count,input_fingerprint FROM runner_architect_continuity_coverage
+           WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+        )
+        .get(this.repository.projectDirectory, renewal.previous_session_id, continuity!.revision)
+      const coveredInputIDs = db
+        .query<{ message_id: string }, [string, string]>(
+          `SELECT message_id FROM runner_architect_renewal_coverage
+           WHERE renewal_id=? AND session_id=? ORDER BY message_id`,
+        )
+        .all(renewal.id, renewal.previous_session_id)
+        .map((row) => row.message_id)
+      if (
+        !checkpoint ||
+        checkpoint.input_count !== coveredInputIDs.length ||
+        checkpoint.input_fingerprint !== fingerprint(coveredInputIDs)
+      ) {
+        db.query(
+          `UPDATE runner_architect_renewals SET state='deferred',error=?
+           WHERE id=? AND state='creating'`,
+        ).run("Architect continuity input coverage changed during renewal preparation", renewal.id)
+        this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
+          renewalID: renewal.id,
+          reason: "Architect continuity input coverage changed during renewal preparation",
+        })
+        return false
+      }
+      const coveredInputSet = new Set(coveredInputIDs)
+      const currentInput = db
+        .query<{ message_id: string }, [string]>(
+          `SELECT message_id FROM runner_architect_inputs
+           WHERE session_id=? AND native_type='user'
+           ORDER BY observed_at,message_id`,
+        )
+        .all(renewal.previous_session_id)
+        .find((row) => !coveredInputSet.has(row.message_id))
+      if (currentInput) {
+        db.query(
+          `UPDATE runner_architect_renewals SET state='deferred',input_message_id=?,error=?
+           WHERE id=? AND state='creating'`,
+        ).run(
+          currentInput.message_id,
+          "Architect continuity checkpoint does not cover observed native input",
+          renewal.id,
+        )
+        this.record(renewal.anchor_plan_id, null, "ARCHITECT_RENEWAL_DEFERRED", {
+          renewalID: renewal.id,
+          inputMessageID: currentInput.message_id,
+          reason: "Architect continuity checkpoint does not cover observed native input",
+        })
+        return false
+      }
       const recentInput = db
         .query<{ message_id: string }, [string, number]>(
           `SELECT message_id FROM runner_architect_inputs
@@ -1166,8 +1600,8 @@ export class RunnerStore {
       }
 
       const currentPlans = db
-        .query<{ id: string }, [string, string]>(
-          "SELECT id FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid",
+        .query<{ id: string; version: number }, [string, string]>(
+          "SELECT id,version FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid",
         )
         .all(this.repository.projectDirectory, renewal.previous_session_id)
       for (const plan of currentPlans) {
@@ -1260,6 +1694,34 @@ export class RunnerStore {
         continuity!.unresolved_questions,
         continuity!.updated_at,
       )
+      db.query(
+        `DELETE FROM runner_architect_continuity_inputs
+         WHERE project_directory=? AND session_id=?`,
+      ).run(this.repository.projectDirectory, renewal.successor_session_id)
+      db.query(
+        `INSERT INTO runner_architect_continuity_inputs(
+          project_directory,session_id,continuity_revision,message_id
+        ) SELECT project_directory,?,continuity_revision,message_id
+          FROM runner_architect_continuity_inputs
+         WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+      ).run(
+        renewal.successor_session_id,
+        this.repository.projectDirectory,
+        renewal.previous_session_id,
+        continuity!.revision,
+      )
+      db.query(
+        `INSERT OR REPLACE INTO runner_architect_continuity_coverage(
+          project_directory,session_id,continuity_revision,input_count,input_fingerprint,updated_at
+        ) SELECT project_directory,?,continuity_revision,input_count,input_fingerprint,updated_at
+          FROM runner_architect_continuity_coverage
+         WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+      ).run(
+        renewal.successor_session_id,
+        this.repository.projectDirectory,
+        renewal.previous_session_id,
+        continuity!.revision,
+      )
       this.record(renewal.anchor_plan_id, null, "ARCHITECT_CONTINUITY_TRANSFERRED", {
         from: renewal.previous_session_id,
         to: renewal.successor_session_id,
@@ -1275,6 +1737,12 @@ export class RunnerStore {
         ownership.lazersMessageID !== renewal.handoff_message_id
       )
         throw new Error("Architect handoff ownership does not match its durable renewal")
+      const payload = JSON.parse(input.payload) as Record<string, unknown>
+      payload.planIDs = mappings.map((mapping) => mapping.plan_id)
+      payload.planVersions = currentPlans.map((plan) => ({
+        planID: plan.id,
+        version: plan.version + 1,
+      }))
       db.query(
         `INSERT OR IGNORE INTO runner_outbox(
           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
@@ -1284,7 +1752,7 @@ export class RunnerStore {
         renewal.anchor_plan_id,
         renewal.successor_session_id,
         renewal.handoff_message_id,
-        input.payload,
+        JSON.stringify(payload),
         input.metadata,
       )
       db.query(

@@ -49,6 +49,16 @@ still deliberately reassign it. Native adapter tests exercise the public archive
 route/readback and paginated message-list contract using injected client responses;
 they do not substitute for live-host evidence.
 
+The retained-source review corrections also cover cancellation interrupting
+workers while archival recovery continues to fail; continuity checkpoints bound to
+the observed user-input IDs they cover; later plan admissions included atomically
+in the successor transfer/handoff across concurrent schedulers and reopen; source
+and recovery lookups isolated by canonical project in a shared database; and late
+or mutable assistant/tool results referenced by safe IDs, revisions, status, and
+aggregate tool counts only. No tool arguments, outputs, reasoning, or transcript
+bodies enter successor references. The artifact-specific resumed-commit receipt
+selection from `2536084` remains present in `runtime.ts` and its regression.
+
 `src/runner/store.test.ts` continues to cover legacy database migrations for
 continuity and the old unique continuation-session constraint.
 
@@ -56,10 +66,10 @@ continuity and the old unique continuation-session constraint.
 
 On the current working candidate:
 
-- `bun test src/runner/store.test.ts src/runner/runtime.test.ts src/runner/native.test.ts` — 119 passed, 0 failed.
-- `bun test` — 402 passed, 0 failed across 75 files.
+- `bun test src/runner test/runner test/architect-lifecycle` — 147 passed, 0 failed across 13 files.
+- `bun test` — 421 passed, 0 failed across 76 files.
 - `bun run verify` — formatting, lint, and TypeScript checks passed.
-- `bun fmt` — no files changed on the final formatting pass.
+- `bun fmt` on the changed source/test/evidence files — 3 files formatted; subsequent `bun run verify` confirmed all 404 files are formatted.
 - `git diff --check` — run after the final documentation update.
 
 ## Still required: exact-artifact native dogfood

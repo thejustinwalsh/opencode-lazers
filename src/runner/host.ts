@@ -8,9 +8,20 @@ export type HostMessage = {
   metadata?: Record<string, unknown>
 }
 
+export type ArchitectSourceResult = {
+  state: "running" | "completed" | "failed"
+  finish: "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown" | null
+  toolCounts: { running: number; completed: number; failed: number; other: number }
+}
+
 export type ArchitectInputPage = {
   inbox: Array<Pick<OutcomeInboxEntry, "id" | "type" | "delivery" | "metadata">>
-  messages: Array<{ id: string; type: string; metadata?: Record<string, unknown> }>
+  messages: Array<{
+    id: string
+    type: string
+    metadata?: Record<string, unknown>
+    result?: ArchitectSourceResult
+  }>
   nextCursor: string | null
 }
 

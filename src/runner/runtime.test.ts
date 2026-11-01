@@ -14,7 +14,7 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import type { HostSession, RunnerHost } from "./host.ts"
+import type { ArchitectSourceResult, HostSession, RunnerHost } from "./host.ts"
 import { DEFAULT_ARCHITECT_IDLE_WINDOW_MS, TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
 import { PlanInput } from "./schema.ts"
@@ -3962,6 +3962,10 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   const attempt = await prepareIdleArchitect(f, now, 0)
   const owner = f.sessions.get("owner")!
   owner.messages.push({ id: "old-transcript", text: "SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY" })
+  await f.runtime.recordArchitectContinuity(owner.id, {
+    decisions: ["Keep the existing approved implementation direction."],
+    unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
+  })
   owner.idleAt = now - DEFAULT_ARCHITECT_IDLE_WINDOW_MS + 1
 
   await f.runtime.tick()
@@ -4008,7 +4012,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(successor.parentID).toBe(owner.id)
   expect(successor.model).toEqual(owner.model)
   expect(f.store.architectContinuity(successor.id)).toMatchObject({
-    revision: 1,
+    revision: 2,
     decisions: JSON.stringify(["Keep the existing approved implementation direction."]),
     unresolved_questions: JSON.stringify(["Confirm whether the follow-up needs additional scope."]),
   })
@@ -4431,7 +4435,6 @@ test("large predecessor histories produce bounded reference-only notification ba
     now: () => now,
     taskFiles: [{ name: "a", path: "bounded-references.txt" }],
   })
-  await prepareIdleArchitect(f, now, 1_000)
   const ids = Array.from(
     { length: 45 },
     (_, index) => `msg_reference_${index.toString().padStart(2, "0")}`,
@@ -4441,6 +4444,7 @@ test("large predecessor histories produce bounded reference-only notification ba
     messages: ids.map((id) => ({ id, type: "user" })),
     nextCursor: null,
   })
+  await prepareIdleArchitect(f, now, 1_000)
 
   await f.runtime.tick()
   let rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
@@ -5066,4 +5070,339 @@ test("a reopened two-scheduler runtime archives only after durable transfer and 
     expect.objectContaining({ message_id: foreign.id, disposition: "pending" }),
   )
   expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(true)
+})
+
+test("cancellation interrupts workers while a transferred renewal still has failed archival recovery", async () => {
+  const now = 2_000_000_500_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "cancel-during-archive.txt" }],
+  })
+  const attempt = await prepareIdleArchitect(f, now, 1_000)
+  let archiveAttempts = 0
+  f.host.updateSession = async ({ sessionID, archived }) => {
+    if (sessionID === "owner" && archived) {
+      archiveAttempts++
+      throw new Error("archive remains unavailable during cancellation")
+    }
+  }
+
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("archiving")
+  const plan = f.store.plan(f.receipt.planID)!
+  await f.runtime.command(
+    {
+      requestID: "cancel-during-archive-recovery",
+      planID: plan.id,
+      expectedVersion: plan.version,
+      action: "cancel",
+    },
+    renewal.successor_session_id,
+  )
+
+  await f.runtime.tick()
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(false)
+  expect(f.sessions.get(attempt.session_id)?.outcome).toBe("interrupted")
+  expect(f.store.plan(plan.id)?.state).toBe("cancelling")
+  await f.runtime.tick()
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)?.state).toBe("cancelled")
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("archiving")
+  expect(f.store.plan(plan.id)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(archiveAttempts).toBeGreaterThan(1)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+})
+
+test("a continuity checkpoint cannot outlive a later observed user input", async () => {
+  let now = 2_000_000_510_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "checkpoint-coverage.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const owner = f.sessions.get("owner")!
+  now += 100
+  owner.messages.push({ id: "msg_new_user_decision", type: "user", text: "Use the new decision" })
+  await f.runtime.observeArchitectPrompt(owner.id, "msg_new_user_decision")
+  owner.busy = false
+  owner.idleAt = now + 100
+  now = owner.idleAt + 1_000
+
+  await f.runtime.tick()
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)).toBeNull()
+  expect(owner.archived).toBe(false)
+  expect(
+    f.store.latestTransition<{ uncoveredInputID: string }>(
+      f.receipt.planID,
+      null,
+      "ARCHITECT_RENEWAL_BLOCKED_STALE_CHECKPOINT",
+    )?.uncoveredInputID,
+  ).toBe("msg_new_user_decision")
+
+  await f.runtime.recordArchitectContinuity(owner.id, {
+    decisions: ["Use the newly observed user decision."],
+    unresolvedQuestions: [],
+  })
+  expect(f.store.architectContinuityCoverage(owner.id)).toContain("msg_new_user_decision")
+  await f.runtime.tick()
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+  expect(JSON.parse(renewal.continuity_json!).decisions).toEqual([
+    "Use the newly observed user decision.",
+  ])
+  const handoff = (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+    .map((row) => JSON.parse(row.payload))
+    .find((payload) => payload.status === "architect-handoff")
+  expect(handoff.continuityCoverage).toMatchObject({ revision: 2, inputCount: 1 })
+})
+
+test("late and mutable assistant tool results are durably referenced by safe revision", async () => {
+  const now = 2_000_000_520_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "mutable-source-result.txt" }],
+  })
+  const attempt = await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+
+  const privateCanary = "RAW_TOOL_ARGUMENTS_AND_REASONING_MUST_NOT_ESCAPE"
+  let result: ArchitectSourceResult = {
+    state: "running" as const,
+    finish: null,
+    toolCounts: { running: 1, completed: 0, failed: 0, other: 0 },
+  }
+  f.host.architectInputPage = async () => ({
+    inbox: [],
+    messages: [
+      {
+        id: "msg_late_tool_result",
+        type: "assistant",
+        metadata: { private: privateCanary },
+        result,
+      },
+    ],
+    nextCursor: null,
+  })
+
+  await f.runtime.tick()
+  result = {
+    state: "completed",
+    finish: "stop",
+    toolCounts: { running: 0, completed: 1, failed: 0, other: 0 },
+  }
+  await f.runtime.tick()
+
+  const stored = f.store.atomic((db) =>
+    db
+      .query<
+        {
+          state: string
+          result_revision: number
+          referenced_revision: number
+          result_fingerprint: string
+        },
+        [string, string]
+      >(
+        `SELECT state,result_revision,referenced_revision,result_fingerprint
+         FROM runner_architect_source_results WHERE session_id=? AND message_id=?`,
+      )
+      .get("owner", "msg_late_tool_result"),
+  )!
+  expect(stored).toMatchObject({
+    state: "completed",
+    result_revision: 2,
+    referenced_revision: expect.any(Number),
+  })
+  expect(stored.referenced_revision).toEqual(2)
+  const references = (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+    .map((row) => JSON.parse(row.payload))
+    .filter((payload) => payload.status === "architect-source-reference")
+  expect(references.flatMap((payload) => payload.results)).toEqual([
+    expect.objectContaining({ id: "msg_late_tool_result", revision: 1, state: "running" }),
+    expect.objectContaining({ id: "msg_late_tool_result", revision: 2, state: "completed" }),
+  ])
+  const resultNotices = f.notifications.filter((notice) =>
+    notice.text.includes("assistant result msg_late_tool_result"),
+  )
+  expect(resultNotices).toHaveLength(2)
+  expect(resultNotices.every((notice) => notice.resume === false)).toBe(true)
+  expect(JSON.stringify(references)).not.toContain(privateCanary)
+  expect(JSON.stringify(resultNotices)).not.toContain(privateCanary)
+  expect(f.store.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+})
+
+test("concurrent plan admission joins the fixed successor and survives two-scheduler reopen", async () => {
+  const now = 2_000_000_530_000
+  const f = fixture({
+    shared: true,
+    delayed: true,
+    independent: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "concurrent-admission.txt" }],
+  })
+  const attempt = await prepareIdleArchitect(f, now, 1_000)
+  const peer = new TaskRuntime(f.store, f.host, "project", undefined, {
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+  })
+  cleanup.push(() => void peer.stop())
+  let signalCreated!: () => void
+  let releaseCreate!: () => void
+  const created = new Promise<void>((resolve) => (signalCreated = resolve))
+  const createGate = new Promise<void>((resolve) => (releaseCreate = resolve))
+  const nativeCreate = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    await nativeCreate(input)
+    signalCreated()
+    await createGate
+  }
+  let failArchive = true
+  const nativeUpdate = f.host.updateSession!
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived && failArchive) {
+      failArchive = false
+      throw new Error("hold transfer for reopen")
+    }
+    await nativeUpdate(input)
+  }
+
+  const tick = f.runtime.tick()
+  await created
+  const lateTask = f.createTask("late", "late-concurrent-plan.txt")
+  const lateReceipt = f.store.submit(
+    f.inputFor([lateTask], { requestID: "late-plan-during-successor-create" }),
+    "owner",
+  )
+  await peer.tick()
+  releaseCreate()
+  await tick
+
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("archiving")
+  expect(f.store.architectRenewalForPlan(lateReceipt.planID)?.id).toBe(renewal.id)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(f.store.plan(lateReceipt.planID)?.owner).toBe(renewal.successor_session_id)
+  const handoff = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>("SELECT payload FROM runner_outbox WHERE id=?")
+      .get(renewal.handoff_outbox_id!)!,
+  )
+  const handoffPayload = JSON.parse(handoff.payload)
+  expect(handoffPayload.planIDs).toContain(lateReceipt.planID)
+  expect(handoffPayload.planVersions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ planID: f.receipt.planID }),
+      expect.objectContaining({ planID: lateReceipt.planID }),
+    ]),
+  )
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopenedRepository = new TaskRepository(f.repository.path, f.root)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  const reopenedA = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+  })
+  const reopenedB = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+  })
+  cleanup.unshift(() => {
+    void reopenedA.stop()
+    void reopenedB.stop()
+    reopenedRepository.close()
+  })
+  await Promise.all([reopenedA.tick(), reopenedB.tick()])
+
+  expect(reopenedStore.architectRenewal(renewal.id)?.state).toBe("committed")
+  expect(reopenedStore.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(reopenedStore.plan(lateReceipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  expect(reopenedStore.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)
+  expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
+})
+
+test("shared-database renewal recovery is invisible to a different canonical project", async () => {
+  const now = 2_000_000_540_000
+  const f = fixture({
+    shared: true,
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "project-isolation.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const update = f.host.updateSession!
+  f.host.updateSession = async (input) => {
+    if (input.sessionID === "owner" && input.archived)
+      throw new Error("foreign scheduler must not retry this archive")
+    await update(input)
+  }
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("archiving")
+
+  const otherRoot = realpathSync(mkdtempSync(join(tmpdir(), "lazers-other-project-")))
+  const otherRepository = new TaskRepository(f.repository.path, otherRoot)
+  const otherStore = new RunnerStore(otherRepository)
+  const otherRuntime = new TaskRuntime(otherStore, f.host, "other-project", undefined, {
+    now: () => now,
+    architectPromptHook: true,
+  })
+  cleanup.unshift(() => {
+    void otherRuntime.stop()
+    otherRepository.close()
+    rmSync(otherRoot, { recursive: true, force: true })
+  })
+  let foreignSessionReads = 0
+  const session = f.host.session
+  f.host.session = async (id, options) => {
+    foreignSessionReads++
+    return session(id, options)
+  }
+
+  await otherRuntime.tick()
+
+  expect(foreignSessionReads).toBe(0)
+  expect(otherStore.architectRenewalsNeedingRecovery()).toEqual([])
+  expect(otherStore.architectSources()).toEqual([])
+  expect(otherStore.architectRenewal(renewal.id)).toBeNull()
+  expect(otherStore.architectRenewalForSource("owner")).toBeNull()
+  expect(otherStore.architectSource("owner")).toBeNull()
+  expect(otherStore.architectSourceInputs("owner")).toEqual([])
+  expect(
+    otherStore.observeArchitectInput("owner", "foreign-user-input", now, {
+      type: "user",
+      userPrompt: true,
+    }),
+  ).toMatchObject({ renewal: null, state: null })
+  expect(f.store.architectRenewal(renewal.id)).toMatchObject({
+    state: "archiving",
+    error: "foreign scheduler must not retry this archive",
+  })
 })

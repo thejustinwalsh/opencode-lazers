@@ -8,7 +8,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { AbsolutePath } from "@opencode/schema/schema"
 import { DateTime, Effect } from "effect"
-import type { ArchitectInputPage, RunnerHost } from "./host.ts"
+import type { ArchitectInputPage, ArchitectSourceResult, RunnerHost } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
@@ -70,6 +70,40 @@ function inboxEntry(
     ...("delivery" in entry ? { delivery: entry.delivery } : {}),
     ...(metadata ? { metadata } : {}),
   } satisfies OutcomeInboxEntry
+}
+
+function architectSourceResult(
+  message: Awaited<ReturnType<NativeInboxClient["message"]["list"]>>["data"][number],
+): ArchitectSourceResult | undefined {
+  if (message.type !== "assistant") return undefined
+  const toolCounts = { running: 0, completed: 0, failed: 0, other: 0 }
+  for (const part of message.content ?? []) {
+    if (part.type !== "tool") continue
+    switch (part.state.status) {
+      case "running":
+      case "streaming":
+        toolCounts.running++
+        break
+      case "completed":
+        toolCounts.completed++
+        break
+      case "error":
+        toolCounts.failed++
+        break
+      default:
+        toolCounts.other++
+    }
+  }
+  const finish = message.finish ?? null
+  const state =
+    message.error || finish === "error" || toolCounts.failed > 0
+      ? "failed"
+      : message.time?.completed === undefined || toolCounts.running > 0 || toolCounts.other > 0
+        ? "running"
+        : "completed"
+  // Return only a bounded status projection; never retain tool inputs/outputs or reasoning.
+  const result = { state, finish, toolCounts } satisfies ArchitectSourceResult
+  return result
 }
 
 export function nativeHost(
@@ -212,11 +246,15 @@ export function nativeHost(
               : {}),
             ...("delivery" in entry ? { delivery: entry.delivery } : {}),
           })),
-        messages: page.data.map((entry) => ({
-          id: entry.id,
-          type: entry.type,
-          ...(entry.metadata ? { metadata: entry.metadata } : {}),
-        })),
+        messages: page.data.map((entry) => {
+          const result = architectSourceResult(entry)
+          return {
+            id: entry.id,
+            type: entry.type,
+            ...(entry.metadata ? { metadata: entry.metadata } : {}),
+            ...(result ? { result } : {}),
+          }
+        }),
         nextCursor: page.cursor.next ?? null,
       }
     },

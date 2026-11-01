@@ -763,10 +763,26 @@ export class TaskRuntime {
     const session = await this.host.session(sessionID)
     if (!this.validArchitect(session))
       throw new Error("Architect continuity can only be recorded by the current active Architect")
+    if (!this.host.architectInputPage)
+      throw new Error("Architect continuity requires public input/history coverage")
+    const coverageInputs: Array<{ id: string; type: string; metadata?: Record<string, unknown> }> =
+      []
+    const seenCursors = new Set<string>()
+    let cursor: string | undefined
+    for (;;) {
+      const page = await this.host.architectInputPage(sessionID, cursor)
+      coverageInputs.push(...page.inbox, ...page.messages)
+      if (!page.nextCursor) break
+      if (seenCursors.has(page.nextCursor))
+        throw new Error("Architect continuity history pagination did not advance")
+      seenCursors.add(page.nextCursor)
+      cursor = page.nextCursor
+    }
     const saved = this.store.saveArchitectContinuity({
       sessionID,
       decisions: continuity.decisions,
       unresolvedQuestions: continuity.unresolvedQuestions,
+      coverageInputs,
       now: this.now(),
     })
     return {
@@ -807,6 +823,18 @@ export class TaskRuntime {
           renewalID: renewal.id,
           sourceRevision: result.revision,
           inputs: result.changedInputs,
+          nextCursor: result.nextCursor,
+        },
+        fence,
+      )
+    if (result.changedResults.length)
+      this.renewalEvent(
+        renewal,
+        "ARCHITECT_RENEWAL_SOURCE_RESULT_OBSERVED",
+        {
+          renewalID: renewal.id,
+          sourceRevision: result.revision,
+          results: result.changedResults,
           nextCursor: result.nextCursor,
         },
         fence,
@@ -890,11 +918,14 @@ export class TaskRuntime {
     const model = JSON.parse(renewal.model) as NonNullable<HostSession["model"]>
     const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
     const metadataPlanIDs = session?.metadata?.lazersPlanIDs
-    const ownsEveryPlan =
-      Array.isArray(metadataPlanIDs) &&
-      planIDs.every((id) => (metadataPlanIDs as unknown[]).includes(id))
-    const singlePlanIdentity =
-      planIDs.length === 1 && session?.metadata?.lazersPlanID === renewal.anchor_plan_id
+    // Metadata is the identity snapshot taken when native creation began. Later
+    // plans may be admitted to the predecessor while creation is in flight; the
+    // durable transfer attaches those plans without changing successor identity.
+    const anchorIdentity =
+      session?.metadata?.lazersPlanID === renewal.anchor_plan_id &&
+      (!Array.isArray(metadataPlanIDs) ||
+        (metadataPlanIDs.includes(renewal.anchor_plan_id) &&
+          metadataPlanIDs.every((id) => planIDs.includes(String(id)))))
     return Boolean(
       session &&
       (allowArchived || !session.archived) &&
@@ -908,7 +939,7 @@ export class TaskRuntime {
       session.model.variant === model.variant &&
       session.metadata?.lazersContinuation === true &&
       session.metadata.lazersSourceSessionID === renewal.previous_session_id &&
-      (ownsEveryPlan || singlePlanIdentity),
+      anchorIdentity,
     )
   }
 
@@ -930,6 +961,16 @@ export class TaskRuntime {
     if (typeof parsed.revision !== "number" || !Number.isSafeInteger(parsed.revision))
       throw new Error("Architect continuity checkpoint revision is invalid")
     return { revision: parsed.revision, ...content }
+  }
+
+  private renewalContinuityCoverage(renewal: ArchitectRenewalRow) {
+    const coverage = this.store.architectRenewalCoverageEvidence(renewal.id)
+    if (!coverage) throw new Error("Architect renewal continuity coverage is unavailable")
+    return {
+      revision: coverage.revision,
+      inputCount: coverage.inputCount,
+      inputFingerprint: coverage.inputFingerprint,
+    }
   }
 
   private renewalWakeContext(renewal: ArchitectRenewalRow, payload: unknown) {
@@ -1157,6 +1198,7 @@ export class TaskRuntime {
             planIDs,
             label,
             continuity,
+            continuityCoverage: this.renewalContinuityCoverage(renewal),
             predecessorSessionID: renewal.previous_session_id,
             successorSessionID: renewal.successor_session_id,
             sourceRevision: source?.revision ?? 0,
@@ -1348,6 +1390,7 @@ export class TaskRuntime {
           planIDs: this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id),
           label: knownLabel ?? this.renewalLabel(renewal),
           continuity: this.renewalContinuity(renewal),
+          continuityCoverage: this.renewalContinuityCoverage(renewal),
           predecessorSessionID: renewal.previous_session_id,
           successorSessionID: renewal.successor_session_id,
           sourceRevision: source?.revision ?? 0,
@@ -1588,6 +1631,14 @@ export class TaskRuntime {
   private async step(initialPlan: PlanRow, fence: number) {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
+    if (plan.state === "cancelling") {
+      await this.cancelWorkers(plan, fence)
+      const pending = this.store
+        .effects(plan.id)
+        .find((e) => ["intended", "uncertain"].includes(e.state))
+      if (pending) await this.reconcileEffect(pending, fence)
+      return
+    }
     const planRenewal = this.store.architectRenewalForPlan(plan.id)
     if (
       planRenewal &&
@@ -1615,14 +1666,6 @@ export class TaskRuntime {
     if (!this.validArchitect(owner)) {
       await this.ensureArchitectOwner(plan, owner)
       plan = this.store.plan(plan.id)!
-    }
-    if (plan.state === "cancelling") {
-      await this.cancelWorkers(plan, fence)
-      const pending = this.store
-        .effects(plan.id)
-        .find((e) => ["intended", "uncertain"].includes(e.state))
-      if (pending) await this.reconcileEffect(pending, fence)
-      return
     }
     const pending = this.store
       .effects(plan.id)

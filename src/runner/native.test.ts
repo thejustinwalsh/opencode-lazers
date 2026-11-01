@@ -448,7 +448,15 @@ function nativeOutcomeFixture(options: {
   loseUpdateResponse?: boolean
   inbox?: OutcomeInboxEntry[]
   messagePage?: (cursor?: string) => {
-    data: { id: string; type: string; metadata?: Record<string, unknown> }[]
+    data: {
+      id: string
+      type: string
+      metadata?: Record<string, unknown>
+      content?: unknown[]
+      finish?: string | null
+      time?: { completed?: number }
+      error?: unknown
+    }[]
     cursor: { next?: string | null }
   }
   onUpdate?: (input: { sessionID: string; archived: boolean }) => void
@@ -658,6 +666,68 @@ test("native Architect input reconciliation follows public message pagination an
   expect(first.nextCursor).toBe("page-2")
   expect(second.messages.map((entry) => entry.id)).toEqual(["msg_late"])
   expect(second.nextCursor).toBeNull()
+})
+
+test("native Architect history projects mutable assistant/tool status without private payloads", async () => {
+  const privateCanary = "PRIVATE_TOOL_ARGUMENT_AND_REASONING_CANARY"
+  const fixture = nativeOutcomeFixture({
+    messagePage: () => ({
+      data: [
+        {
+          id: "msg_tool_running",
+          type: "assistant",
+          time: {},
+          content: [
+            {
+              type: "tool",
+              name: "private-tool-name",
+              state: { status: "running", input: { secret: privateCanary } },
+            },
+            { type: "reasoning", text: privateCanary },
+          ],
+        },
+        {
+          id: "msg_tool_failed",
+          type: "assistant",
+          finish: "error",
+          error: { message: privateCanary },
+          time: { completed: 7 },
+          content: [
+            {
+              type: "tool",
+              name: "private-tool-name",
+              state: { status: "error", input: { secret: privateCanary } },
+            },
+          ],
+        },
+      ],
+      cursor: { next: null },
+    }),
+  })
+
+  const page = await fixture.host.architectInputPage!("ses_owner")
+  expect(page.messages).toEqual([
+    {
+      id: "msg_tool_running",
+      type: "assistant",
+      result: {
+        state: "running",
+        finish: null,
+        toolCounts: { running: 1, completed: 0, failed: 0, other: 0 },
+      },
+    },
+    {
+      id: "msg_tool_failed",
+      type: "assistant",
+      result: {
+        state: "failed",
+        finish: "error",
+        toolCounts: { running: 0, completed: 0, failed: 1, other: 0 },
+      },
+    },
+  ])
+  expect(JSON.stringify(page)).not.toContain(privateCanary)
+  expect(JSON.stringify(page)).not.toContain("private-tool-name")
 })
 
 test("native session heartbeat reads metadata without context and opts into messages explicitly", async () => {

@@ -42,6 +42,7 @@ export function outcomeText(serialized: string) {
     }
     case "architect-source-reference": {
       const inputs = Array.isArray(payload.inputIDs) ? payload.inputIDs : []
+      const results = Array.isArray(payload.results) ? payload.results : []
       const references = inputs.flatMap((input: unknown) => {
         if (typeof input !== "object" || input === null) return []
         const row = input as { id?: unknown; disposition?: unknown; type?: unknown }
@@ -50,11 +51,30 @@ export function outcomeText(serialized: string) {
           `- ${row.id}: ${String(row.disposition ?? "unknown")} ${String(row.type ?? "input")}`,
         ]
       })
+      const resultReferences = results.flatMap((result: unknown) => {
+        if (typeof result !== "object" || result === null) return []
+        const row = result as {
+          id?: unknown
+          revision?: unknown
+          state?: unknown
+          finish?: unknown
+          toolCounts?: unknown
+        }
+        if (typeof row.id !== "string" || typeof row.revision !== "number") return []
+        const counts =
+          typeof row.toolCounts === "object" && row.toolCounts !== null
+            ? (row.toolCounts as Record<string, unknown>)
+            : {}
+        return [
+          `- assistant result ${row.id} revision ${row.revision}: ${String(row.state ?? "unknown")}; finish ${String(row.finish ?? "unknown")}; tools running/completed/failed/other ${String(counts.running ?? 0)}/${String(counts.completed ?? 0)}/${String(counts.failed ?? 0)}/${String(counts.other ?? 0)}`,
+        ]
+      })
       return [
         "LAZERS retained Architect input update",
         `Source session: ${String(payload.sourceSessionID ?? "unknown")} (reconciliation revision ${String(payload.sourceRevision ?? "unknown")}).`,
         "Original native inputs remain on the predecessor. These references do not authorize execution, replay, cancellation, permission grants, or answering forms.",
         ...(references.length ? references : ["- No input IDs in this update."]),
+        ...resultReferences,
         "Inspect current durable plan state and the original source session before deciding what to do.",
       ].join("\n")
     }
