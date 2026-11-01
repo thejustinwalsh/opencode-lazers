@@ -51,6 +51,14 @@ the exact plan/task/attempt/session, an evidence interval or sequence watermark,
 and the observable reason a rule matched. Use deterministic, explainable rules;
 do not run a model on every event or repeatedly load full transcripts.
 
+Incremental observation includes changes to previously seen records, not only
+inserts. `ProgressRecorder` coalesces observations into existing rows whose `seq`
+and often `at` remain unchanged. A sequence-only insertion watermark must not miss
+a later terminal failure on an already-seen call. Reuse supported hooks/change
+tracking and retain a durable change boundary that survives replay/reopening;
+coordinate this with Radar recency without treating snapshot timestamps as a
+guaranteed update cursor.
+
 Start with signals current evidence can support, such as repeated equivalent
 tool/check failures after attempted correction, repeated unsuccessful edit
 operations, or an unmet follow-up/check-in expectation. Architect should specify
