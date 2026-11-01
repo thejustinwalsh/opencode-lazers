@@ -72,6 +72,51 @@ test("structural errors and oversized tasks never invoke the model or save a rev
   expect(store.data.size).toBe(0)
 })
 
+test("task adapter preserves its storage key, record/history shape, and result fields", async () => {
+  const store = memory()
+  const reviewer = new TaskReviewer(store, {
+    systemOne: async (request) => reply(request),
+  })
+  const result = await reviewer.verify(draft(), "owner", new AbortController().signal)
+  if (!("reviewID" in result)) throw Error("Expected task review result")
+
+  expect([...store.data.keys()]).toEqual([`task-review.${result.reviewID}`])
+  const saved = store.data.get(`task-review.${result.reviewID}`) as Record<string, unknown>
+  expect(Object.keys(saved).sort()).toEqual(
+    [
+      "version",
+      "owner",
+      "request",
+      "round",
+      "busyUntil",
+      "focus",
+      "previous",
+      "completed",
+      "history",
+    ].sort(),
+  )
+  expect(Object.keys(result).sort()).toEqual(
+    [
+      "status",
+      "reviewID",
+      "version",
+      "round",
+      "maxRounds",
+      "fingerprint",
+      "model",
+      "answers",
+      "findings",
+      "focus",
+      "errors",
+      "usage",
+      "next",
+    ].sort(),
+  )
+  const history = saved.history as Array<Record<string, unknown>>
+  expect(history).toHaveLength(1)
+  expect(Object.keys(history[0]!).sort()).toEqual(["result", "state"])
+})
+
 test("one focused concern advances on equal score after a changed-state repair, retaining the concern", async () => {
   const input = draft()
   const firstCheck = reviewChecks(input.task)[0]!.id

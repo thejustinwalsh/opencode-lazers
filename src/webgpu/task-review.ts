@@ -1,15 +1,11 @@
 import { createHash } from "node:crypto"
 import { z } from "zod"
 import { TaskProposalSchema } from "../task.ts"
+import { reviewProgression, REVIEW_ROUNDS } from "../review/progression.ts"
+import type { ReviewDisposition, ReviewProgressionRecord } from "../review/progression.ts"
 import { SystemOneRequest, systemOneClient } from "./system-one.ts"
 import type { SystemOneInput, SystemOneOutput } from "./system-one.ts"
-import {
-  REVIEW_ROUNDS,
-  REVIEW_THRESHOLD,
-  REVIEW_VERSION,
-  reviewChecks,
-  reviewQuestions,
-} from "./review-questions.ts"
+import { REVIEW_VERSION, reviewChecks, reviewQuestions } from "./review-questions.ts"
 import type { ReviewCheck } from "./review-questions.ts"
 import { DECISION_REVISION } from "./manifest.ts"
 
@@ -36,11 +32,10 @@ export interface ReviewStore {
   get(key: string): Promise<unknown>
   set(key: string, value: unknown): Promise<void>
 }
-type Disposition = "resolved" | "not_applicable" | "non_regressed" | "limit" | "pending"
 export interface Finding extends ReviewCheck {
   probability: number | null
   score: number | null
-  disposition: Disposition
+  disposition: ReviewDisposition
 }
 interface ReviewResult {
   status: "feedback" | "completed" | "completed_with_concerns" | "unavailable"
@@ -57,15 +52,11 @@ interface ReviewResult {
   usage: SystemOneOutput["usage"]
   next: { action: "revise_or_clarify" | "retry" | "submit"; tool: string; instruction: string }
 }
-interface RecordState {
+interface RecordState extends ReviewProgressionRecord<Finding> {
   version: string
   owner: string
   request: string
-  round: number
   busyUntil: number
-  focus: string | null
-  previous: Finding[]
-  completed: Record<string, Disposition>
   history: { state: ReviewState; result: ReviewResult }[]
 }
 const fingerprint = (state: ReviewState) =>
@@ -153,21 +144,26 @@ export class TaskReviewer {
         }
       const hash = fingerprint(state)
       const last = record.history.at(-1)?.result
-      if (last && last.status.startsWith("completed"))
-        return last.fingerprint === hash
-          ? last
-          : {
-              status: "stale",
-              reviewID: id,
-              reviewedFingerprint: last.fingerprint,
-              next: {
-                action: "verify",
-                tool: "lazers_verify_task",
-                instruction:
-                  "This completed review belongs to another draft. Verify the changed task under a new review ID before submission.",
-              },
-            }
-      if (last?.fingerprint === hash && last.status === "feedback") return last
+      const replay = reviewProgression.inspect(last, hash, (result) =>
+        result.status.startsWith("completed")
+          ? "terminal"
+          : result.status === "feedback"
+            ? "feedback"
+            : "retryable",
+      )
+      if (replay.kind === "replay") return replay.result
+      if (replay.kind === "stale")
+        return {
+          status: "stale",
+          reviewID: id,
+          reviewedFingerprint: replay.result.fingerprint,
+          next: {
+            action: "verify",
+            tool: "lazers_verify_task",
+            instruction:
+              "This completed review belongs to another draft. Verify the changed task under a new review ID before submission.",
+          },
+        }
       const checks = reviewChecks(state.task)
       if (checks.length > 64)
         return {
@@ -175,7 +171,7 @@ export class TaskReviewer {
           error:
             "This bounded review supports at most 64 concrete checks. Split the task into smaller coherent increments.",
         }
-      if (record.round >= REVIEW_ROUNDS) {
+      if (!reviewProgression.hasRounds(record)) {
         const result: ReviewResult = {
           status: "completed_with_concerns",
           reviewID: id,
@@ -185,11 +181,9 @@ export class TaskReviewer {
           fingerprint: hash,
           model: { id: "d1-omni-2b", revision: DECISION_REVISION },
           answers: {},
-          findings: checks.map((check) => ({
+          findings: reviewProgression.limit(checks).map((check) => ({
             ...check,
             probability: null,
-            score: null,
-            disposition: "limit",
           })),
           focus: null,
           errors: ["The last verification call was interrupted; the round budget is exhausted."],
@@ -236,7 +230,8 @@ export class TaskReviewer {
           batches.push(single.data)
         }
       }
-      record.round++
+      if (!reviewProgression.reserveRound(record))
+        throw new Error("The review round budget was exhausted before reservation.")
       record.busyUntil = this.now() + 120_000
       await this.store.set(key, record)
       const answers: SystemOneOutput["answers"] = {}
@@ -260,56 +255,46 @@ export class TaskReviewer {
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error))
       }
-      const findings = checks.map((check): Finding => {
-        const answer = answers[check.id]
-        const gate = check.appliesWhen ? answers[check.appliesWhen] : undefined
-        const probability = answer?.type === "noul" ? answer.noul : null
-        const applicable =
-          !check.appliesWhen || (gate?.type === "noul" && gate.noul >= REVIEW_THRESHOLD)
-        const absent =
-          check.appliesWhen && gate?.type === "noul" && gate.noul <= 1 - REVIEW_THRESHOLD
-        const score =
-          errors.length || probability === null
-            ? null
-            : !applicable && !absent
-              ? 0.5
-              : check.goodWhen === "yes"
-                ? probability
-                : 1 - probability
-        let disposition: Disposition =
-          absent && !errors.length
-            ? "not_applicable"
-            : score !== null && score >= REVIEW_THRESHOLD
-              ? "resolved"
-              : "pending"
-        const previous = record.previous.find((item) => item.id === check.id)
-        if (
-          disposition === "pending" &&
-          score !== null &&
-          previous?.score !== null &&
-          previous?.score !== undefined &&
-          (record.focus === check.id || record.completed[check.id] === "non_regressed") &&
-          score >= previous.score
-        )
-          disposition = "non_regressed"
-        if (disposition === "pending" && record.round >= REVIEW_ROUNDS) disposition = "limit"
-        return { ...check, probability, score, disposition }
-      })
+      const observations = Object.fromEntries(
+        checks.map((check) => {
+          const answer = answers[check.id]
+          const gate = check.appliesWhen ? answers[check.appliesWhen] : undefined
+          const probability = answer?.type === "noul" ? answer.noul : null
+          const applicable =
+            !check.appliesWhen ||
+            (gate?.type === "noul" && gate.noul >= reviewProgression.threshold)
+          const absent =
+            check.appliesWhen &&
+            gate?.type === "noul" &&
+            gate.noul <= 1 - reviewProgression.threshold
+          const score =
+            errors.length || probability === null
+              ? null
+              : !applicable && !absent
+                ? 0.5
+                : check.goodWhen === "yes"
+                  ? probability
+                  : 1 - probability
+          return [check.id, { score, notApplicable: Boolean(absent) }]
+        }),
+      )
+      const progression = reviewProgression.evaluate(
+        checks,
+        observations,
+        record,
+        errors.length > 0,
+      )
+      const probabilityFor = (id: string) => {
+        const answer = answers[id]
+        return answer?.type === "noul" ? answer.noul : null
+      }
+      const findings: Finding[] = progression.findings.map((finding) => ({
+        ...finding,
+        probability: probabilityFor(finding.id),
+      }))
       const focus = findings.find((item) => item.disposition === "pending") ?? null
-      const done = !focus
-      const concerns =
-        findings.some(
-          (item) => item.disposition === "non_regressed" || item.disposition === "limit",
-        ) || errors.length > 0
-      const status = done
-        ? concerns
-          ? "completed_with_concerns"
-          : "completed"
-        : errors.length
-          ? "unavailable"
-          : "feedback"
       const result: ReviewResult = {
-        status,
+        status: progression.status,
         reviewID: id,
         version: REVIEW_VERSION,
         round: record.round,
@@ -321,7 +306,7 @@ export class TaskReviewer {
         focus,
         errors,
         usage,
-        next: done
+        next: progression.done
           ? {
               action: "submit",
               tool: "lazers_submit_task",
@@ -343,11 +328,7 @@ export class TaskReviewer {
       }
       record.focus = focus?.id ?? null
       record.previous = findings
-      record.completed = Object.fromEntries(
-        findings
-          .filter((item) => item.disposition !== "pending")
-          .map((item) => [item.id, item.disposition]),
-      )
+      record.completed = progression.completed
       record.history.push({ state, result })
       record.busyUntil = 0
       await this.store.set(key, record)
