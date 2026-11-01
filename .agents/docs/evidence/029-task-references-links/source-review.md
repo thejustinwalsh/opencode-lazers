@@ -34,11 +34,10 @@ accepted task's source landing at plan `58146c54-d236-4235-9704-630ad550c084`
 v13 → v14, observed HEAD `955036c`. It did not finalize the combined plan,
 clean worktrees or alter the active grouping worker.
 
-## Remaining native observation
+## Native follow-through
 
-Spike 029 still explicitly requires a real Tasks inspector Copy task link,
-paste into a native message, rendered-link click and correct scoped Tasks
-selection. Returning the user's copied `LZ-23` Markdown link is not proof of
-that interaction. This source record does not claim it occurred; native driver
-evidence must close that concrete boundary separately. Grouping and progress
-continue in their existing owned attempts; lifecycle retains its real prerequisite.
+Root subsequently completed the actual copied-message/rendered-link interaction:
+clicking the Architect's LZ-23 link reopened the closed Tasks tab and loaded its
+correct project-scoped detail. [Native report and capture](native-root-review.md).
+Whole references/grouping plan integration remains a normal runtime operation;
+source landing alone did not finalize that plan.
