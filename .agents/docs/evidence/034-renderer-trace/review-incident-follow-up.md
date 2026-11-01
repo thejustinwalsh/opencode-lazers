@@ -1,5 +1,9 @@
 # Local-review incident — native read-only follow-up
 
+A later matched freeze was captured at 15:40 UTC; see the
+[new incident](../renderer-freeze-20261101T1540/report.md). The findings below
+describe the earlier pre-hang inspection.
+
 Native investigation `ses_e684cfd22ffeA75L4NDI0b8iwj` followed the ordinary review
 failure without changing files, settings, sessions or processes, launching
 inference, attaching a profiler or sampling a live process. Main at inspection
