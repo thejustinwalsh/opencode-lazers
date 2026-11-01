@@ -137,7 +137,12 @@ export const CommandInput = z.strictObject({
     "schedule",
     "amend-scope",
   ]),
-  reason: z.string().min(1).max(2000).optional(),
+  reason: z
+    .string()
+    .min(1)
+    .max(2000)
+    .describe("Brief user-facing explanation; keep detailed evidence in linked notes.")
+    .optional(),
   priority: z.int().optional(),
   afterPlans: z.array(z.uuid()).optional(),
   workspaceMode: z.enum(["shared", "isolated"]).optional(),
