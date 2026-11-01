@@ -18,7 +18,7 @@ failed on its local configuration before reviewing anything and was not retried.
 | Stable SVG/ELK Radar                             | LZ-34                                              | Actual operational map, unchanged-topology updates without relayout, real native flows and off-renderer layout proof.           |
 
 LZ-33 precedes LZ-34 in plan `b0eb89b4-a071-49e2-a238-c474d53cc42f`.
-That graph waits for integrated LZ-28, LZ-31, LZ-32 and LZ-35 plans, then consumes the
+That graph waits for integrated LZ-31, LZ-32 and LZ-35 plans, then consumes the
 reviewed checkout. Initial privacy/history work uses isolated native workers.
 All new plans inherit the configured implementor; nodes select Systems or UI
 personas independently of the model.
@@ -33,6 +33,22 @@ entry `lazers-lifecycle-review-repair-20261101` was installed and read back on
 `ses_930ecf3fd619489993f8b98167853ac1` before resume. It points to the retained
 review/reproducer and requires native synthetic-admission races and durable
 decision/question handoff. Do not create a replacement task or waive native proof.
+
+The subsequent automatic repair after `8c8f86c` was caused by stale verification
+receipt selection, not a failed current implementation check. The user's main
+fix `2536084` is preserved and was activated through supported public reload
+before LZ-32 returned. LZ-28 remains unfinished: disabling renewal is not delivery.
+Its latest work is retained stopped while a native investigation evaluates
+durable late-input/outcome reconciliation and visible archival. An atomic
+admission fence is one stronger design, **not a task requirement**; absence of
+that primitive alone does not establish unsupported renewal. See
+`evidence/architect-context-lifecycle/upstream-gap.md` for the corrected boundary.
+
+LZ-32's initial native source review found one compatibility regression: legacy
+omitted-state queries lost failed/exhausted tasks. Its same original attempt was
+explicitly resumed to repair both readers and tests. Do not activate the initial
+`b49116e` candidate or waive the native gate. After review of the correction,
+activate the candidate and ask the user to perform the agreed Desktop check.
 
 ### Privacy review hold and correction
 
@@ -54,9 +70,13 @@ checkout, then record both accepted ancestor artifacts through runtime.
 LZ-35 returned `15eff84`. Independent focused checks passed (35 tests / 239
 assertions), original audit and both residual reproducers now omit their private
 canaries while retaining safe summaries, quality passed, and the independent
-full suite passed (380 tests / 3,505 assertions). A native OpenCode reviewer is
-examining the corrected candidate before merge; these passing checks do not
-replace that review or establish integration/cleanup.
+full suite passed (380 tests / 3,505 assertions). Native OpenCode review found no
+blocking findings; the corrected descendant was merged, and clean integrated
+snapshot `2536084` passed GUI build, 382 tests / 3,533 assertions and quality.
+Both privacy plans are now integrated v9. Native registry/filesystem checks
+confirmed both owned worker trees absent after non-forced cleanup; the separate
+clean verification tree was removed natively too. Evidence is in
+`evidence/trajectory-privacy/native-review.md`.
 
 ### Remaining Phase 1 work
 
