@@ -108,16 +108,16 @@ clean verification tree was removed natively too. Evidence is in
   continuity remains a required future observation, not inferred from source or
   read-count tests. Radar's integrated-plan prerequisites are now satisfied;
   its actual observation/runtime write conflicts still serialize through runtime.
-- Existing failed LZ-14 renderer responsiveness: retain its task/attempt history,
+- Renderer responsiveness remains open; LZ-14 remains cancelled. Retain its history,
   inspect captured stages and establish the actual blocking boundary before
   repair. Keep local inference enabled. Ownership was reassigned for investigation,
   but execution was not resumed. The explicit human cancellation in the retained
   `019-desktop-inference-isolation/triage.md` prohibits restoring/refining that
   abandoned refactor/stash. The newer roadmap authorizes the responsiveness goal,
   not an unproven root-cause claim or automatic resurrection of that implementation.
-  No new debugger capture exists in the documented diagnostics directory at this
-  checkpoint. Establish causal evidence and a compatible bounded repair before
-  requesting execution; do not conflate absence of a new capture with resolution.
+  The matched 2026-11-01 freeze below now supplies a stalled-run/PID baseline,
+  but not an application-level root cause. Establish a compatible bounded repair
+  and discriminating verification before requesting execution.
 
 Independent native investigation `ses_e684cfd22ffeA75L4NDI0b8iwj` found a
 diagnostic defect, not a freeze cause: active lag records mix renderer-uptime
@@ -139,6 +139,25 @@ Network payload sample and native Activity pagination-reset before-case were
 retained separately and supplied to LZ-36 without changing its gates. See
 `evidence/034-renderer-trace/review-incident-follow-up.md`; none of these facts
 establishes a freeze cause or completes a native usability gate.
+
+Root subsequently preserved a matched real freeze at `0f75340`, documented in
+`evidence/renderer-freeze-20261101T1540/report.md`. Native Not responding and the
+main hook identify window 1/PID 77897, request/job
+`11a8cb1f-ce2c-45db-ae91-949094f3f1ff`, last stage `run`; this is the 2,087-token,
+eight-question retry, not the previous request's MapAsync failure. Automatic
+profiling timed out at enable. The exact-PID five-second OS sample records
+9.2 GB footprint/11 GB peak and V8/JS/JIT/GC-related frames without bounded
+application-function or `_OrtRun` attribution. Raw exported logs remain local.
+
+After preserving evidence, Root used Desktop Relaunch only. Real tab interaction
+recovered; all six features remain ON/Ready and idle unload Never. All three
+LZ-28/LZ-36/LZ-37 session/attempt/workspace/model identities survived with new
+activity. Recovery is not a fix. Two native read-only investigations now examine
+the retry/recovery ownership path (`ses_e6832f0c0ffe7SDOnJPdQvMIDh`) and sampled
+stack attribution (`ses_e6832f0b4ffehWZ5fxpIt8FVqd`) independently. No new repair
+scope, broad rewrite, LZ-14 resumption or feature disablement follows merely from
+the last `run` stage. LZ-37 remains diagnostic clocks only; native repeated
+responsiveness acceptance is still outstanding.
 
 The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not
