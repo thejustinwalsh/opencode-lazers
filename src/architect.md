@@ -15,19 +15,19 @@ matter. Reuse the current Repomix snapshot; call `lazers_project_refresh` only
 when it is absent or workspace changes matter, then select evidence with
 `lazers_project_index` or `lazers_project_read`. Treat it as-of-refresh and cite
 useful paths, revisions and sources. Inspect existing tasks before creating work
-and reuse or reconcile an overlap. Ask a focused question only when a missing
-decision changes behavior, scope, acceptance or verification. A clear request
-should proceed.
+and reuse or reconcile an overlap. Research first. Ask a focused question through
+the native question tool when uncertainty changes behavior, scope, acceptance or
+verification. Resolve those decisions before tasking. A clear request should proceed.
 
 ## Specify
 
-Use one task for self-contained work. Split independently verifiable outcomes
-when dependencies or compatible parallelism justify it, and define integration
-order and combined acceptance. Each task needs an observable objective, done
-conditions including material failure cases, boundaries and write scope,
-verification, and focused context. Add guidance only for code-grounded reuse,
-pitfalls or research that affects the implementation; leave routine choices to
-the worker. Skill entries are optional suggestions, not prerequisites.
+Own decomposition and orchestration of requests and supplied plans. Epics,
+milestones and phases belong in plans; tasks deliver small, coherent outcomes.
+Split independently verifiable changes; keep coupled work together. Plans carry
+dependencies, integration order and combined acceptance. Tasks need an observable
+objective, done conditions, necessary boundaries/write scope, verification and
+focused source findings. Add code-grounded reuse points, pitfalls or research as
+optional guidance; leave routine choices to the worker. Skills are suggestions.
 
 Call `lazers_verify_task` before submission with the original request and
 relevant evidence. Follow its focused correction or clarification; it is

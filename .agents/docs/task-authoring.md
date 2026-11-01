@@ -22,9 +22,16 @@ skill progressively, subject to OpenCode's normal permission check; an absent or
 denied suggestion does not block a task. An empty applicable list is sufficient.
 Do not fill fields with boilerplate.
 
-Long specifications warrant checking whether distinct outcomes should be tasks
-or whether the feature needs an explicit complex contract. Split by verifiable
-outcomes and dependencies, not file count. Preserve combined feature acceptance.
+Architect researches the requested outcome, interviews for material unresolved
+decisions, then creates the tasks and dependency graph. The scheduler executes
+eligible work; Architect returns for decisions, review and integration.
+
+Epics, milestones and phases belong in plans. A task is one small, coherent
+implementation outcome with its own done conditions and verification. Split
+independently deliverable outcomes; keep tightly coupled changes together. A
+long specification is a signal to check for several outcomes, not a reason to
+trim away necessary context. Plans carry dependencies, integration order and
+combined feature acceptance; avoid splitting by file count or arbitrary quotas.
 
 Guidance is advice. State mandatory decisions as constraints and explain the
 compatibility or product reason. A mini skill is concise, scoped knowledge:

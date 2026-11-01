@@ -8,12 +8,12 @@ verification records remain evidence of their recorded checkpoints.
 
 ## Four phases
 
-| Phase | Outcome | Review state |
-| --- | --- | --- |
-| 1 | Usable task/history investigation and a live operational Radar, alongside existing reliability repairs | Direction recorded |
-| 2 | Persona-based dispatch, model evidence database, usage/cost accounting and Models panel | Direction recorded |
-| 3 | Better planning and change management: task revisions, guided model configuration, focused research delegation where useful | Direction recorded |
-| 4 | Complete usable public-repo release, cross-machine dogfood, clean installation and upgrade/recovery | Direction recorded |
+| Phase | Outcome                                                                                                                     | Review state       |
+| ----- | --------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| 1     | Usable task/history investigation and a live operational Radar, alongside existing reliability repairs                      | Direction recorded |
+| 2     | Persona-based dispatch, model evidence database, usage/cost accounting and Models panel                                     | Direction recorded |
+| 3     | Better planning and change management: task revisions, guided model configuration, focused research delegation where useful | Direction recorded |
+| 4     | Complete usable public-repo release, cross-machine dogfood, clean installation and upgrade/recovery                         | Direction recorded |
 
 These are outcomes, not four giant tasks. Architect should inspect current code,
 reuse open task lineages, and decompose approved work into small coherent tasks
@@ -238,7 +238,15 @@ unfinished. No separate LAZERS daemon or inference server is introduced.
   and [production audit](production-audit-and-next-phases.md)
 
 Research files are planning references, not bodies to inject into agent prompts.
-Phase review is complete. Root submitted the first Phase 1 task-history/navigation
-request through the existing Desktop Architect (Sol 6.1 High), requesting Luna
-Max with the UI persona. Task submission and worker dispatch are not yet confirmed
-at this documentation checkpoint; observe the native result before reporting them.
+Phase review is complete. The product requirements are distilled in
+`design/roadmap.md`, without a task breakdown or test coaching. Architect's shipped
+definition owns research, native interviews for material uncertainty, decomposition
+into small tasks/plans and orchestration; the scheduler owns execution.
+
+Root stopped the coached run, preserved its transcript and the existing LZ-28
+lineage, and activated the concise definition through supported native location
+reload. Native agent readback matched the shipped definition. A fresh Desktop
+session will receive only: “Here is the agreed plan: design/roadmap.md. Let's build
+it.” Sol High and Luna Max are configured in OpenCode, not supplied as prompting
+instructions. Judge actual research/interview/decomposition/dispatch behavior;
+source registration tests alone do not establish planning quality.
