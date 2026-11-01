@@ -305,7 +305,7 @@ export class TrajectoryPanelState {
         this.data.taskID === taskID &&
         (!this.data.report || this.data.historyCapturedAt === null)
       ) {
-        this.update({ loading: false, stale: true })
+        this.update({ loading: false, stale: true, error: "" })
       } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
         await this.captureHistory(taskID, taskSignal, !taskChanged)
       } else {
@@ -501,12 +501,17 @@ export class TrajectoryPanelState {
       )
       const events = [...report.trajectory.events]
       let eventCursor = report.trajectory.nextCursor
+      const continuationCursors = new Set<string>()
       while (preserveSelection && events.length < targetCount && eventCursor) {
+        const requestedCursor = eventCursor
+        if (continuationCursors.has(requestedCursor))
+          throw new Error("Recaptured history cursor did not advance; recapture explicitly")
+        continuationCursors.add(requestedCursor)
         const continuation = await transport.history(
           scope,
           taskID,
           signal,
-          eventCursor,
+          requestedCursor,
           report.trajectory.limit ?? 50,
         )
         if (
@@ -527,14 +532,22 @@ export class TrajectoryPanelState {
           throw new Error("Recaptured history continuation belongs to another capture")
         const pageEvents = continuationReport.trajectory.events
         const expectedIDs = eventIDs.slice(events.length, events.length + pageEvents.length)
+        const nextCursor = continuationReport.trajectory.nextCursor
         if (
+          pageEvents.length === 0 ||
           expectedIDs.length !== pageEvents.length ||
-          expectedIDs.some((id, index) => id !== pageEvents[index]?.id)
+          expectedIDs.some((id, index) => id !== pageEvents[index]?.id) ||
+          nextCursor === requestedCursor ||
+          (nextCursor !== null && continuationCursors.has(nextCursor))
         )
-          throw new Error("Recaptured history page order changed; recapture explicitly")
+          throw new Error(
+            "Recaptured history page order changed or cursor did not advance; recapture explicitly",
+          )
         events.push(...pageEvents)
-        eventCursor = continuationReport.trajectory.nextCursor
+        eventCursor = nextCursor
       }
+      if (preserveSelection && events.length < targetCount)
+        throw new Error("Recaptured history ended before loaded activity could be preserved")
       if (preserveSelection)
         report = {
           ...report,

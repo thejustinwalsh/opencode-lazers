@@ -515,6 +515,59 @@ test("expired history continuations retain old pages and require an explicit rec
   }
 })
 
+test("history recovery remains available after a healthy snapshot before the first capture", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  let online = true
+  const { transport } = transportFor(fixture, tracker, () => online)
+  const originalHistory = transport.history
+  let historyAvailable = false
+  transport.history = async (scope, id, signal, cursor, limit) => {
+    if (!historyAvailable)
+      throw {
+        type: "trajectory_history_unavailable",
+        message: "Trajectory history expired; recapture explicitly",
+        data: { reason: "expired", recovery: "recapture" },
+      }
+    return originalHistory(scope, id, signal, cursor, limit)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "initial-history-recovery",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => Boolean(state.data.historyError) && !state.data.loading)
+    expect(state.data.report).toBeUndefined()
+
+    online = false
+    await state.refresh()
+    expect(state.data.error).toBe("Trajectory updates are disconnected.")
+    expect(state.data.historyError).toContain("Recapture history")
+
+    online = true
+    await state.refresh()
+    expect(state.data.report).toBeUndefined()
+    expect(state.data.error).toBe("")
+    expect(state.data.historyError).toContain("Recapture history")
+    expect(state.data.stale).toBe(true)
+
+    historyAvailable = true
+    await state.recaptureActivity()
+    expect(state.data.report).toBeDefined()
+    expect(state.data.historyError).toBe("")
+    expect(state.data.recapturingHistory).toBe(false)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
 test("failed explicit recapture keeps the old capture and page union after healthy status", async () => {
   const fixture = makeFixture()
   const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
@@ -584,6 +637,75 @@ test("failed explicit recapture keeps the old capture and page union after healt
     expect(state.data.selection).toEqual(oldSelection)
     expect(state.data.selectionEventSnapshot).toEqual(oldPayload)
     expect(calls).toHaveLength(2)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("recapture rejects an empty nonadvancing continuation without replacing old history", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const initialHistory = transport.history
+  transport.history = (scope, id, signal, cursor) => initialHistory(scope, id, signal, cursor, 2)
+  const pageHistory = transport.history
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "nonadvancing-recapture",
+      "project",
+      fixture.directory,
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    await state.loadMoreActivity()
+    expect(state.data.events).toHaveLength(4)
+    state.selectEvent(state.data.events[0]!.id)
+
+    const oldReport = state.data.report
+    const oldEvents = structuredClone(state.data.events)
+    const oldCursor = state.data.eventCursor
+    const oldCapturedAt = state.data.historyCapturedAt
+    const oldExpiresAt = state.data.historyExpiresAt
+    const oldSelection = state.data.selection
+    const oldPayload = structuredClone(state.data.selectionEventSnapshot)
+    const calls: Array<string | undefined> = []
+    transport.history = async (scope, id, signal, cursor, limit) => {
+      calls.push(cursor)
+      const response = await pageHistory(scope, id, signal, cursor, limit)
+      if (!cursor) return response
+      const report = response.report as { trajectory: Record<string, unknown> }
+      return {
+        ...response,
+        report: {
+          ...response.report,
+          trajectory: {
+            ...report.trajectory,
+            events: [],
+            nextCursor: cursor,
+            hasMore: true,
+          },
+        },
+      }
+    }
+
+    await state.recaptureActivity()
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toBeUndefined()
+    expect(calls[1]).toBeTypeOf("string")
+    expect(state.data.historyError).toContain("cursor did not advance")
+    expect(state.data.recapturingHistory).toBe(false)
+    expect(state.data.report).toBe(oldReport)
+    expect(state.data.events).toEqual(oldEvents)
+    expect(state.data.eventCursor).toBe(oldCursor)
+    expect(state.data.historyCapturedAt).toBe(oldCapturedAt)
+    expect(state.data.historyExpiresAt).toBe(oldExpiresAt)
+    expect(state.data.selection).toEqual(oldSelection)
+    expect(state.data.selectionEventSnapshot).toEqual(oldPayload)
   } finally {
     state.close()
     fixture.close()
