@@ -38,17 +38,39 @@ The subsequent automatic repair after `8c8f86c` was caused by stale verification
 receipt selection, not a failed current implementation check. The user's main
 fix `2536084` is preserved and was activated through supported public reload
 before LZ-32 returned. LZ-28 remains unfinished: disabling renewal is not delivery.
-Its latest work is retained stopped while a native investigation evaluates
+Its latest work was retained stopped while native investigation evaluated
 durable late-input/outcome reconciliation and visible archival. An atomic
 admission fence is one stronger design, **not a task requirement**; absence of
 that primitive alone does not establish unsupported renewal. See
 `evidence/architect-context-lifecycle/upstream-gap.md` for the corrected boundary.
+The user clarified “Preserve work, honor cancels”; original LZ-28 resumed in the
+same retained latest attempt with the source-supported reconciliation brief at
+`evidence/architect-context-lifecycle/reconciliation-plan.md`. Renewal/archival
+and exact-artifact native proof remain unfinished.
 
 LZ-32's initial native source review found one compatibility regression: legacy
 omitted-state queries lost failed/exhausted tasks. Its same original attempt was
 explicitly resumed to repair both readers and tests. Do not activate the initial
 `b49116e` candidate or waive the native gate. After review of the correction,
 activate the candidate and ask the user to perform the agreed Desktop check.
+The user subsequently observed correct filtering, historical/all-attempt
+navigation and narrow wrapping, but Tera found misleading active/total fractions
+in history views. LZ-32 repaired that presentation issue in its same attempt.
+The user then explicitly passed `b21e3e30309616713a206278de7b5011cb7f7953`,
+activated by merge `73f7783`, with fresh corrected visuals and exact LZ-9 mounted
+navigation; Tera cleared its blocker. Complete evidence is in
+`evidence/task-history-navigation/native.md` at `d933204`. Task `native-usable`
+and combined `native-history` human evidence have now been recorded against that
+exact artifact. Original attempt is accepted; normal combined reconciliation
+is running. No duplicate activation was performed. Record integration/cleanup
+only after runtime combined acceptance.
+
+Stable live Trajectory is now LZ-36 (`68a72431-87af-4bce-8e7b-77f430aeb100`),
+plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. Execution is admitted but waits for
+LZ-32 integration, then serializes true observation-file conflicts with Radar.
+It preserves loaded history/disclosures/reading anchor while status/progress
+refreshes independently; repeated status and captured-page reads must add zero
+native context loads. Existing default inspection cursor behavior remains.
 
 ### Privacy review hold and correction
 

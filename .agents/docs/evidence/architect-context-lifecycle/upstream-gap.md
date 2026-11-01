@@ -70,9 +70,34 @@ approach compatible with original acceptance, with required corrections:
   not transfer native grants or authorize answering another session's forms.
 
 These are protocol/test requirements, not implemented or natively passed cases.
-The remaining focused investigation is whether the live supported host durably
-retains an admission that was cancelled before LAZERS first observed it. That is
-a narrower journal/retention question, not evidence that a fence is mandatory.
+
+### Native cancellation probe and user clarification
+
+Native investigator `ses_e687a0f55ffeuodjgp0VDqALFr` created one authorized
+same-project probe `ses_e6a80a899d2a42f59c5ef2c0bd8aa358`, title
+`LAZERS renewal journal probe`, without inference. Synthetic canary
+`msg_9d07ffddf3c545dbaa584344d28b8205` was queued with `resume:false`, observed
+pending, then explicitly cancelled. After cancellation its inbox and full
+history were empty, exact message lookup returned `MessageNotFoundError`, and
+public log replay returned only `log.synced`, not admission/cancellation records.
+Public client archival readback succeeded; token counters remained zero. A
+separate client process on the same host returned the same result. The probe
+remains archived; no existing sessions/settings were mutated.
+
+Source `packages/core/src/bus.ts:208,786–891` shows sequence markers advance
+independently of optional event persistence. The ordinary pinned service launcher
+does not supply `events.persist`, and the public service schema exposes no such
+setting. The live flag itself is not publicly exposed. Host restart/reload
+retention was not tested; separate-client readback is not claimed as that proof.
+
+Asked the precise accounting question, the user selected **“Preserve work, honor
+cancels”**, not “Audit every admission.” Required accounting therefore preserves
+pending/delivered work and outcomes and honors explicit pause/cancellation; it
+does not require reconstructing foreign inputs deliberately cancelled before
+first observation. The narrower missing cancellation journal is not a blocker
+for that clarified protocol. Original real input/outcome and visible archival
+tests remain required. Implementation resumed through the original retained
+LZ-28 attempt with this clarification and the independent review corrections.
 
 ## Two separate upstream defects
 
