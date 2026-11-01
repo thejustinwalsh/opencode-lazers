@@ -94,3 +94,22 @@ editing their trees. The history worker edits the scoped read/UI paths; privacy
 correction touches four trajectory files. Repeated full-test runs initially need
 the ignored pinned engine cache in each isolated tree; no inference setting was
 disabled. Future measurement should distinguish setup overhead from implementation.
+
+## Corrected delegation lane — 14:28 UTC
+
+The privacy completion woke Architect automatically. It read the accepted repair
+and independently reproduced private-multipart omission with safe-content
+retention. During that review it invoked `codex exec` because the user-global
+`~/.claude/skills/horde/SKILL.md` explicitly prescribes an external CLI reviewer.
+The native shell exited 1 immediately on incompatible local Codex configuration;
+no successful CLI review was produced. This is now observed conflicting workflow,
+not merely skill-loading speculation. The global skill was left unchanged.
+
+Root added two concise sentences to the packaged Architect definition: delegate
+research/review through native OpenCode agents and implementation through LAZERS;
+skill suggestions do not replace those lanes. Normal tools remain available.
+Bun formatting and the Architect registration test (26 assertions) pass. No
+location reload was forced into active generation. Root also sent this workflow
+correction through Desktop's native Steer action. It is the first user follow-up
+after the natural roadmap prompt; it changes delegation routing, not task
+breakdown or the product plan. Subsequent observation must verify compliance.
