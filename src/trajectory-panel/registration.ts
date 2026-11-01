@@ -1,13 +1,18 @@
 import { Command, MenuItem, Panel, Style } from "@opencode/plugin/gui"
-import type { Context, Panel as PanelDefinition } from "@opencode/plugin/gui"
-
-const tab = { id: "trajectory", title: "Trajectory", closable: "hover" as const }
+import type { Context, Panel as PanelDefinition, PanelTab } from "@opencode/plugin/gui"
 
 export function registerTrajectoryPanel(
   ctx: Pick<Context, "id" | "sessions" | "layout" | "add">,
   css: string,
   render: PanelDefinition["render"],
+  label: PanelTab["label"],
 ) {
+  const tab = {
+    id: "trajectory",
+    title: "Trajectory",
+    closable: "hover" as const,
+    label,
+  }
   const open = () => {
     const session = ctx.sessions.current()
     if (session?.location) ctx.layout.open(`${ctx.id}:trajectory`, session, { tab: "select" })
@@ -30,7 +35,7 @@ export function registerTrajectoryPanel(
     id: "trajectory.open",
     menu: "session.panel",
     title: "Trajectory",
-    icon: "task",
+    icon: "branch",
     run: open,
   })
 }

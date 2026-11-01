@@ -1,4 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "default_agent": "architect"
+  "default_agent": "architect",
+  "agents": {
+    "lazers-implementor": {
+      "model": "openai/gpt-6-luna#max"
+    }
+  }
 }

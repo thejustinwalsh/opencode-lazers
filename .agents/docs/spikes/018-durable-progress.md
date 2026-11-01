@@ -61,10 +61,15 @@ identity, synthetic admission recovery, rejection retry bounds, and early
 commentary/tool/final handoff cases. Runtime integration tests assert that
 artifacts and successful checks are recorded without changing acceptance rules.
 
-The native tool/event paths are covered through registered-tool tests and
-simulated host events. A manual OpenCode Desktop worker lifecycle observation
-was not performed for this spike; live native stream availability and complete
-session history therefore remain explicit runtime recovery boundaries.
+Registered-tool tests and simulated host events cover the failure/recovery
+matrix. After the repaired source was merged and activated, the user authorized
+native dogfood on the existing dependent lifecycle worker: its real report call
+completed at sequence 18555 with matching durable commentary identity and native
+events, alongside automatic facts. See
+`../evidence/018-durable-progress/native.md`. This establishes the live tool/event
+roundtrip, not complete native failure/restart/reminder or lifecycle input/archive
+coverage; stream availability and incomplete retained history remain explicit
+recovery boundaries.
 
 Verification results:
 

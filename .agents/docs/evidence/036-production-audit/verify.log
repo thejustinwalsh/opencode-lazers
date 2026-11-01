@@ -1,0 +1,4 @@
+$ bun fmt --check && bun lint && bun check
+All 371 files are formatted.
+✓ No problems in 191 files [22.12ms]
+✓ No type errors in 185 files [126.31ms]

@@ -11,7 +11,12 @@ test("Trajectory registers as a closable optional panel with command and session
       return () => {}
     },
   }
-  registerTrajectoryPanel(context as never, "trajectory-css", () => null)
+  registerTrajectoryPanel(
+    context as never,
+    "trajectory-css",
+    () => null,
+    () => null,
+  )
 
   expect(
     registrations.some(({ token, value }) => token === Style && typeof value === "string"),
@@ -26,7 +31,7 @@ test("Trajectory registers as a closable optional panel with command and session
   expect(contribution.id).toBe("trajectory")
   expect(contribution.region).toBe("side")
   expect(contribution.list({ open: [] })).toEqual([])
-  expect(contribution.list({ open: ["trajectory"] })).toEqual([
+  expect(contribution.list({ open: ["trajectory"] })).toMatchObject([
     { id: "trajectory", title: "Trajectory", closable: "hover" },
   ])
   expect(typeof contribution.render).toBe("function")

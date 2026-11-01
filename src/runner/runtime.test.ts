@@ -2997,6 +2997,77 @@ test("an unchanged evidence wait keeps its version and notification stable until
   expect(f.store.plan(planID)!.state).toBe("accepted")
 })
 
+test("a resumed worker verifies its new commit without reusing older receipts or spending a repair", async () => {
+  const f = fixture({
+    human: true,
+    commit: true,
+    repair: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await drive(f.runtime, 5)
+  const original = f.store.attempts(planID)[0]!
+  const originalCheck = f.store.effects(planID).find((effect) => effect.kind === "verify:content")!
+  const originalReceipt = originalCheck.receipt
+  expect(f.store.plan(planID)?.reason).toContain("correct:human")
+
+  await f.runtime.command(
+    {
+      requestID: "cancel",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  await f.runtime.command(
+    {
+      requestID: "resume-review-repair",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: original.task_id,
+      reason: "Continue the existing worker after review",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  // Same attempt, different valid source commit after the resumed worker finishes.
+  writeFileSync(join(original.workspace, "a.txt"), "a\n")
+  git(original.workspace, ["add", "a.txt"])
+  git(original.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Repair after review",
+  ])
+  const repaired = git(original.workspace, ["rev-parse", "HEAD"])
+  expect(repaired).not.toBe(original.artifact!)
+  await drive(f.runtime, 5)
+
+  expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([original.id])
+  expect(f.store.plan(planID)?.reason).toContain("correct:human")
+  expect(f.store.nodes(planID)[0]).toMatchObject({ state: "verifying", artifact: repaired })
+  const checks = f.store.effects(planID).filter((effect) => effect.kind === "verify:content")
+  expect(checks).toHaveLength(2)
+  expect(checks.find((effect) => effect.id === originalCheck.id)?.receipt).toBe(originalReceipt)
+  expect(new Set(checks.map((effect) => JSON.parse(effect.payload).receiptPath)).size).toBe(2)
+  for (const effect of checks) {
+    const payload = JSON.parse(effect.payload)
+    expect(JSON.parse(effect.receipt!).check).toMatchObject({
+      artifact: payload.artifact,
+      exitCode: 0,
+    })
+    expect(existsSync(payload.receiptPath)).toBe(true)
+  }
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+})
+
 test("plan evidence binds to the accepted combination and remains separate from task evidence", async () => {
   const f = fixture({ commit: true, startOnly: true })
   const plan = f.store.submit(

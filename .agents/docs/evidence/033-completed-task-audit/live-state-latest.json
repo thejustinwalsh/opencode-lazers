@@ -1,6 +1,6 @@
 {
-  "observedAt": "2026-11-01T00:17:36.432Z",
-  "head": "5960e10cd75cd31868ca32b1bc4c7dd6e9b6c65a",
+  "observedAt": "2026-11-01T04:46:20.526Z",
+  "head": "53a6e694a8fc0b5983e0a2ef3be64c3b09aa6de6",
   "counts": {
     "plans": [
       {
@@ -9,17 +9,17 @@
       },
       {
         "state": "integrated",
-        "count": 14
+        "count": 15
       },
       {
         "state": "running",
-        "count": 2
+        "count": 1
       }
     ],
     "nodes": [
       {
         "state": "accepted",
-        "count": 21
+        "count": 22
       },
       {
         "state": "cancelled",
@@ -27,10 +27,6 @@
       },
       {
         "state": "failed",
-        "count": 1
-      },
-      {
-        "state": "queued",
         "count": 1
       },
       {
@@ -141,10 +137,10 @@
     {
       "id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
       "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
-      "state": "running",
-      "version": 10,
+      "state": "integrated",
+      "version": 16,
       "reason": null,
-      "artifact": null,
+      "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e",
       "title": null,
       "priority": 5,
       "afterPlans": [],
@@ -295,13 +291,13 @@
       "id": "8253ff59-57a5-45fd-8847-acd971438af8",
       "owner": "ses_e6e0e6239ffdtzIePMeJ1sHA4l",
       "state": "running",
-      "version": 3,
+      "version": 6,
       "reason": null,
       "artifact": null,
       "title": null,
       "priority": 5,
       "afterPlans": ["b9e55d09-7f0d-446a-9a13-fe24133bea70"],
-      "baseCommit": "9b0ab5efec71fa5935695b92bacf9592a745ef86",
+      "baseCommit": "d9ef1988677f286be401892b94b57507bc140351",
       "workerModel": {
         "providerID": "openai",
         "id": "gpt-6-luna",
@@ -429,8 +425,8 @@
       "plan_id": "8253ff59-57a5-45fd-8847-acd971438af8",
       "task_id": "239f45a9-3247-4cba-b339-19c8267d0800",
       "ordinal": 0,
-      "state": "queued",
-      "version": 1,
+      "state": "running",
+      "version": 3,
       "reason": null,
       "artifact": null
     },
@@ -510,10 +506,10 @@
       "plan_id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
       "task_id": "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
       "ordinal": 0,
-      "state": "running",
-      "version": 5,
-      "reason": "The original worktree effect is conclusively completed on original attempt d543a0f7-670a-46eb-8a91-0ca590a0f848; no native worker/session/prompt had been created. Runtime cancelled only the unsent reservation while its plan remained blocked. Resume that same attempt/worktree/session identity, not retry or a replacement task/worker. Before dispatch, its clean native-created checkout was fast-forwarded from recorded9ab588f to reviewed canonical5c407e8 so existing GUI, references, scope recovery/coalescer and native proof repairs are already present. Preserve original source provenance and effective scope; Root2332abb ancestry-aware isolated verification excludes reviewed inherited main changes. Keep exact Luna Max route and lifecycle's actual progress integration prerequisite.",
-      "artifact": null
+      "state": "accepted",
+      "version": 7,
+      "reason": null,
+      "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e"
     },
     {
       "plan_id": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
@@ -572,12 +568,12 @@
   ],
   "activeAttempts": [
     {
-      "id": "d543a0f7-670a-46eb-8a91-0ca590a0f848",
-      "plan_id": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
-      "task_id": "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
+      "id": "33e6b86d-edda-41dc-9ac4-93d195f537ea",
+      "plan_id": "8253ff59-57a5-45fd-8847-acd971438af8",
+      "task_id": "239f45a9-3247-4cba-b339-19c8267d0800",
       "state": "running",
-      "session_id": "ses_043f3b7202dd41b8bd9bbb7c0b69c805",
-      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/d543a0f7-670a-46eb-8a91-0ca590a0f848"
+      "session_id": "ses_930ecf3fd619489993f8b98167853ac1",
+      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/33e6b86d-edda-41dc-9ac4-93d195f537ea"
     }
   ]
 }

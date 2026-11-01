@@ -20,9 +20,18 @@ import { registerTrajectoryPanel } from "./registration.ts"
 import css from "./panel.css?inline"
 
 const SelectionKind = Schema.Literals(["", "attempt", "check", "event"])
+const TaskTarget = Schema.Struct({
+  requestID: Schema.String,
+  taskID: Schema.String,
+  reference: Schema.String,
+  projectID: Schema.String,
+  projectDirectory: Schema.String,
+})
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
   selectedTaskID: Schema.NullOr(Schema.String),
+  selectedReference: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  target: Schema.optionalKey(Schema.NullOr(TaskTarget)),
   selectedKind: SelectionKind,
   selectedRecordID: Schema.String,
   split: Schema.Number,
@@ -30,6 +39,8 @@ const View = Schema.Struct({
 const initial: typeof View.Type = {
   scope: "session",
   selectedTaskID: null,
+  selectedReference: null,
+  target: null,
   selectedKind: "",
   selectedRecordID: "",
   split: 56,
@@ -95,6 +106,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     key: "",
     tasks: [],
     taskID: null,
+    taskReference: null,
     selection: null,
     events: [],
     eventCursor: null,
@@ -117,6 +129,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   let root: HTMLDivElement | undefined
   let separator: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
+  let handledTargetRequestID = ""
 
   const source = createLatest(
     () => {
@@ -206,7 +219,9 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         value.directory,
         () => props.session.server.connected,
       )
-      state.connect(key, value.projectID, scope, transport, {
+      handledTargetRequestID = view.target?.requestID ?? ""
+      state.connect(key, value.projectID, value.project, scope, transport, {
+        target: view.target,
         taskID: view.selectedTaskID,
         selection: selectionFrom(view),
       })
@@ -221,6 +236,14 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   createEffect(() => {
     const value = current()
     if (value && props.session.server.connected) void state.refresh()
+  })
+
+  createEffect(() => {
+    const value = current()
+    const target = prefs().target
+    if (!value || !target || target.requestID === handledTargetRequestID) return
+    handledTargetRequestID = target.requestID
+    state.selectTarget(target)
   })
 
   const currentData = () => visible()
@@ -313,10 +336,23 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   }
   const timeText = (value: number | null) => formatTime(value, timeline()?.origin ?? null)
   const selectScope = (scope: "session" | "project") => {
-    save({ scope, selectedTaskID: null, selectedKind: "", selectedRecordID: "" })
+    save({
+      scope,
+      selectedTaskID: null,
+      selectedReference: null,
+      target: null,
+      selectedKind: "",
+      selectedRecordID: "",
+    })
   }
   const selectTask = (taskID: string) => {
-    save({ selectedTaskID: taskID, selectedKind: "", selectedRecordID: "" })
+    save({
+      selectedTaskID: taskID,
+      selectedReference: null,
+      target: null,
+      selectedKind: "",
+      selectedRecordID: "",
+    })
     state.selectTask(taskID)
   }
   const checkOutput = (check: DetailedCheck) =>
@@ -413,6 +449,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 class="lazers-trajectory-id"
                 style={{ "font-family": ctx.appearance.font("mono") }}
               >
+                {currentData()?.taskReference ? `${currentData()!.taskReference} · ` : ""}
                 {report()?.task.id.slice(0, 8)}
                 {report()?.task.revision ? ` · r${report()?.task.revision}` : ""}
               </span>
@@ -885,9 +922,16 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
 }
 
 export function setupTrajectoryPanel(ctx: TrajectoryContext) {
+  const Ui = ctx.ui
   registerTrajectoryPanel(
     ctx,
     css,
     bindPlugin((props: PanelProps) => <PanelView {...props} ctx={ctx} />),
+    () => (
+      <div class="flex min-w-0 items-center gap-1.5">
+        <Ui.Icon name="branch" size="small" class="shrink-0" />
+        <span class="truncate">Trajectory</span>
+      </div>
+    ),
   )
 }

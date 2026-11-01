@@ -94,3 +94,29 @@ worker, then observe its real registered report-tool call plus automatic facts.
 That positive live tool roundtrip remains explicitly pending until observed; it
 is not replaced by registered-host stubs, automatically recovered facts or this
 authorized change in verification order.
+
+## Normal closure and existing dependent dispatch
+
+Command `progress-reviewed-activated-integrated-b7f036b-v1` recorded the authorized
+integration at v14 → cleanup-requested v15 → **integrated v16**. All ten effects
+are complete with none pending. Native non-forced cleanup removed the original
+idle progress worktree (HEAD `9d341de`, already merged); native registry and
+filesystem checks confirmed it absent. No missing directory was recreated.
+
+Runtime then dispatched existing lifecycle task `239f45a9-3247-4cba-b339-19c8267d0800`
+(`LZ-28`) normally, original attempt `33e6b86d-edda-41dc-9ac4-93d195f537ea`, native
+session `ses_930ecf3fd619489993f8b98167853ac1`, exact Luna Max route and integrated
+`d9ef198` checkout. Its scoped native preservation entry was written/read back.
+Coordination message `msg_54d23648aafc4e06bdd0eb8b331ff8d8` requests one truthful
+real progress checkpoint while continuing lifecycle work; admission is observed,
+consumption/success is not inferred. The worker remains present/registered, its
+busy/idle timestamps unchanged by cleanup verification, and PID stays 16786.
+Root's native lifecycle/input gate remains required; successful report-tool
+roundtrip still needs actual readback rather than this dispatch receipt.
+
+That positive roundtrip was subsequently observed on the existing lifecycle
+worker: the native call completed at sequence **18555**, and its exact call and
+assistant-message IDs match the single durable commentary row with native event
+and tool-commentary provenance. Automatic facts were recorded alongside it.
+[`native.md`](native.md) records the exact identities and remaining limits; this
+closes the deferred progress-tool observation, not lifecycle acceptance.

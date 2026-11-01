@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import type { TaskProposal } from "../task.ts"
 import type { SystemOneQuestion } from "./system-one.ts"
 
-export const REVIEW_VERSION = "task-hardening-v2"
+export const REVIEW_VERSION = "task-hardening-v3"
 export const REVIEW_ROUNDS = 3
 export const REVIEW_THRESHOLD = 0.7
 
@@ -27,9 +27,9 @@ export function reviewChecks(task: TaskProposal): ReviewCheck[] {
     family: "coverage",
     path: "acceptance",
     goodWhen: "yes",
-    question: "Does task.acceptance explicitly cover the behavior requested in intent.request?",
+    question: "Does task.acceptance explicitly cover the behavior promised by task.objective?",
     guidance:
-      "Compare each requested behavior with acceptance. Add the missing assertion; ask a focused question if the intended behavior is unclear.",
+      "Compare this task's objective with its acceptance. A task within a plan need not cover unrelated roadmap outcomes. Add missing task assertions; clarify material uncertainty.",
   })
   add({
     family: "scope",
@@ -122,11 +122,11 @@ export function reviewQuestions(checks: readonly ReviewCheck[]): Record<string, 
   return {
     cancellation_requested: {
       type: "noul",
-      instructions: "Does intent.request ask for cancellation behavior?",
+      instructions: "Does this task's objective require cancellation behavior?",
     },
     performance_requested: {
       type: "noul",
-      instructions: "Does intent.request ask for improved execution speed?",
+      instructions: "Does this task's objective require improved execution speed?",
     },
     ...Object.fromEntries(
       checks.map((check) => [check.id, { type: "noul" as const, instructions: check.question }]),

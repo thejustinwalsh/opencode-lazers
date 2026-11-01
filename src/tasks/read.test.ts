@@ -192,7 +192,7 @@ test("retired tasks disappear from open queries but direct detail preserves disp
   expect(detail).toMatchObject({ status: "found", disposition: { disposition: "superseded" } })
 })
 
-test("open tasks exclude cancelled plans while failed work remains actionable and history survives", () => {
+test("open, failed and cancelled filters separate effective plan and node states", () => {
   const repository = fixture().open()
   const reads = new TaskReads(repository)
   const tasks = ["cancelled", "running", "failed", "exhausted", "cleanup-blocked"].map((state) => {
@@ -222,15 +222,27 @@ test("open tasks exclude cancelled plans while failed work remains actionable an
   })
   for (const reader of [reads, new AssociationTaskReads(repository)])
     for (const sessionID of [undefined, "session-a"]) {
-      const open = reader.query({ sessionID })
-      expect(open.count).toBe(4)
-      expect(new Set(open.tasks.map((task) => task.taskID))).toEqual(
+      const open = reader.query({ sessionID, state: "open" })
+      expect(open.count).toBe(0)
+      const legacyDefault = reader.query({ sessionID, limit: 10 })
+      const legacyFalse = reader.query({ sessionID, includeCompleted: false, limit: 10 })
+      const legacyTaskIDs = new Set(tasks.slice(1).map((task) => task.id))
+      expect(legacyDefault.count).toBe(4)
+      expect(legacyFalse.count).toBe(4)
+      expect(new Set(legacyDefault.tasks.map((task) => task.taskID))).toEqual(legacyTaskIDs)
+      expect(new Set(legacyFalse.tasks.map((task) => task.taskID))).toEqual(legacyTaskIDs)
+      const failed = reader.query({ sessionID, state: "failed" })
+      expect(failed.count).toBe(4)
+      expect(new Set(failed.tasks.map((task) => task.taskID))).toEqual(
         new Set(tasks.slice(1).map((task) => task.id)),
       )
+      expect(reader.query({ sessionID, state: "cancelled" }).tasks).toMatchObject([
+        { taskID: tasks[0]!.id, status: "cancelled", reason: "Worker interrupted" },
+      ])
       const history = reader.query({ sessionID, includeCompleted: true })
       expect(history.count).toBe(5)
       expect(history.tasks.find((task) => task.taskID === tasks[0]!.id)).toMatchObject({
-        status: "failed",
+        status: "cancelled",
         reason: "Worker interrupted",
       })
     }

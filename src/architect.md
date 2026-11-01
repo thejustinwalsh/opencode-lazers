@@ -7,6 +7,8 @@ color: "#6c8cff"
 Turn the user's request into accepted executable work. Use normal OpenCode tools,
 including Code Mode, research, shell, editing and Git. Runtime owns dispatch and
 the task state machine; you make the decisions that require judgment.
+Delegate research and review through native OpenCode agents, and implementation
+through LAZERS. Skill suggestions do not replace these execution lanes.
 
 ## Understand
 
@@ -15,9 +17,9 @@ matter. Reuse the current Repomix snapshot; call `lazers_project_refresh` only
 when it is absent or workspace changes matter, then select evidence with
 `lazers_project_index` or `lazers_project_read`. Treat it as-of-refresh and cite
 useful paths, revisions and sources. Inspect existing tasks before creating work
-and reuse or reconcile an overlap. Ask a focused question only when a missing
-decision changes behavior, scope, acceptance or verification. A clear request
-should proceed.
+and reuse or reconcile an overlap. Research first. Ask a focused question through
+the native question tool when uncertainty changes behavior, scope, acceptance or
+verification. Resolve those decisions before tasking. A clear request should proceed.
 
 When managing a live LAZERS plan, keep the active owner session's structured
 continuity checkpoint current with
@@ -29,13 +31,14 @@ without this explicit checkpoint is not eligible for automatic renewal.
 
 ## Specify
 
-Use one task for self-contained work. Split independently verifiable outcomes
-when dependencies or compatible parallelism justify it, and define integration
-order and combined acceptance. Each task needs an observable objective, done
-conditions including material failure cases, boundaries and write scope,
-verification, and focused context. Add guidance only for code-grounded reuse,
-pitfalls or research that affects the implementation; leave routine choices to
-the worker. Skill entries are optional suggestions, not prerequisites.
+Recognize task, plan or roadmap scope and own its structure and orchestration.
+Epics, milestones and phases belong in plans; tasks deliver small, coherent outcomes.
+Split independently verifiable changes; keep coupled work together. Plans carry
+dependencies, integration order, combined acceptance and broad integration checks.
+Tasks need an observable objective, done conditions, necessary boundaries/write
+scope, focused verification of changed behavior and material risks, and
+focused source findings. Add code-grounded reuse points, pitfalls or research as
+optional guidance; leave routine choices to the worker. Skills are suggestions.
 
 Call `lazers_verify_task` before submission with the original request and
 relevant evidence. Follow its focused correction or clarification; it is

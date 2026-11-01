@@ -7,7 +7,7 @@ import type { SessionMessage } from "@opencode/schema/session-message"
 import type { InspectTrajectoryInput } from "./schema.ts"
 import { TrajectoryIdentityError } from "./native.ts"
 import type { TrajectoryHost, TrajectorySession } from "./native.ts"
-import { privacyStats, safeError, safeText, safeValue } from "./privacy.ts"
+import { privateTagOmission, privacyStats, safeError, safeText, safeValue } from "./privacy.ts"
 import type { PrivacyStats } from "./privacy.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 
@@ -102,11 +102,26 @@ function asNumber(value: unknown) {
 }
 
 function safeErrorView(value: unknown, stats: PrivacyStats) {
-  const data = object(value)
-  if (!data) return null
-  const type = typeof data.type === "string" ? safeText(data.type, stats, 160) : null
-  const message = typeof data.message === "string" ? safeText(data.message, stats, 1000) : null
-  return type || message ? { ...(type ? { type } : {}), ...(message ? { message } : {}) } : null
+  try {
+    if (value instanceof Error) {
+      const message = safeText(value.message, stats, 1000)
+      return message ? { message } : null
+    }
+    const data = object(value)
+    if (!data) return null
+    const rawType = data.type
+    const privateKind = privateTagOmission(rawType)
+    if (privateKind === "reasoning") stats.omittedReasoning++
+    else if (privateKind === "system") stats.omittedSystem++
+    else if (privateKind === "attachment") stats.omittedAttachments++
+    if (privateKind) return null
+    const type = typeof rawType === "string" ? safeText(rawType, stats, 160) : null
+    const message = typeof data.message === "string" ? safeText(data.message, stats, 1000) : null
+    return type || message ? { ...(type ? { type } : {}), ...(message ? { message } : {}) } : null
+  } catch {
+    stats.omittedUnsupportedParts++
+    return null
+  }
 }
 
 function safeSpec(task: TaskSpec, stats: PrivacyStats) {
@@ -150,13 +165,21 @@ function safeSpec(task: TaskSpec, stats: PrivacyStats) {
 }
 
 function safeToolContent(value: unknown, stats: PrivacyStats) {
-  if (!Array.isArray(value)) return ""
   const output: string[] = []
-  for (const part of value) {
-    const entry = object(part)
-    if (entry?.type === "text" && typeof entry.text === "string") output.push(entry.text)
-    else if (entry?.type === "file") stats.omittedAttachments++
-    else stats.omittedUnsupportedParts++
+  try {
+    if (!Array.isArray(value)) return ""
+    const length = value.length
+    for (let index = 0; index < Math.min(length, 40); index++) {
+      const entry = object(value[index])
+      if (entry?.type === "text" && typeof entry.text === "string")
+        output.push(safeText(entry.text, stats))
+      else if (entry?.type === "file") stats.omittedAttachments++
+      else stats.omittedUnsupportedParts++
+    }
+    if (length > 40) stats.truncated++
+  } catch {
+    stats.omittedUnsupportedParts++
+    return ""
   }
   return safeText(output.join("\n"), stats)
 }

@@ -24,6 +24,9 @@ import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
 import { StartFeedback, ScrollRestoration, canStart, connectionLabel } from "./panel-view.ts"
 import { buildExecutionList, selectForkForTask } from "./execution-list.ts"
 import type { ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
+import { ExecutionPlanGroupView } from "./execution-list-view.tsx"
+import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
+import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
 import css from "./panel.css?inline"
 
@@ -34,6 +37,7 @@ const View = Schema.Struct({
   split: Schema.Number,
   listScroll: Schema.Number,
   detailScroll: Schema.Number,
+  state: Schema.optionalKey(Schema.Literals(["open", "completed", "failed", "cancelled", "all"])),
   history: Schema.optionalKey(Schema.Boolean),
   collapsedForks: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   revealTaskID: Schema.optionalKey(Schema.String),
@@ -55,8 +59,13 @@ export const taskStores = {
   }),
 }
 type TaskContext = SetupContext<{ stores: typeof taskStores }>
+export type TaskTrajectoryRequest = Omit<TaskTrajectoryTarget, "requestID">
+export type TaskTrajectoryOpener = (
+  session: PanelProps["session"],
+  target: TaskTrajectoryRequest,
+) => void
 
-function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
+function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskTrajectoryOpener }) {
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
@@ -123,6 +132,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
       ? (ctx.stores.taskView(props.session).value?.projects[value.project] ?? initial)
       : initial
   }
+  const stateFilter = () => preferredTaskStateFilter(prefs().state, prefs().history)
   const save = (change: Partial<typeof initial>) => {
     const value = current()
     if (!value) return
@@ -156,7 +166,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         value.session,
         prefs().scope,
         prefs().search,
-        prefs().history ?? false,
+        stateFilter(),
       ])
       return { value, key }
     },
@@ -197,9 +207,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         },
         {
           search: view.search,
+          state: stateFilter(),
           sessionID,
           limit: 30,
-          includeCompleted: view.history ?? false,
         },
         view.selectedID ?? undefined,
       )
@@ -220,7 +230,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
           value.session,
           view.scope,
           view.search,
-          view.history ?? false,
+          preferredTaskStateFilter(view.state, view.history),
         ])
       : ""
   }
@@ -530,6 +540,18 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
       setCopyStatus("Could not copy task link.")
     }
   }
+  const openSelectedTrajectory = () => {
+    const task = selectedTask()
+    const reference = selectedDetail()?.reference
+    const value = current()
+    if (!task || !reference || !value) return
+    props.openTrajectory(props.session, {
+      taskID: task.id,
+      reference,
+      projectID: task.provenance.projectID,
+      projectDirectory: value.project,
+    })
+  }
   const startTask = async (taskID: string, revision: 1) => {
     const value = current()
     if (!value) return
@@ -559,6 +581,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
     const id = rows[next]?.dataset.taskId
     if (id) selectTask(id)
   }
+  const stateLabel = (state: NonNullable<typeof initial.state>) =>
+    state === "failed" ? "Failed / exhausted" : state[0]!.toUpperCase() + state.slice(1)
   let focusedSelection = ""
   createEffect(() => {
     const selectedID = visible()?.selectedID
@@ -633,7 +657,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">
             <Ui.Menu
-              label={`${prefs().scope === "session" ? "Session" : "Project"}${prefs().history ? " · History" : ""}`}
+              label={prefs().scope === "session" ? "Session" : "Project"}
               trigger="button"
               icon="chevron-down"
               items={[
@@ -645,12 +669,26 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                   label: "Project tasks",
                   onSelect: () => save({ scope: "project", selectedID: null }),
                 },
-                {
-                  label: prefs().history ? "Hide completed history" : "Show completed history",
-                  onSelect: () =>
-                    save({ history: !prefs().history, selectedID: null, listScroll: 0 }),
-                },
               ]}
+            />
+          </span>
+          <span class="lazers-tasks-state-filter">
+            <Ui.Menu
+              label={`State: ${stateLabel(stateFilter())}`}
+              trigger="button"
+              icon="chevron-down"
+              items={(["open", "completed", "failed", "cancelled", "all"] as const).map(
+                (state) => ({
+                  label: stateLabel(state),
+                  onSelect: () =>
+                    save({
+                      state,
+                      history: state !== "open",
+                      selectedID: null,
+                      listScroll: 0,
+                    }),
+                }),
+              )}
             />
           </span>
           <Ui.Tooltip value="Search tasks">
@@ -760,31 +798,20 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                     <div class="lazers-tasks-note">
                       {prefs().search
                         ? "No matching tasks."
-                        : prefs().history
-                          ? "No tasks in this history view."
-                          : prefs().scope === "session"
-                            ? "No open tasks in this session. Show completed history to review finished work."
-                            : "No open tasks in this project. Show completed history to review finished work."}
+                        : stateFilter() === "all"
+                          ? "No tasks in this view."
+                          : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
                     </div>
                   }
                 >
-                  <div aria-label="Open tasks">
+                  <div aria-label={`${stateLabel(stateFilter())} tasks`}>
                     <Keyed each={executionList().plans} by={(group) => group.planID}>
                       {(group) => (
-                        <section
-                          class="lazers-tasks-plan"
-                          aria-label={`${group().title}, ${group().activeCount} active of ${group().totalCount} tasks`}
-                        >
-                          <div class="lazers-tasks-plan-heading">
-                            <span>{group().title}</span>
-                            <span>
-                              {group().activeCount}/{group().totalCount}
-                            </span>
-                          </div>
+                        <ExecutionPlanGroupView group={group()} stateFilter={stateFilter()}>
                           <Keyed each={group().rows} by={(taskRow) => taskRow.taskID}>
                             {(taskRow) => renderTaskRow(taskRow, group)}
                           </Keyed>
-                        </section>
+                        </ExecutionPlanGroupView>
                       )}
                     </Keyed>
                     <Keyed each={executionList().unplanned} by={(taskRow) => taskRow.taskID}>
@@ -880,6 +907,15 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
                     Start
                   </Ui.Button>
                 </Show>
+                <Ui.Button
+                  size="small"
+                  variant="ghost-muted"
+                  aria-label={`Open trajectory for ${selectedDetail()?.reference ?? "selected task"}`}
+                  disabled={!selectedDetail()?.reference}
+                  onClick={openSelectedTrajectory}
+                >
+                  Open trajectory
+                </Ui.Button>
                 <Ui.Button
                   size="small"
                   variant="ghost-muted"
@@ -1205,7 +1241,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext }) {
   )
 }
 
-export function setupTaskPanel(ctx: TaskContext) {
+export function setupTaskPanel(ctx: TaskContext, openTrajectory: TaskTrajectoryOpener) {
   const Ui = ctx.ui
   ctx.add(
     LinkHandler,
@@ -1281,7 +1317,9 @@ export function setupTaskPanel(ctx: TaskContext) {
     id: "tasks",
     region: "side",
     list: (input) => (input.open.includes(tab.id) ? [tab] : []),
-    render: bindPlugin((props: PanelProps) => <TaskPanel {...props} ctx={ctx} />),
+    render: bindPlugin((props: PanelProps) => (
+      <TaskPanel {...props} ctx={ctx} openTrajectory={openTrajectory} />
+    )),
   })
   ctx.add(Command, {
     id: "tasks.open",

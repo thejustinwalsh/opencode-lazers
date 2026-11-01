@@ -56,7 +56,7 @@ test("shipped GUI setup registers both observation panels exactly once", async (
       ] as const) {
         const panel = panels.find((item) => item.id === id)!
         expect(panel.list({ open: [] })).toEqual([])
-        expect(panel.list({ open: [id] })).toEqual([{ id, title, closable: "hover" }])
+        expect(panel.list({ open: [id] })).toMatchObject([{ id, title, closable: "hover" }])
         expect(typeof panel.render).toBe("function")
       }
 

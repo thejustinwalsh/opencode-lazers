@@ -330,3 +330,38 @@ test("interrupted attempts retain their reserved rounds and exhaust with an expl
   ).toBe(true)
   expect(result.errors[0]).toContain("interrupted")
 })
+
+test("a changed checklist cannot reuse an earlier review; a new review preserves parent intent", async () => {
+  const store = memory()
+  const input = draft()
+  input.request = "Improve task history, live scheduler visualization and model accounting."
+  const seen: Array<{ request: string; objective: string }> = []
+  const reviewer = new TaskReviewer(store, {
+    systemOne: async (request) => {
+      const state = request.state as { intent: { request: string }; task: { objective: string } }
+      seen.push({ request: state.intent.request, objective: state.task.objective })
+      return reply(request)
+    },
+  })
+  const first = await reviewer.verify(input, "owner", new AbortController().signal)
+  if (!("reviewID" in first)) throw Error("Expected stored review")
+  for (const saved of store.data.values())
+    (saved as { version: string }).version = "task-hardening-v2"
+  const calls = seen.length
+  const stale = await reviewer.verify(
+    { ...input, reviewID: first.reviewID },
+    "owner",
+    new AbortController().signal,
+  )
+  expect(stale.status).toBe("invalid")
+  expect(seen.length).toBe(calls)
+  const fresh = await reviewer.verify(input, "owner", new AbortController().signal)
+  expect(fresh.status).toBe("completed")
+  if (!("reviewID" in fresh)) throw Error("Expected fresh review")
+  expect(fresh.reviewID).not.toBe(first.reviewID)
+  expect(
+    seen.every(
+      (state) => state.request === input.request && state.objective === input.task.objective,
+    ),
+  ).toBe(true)
+})

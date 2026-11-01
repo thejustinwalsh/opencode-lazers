@@ -69,7 +69,7 @@ test("native registration exposes its closable tab and renders through real obse
       )
       return null
     }
-    registerRadarPanel(context as never, render)
+    registerRadarPanel(context as never, render, () => null)
 
     expect(registrations.some((item) => item.kind === Style)).toBe(true)
     const panel = registrations.find((item) => item.kind === Panel)?.value as {
@@ -80,7 +80,7 @@ test("native registration exposes its closable tab and renders through real obse
     }
     expect(panel).toMatchObject({ id: "radar", region: "side" })
     expect(panel.list({ open: [] })).toEqual([])
-    expect(panel.list({ open: ["radar"] })).toEqual([
+    expect(panel.list({ open: ["radar"] })).toMatchObject([
       { id: "radar", title: "Radar", closable: "hover" },
     ])
 

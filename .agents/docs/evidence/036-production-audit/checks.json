@@ -1,0 +1,27 @@
+{
+  "sourceCommit": "53a6e694a8fc0b5983e0a2ef3be64c3b09aa6de6",
+  "testsLogUpdatedAt": "2026-11-01T04:39:30.899767+00:00",
+  "commands": [
+    {
+      "command": "bun run verify",
+      "exitCode": 0,
+      "log": "verify.log"
+    },
+    {
+      "command": "bun test",
+      "exitCode": 0,
+      "tests": 376,
+      "failures": 0,
+      "assertions": 3449,
+      "files": 75,
+      "log": "tests.log"
+    },
+    {
+      "command": "bun audit --production --json",
+      "exitCode": 1,
+      "result": "Two moderate host-transitive advisory packages; dependencies.json"
+    }
+  ],
+  "runtimeChangesDuringAudit": false,
+  "newTaskCandidatesDispatched": false
+}
