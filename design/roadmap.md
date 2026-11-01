@@ -114,6 +114,12 @@ The executable front of this sequence is R1 **LZ-49** (plan
 no new authoring contract until V4 can enforce it; it does not retrofit active
 tasks. Remaining rows require their own reviewed specifications and admitted plans.
 
+LZ-52 (`907c6403-6f46-465b-83c7-79cf39e92b35`) supplements R1 before producer
+activation: exact stored-page correspondence and late-project coverage must not
+skip captured facts. LZ-53 (`f4b36a89-917f-4eb4-94a4-8f05b7649766`) corrects the
+observed targeted-index permission fan-out, preserving real authorization; focused
+totals count authorized selected matches. Neither replaces an existing worker.
+
 Combined-probe ownership must be an explicit authorized continuation/assignment,
 not another implementation attempt fabricated for counting. Establish its narrow
 receipt authority before V5 dispatch. Environment generations change on relevant
@@ -121,6 +127,42 @@ candidate/procedure/configuration/target or ownership changes; uncertain externa
 effects require positive identity/readback reconciliation, not timeout-based reuse.
 Worker-reported results remain provenance-bearing claims until required tool
 observations and any explicit Architect judgment are satisfied.
+Procedure/input/environment freshness uses runtime-owned durable revision,
+generation or record identities—not implementer hashing or invented evidence
+digests. Internal canonical idempotency fingerprints and Git candidate identity
+remain valid. Receipt invalidation must be mechanical and testable.
+
+#### Source-attached recovery handoffs
+
+Fold the [handoff and clarification contract](recovery-handoff-contract.md) into
+R3–R6 and the existing live walkthroughs. Running LZ-49/50/51 contracts remain
+unchanged; new work is additive and linked. Submission is never completion,
+acceptance, proof of stopping, or authority to alter the source task.
+
+| Slice                                        | Prerequisite                                           | Outcome                                                                                                                                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1: shared review policy                     | Reviewed task-hardening source                         | Reuse one three-total-round engine for tasks and handoffs, with subject-specific fixed checks, focused correction, non-regression, replay/interruption and retained concerns. Preserve existing task behavior and records.                                      |
+| H2: durable handoff domain                   | Current SQLite/task ownership interfaces               | Source-request/task/attempt-bound drafts, immutable versions, review reservations/history, concerns, final reports and append-only Architect dispositions; bounded reads survive session/workspace removal.                                                     |
+| H3: assigned-worker tools and requests       | H1, H2 and delivered R3/R4 request/delivery interfaces | Runtime records and sends identified requests; `lazers_verify_handoff` reviews structured input, and `lazers_submit_handoff` atomically attaches the exact report/history and queues notification. Permission/ownership/structure precede inference.            |
+| H4: stopped-worker report-only collection    | H3                                                     | Narrow request-bound tools/reads in the retained session, without shell/edit/Code Mode escape or resumed implementation authority. Missing response and unknown quiescence remain explicit.                                                                     |
+| H5: Architect correction and actual delivery | H3 and delivered R4/R5 continuation/handoff interfaces | Evidence-backed disposition and material human decisions persist separately from task retirement; current correction reaches continuing/replacement workers through actual readable instructions/context, including concrete automatic-repair failure receipts. |
+
+H1/H2 can proceed independently of runner integration. H3–H5 serialize with real
+runner reservations and depend on implemented interfaces, not roadmap labels.
+Bind reviews to the relevant effective source contract, exact draft/evidence and
+check definitions without invalidating on unrelated plan-version increments.
+Preserve original intent/decision references when available; mark missing original
+request text unknown rather than reconstructing it from the task objective.
+
+The existing walkthroughs must demonstrate request → enabled hardening → DB
+attachment → Architect disposition → actual downstream correction retrieval →
+subsequent checked/probed behavior. Disabled/unavailable review remains honest and
+recoverable, but cannot substitute for a working enabled path. Correct the
+location-plugin forwarding/discovery blocker through supported connection APIs;
+do not rotate/copy credentials or restart the healthy driver to mask it. Retain
+the observed 9,930 ms Tasks query and 5,000 ms poll failure path without attributing
+RPC latency or device/ownership failure prematurely. No profiler arming, arbitrary
+timeout increase, or weaker ownership checks is authorized.
 
 #### Verification reservations and safe writer release
 
@@ -207,6 +249,7 @@ daemon or inference server.
 - Research and decisions: `.agents/docs/phase-review-plan.md`
 - Proactive recovery behavior and acceptance: `design/proactive-worker-recovery.md`
 - Live product verification behavior and acceptance: `design/live-product-verification.md`
+- Recovery handoff and clarification: `design/recovery-handoff-contract.md`
 - Current delivery/defects: `.agents/docs/production-audit-and-next-phases.md`
   and `.agents/docs/evidence/architect-context-lifecycle/review.md`
 - Radar prior art: https://github.com/thejustinwalsh/gh-wat-dis

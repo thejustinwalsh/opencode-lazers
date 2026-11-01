@@ -171,6 +171,11 @@ specifications rather than silently mutating immutable historical acceptance.
 
 ## Acceptance and verification
 
+Apply the [recovery handoff and clarification addendum](recovery-handoff-contract.md)
+within this work: DB-attached source-task handoffs, the existing three-round
+System One hardening/forward-progress policy, Architect clarification decisions,
+and actual delivery of failure context to continuing or replacement workers.
+
 Architect should map these feature-level assertions to task and combined-plan
 evidence, with focused checks at task boundaries and broad integration checks at
 the combined boundary:

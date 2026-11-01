@@ -223,6 +223,10 @@ run or a lower number of tool calls.
 
 ## Acceptance and live walkthrough
 
+Include the [recovery handoff and clarification addendum](recovery-handoff-contract.md)
+in these walkthroughs where a probe fails or reveals a changed assumption. Reuse
+the existing recovery flow and preserve handoff/review records in the DB.
+
 Architect should decompose the implementation and map these feature-level
 assertions into task and combined-plan evidence:
 
