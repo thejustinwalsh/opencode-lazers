@@ -680,6 +680,163 @@ test("Radar default and opt-in inventories preserve exact Project and Session id
   }
 })
 
+test("Radar expands only verified same-project ancestors before loading associated work", async () => {
+  const fixture = makeFixture()
+  try {
+    const addOwnedWork = (owner: string, suffix: string) => {
+      const ownedTaskID = crypto.randomUUID()
+      const attemptID = crypto.randomUUID()
+      const effectID = `effect-prompt-${suffix}`
+      const proposal = validProposal()
+      fixture.repository.insert({
+        schemaVersion: 1,
+        id: ownedTaskID,
+        revision: 1,
+        status: "submitted",
+        createdAt: new Date().toISOString(),
+        provenance: { ...fixture.task.provenance, sessionID: owner },
+        proposal,
+      })
+      const receipt = fixture.store.submit(
+        {
+          requestID: `ancestor-work-${suffix}`,
+          objective: proposal.objective,
+          baseCommit: "a".repeat(40),
+          workspaceMode: "shared",
+          workerModel: { providerID: "openai", id: "gpt-6-luna" },
+          nodes: [{ taskID: ownedTaskID, revision: 1 }],
+          dependencies: [],
+          integrationOrder: [ownedTaskID],
+          verification: proposal.verification,
+          acceptance: proposal.acceptance,
+        },
+        owner,
+      )
+      const transitionSequence = fixture.store.atomic((db) => {
+        db.query(
+          `INSERT INTO runner_attempts
+           (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,
+            state,started_at,token_count,tool_count,retry_count,cost)
+           VALUES(?,?,?,1,?,?,?, ?,NULL,?,'running',9000,NULL,0,0,NULL)`,
+        ).run(
+          attemptID,
+          receipt.planID,
+          ownedTaskID,
+          owner,
+          `msg-${suffix}`,
+          fixture.directory,
+          "a".repeat(40),
+          JSON.stringify({ model: { providerID: "openai", id: "gpt-6-luna" } }),
+        )
+        db.query(
+          `INSERT INTO runner_effects
+           (id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
+           VALUES(?,?,?,?,'prompt','completed',?,NULL,1)`,
+        ).run(
+          effectID,
+          receipt.planID,
+          ownedTaskID,
+          attemptID,
+          JSON.stringify({ messageID: `msg-${suffix}` }),
+        )
+        db.query(
+          `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+           VALUES(?,?,1,'PROMPT_ADMITTED',?,9001)`,
+        ).run(receipt.planID, ownedTaskID, JSON.stringify({ effectID, messageID: `msg-${suffix}` }))
+        return db.query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get()!.id
+      })
+      return {
+        taskID: ownedTaskID,
+        planID: receipt.planID,
+        attemptID,
+        effectID,
+        transitionSequence,
+      }
+    }
+
+    const verified = addOwnedWork("ses-owner", "verified")
+    const unresolved = addOwnedWork("ses-unresolved", "unresolved")
+    const foreign = addOwnedWork("ses-foreign", "foreign")
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(19),
+      "project",
+    )
+    tracker.initialize()
+
+    const verifiedReads = radarReads(
+      fixture,
+      radarHost([
+        radarSession("ses-failed", { parentID: "ses-owner", directory: fixture.directory }),
+        radarSession("ses-owner", { directory: fixture.directory }),
+      ]),
+    )
+    const projected = await verifiedReads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(projected.plans.some((plan) => plan.id === verified.planID)).toBe(true)
+    expect(projected.tasks).toContainEqual({
+      id: verified.taskID,
+      planID: verified.planID,
+      state: "queued",
+    })
+    expect(projected.attempts).toContainEqual(
+      expect.objectContaining({
+        id: verified.attemptID,
+        planID: verified.planID,
+        taskID: verified.taskID,
+      }),
+    )
+    expect(projected.boundary.transitionSequence).toBe(verified.transitionSequence)
+    expect(projected.edges.find((edge) => edge.id === `prompt:${verified.effectID}`)).toMatchObject(
+      {
+        planID: verified.planID,
+        taskID: verified.taskID,
+        attemptID: verified.attemptID,
+        evidence: [
+          expect.objectContaining({
+            source: "runner-transition",
+            event: "PROMPT_ADMITTED",
+            effectID: verified.effectID,
+          }),
+        ],
+      },
+    )
+
+    for (const [ancestorID, associated] of [
+      ["ses-unresolved", unresolved],
+      ["ses-foreign", foreign],
+    ] as const) {
+      const sessions = [
+        radarSession("ses-failed", { parentID: ancestorID, directory: fixture.directory }),
+        ...(ancestorID === "ses-foreign"
+          ? [
+              radarSession(ancestorID, {
+                projectID: "another-project",
+                directory: fixture.directory,
+              }),
+            ]
+          : []),
+      ]
+      const isolatedReads = radarReads(fixture, radarHost(sessions))
+      const isolated = await isolatedReads.radar(
+        { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+        tracker,
+        new AbortController().signal,
+      )
+      expect(isolated.plans.some((plan) => plan.id === associated.planID)).toBe(false)
+      expect(isolated.tasks.some((task) => task.id === associated.taskID)).toBe(false)
+      expect(isolated.attempts.some((attempt) => attempt.id === associated.attemptID)).toBe(false)
+      expect(isolated.edges.some((edge) => edge.id === `prompt:${associated.effectID}`)).toBe(false)
+      expect(isolated.boundary.transitionSequence).toBeLessThan(associated.transitionSequence)
+    }
+  } finally {
+    fixture.close()
+  }
+})
+
 test("Radar marks missing, archived, and moved managed sessions stale without projecting routes", async () => {
   const fixture = makeFixture()
   try {
@@ -1174,6 +1331,264 @@ test("Radar keeps newest progress and chronological model/tool evidence at the t
       toolCall?.observedAt,
       toolResult?.observedAt,
     ]).toEqual([30_100, 30_200, 30_400, 30_500])
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar retains recently coalesced step and tool observations beyond 5000 later rows", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(20)
+    const planID = fixture.receipt.planID
+    const host = radarHost([
+      radarSession("ses-owner"),
+      radarSession("ses-failed", { parentID: "ses-owner", directory: fixture.directory }),
+      radarSession("ses-accepted", { parentID: "ses-owner", directory: fixture.directory }),
+    ])
+    const reads = radarReads(fixture, host, secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const emit = (id: string, type: string, created: number, data: Record<string, unknown>) => {
+      const event = { id, type, created, data: { sessionID: "ses-failed", ...data } }
+      recorder.recordNativeEvent(event)
+      tracker.native(event)
+    }
+    emit("evt-recency-step-start", "session.step.started", 30_100, {
+      assistantMessageID: "msg-recency-step",
+      agent: "lazers-implementor",
+      model: { providerID: "anthropic", id: "recency-model" },
+      started: 30_000,
+    })
+    emit("evt-recency-tool-input", "session.tool.input.started", 30_300, {
+      assistantMessageID: "msg-recency-step",
+      id: "call-recency",
+      name: "Read",
+    })
+    emit("evt-recency-tool-call", "session.tool.called", 30_400, {
+      assistantMessageID: "msg-recency-step",
+      id: "call-recency",
+      executed: true,
+    })
+
+    fixture.store.atomic((db) => {
+      const insert = db.query(
+        `INSERT INTO runner_progress
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+          sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      for (let index = 0; index < 5_001; index++)
+        insert.run(
+          fixture.directory,
+          "project",
+          planID,
+          taskID,
+          firstAttemptID,
+          "ses-failed",
+          50_000,
+          "test",
+          '["test"]',
+          "commentary",
+          "[]",
+          null,
+          null,
+          `recent-fill:${index}`,
+          '{"text":""}',
+        )
+    })
+    emit("evt-recency-step-end", "session.step.ended", 60_000, {
+      assistantMessageID: "msg-recency-step",
+    })
+    emit("evt-recency-tool-result", "session.tool.success", 60_100, {
+      assistantMessageID: "msg-recency-step",
+      id: "call-recency",
+    })
+    const oldSequences = fixture.store.atomic((db) =>
+      db
+        .query<{ seq: number }, [string, string, string]>(
+          `SELECT seq FROM runner_progress WHERE plan_id=? AND dedupe_key IN (?,?) ORDER BY seq`,
+        )
+        .all(planID, "step:ses-failed:msg-recency-step", "tool:ses-failed:call-recency")
+        .map((row) => row.seq),
+    )
+    const newestSequences = fixture.store.atomic((db) =>
+      db
+        .query<{ seq: number }, [string]>(
+          "SELECT seq FROM runner_progress WHERE plan_id=? ORDER BY seq DESC LIMIT 5000",
+        )
+        .all(planID)
+        .map((row) => row.seq),
+    )
+    expect(oldSequences).toHaveLength(2)
+    expect(oldSequences.every((seq) => !newestSequences.includes(seq))).toBe(true)
+    tracker.refreshSource()
+
+    const result = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(result.coverage.progressTruncated).toBe(true)
+    const request = result.edges.find(
+      (edge) => edge.kind === "model-request" && edge.messageID === "msg-recency-step",
+    )
+    const response = result.edges.find(
+      (edge) => edge.kind === "model-response" && edge.messageID === "msg-recency-step",
+    )
+    expect(request).toMatchObject({
+      startedAt: 30_000,
+      observedAt: 30_100,
+      evidence: [{ source: "native-event", eventID: "evt-recency-step-start", at: 30_100 }],
+    })
+    expect(response).toMatchObject({
+      routeID: request?.routeID,
+      startedAt: 30_000,
+      observedAt: 60_000,
+      evidence: [{ source: "native-event", eventID: "evt-recency-step-end", at: 60_000 }],
+    })
+    expect(
+      result.edges.find((edge) => edge.kind === "tool-call" && edge.callID === "call-recency"),
+    ).toMatchObject({
+      observedAt: 30_400,
+      evidence: [{ source: "native-event", eventID: "evt-recency-tool-call", at: 30_400 }],
+    })
+    expect(
+      result.edges.find((edge) => edge.kind === "tool-result" && edge.callID === "call-recency"),
+    ).toMatchObject({
+      observedAt: 60_100,
+      evidence: [{ source: "native-event", eventID: "evt-recency-tool-result", at: 60_100 }],
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar preserves equal-time step order and ignores malformed observation metadata", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(21)
+    const planID = fixture.receipt.planID
+    const reads = radarReads(
+      fixture,
+      radarHost([
+        radarSession("ses-owner"),
+        radarSession("ses-failed", { parentID: "ses-owner", directory: fixture.directory }),
+        radarSession("ses-accepted", { parentID: "ses-owner", directory: fixture.directory }),
+      ]),
+      secret,
+    )
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const emit = (id: string, type: string, data: Record<string, unknown>) => {
+      const event = {
+        id,
+        type,
+        created: 70_000,
+        data: { sessionID: "ses-failed", ...data },
+      }
+      recorder.recordNativeEvent(event)
+      tracker.native(event)
+    }
+    emit("evt-equal-start", "session.step.started", {
+      assistantMessageID: "msg-equal-time",
+      model: { providerID: "anthropic", id: "equal-time-model" },
+      started: 70_000,
+    })
+    emit("evt-equal-end", "session.step.ended", { assistantMessageID: "msg-equal-time" })
+    emit("evt-orphan-end", "session.step.ended", { assistantMessageID: "msg-orphan" })
+    emit("evt-equal-late-end", "session.step.ended", {
+      assistantMessageID: "msg-equal-out-of-order",
+    })
+    emit("evt-equal-late-start", "session.step.started", {
+      assistantMessageID: "msg-equal-out-of-order",
+      model: { providerID: "anthropic", id: "equal-order-model" },
+      started: 70_000,
+    })
+
+    fixture.store.atomic((db) => {
+      const insert = db.query(
+        `INSERT INTO runner_progress
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+          sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      const base = [
+        fixture.directory,
+        "project",
+        planID,
+        taskID,
+        firstAttemptID,
+        "ses-failed",
+        71_000,
+        "native-event",
+        '["native-event"]',
+        "step",
+        "[]",
+        null,
+      ] as const
+      insert.run(
+        ...base,
+        "msg-malformed-time",
+        "malformed:infinite-time",
+        '{"observations":[{"source":"native-event","eventID":"evt-infinite-time","eventType":"session.step.started","at":1e999,"messageID":"msg-malformed-time","route":{"providerID":"anthropic","modelID":"bad-time"}}]}',
+      )
+      insert.run(...base, "msg-malformed-json", "malformed:json", "{not-json")
+      insert.run(
+        ...base,
+        "msg-malformed-route",
+        "malformed:route",
+        '{"observations":[{"source":"native-event","eventID":"evt-malformed-route","eventType":"session.step.started","at":72000,"messageID":"msg-malformed-route","route":{"providerID":"","modelID":"model"}},{"source":"native-event","eventID":"evt-malformed-route-end","eventType":"session.step.ended","at":73000,"messageID":"msg-malformed-route"}]}',
+      )
+    })
+    tracker.refreshSource()
+
+    const result = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(
+      result.edges.find(
+        (edge) => edge.kind === "model-request" && edge.messageID === "msg-equal-time",
+      ),
+    ).toMatchObject({ startedAt: 70_000, observedAt: 70_000 })
+    expect(
+      result.edges.find(
+        (edge) => edge.kind === "model-response" && edge.messageID === "msg-equal-time",
+      ),
+    ).toMatchObject({ startedAt: 70_000, observedAt: 70_000 })
+    expect(
+      result.edges.find(
+        (edge) => edge.kind === "model-request" && edge.messageID === "msg-equal-out-of-order",
+      ),
+    ).toBeDefined()
+    expect(
+      result.edges.find(
+        (edge) => edge.kind === "model-response" && edge.messageID === "msg-equal-out-of-order",
+      ),
+    ).toBeUndefined()
+    expect(
+      result.edges.filter(
+        (edge) =>
+          (edge.kind === "model-request" || edge.kind === "model-response") &&
+          [
+            "msg-orphan",
+            "msg-malformed-time",
+            "msg-malformed-json",
+            "msg-malformed-route",
+          ].includes(edge.messageID ?? ""),
+      ),
+    ).toEqual([])
+    expect(
+      result.edges.some((edge) =>
+        edge.evidence.some(
+          (item) => item.source === "native-event" && item.eventID === "evt-infinite-time",
+        ),
+      ),
+    ).toBe(false)
   } finally {
     fixture.close()
   }

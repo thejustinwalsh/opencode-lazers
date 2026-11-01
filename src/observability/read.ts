@@ -199,9 +199,18 @@ function loadProjectionSource(
   projectDirectory: string,
   scope: ObservationScope,
   secret: Uint8Array,
+  extraSessionIDs: Iterable<string> = [],
 ) {
   const stamp = sourceStampFromDatabase(db, projectDirectory, secret)
   const associations = initialAssociations(db, projectDirectory, scope)
+  if (scope.kind === "session") {
+    for (const sessionID of extraSessionIDs) {
+      if (sessionID === scope.sessionID) continue
+      const extra = sessionAssociations(db, projectDirectory, sessionID)
+      for (const taskID of extra.taskIDs) associations.taskIDs.add(taskID)
+      for (const planID of extra.planIDs) associations.planIDs.add(planID)
+    }
+  }
   const allPlans = db
     .query<PlanRecord, [string]>(
       "SELECT id,revision,version,state,body,reason FROM runner_plans WHERE project_directory=? ORDER BY rowid",
@@ -309,15 +318,7 @@ function loadRadarSource(
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
-  const projection = loadProjectionSource(db, projectDirectory, scope, secret)
-  if (scope.kind === "session") {
-    for (const sessionID of extraSessionIDs) {
-      if (sessionID === scope.sessionID) continue
-      const extra = sessionAssociations(db, projectDirectory, sessionID)
-      for (const taskID of extra.taskIDs) projection.associations.taskIDs.add(taskID)
-      for (const planID of extra.planIDs) projection.associations.planIDs.add(planID)
-    }
-  }
+  const projection = loadProjectionSource(db, projectDirectory, scope, secret, extraSessionIDs)
   const planIDs = [...projection.associations.planIDs]
   const managedSessionIDs =
     scope.kind === "project"
@@ -372,14 +373,40 @@ function loadRadarSource(
     .all(...planIDs)
   const progressRows = db
     .query<ProgressRow, (string | number)[]>(
-      `SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
-              g.session_id,g.at,g.source,g.sources_json,g.kind,g.event_ids_json,g.call_id,
-              g.message_id,g.dedupe_key,g.payload
-        FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
-        WHERE p.project_directory=? AND g.plan_id IN (${placeholders}) ORDER BY g.seq DESC LIMIT 5001`,
+      `WITH scoped AS (
+         SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
+                g.session_id,g.at,g.source,g.sources_json,g.kind,g.event_ids_json,g.call_id,
+                g.message_id,g.dedupe_key,g.payload,
+                 (SELECT MAX(
+                    CASE WHEN observation.type='object' THEN
+                      CASE WHEN json_valid(observation.value) THEN
+                        CASE WHEN json_type(observation.value,'$.at') IN ('integer','real') THEN
+                          CASE WHEN json_extract(observation.value,'$.at')
+                            BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308
+                          THEN json_extract(observation.value,'$.at') END
+                        END
+                      END
+                    END
+                  )
+                  FROM json_each(
+                    CASE WHEN json_valid(g.payload) THEN
+                      CASE WHEN json_type(g.payload,'$.observations')='array'
+                        THEN g.payload ELSE '{"observations":[]}' END
+                    ELSE '{"observations":[]}'
+                    END,
+                    '$.observations'
+                  ) AS observation) AS observed_at
+           FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
+          WHERE p.project_directory=? AND g.plan_id IN (${placeholders})
+       )
+       SELECT seq,project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,
+              source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload
+         FROM scoped
+        ORDER BY max(at, COALESCE(observed_at,at)) DESC, seq DESC
+        LIMIT 5001`,
     )
     .all(projectDirectory, ...planIDs)
-  const progress = progressRows.slice(0, 5_000).reverse()
+  const progress = progressRows.slice(0, 5_000).sort((left, right) => left.seq - right.seq)
 
   for (const plan of radarPlans) managedSessionIDs.add(plan.owner)
   for (const attempt of radarAttempts) managedSessionIDs.add(attempt.session_id)
@@ -616,8 +643,6 @@ export class ObservationReads {
             break
           }
           visited.add(parentID)
-          scopeAncestryIDs.add(parentID)
-          addReason(parentID, "native-ancestry")
           signal.throwIfAborted()
           try {
             const parent = await this.nativeSessions.get(parentID, signal)
@@ -627,6 +652,8 @@ export class ObservationReads {
               foreignSessionIDs.add(parentID)
               break
             }
+            scopeAncestryIDs.add(parentID)
+            addReason(parentID, "native-ancestry")
             nativeByID.set(parentID, parent)
             current = parent
           } catch (error) {
@@ -1212,125 +1239,135 @@ export class ObservationReads {
         string,
         { routeID: string; startedAt: number | null; agentID: string | null }
       >()
-      for (const row of source.progress) {
+      const stepObservations = source.progress.flatMap((row) => {
+        if (row.kind !== "step") return []
         const fact = projectProgressFact(row)
-        const kind = row.kind
-        if (kind === "step" && Array.isArray(fact.observations)) {
-          for (const rawObservation of fact.observations) {
-            const observation = object(rawObservation)
-            if (
-              observation?.source !== "native-event" ||
-              typeof observation.eventID !== "string" ||
-              typeof observation.messageID !== "string" ||
-              typeof observation.at !== "number" ||
-              !["session.step.started", "session.step.ended", "session.step.failed"].includes(
-                String(observation.eventType),
-              )
-            )
-              continue
-            const key = `${row.session_id}\u0000${observation.messageID}`
-            if (observation.eventType === "session.step.started") {
-              const route = object(observation.route)
-              if (
-                !route ||
-                typeof route.providerID !== "string" ||
-                typeof route.modelID !== "string"
-              )
-                continue
-              const routeID = addRoute({
-                id: `route:step:${stableToken(observation.eventID)}`,
-                providerID: route.providerID,
-                modelID: route.modelID,
-                variant: typeof route.variant === "string" ? route.variant : null,
-                source: "step-event",
-                sessionID: row.session_id,
+        const observations = fact.observations
+        if (!Array.isArray(observations)) return []
+        return observations.flatMap((rawObservation, index) => {
+          const observation = object(rawObservation)
+          const at = observation?.at
+          if (
+            observation?.source !== "native-event" ||
+            typeof at !== "number" ||
+            !Number.isFinite(at)
+          )
+            return []
+          return [{ row, messageID: fact.messageID, observation, index, at }]
+        })
+      })
+      stepObservations.sort(
+        (left, right) =>
+          left.at - right.at || left.row.seq - right.row.seq || left.index - right.index,
+      )
+      for (const { row, messageID, observation, at } of stepObservations) {
+        if (
+          typeof observation.eventID !== "string" ||
+          !observation.eventID ||
+          typeof observation.messageID !== "string" ||
+          !observation.messageID ||
+          observation.messageID !== messageID ||
+          !["session.step.started", "session.step.ended", "session.step.failed"].includes(
+            String(observation.eventType),
+          )
+        )
+          continue
+        const key = `${row.session_id}\u0000${observation.messageID}`
+        if (observation.eventType === "session.step.started") {
+          const route = object(observation.route)
+          if (
+            !route ||
+            typeof route.providerID !== "string" ||
+            !route.providerID ||
+            typeof route.modelID !== "string" ||
+            !route.modelID
+          )
+            continue
+          const routeID = addRoute({
+            id: `route:step:${stableToken(observation.eventID)}`,
+            providerID: route.providerID,
+            modelID: route.modelID,
+            variant: typeof route.variant === "string" ? route.variant : null,
+            source: "step-event",
+            sessionID: row.session_id,
+            attemptID: row.attempt_id,
+            messageID: observation.messageID,
+            eventID: observation.eventID,
+            observedAt: at,
+          })
+          if (!routeID) continue
+          const agentID =
+            typeof observation.agent === "string" ? safeText(observation.agent, stats, 200) : null
+          const recordedStartedAt = observation.startedAt
+          const startedAt =
+            typeof recordedStartedAt === "number" && Number.isFinite(recordedStartedAt)
+              ? recordedStartedAt
+              : at
+          stepStarts.set(key, { routeID, startedAt, agentID })
+          addEdge(
+            baseEdge(
+              `model-request:${stableToken(observation.eventID)}`,
+              "model-request",
+              sessionNodeID(row.session_id),
+              routeID,
+              "started",
+              {
+                planID: row.plan_id,
+                taskID: row.task_id,
                 attemptID: row.attempt_id,
-                messageID: observation.messageID,
-                eventID: observation.eventID,
-                observedAt: observation.at,
-              })
-              if (!routeID) continue
-              const agentID =
-                typeof observation.agent === "string"
-                  ? safeText(observation.agent, stats, 200)
-                  : null
-              stepStarts.set(key, {
-                routeID,
-                startedAt:
-                  typeof observation.startedAt === "number"
-                    ? observation.startedAt
-                    : observation.at,
                 agentID,
-              })
-              addEdge(
-                baseEdge(
-                  `model-request:${stableToken(observation.eventID)}`,
-                  "model-request",
-                  sessionNodeID(row.session_id),
-                  routeID,
-                  "started",
-                  {
-                    planID: row.plan_id,
-                    taskID: row.task_id,
-                    attemptID: row.attempt_id,
-                    agentID,
-                    messageID: observation.messageID,
-                    routeID,
-                    startedAt:
-                      typeof observation.startedAt === "number"
-                        ? observation.startedAt
-                        : observation.at,
-                    observedAt: observation.at,
-                    live: liveEventIDs.has(observation.eventID),
-                    evidence: [
-                      eventEvidence(
-                        observation.eventID,
-                        String(observation.eventType),
-                        row.session_id,
-                        observation.messageID,
-                        null,
-                        observation.at,
-                      ),
-                    ],
-                  },
-                ),
-              )
-            } else {
-              const started = stepStarts.get(key)
-              if (!started) continue
-              const failed = observation.eventType === "session.step.failed"
-              addEdge(
-                baseEdge(
-                  `model-response:${stableToken(observation.eventID)}`,
-                  "model-response",
-                  started.routeID,
-                  sessionNodeID(row.session_id),
-                  failed ? "failed" : "ended",
-                  {
-                    planID: row.plan_id,
-                    taskID: row.task_id,
-                    attemptID: row.attempt_id,
-                    agentID: started.agentID,
-                    messageID: observation.messageID,
-                    routeID: started.routeID,
-                    startedAt: started.startedAt,
-                    observedAt: observation.at,
-                    live: liveEventIDs.has(observation.eventID),
-                    evidence: [
-                      eventEvidence(
-                        observation.eventID,
-                        String(observation.eventType),
-                        row.session_id,
-                        observation.messageID,
-                        null,
-                        observation.at,
-                      ),
-                    ],
-                  },
-                ),
-              )
-            }
-          }
+                messageID: observation.messageID,
+                routeID,
+                startedAt,
+                observedAt: at,
+                live: liveEventIDs.has(observation.eventID),
+                evidence: [
+                  eventEvidence(
+                    observation.eventID,
+                    String(observation.eventType),
+                    row.session_id,
+                    observation.messageID,
+                    null,
+                    at,
+                  ),
+                ],
+              },
+            ),
+          )
+        } else {
+          const started = stepStarts.get(key)
+          if (!started) continue
+          const failed = observation.eventType === "session.step.failed"
+          addEdge(
+            baseEdge(
+              `model-response:${stableToken(observation.eventID)}`,
+              "model-response",
+              started.routeID,
+              sessionNodeID(row.session_id),
+              failed ? "failed" : "ended",
+              {
+                planID: row.plan_id,
+                taskID: row.task_id,
+                attemptID: row.attempt_id,
+                agentID: started.agentID,
+                messageID: observation.messageID,
+                routeID: started.routeID,
+                startedAt: started.startedAt,
+                observedAt: at,
+                live: liveEventIDs.has(observation.eventID),
+                evidence: [
+                  eventEvidence(
+                    observation.eventID,
+                    String(observation.eventType),
+                    row.session_id,
+                    observation.messageID,
+                    null,
+                    at,
+                  ),
+                ],
+              },
+            ),
+          )
         }
       }
       const tools = new Map<string, { id: string; name: string }>()
@@ -1339,15 +1376,27 @@ export class ObservationReads {
         const fact = projectProgressFact(row)
         const observations = Array.isArray(fact.observations) ? fact.observations : []
         const name = typeof fact.tool === "string" ? fact.tool : ""
-        if (!name || !row.call_id) continue
+        const callID = typeof fact.callID === "string" ? fact.callID : ""
+        if (!name || !row.call_id || !callID) continue
         const toolID = `tool:${stableToken(name)}`
         tools.set(toolID, { id: toolID, name })
-        for (const rawObservation of observations) {
-          const observation = object(rawObservation)
+        const orderedObservations = observations
+          .flatMap((rawObservation, index) => {
+            const observation = object(rawObservation)
+            if (
+              observation?.source !== "native-event" ||
+              typeof observation.at !== "number" ||
+              !Number.isFinite(observation.at)
+            )
+              return []
+            return [{ observation, index, at: observation.at }]
+          })
+          .sort((left, right) => left.at - right.at || left.index - right.index)
+        for (const { observation, at } of orderedObservations) {
           if (
-            observation?.source !== "native-event" ||
             typeof observation.eventID !== "string" ||
-            typeof observation.at !== "number" ||
+            !observation.eventID ||
+            observation.callID !== callID ||
             (observation.eventType !== "session.tool.called" &&
               observation.eventType !== "session.tool.success" &&
               observation.eventType !== "session.tool.failed")
@@ -1360,7 +1409,7 @@ export class ObservationReads {
             row.session_id,
             row.message_id ? safeText(row.message_id, stats, 200) : null,
             safeText(row.call_id, stats, 200),
-            observation.at,
+            at,
           )
           addEdge(
             baseEdge(
@@ -1375,7 +1424,7 @@ export class ObservationReads {
                 attemptID: row.attempt_id,
                 messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
                 callID: safeText(row.call_id, stats, 200),
-                observedAt: observation.at,
+                observedAt: at,
                 live: liveEventIDs.has(observation.eventID),
                 evidence: [evidence],
               },
