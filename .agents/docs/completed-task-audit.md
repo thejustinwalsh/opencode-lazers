@@ -87,7 +87,7 @@ No SQL state transitions, dirty-work deletion or force acceptance were used.
 
 ## Evidence and unresolved limits
 
-Fresh merged checkpoint `f2beb81` passed **354 tests / 3,318 assertions**, formatter,
+Fresh merged checkpoint `5a2b39c` passed **355 tests / 3,323 assertions**, formatter,
 lint and strict TypeScript, followed by a successful GUI rebuild and native review. The later startup repair passed 84 runtime/artifact/
 process-recovery tests / 1,490 assertions; final positive/negative checks and
 quality checks passed after helper reuse. Native activation retained PID 16786,
@@ -103,3 +103,10 @@ Still unproven: broad specialist dispatch quality, general specification revisio
 complete custom-font/reconnect/navigation coverage, comparative accepted-task cost
 and the remaining progress/lifecycle outcomes. These are explicit limits, not a
 reason to rerun broad completed tasks or invent extra approval gates.
+
+The [local package dry-run](evidence/033-completed-task-audit/package-dry-run.json)
+includes every declared export, both agent definitions and the prebuilt Desktop
+GUI: 168 files, 41.88 MB unpacked. Development caches/private folders are excluded.
+The package remains private at 0.0.0; no publication or fresh-machine installation
+is claimed. [Radar plan-switch retest](evidence/025-radar-panel/live-flow-inspector.md)
+also closes the observed stale inspector identity on the actual running worker.

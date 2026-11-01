@@ -1,0 +1,22 @@
+{
+  "recordedAt": "2026-11-01T00:37:54.350234+00:00",
+  "sourceCommit": "4d5b49a",
+  "command": "bun pm pack --dry-run --ignore-scripts",
+  "exitCode": 0,
+  "fileCount": 168,
+  "unpackedSize": "41.88 MB",
+  "exports": {
+    ".": "./src/index.ts",
+    "./gui-experimental": "./dist/gui-experimental.cjs",
+    "./webgpu/rpc": "./src/webgpu/rpc.ts",
+    "./webgpu/contract": "./src/webgpu/contract.ts",
+    "./webgpu/system-one": "./src/webgpu/system-one.ts"
+  },
+  "allDeclaredExportsIncluded": true,
+  "agentDefinitionsIncluded": true,
+  "developmentFoldersExcluded": true,
+  "packagePrivate": true,
+  "version": "0.0.0",
+  "published": false,
+  "limit": "Package-content dry-run; does not establish fresh-machine installation or publication."
+}
