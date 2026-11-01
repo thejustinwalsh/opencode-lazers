@@ -61,13 +61,21 @@ activated by merge `73f7783`, with fresh corrected visuals and exact LZ-9 mounte
 navigation; Tera cleared its blocker. Complete evidence is in
 `evidence/task-history-navigation/native.md` at `d933204`. Task `native-usable`
 and combined `native-history` human evidence have now been recorded against that
-exact artifact. Original attempt is accepted; normal combined reconciliation
-is running. No duplicate activation was performed. Record integration/cleanup
-only after runtime combined acceptance.
+exact artifact. Original attempt and combined plan passed runtime acceptance;
+LZ-32 is integrated v25. The native registry and a subsequent filesystem check
+confirm its owned worktree was removed without force. No duplicate activation
+was performed.
 
 Stable live Trajectory is now LZ-36 (`68a72431-87af-4bce-8e7b-77f430aeb100`),
-plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. Execution is admitted but waits for
-LZ-32 integration, then serializes true observation-file conflicts with Radar.
+plan `1fab1396-5f6b-45cc-a148-5eff48182ed9`. First attempt
+`83daf09a-0112-484e-af40-57ff1ff6e554` returned `08b2a47`; focused/all/build passed,
+but quality failed because report.md needed formatting. Runtime started repair
+attempt `29659c51-4151-4c61-8951-4482b6089b7e`. Root and native source review also
+confirmed a stale selected-live inspector: current completion loses to an old
+selection snapshot, including on reselection. That repair is instructed on the
+active second session, alongside removal of checksum-as-proof wording, without
+restart. See `evidence/stable-live-trajectory/selected-live-review.md`. Actual
+observation-file conflicts with Radar remain serialized through runtime.
 It preserves loaded history/disclosures/reading anchor while status/progress
 refreshes independently; repeated status and captured-page reads must add zero
 native context loads. Existing default inspection cursor behavior remains.
@@ -102,22 +110,114 @@ clean verification tree was removed natively too. Evidence is in
 
 ### Remaining Phase 1 work
 
-- Stable live Trajectory: specify after inspecting retained LZ-31/LZ-32 output;
-  preserve old expanded pages/selections while new events arrive. Use durable
-  sequences/stable history boundaries and separate current status from history.
-  Measure native-context calls/read cost before and after; unchanged status
-  refresh must not rematerialize full context. Serialize overlapping observation
-  and panel-state writes with Radar. Do not restore the privacy defect.
-- Existing failed LZ-14 renderer responsiveness: retain its task/attempt history,
+- Stable live Trajectory is executing as LZ-36 above. Native disclosure/reading
+  continuity remains a required future observation, not inferred from source or
+  read-count tests. Radar's integrated-plan prerequisites are now satisfied;
+  its actual observation/runtime write conflicts still serialize through runtime.
+- Renderer responsiveness remains open; LZ-14 remains cancelled. Retain its history,
   inspect captured stages and establish the actual blocking boundary before
   repair. Keep local inference enabled. Ownership was reassigned for investigation,
   but execution was not resumed. The explicit human cancellation in the retained
   `019-desktop-inference-isolation/triage.md` prohibits restoring/refining that
   abandoned refactor/stash. The newer roadmap authorizes the responsiveness goal,
   not an unproven root-cause claim or automatic resurrection of that implementation.
-  No new debugger capture exists in the documented diagnostics directory at this
-  checkpoint. Establish causal evidence and a compatible bounded repair before
-  requesting execution; do not conflate absence of a new capture with resolution.
+  The matched 2026-11-01 freeze below now supplies a stalled-run/PID baseline,
+  but not an application-level root cause. Establish a compatible bounded repair
+  and discriminating verification before requesting execution.
+
+Independent native investigation `ses_e684cfd22ffeA75L4NDI0b8iwj` found a
+diagnostic defect, not a freeze cause: active lag records mix renderer-uptime
+elapsed values into request-relative spans and misuse lag magnitude as event
+delta. LZ-37 (`4971ffe9-9d50-49cd-bdd7-775ffc681c39`), plan
+`8332f91a-b697-4697-993e-8be4740ed9d6`, is admitted independently to correct only
+these trace clocks/correlation boundaries. Production timer-path fake-clock
+regressions, terminal/idle attribution, existing lifecycle/privacy tests and
+full/quality/GUI build are required. No engine/settings/provider/transport change,
+Desktop reload, cancelled-refactor revival or responsiveness improvement is
+authorized by that correction. See `evidence/renderer-trace-clocks/investigation.md`.
+
+During local task review, ordinary enabled inference reported GPU device loss,
+then renderer-heartbeat loss; no semantic pass was established or settings changed.
+The read-only native follow-up found a failed inference trace and an unfinished
+retry candidate, but no matching automatic capture or current renderer PID.
+Broker heartbeat expiry is not an Electron unresponsive event. Root's healthy
+Network payload sample and native Activity pagination-reset before-case were
+retained separately and supplied to LZ-36 without changing its gates. See
+`evidence/034-renderer-trace/review-incident-follow-up.md`; none of these facts
+establishes a freeze cause or completes a native usability gate.
+
+Root subsequently preserved a matched real freeze at `0f75340`, documented in
+`evidence/renderer-freeze-20261101T1540/report.md`. Native Not responding and the
+main hook identify window 1/PID 77897, request/job
+`11a8cb1f-ce2c-45db-ae91-949094f3f1ff`, last stage `run`; this is the 2,087-token,
+eight-question retry, not the previous request's MapAsync failure. Automatic
+profiling timed out at enable. The exact-PID five-second OS sample records
+9.2 GB footprint/11 GB peak and V8/JS/JIT/GC-related frames without bounded
+application-function or `_OrtRun` attribution. Raw exported logs remain local.
+
+After preserving evidence, Root used Desktop Relaunch only. Real tab interaction
+recovered; all six features remain ON/Ready and idle unload Never. All three
+LZ-28/LZ-36/LZ-37 session/attempt/workspace/model identities survived with new
+activity. Recovery is not a fix. Native read-only investigations examined the
+retry/recovery ownership path (`ses_e6832f0c0ffe7SDOnJPdQvMIDh`) and sampled stack
+attribution (`ses_e6832f0b4ffehWZ5fxpIt8FVqd`). `sample-analysis.md` preserves the
+unresolved application-function attribution. `recovery-findings.md` records three
+separately reproduced source defects: known-loss rejection can leave a decision
+session reusable before its loss callback, rejected disposal can become later
+false success, and failed-load cleanup can escape ownership. Pending native work
+cannot be treated as terminated merely because its caller timed out.
+
+Plan `e2cfb569-7c01-4b6c-9bdc-a0e4ae10b89a` is admitted for compatible repairs:
+
+- LZ-38 (`9a9ff061-b95a-409d-a43e-710dd04bfd30`) is running: preserve resident and
+  failed-load cleanup uncertainty through the actual adapter, retryLoad, exclusive
+  ownership and main lease. Repeated/concurrent disposal must not falsely permit
+  replacement. Native release retry safety after partial failure is not assumed.
+- LZ-39 (`99d6b8cf-1eea-4f6c-98ff-27afcd8a6240`) waits for LZ-38: retire only
+  positively lost decision sessions through existing recovery, with no replay,
+  duplicate recovery or generic-error false positives. Actual-adapter/runtime/
+  broker tests cover callback ordering and pending-run cancellation/ownership.
+
+Shared adapter/tests serialize through that dependency. Scopes avoid LZ-37's
+runtime clock edits and LZ-28/LZ-36 source. Existing settings, engine/provider,
+context limits, loss circuit breaker, worker identities and cancelled LZ-14
+boundary are preserved. No broad rewrite or feature disablement is authorized.
+Repeated native verification on the exact combined artifact remains mandatory:
+three ordinary reviews near eight questions/~2,087 measured tokens with usable
+native navigation, normal question/decision/speech/model switching, unchanged
+all-six-ON/Ready apple-WebGPU idle-Never and preserved workers/history. Record
+completion, correlation and footprint across repetitions. These are recovery
+repairs, not a proven causal freeze fix.
+
+LZ-37 returned `097eab95e592f4e6122c44aa525ef911c94bb9a7`; Root and independent
+native review found no blocking source issue, and native review passed six focused
+tests. Original focused/all/quality/build receipts passed unchanged. Its hold is
+the artifact directory reference: committed verification.md is present, but
+artifactExists accepts only files. LZ-40 (`44715414-30fd-41cc-bdd4-5fdc7591ad5e`),
+plan `aee3ba37-ec68-4c4b-a2ad-b311a9643ff8`, is admitted to repair that generic
+contract mismatch while retaining confinement, rejecting placeholder directories
+and preserving all check/human gates. Do not rewrite LZ-37's immutable task,
+redispatch its worker or repeat its diagnostic implementation. After reviewed
+validator activation at a quiet inference boundary, reconcile existing matching
+receipts normally. Runtime owns actual runner-scope serialization with LZ-28.
+LZ-37 remains diagnostic clocks only, not the freeze fix.
+
+LZ-28 returned `7e02ce0`; independent native review reproduced five blockers:
+cancellation stuck behind archive recovery, invisible mutable results, concurrent
+admission identity conflict, foreign-project recovery and stale checkpoint input
+coverage. See `evidence/architect-context-lifecycle/retained-source-review.md`.
+Do not activate this candidate. Correct it in the same retained attempt and carry
+the user's `2536084` receipt selection fix into that source before final checks.
+Original live renewal/archival/input/outcome proof remains pending. Root is
+available for that proof and LZ-36's mounted UI proof once corrected, reviewed
+candidates can be activated at a quiet inference boundary. Independent retained
+workers must not be restarted.
+
+Root's main `6f4d163` concise task-verification guidance and `74974e9` implementor
+behavior-evidence guidance must survive integration. LZ-36 was instructed to drop
+bundle-checksum-as-mount/evidence language: use the committed candidate and actual
+mounted observations, not file-hash proof. This is an existing requirement, not
+a new acceptance gate or authority to skip already-specified checks.
 
 The initial canary reproducer was rerun in a disposable fixture and all three
 private-content retention flags were true. That is a defect reproduction, not
@@ -134,6 +234,8 @@ specify small dependency tasks for:
    separate actual charge/allowance and preserved historical basis.
 3. Persistent task persona and live shared/project/task dispatch mappings with
    explicit precedence and immutable attempt-route history.
+   Carry provider/model cache-policy information into Architect idle-renewal
+   timing with explicit overrides; unknown retention is not a guaranteed TTL.
 4. Model evidence database and Models panel: mapping editor, task-class tables,
    Pareto comparisons, sample/coverage and contributing trajectories; external
    evidence, observations and projections are distinct.

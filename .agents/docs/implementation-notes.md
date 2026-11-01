@@ -20,3 +20,13 @@ opens despite the normal busy timeout. The existing connection setup in
 into automatic replay of task writes after an uncertain commit. The accepted
 submission worker exposed the race and verified the repair with independent
 process tests; see [submission result](spikes/007-retry-safe-submission.md).
+
+## Isolated WebGPU test prerequisite
+
+The runtime fixture mocks `.cache/lfm3-engine.js`, but Bun still needs that ignored
+path to resolve. In a fresh worktree, prepare the pinned engine JavaScript with
+`bun scripts/prepare-engine.ts` before the full suite; `bun run build:gui` includes
+that preflight too. Reuse the child-process fixture isolation for runtime tests.
+This setup gap recurred in LZ-37 after earlier isolated workers encountered it;
+see [execution observations](evidence/037-roadmap-planning/native.md). Keep this
+pitfall scoped to relevant WebGPU work rather than repeating it in every task.

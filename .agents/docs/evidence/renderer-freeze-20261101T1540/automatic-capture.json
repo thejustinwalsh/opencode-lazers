@@ -1,0 +1,10 @@
+{
+  "windowID": 1,
+  "rendererPID": 77897,
+  "lastStage": "run",
+  "lastRequestID": "11a8cb1f-ce2c-45db-ae91-949094f3f1ff",
+  "lastJobID": "11a8cb1f-ce2c-45db-ae91-949094f3f1ff",
+  "captured": false,
+  "reason": "timeout",
+  "failure": "profiler-enable"
+}

@@ -29,6 +29,9 @@ implementors. The persona stays with the task; model/effort is resolved at dispa
 from a live hierarchy of shared defaults and project/task overrides. Running
 attempts retain their chosen route and history. Future selection rules can use
 observed performance, prices, promotions and other user criteria.
+Architect idle-renewal timing should account for provider/model cache policy
+and explicit overrides; unknown retention stays explicit rather than inferred
+from a cache price or promised as a cache hit.
 
 A Models panel edits these mappings and shows a model database combining native
 OpenCode/Go metadata, OpenRouter prices/benchmarks and our observed results. Show
