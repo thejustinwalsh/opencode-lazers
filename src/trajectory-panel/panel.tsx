@@ -885,9 +885,16 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
 }
 
 export function setupTrajectoryPanel(ctx: TrajectoryContext) {
+  const Ui = ctx.ui
   registerTrajectoryPanel(
     ctx,
     css,
     bindPlugin((props: PanelProps) => <PanelView {...props} ctx={ctx} />),
+    () => (
+      <div class="flex min-w-0 items-center gap-1.5">
+        <Ui.Icon name="branch" size="small" class="shrink-0" />
+        <span class="truncate">Trajectory</span>
+      </div>
+    ),
   )
 }

@@ -1183,8 +1183,15 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
 }
 
 export function setupRadarPanel(ctx: RadarContext) {
+  const Ui = ctx.ui
   registerRadarPanel(
     ctx,
     bindPlugin((props: PanelProps) => <RadarPanel {...props} ctx={ctx} />),
+    () => (
+      <div class="flex min-w-0 items-center gap-1.5">
+        <Ui.Icon name="eye" size="small" class="shrink-0" />
+        <span class="truncate">Radar</span>
+      </div>
+    ),
   )
 }
