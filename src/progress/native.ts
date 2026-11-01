@@ -21,6 +21,7 @@ const NATIVE_EVENT_TYPES = [
   "session.step.ended",
   "session.step.failed",
   "session.text.ended",
+  "session.tool.input.started",
   "session.tool.called",
   "session.tool.success",
   "session.tool.failed",

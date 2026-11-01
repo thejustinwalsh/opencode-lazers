@@ -167,6 +167,23 @@ function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
   return merged
 }
 
+function mergeObservations(previous: unknown, incoming: unknown): JsonObject[] {
+  const values = [
+    ...(Array.isArray(previous) ? previous : []),
+    ...(Array.isArray(incoming) ? incoming : []),
+  ]
+  const unique = new Map<string, JsonObject>()
+  for (const value of values) {
+    const item = object(value)
+    if (!item) continue
+    const identity =
+      text(item.eventID) ??
+      `${text(item.source) ?? "unknown"}:${text(item.eventType) ?? "unknown"}:${number(item.at) ?? "unknown"}`
+    unique.set(identity, item)
+  }
+  return [...unique.values()].slice(-25)
+}
+
 const toolStatusRank: Record<string, number> = {
   "not-executed": 0,
   running: 1,
@@ -180,6 +197,8 @@ function mergeFactPayload(
   incoming: JsonObject,
 ): JsonObject {
   const merged = mergeObjects(previous, incoming)
+  const observations = mergeObservations(previous.observations, incoming.observations)
+  if (observations.length) merged.observations = observations
   if (kind === "tool") {
     const oldStatus = text(previous.status)
     const newStatus = text(incoming.status)
@@ -495,6 +514,7 @@ export class ProgressRecorder {
     let fact: Fact | undefined
 
     if (
+      type === "session.tool.input.started" ||
       type === "session.tool.called" ||
       type === "session.tool.success" ||
       type === "session.tool.failed"
@@ -502,8 +522,11 @@ export class ProgressRecorder {
       const callID = text(data.id)
       if (!callID) return undefined
       const payload: Record<string, unknown> = {
+        ...(type === "session.tool.input.started" && text(data.name)
+          ? { tool: safeText(text(data.name)!, stats, 160) }
+          : {}),
         status:
-          type === "session.tool.called"
+          type === "session.tool.input.started" || type === "session.tool.called"
             ? data.executed === false
               ? "not-executed"
               : "running"
@@ -519,6 +542,20 @@ export class ProgressRecorder {
         const error = errorView(data.error, stats)
         if (error !== undefined) payload.error = error
       }
+      payload.observations = [
+        {
+          source: "native-event",
+          ...(eventID ? { eventID } : {}),
+          eventType: type,
+          at,
+          status: payload.status,
+          messageID: messageID ?? null,
+          callID,
+          ...(type === "session.tool.input.started" && text(data.name)
+            ? { tool: safeText(text(data.name)!, stats, 160) }
+            : {}),
+        },
+      ]
       fact = {
         source: "native-event",
         kind: "tool",
@@ -541,6 +578,21 @@ export class ProgressRecorder {
           ? "failed"
           : "ended"
       const payload: Record<string, unknown> = { status }
+      const observedAgent = type === "session.step.started" ? text(data.agent) : undefined
+      const model = type === "session.step.started" ? object(data.model) : undefined
+      const providerID = text(model?.providerID)
+      const modelID = text(model?.id)
+      const variant = text(model?.variant)
+      const route =
+        providerID && modelID
+          ? {
+              providerID: safeText(providerID, stats, 200),
+              modelID: safeText(modelID, stats, 300),
+              variant: variant ? safeText(variant, stats, 200) : null,
+            }
+          : undefined
+      if (observedAgent) payload.agent = safeText(observedAgent, stats, 200)
+      if (route) payload.route = route
       if (type === "session.step.ended" || type === "session.step.failed") {
         payload.measurementBasis = "additive-step-measurement"
         payload.usage = measuredUsage(data.tokens, data.cost)
@@ -548,6 +600,21 @@ export class ProgressRecorder {
       }
       const error = errorView(data.error, stats)
       if (error !== undefined) payload.error = error
+      payload.observations = [
+        {
+          source: "native-event",
+          ...(eventID ? { eventID } : {}),
+          eventType: type,
+          at,
+          status,
+          messageID,
+          ...(observedAgent ? { agent: safeText(observedAgent, stats, 200) } : {}),
+          ...(route ? { route } : {}),
+          ...(type === "session.step.started" && number(data.started) !== undefined
+            ? { startedAt: number(data.started) }
+            : {}),
+        },
+      ]
       fact = {
         source: "native-event",
         kind: "step",
@@ -689,6 +756,15 @@ export class ProgressRecorder {
                 status: message.error ? "failed" : "ended",
                 measurementBasis: "additive-step-measurement",
                 usage: measuredUsage(tokens, messageCost),
+                observations: [
+                  {
+                    source: "recovery",
+                    eventType: "retained-assistant-message",
+                    at,
+                    status: message.error ? "failed" : "ended",
+                    messageID,
+                  },
+                ],
                 ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
               },
             })
@@ -825,6 +901,23 @@ export class ProgressRecorder {
             : status === "running" || status === "streaming"
               ? "running"
               : "not-executed",
+      observations: [
+        {
+          source: "recovery",
+          eventType: "retained-tool-message",
+          at,
+          status:
+            status === "completed"
+              ? "succeeded"
+              : status === "error"
+                ? "failed"
+                : status === "running" || status === "streaming"
+                  ? "running"
+                  : "not-executed",
+          messageID,
+          ...(text(part.name) ? { tool: safeText(text(part.name)!, stats, 160) } : {}),
+        },
+      ],
     }
     if (status === "completed" || status === "error") {
       const content = visibleContent(state?.content, stats)

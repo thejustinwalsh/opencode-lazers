@@ -37,6 +37,52 @@ function payload(row: ProgressRow): JsonObject {
   }
 }
 
+function projectedRoute(value: unknown, stats: ReturnType<typeof privacyStats>) {
+  const route = object(value)
+  if (typeof route?.providerID !== "string" || typeof route.modelID !== "string") return null
+  return {
+    providerID: safeText(route.providerID, stats, 200),
+    modelID: safeText(route.modelID, stats, 300),
+    variant: typeof route.variant === "string" ? safeText(route.variant, stats, 200) : null,
+  }
+}
+
+function projectedObservations(value: unknown, stats: ReturnType<typeof privacyStats>) {
+  if (!Array.isArray(value)) return []
+  return value.slice(-25).flatMap((raw) => {
+    const observation = object(raw)
+    if (
+      !observation ||
+      (observation.source !== "native-event" && observation.source !== "recovery") ||
+      typeof observation.eventType !== "string"
+    )
+      return []
+    return [
+      {
+        source: observation.source,
+        eventID:
+          typeof observation.eventID === "string"
+            ? safeText(observation.eventID, stats, 200)
+            : null,
+        eventType: safeText(observation.eventType, stats, 120),
+        at: number(observation.at),
+        status: string(observation.status),
+        messageID:
+          typeof observation.messageID === "string"
+            ? safeText(observation.messageID, stats, 200)
+            : null,
+        callID:
+          typeof observation.callID === "string" ? safeText(observation.callID, stats, 200) : null,
+        agent:
+          typeof observation.agent === "string" ? safeText(observation.agent, stats, 200) : null,
+        tool: typeof observation.tool === "string" ? safeText(observation.tool, stats, 160) : null,
+        route: projectedRoute(observation.route, stats),
+        startedAt: number(observation.startedAt),
+      },
+    ]
+  })
+}
+
 /** Fail-closed trajectory view; stored native or model payloads are never copied wholesale. */
 export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
   const stats = privacyStats()
@@ -50,6 +96,8 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     taskID: safeText(row.task_id, stats, 128),
     attemptID: safeText(row.attempt_id, stats, 128),
     sessionID: safeText(row.session_id, stats, 128),
+    messageID: row.message_id === null ? null : safeText(row.message_id, stats, 200),
+    callID: row.call_id === null ? null : safeText(row.call_id, stats, 200),
     source: safeText(row.source, stats, 80),
     sources: [...new Set([row.source, ...list(row.sources_json)])].map((source) =>
       safeText(source, stats, 80),
@@ -68,6 +116,7 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       if (typeof value.content === "string") view.result = visibleProgressText(value.content, stats)
       // Legacy arbitrary structured output is not exported either.
       if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
+      view.observations = projectedObservations(value.observations, stats)
       break
     case "visible-text":
       view.text = typeof value.text === "string" ? safeText(value.text, stats) : ""
@@ -77,6 +126,9 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       view.status = string(value.status)
       view.finish = string(value.finish)
       view.measurementBasis = string(value.measurementBasis)
+      view.agent = typeof value.agent === "string" ? safeText(value.agent, stats, 200) : null
+      view.route = projectedRoute(value.route, stats)
+      view.observations = projectedObservations(value.observations, stats)
       view.usage = usage
         ? {
             input: number(usage.input),
@@ -153,6 +205,9 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     case "reminder":
       view.text = typeof value.text === "string" ? safeText(value.text, stats, 500) : ""
       view.delivery = string(value.delivery)
+      view.observedAt = number(value.reconciledAt)
+      view.nativeEventID =
+        typeof value.nativeEventID === "string" ? safeText(value.nativeEventID, stats, 200) : null
       break
     default:
       view.kind = "worker-unknown"

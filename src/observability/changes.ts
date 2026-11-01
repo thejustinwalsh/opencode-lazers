@@ -61,7 +61,28 @@ export function sourceStampFromDatabase(
       .all(projectDirectory),
     effects: db
       .query(
-        "SELECT e.id,e.plan_id,e.task_id,e.attempt_id,e.kind,e.state,e.receipt,e.fence FROM runner_effects e JOIN runner_plans p ON p.id=e.plan_id WHERE p.project_directory=? ORDER BY e.rowid",
+        "SELECT e.id,e.plan_id,e.task_id,e.attempt_id,e.kind,e.state,e.payload,e.receipt,e.fence FROM runner_effects e JOIN runner_plans p ON p.id=e.plan_id WHERE p.project_directory=? ORDER BY e.rowid",
+      )
+      .all(projectDirectory),
+    continuations: db
+      .query(
+        `SELECT c.plan_id,c.session_id,c.parent_id,c.directory,c.model,c.generation
+         FROM runner_continuations c JOIN runner_plans p ON p.id=c.plan_id
+         WHERE p.project_directory=? ORDER BY c.plan_id`,
+      )
+      .all(projectDirectory),
+    outbox: db
+      .query(
+        `SELECT o.id,o.plan_id,o.session_id,o.message_id,o.payload,o.state,o.resume,o.metadata,o.receipt
+         FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+         WHERE p.project_directory=? ORDER BY o.rowid`,
+      )
+      .all(projectDirectory),
+    progress: db
+      .query(
+        `SELECT seq,plan_id,task_id,attempt_id,session_id,at,source,sources_json,kind,
+                event_ids_json,call_id,message_id,dedupe_key,payload
+         FROM runner_progress WHERE project_directory=? ORDER BY seq`,
       )
       .all(projectDirectory),
     transitions: db
@@ -97,8 +118,11 @@ export class ObservationChangeTracker {
   private repositoryVersion = 0
   private sourceFingerprint = ""
   private sessionIDs = new Set<string>()
+  private scopedSessionIDs = new Set<string>()
   private readonly seenEvents = new Set<string>()
   private readonly durableSequences = new Map<string, number>()
+  private readonly liveEventIDs = new Map<string, string>()
+  private eventStreamConnected = false
   private publish?: (change: ObservationChange) => void
 
   constructor(
@@ -137,6 +161,30 @@ export class ObservationChangeTracker {
     )
   }
 
+  trackScopedSessions(sessionIDs: Iterable<string>) {
+    this.scopedSessionIDs = new Set([...sessionIDs].slice(0, 500))
+  }
+
+  /** Return only events observed since the last radar projection; history never pulses. */
+  peekLiveEvents(sessionIDs: ReadonlySet<string>) {
+    return new Set(
+      [...this.liveEventIDs].flatMap(([eventID, sessionID]) =>
+        sessionIDs.has(sessionID) ? [eventID] : [],
+      ),
+    )
+  }
+
+  /** Return only events observed since the last radar projection; history never pulses. */
+  takeLiveEvents(sessionIDs: ReadonlySet<string>) {
+    const output = new Set<string>()
+    for (const [eventID, sessionID] of this.liveEventIDs) {
+      if (!sessionIDs.has(sessionID)) continue
+      output.add(eventID)
+      this.liveEventIDs.delete(eventID)
+    }
+    return output
+  }
+
   observeStamp(stamp: SourceStamp) {
     const changed =
       this.repositoryVersion !== stamp.repositoryVersion ||
@@ -154,9 +202,9 @@ export class ObservationChangeTracker {
     const data = object(object(event)?.data)
     const sessionID = typeof data?.sessionID === "string" ? data.sessionID : null
     if (!sessionID) return
-    if (!this.sessionIDs.has(sessionID)) {
+    if (!this.sessionIDs.has(sessionID) && !this.scopedSessionIDs.has(sessionID)) {
       this.refreshSource()
-      if (!this.sessionIDs.has(sessionID)) return
+      if (!this.sessionIDs.has(sessionID) && !this.scopedSessionIDs.has(sessionID)) return
     }
 
     const info = object(event)
@@ -164,7 +212,8 @@ export class ObservationChangeTracker {
     if (id && this.seenEvents.has(id)) return
     if (id) {
       this.seenEvents.add(id)
-      if (this.seenEvents.size > 4096) this.seenEvents.clear()
+      if (this.seenEvents.size > 4096)
+        this.seenEvents.delete(this.seenEvents.values().next().value!)
     }
 
     const durable = object(info?.durable)
@@ -179,13 +228,25 @@ export class ObservationChangeTracker {
       this.durableSequences.set(aggregateID, sequence)
     }
     this.nativeRevision++
+    this.eventStreamConnected = true
+    if (id) {
+      this.liveEventIDs.set(id, sessionID)
+      if (this.liveEventIDs.size > 4096)
+        this.liveEventIDs.delete(this.liveEventIDs.keys().next().value!)
+    }
     this.emit("native", false)
   }
 
   streamGap() {
     this.nativeRevision++
+    this.eventStreamConnected = false
+    this.liveEventIDs.clear()
     this.durableSequences.clear()
     this.emit("gap", true)
+  }
+
+  get hasConnectedEventStream() {
+    return this.eventStreamConnected
   }
 
   private emit(cause: ObservationChange["cause"], resnapshotRequired: boolean) {

@@ -2,10 +2,18 @@ import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
 import { SnapshotOutput } from "./contract.ts"
-import { makeFixture, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import {
+  makeFixture,
+  taskID,
+  firstAttemptID,
+  secondAttemptID,
+} from "../../test/trajectory/fixture.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
+import { validProposal } from "../../test/proposal.ts"
 import type { TrajectoryHost } from "../trajectory/native.ts"
+import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
+import { ObservationSyncState } from "./state.ts"
 
 function metadataOnlyHost(fixture: ReturnType<typeof makeFixture>): TrajectoryHost {
   return {
@@ -17,6 +25,73 @@ function metadataOnlyHost(fixture: ReturnType<typeof makeFixture>): TrajectoryHo
         : null
     },
   }
+}
+
+function radarSession(
+  id: string,
+  options: {
+    projectID?: string
+    parentID?: string | null
+    directory?: string
+    archived?: boolean
+    model?: RadarNativeSession["model"]
+  } = {},
+): RadarNativeSession {
+  return {
+    id,
+    projectID: options.projectID ?? "project",
+    parentID: options.parentID ?? null,
+    directory: options.directory ?? "/workspace/project",
+    agent: "architect",
+    model: options.model ?? { providerID: "google", id: "gemini-current", variant: "high" },
+    archived: options.archived ?? false,
+    busy: false,
+    createdAt: 1_000,
+    updatedAt: 2_000,
+  }
+}
+
+function radarHost(values: RadarNativeSession[]): RadarSessionHost {
+  const byID = new Map(values.map((session) => [session.id, session]))
+  return {
+    get: async (id) => byID.get(id) ?? null,
+    project: async (projectID, includeArchived, limit) => {
+      const matching = [...byID.values()].filter(
+        (session) => session.projectID === projectID && (includeArchived || !session.archived),
+      )
+      return { sessions: matching.slice(0, limit), truncated: matching.length > limit }
+    },
+    descendants: async (projectID, rootID, includeArchived, limit) => {
+      const sessions: RadarNativeSession[] = []
+      const visited = new Set([rootID])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const session of byID.values()) {
+          if (
+            session.projectID === projectID &&
+            session.parentID &&
+            visited.has(session.parentID) &&
+            !visited.has(session.id) &&
+            (includeArchived || !session.archived)
+          ) {
+            visited.add(session.id)
+            sessions.push(session)
+            changed = true
+          }
+        }
+      }
+      return { sessions: sessions.slice(0, limit), truncated: sessions.length > limit }
+    },
+  }
+}
+
+function radarReads(
+  fixture: ReturnType<typeof makeFixture>,
+  sessions: RadarSessionHost,
+  secret = new Uint8Array(32).fill(12),
+) {
+  return new ObservationReads(fixture.store, fixture.host, "project", secret, sessions)
 }
 
 test("session snapshots expose actual machine topology and recorded transitions separately, read-only", () => {
@@ -460,6 +535,673 @@ test("metadata status fails explicitly instead of falling back to session contex
       ),
     ).rejects.toThrow("Metadata-only trajectory status is unavailable")
     expect(fullSessionReads).toBe(0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar default and opt-in inventories preserve exact Project and Session identity scope", async () => {
+  const fixture = makeFixture()
+  try {
+    const sessions = radarHost([
+      radarSession("ses-owner"),
+      radarSession("ses-failed", { parentID: "ses-owner" }),
+      radarSession("ses-accepted", { parentID: "ses-owner" }),
+      radarSession("ses-unrelated", { parentID: "ses-owner" }),
+      radarSession("ses-descendant", { parentID: "ses-failed" }),
+      radarSession("ses-deep-descendant", { parentID: "ses-descendant" }),
+      radarSession("ses-foreign", { projectID: "another-project" }),
+    ])
+    const reads = radarReads(fixture, sessions)
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(12),
+      "project",
+    )
+    tracker.initialize()
+
+    const projectDefault = await reads.radar(
+      { scope: { kind: "project", sessionID: "ses-owner" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(projectDefault.sessions.map((session) => session.sessionID).sort()).toEqual([
+      "ses-accepted",
+      "ses-failed",
+      "ses-owner",
+    ])
+    expect(projectDefault.freshness.nativeInventory).toBe("managed-only")
+
+    const projectOptIn = await reads.radar(
+      { scope: { kind: "project", sessionID: "ses-owner" }, includeUnmanagedSessions: true },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(projectOptIn.freshness.nativeInventory).toBe("complete")
+    expect(projectOptIn.coverage).toMatchObject({
+      includeUnmanagedSessions: true,
+      inventoryTruncated: false,
+      workTruncated: false,
+      progressTruncated: false,
+      routeTruncated: false,
+      toolTruncated: false,
+      edgeTruncated: false,
+    })
+    expect(projectOptIn.sessions.map((session) => session.sessionID).sort()).toEqual([
+      "ses-accepted",
+      "ses-deep-descendant",
+      "ses-descendant",
+      "ses-failed",
+      "ses-owner",
+      "ses-unrelated",
+    ])
+    expect(
+      projectOptIn.sessions.find((session) => session.sessionID === "ses-unrelated"),
+    ).toMatchObject({ classification: "unmanaged" })
+    expect(projectOptIn.sessions.some((session) => session.sessionID === "ses-foreign")).toBe(false)
+
+    const sessionDefault = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(sessionDefault.sessions.map((session) => session.sessionID).sort()).toEqual([
+      "ses-accepted",
+      "ses-failed",
+      "ses-owner",
+    ])
+    expect(sessionDefault.scope).toEqual({ kind: "session", sessionID: "ses-failed" })
+
+    const sessionOptIn = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: true },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(sessionOptIn.sessions.map((session) => session.sessionID).sort()).toEqual([
+      "ses-accepted",
+      "ses-deep-descendant",
+      "ses-descendant",
+      "ses-failed",
+      "ses-owner",
+    ])
+    expect(
+      sessionOptIn.sessions.find((session) => session.sessionID === "ses-deep-descendant"),
+    ).toMatchObject({ associations: ["native-ancestry"] })
+    expect(sessionOptIn.sessions.some((session) => session.sessionID === "ses-unrelated")).toBe(
+      false,
+    )
+    expect(sessionOptIn.sessions.some((session) => session.sessionID === "ses-foreign")).toBe(false)
+
+    const standaloneReads = radarReads(
+      fixture,
+      radarHost([
+        radarSession("ses-scope-root", { parentID: "ses-parent" }),
+        radarSession("ses-parent", { parentID: "ses-grandparent" }),
+        radarSession("ses-grandparent"),
+        radarSession("ses-sibling", { parentID: "ses-parent" }),
+        radarSession("ses-child", { parentID: "ses-scope-root" }),
+      ]),
+    )
+    const standaloneTracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(12),
+      "project",
+    )
+    standaloneTracker.initialize()
+    const standaloneDefault = await standaloneReads.radar(
+      { scope: { kind: "session", sessionID: "ses-scope-root" }, includeUnmanagedSessions: false },
+      standaloneTracker,
+      new AbortController().signal,
+    )
+    expect(standaloneDefault.sessions.map((session) => session.sessionID).sort()).toEqual([
+      "ses-grandparent",
+      "ses-parent",
+      "ses-scope-root",
+    ])
+    expect(
+      standaloneDefault.sessions.find((session) => session.sessionID === "ses-parent"),
+    ).toMatchObject({ associations: ["native-ancestry"], classification: "associated" })
+    const standaloneOptIn = await standaloneReads.radar(
+      { scope: { kind: "session", sessionID: "ses-scope-root" }, includeUnmanagedSessions: true },
+      standaloneTracker,
+      new AbortController().signal,
+    )
+    expect(standaloneOptIn.sessions.map((session) => session.sessionID).sort()).toEqual([
+      "ses-child",
+      "ses-grandparent",
+      "ses-parent",
+      "ses-scope-root",
+    ])
+    expect(
+      standaloneOptIn.sessions.find((session) => session.sessionID === "ses-child"),
+    ).toMatchObject({ classification: "unmanaged" })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar marks missing, archived, and moved managed sessions stale without projecting routes", async () => {
+  const fixture = makeFixture()
+  try {
+    const host = radarHost([
+      radarSession("ses-failed", { directory: "/different/worktree" }),
+      radarSession("ses-accepted", { archived: true }),
+    ])
+    const reads = radarReads(fixture, host)
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(13),
+      "project",
+    )
+    tracker.initialize()
+    const result = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(result.sessions.find((session) => session.sessionID === "ses-failed")).toMatchObject({
+      availability: "moved",
+      freshness: "stale",
+      agent: null,
+      state: "unknown",
+      currentRouteID: null,
+      updatedAt: null,
+    })
+    expect(result.sessions.find((session) => session.sessionID === "ses-accepted")).toMatchObject({
+      availability: "archived",
+      freshness: "stale",
+      currentRouteID: null,
+    })
+    expect(result.sessions.find((session) => session.sessionID === "ses-owner")).toMatchObject({
+      availability: "missing",
+      freshness: "unknown",
+      currentRouteID: null,
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar reports native inventory failures instead of implying complete coverage", async () => {
+  const fixture = makeFixture()
+  try {
+    const host: RadarSessionHost = {
+      get: async (id) => radarSession(id, { directory: fixture.directory }),
+      project: async () => {
+        throw new Error("native inventory unavailable")
+      },
+      descendants: async () => {
+        throw new Error("native inventory unavailable")
+      },
+    }
+    const reads = radarReads(fixture, host)
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(17),
+      "project",
+    )
+    tracker.initialize()
+    const result = await reads.radar(
+      { scope: { kind: "project", sessionID: "ses-owner" }, includeUnmanagedSessions: true },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(result.freshness.nativeInventory).toBe("unavailable")
+    expect(result.coverage).toMatchObject({
+      includeUnmanagedSessions: true,
+      inventoryTruncated: false,
+    })
+    expect(result.sessions.every((session) => session.classification !== "unmanaged")).toBe(true)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar separates configured, selected, and observed routes and links deduplicated event evidence", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(14)
+    const metadata = radarHost([
+      radarSession("ses-owner"),
+      radarSession("ses-failed", {
+        parentID: "ses-owner",
+        directory: fixture.directory,
+        model: { providerID: "google", id: "selection-b", variant: "high" },
+      }),
+      radarSession("ses-accepted", { parentID: "ses-owner", directory: fixture.directory }),
+    ])
+    let fullContextReads = 0
+    const reads = new ObservationReads(
+      fixture.store,
+      {
+        session: async () => {
+          fullContextReads++
+          return null
+        },
+      },
+      "project",
+      secret,
+      metadata,
+    )
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const emit = (event: Record<string, unknown>) => {
+      recorder.recordNativeEvent(event)
+      tracker.native(event)
+    }
+    const initialSourceRevision = tracker.sourceRevision
+    const stepStarted = {
+      id: "evt-step-c-start",
+      type: "session.step.started",
+      created: 3_000,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-observed-c",
+        agent: "lazers-implementor",
+        model: { providerID: "anthropic", id: "observed-route-c", variant: "thinking" },
+        started: 2_990,
+      },
+    }
+    emit(stepStarted)
+    emit(stepStarted)
+    emit({
+      id: "evt-step-c-end",
+      type: "session.step.ended",
+      created: 3_100,
+      data: { sessionID: "ses-failed", assistantMessageID: "msg-observed-c" },
+    })
+    emit({
+      id: "evt-tool-start",
+      type: "session.tool.input.started",
+      created: 3_200,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-observed-c",
+        id: "call-observed-7",
+        name: "Read",
+      },
+    })
+    emit({
+      id: "evt-tool-call",
+      type: "session.tool.called",
+      created: 3_210,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-observed-c",
+        id: "call-observed-7",
+      },
+    })
+    emit({
+      id: "evt-tool-result",
+      type: "session.tool.success",
+      created: 3_300,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-observed-c",
+        id: "call-observed-7",
+        content: [{ type: "text", text: "PRIVATE_RADAR_TOOL_RESULT_CANARY" }],
+      },
+    })
+    tracker.refreshSource()
+    expect(tracker.sourceRevision).toBeGreaterThan(initialSourceRevision)
+    const beforeRead = fixture.store.atomic((db) => ({
+      dataVersion: db.query<{ data_version: number }, []>("PRAGMA data_version").get()!
+        .data_version,
+      taskChanges: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM task_changes")
+        .get()!.count,
+      attempts: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
+        .get()!.count,
+      effects: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_effects")
+        .get()!.count,
+      outbox: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_outbox").get()!
+        .count,
+      continuations: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_continuations")
+        .get()!.count,
+      progress: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
+        .get()!.count,
+      audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
+        .count,
+      transitions: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_transitions")
+        .get()!.count,
+    }))
+    const first = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    const afterRead = fixture.store.atomic((db) => ({
+      dataVersion: db.query<{ data_version: number }, []>("PRAGMA data_version").get()!
+        .data_version,
+      taskChanges: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM task_changes")
+        .get()!.count,
+      attempts: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
+        .get()!.count,
+      effects: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_effects")
+        .get()!.count,
+      outbox: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_outbox").get()!
+        .count,
+      continuations: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_continuations")
+        .get()!.count,
+      progress: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
+        .get()!.count,
+      audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
+        .count,
+      transitions: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_transitions")
+        .get()!.count,
+    }))
+    expect(afterRead).toEqual(beforeRead)
+
+    const firstAttempt = first.attempts.find((attempt) => attempt.id === firstAttemptID)!
+    const configured = first.routes.find((route) => route.id === firstAttempt.configuredRouteID)
+    const selected = first.routes.find(
+      (route) =>
+        route.id === first.sessions.find((s) => s.sessionID === "ses-failed")?.currentRouteID,
+    )
+    const observed = first.routes.find((route) => route.eventID === "evt-step-c-start")
+    expect(configured).toMatchObject({
+      source: "attempt-policy",
+      providerID: "openai",
+      modelID: "gpt-6-luna",
+    })
+    expect(selected).toMatchObject({
+      source: "session-selection",
+      providerID: "google",
+      modelID: "selection-b",
+    })
+    expect(observed).toMatchObject({
+      source: "step-event",
+      providerID: "anthropic",
+      modelID: "observed-route-c",
+    })
+    expect(new Set([configured?.id, selected?.id, observed?.id]).size).toBe(3)
+
+    const request = first.edges.find(
+      (edge) => edge.kind === "model-request" && edge.messageID === "msg-observed-c",
+    )
+    const response = first.edges.find(
+      (edge) => edge.kind === "model-response" && edge.messageID === "msg-observed-c",
+    )
+    expect(request).toMatchObject({
+      kind: "model-request",
+      routeID: observed?.id,
+      agentID: "lazers-implementor",
+      messageID: "msg-observed-c",
+      startedAt: 2_990,
+      observedAt: 3_000,
+      live: true,
+      evidence: [{ source: "native-event", eventID: "evt-step-c-start", at: 3_000 }],
+    })
+    expect(response).toMatchObject({
+      kind: "model-response",
+      routeID: observed?.id,
+      messageID: "msg-observed-c",
+      startedAt: 2_990,
+      observedAt: 3_100,
+      live: true,
+      evidence: [{ source: "native-event", eventID: "evt-step-c-end", at: 3_100 }],
+    })
+    expect(
+      first.edges.filter(
+        (edge) => edge.kind === "model-request" && edge.messageID === "msg-observed-c",
+      ),
+    ).toHaveLength(1)
+    expect(first.tools).toEqual([{ id: expect.any(String), name: "Read" }])
+    expect(
+      first.edges.find((edge) => edge.kind === "tool-call" && edge.callID === "call-observed-7")
+        ?.evidence,
+    ).toMatchObject([{ source: "native-event", eventID: "evt-tool-call", at: 3_210 }])
+    expect(
+      first.edges.find((edge) => edge.kind === "tool-result" && edge.callID === "call-observed-7")
+        ?.evidence,
+    ).toMatchObject([{ source: "native-event", eventID: "evt-tool-result", at: 3_300 }])
+    expect(JSON.stringify(first)).not.toContain("PRIVATE_RADAR_TOOL_RESULT_CANARY")
+    expect(fullContextReads).toBe(0)
+
+    tracker.streamGap()
+    recorder.reconcileMessages("ses-failed", [
+      {
+        id: "msg-observed-c",
+        type: "assistant",
+        time: { created: 3_400 },
+        content: [],
+        tokens: { input: 1, output: 1 },
+      },
+    ])
+    tracker.refreshSource()
+    const recovered = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(
+      recovered.edges.find(
+        (edge) => edge.kind === "model-request" && edge.messageID === "msg-observed-c",
+      )?.live,
+    ).toBe(false)
+    expect(
+      recovered.edges.filter(
+        (edge) => edge.kind === "model-request" && edge.messageID === "msg-observed-c",
+      ),
+    ).toHaveLength(1)
+    expect(fullContextReads).toBe(0)
+    const observations = fixture.store.atomic((db) =>
+      db
+        .query<{ payload: string; event_ids_json: string }, [string]>(
+          "SELECT payload,event_ids_json FROM runner_progress WHERE dedupe_key=?",
+        )
+        .get("step:ses-failed:msg-observed-c")!,
+    )
+    const stored = JSON.parse(observations.payload) as { observations: Array<{ eventID?: string }> }
+    expect(
+      stored.observations.filter((observation) => observation.eventID === "evt-step-c-start"),
+    ).toHaveLength(1)
+    expect(JSON.parse(observations.event_ids_json)).toEqual(["evt-step-c-start", "evt-step-c-end"])
+    expect(stored.observations.filter((observation) => !observation.eventID)).toHaveLength(1)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar keeps durable effect and outbox delivery stages distinct from structural links", async () => {
+  const fixture = makeFixture()
+  try {
+    const planID = fixture.receipt.planID
+    const dependentTaskID = crypto.randomUUID()
+    fixture.repository.insert({
+      schemaVersion: 1,
+      id: dependentTaskID,
+      revision: 1,
+      status: "submitted",
+      createdAt: new Date().toISOString(),
+      provenance: { ...fixture.task.provenance, sessionID: "ses-owner" },
+      proposal: validProposal(),
+    })
+    fixture.store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_nodes
+         (plan_id,task_id,spec_revision,ordinal,state,version,reason,artifact,snapshot,machine_version)
+         VALUES(?,?,1,2,'queued',1,NULL,NULL,?,'lazers-task/1')`,
+      ).run(planID, dependentTaskID, JSON.stringify({ status: "active", value: "queued" }))
+      db.query("INSERT INTO runner_dependencies(plan_id,prerequisite,successor) VALUES(?,?,?)").run(
+        planID,
+        taskID,
+        dependentTaskID,
+      )
+      const effect = (
+        id: string,
+        attemptID: string,
+        kind: string,
+        state: string,
+        payload: unknown,
+      ) =>
+        db
+          .query(
+            `INSERT INTO runner_effects
+           (id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
+           VALUES(?,?,?,?,?,?,?,NULL,1)`,
+          )
+          .run(id, planID, taskID, attemptID, kind, state, JSON.stringify(payload))
+      effect("effect-session", firstAttemptID, "session", "completed", { sessionID: "ses-failed" })
+      effect("effect-prompt-persisted", firstAttemptID, "prompt", "intended", {
+        messageID: "msg-first",
+      })
+      effect("effect-prompt-admitted", secondAttemptID, "prompt", "completed", {
+        messageID: "msg-second",
+      })
+      const transition = (event: string, payload: unknown, at: number) =>
+        db
+          .query(
+            `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+           VALUES(?,?,1,?,?,?)`,
+          )
+          .run(planID, taskID, event, JSON.stringify(payload), at)
+      transition("SESSION_EFFECT_COMPLETED", { effectID: "effect-session" }, 4_100)
+      transition(
+        "PROMPT_PERSISTED",
+        { effectID: "effect-prompt-persisted", messageID: "msg-first" },
+        4_200,
+      )
+      transition(
+        "PROMPT_ADMITTED",
+        { effectID: "effect-prompt-admitted", messageID: "msg-second" },
+        4_300,
+      )
+      const outbox = [
+        ["outbox-persisted", "pending"],
+        ["outbox-admitted", "admitted"],
+        ["outbox-consumed", "consumed"],
+        ["outbox-unknown", "unknown"],
+      ] as const
+      for (const [index, [id, state]] of outbox.entries()) {
+        const messageID = `message-${id}`
+        db.query(
+          `INSERT INTO runner_outbox
+           (id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt)
+           VALUES(?,?,?,?,?,?,0,NULL,NULL)`,
+        ).run(id, planID, "ses-owner", messageID, "private outbox payload must stay hidden", state)
+        transition(`OUTBOX_${state.toUpperCase()}`, { outboxID: id, messageID }, 4_400 + index)
+      }
+    })
+    const host = radarHost([
+      radarSession("ses-owner"),
+      radarSession("ses-failed", { directory: fixture.directory }),
+      radarSession("ses-accepted", { directory: fixture.directory }),
+    ])
+    const reads = radarReads(fixture, host)
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(16),
+      "project",
+    )
+    tracker.initialize()
+    const result = await reads.radar(
+      { scope: { kind: "project", sessionID: "ses-owner" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    const delivery = new Map(
+      result.edges
+        .filter((edge) => edge.kind === "outcome")
+        .map((edge) => [edge.id.slice("outcome:".length), edge.deliveryStage]),
+    )
+    expect(delivery).toEqual(
+      new Map([
+        ["outbox-persisted", "persisted"],
+        ["outbox-admitted", "admitted"],
+        ["outbox-consumed", "consumed"],
+        ["outbox-unknown", "unknown"],
+      ]),
+    )
+    expect(result.edges.find((edge) => edge.id === "prompt:effect-prompt-persisted")).toMatchObject(
+      { deliveryStage: "persisted", messageID: "msg-first" },
+    )
+    expect(result.edges.find((edge) => edge.id === "prompt:effect-prompt-admitted")).toMatchObject({
+      deliveryStage: "admitted",
+      messageID: "msg-second",
+    })
+    const assignment = result.edges.find((edge) => edge.id === `assignment:${firstAttemptID}`)
+    expect(assignment).toMatchObject({ kind: "assignment", observedAt: 4_100 })
+    expect(assignment?.evidence).toContainEqual({
+      source: "runner-transition",
+      sequence: expect.any(Number),
+      event: "SESSION_EFFECT_COMPLETED",
+      effectID: "effect-session",
+      outboxID: null,
+      messageID: null,
+      at: 4_100,
+    })
+    expect(
+      result.edges
+        .filter((edge) => edge.kind === "architecture")
+        .every((edge) => edge.live === false && edge.deliveryStage === null),
+    ).toBe(true)
+    expect(result.edges.find((edge) => edge.kind === "dependency")).toMatchObject({
+      from: `task:${taskID}`,
+      to: `task:${dependentTaskID}`,
+      live: false,
+      deliveryStage: null,
+      evidence: [{ source: "runner-record", at: null }],
+    })
+    expect(JSON.stringify(result)).not.toContain("private outbox payload")
+  } finally {
+    fixture.close()
+  }
+})
+
+test("deferred Radar responses from an obsolete scope cannot become fresh in the next scope", async () => {
+  const fixture = makeFixture()
+  try {
+    let entered!: () => void
+    let resume!: (value: RadarNativeSession | null) => void
+    const waitForRead = new Promise<void>((resolve) => (entered = resolve))
+    const deferredHost: RadarSessionHost = {
+      get: async (id) => {
+        if (id === "ses-failed") {
+          entered()
+          return await new Promise<RadarNativeSession | null>((resolve) => (resume = resolve))
+        }
+        return radarSession(id)
+      },
+      project: async () => ({ sessions: [], truncated: false }),
+      descendants: async () => ({ sessions: [], truncated: false }),
+    }
+    const reads = radarReads(fixture, deferredHost)
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(15),
+      "project",
+    )
+    tracker.initialize()
+    const state = new ObservationSyncState()
+    const oldScope = { kind: "session" as const, sessionID: "ses-failed" }
+    const oldGeneration = state.connect("project", oldScope)
+    const deferred = reads.radar(
+      { scope: oldScope, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    await waitForRead
+    const nextScope = { kind: "project" as const, sessionID: "ses-owner" }
+    const nextGeneration = state.connect("project", nextScope)
+    resume(radarSession("ses-failed"))
+    const obsolete = await deferred
+    expect(state.acceptRadar(oldGeneration, obsolete)).toBe(false)
+    expect(state.radar).toBeUndefined()
+    expect(state.scope).toEqual(nextScope)
+    expect(nextGeneration).toBeGreaterThan(oldGeneration)
   } finally {
     fixture.close()
   }

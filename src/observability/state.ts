@@ -1,6 +1,14 @@
-import type { ObservationChange, ObservationScope, SnapshotResponse } from "./contract.ts"
+import type {
+  ObservationChange,
+  ObservationScope,
+  RadarResponse,
+  SnapshotResponse,
+} from "./contract.ts"
 
-function scopeMatches(response: SnapshotResponse, scope: ObservationScope) {
+function scopeMatches(
+  response: Pick<SnapshotResponse | RadarResponse, "scope">,
+  scope: ObservationScope,
+) {
   return (
     response.scope.kind === scope.kind &&
     (scope.kind === "project" ||
@@ -14,6 +22,7 @@ export class ObservationSyncState {
   projectID = ""
   scope?: ObservationScope
   snapshot?: SnapshotResponse
+  radar?: RadarResponse
   eventSequence?: number
   stale = true
 
@@ -22,6 +31,7 @@ export class ObservationSyncState {
     this.projectID = projectID
     this.scope = scope
     this.snapshot = undefined
+    this.radar = undefined
     this.eventSequence = undefined
     this.stale = true
     return this.generation
@@ -44,6 +54,21 @@ export class ObservationSyncState {
       return false
     this.snapshot = snapshot
     this.eventSequence = snapshot.boundary.eventSequence
+    this.stale = false
+    return true
+  }
+
+  acceptRadar(generation: number, radar: RadarResponse) {
+    if (
+      generation !== this.generation ||
+      radar.projectID !== this.projectID ||
+      !this.scope ||
+      !scopeMatches(radar, this.scope) ||
+      (this.eventSequence !== undefined && radar.boundary.eventSequence < this.eventSequence)
+    )
+      return false
+    this.radar = radar
+    this.eventSequence = radar.boundary.eventSequence
     this.stale = false
     return true
   }
