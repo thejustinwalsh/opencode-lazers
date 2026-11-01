@@ -174,6 +174,8 @@ specify small dependency tasks for:
    separate actual charge/allowance and preserved historical basis.
 3. Persistent task persona and live shared/project/task dispatch mappings with
    explicit precedence and immutable attempt-route history.
+   Carry provider/model cache-policy information into Architect idle-renewal
+   timing with explicit overrides; unknown retention is not a guaranteed TTL.
 4. Model evidence database and Models panel: mapping editor, task-class tables,
    Pareto comparisons, sample/coverage and contributing trajectories; external
    evidence, observations and projections are distinct.

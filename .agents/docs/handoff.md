@@ -134,7 +134,8 @@ unmerged work manually; use native runtime cleanup after reviewed integration.
 Remaining scope includes Radar, stable Trajectory, actual renderer-freeze diagnosis
 and compatible repair (not resurrection of the cancelled LZ-14 isolation stash),
 whole-feature metrics/OpenRouter fallback market pricing, hierarchical persona
-routing/Models database and panel, specification revisions/research, and usable
+routing/Models database and panel (including provider/model-aware Architect idle
+policy and explicit overrides), specification revisions/research, and usable
 package/restart/upgrade/backup/release proof. See the execution map; no phase is dropped.
 
 Use Desktop Computer Use for model prompts; read-only SDK and supported native
