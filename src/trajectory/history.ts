@@ -1,5 +1,9 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto"
-import type { ObservationScope, ObservationScopeView } from "../observability/contract.ts"
+import type {
+  ObservationScope,
+  ObservationScopeView,
+  TrajectoryHistoryErrorReason,
+} from "../observability/contract.ts"
 
 const TTL_MS = 5 * 60_000
 const MAX_ENTRIES = 16
@@ -61,6 +65,19 @@ export type TrajectoryHistoryProjection = Record<string, unknown> & {
     events: unknown[]
     nextCursor: string | null
     hasMore: boolean
+  }
+}
+
+const historyFailureMessage = {
+  expired: "Trajectory history expired; recapture explicitly",
+  evicted: "Trajectory history expired or was evicted; recapture explicitly",
+  "invalid-cursor": "Invalid or stale trajectory history cursor; recapture explicitly",
+} satisfies Record<TrajectoryHistoryErrorReason, string>
+
+export class TrajectoryHistoryUnavailableError extends Error {
+  constructor(readonly reason: TrajectoryHistoryErrorReason) {
+    super(historyFailureMessage[reason])
+    this.name = "TrajectoryHistoryUnavailableError"
   }
 }
 
@@ -160,16 +177,16 @@ export class TrajectoryHistoryCache {
   ): TrajectoryHistoryPage {
     const parsed = this.readCursor(cursor)
     if (parsed.binding !== identityBinding(this.secret, identity))
-      throw new Error("Invalid or stale trajectory history cursor")
+      throw new TrajectoryHistoryUnavailableError("invalid-cursor")
     if (parsed.expiresAt <= now) {
       this.remove(parsed.id)
-      throw new Error("Trajectory history expired; recapture explicitly")
+      throw new TrajectoryHistoryUnavailableError("expired")
     }
 
     const entry = this.entries.get(parsed.id)
     if (!entry || entry.expiresAt <= now) {
       if (entry) this.remove(entry.id)
-      throw new Error("Trajectory history expired or was evicted; recapture explicitly")
+      throw new TrajectoryHistoryUnavailableError(entry ? "expired" : "evicted")
     }
     if (
       entry.expiresAt !== parsed.expiresAt ||
@@ -177,7 +194,7 @@ export class TrajectoryHistoryCache {
       parsed.offset < identity.limit ||
       parsed.offset >= entry.eventIDs.length
     )
-      throw new Error("Invalid or stale trajectory history cursor")
+      throw new TrajectoryHistoryUnavailableError("invalid-cursor")
     return this.page(entry, parsed.offset, false)
   }
 
@@ -233,7 +250,7 @@ export class TrajectoryHistoryCache {
   }
 
   private readCursor(cursor: string): HistoryCursor {
-    const invalid = () => new Error("Invalid or stale trajectory history cursor")
+    const invalid = () => new TrajectoryHistoryUnavailableError("invalid-cursor")
     if (cursor.length > 4096) throw invalid()
     const [body, signature, extra] = cursor.split(".")
     if (!body || !signature || extra !== undefined) throw invalid()

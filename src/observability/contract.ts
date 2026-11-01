@@ -176,6 +176,10 @@ export const TrajectoryHistoryOutput = z.strictObject({
   eventIDs: z.array(z.string()).max(10_000).optional(),
   report: z.record(z.string(), z.unknown()),
 })
+export const TrajectoryHistoryErrorData = z.strictObject({
+  reason: z.enum(["expired", "evicted", "invalid-cursor"]),
+  recovery: z.literal("recapture"),
+})
 export const TrajectoryStatusInput = z.strictObject({ scope: ObservationScope, taskID: z.uuid() })
 
 export const Changed = z.strictObject({
@@ -193,7 +197,11 @@ export const Observability = Rpc.define({
   methods: {
     snapshot: { input: SnapshotInput, output: SnapshotOutput },
     trajectory: { input: TrajectoryInput, output: TrajectoryOutput },
-    trajectoryHistory: { input: TrajectoryHistoryInput, output: TrajectoryHistoryOutput },
+    trajectoryHistory: {
+      input: TrajectoryHistoryInput,
+      output: TrajectoryHistoryOutput,
+      errors: { trajectory_history_unavailable: TrajectoryHistoryErrorData },
+    },
     trajectoryStatus: { input: TrajectoryStatusInput, output: TrajectoryOutput },
   },
   events: { changed: { schema: Changed } },
@@ -207,5 +215,6 @@ export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
 export type TrajectoryResponse = z.infer<typeof TrajectoryOutput>
 export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
 export type TrajectoryHistoryResponse = z.infer<typeof TrajectoryHistoryOutput>
+export type TrajectoryHistoryErrorReason = z.infer<typeof TrajectoryHistoryErrorData>["reason"]
 export type TrajectoryStatusRequest = z.infer<typeof TrajectoryStatusInput>
 export type ObservationChange = z.infer<typeof Changed>

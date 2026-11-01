@@ -139,6 +139,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     totalEvents: 0,
     historyCapturedAt: null,
     historyExpiresAt: null,
+    historyError: "",
+    recapturingHistory: false,
     loading: true,
     loadingActivity: false,
     stale: false,
@@ -464,11 +466,17 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
             }
           />
         </div>
-        <Show when={currentData()?.error}>
+        <Show when={currentData()?.error || (!report() && currentData()?.historyError)}>
           <div class="lazers-trajectory-error" role="alert">
-            {currentData()?.error}
-            <Ui.Button variant="ghost" size="small" onClick={() => void state.refresh()}>
-              Retry
+            {currentData()?.error || currentData()?.historyError}
+            <Ui.Button
+              variant="ghost"
+              size="small"
+              onClick={() =>
+                currentData()?.error ? void state.refresh() : void state.recaptureActivity()
+              }
+            >
+              {currentData()?.error ? "Retry status" : "Recapture history"}
             </Ui.Button>
           </div>
         </Show>
@@ -940,11 +948,17 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           <Ui.Button
                             variant="ghost"
                             size="small"
+                            busy={currentData()?.recapturingHistory}
                             onClick={() => void state.recaptureActivity()}
                           >
                             Recapture history
                           </Ui.Button>
                         </div>
+                        <Show when={currentData()?.historyError}>
+                          <div class="lazers-trajectory-error" role="alert">
+                            {currentData()?.historyError}
+                          </div>
+                        </Show>
                         <For each={currentData()?.events ?? []}>
                           {(event) => (
                             <button
@@ -966,7 +980,9 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           <Ui.Button
                             variant="ghost"
                             size="small"
-                            busy={currentData()?.loadingActivity}
+                            busy={
+                              currentData()?.loadingActivity || currentData()?.recapturingHistory
+                            }
                             onClick={() => void state.loadMoreActivity()}
                           >
                             Load more activity
