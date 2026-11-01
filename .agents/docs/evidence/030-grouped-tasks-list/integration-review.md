@@ -129,3 +129,27 @@ dependency-spacing `bdc9137`. Its full background checks completed: **354 passed
 formatter, lint and strict types (358 files formatted). Native review is still a
 separate pending boundary; these results do not close Root's reported scroll or
 accessibility behavior.
+
+## Native acceptance and normal integration closure
+
+Root completed the actual repaired-build observations and committed them in
+`23df5d3`: `native.md` records stable scrolled b50 pointer/Space disclosure across
+refresh, branch/join selection, 330/450 px wrapping, Details/Activity disclosure,
+hidden prerequisites and close/reopen preserving Project history, expansion,
+scroll, LZ-23 selection and 39% split. Terra 6.1 High passed the final shown
+screenshots, including `bdc9137` spacing. The linked spike 029 native report
+establishes actual copied/pasted rendered-message navigation. Coverage remains
+limited to those observations and the separately recorded regressions.
+
+Normal runtime command
+`references-grouping-native-reviewed-integrated-dcba900-v1` recorded that review
+against accepted combined `dcba900` and its repaired merged lineage. The plan
+advanced v18 → cleanup-requested v19 → **integrated v20**, retaining every task,
+attempt and check receipt; all 22 effects are complete with none pending.
+
+Native non-forced cleanup removed the original references (`e461cae9`), accepted
+references (`1aa93ea5`) and grouping (`f0eee1ec`) worktrees. Read-only native
+registry and filesystem checks confirmed all three absent. Original progress
+`d543a0f7` remains registered, present and busy on Luna Max with unchanged native
+busy/idle timestamps. Lifecycle remains queued behind progress integration; no
+UI replacement task, worker or further native test plan was created.
