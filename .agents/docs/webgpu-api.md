@@ -104,14 +104,32 @@ or renderer/plugin lifecycle cleanup. Stop is bounded to two seconds. A successf
 profile and its metadata are saved separately as `.cpuprofile` and `.json` in the
 diagnostics directory. The bounded sanitizer accepts at most 8,192 profile nodes
 and 20,000 samples, and the standalone profile is capped at 2 MB; invalid, empty,
-oversized, stop-timeout, and persistence-failure cases remain failed metadata and
-never claim a successful artifact. Metadata correlates window/PID, request/job,
-bounded stage history and timing, stop trigger, and outcome. It does not retain
-prompt/context contents, audio, scopes, source text, or arbitrary object dumps.
+oversized, stop-timeout, cleanup-failure, and persistence-failure cases remain
+failed metadata and never claim a successful artifact. Metadata correlates
+window/PID, request/job, bounded stage history and timing, trigger time, each
+profiler command's outcome and timestamps, debugger-cleanup outcome and
+timestamps, and capture outcome. A stop failure is not replaced by `job-not-seen`,
+and a failed detach cannot be reported as a successful capture.
+
+A timeout or diagnostic disarm does not cancel Electron's native CDP command.
+Its result records whether the command remains pending, and the same debugger
+transport stays reserved until that command settles; a later explicit capture
+cannot overlap it. A late reply updates only the original capture's metadata and
+does not change its timeout/abort outcome or detach a later owner. If a late
+start acknowledgement or failed stop leaves the profiler not confirmed stopped,
+the transport remains reserved even after the command settles. Disarm cancels
+diagnostic intent only; it does not cancel inference. If explicit profiler
+startup fails, the main process suppresses automatic unresponsive CDP capture in
+that window. Explicit retry is possible only after native ownership is resolved.
+If a late metadata refresh itself cannot be written, status reports that update
+failure separately while retaining the original capture reason and failure.
+Metadata does not retain prompt/context contents, audio, scopes, source text, or
+arbitrary object dumps.
 
 The existing automatic unresponsive-renderer capture continues when no explicit
-capture owns that window. An armed capture handles unresponsiveness itself so the
-two profiler paths cannot compete.
+capture has failed startup or owns that window. An armed capture handles
+unresponsiveness itself so the two profiler paths cannot compete; a failed armed
+startup does not trigger a competing automatic fallback.
 
 ## General questions
 

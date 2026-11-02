@@ -28,6 +28,8 @@ export type RendererDebugResult = RendererDebugCorrelation & {
   reason?:
     | "devtools-open"
     | "debugger-attached"
+    | "profiler-command-pending"
+    | "profiler-state-uncertain"
     | "unavailable"
     | "timeout"
     | "aborted"
@@ -39,6 +41,7 @@ export type RendererDebugResult = RendererDebugCorrelation & {
     | "job-started-during-arming"
     | "manual-stop-before-job"
     | "lifecycle-lost"
+    | "cleanup-failed"
   failure?:
     | "attach"
     | "profiler-enable"
@@ -48,11 +51,14 @@ export type RendererDebugResult = RendererDebugCorrelation & {
     | "job-wait"
     | "lifecycle"
     | "profile"
+    | "profiler-cleanup"
   path?: string
   profilePath?: string
   profile?: RendererCPUProfile
   profileOmitted?: "too-large"
   armedCapture?: RendererArmedMetadata
+  profilerDiagnostics?: RendererProfilerDiagnostics
+  persistenceFailure?: "late-metadata-update"
 }
 
 export type RendererArmedStopTrigger =
@@ -72,6 +78,7 @@ export type RendererArmedMetadata = {
   stopTrigger: RendererArmedStopTrigger
   outcome: "captured" | "failed"
   armedAt: number
+  triggeredAt: number
   profilerStartedAt?: number
   jobStartedAt?: number
   stoppedAt: number
@@ -82,6 +89,36 @@ export type RendererArmedMetadata = {
   targetFeature?: string
   stageHistory: readonly { stage: string; elapsedMs: number; deltaMs: number }[]
   stageHistoryDropped?: number
+  profilerCommands: readonly RendererProfilerCommandObservation[]
+  profilerCleanup?: RendererProfilerCleanupObservation
+}
+
+export type RendererProfilerCommandMethod =
+  "Profiler.enable" | "Profiler.setSamplingInterval" | "Profiler.start" | "Profiler.stop"
+
+export type RendererProfilerCommandObservation = {
+  method: RendererProfilerCommandMethod
+  outcome: "succeeded" | "failed" | "timed-out" | "aborted"
+  /** Time the native command was issued. */
+  startedAt: number
+  /** Time the result or timeout/abort was observed. */
+  settledAt: number
+  /** A timeout/abort does not cancel the native command. */
+  nativePending?: boolean
+  nativeOutcome?: "succeeded" | "failed"
+  nativeSettledAt?: number
+  profilerStateUncertain?: boolean
+}
+
+export type RendererProfilerCleanupObservation = {
+  outcome: "detached" | "not-required" | "not-owned" | "failed"
+  startedAt: number
+  settledAt: number
+}
+
+export type RendererProfilerDiagnostics = {
+  commands: RendererProfilerCommandObservation[]
+  cleanup?: RendererProfilerCleanupObservation
 }
 
 export type RendererCPUProfile = {
@@ -120,12 +157,14 @@ type CaptureOptions = {
 export type RendererDebugPersistenceOptions = Pick<
   CaptureOptions,
   "directory" | "write" | "makeDirectory" | "filePrefix"
->
+> & { metadataPath?: string }
 
 export type RendererProfilerStartOptions = {
   timeoutMs?: number
   signal?: AbortSignal
   samplingIntervalUs?: number
+  now?: () => number
+  onDiagnosticsChange?: (diagnostics: RendererProfilerDiagnostics) => void
 }
 
 export type RendererProfilerFailure = {
@@ -134,22 +173,27 @@ export type RendererProfilerFailure = {
     | NonNullable<RendererDebugResult["reason"]>
     | "devtools-open"
     | "debugger-attached"
+    | "profiler-command-pending"
+    | "profiler-state-uncertain"
     | "unavailable"
     | "error"
   failure?: RendererDebugResult["failure"]
+  diagnostics: RendererProfilerDiagnostics
 }
 
 export type RendererProfilerStopResult =
-  | { ok: true; profile: RendererCPUProfile }
+  | { ok: true; profile: RendererCPUProfile; diagnostics: RendererProfilerDiagnostics }
   | {
       ok: false
       reason: NonNullable<RendererDebugResult["reason"]> | "timeout" | "aborted" | "error"
-      failure: "profiler-stop" | "profile"
+      failure: "profiler-stop" | "profile" | "profiler-cleanup" | "lifecycle"
+      diagnostics: RendererProfilerDiagnostics
     }
 
 export type RendererProfilerSession = {
   /** Resolves only if Electron reports that this profiler's debugger attachment was lost. */
   lost: Promise<void>
+  diagnostics: RendererProfilerDiagnostics
   stop(timeoutMs?: number, signal?: AbortSignal): Promise<RendererProfilerStopResult>
 }
 
@@ -188,30 +232,223 @@ const wait = (duration: number, signal?: AbortSignal) =>
 
 type Attempt<T> = { ok: true; value: T } | { ok: false; timedOut: boolean; aborted: boolean }
 
-const attempt = async <T>(
-  operation: () => Promise<T> | T,
-  timeoutMs: number,
-  signal?: AbortSignal,
-): Promise<Attempt<T>> => {
-  if (signal?.aborted) return { ok: false, timedOut: false, aborted: true }
-  let timer: ReturnType<typeof setTimeout> | undefined
+type NativeOwnership = {
+  attached: boolean
+  ownershipLost: boolean
+  pendingCommand: boolean
+  profilerActive: boolean
+  profilerStateUncertain: boolean
+  lostListener?: (event: unknown, reason: string) => void
+  profilerStartCommand?: RendererProfilerCommandObservation
+}
+
+const nativeOwnership = new WeakMap<RendererDebugger, NativeOwnership>()
+
+const diagnostics = (): RendererProfilerDiagnostics => ({ commands: [] })
+
+const markNoCleanupNeeded = (value: RendererProfilerDiagnostics, now: () => number) => {
+  const at = now()
+  value.cleanup = { outcome: "not-required", startedAt: at, settledAt: at }
+}
+
+const releaseNativeOwnership = (transport: RendererDebugger, owner: NativeOwnership) => {
+  if (
+    owner.pendingCommand ||
+    owner.profilerActive ||
+    owner.profilerStateUncertain ||
+    nativeOwnership.get(transport) !== owner
+  )
+    return
+  try {
+    if (!transport.isAttached()) nativeOwnership.delete(transport)
+  } catch {
+    // An unconfirmed native attachment remains reserved; never permit overlap on uncertainty.
+  }
+}
+
+const cleanupNativeOwnership = (
+  transport: RendererDebugger,
+  owner: NativeOwnership,
+  value: RendererProfilerDiagnostics,
+  now: () => number,
+) => {
+  const startedAt = now()
+  let outcome: RendererProfilerCleanupObservation["outcome"]
+  const removeLostListener = () => {
+    try {
+      transport.removeListener?.("detach", owner.lostListener!)
+    } catch {
+      // A failed observer cleanup does not authorize detaching an uncertain owner.
+    }
+  }
+  if (!owner.attached || owner.ownershipLost) {
+    outcome = "not-owned"
+    removeLostListener()
+  } else {
+    try {
+      if (!transport.isAttached()) {
+        owner.attached = false
+        owner.ownershipLost = true
+        outcome = "not-owned"
+      } else {
+        removeLostListener()
+        try {
+          transport.detach()
+        } catch {
+          // Confirm the postcondition below; Electron may throw after the detach took effect.
+        }
+        if (transport.isAttached()) {
+          outcome = "failed"
+        } else {
+          owner.attached = false
+          owner.ownershipLost = true
+          outcome = "detached"
+        }
+      }
+    } catch {
+      outcome = "failed"
+    }
+  }
+  value.cleanup = { outcome, startedAt, settledAt: now() }
+  releaseNativeOwnership(transport, owner)
+  return value.cleanup
+}
+
+type OwnedNativeCommandOptions = {
+  transport: RendererDebugger
+  owner: NativeOwnership
+  diagnostics: RendererProfilerDiagnostics
+  method: RendererProfilerCommandMethod
+  params?: Readonly<Record<string, unknown>>
+  timeoutMs: number
+  signal?: AbortSignal
+  now: () => number
+  onDiagnosticsChange?: (diagnostics: RendererProfilerDiagnostics) => void
+}
+
+const runOwnedCommand = async <T>(options: OwnedNativeCommandOptions): Promise<Attempt<T>> => {
+  const startedAt = options.now()
+  const observation: RendererProfilerCommandObservation = {
+    method: options.method,
+    outcome: "aborted",
+    startedAt,
+    settledAt: startedAt,
+  }
+  options.diagnostics.commands.push(observation)
+  if (options.signal?.aborted) {
+    if (options.method === "Profiler.stop") {
+      observation.profilerStateUncertain = true
+      options.owner.profilerStateUncertain = true
+    }
+    return { ok: false, timedOut: false, aborted: true }
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
   let abort: (() => void) | undefined
-  const operationResult = Promise.resolve()
-    .then(operation)
+  let nativeSettled = false
+  let nativeResult: Attempt<T> | undefined
+  let observationDecided = false
+  const native = Promise.resolve()
+    .then(() => options.transport.sendCommand(options.method, options.params) as Promise<T> | T)
     .then(
       (value): Attempt<T> => ({ ok: true, value }),
       (): Attempt<T> => ({ ok: false, timedOut: false, aborted: false }),
     )
-  const timeout = new Promise<Attempt<T>>((resolve) => {
-    timer = setTimeout(() => resolve({ ok: false, timedOut: true, aborted: false }), timeoutMs)
+    .then((result) => {
+      nativeSettled = true
+      nativeResult = result
+      options.owner.pendingCommand = false
+      if (options.method === "Profiler.start") {
+        options.owner.profilerActive = result.ok
+        options.owner.profilerStateUncertain = false
+        options.owner.profilerStartCommand = result.ok ? observation : undefined
+      } else if (options.method === "Profiler.stop") {
+        options.owner.profilerActive = false
+        options.owner.profilerStateUncertain = !result.ok
+        observation.profilerStateUncertain = !result.ok
+      }
+      if (observationDecided && observation.nativePending) {
+        observation.nativePending = false
+        observation.nativeOutcome = result.ok ? "succeeded" : "failed"
+        observation.nativeSettledAt = options.now()
+        const profilerStateUncertain =
+          options.method === "Profiler.start"
+            ? result.ok
+            : options.method === "Profiler.stop"
+              ? !result.ok
+              : false
+        observation.profilerStateUncertain = profilerStateUncertain
+        if (options.method === "Profiler.start")
+          options.owner.profilerStateUncertain = profilerStateUncertain
+        if (options.method === "Profiler.stop")
+          options.owner.profilerStateUncertain = profilerStateUncertain
+        try {
+          options.onDiagnosticsChange?.(options.diagnostics)
+        } catch {
+          // Diagnostic updates must not interfere with native ownership cleanup.
+        }
+      }
+      releaseNativeOwnership(options.transport, options.owner)
+      return result
+    })
+  options.owner.pendingCommand = true
+
+  const timedOut = new Promise<Attempt<T>>((resolve) => {
+    timeout = setTimeout(
+      () => resolve({ ok: false, timedOut: true, aborted: false }),
+      options.timeoutMs,
+    )
   })
   const aborted = new Promise<Attempt<T>>((resolve) => {
     abort = () => resolve({ ok: false, timedOut: false, aborted: true })
-    signal?.addEventListener("abort", abort, { once: true })
+    options.signal?.addEventListener("abort", abort, { once: true })
   })
-  const result = await Promise.race([operationResult, timeout, aborted])
-  if (timer) clearTimeout(timer)
-  if (abort) signal?.removeEventListener("abort", abort)
+  const result = await Promise.race([native, timedOut, aborted])
+  if (timeout) clearTimeout(timeout)
+  if (abort) options.signal?.removeEventListener("abort", abort)
+
+  observationDecided = true
+  observation.settledAt = options.now()
+  if (result.ok) {
+    observation.outcome = "succeeded"
+  } else if (result.aborted) {
+    observation.outcome = "aborted"
+  } else if (result.timedOut) {
+    observation.outcome = "timed-out"
+  } else {
+    observation.outcome = "failed"
+  }
+  if (!result.ok && (result.aborted || result.timedOut)) {
+    if (nativeSettled) {
+      observation.nativeOutcome = nativeResult?.ok ? "succeeded" : "failed"
+      observation.nativeSettledAt = options.now()
+      const profilerStateUncertain =
+        options.method === "Profiler.start"
+          ? nativeResult?.ok === true
+          : options.method === "Profiler.stop"
+            ? nativeResult?.ok !== true
+            : false
+      observation.profilerStateUncertain = profilerStateUncertain
+      if (options.method === "Profiler.start") {
+        options.owner.profilerActive = nativeResult?.ok === true
+        options.owner.profilerStateUncertain = profilerStateUncertain
+      }
+      if (options.method === "Profiler.stop") {
+        options.owner.profilerActive = nativeResult?.ok !== true
+        options.owner.profilerStateUncertain = profilerStateUncertain
+      }
+    } else {
+      observation.nativePending = true
+      if (options.method === "Profiler.start" || options.method === "Profiler.stop") {
+        observation.profilerStateUncertain = true
+        options.owner.profilerStateUncertain = true
+        if (options.method === "Profiler.start") options.owner.profilerActive = false
+      }
+    }
+  } else if (!result.ok && options.method === "Profiler.stop") {
+    observation.profilerStateUncertain = true
+    options.owner.profilerStateUncertain = true
+  }
   return result
 }
 
@@ -306,14 +543,6 @@ const failedReason = (result: Attempt<unknown>) => {
   return result.aborted ? "aborted" : result.timedOut ? "timeout" : "error"
 }
 
-const detachOwnedDebugger = (transport: RendererDebugger) => {
-  try {
-    transport.detach()
-  } catch {
-    // The renderer may have exited while the bounded capture was running.
-  }
-}
-
 /**
  * Acquire and start an owned CDP CPU profiler. A successful result means every
  * required command was acknowledged; a pre-existing debugger is never detached.
@@ -328,125 +557,198 @@ export async function startRendererProfiler(
   )
   const deadline = Date.now() + timeoutMs
   const remaining = () => Math.max(1, deadline - Date.now())
+  const now = options.now ?? Date.now
+  const commandDiagnostics = diagnostics()
+  const fail = (
+    reason: RendererProfilerFailure["reason"],
+    failure?: RendererDebugResult["failure"],
+  ): RendererProfilerFailure => {
+    markNoCleanupNeeded(commandDiagnostics, now)
+    return {
+      ok: false,
+      reason,
+      ...(failure ? { failure } : {}),
+      diagnostics: commandDiagnostics,
+    }
+  }
   const transport = renderer.debugger
-  if (!transport) return { ok: false, reason: "unavailable" }
-  try {
-    if (renderer.isDevToolsOpened?.()) return { ok: false, reason: "devtools-open" }
-    if (transport.isAttached()) return { ok: false, reason: "debugger-attached" }
-  } catch {
-    return { ok: false, reason: "unavailable" }
-  }
-
-  let attached = false
-  let ownershipLost = false
-  let resolveOwnershipLost!: () => void
-  const ownershipLostPromise = new Promise<void>((resolve) => (resolveOwnershipLost = resolve))
-  const lostListener = () => {
-    if (!attached) return
-    attached = false
-    ownershipLost = true
-    resolveOwnershipLost()
-  }
-  const detach = () => {
-    const owned = attached && !ownershipLost
-    attached = false
-    transport.removeListener?.("detach", lostListener)
-    if (!owned) return
+  if (!transport) return fail("unavailable")
+  const existingOwner = nativeOwnership.get(transport)
+  if (existingOwner) {
+    if (existingOwner.pendingCommand) return fail("profiler-command-pending", "attach")
+    if (existingOwner.profilerActive || existingOwner.profilerStateUncertain)
+      return fail("profiler-state-uncertain", "attach")
     try {
-      if (transport.isAttached()) detachOwnedDebugger(transport)
+      if (transport.isAttached()) return fail("debugger-attached", "attach")
+      nativeOwnership.delete(transport)
     } catch {
-      // If Electron cannot confirm the attachment, avoid detaching another owner.
+      return fail("unavailable", "attach")
     }
   }
   try {
-    if (options.signal?.aborted) return { ok: false, reason: "aborted", failure: "attach" }
+    if (renderer.isDevToolsOpened?.()) return fail("devtools-open")
+    if (transport.isAttached()) return fail("debugger-attached")
+  } catch {
+    return fail("unavailable")
+  }
+
+  if (options.signal?.aborted) return fail("aborted", "attach")
+
+  const owner: NativeOwnership = {
+    attached: false,
+    ownershipLost: false,
+    pendingCommand: false,
+    profilerActive: false,
+    profilerStateUncertain: false,
+  }
+  nativeOwnership.set(transport, owner)
+  let resolveOwnershipLost!: () => void
+  const ownershipLostPromise = new Promise<void>((resolve) => (resolveOwnershipLost = resolve))
+  const lostListener = () => {
+    if (!owner.attached) return
+    owner.attached = false
+    owner.ownershipLost = true
+    if (owner.profilerActive) {
+      owner.profilerStateUncertain = true
+      if (owner.profilerStartCommand) owner.profilerStartCommand.profilerStateUncertain = true
+    }
+    resolveOwnershipLost()
+    releaseNativeOwnership(transport, owner)
+  }
+  owner.lostListener = lostListener
+  const failOwned = (
+    reason: RendererProfilerFailure["reason"],
+    failure: RendererDebugResult["failure"],
+  ): RendererProfilerFailure => {
+    cleanupNativeOwnership(transport, owner, commandDiagnostics, now)
+    return { ok: false, reason, failure, diagnostics: commandDiagnostics }
+  }
+  try {
     transport.attach("1.3")
-    attached = true
+    owner.attached = true
     transport.on?.("detach", lostListener)
     const commands: {
-      method: string
+      method: RendererProfilerCommandMethod
       params?: Readonly<Record<string, unknown>>
       failure: NonNullable<RendererDebugResult["failure"]>
-    }[] = [
-      { method: "Profiler.enable", failure: "profiler-enable" },
-      ...(options.samplingIntervalUs === undefined
-        ? []
-        : [
-            {
-              method: "Profiler.setSamplingInterval",
-              params: {
-                interval: Math.min(10_000, Math.max(100, Math.trunc(options.samplingIntervalUs))),
-              },
-              failure: "profiler-sampling" as const,
-            },
-          ]),
-      { method: "Profiler.start", failure: "profiler-start" },
-    ]
+    }[] = [{ method: "Profiler.enable", failure: "profiler-enable" }]
+    if (options.samplingIntervalUs !== undefined)
+      commands.push({
+        method: "Profiler.setSamplingInterval",
+        params: {
+          interval: Math.min(10_000, Math.max(100, Math.trunc(options.samplingIntervalUs))),
+        },
+        failure: "profiler-sampling",
+      })
+    commands.push({ method: "Profiler.start", failure: "profiler-start" })
     for (const { method, params, failure } of commands) {
-      const result = await attempt(
-        () => transport.sendCommand(method, params),
-        remaining(),
-        options.signal,
-      )
+      const result = await runOwnedCommand<unknown>({
+        transport,
+        owner,
+        diagnostics: commandDiagnostics,
+        method,
+        ...(params ? { params } : {}),
+        timeoutMs: remaining(),
+        signal: options.signal,
+        now,
+        onDiagnosticsChange: options.onDiagnosticsChange,
+      })
       if (!result.ok) {
-        detach()
-        return { ok: false, reason: failedReason(result), failure }
+        return failOwned(failedReason(result), failure)
       }
-      if (ownershipLost || !transport.isAttached()) {
-        ownershipLost = true
-        attached = false
-        transport.removeListener?.("detach", lostListener)
-        return { ok: false, reason: "lifecycle-lost", failure }
+      let attached: boolean
+      try {
+        attached = transport.isAttached()
+      } catch {
+        owner.ownershipLost = true
+        owner.attached = false
+        return failOwned("unavailable", failure)
+      }
+      if (owner.ownershipLost || !attached) {
+        owner.ownershipLost = true
+        owner.attached = false
+        return failOwned("lifecycle-lost", failure)
       }
     }
 
     let stopping: Promise<RendererProfilerStopResult> | undefined
     const session: RendererProfilerSession = {
       lost: ownershipLostPromise,
+      diagnostics: commandDiagnostics,
       stop: (stopTimeoutMs = RENDERER_DEBUG_TIMEOUT_MS, signal) => {
         if (stopping) return stopping
         const boundedStopMs = Math.min(MAX_TIMEOUT, Math.max(1, stopTimeoutMs))
         stopping = (async () => {
+          let attached: boolean
           try {
-            if (ownershipLost || !attached || !transport.isAttached())
-              return { ok: false, reason: "lifecycle-lost", failure: "profiler-stop" }
-            const stopped = await Promise.race([
-              attempt(() => transport.sendCommand("Profiler.stop"), boundedStopMs, signal),
-              ownershipLostPromise.then(() => "ownership-lost" as const),
-            ])
-            if (stopped === "ownership-lost")
-              return { ok: false, reason: "lifecycle-lost", failure: "profiler-stop" }
-            if (!stopped.ok)
-              return {
-                ok: false,
-                reason: failedReason(stopped),
-                failure: "profiler-stop",
-              }
-            const response = stopped.value
-            const captured =
-              response && typeof response === "object"
-                ? profile((response as Record<string, unknown>).profile)
-                : undefined
-            return captured && "profile" in captured
-              ? { ok: true, profile: captured.profile }
-              : {
-                  ok: false,
-                  reason: captured?.reason ?? "profile-empty",
-                  failure: "profile",
-                }
+            attached = !owner.ownershipLost && owner.attached && transport.isAttached()
           } catch {
-            return { ok: false, reason: "lifecycle-lost", failure: "profiler-stop" }
-          } finally {
-            detach()
+            attached = false
           }
+          if (!attached) {
+            const cleanup = cleanupNativeOwnership(transport, owner, commandDiagnostics, now)
+            return {
+              ok: false,
+              reason: "lifecycle-lost",
+              failure: cleanup.outcome === "failed" ? "profiler-cleanup" : "lifecycle",
+              diagnostics: commandDiagnostics,
+            }
+          }
+
+          const stopped = await runOwnedCommand<unknown>({
+            transport,
+            owner,
+            diagnostics: commandDiagnostics,
+            method: "Profiler.stop",
+            timeoutMs: boundedStopMs,
+            signal,
+            now,
+            onDiagnosticsChange: options.onDiagnosticsChange,
+          })
+          const ownershipLost = owner.ownershipLost
+          const cleanup = cleanupNativeOwnership(transport, owner, commandDiagnostics, now)
+          if (!stopped.ok)
+            return {
+              ok: false,
+              reason: failedReason(stopped),
+              failure: "profiler-stop",
+              diagnostics: commandDiagnostics,
+            }
+          if (ownershipLost)
+            return {
+              ok: false,
+              reason: "lifecycle-lost",
+              failure: "profiler-stop",
+              diagnostics: commandDiagnostics,
+            }
+
+          const response = stopped.value
+          const captured =
+            response && typeof response === "object"
+              ? profile((response as Record<string, unknown>).profile)
+              : undefined
+          if (cleanup.outcome === "failed")
+            return {
+              ok: false,
+              reason: "cleanup-failed",
+              failure: "profiler-cleanup",
+              diagnostics: commandDiagnostics,
+            }
+          return captured && "profile" in captured
+            ? { ok: true, profile: captured.profile, diagnostics: commandDiagnostics }
+            : {
+                ok: false,
+                reason: captured?.reason ?? "profile-empty",
+                failure: "profile",
+                diagnostics: commandDiagnostics,
+              }
         })()
         return stopping
       },
     }
     return { ok: true, session }
   } catch {
-    detach()
-    return { ok: false, reason: "error", failure: "attach" }
+    return failOwned("error", "attach")
   }
 }
 
@@ -469,10 +771,12 @@ const persist = async (
         : {}),
     }
   }
-  const basePath = join(
-    options.directory,
-    `${options.filePrefix ?? "renderer-unresponsive"}-${Date.now()}-${++captureNumber}.json`,
-  )
+  const basePath =
+    options.metadataPath ??
+    join(
+      options.directory,
+      `${options.filePrefix ?? "renderer-unresponsive"}-${Date.now()}-${++captureNumber}.json`,
+    )
   const path = basePath
   const profilePath =
     profileData && boundedReport.profile ? basePath.replace(/\.json$/, ".cpuprofile") : undefined
@@ -488,6 +792,7 @@ const persist = async (
         persistedProfile = true
       } catch {
         // Preserve a metadata breadcrumb even when the larger profile artifact cannot be written.
+        if (options.metadataPath) return { ...report, persistenceFailure: "late-metadata-update" }
         boundedReport = {
           ...boundedReport,
           captured: false,
@@ -506,6 +811,7 @@ const persist = async (
     await write(path, JSON.stringify(metadata))
     return { ...boundedReport, path, ...(persistedProfile ? { profilePath } : {}) }
   } catch {
+    if (options.metadataPath) return { ...report, persistenceFailure: "late-metadata-update" }
     return {
       ...boundedReport,
       captured: false,
@@ -543,11 +849,41 @@ export async function captureRendererDebug(options: CaptureOptions): Promise<Ren
   const remaining = () => Math.max(1, deadline - Date.now())
   const base = { ...correlation }
   let report: RendererDebugResult | undefined
-  const started = await startRendererProfiler(renderer, { timeoutMs, signal })
+  let persistedReport: RendererDebugResult | undefined
+  let lateDiagnosticsChanged = false
+  let latePersistence = Promise.resolve()
+  const onDiagnosticsChange = (current: RendererProfilerDiagnostics) => {
+    lateDiagnosticsChanged = true
+    const previous = persistedReport
+    if (!previous?.path) return
+    latePersistence = latePersistence
+      .then(async () => {
+        const latest = persistedReport
+        if (!latest?.path || latest.path !== previous.path) return
+        const updated = await persist(
+          { ...latest, profilerDiagnostics: current },
+          { ...options, metadataPath: latest.path },
+        )
+        if (updated.path === latest.path && persistedReport === latest) {
+          persistedReport = updated
+          if (updated.persistenceFailure) latest.persistenceFailure = updated.persistenceFailure
+        }
+      })
+      .catch(() => {
+        // A late native reply cannot invalidate the already persisted timeout/abort outcome.
+      })
+  }
+  const started = await startRendererProfiler(renderer, {
+    timeoutMs,
+    signal,
+    onDiagnosticsChange,
+  })
   if (!started.ok) {
     const preflight =
       started.reason === "devtools-open" ||
       started.reason === "debugger-attached" ||
+      started.reason === "profiler-command-pending" ||
+      started.reason === "profiler-state-uncertain" ||
       started.reason === "unavailable"
     if (preflight)
       return {
@@ -555,27 +891,39 @@ export async function captureRendererDebug(options: CaptureOptions): Promise<Ren
         captured: false,
         reason: started.reason,
         ...(started.failure ? { failure: started.failure } : {}),
+        profilerDiagnostics: started.diagnostics,
       }
     report = {
       ...base,
       captured: false,
       reason: started.reason,
       ...(started.failure ? { failure: started.failure } : { failure: "attach" }),
+      profilerDiagnostics: started.diagnostics,
     }
   } else {
     await wait(Math.min(profileMs, remaining()), signal)
     const stopped = await started.session.stop(remaining(), signal)
     report = stopped.ok
-      ? { ...base, captured: true, profile: stopped.profile }
+      ? {
+          ...base,
+          captured: true,
+          profile: stopped.profile,
+          profilerDiagnostics: stopped.diagnostics,
+        }
       : {
           ...base,
           captured: false,
           reason: stopped.reason,
           failure: stopped.failure,
+          profilerDiagnostics: stopped.diagnostics,
         }
   }
-  return persist(
+  const saved = await persist(
     report ?? { ...base, captured: false, reason: "error", failure: "attach" },
     options,
   )
+  persistedReport = saved
+  if (lateDiagnosticsChanged && saved.path && saved.profilerDiagnostics)
+    onDiagnosticsChange(saved.profilerDiagnostics)
+  return saved
 }

@@ -11,6 +11,9 @@ import type {
   RendererDebugCorrelation,
   RendererDebugPersistenceOptions,
   RendererDebugResult,
+  RendererProfilerDiagnostics,
+  RendererProfilerCommandObservation,
+  RendererProfilerCleanupObservation,
   RendererProfilerSession,
 } from "./renderer-debug.ts"
 
@@ -46,6 +49,10 @@ export type RendererArmedCaptureStatus = {
   profilePath?: string
   stopTrigger?: RendererArmedStopTrigger
   outcome?: "captured" | "failed"
+  triggeredAt?: number
+  profilerCommands?: readonly RendererProfilerCommandObservation[]
+  profilerCleanup?: RendererProfilerCleanupObservation
+  persistenceFailure?: "late-metadata-update"
 }
 
 export type RendererArmedCaptureOptions = RendererDebugPersistenceOptions & {
@@ -72,6 +79,7 @@ type SafeTrace = {
 
 type StopRequest = {
   trigger: RendererArmedStopTrigger
+  triggeredAt: number
   failure?: NonNullable<RendererDebugResult["failure"]>
   reason?: NonNullable<RendererDebugResult["reason"]>
 }
@@ -89,6 +97,7 @@ type Entry = {
   preparation?: Promise<void>
   finalization?: Promise<RendererArmedCaptureStatus>
   pendingStop?: StopRequest
+  profilerDiagnostics?: RendererProfilerDiagnostics
   target?: SafeTrace
   jobStartedAt?: number
   profilerStartedAt?: number
@@ -97,6 +106,8 @@ type Entry = {
   stageHistory: { stage: string; elapsedMs: number; deltaMs: number }[]
   stageHistoryDropped: number
   result?: RendererDebugResult
+  lateDiagnosticsChanged?: boolean
+  latePersistence?: Promise<void>
 }
 
 const boundedID = (value: unknown) =>
@@ -136,6 +147,7 @@ const active = (entry: Entry) =>
 export class RendererArmedCaptureManager {
   readonly #entries = new Map<number, Entry>()
   readonly #activeJobs = new Map<number, Map<string, SafeTrace>>()
+  readonly #failedArmingWindows = new Set<number>()
   readonly #options: RendererArmedCaptureOptions
   readonly #now: () => number
   readonly #schedule: NonNullable<RendererArmedCaptureOptions["schedule"]>
@@ -151,6 +163,10 @@ export class RendererArmedCaptureManager {
   hasActive(windowID: number) {
     const entry = this.#entries.get(windowID)
     return entry !== undefined && active(entry)
+  }
+
+  suppressesAutomaticCapture(windowID: number) {
+    return this.#failedArmingWindows.has(windowID)
   }
 
   status(windowID: number): RendererArmedCaptureStatus {
@@ -247,7 +263,8 @@ export class RendererArmedCaptureManager {
         entry.target.jobID === trace.jobID
       ) {
         this.#appendStage(entry, trace)
-        if (terminal(trace.stage)) void this.#finalize(entry, { trigger: "terminal" })
+        if (terminal(trace.stage))
+          void this.#finalize(entry, { trigger: "terminal", triggeredAt: this.#now() })
       }
     }
 
@@ -266,6 +283,7 @@ export class RendererArmedCaptureManager {
     const trigger = entry.state === "recording" ? "manual-stop" : "manual-disarm"
     return this.#requestStop(entry, {
       trigger,
+      triggeredAt: this.#now(),
       ...(!entry.target
         ? { reason: "manual-stop-before-job" as const, failure: "job-wait" as const }
         : {}),
@@ -279,6 +297,7 @@ export class RendererArmedCaptureManager {
     const noTarget = !entry.target
     return this.#requestStop(entry, {
       trigger,
+      triggeredAt: this.#now(),
       ...(noTarget
         ? {
             reason:
@@ -296,6 +315,7 @@ export class RendererArmedCaptureManager {
     await this.lifecycleLost(windowID, "lifecycle-loss")
     this.#entries.delete(windowID)
     this.#activeJobs.delete(windowID)
+    this.#failedArmingWindows.delete(windowID)
   }
 
   async shutdown() {
@@ -303,6 +323,7 @@ export class RendererArmedCaptureManager {
       [...this.#entries.values()].filter(active).map((entry) =>
         this.#requestStop(entry, {
           trigger: "cleanup",
+          triggeredAt: this.#now(),
           reason: "lifecycle-lost",
           failure: "lifecycle",
         }),
@@ -315,29 +336,40 @@ export class RendererArmedCaptureManager {
       timeoutMs: this.#options.prepareTimeoutMs ?? RENDERER_DEBUG_TIMEOUT_MS,
       samplingIntervalUs: this.#options.samplingIntervalUs ?? RENDERER_ARMED_SAMPLING_INTERVAL_US,
       signal: entry.controller.signal,
+      now: this.#now,
+      onDiagnosticsChange: () => this.#persistLateDiagnostics(entry),
     })
     if (!started.ok) {
+      entry.profilerDiagnostics = started.diagnostics
+      this.#failedArmingWindows.add(entry.windowID)
       const request = entry.pendingStop
       const raced = entry.preparationRace
+      const trigger = raced ? "preparation-race" : (request?.trigger ?? "arming-failure")
+      const triggeredAt = request?.triggeredAt ?? this.#now()
       const result = await this.#persist(
         entry,
         {
           ...entry.correlation,
           captured: false,
-          reason: raced ? "job-started-during-arming" : (request?.reason ?? started.reason),
-          failure: started.failure ?? request?.failure ?? "attach",
+          reason: raced ? "job-started-during-arming" : started.reason,
+          failure: started.failure ?? "attach",
+          profilerDiagnostics: started.diagnostics,
         },
-        raced ? "preparation-race" : (request?.trigger ?? "arming-failure"),
+        trigger,
+        triggeredAt,
       )
       this.#complete(entry, result)
       return
     }
 
     entry.session = started.session
+    entry.profilerDiagnostics = started.session.diagnostics
+    this.#failedArmingWindows.delete(entry.windowID)
     void started.session.lost.then(() => {
       if (active(entry))
         void this.#requestStop(entry, {
           trigger: "lifecycle-loss",
+          triggeredAt: this.#now(),
           reason: "lifecycle-lost",
           failure: "lifecycle",
         })
@@ -347,6 +379,7 @@ export class RendererArmedCaptureManager {
       entry.state = "waiting"
       await this.#finalize(entry, {
         trigger: entry.pendingStop?.trigger ?? "preparation-race",
+        triggeredAt: entry.pendingStop?.triggeredAt ?? this.#now(),
         reason: "job-started-during-arming",
         failure: "profile",
       })
@@ -409,6 +442,7 @@ export class RendererArmedCaptureManager {
     entry.timer = this.#schedule(() => {
       void this.#finalize(entry, {
         trigger,
+        triggeredAt: this.#now(),
         ...(!entry.target ? { reason: "job-not-seen" as const, failure: "job-wait" as const } : {}),
       })
     }, duration)
@@ -445,9 +479,12 @@ export class RendererArmedCaptureManager {
             ok: false as const,
             reason: "lifecycle-lost" as const,
             failure: "profiler-stop" as const,
+            diagnostics: entry.profilerDiagnostics ?? { commands: [] },
           }))
       : undefined
-    const metadata = this.#metadata(entry, request.trigger, false, this.#now())
+    if (stop) entry.profilerDiagnostics = stop.diagnostics
+    const stoppedAt = this.#now()
+    const metadata = this.#metadata(entry, request.trigger, false, request.triggeredAt, stoppedAt)
     const canCapture = Boolean(stop?.ok && !noTarget && !entry.preparationRace)
     let report: RendererDebugResult
     if (canCapture && stop?.ok) {
@@ -455,39 +492,41 @@ export class RendererArmedCaptureManager {
         ...entry.correlation,
         captured: true,
         profile: stop.profile,
-        armedCapture: this.#metadata(entry, request.trigger, true, this.#now()),
+        profilerDiagnostics: stop.diagnostics,
+        armedCapture: this.#metadata(entry, request.trigger, true, request.triggeredAt, stoppedAt),
       }
     } else {
       const reason =
-        request.reason ??
-        (entry.preparationRace
-          ? "job-started-during-arming"
-          : noTarget
-            ? request.trigger === "manual-disarm" || request.trigger === "manual-stop"
-              ? "manual-stop-before-job"
-              : request.trigger === "lifecycle-loss" || request.trigger === "cleanup"
-                ? "lifecycle-lost"
-                : "job-not-seen"
-            : stop && !stop.ok
-              ? stop.reason
-              : "error")
+        stop && !stop.ok
+          ? stop.reason
+          : (request.reason ??
+            (entry.preparationRace
+              ? "job-started-during-arming"
+              : noTarget
+                ? request.trigger === "manual-disarm" || request.trigger === "manual-stop"
+                  ? "manual-stop-before-job"
+                  : request.trigger === "lifecycle-loss" || request.trigger === "cleanup"
+                    ? "lifecycle-lost"
+                    : "job-not-seen"
+                : "error"))
       report = {
         ...entry.correlation,
         captured: false,
         reason,
         failure:
-          request.failure ??
-          (entry.preparationRace || noTarget
-            ? request.trigger === "lifecycle-loss" || request.trigger === "cleanup"
-              ? "lifecycle"
-              : "job-wait"
-            : stop && !stop.ok
-              ? stop.failure
-              : "profile"),
+          stop && !stop.ok
+            ? stop.failure
+            : (request.failure ??
+              (entry.preparationRace || noTarget
+                ? request.trigger === "lifecycle-loss" || request.trigger === "cleanup"
+                  ? "lifecycle"
+                  : "job-wait"
+                : "profile")),
+        ...(stop ? { profilerDiagnostics: stop.diagnostics } : {}),
         armedCapture: metadata,
       }
     }
-    const persisted = await this.#persist(entry, report, request.trigger)
+    const persisted = await this.#persist(entry, report, request.trigger, request.triggeredAt)
     this.#complete(entry, persisted)
     return this.status(entry.windowID)
   }
@@ -496,6 +535,7 @@ export class RendererArmedCaptureManager {
     entry: Entry,
     stopTrigger: RendererArmedStopTrigger,
     captured: boolean,
+    triggeredAt: number,
     stoppedAt: number,
   ): RendererArmedMetadata {
     return {
@@ -503,6 +543,7 @@ export class RendererArmedCaptureManager {
       stopTrigger,
       outcome: captured ? "captured" : "failed",
       armedAt: entry.armedAt,
+      triggeredAt,
       ...(entry.profilerStartedAt === undefined
         ? {}
         : { profilerStartedAt: entry.profilerStartedAt }),
@@ -521,15 +562,30 @@ export class RendererArmedCaptureManager {
         : {}),
       stageHistory: [...entry.stageHistory],
       ...(entry.stageHistoryDropped ? { stageHistoryDropped: entry.stageHistoryDropped } : {}),
+      profilerCommands: entry.profilerDiagnostics?.commands ?? [],
+      ...(entry.profilerDiagnostics?.cleanup
+        ? { profilerCleanup: entry.profilerDiagnostics.cleanup }
+        : {}),
     }
   }
 
-  async #persist(entry: Entry, report: RendererDebugResult, trigger: RendererArmedStopTrigger) {
+  async #persist(
+    entry: Entry,
+    report: RendererDebugResult,
+    trigger: RendererArmedStopTrigger,
+    triggeredAt: number,
+    metadataPath?: string,
+  ) {
     const armedCapture =
-      report.armedCapture ?? this.#metadata(entry, trigger, report.captured, this.#now())
+      report.armedCapture ??
+      this.#metadata(entry, trigger, report.captured, triggeredAt, this.#now())
     return persistRendererDebugResult(
       { ...report, armedCapture },
-      { ...this.#options, filePrefix: "renderer-armed-capture" },
+      {
+        ...this.#options,
+        filePrefix: "renderer-armed-capture",
+        ...(metadataPath ? { metadataPath } : {}),
+      },
     )
   }
 
@@ -543,6 +599,30 @@ export class RendererArmedCaptureManager {
     } catch {
       // Diagnostics callbacks must not interfere with debugger ownership cleanup.
     }
+    if (entry.lateDiagnosticsChanged) this.#persistLateDiagnostics(entry)
+  }
+
+  #persistLateDiagnostics(entry: Entry) {
+    entry.lateDiagnosticsChanged = true
+    if (!entry.result?.path || !entry.result.armedCapture) return
+    const resultPath = entry.result.path
+    const previous = entry.latePersistence ?? Promise.resolve()
+    entry.latePersistence = previous
+      .then(async () => {
+        const result = entry.result
+        if (!result || result.path !== resultPath || !result.armedCapture) return
+        const updated = await this.#persist(
+          entry,
+          result,
+          result.armedCapture.stopTrigger,
+          result.armedCapture.triggeredAt,
+          resultPath,
+        )
+        if (updated.path === resultPath && entry.result === result) entry.result = updated
+      })
+      .catch(() => {
+        // A late native reply cannot invalidate the already persisted timeout/abort outcome.
+      })
   }
 
   #summary(entry: Entry, result: RendererDebugResult): RendererArmedCaptureStatus {
@@ -565,7 +645,15 @@ export class RendererArmedCaptureManager {
       ...(result.failure ? { failure: result.failure } : {}),
       ...(result.path ? { path: result.path } : {}),
       ...(result.profilePath ? { profilePath: result.profilePath } : {}),
+      ...(result.persistenceFailure ? { persistenceFailure: result.persistenceFailure } : {}),
       ...(metadata ? { stopTrigger: metadata.stopTrigger, outcome: metadata.outcome } : {}),
+      ...(metadata
+        ? {
+            triggeredAt: metadata.triggeredAt,
+            profilerCommands: metadata.profilerCommands,
+            ...(metadata.profilerCleanup ? { profilerCleanup: metadata.profilerCleanup } : {}),
+          }
+        : {}),
     }
   }
 }

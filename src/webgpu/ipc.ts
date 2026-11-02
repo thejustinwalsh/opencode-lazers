@@ -25,6 +25,30 @@ const captureCount = Schema.Number.check(
   Schema.isInt(),
   Schema.isBetween({ minimum: 0, maximum: 10_000 }),
 )
+const captureTimestamp = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+)
+const ProfilerCommand = Schema.Struct({
+  method: Schema.Literals([
+    "Profiler.enable",
+    "Profiler.setSamplingInterval",
+    "Profiler.start",
+    "Profiler.stop",
+  ]),
+  outcome: Schema.Literals(["succeeded", "failed", "timed-out", "aborted"]),
+  startedAt: captureTimestamp,
+  settledAt: captureTimestamp,
+  nativePending: Schema.optionalKey(Schema.Boolean),
+  nativeOutcome: Schema.optionalKey(Schema.Literals(["succeeded", "failed"])),
+  nativeSettledAt: Schema.optionalKey(captureTimestamp),
+  profilerStateUncertain: Schema.optionalKey(Schema.Boolean),
+})
+const ProfilerCleanup = Schema.Struct({
+  outcome: Schema.Literals(["detached", "not-required", "not-owned", "failed"]),
+  startedAt: captureTimestamp,
+  settledAt: captureTimestamp,
+})
 const TraceError = Schema.Struct({
   kind: Schema.Literals(["cancelled", "context-overflow", "device-lost", "deadline", "unknown"]),
   name: Schema.optionalKey(Schema.String.check(Schema.isBetweenLength(1, 80))),
@@ -95,6 +119,8 @@ export const RendererCaptureStatus = Schema.Struct({
     Schema.Literals([
       "devtools-open",
       "debugger-attached",
+      "profiler-command-pending",
+      "profiler-state-uncertain",
       "unavailable",
       "timeout",
       "aborted",
@@ -106,6 +132,7 @@ export const RendererCaptureStatus = Schema.Struct({
       "job-started-during-arming",
       "manual-stop-before-job",
       "lifecycle-lost",
+      "cleanup-failed",
     ]),
   ),
   failure: Schema.optionalKey(
@@ -118,10 +145,12 @@ export const RendererCaptureStatus = Schema.Struct({
       "job-wait",
       "lifecycle",
       "profile",
+      "profiler-cleanup",
     ]),
   ),
   path: Schema.optionalKey(capturePath),
   profilePath: Schema.optionalKey(capturePath),
+  persistenceFailure: Schema.optionalKey(Schema.Literals(["late-metadata-update"])),
   stopTrigger: Schema.optionalKey(
     Schema.Literals([
       "terminal",
@@ -137,6 +166,11 @@ export const RendererCaptureStatus = Schema.Struct({
     ]),
   ),
   outcome: Schema.optionalKey(Schema.Literals(["captured", "failed"])),
+  triggeredAt: Schema.optionalKey(captureTimestamp),
+  profilerCommands: Schema.optionalKey(
+    Schema.Array(ProfilerCommand).check(Schema.isBetweenLength(0, 4)),
+  ),
+  profilerCleanup: Schema.optionalKey(ProfilerCleanup),
 })
 export type RendererCaptureStatus = typeof RendererCaptureStatus.Type
 

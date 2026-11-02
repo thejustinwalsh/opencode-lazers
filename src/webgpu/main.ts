@@ -70,6 +70,9 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
         ...(status.profilePath ? { profilePath: status.profilePath } : {}),
         ...(status.stopTrigger ? { stopTrigger: status.stopTrigger } : {}),
         ...(status.outcome ? { outcome: status.outcome } : {}),
+        ...(status.triggeredAt === undefined ? {} : { triggeredAt: status.triggeredAt }),
+        ...(status.profilerCommands ? { profilerCommands: status.profilerCommands } : {}),
+        ...(status.profilerCleanup ? { profilerCleanup: status.profilerCleanup } : {}),
         stageCount: status.stageCount,
         ...(status.stageHistoryDropped ? { stageHistoryDropped: status.stageHistoryDropped } : {}),
       }),
@@ -102,6 +105,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
         void armedCaptures.lifecycleLost(window.id, "unresponsive")
         return
       }
+      if (armedCaptures.suppressesAutomaticCapture(window.id)) return
       if (freezeCaptures.has(window.id)) return
       freezeCaptures.add(window.id)
       void captureRendererDebug({

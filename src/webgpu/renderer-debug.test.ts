@@ -4,6 +4,8 @@ import { captureRendererDebug } from "./renderer-debug.ts"
 class FakeDebugger {
   attached = false
   readonly calls: string[] = []
+  rejectMethod = ""
+  detachThrows = false
   stopResponse: unknown = {
     profile: {
       nodes: [
@@ -49,11 +51,13 @@ class FakeDebugger {
 
   detach() {
     this.calls.push("detach")
+    if (this.detachThrows) throw new Error("detach refused")
     this.attached = false
   }
 
   async sendCommand(method: string) {
     this.calls.push(method)
+    if (method === this.rejectMethod) throw new Error(`${method} refused`)
     if (method === "Profiler.stop") return this.stopResponse
     return {}
   }
@@ -169,6 +173,93 @@ test("persists profiler stop timeout as a failure and always detaches", async ()
   ])
 })
 
+test("a stop-command rejection stays distinct from successful debugger cleanup", async () => {
+  const transport = new FakeDebugger()
+  transport.rejectMethod = "Profiler.stop"
+  const writes: { path: string; data: string }[] = []
+  const result = await captureRendererDebug(
+    options(transport, {
+      write: async (path: string, data: string) => writes.push({ path, data }),
+    }),
+  )
+
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "error",
+    failure: "profiler-stop",
+    profilerDiagnostics: {
+      commands: [
+        { method: "Profiler.enable", outcome: "succeeded" },
+        { method: "Profiler.start", outcome: "succeeded" },
+        {
+          method: "Profiler.stop",
+          outcome: "failed",
+          startedAt: expect.any(Number),
+          settledAt: expect.any(Number),
+          profilerStateUncertain: true,
+        },
+      ],
+      cleanup: {
+        outcome: "detached",
+        startedAt: expect.any(Number),
+        settledAt: expect.any(Number),
+      },
+    },
+  })
+  expect(JSON.parse(writes.find((write) => write.path.endsWith(".json"))!.data)).toMatchObject({
+    captured: false,
+    failure: "profiler-stop",
+    profilerDiagnostics: {
+      commands: [
+        { method: "Profiler.enable" },
+        { method: "Profiler.start" },
+        { method: "Profiler.stop", outcome: "failed", profilerStateUncertain: true },
+      ],
+      cleanup: { outcome: "detached" },
+    },
+  })
+})
+
+test("a detach failure prevents reporting a successful profile or cleanup", async () => {
+  const transport = new FakeDebugger()
+  transport.detachThrows = true
+  const writes: { path: string; data: string }[] = []
+  const result = await captureRendererDebug(
+    options(transport, {
+      write: async (path: string, data: string) => writes.push({ path, data }),
+    }),
+  )
+
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "cleanup-failed",
+    failure: "profiler-cleanup",
+    profilerDiagnostics: {
+      cleanup: {
+        outcome: "failed",
+        startedAt: expect.any(Number),
+        settledAt: expect.any(Number),
+      },
+    },
+  })
+  expect(result.profilerDiagnostics?.commands.at(-1)).toMatchObject({
+    method: "Profiler.stop",
+    outcome: "succeeded",
+  })
+  expect(writes.some((write) => write.path.endsWith(".cpuprofile"))).toBe(false)
+  const metadata = JSON.parse(writes.find((write) => write.path.endsWith(".json"))!.data)
+  expect(metadata).toMatchObject({
+    captured: false,
+    reason: "cleanup-failed",
+    failure: "profiler-cleanup",
+    profilerDiagnostics: { cleanup: { outcome: "failed" } },
+  })
+  expect(metadata.profilerDiagnostics.commands.at(-1)).toMatchObject({
+    method: "Profiler.stop",
+    outcome: "succeeded",
+  })
+})
+
 test("abort races the active profiler command and detaches", async () => {
   const transport = new FakeDebugger()
   transport.sendCommand = async (method: string) => {
@@ -182,6 +273,73 @@ test("abort races the active profiler command and detaches", async () => {
   const result = await pending
   expect(result).toMatchObject({ captured: false, reason: "aborted", failure: "profiler-stop" })
   expect(transport.calls.at(-1)).toBe("detach")
+})
+
+test("late metadata write failure does not replace an aborted profiler-start result", async () => {
+  const transport = new FakeDebugger()
+  const controller = new AbortController()
+  let releaseStart!: () => void
+  let reachedStart!: () => void
+  const startReached = new Promise<void>((resolve) => (reachedStart = resolve))
+  let jsonWriteCount = 0
+  let originalMetadata = ""
+  transport.sendCommand = async (method) => {
+    transport.calls.push(method)
+    if (method === "Profiler.start") {
+      reachedStart()
+      await new Promise<void>((resolve) => (releaseStart = resolve))
+    }
+    return {}
+  }
+
+  const pending = captureRendererDebug(
+    options(transport, {
+      signal: controller.signal,
+      write: async (path: string, data: string) => {
+        if (!path.endsWith(".json")) return
+        jsonWriteCount++
+        if (jsonWriteCount > 1) throw new Error("diagnostics storage unavailable")
+        originalMetadata = data
+      },
+    }),
+  )
+  await startReached
+  controller.abort()
+  const result = await pending
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+  })
+  expect(typeof result.path).toBe("string")
+
+  releaseStart()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  expect(jsonWriteCount).toBe(2)
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+    persistenceFailure: "late-metadata-update",
+  })
+  expect(result.profilerDiagnostics?.commands.at(-1)).toMatchObject({
+    method: "Profiler.start",
+    outcome: "aborted",
+    nativePending: false,
+    nativeOutcome: "succeeded",
+  })
+  const savedMetadata = JSON.parse(originalMetadata)
+  expect(savedMetadata).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+  })
+  expect(savedMetadata.profilerDiagnostics.commands.at(-1)).toMatchObject({
+    method: "Profiler.start",
+    outcome: "aborted",
+    nativePending: true,
+  })
 })
 
 test("empty profiler output is not reported as a successful capture", async () => {

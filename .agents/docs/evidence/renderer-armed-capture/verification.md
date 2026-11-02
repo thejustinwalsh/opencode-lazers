@@ -15,22 +15,36 @@
   preparation race.
 - Terminal traces, manual stop/disarm, no-job/recording deadlines,
   unresponsiveness, debugger-owner loss, renderer lifecycle loss, and plugin
-  cleanup converge on one bounded finalizer. A stop timeout and late response
-  remain failed; cleanup only detaches an attachment this capture still owns.
+  cleanup converge on one bounded finalizer. Trigger time, each acknowledged or
+  failed CDP command, and debugger cleanup have separate outcomes/timestamps. A
+  no-job expiry cannot hide a failed stop; failed detach cannot claim a successful
+  capture.
+- A timeout or disarm does not cancel a native CDP command. Pending command
+  ownership reserves that renderer transport until settlement; explicit retries
+  cannot overlap it. Late settlement updates the original capture record only and
+  cannot detach a later owner. A late start acknowledgement or failed stop keeps
+  the transport reserved until the profiler is confirmed stopped. A failed late
+  metadata refresh is shown separately and does not replace the original command
+  outcome. Disarm does not cancel inference.
+- Failed armed startup suppresses automatic CDP fallback in that window across
+  later unresponsive/responsive events. Other windows and never-armed automatic
+  capture remain independent.
 - The `.cpuprofile` and `.json` metadata are separate. The metadata records
-  window/PID, target request/job, up to 64 ordered stages, timing, stop trigger,
-  dropped-stage count, and outcome. It excludes prompt/context contents, audio,
-  scopes, source text, and arbitrary objects.
+  window/PID, target request/job, up to 64 ordered stages, trigger time, bounded
+  command and cleanup outcomes/timestamps, dropped-stage count, and capture
+  outcome. It excludes prompt/context contents, audio, scopes, source text, and
+  arbitrary objects.
 
 ## Verification
 
-- `bun run verify` — passed: formatting, lint, strict typecheck.
-- `bun test src/webgpu/renderer-debug.test.ts src/webgpu/main-trace.test.ts src/webgpu/inference-trace.test.ts src/webgpu/renderer-armed-capture.test.ts` — 28 passed.
-- `bun test` — 432 passed across 84 files.
-- `bun run build:gui` — passed. Vite emitted its existing `import.meta` warnings
-  from the bundled `onnxruntime-web` dependency; output built successfully.
-- `bun scripts/prepare-engine.ts` verified the pinned GUI engine before the
-  full test/build runs. The deployed Desktop GUI was not activated.
+- `bun test src/webgpu/renderer-debug.test.ts src/webgpu/renderer-armed-capture.test.ts src/webgpu/main-trace.test.ts src/webgpu/inference-trace.test.ts` — 37 passed, including no-job stop failure, detach failure, deferred-start/disarm, late settlement/metadata-write failure ownership, and fallback-suppression regressions.
+- `bun run verify` — passed formatting, lint, and strict typecheck.
+- `bun test` — 442 passed across 84 files.
+- `bun run build:gui` passed before the final profiler-state label change; Vite
+  emitted its existing `import.meta` warnings from `onnxruntime-web`. The final
+  GUI source was typechecked but not rebundled for this pass.
+- The build's `prepare-engine` step verified the pinned engine. The deployed
+  Desktop GUI and live profiler were not activated.
 
 ## Profile bounds
 
