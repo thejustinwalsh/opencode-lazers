@@ -63,12 +63,15 @@ failure separately from environment, permission, resource and cleanup blockage.
 Reprobe should preserve the worker where appropriate, not spend a repair merely
 because setup was blocked.
 
-Record fixture ownership before creation, exercise the real product, retain
-bounded evidence, remove disposable state and confirm cleanup on failed runs too.
-Keep uncertain/dirty resources unavailable until positively reconciled; lease
-expiry is not quiescence. Initially keep required teardown within `verifying`,
-while displaying product verdict separately from cleanup. Combined candidates
-need their own relevant probe evidence. Cancellation must not strand cleanup.
+Runtime must register owned resources before creation, retain bounded evidence,
+and automatically perform idempotent teardown on success, failure and cancellation.
+Reconcile interrupted setup/teardown after restart and retain actual cleanup
+receipts, not model assertions. Keep uncertain/dirty resources unavailable until
+positively reconciled; lease expiry is not quiescence. Unresolved cleanup does
+not invalidate behavior evidence, block review/integration of valid code, or
+trigger product reprobe or implementation repair. Do not report whole-delivery
+cleanup complete until owned resources are reconciled. Combined candidates need
+their own relevant probe evidence.
 
 Package a concise progressively loaded product-verification skill and platform
 references so native workers can actually discover and use them. Reuse existing
@@ -96,7 +99,7 @@ LZ-36, LZ-39, LZ-46 and LZ-48 identities, candidates and pending gates intact.
 | V1: full-instance qualification                     | 25       | Controlled-trial authorization                  | Candidate-specific launch/acquisition tools and initial project runbook; an actual admitted worker proves tool access, isolated app/service identity, behavioral activation and owned teardown. Missing capability remains a concrete blockage. |
 | R2: producer integration and deterministic concerns | 20       | R1 and reviewed LZ-28 baseline                  | Progress/journal mutations commit together; versioned repeated-failure rules survive reopening and exclude healthy work/provider or environment waits.                                                                                          |
 | V2: probe definitions and receipts                  | 20       | Reviewed task-contract baseline                 | Versioned required/N/A definitions, assertion-linked candidate-bound receipts, producer provenance and unchanged historical parsing/idempotency. No launch or scheduling claim.                                                                 |
-| V3: resource and fixture lifecycle                  | 20       | V2; V1 target-identity findings                 | Exclusive actual-resource ownership, durable setup/teardown intent and receipts, uncertainty reconciliation and retryable cleanup that blocks dirty reuse.                                                                                      |
+| V3: resource and fixture lifecycle                  | 20       | V2; V1 target-identity findings                 | Automatic idempotent owned registration/teardown, durable intents and receipts, restart reconciliation and exclusive resource identity. Unresolved cleanup blocks dirty reuse, not behavior review/integration.                                 |
 | R3: notifications and dispositions                  | 20       | R2 and reviewed renewal ownership               | Evidence reaches the current Architect; cook, durable follow-up and check-in decisions are fenced, replay-safe and separate from execution state.                                                                                               |
 | R4: check-in, steering and reassessment             | 20       | R3                                              | Same-worker guidance/response association, new-evidence reassessment and bounded escalation; admission, consumption and response stay distinct.                                                                                                 |
 | V4: task probe scheduling                           | 20       | V2, V3 and reviewed LZ-28 idle/renewal behavior | Checks precede same-worker probes; current evidence gates acceptance; blocked setup spends no implementation repair and duplicate ticks cannot repeat uncertain setup.                                                                          |
@@ -119,6 +122,13 @@ activation: exact stored-page correspondence and late-project coverage must not
 skip captured facts. LZ-53 (`f4b36a89-917f-4eb4-94a4-8f05b7649766`) corrects the
 observed targeted-index permission fan-out, preserving real authorization; focused
 totals count authorized selected matches. Neither replaces an existing worker.
+
+R1 source (LZ-49/52 plus Root's prefix/sparse-page corrections) is integrated in
+`e18b826`; V2 source (LZ-51 plus Root's cleanup-separation correction) is also
+integrated. Their module-only plans completed normal owned-worktree cleanup.
+These landings do not establish native producer activation, full-instance
+qualification or V3's automatic resource lifecycle; LZ-50's original trial and
+all later recovery/verification lanes remain applicable.
 
 Combined-probe ownership must be an explicit authorized continuation/assignment,
 not another implementation attempt fabricated for counting. Establish its narrow
