@@ -143,6 +143,11 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
     const queues = [new EventQueue<ObservationChange>(), new EventQueue<ObservationChange>()]
     let streamCalls = 0
     let snapshotCalls = 0
+    let deferRefresh = false
+    let deferredReadsCompleted = 0
+    let reconnectWaits = 0
+    const refreshGate = deferred<void>()
+    const reconnectGate = deferred<void>()
     const updates: { stale: boolean; error: string }[] = []
     const pulses: string[] = []
     const pulseTracker = new RadarPulseTracker()
@@ -150,15 +155,24 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
     const transport: RadarTransport = {
       snapshot: async () => {
         snapshotCalls++
-        return {
+        const result = {
           ...session,
           boundary: { ...session.boundary, eventSequence },
         }
+        if (deferRefresh) {
+          await refreshGate.promise
+          deferredReadsCompleted++
+        }
+        return result
       },
-      radar: async (_scope, _includeUnmanaged, _signal) => ({
-        ...radar,
-        boundary: { ...radar.boundary, eventSequence },
-      }),
+      radar: async (_scope, _includeUnmanaged, _signal) => {
+        const result = { ...radar, boundary: { ...radar.boundary, eventSequence } }
+        if (deferRefresh) {
+          await refreshGate.promise
+          deferredReadsCompleted++
+        }
+        return result
+      },
       changes: (signal) => {
         const queue = queues[Math.min(streamCalls++, queues.length - 1)]!
         return changesFrom(queue, signal)
@@ -187,7 +201,10 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
             .map((pulse) => pulse.eventID),
         )
       },
-      async () => {},
+      async () => {
+        reconnectWaits++
+        await reconnectGate.promise
+      },
     )
     state.connect(
       "session-view",
@@ -241,13 +258,30 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
     await until(() => state.data.snapshot?.boundary.eventSequence === gap + 1 && !state.data.stale)
     expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`])
 
+    deferRefresh = true
+    state.refreshNow()
+    await until(() => snapshotCalls === 5)
     queues[0]!.close()
-    await until(() => streamCalls >= 2 && snapshotCalls >= 5 && !state.data.stale)
-    expect(state.data.snapshot?.boundary.eventSequence).toBe(gap + 1)
+    await until(() => reconnectWaits === 1)
+    expect(state.data.resynchronizing).toBe(true)
+    deferRefresh = false
+    refreshGate.resolve(undefined)
+    await until(() => deferredReadsCompleted === 2)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(state.data.stale).toBe(true)
+    expect(state.data.resynchronizing).toBe(true)
+    state.refreshNow()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(snapshotCalls).toBe(5)
+
+    eventSequence = gap + 2 // missed activity while the stream was disconnected
+    reconnectGate.resolve(undefined)
+    await until(() => streamCalls >= 2 && snapshotCalls >= 6 && !state.data.stale)
+    expect(state.data.snapshot?.boundary.eventSequence).toBe(gap + 2)
     expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`])
-    emit(gap + 2)
-    await until(() => state.data.snapshot?.boundary.eventSequence === gap + 2 && !state.data.stale)
-    expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`, `event-${gap + 2}`])
+    emit(gap + 3)
+    await until(() => state.data.snapshot?.boundary.eventSequence === gap + 3 && !state.data.stale)
+    expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`, `event-${gap + 3}`])
     state.close()
   } finally {
     fixture.close()

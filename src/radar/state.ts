@@ -48,6 +48,7 @@ export class RadarPanelState {
   private transport?: RadarTransport
   private scope?: ObservationScope
   private includeUnmanagedSessions = false
+  private reconnecting = false
   private poll?: ReturnType<typeof setInterval>
   private readonly snapshotRuns = new Map<number, { pending: boolean; retries: number }>()
 
@@ -90,7 +91,7 @@ export class RadarPanelState {
   }
 
   async refresh(epoch: number, generation: number, transport: RadarTransport, signal: AbortSignal) {
-    if (!this.current(epoch, transport, signal) || !this.scope) return
+    if (!this.current(epoch, transport, signal) || !this.scope || this.reconnecting) return
     const pending = this.snapshotRuns.get(generation)
     if (pending) {
       pending.pending = true
@@ -248,7 +249,8 @@ export class RadarPanelState {
         throw new Error("Observation update stream closed")
       } catch (error) {
         if (!this.current(epoch, transport, signal)) return
-        this.sync.stale = true
+        this.reconnecting = true
+        generation = this.sync.reconnect()
         this.update({
           loading: !this.data.radar,
           stale: true,
@@ -259,7 +261,8 @@ export class RadarPanelState {
         })
         await this.waitForReconnect(signal)
         if (signal.aborted || !this.current(epoch, transport, signal)) return
-        generation = this.sync.reconnect()
+        this.reconnecting = false
+        this.update({ stale: true, resynchronizing: true })
         void this.refresh(epoch, generation, transport, signal)
       }
     }
@@ -267,6 +270,7 @@ export class RadarPanelState {
 
   close() {
     this.epoch++
+    this.reconnecting = false
     this.controller.abort()
     if (this.poll) clearInterval(this.poll)
     this.poll = undefined
