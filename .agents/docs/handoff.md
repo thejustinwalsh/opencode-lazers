@@ -1,90 +1,110 @@
 # LAZERS current handoff
 
-2026-11-02 03:16 UTC checkpoint (November 1 evening EST). Recheck native runtime
-before acting. Full goal remains all four phases in [the roadmap](../../design/roadmap.md),
-then an observation-based improvements plan. This is not completion.
+2026-11-02 04:34 UTC checkpoint (November 1 evening EST). Recheck native state.
+Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
+an observation-based improvements plan. This is not completion.
 
 ## Operate
 
-- Drive model prompts/interviews through OpenCode Desktop Computer Use. Read-only
-  SDK/SQLite/logs and supported native maintenance are authorized. Root may repair
-  demonstrated harness blockers and review/integrate; native Architect owns task
-  decomposition and orchestration, runtime owns scheduling/dispatch.
-- Architect: `ses_e68a9ed37ffeVqzPWRXN5SB7Uw`, “Build LAZERS roadmap”,
-  `openai/gpt-6.1-sol#high`. Implementors use `openai/gpt-6-luna#max` during tuning.
-  Architect keeps normal tools/Code Mode; workers do not launch subagents.
-- Evidence means meaningful tests and live product behavior. No source/file/doc
-  hashes as proof, invented budgets or provider vetoes. Keep schemas, Architect
-  self-review through `lazers_verify_task`, and useful System One hardening.
-- Cleanup is independent of passing behavior and review/integration. Retry cleanup
-  mechanically; reserve dirty resources. Do not replay a passed probe or create an
-  implementation repair solely because cleanup failed.
-- One reusable plugin, pinned OpenCode V2 2.2.5 APIs and native worktree lifecycle;
-  no custom daemon. Load Portless before project listening servers. Official
-  OpenCode app/service flows use their supported launcher.
-- All six local-inference switches remain ON, apple/WebGPU, idle Never. Do not
-  disable inference, arm the profiler, or restart a healthy service by assumption.
-- Start with README contracts and the [API index](opencode-api.md); read focused
-  source as needed. Avoid loading full transcripts or old evidence reports upfront.
+- Model prompts/interviews use OpenCode Desktop Computer Use. Read-only SDK,
+  SQLite/logs and supported maintenance are authorized. Root may repair proven
+  blockers and review/integrate; native Architect decomposes/orchestrates and
+  runtime schedules/dispatches.
+- Main Architect `ses_e68a9ed37ffeVqzPWRXN5SB7Uw`, “Build LAZERS roadmap”,
+  `openai/gpt-6.1-sol#high`. Current implementors `openai/gpt-6-luna#max`.
+  Architect has normal tools/Code Mode; workers do not launch subagents.
+- Evidence is passing meaningful checks and live behavior. No source/file/doc
+  hashes as proof, invented budgets or provider vetoes. Preserve schemas,
+  Architect self-review `lazers_verify_task` and useful System One hardening.
+- Failed/pending cleanup does not invalidate passed behavior, block valid
+  review/integration, or trigger implementation replay. Reserve dirty resources
+  and reconcile cleanup mechanically; do not claim cleanup before observation.
+- One reusable plugin, pinned V2 2.2.5 and native worktree lifecycle. No custom
+  daemon. Use Portless for project listening servers; official OpenCode launches
+  use the supported app/service path. One-shot builds/tests are exempt.
+- All six local-inference switches ON, apple/WebGPU, idle Never. No profiler
+  arming or service restart by assumption. Latest Desktop status was Ready after
+  an actual device-loss review failure; no settings changed and no semantic pass
+  was claimed for the failed review.
+- Start with README contracts and [API index](opencode-api.md), then focused
+  source. Do not preload old transcripts or large evidence reports.
 
-## Immediate delivery
+## Live work
 
-**Radar must become visibly usable.** Source `337074e` is merged. Root built it
-and fixed actual native main failure `__dirname is not defined` in **`37abb66`**:
-ELK plus adapter is embedded in the GUI and runs in a native worker thread.
-Eight tests/42 assertions, formatting/lint/typecheck and GUI build passed. Desktop
-picked it up automatically; plugin failure cleared and local model showed Ready.
+Native service remains PID 40217 at `http://127.0.0.1:49374`. `session.active()`
+is authoritative foreground inventory. Observation timeout is not termination;
+poll the same handle. Main was clean at `dd4d0be` before this checkpoint.
 
-Actual rendering is still unacceptable: 10,155 × 8,599 SVG, 115 nodes, mostly
-empty outlines in the initial panel. Tera 6.1 High reviewed the actual screenshot.
-Its [correction plan](evidence/operational-radar-view/native-terra-review.md)
-recommends a compact live scheduler/session/model/task overview, expandable
-counted groups preserving other records, readable host text and inspector below.
-Do not shrink all nodes into unreadable text. [Native observations](evidence/operational-radar-view/desktop-review.md).
-Original LZ-34 lineage and native acceptance remain open; Root sent the findings
-back through Desktop. Preserve selection/viewport and prove real live updates.
+| Work                                   | Current identity and boundary                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`; UI persona. Real edits underway. Compact-width test caught 1,436px output, was repaired, then 17 focused tests/124 assertions passed. No returned candidate, native visual acceptance or integration yet. |
+| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`; Systems persona. Real relay edits underway.                                                                                                                                                               |
+| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`; Systems persona. Missing zero-turn closure capability is being implemented; do not replay original stopped workers.                                                                                       |
 
-## Active review and rollout
+All three foreground workers were observed live in distinct native worktrees
+under `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
+Plans can still show permission-block reasons after workers continue. Both
+session and location permission inventories for LZ-63 were empty at Unix ms 1793593961522. `advanceAttempt()` currently returns for busy work before clearing
+transient observation waits; investigate this proportional diagnostic/liveness
+issue after coordinating the current runner writer, not through repeated retries.
 
-| Work                             | Last verified state and next action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-50 full-instance verification | Original worker `ses_f250e0de9fce4d6bafd9db6a8cf41e64`, attempt `29cbd76a-f700-4617-a22a-13de12362420`, returned **`ed3b01b`** and is terminal. Original plan `b76de1a5-4c2b-423e-8867-0afa7e704c07` is verifying. Native reviewer `ses_e65c30973ffeguVat3jYLKwN0L` is active. Actual isolated Desktop submitted task `fb119a84-b8f7-4cca-b63e-0874646e60a7` / LZ-1, independently found in its DB. Owned root, project, processes and listener were removed; driving service PID40217 and protocol handler preserved. Do not repeat the successful submission or claim worker execution from it. Review/integrate the original return; 41 focused tests/198 assertions and quality/build are worker-reported. |
-| LZ-59 scheduler liveness         | Original accepted attempt `a6ee844e-e8da-4b0c-adfe-13aed1f69e5d`, retained clean tree, original Luna return `a2fd5c4`. Root repaired genuine cross-listener/async/queued-event races through **`46b4d27`**. Existing native reviewer `ses_e65f2f689ffeyogHdgkRNj0WpY` cleared the final source. Root ran 203 tests/2,752 assertions plus quality. Not merged/rolled out at checkpoint. Preserve accepted history; no replacement worker.                                                                                                                                                                                                                                                                       |
-| Effective plugin source          | Public inventory found main using canonical LAZERS, while LZ-50 used its worktree-local source and canonical failed there as a duplicate ID. Module-local maps are not shared across those copies. Resolve one effective reviewed package and observe actual worker tools/liveness. Native researcher `ses_e65cdd660ffeOYNwFb5zGn8sJQ` completed; broad distribution-policy research is not a prerequisite. Avoid turning research suggestions into new approval or evidence ceremonies.                                                                                                                                                                                                                       |
+Root submitted a normal Desktop roadmap steering message: keep Radar first,
+advance independent Models/persona and recovery/verification work in parallel.
+Architect acknowledged and dispatched native research `ses_e6579218fffeHeLUWLWdjcxTs4`
+and `ses_e6579218fffd03z6Srne6KBkmx`. Do not duplicate their work.
 
-Retained worker paths are under
-`~/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
-Public `session.active()` is authoritative foreground state. Observe the same
-live handle after a timeout; do not restart it merely because observation expired.
+## Landed, with remaining proof
 
-`client.location.reload()` invalidates **all loaded locations**, not one worker.
-Coordinate affected writers before using it. Main merge is not proof of worker
-activation. Use actual source inventory and real tool/behavior observations.
+- Radar ELK packaging now works in real Desktop (`37abb66`). Tera 6.1 High rejected
+  its initial 10,155×8,599/115-node presentation. LZ-62 addresses that review;
+  original LZ-34 lineage/native gates remain open. Use actual narrow screenshots
+  and Tera review, C4 SVG/ELK, native theme/fonts and inspector below.
+- LZ-59 source and Root repairs merged in `f1484be`, with process-shared idle
+  registry `f23beb8`. Actual pinned-loader red/green reproducer proved separate
+  local module instances; focused checks passed. Native crash fixture correction
+  `822bb10` models completed-turn/idle lineage, preserving original recovery cuts.
+  Native reports full 563 tests/5,446 assertions passed. Source landing recorded
+  at original plan v10; plan remains blocked on historical combined candidate.
+  Real matching-input completion and background consumption still need observation.
+- LZ-50 full-instance tooling plus Root startup-ownership corrections through
+  `dbb54d2` merged in `390c23a`; native reviewed and reports postmerge checks passed.
+  Actual owned Desktop submitted one task LZ-1 / `fb119a84-b8f7-4cca-b63e-0874646e60a7`;
+  isolated DB and owned teardown were observed, driving service preserved. This
+  was not an implementation execution. Original plan remains blocked v9, original
+  task failed/ready against an older artifact. LZ-63 supplies safe closure; do not
+  reverify the stale artifact or invent acceptance. Root corrections lack native
+  startup-failure observation.
+- Canonical development source migration is complete: one active canonical package
+  observed in main, home and retained-worker locations. Old tracked main shim was
+  removed in `8def48b`; retained shims are source-excluded. No service restart.
+  Exact config/observations in [canonical rollout](evidence/native-liveness/canonical-rollout.md).
+  That record also proves LZ-62's real Code Mode hit on published index
+  `43544f57-52d0-4c64-ad88-781c8a6236e4`; unfiltered metadata is not selected-read
+  qualification. LZ-53's full worker/source-read gate remains unproven.
+- Agent task prose was tightened in `bddb4de`: outcome, done conditions, scope,
+  focused checks and source findings; workflow/history does not belong in tasks.
+- Native Architect auto-compaction had an observed 648,712ms gap; cache-read
+  425,216 tokens contradicts a blanket cache-miss explanation. Exact duration and
+  equivalent market cost remain unknown. [Metadata](evidence/architect-context-lifecycle/compaction-20261102.json).
 
-## Landed foundations and remaining work
+## Preserve the full roadmap
 
-The [delivery reconciliation](evidence/delivery-reconciliation/2026-11-02.md)
-records reviewed integrations and exact boundaries; [execution map](roadmap-execution.md)
-and [phase decisions](phase-review-plan.md) preserve the broader plan.
+[Execution map](roadmap-execution.md), [phase decisions](phase-review-plan.md) and
+[delivery reconciliation](evidence/delivery-reconciliation/2026-11-02.md) retain
+the wider requirements; older runtime statuses there need readback.
 
-- H1/H2 handoff foundations are integrated; H3 tools, stopped-worker collection,
-  Architect disposition and correction used by subsequent work remain open.
-- Recovery journal LZ-49/52 is integrated through `e18b826`, original plans v10,
-  worktrees removed. Native producers/detectors, notification, same-worker steering
-  and reassessment remain open.
-- Probe records LZ-51 plus Root cleanup separation `a360ddc` are integrated, plan
-  v10 and worktree removed. Automatic owned-resource teardown/restart reconciliation
-  remains unimplemented. Completed passed behavior stays passed through cleanup.
-- GPU recovery LZ-39 and profiler repair LZ-46 source are merged; actual native
-  recovery/profile gates remain open. Do not arm profiling now.
-- Trajectory LZ-36 navigation/expiry/recapture was observed; selected live-tool
-  completion remains open. LZ-28/36 retained closure and repair controls are tracked
-  in draft LZ-57/58. LZ-53 worker-index qualification is not established by Root's
-  partial main-Architect index publication.
-- LZ-60 was cancelled after a premature-completion runtime defect. Do not resurrect
-  its broad scope or replay its empty attempts. LZ-61 Unix-ms endpoint/provenance
-  task is draft. Unstarted LZ-56 was reversibly stopped; preserve its intent.
-- Models/persona mapping, cost/efficiency/Pareto UI, remaining Tasks/Trajectory and
-  Radar polish, full recovery/handoff/live-probe integration, at least two real
-  implementer walkthroughs, and usable distribution remain in the roadmap.
-  Subscription use needs dated OpenRouter market-price estimates, not zero cost.
+- H1/H2, recovery R1 (LZ-49/52), and probe V2 (LZ-51) are integrated and their owned
+  worktrees removed. H3–H5 tools/delivery/correction, R2–R6 native producers,
+  detection/steering/handoff and V3–V6 resource lifecycle/runtime probes/metrics
+  remain to deliver. K1 usable guidance and N1 two real implementer walkthroughs
+  including correction/reprobe are still required.
+- LZ-28 lifecycle, LZ-34 Radar, LZ-36 selected-live trajectory, LZ-39 recovery and
+  LZ-46 profiler native gates remain. Do not arm the profiler now. LZ-57/58 drafts
+  need refreshed walkthrough references before dispatch; their old examples were
+  already integrated. LZ-60 is cancelled after premature host completion; preserve
+  its failures and do not resurrect its broad task. LZ-61 timestamp/provenance task
+  is draft and overlaps runner/progress work.
+- Remaining Models DB/Pareto panel and hierarchical persona routes, Tasks and
+  Trajectory polish, conversation-first plan evolution/delegation, and usable
+  install/upgrade/backup/cross-machine distribution remain. Subscription metrics
+  need dated OpenRouter fallback market estimates; unknown is not zero.
