@@ -96,6 +96,17 @@ const host: RunnerHost = {
     session.messages.push({ id: input.id, text: input.text })
     writeFileSync(join(session.directory, "result.txt"), "correct\n")
     session.outcome = "succeeded"
+    session.turn = { inputID: input.id, state: "completed" }
+    session.background = {
+      state: "observed",
+      source: "experimental.idle",
+      observedAt: Date.now(),
+      inputID: input.id,
+      executionStartSequence: 1,
+      eventSequence: 2,
+      count: 0,
+      kinds: { shell: 0, subagent: 0, image: 0 },
+    }
     save(state)
     cut("after-prompt")
   },
