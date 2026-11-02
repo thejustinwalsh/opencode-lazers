@@ -1,0 +1,335 @@
+import type { Plugin } from "@opencode/plugin/effect"
+import { Effect } from "effect"
+import { dirname, join, resolve } from "node:path"
+import {
+  NATIVE_VERIFICATION_BASE_ENV,
+  NativeInteraction,
+  type NativeActionResult,
+  type NativeBinding,
+  type NativeOperation,
+  type NativeWindowReference,
+} from "./native-interaction-contract.ts"
+
+const HOST_FRESH_MS = 2_000
+const MAX_REQUESTS = 256
+
+type NativeRequest = {
+  requestID: string
+  operation: NativeOperation
+}
+
+type RecordState = "queued" | "delivered" | "completed"
+
+type RequestRecord = {
+  bindingKey: string
+  request: NativeRequest
+  state: RecordState
+  result?: NativeActionResult
+}
+
+type HostRecord = {
+  binding: NativeBinding
+  adapterID: string
+  windows: NativeWindowReference[]
+  lastSeen: number
+}
+
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`
+  if (typeof value !== "object" || value === null) return JSON.stringify(value) ?? "undefined"
+  const object = value as Record<string, unknown>
+  return `{${Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stable(object[key])}`)
+    .join(",")}}`
+}
+
+function same(left: unknown, right: unknown): boolean {
+  return stable(left) === stable(right)
+}
+
+export class NativeInteractionBroker {
+  private host?: HostRecord
+  private readonly requests = new Map<string, RequestRecord>()
+  private activeRequest?: string
+  private ambiguous = false
+
+  constructor(
+    private readonly expected: {
+      root: string
+      verificationBase: string
+      servicePID: number
+      version: string
+    },
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  attach(input: {
+    binding: NativeBinding
+    adapterID: string
+    windows: ReadonlyArray<NativeWindowReference>
+  }): void {
+    this.assertBinding(input.binding)
+    const current = this.host
+    if (current !== undefined && current.adapterID !== input.adapterID) {
+      throw new Error("A different native adapter generation still owns this trial")
+    }
+    if (current !== undefined && !same(current.binding, input.binding)) {
+      throw new Error("Native adapter binding changed during this trial")
+    }
+    this.host = {
+      binding: input.binding,
+      adapterID: input.adapterID,
+      windows: this.validateWindows(input.windows),
+      lastSeen: this.now(),
+    }
+  }
+
+  status(binding: NativeBinding) {
+    this.assertBinding(binding)
+    const host = this.host
+    if (host === undefined || !same(host.binding, binding)) {
+      return { ready: false, blocked: this.ambiguous, windows: [] as NativeWindowReference[] }
+    }
+    const fresh = this.now() - host.lastSeen <= HOST_FRESH_MS
+    return {
+      ready: fresh,
+      blocked: this.ambiguous,
+      windows: fresh ? host.windows : [],
+      ...(fresh ? { adapterID: host.adapterID } : {}),
+    }
+  }
+
+  enqueue(input: { binding: NativeBinding; requestID: string; operation: NativeOperation }) {
+    this.assertBinding(input.binding)
+    if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.requestID)) {
+      throw new Error("Native request ID is invalid")
+    }
+    const duplicate = this.requests.get(input.requestID)
+    if (duplicate !== undefined) {
+      if (
+        duplicate.bindingKey !== stable(input.binding) ||
+        !same(duplicate.request.operation, input.operation)
+      ) {
+        throw new Error("Native request ID was already used for a different operation")
+      }
+      return { state: "existing" as const }
+    }
+    const host = this.requireFreshHost(input.binding)
+    if (this.ambiguous) throw new Error("An ambiguous native action blocks further interaction")
+    if (this.activeRequest !== undefined) {
+      throw new Error("A native interaction is already pending; inspect it without replay")
+    }
+    if (this.requests.size >= MAX_REQUESTS) {
+      throw new Error("Native interaction history is full; start a new owned trial")
+    }
+    const currentWindow = host.windows.find(
+      (window) => window.windowID === input.operation.window.windowID,
+    )
+    if (currentWindow === undefined || !same(currentWindow, input.operation.window)) {
+      throw new Error("Native window reference is stale; take a fresh snapshot")
+    }
+    if (!currentWindow.visible) throw new Error("Native target window is not visible")
+    if (input.operation.kind !== "snapshot" && input.operation.kind !== "capture") {
+      if (!currentWindow.focused)
+        throw new Error("Focus the owned Desktop window before native input")
+    }
+    this.requests.set(input.requestID, {
+      bindingKey: stable(input.binding),
+      request: { requestID: input.requestID, operation: input.operation },
+      state: "queued",
+    })
+    this.activeRequest = input.requestID
+    return { state: "queued" as const }
+  }
+
+  poll(input: {
+    binding: NativeBinding
+    adapterID: string
+    windows: ReadonlyArray<NativeWindowReference>
+  }): NativeRequest | null {
+    this.attach(input)
+    if (this.ambiguous || this.activeRequest === undefined) return null
+    const record = this.requests.get(this.activeRequest)
+    if (record === undefined || record.state !== "queued") return null
+    record.state = "delivered"
+    return record.request
+  }
+
+  complete(input: {
+    binding: NativeBinding
+    adapterID: string
+    requestID: string
+    result: NativeActionResult
+  }): void {
+    this.assertBinding(input.binding)
+    const host = this.host
+    if (
+      host === undefined ||
+      !same(host.binding, input.binding) ||
+      host.adapterID !== input.adapterID
+    ) {
+      throw new Error("Native completion came from a stale adapter generation")
+    }
+    const record = this.requests.get(input.requestID)
+    if (
+      record === undefined ||
+      record.state !== "delivered" ||
+      this.activeRequest !== input.requestID
+    ) {
+      throw new Error("Native completion does not match the delivered request")
+    }
+    record.state = "completed"
+    record.result = input.result
+    this.activeRequest = undefined
+    if (input.result.delivery === "ambiguous") this.ambiguous = true
+  }
+
+  result(binding: NativeBinding, requestID: string) {
+    this.assertBinding(binding)
+    const record = this.requests.get(requestID)
+    if (record === undefined) return { state: "unknown" as const }
+    if (record.bindingKey !== stable(binding)) {
+      throw new Error("Native request belongs to a different owned trial")
+    }
+    return {
+      state: record.state,
+      ...(record.result === undefined ? {} : { result: record.result }),
+    }
+  }
+
+  detach(binding: NativeBinding, adapterID: string): void {
+    const host = this.requireFreshHost(binding)
+    if (host.adapterID !== adapterID) throw new Error("Native adapter generation is stale")
+    const active =
+      this.activeRequest === undefined ? undefined : this.requests.get(this.activeRequest)
+    if (active?.state === "queued") {
+      active.state = "completed"
+      active.result = {
+        delivery: "not-delivered",
+        message: "Desktop adapter stopped before dispatch",
+      }
+      this.activeRequest = undefined
+    } else if (active?.state === "delivered") {
+      active.state = "completed"
+      active.result = { delivery: "ambiguous", message: "Desktop adapter stopped after dispatch" }
+      this.activeRequest = undefined
+      this.ambiguous = true
+    }
+    this.host = undefined
+  }
+
+  private assertBinding(binding: NativeBinding): void {
+    let endpoint: URL | undefined
+    try {
+      endpoint = new URL(binding.service.url)
+    } catch {
+      throw new Error("Native interaction service endpoint is malformed")
+    }
+    const portMatch = /(?:^|\s)--port(?:=|\s+)(\d+)(?:\s|$)/.exec(binding.service.process.command)
+    if (
+      binding.root !== this.expected.root ||
+      binding.verificationBase !== this.expected.verificationBase ||
+      dirname(resolve(binding.root)) !== this.expected.verificationBase ||
+      binding.service.process.pid !== this.expected.servicePID ||
+      binding.service.version !== this.expected.version ||
+      binding.target.cliVersion !== this.expected.version ||
+      binding.target.effectiveStateHome !== join(this.expected.root, "state") ||
+      binding.candidate.workspace !== binding.target.workspace ||
+      !/^[a-f0-9]{40,64}$/.test(binding.candidate.revision) ||
+      binding.candidate.pluginEntry !==
+        join(resolve(binding.candidate.workspace), "src", "index.ts") ||
+      binding.candidate.guiEntry !==
+        join(resolve(binding.candidate.workspace), "dist", "gui-experimental.cjs") ||
+      !binding.target.desktopBundle.endsWith(".app") ||
+      !binding.desktop.command.includes(
+        join(binding.target.desktopBundle, "Contents", "MacOS", "OpenCode"),
+      ) ||
+      binding.desktop.pid === binding.service.process.pid ||
+      binding.desktop.pid <= 0 ||
+      binding.desktop.startedAt.length === 0 ||
+      binding.service.process.startedAt.length === 0 ||
+      binding.target.bundleID.length === 0 ||
+      binding.target.version.length === 0 ||
+      binding.target.cliPath.length === 0 ||
+      binding.target.serviceRegistrationPath !==
+        join(this.expected.root, "state", "opencode", "service.json") ||
+      endpoint.protocol !== "http:" ||
+      endpoint.hostname !== "127.0.0.1" ||
+      endpoint.username !== "" ||
+      endpoint.password !== "" ||
+      endpoint.pathname !== "/" ||
+      endpoint.search !== "" ||
+      endpoint.hash !== "" ||
+      endpoint.port.length === 0 ||
+      Number(endpoint.port) === 49374 ||
+      portMatch === null ||
+      Number(portMatch[1]) !== Number(endpoint.port) ||
+      binding.service.id.length === 0 ||
+      binding.service.url.length === 0
+    ) {
+      throw new Error("Native interaction binding does not match the owned sidecar")
+    }
+  }
+
+  private requireFreshHost(binding: NativeBinding): HostRecord {
+    this.assertBinding(binding)
+    const host = this.host
+    if (
+      host === undefined ||
+      !same(host.binding, binding) ||
+      this.now() - host.lastSeen > HOST_FRESH_MS
+    ) {
+      throw new Error("Owned Desktop native adapter is not freshly attached")
+    }
+    return host
+  }
+
+  private validateWindows(windows: ReadonlyArray<NativeWindowReference>): NativeWindowReference[] {
+    if (
+      windows.length > 32 ||
+      new Set(windows.map((window) => window.windowID)).size !== windows.length
+    ) {
+      throw new Error("Owned Desktop window inventory is malformed")
+    }
+    return windows.map((window) => ({ ...window }))
+  }
+}
+
+export function registerNativeInteraction(ctx: Pick<Plugin.Context, "rpc" | "app">) {
+  const root = process.env.OPENCODE_DESKTOP_TEST_ROOT
+  if (root === undefined || root.length === 0) return Effect.void
+  const verificationBase = process.env[NATIVE_VERIFICATION_BASE_ENV]
+  if (verificationBase === undefined || dirname(resolve(root)) !== resolve(verificationBase)) {
+    return Effect.die(new Error("Owned native verification base identity is unavailable"))
+  }
+  const broker = new NativeInteractionBroker({
+    root,
+    verificationBase: resolve(verificationBase),
+    servicePID: process.pid,
+    version: ctx.app.version,
+  })
+  return Effect.gen(function* () {
+    yield* ctx.rpc.register(NativeInteraction, {
+      attach: (input) =>
+        Effect.sync(() => {
+          broker.attach(input)
+          return {}
+        }),
+      status: (input) => Effect.sync(() => broker.status(input.binding)),
+      enqueue: (input) => Effect.sync(() => broker.enqueue(input)),
+      poll: (input) => Effect.sync(() => broker.poll(input)),
+      complete: (input) =>
+        Effect.sync(() => {
+          broker.complete(input)
+          return {}
+        }),
+      result: (input) => Effect.sync(() => broker.result(input.binding, input.requestID)),
+      detach: (input) =>
+        Effect.sync(() => {
+          broker.detach(input.binding, input.adapterID)
+          return {}
+        }),
+    })
+  })
+}

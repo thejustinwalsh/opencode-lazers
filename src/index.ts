@@ -21,6 +21,7 @@ import { registerObservability } from "./observability/rpc.ts"
 import { nativeRadarSessionHost } from "./observability/native.ts"
 import { ProgressRecorder } from "./progress/recorder.ts"
 import { registerProgress } from "./progress/native.ts"
+import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
@@ -92,6 +93,7 @@ export default Plugin.define({
         (index) => Effect.sync(() => index.close()),
       )
       yield* registerContextTools(ctx, projectIndex)
+      yield* registerNativeInteraction(ctx).pipe(Effect.orDie)
       yield* registerTaskTools(ctx, repository)
       yield* registerArchitect(ctx)
       const runnerStore = new RunnerStore(repository)

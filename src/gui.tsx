@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { ModelFiles } from "./webgpu/ipc.ts"
 import { setupMain } from "./webgpu/main.ts"
+import { setupNativeInteractionMain } from "./verification/opencode/native-interaction-main.ts"
 import { createInferenceRuntime } from "./webgpu/runtime.ts"
 import { LocalModel } from "./webgpu/contract.ts"
 import {
@@ -47,14 +48,27 @@ export default Plugin.define({
   },
   async main(ctx) {
     const cleanupInference = await setupMain(ctx)
+    let cleanupRadarLayout: Awaited<ReturnType<typeof setupRadarLayoutMain>> | undefined
     try {
-      const cleanupRadarLayout = setupRadarLayoutMain(ctx)
+      cleanupRadarLayout = setupRadarLayoutMain(ctx)
+      const cleanupNativeInteraction = setupNativeInteractionMain(ctx)
       return async () => {
-        await cleanupRadarLayout()
-        if (cleanupInference) await cleanupInference()
+        try {
+          cleanupNativeInteraction?.()
+        } finally {
+          try {
+            await cleanupRadarLayout?.()
+          } finally {
+            if (cleanupInference) await cleanupInference()
+          }
+        }
       }
     } catch (error) {
-      if (cleanupInference) await cleanupInference()
+      try {
+        await cleanupRadarLayout?.()
+      } finally {
+        if (cleanupInference) await cleanupInference()
+      }
       throw error
     }
   },
