@@ -108,7 +108,7 @@ export function createInferenceRuntime(
   let lastUsed = Date.now()
   let autoload = false
   let losses: number[] = []
-  let recoveryBlocked = false
+  let recoveryRetry: { kind: ModelKind; at: number } | undefined
   let nextLoadAttempt = 0
   let loadFailures = 0
   const serviceSignal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
@@ -253,8 +253,8 @@ export function createInferenceRuntime(
 
   const recover = (kind: ModelKind) => {
     if (recovery || disposed || unloading) return
-    losses = losses.filter((time) => Date.now() - time < 60_000)
-    losses.push(Date.now())
+    losses = losses.filter((time) => wallNow() - time < 60_000)
+    losses.push(wallNow())
     recoveryController = new AbortController()
     recoveryKind = kind
     const recoverySignal = AbortSignal.any([
@@ -268,13 +268,13 @@ export function createInferenceRuntime(
         await active?.done
         await models.release()
         setResident(undefined)
+        if (disposed || unloading) return
         if (losses.length > 2) {
-          recoveryBlocked = true
+          recoveryRetry = { kind, at: wallNow() + 60_000 }
           throw new Error(
-            "Repeated GPU loss; automatic recovery stopped after two attempts in one minute. A new request can try again.",
+            "Repeated GPU loss; automatic recovery is cooling down for one minute. A new request can try sooner.",
           )
         }
-        if (disposed || unloading) return
         setDetail("GPU device lost; recovering from verified disk cache")
         await ensureModel(kind, recoverySignal)
         ready()
@@ -314,7 +314,7 @@ export function createInferenceRuntime(
     try {
       if (!featureEnabled(features(), job.feature))
         throw Error("This local inference feature is turned off")
-      recoveryBlocked = false
+      recoveryRetry = undefined
       await traceStage("loading")
       await ensureModel(job.mode === "systemone" ? "decision" : "chat", controller.signal)
       setState("busy")
@@ -437,6 +437,7 @@ export function createInferenceRuntime(
 
   const unload = (): Promise<void> => {
     autoload = false
+    recoveryRetry = undefined
     if (unloading) return unloading
     const operation = Promise.resolve().then(async () => {
       try {
@@ -604,11 +605,25 @@ export function createInferenceRuntime(
       }
       if (
         owner &&
+        recoveryRetry &&
+        wallNow() >= recoveryRetry.at &&
         !active &&
         !initializing &&
         !switching &&
         !recovery &&
-        !recoveryBlocked &&
+        !models.isTainted()
+      ) {
+        const kind = recoveryRetry.kind
+        recoveryRetry = undefined
+        recover(kind)
+      }
+      if (
+        owner &&
+        !active &&
+        !initializing &&
+        !switching &&
+        !recovery &&
+        !recoveryRetry &&
         !models.isTainted() &&
         (!models.current() ||
           (models.current() === "chat" && !needsChat(features())) ||

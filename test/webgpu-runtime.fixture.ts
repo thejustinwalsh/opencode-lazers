@@ -458,7 +458,7 @@ try {
     )
   }
   assert.equal(runtime.state(), "error")
-  assert.match(runtime.detail(), /recovery stopped/)
+  assert.match(runtime.detail(), /cooling down/)
   const afterCircuit = releases
   await Bun.sleep(700)
   assert.equal(
@@ -467,7 +467,21 @@ try {
     "The ordinary poll loop must not bypass the recovery circuit breaker",
   )
   assert.equal(releases, afterCircuit)
-  assert.equal((await decision()).ok, true, "An explicit new request may attempt recovery")
+  wallNow += 60_000
+  timerTick()
+  await until(() => runtime.state() === "ready")
+  assert.equal(allocations, 1, "Repeated loss retries after cooling down without new demand")
+  assert.equal(broker.demand().requested, false)
+  assert.equal((await decision()).ok, true, "The recovered model must serve a fresh request")
+  for (let loss = 0; loss < 3 && runtime.state() !== "error"; loss++) {
+    const before = releases
+    runtime.simulateDeviceLoss()
+    await until(
+      () => releases > before && (runtime.state() === "ready" || runtime.state() === "error"),
+    )
+  }
+  assert.equal(runtime.state(), "error")
+  assert.equal((await decision()).ok, true, "An explicit new request may recover before cooldown")
 
   const gate = Promise.withResolvers<void>()
   cleanupGate = gate.promise
