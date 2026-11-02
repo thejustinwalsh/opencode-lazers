@@ -92,6 +92,15 @@ type TimingEndpoint = {
   meaning: string
 }
 
+type ExecutionEvidence = {
+  status: string
+  source: string
+  sourceType: string
+  meaning: string
+  phase: number
+  conflict?: true
+}
+
 const EPOCH_MILLIS = "unix-epoch-ms" as const
 const timingSourceRank: Record<string, number> = {
   "native-event": 3,
@@ -209,7 +218,48 @@ function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
   return merged
 }
 
-function mergeObservations(previous: unknown, incoming: unknown): JsonObject[] {
+function observationIdentity(item: JsonObject): string {
+  return (
+    text(item.eventID) ??
+    `${text(item.source) ?? "unknown"}:${text(item.eventType) ?? "unknown"}:${number(item.at) ?? "unknown"}`
+  )
+}
+
+function observationPhase(item: JsonObject): number {
+  const explicit = number(item.phase)
+  if (explicit !== undefined && Number.isInteger(explicit) && explicit >= 0) return explicit
+  const eventType = text(item.eventType) ?? ""
+  if (eventType === "session.tool.success" || eventType === "session.tool.failed") return 2
+  if (eventType === "session.tool.called") return 1
+  return 0
+}
+
+function preferObservation(kind: ProgressKind, previous: JsonObject, incoming: JsonObject) {
+  const oldPriority = sourcePriority(previous)
+  const nextPriority = sourcePriority(incoming)
+  if (oldPriority !== nextPriority) return oldPriority > nextPriority ? previous : incoming
+
+  const oldPhase = observationPhase(previous)
+  const nextPhase = observationPhase(incoming)
+  if (oldPhase !== nextPhase) return oldPhase > nextPhase ? previous : incoming
+
+  const oldStatus = text(previous.status)
+  const nextStatus = text(incoming.status)
+  if (oldStatus && nextStatus) {
+    const oldRank = statusRank(kind, oldStatus)
+    const nextRank = statusRank(kind, nextStatus)
+    if (oldRank !== nextRank) return oldRank > nextRank ? previous : incoming
+    const terminalRank = kind === "tool" ? 3 : kind === "step" || kind === "shell" ? 2 : -1
+    if (oldRank === terminalRank && oldStatus !== nextStatus) {
+      if (oldStatus === "failed") return previous
+      if (nextStatus === "failed") return incoming
+    }
+  }
+
+  return JSON.stringify(previous).localeCompare(JSON.stringify(incoming)) <= 0 ? previous : incoming
+}
+
+function mergeObservations(previous: unknown, incoming: unknown, kind: ProgressKind): JsonObject[] {
   const values = [
     ...(Array.isArray(previous) ? previous : []),
     ...(Array.isArray(incoming) ? incoming : []),
@@ -218,12 +268,9 @@ function mergeObservations(previous: unknown, incoming: unknown): JsonObject[] {
   for (const value of values) {
     const item = object(value)
     if (!item) continue
-    const identity =
-      text(item.eventID) ??
-      `${text(item.source) ?? "unknown"}:${text(item.eventType) ?? "unknown"}:${number(item.at) ?? "unknown"}`
+    const identity = observationIdentity(item)
     const prior = unique.get(identity)
-    if (!prior || JSON.stringify(item).localeCompare(JSON.stringify(prior)) < 0)
-      unique.set(identity, item)
+    unique.set(identity, prior ? preferObservation(kind, prior, item) : item)
   }
   return [...unique.values()].slice(-25)
 }
@@ -368,40 +415,134 @@ function mergeTiming(previousValue: unknown, incomingValue: unknown): JsonObject
   return { unit: EPOCH_MILLIS, endpoints }
 }
 
-function mergeExecution(previousValue: unknown, incomingValue: unknown): JsonObject | undefined {
+function executionPhase(value: JsonObject, status: string | undefined, legacyConflict = false) {
+  const explicit = number(value.phase)
+  if (explicit !== undefined && Number.isInteger(explicit) && explicit >= 0) return explicit
+  const sourceType = text(value.sourceType) ?? ""
+  if (sourceType === "session.tool.success" || sourceType === "session.tool.failed") return 2
+  if (sourceType === "session.tool.called") return 1
+  if (legacyConflict) return 2
+  if (status === "succeeded" || status === "failed") return 2
+  if (status === "running" || status === "not-executed") return 1
+  return 0
+}
+
+function executionEvidence(value: unknown, enclosingStatus?: string): ExecutionEvidence[] {
+  const execution = object(value)
+  if (!execution) return []
+  const existingEvidence = Array.isArray(execution.evidence)
+    ? execution.evidence.flatMap((item) => {
+        const fact = object(item)
+        const status = text(fact?.status)
+        if (!fact || !status) return []
+        const conflict = fact.conflict === true
+        return [
+          {
+            status,
+            source: text(fact.source) ?? "unknown",
+            sourceType: text(fact.sourceType) ?? "unknown",
+            meaning: text(fact.meaning) ?? "",
+            phase: executionPhase(fact, status, conflict),
+            ...(conflict ? { conflict: true as const } : {}),
+          },
+        ]
+      })
+    : []
+  if (existingEvidence.length) return existingEvidence
+
+  const status = text(execution.status)
+  const source = text(execution.source) ?? "unknown"
+  const sourceType = text(execution.sourceType) ?? "unknown"
+  const legacyConflict =
+    execution.conflict === true ||
+    (status === "unknown" && (text(execution.meaning) ?? "").includes("conflicting"))
+  if (!status || (status === "unknown" && !legacyConflict)) return []
+  return [
+    {
+      status,
+      source,
+      sourceType,
+      meaning: text(execution.meaning) ?? "",
+      // Older recovery conflicts did not retain their phase or candidates.
+      // Keep those conflicts conservative until higher-authority evidence arrives.
+      phase: executionPhase(execution, enclosingStatus, legacyConflict),
+      ...(legacyConflict ? { conflict: true as const } : {}),
+    },
+  ]
+}
+
+function isLegacyExecutionConflict(value: unknown): boolean {
+  const execution = object(value)
+  const status = text(execution?.status)
+  return Boolean(
+    execution &&
+    !Array.isArray(execution.evidence) &&
+    (execution.conflict === true ||
+      (status === "unknown" && (text(execution.meaning) ?? "").includes("conflicting"))),
+  )
+}
+
+function executionRank(value: ExecutionEvidence): [number, number] {
+  return [sourcePriority(value), value.phase]
+}
+
+function compareExecutionRank(left: ExecutionEvidence, right: ExecutionEvidence) {
+  const [leftPriority, leftPhase] = executionRank(left)
+  const [rightPriority, rightPhase] = executionRank(right)
+  return leftPriority - rightPriority || leftPhase - rightPhase
+}
+
+function canonicalExecutionEvidence(values: ExecutionEvidence[]) {
+  const unique = new Map<string, ExecutionEvidence>()
+  for (const value of values) unique.set(JSON.stringify(value), value)
+  return [...unique.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, value]) => value)
+}
+
+function mergeExecution(
+  previousValue: unknown,
+  incomingValue: unknown,
+  previousStatus?: string,
+  incomingStatus?: string,
+): JsonObject | undefined {
   const previous = object(previousValue)
-  const incoming = object(incomingValue)
-  if (!previous) return incoming
-  if (!incoming) return previous
-  const oldState = text(previous.status) ?? "unknown"
-  const nextState = text(incoming.status) ?? "unknown"
-  const oldPriority = sourcePriority(previous)
-  const nextPriority = sourcePriority(incoming)
-  if (oldPriority > nextPriority) return previous
-  if (nextPriority > oldPriority) return incoming
-  const phase = (value: JsonObject) => {
-    const sourceType = text(value.sourceType) ?? ""
-    if (sourceType === "session.tool.success" || sourceType === "session.tool.failed") return 2
-    if (sourceType === "session.tool.called") return 1
-    return 0
+  const previousEvidence = executionEvidence(previousValue, previousStatus)
+  const incomingEvidence = executionEvidence(incomingValue, incomingStatus)
+  if (
+    previous &&
+    isLegacyExecutionConflict(previousValue) &&
+    previousEvidence[0] &&
+    !incomingEvidence.some((candidate) => compareExecutionRank(candidate, previousEvidence[0]!) > 0)
+  )
+    return previous
+
+  const values = canonicalExecutionEvidence([...previousEvidence, ...incomingEvidence])
+  if (!values.length) return undefined
+
+  const highest = values.reduce((winner, candidate) =>
+    compareExecutionRank(candidate, winner) > 0 ? candidate : winner,
+  )
+  const evidence = values.filter((candidate) => compareExecutionRank(candidate, highest) === 0)
+  const orderedEvidence = canonicalExecutionEvidence(evidence)
+  const conflict =
+    orderedEvidence.some((candidate) => candidate.conflict === true) ||
+    new Set(orderedEvidence.map((candidate) => candidate.status)).size > 1
+  if (conflict) {
+    const canonical = orderedEvidence[0]!
+    return {
+      status: "unknown",
+      source: canonical.source,
+      sourceType: canonical.sourceType,
+      phase: canonical.phase,
+      meaning: "Execution state is conflicting at equal source authority and phase",
+      conflict: true,
+      evidence: orderedEvidence,
+    }
   }
-  const oldPhase = phase(previous)
-  const nextPhase = phase(incoming)
-  if (oldPhase > nextPhase) return previous
-  if (nextPhase > oldPhase) return incoming
-  if (oldState === nextState) {
-    return (text(previous.sourceType) ?? "").localeCompare(text(incoming.sourceType) ?? "") <= 0
-      ? previous
-      : incoming
-  }
-  if (oldState === "unknown") return incoming
-  if (nextState === "unknown") return previous
-  return {
-    status: "unknown",
-    source: text(previous.source) ?? text(incoming.source),
-    sourceType: [text(previous.sourceType) ?? "", text(incoming.sourceType) ?? ""].toSorted()[0],
-    meaning: "Execution state is conflicting in equally authoritative native observations",
-  }
+
+  const canonical = orderedEvidence[0]!
+  return { ...canonical, evidence: orderedEvidence }
 }
 
 function mergeFactPayload(
@@ -410,7 +551,7 @@ function mergeFactPayload(
   incoming: JsonObject,
 ): JsonObject {
   const merged = mergeObjects(previous, incoming)
-  const observations = mergeObservations(previous.observations, incoming.observations)
+  const observations = mergeObservations(previous.observations, incoming.observations, kind)
   if (observations.length) merged.observations = observations
   if (kind === "tool" || kind === "step" || kind === "shell") {
     const status = mergeStatus(kind, previous, incoming)
@@ -421,7 +562,12 @@ function mergeFactPayload(
   }
   const timing = mergeTiming(previous.timing, incoming.timing)
   if (timing) merged.timing = timing
-  const execution = mergeExecution(previous.execution, incoming.execution)
+  const execution = mergeExecution(
+    previous.execution,
+    incoming.execution,
+    text(previous.status),
+    text(incoming.status),
+  )
   if (execution) merged.execution = execution
   return merged
 }
@@ -557,6 +703,8 @@ export class ProgressRecorder {
         source: fact.source,
         sourceType: fact.sourceType ?? fact.kind,
       }
+    const execution = mergeExecution(undefined, factPayload.execution, text(factPayload.status))
+    if (execution) factPayload.execution = execution
     const payload = JSON.stringify(factPayload)
     const insertedAt = Date.now()
     const inserted = db
@@ -793,6 +941,12 @@ export class ProgressRecorder {
           status: data.executed ? "executed" : "not-executed",
           source: "native-event",
           sourceType: type,
+          phase:
+            type === "session.tool.success" || type === "session.tool.failed"
+              ? 2
+              : type === "session.tool.called"
+                ? 1
+                : 0,
           meaning: "OpenCode executed flag; a tool call is not execution proof",
         }
       const toolTiming = factTiming({
@@ -832,6 +986,12 @@ export class ProgressRecorder {
           unit: EPOCH_MILLIS,
           meaning: "Native event creation time; not a substitute for an absent tool endpoint",
           status: payload.status,
+          phase:
+            type === "session.tool.success" || type === "session.tool.failed"
+              ? 2
+              : type === "session.tool.called"
+                ? 1
+                : 0,
           messageID: messageID ?? null,
           callID,
           ...(type === "session.tool.input.started" && text(data.name)
@@ -1330,6 +1490,15 @@ export class ProgressRecorder {
               ? "running"
               : "unknown"
     const partTime = object(part.time)
+    const phase =
+      status === "completed" || status === "error"
+        ? 2
+        : status === "running" ||
+            status === "streaming" ||
+            dateMillis(partTime?.ran) !== undefined ||
+            executed !== undefined
+          ? 1
+          : 0
     const timing = factTiming({
       inputAt: timedEndpoint(
         partTime?.created,
@@ -1362,6 +1531,7 @@ export class ProgressRecorder {
               status: executed ? "executed" : "not-executed",
               source: "recovery",
               sourceType: "retained-assistant-tool.executed",
+              phase,
               meaning: "Retained explicit executed flag; timing alone is not execution proof",
             },
           }
@@ -1375,6 +1545,7 @@ export class ProgressRecorder {
           unit: EPOCH_MILLIS,
           meaning: "Retained tool state; timing endpoints are separate",
           status: projectedStatus,
+          phase,
           messageID,
           ...(text(part.name) ? { tool: safeText(text(part.name)!, stats, 160) } : {}),
         },

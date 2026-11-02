@@ -7,6 +7,76 @@ import { makeFixture, firstAttemptID, secondAttemptID } from "../../test/traject
 import { ProgressRecorder } from "./recorder.ts"
 
 const workerSession = "ses-failed"
+type RetainedToolState = "running" | "completed"
+type StoredToolPayload = {
+  status?: unknown
+  execution?: {
+    status?: unknown
+    source?: unknown
+    sourceType?: unknown
+    phase?: unknown
+    conflict?: unknown
+    evidence?: { status: string }[]
+  }
+  timing?: { endpoints?: Record<string, unknown> }
+}
+
+function permutations<T extends string>(values: T[]): T[][] {
+  if (!values.length) return [[]]
+  const unique = [...new Set(values)]
+  return unique.flatMap((value) => {
+    let removed = false
+    const rest = values.filter((candidate) => {
+      if (!removed && candidate === value) {
+        removed = true
+        return false
+      }
+      return true
+    })
+    return permutations(rest).map((suffix) => [value, ...suffix])
+  })
+}
+
+function retainedToolMessage(
+  messageID: string,
+  callID: string,
+  stateStatus: RetainedToolState,
+  executed: boolean,
+) {
+  const completed = stateStatus === "completed"
+  return {
+    id: messageID,
+    type: "assistant",
+    time: { created: 100 },
+    content: [
+      {
+        type: "tool",
+        id: callID,
+        name: "Bash",
+        executed,
+        time: { created: 90, ran: 200, ...(completed ? { completed: 300 } : {}) },
+        state: {
+          status: stateStatus,
+          input: { command: "private" },
+          ...(completed ? { content: [{ type: "text", text: "done" }] } : {}),
+        },
+      },
+    ],
+  }
+}
+
+function stableToolRow(row: ReturnType<RunnerStore["progressFacts"]>[number]) {
+  return {
+    seq: row.seq,
+    at: row.at,
+    recorded_at: row.recorded_at,
+    call_id: row.call_id,
+    message_id: row.message_id,
+    sources_json: row.sources_json,
+    event_ids_json: row.event_ids_json,
+    payload: row.payload,
+  }
+}
 
 function toolEvent(type: string, id: string, data: Record<string, unknown>, created: number) {
   return {
@@ -857,6 +927,196 @@ test("native timing endpoints converge across hook, live, and retained recovery 
     reopened?.close()
     numericFixture.close()
     decodedFixture.close()
+  }
+})
+
+test("retained terminal execution wins over stale snapshots in every replay order", () => {
+  const fixture = makeFixture()
+  let reopened: TaskRepository | undefined
+  const originalNow = Date.now
+  let clock = 10_000
+  const sequences = permutations([
+    "running",
+    "completed",
+    "completed",
+    "running",
+    "running",
+  ] as RetainedToolState[])
+  const stableByCallID = new Map<string, ReturnType<typeof stableToolRow>>()
+  try {
+    Date.now = () => clock++
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-terminal-${index}`
+      const messageID = `retained-terminal-message-${index}`
+      let terminal: ReturnType<typeof stableToolRow> | undefined
+      for (const state of sequence) {
+        recorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, state, state === "completed"),
+        ])
+        const rows = fixture.store.progressFacts([firstAttemptID])
+        const matchingRows = rows.filter((row) => row.call_id === callID)
+        expect(matchingRows).toHaveLength(1)
+        const row = matchingRows[0]!
+        if (!terminal && state === "completed") {
+          const payload = JSON.parse(row.payload) as StoredToolPayload
+          expect(payload.execution).toMatchObject({
+            status: "executed",
+            source: "recovery",
+            phase: 2,
+          })
+          expect(payload.status).toBe("succeeded")
+          expect(payload.timing?.endpoints?.completedAt).toMatchObject({
+            at: 300,
+            source: "recovery",
+          })
+          terminal = stableToolRow(row)
+        } else if (terminal) {
+          expect(stableToolRow(row)).toEqual(terminal)
+        }
+      }
+      expect(terminal).toBeDefined()
+      stableByCallID.set(callID, terminal!)
+    }
+
+    const dbPath = fixture.repository.path
+    const projectDirectory = fixture.repository.projectDirectory
+    fixture.repository.close()
+    reopened = new TaskRepository(dbPath, projectDirectory)
+    const reopenedStore = new RunnerStore(reopened)
+    const reopenedRecorder = new ProgressRecorder(reopenedStore, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-terminal-${index}`
+      const messageID = `retained-terminal-message-${index}`
+      for (const state of sequence)
+        reopenedRecorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, state, state === "completed"),
+        ])
+      const row = reopenedStore
+        .progressFacts([firstAttemptID])
+        .find((item) => item.call_id === callID)!
+      expect(stableToolRow(row)).toEqual(stableByCallID.get(callID)!)
+    }
+  } finally {
+    Date.now = originalNow
+    reopened?.close()
+    fixture.close()
+  }
+})
+
+test("equally authoritative retained execution conflicts survive permutations and reopen", () => {
+  const fixture = makeFixture()
+  let reopened: TaskRepository | undefined
+  const originalNow = Date.now
+  let clock = 20_000
+  const sequences = permutations(["not-executed", "executed", "executed", "not-executed"])
+  const stableByCallID = new Map<string, ReturnType<typeof stableToolRow>>()
+  try {
+    Date.now = () => clock++
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-conflict-${index}`
+      const messageID = `retained-conflict-message-${index}`
+      const seen = new Set<string>()
+      let conflict: ReturnType<typeof stableToolRow> | undefined
+      for (const executedValue of sequence) {
+        seen.add(executedValue)
+        recorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, "running", executedValue === "executed"),
+        ])
+        const rows = fixture.store.progressFacts([firstAttemptID])
+        const row = rows.find((item) => item.call_id === callID)!
+        if (seen.size === 2 && !conflict) {
+          const payload = JSON.parse(row.payload) as StoredToolPayload
+          expect(payload.execution).toMatchObject({
+            status: "unknown",
+            source: "recovery",
+            sourceType: "retained-assistant-tool.executed",
+            phase: 1,
+            conflict: true,
+          })
+          const evidence = payload.execution?.evidence ?? []
+          expect(evidence.map((item) => item.status).sort()).toEqual(["executed", "not-executed"])
+          conflict = stableToolRow(row)
+        } else if (conflict) {
+          expect(stableToolRow(row)).toEqual(conflict)
+        }
+      }
+      expect(conflict).toBeDefined()
+      stableByCallID.set(callID, conflict!)
+    }
+
+    const legacyCallID = "retained-legacy-conflict"
+    const legacyMessageID = "retained-legacy-conflict-message"
+    for (const executed of [false, true])
+      recorder.reconcileMessages(workerSession, [
+        retainedToolMessage(legacyMessageID, legacyCallID, "running", executed),
+      ])
+    const conflictedRow = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === legacyCallID)!
+    const conflictedPayload = JSON.parse(conflictedRow.payload) as Record<string, unknown>
+    const legacyPayload = {
+      ...conflictedPayload,
+      execution: {
+        status: "unknown",
+        source: "recovery",
+        sourceType: "retained-assistant-tool.executed",
+        meaning: "Execution state is conflicting in equally authoritative native observations",
+      },
+    }
+    fixture.store.atomic((db) =>
+      db
+        .query("UPDATE runner_progress SET payload=? WHERE seq=?")
+        .run(JSON.stringify(legacyPayload), conflictedRow.seq),
+    )
+    const legacyBeforeReplay = stableToolRow(
+      fixture.store.progressFacts([firstAttemptID]).find((row) => row.call_id === legacyCallID)!,
+    )
+    for (const executed of [false, true, true, false])
+      recorder.reconcileMessages(workerSession, [
+        retainedToolMessage(legacyMessageID, legacyCallID, "running", executed),
+      ])
+    const legacyAfterReplay = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === legacyCallID)!
+    expect(stableToolRow(legacyAfterReplay)).toEqual(legacyBeforeReplay)
+    expect(JSON.parse(legacyAfterReplay.payload).execution).toMatchObject({
+      status: "unknown",
+      meaning: "Execution state is conflicting in equally authoritative native observations",
+    })
+    stableByCallID.set(legacyCallID, legacyBeforeReplay)
+
+    const dbPath = fixture.repository.path
+    const projectDirectory = fixture.repository.projectDirectory
+    fixture.repository.close()
+    reopened = new TaskRepository(dbPath, projectDirectory)
+    const reopenedStore = new RunnerStore(reopened)
+    const reopenedRecorder = new ProgressRecorder(reopenedStore, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-conflict-${index}`
+      const messageID = `retained-conflict-message-${index}`
+      for (const executedValue of sequence)
+        reopenedRecorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, "running", executedValue === "executed"),
+        ])
+      const row = reopenedStore
+        .progressFacts([firstAttemptID])
+        .find((item) => item.call_id === callID)!
+      expect(stableToolRow(row)).toEqual(stableByCallID.get(callID)!)
+    }
+    for (const executed of [false, true])
+      reopenedRecorder.reconcileMessages(workerSession, [
+        retainedToolMessage(legacyMessageID, legacyCallID, "running", executed),
+      ])
+    const legacyReopenedRow = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((item) => item.call_id === legacyCallID)!
+    expect(stableToolRow(legacyReopenedRow)).toEqual(stableByCallID.get(legacyCallID)!)
+  } finally {
+    Date.now = originalNow
+    reopened?.close()
+    fixture.close()
   }
 })
 
