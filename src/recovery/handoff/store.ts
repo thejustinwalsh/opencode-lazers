@@ -79,6 +79,7 @@ type SourceRow = {
 
 type PayloadRow = { payload: string }
 type RoundRow = { payload: string; outcome_json: string | null }
+type ReviewRoundPayloadRow = { payload: string }
 type EventRow = {
   sequence: number
   request_id: string
@@ -86,6 +87,13 @@ type EventRow = {
   record_id: string
   data: string
   created_at: string
+}
+
+export type HandoffReviewContext = {
+  request: HandoffRequestRecordType
+  draft: HandoffDraftRecordType
+  reviewID: string | null
+  rounds: HandoffReviewRoundRecordType[]
 }
 
 const RequestInputWithSource = HandoffRequestInput
@@ -357,6 +365,122 @@ export class HandoffStore {
     })
   }
 
+  /** Read the private, source-bound review context and any matching durable chain. */
+  readReviewContext(
+    input: {
+      requestID: string
+      draftVersion: number
+      reviewID?: string
+      effectiveContractVersion?: string
+      effectiveContract?: unknown
+      checkVersion?: string
+      checks?: unknown
+    },
+    reviewerInput: unknown,
+  ): HandoffReviewContext {
+    const requestID = HandoffRequestInput.shape.requestID.parse(input.requestID)
+    const draftVersion = HandoffReviewReservationInput.shape.draftVersion.parse(input.draftVersion)
+    const reviewID =
+      input.reviewID === undefined
+        ? undefined
+        : HandoffReviewReservationInput.shape.reviewID.parse(input.reviewID)
+    const policyInputCount = [
+      input.effectiveContractVersion,
+      input.effectiveContract,
+      input.checkVersion,
+      input.checks,
+    ].filter((value) => value !== undefined).length
+    if (policyInputCount !== 0 && policyInputCount !== 4)
+      throw new Error("Review contract and check identity must be supplied together")
+    const effectiveContractVersion =
+      input.effectiveContractVersion === undefined
+        ? undefined
+        : HandoffReviewReservationInput.shape.effectiveContractVersion.parse(
+            input.effectiveContractVersion,
+          )
+    const effectiveContract =
+      input.effectiveContract === undefined
+        ? undefined
+        : JsonObjectSchema.parse(input.effectiveContract)
+    const checkVersion =
+      input.checkVersion === undefined
+        ? undefined
+        : HandoffReviewReservationInput.shape.checkVersion.parse(input.checkVersion)
+    const checks =
+      input.checks === undefined
+        ? undefined
+        : HandoffReviewReservationInput.shape.checks.parse(input.checks)
+    const reviewer = HandoffActor.parse(reviewerInput)
+
+    return this.repository.atomic((db) => {
+      const request = this.requireRequest(db, requestID)
+      this.assertReviewAuthority(db, request, reviewer)
+      const draftRow = this.draftRow(db, requestID, draftVersion)
+      if (!draftRow) throw new Error("Draft version is not attached to this request")
+      const draft = HandoffDraftRecord.parse(JSON.parse(draftRow.payload))
+      if (draft.requestID !== requestID || canonical(draft.source) !== canonical(request.source))
+        throw new Error("Draft source attachment does not match the current handoff request")
+
+      const headers = db
+        .query<ReviewHeaderRow, [string, string]>(
+          `SELECT * FROM recovery_handoff_reviews WHERE project_directory=? AND request_id=?`,
+        )
+        .all(this.repository.projectDirectory, requestID)
+      const requestedHeader =
+        policyInputCount > 0 && reviewID !== undefined
+          ? db
+              .query<ReviewHeaderRow, [string, string]>(
+                `SELECT * FROM recovery_handoff_reviews WHERE project_directory=? AND review_id=?`,
+              )
+              .get(this.repository.projectDirectory, reviewID)
+          : undefined
+      if (requestedHeader && requestedHeader.request_id !== requestID)
+        throw new Error("Review ID is already attached to another handoff request")
+      if (
+        policyInputCount &&
+        requestedHeader &&
+        (canonical(JSON.parse(requestedHeader.owner_json)) !== canonical(reviewer) ||
+          requestedHeader.contract_version !== effectiveContractVersion ||
+          requestedHeader.contract_json !== canonical(effectiveContract) ||
+          requestedHeader.check_version !== checkVersion ||
+          requestedHeader.checks_json !== canonical(checks))
+      )
+        throw new Error("Review owner or effective contract/check version is stale")
+
+      const matching = policyInputCount
+        ? headers.filter(
+            (header) =>
+              canonical(JSON.parse(header.owner_json)) === canonical(reviewer) &&
+              header.contract_version === effectiveContractVersion &&
+              header.contract_json === canonical(effectiveContract!) &&
+              header.check_version === checkVersion &&
+              header.checks_json === canonical(checks!),
+          )
+        : []
+      const preferred =
+        (reviewID ? matching.find((header) => header.review_id === reviewID) : undefined) ??
+        matching.sort((left, right) => left.created_at.localeCompare(right.created_at))[0]
+      const chainIDs = new Set(matching.map((header) => header.review_id))
+      const rounds = chainIDs.size
+        ? db
+            .query<ReviewRoundPayloadRow, [string, string]>(
+              `SELECT payload FROM recovery_handoff_rounds
+               WHERE project_directory=? AND request_id=? ORDER BY rowid`,
+            )
+            .all(this.repository.projectDirectory, requestID)
+            .map((row) => HandoffReviewRoundRecord.parse(JSON.parse(row.payload)))
+            .filter((round) => chainIDs.has(round.reviewID))
+            .sort((left, right) => left.round - right.round)
+        : []
+      return {
+        request,
+        draft,
+        reviewID: preferred?.review_id ?? (policyInputCount ? (reviewID ?? null) : null),
+        rounds,
+      }
+    })
+  }
+
   /** Reserve exact source/evidence/contract/check versions before asynchronous review. */
   reserveRound(input: unknown, reviewerInput: unknown): Receipt<HandoffReviewRoundRecordType> {
     const reservation = HandoffReviewReservationInput.parse(input)
@@ -369,6 +493,12 @@ export class HandoffStore {
       this.assertReviewAuthority(db, request, reviewer)
       const draft = this.draftRow(db, reservation.requestID, reservation.draftVersion)
       if (!draft) throw new Error("Draft version is not attached to this request")
+      const draftRecord = HandoffDraftRecord.parse(JSON.parse(draft.payload))
+      if (
+        draftRecord.requestID !== reservation.requestID ||
+        canonical(draftRecord.source) !== canonical(request.source)
+      )
+        throw new Error("Draft source attachment does not match the current handoff request")
 
       const review = db
         .query<ReviewHeaderRow, [string, string]>(
@@ -404,6 +534,43 @@ export class HandoffStore {
               message: "Review round already has a different reservation",
             }
       }
+
+      const chainHeaders = db
+        .query<ReviewHeaderRow, [string, string]>(
+          `SELECT * FROM recovery_handoff_reviews WHERE project_directory=? AND request_id=?`,
+        )
+        .all(this.repository.projectDirectory, reservation.requestID)
+        .filter(
+          (header) =>
+            canonical(JSON.parse(header.owner_json)) === canonical(reviewer) &&
+            header.contract_version === reservation.effectiveContractVersion &&
+            header.contract_json === canonical(contract) &&
+            header.check_version === reservation.checkVersion &&
+            header.checks_json === canonical(checks),
+        )
+      const chainIDs = new Set(chainHeaders.map((header) => header.review_id))
+      if (chainIDs.size && !chainIDs.has(reservation.reviewID))
+        return {
+          status: "conflict" as const,
+          message: `Review chain already belongs to review ${chainHeaders[0]!.review_id}`,
+        }
+      const existingRounds = chainIDs.size
+        ? db
+            .query<ReviewRoundPayloadRow, [string, string]>(
+              `SELECT payload FROM recovery_handoff_rounds
+               WHERE project_directory=? AND request_id=? ORDER BY rowid`,
+            )
+            .all(this.repository.projectDirectory, reservation.requestID)
+            .map((row) => HandoffReviewRoundRecord.parse(JSON.parse(row.payload)))
+            .filter((round) => chainIDs.has(round.reviewID))
+        : []
+      const expectedRound =
+        existingRounds.reduce((maximum, round) => Math.max(maximum, round.round), 0) + 1
+      if (reservation.round !== expectedRound)
+        return {
+          status: "conflict" as const,
+          message: `Review chain expected round ${expectedRound}, not ${reservation.round}`,
+        }
 
       if (!review) {
         db.query(
@@ -1050,8 +1217,8 @@ export class HandoffStore {
   private assertCurrentRequest(db: Database, request: HandoffRequestRecordType): void {
     const source = request.source
     const currentSource = db
-      .query<{ id: string }, (string | number)[]>(
-        `SELECT a.id FROM runner_attempts a
+      .query<{ id: string; task_body: string }, (string | number)[]>(
+        `SELECT a.id,t.body AS task_body FROM runner_attempts a
          JOIN runner_plans p ON p.id=a.plan_id AND p.project_directory=?
          JOIN runner_nodes n ON n.plan_id=p.id AND n.task_id=a.task_id
          JOIN tasks t ON t.id=n.task_id AND t.project_directory=p.project_directory
@@ -1069,6 +1236,9 @@ export class HandoffStore {
       )
     if (!currentSource)
       throw new Error("Handoff source attempt is stale or no longer project-owned")
+    const currentTask = TaskSpecSchema.parse(JSON.parse(currentSource.task_body))
+    if (canonical(currentTask) !== canonical(source.task))
+      throw new Error("Handoff source task contract is stale")
     const generation = db
       .query<{ generation: number }, [string, string]>(
         `SELECT COALESCE(MAX(request_generation),0) AS generation
@@ -1203,6 +1373,7 @@ type ReviewHeaderRow = {
   contract_json: string
   check_version: string
   checks_json: string
+  created_at: string
 }
 
 type FinalizationRow = { report_payload: string; notification_payload: string }
