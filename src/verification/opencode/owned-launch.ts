@@ -31,6 +31,12 @@ export type ProcessIdentity = {
   command: string
 }
 
+export type SpawnedService = {
+  pid: number
+  command: string
+  spawnedAt: number
+}
+
 export type ProcessObservation =
   | { kind: "authoritatively-absent" }
   | { kind: "live"; identity: ProcessIdentity }
@@ -113,6 +119,7 @@ export type OwnedLaunchManifest = {
     serviceRegistrationPath: string
   }
   protocolHandlerBaseline: string | null
+  pendingService?: SpawnedService
   service?: {
     process: ProcessIdentity
     id: string
@@ -327,7 +334,12 @@ export type LaunchDependencies = {
     existingRegistration: boolean
     effectiveEnvironment: ReadonlyMap<string, string>
   }>
-  startService(input: { root: string; cliPath: string; version: string }): Promise<ProcessIdentity>
+  startService(input: {
+    root: string
+    cliPath: string
+    version: string
+    onSpawn(process: SpawnedService): Promise<void>
+  }): Promise<ProcessIdentity>
   waitForService(input: { root: string; process: ProcessIdentity; version: string }): Promise<{
     registration: ServiceRegistration
     health: { pid: number; version: string }
@@ -418,7 +430,12 @@ export async function startOwnedDesktop(
         root: manifest.root,
         cliPath: manifest.target.cliPath,
         version: manifest.target.cliVersion,
+        onSpawn: async (process) => {
+          manifest!.pendingService = process
+          await dependencies.writeManifest(manifest!)
+        },
       })
+      delete manifest.pendingService
       manifest.service = {
         process: serviceProcess,
         id: "",
@@ -530,6 +547,7 @@ export async function startOwnedDesktop(
 export type CleanupDependencies = Pick<LaunchDependencies, "writeManifest"> & {
   verifyAndStopDesktop(process: ProcessIdentity): Promise<OwnedCleanupOutcome>
   verifyAndStopService(manifest: OwnedLaunchManifest): Promise<OwnedCleanupOutcome>
+  observeProcess?(pid: number): ProcessObservation
   protocolHandler(): Promise<string | null>
   restoreProtocolHandler?(handlerID: string): Promise<void>
   effectiveRegistrationPath?(root: string): Promise<string>
@@ -566,6 +584,21 @@ export async function cleanupOwnedDesktop(
     const serviceResult = await dependencies.verifyAndStopService(manifest)
     const issue = cleanupIssueForOutcome("service", serviceResult)
     if (issue !== undefined) return block(issue)
+  }
+  if (manifest.pendingService !== undefined) {
+    const spawned = manifest.pendingService
+    if (!isSpawnedService(spawned))
+      return block("Unconfirmed service ownership is malformed; preserve the owned root")
+    const observed = (dependencies.observeProcess ?? observeProcess)(spawned.pid)
+    if (observed.kind !== "authoritatively-absent") {
+      return block(
+        observed.kind === "live"
+          ? "Spawned service identity was not confirmed and its PID is still live; preserve the root"
+          : "Spawned service exit cannot be observed; preserve the root and retry cleanup",
+      )
+    }
+    delete manifest.pendingService
+    await dependencies.writeManifest(manifest)
   }
   if (manifest.desktop !== undefined) {
     const currentHandler = await dependencies.protocolHandler()
@@ -797,6 +830,7 @@ export class SystemLaunchDependencies implements LaunchDependencies {
     root: string
     cliPath: string
     version: string
+    onSpawn(process: SpawnedService): Promise<void>
   }): Promise<ProcessIdentity> {
     const paths = runtimePaths(input.root)
     const port = await reserveLoopbackPort()
@@ -807,9 +841,15 @@ export class SystemLaunchDependencies implements LaunchDependencies {
       env,
       stdio: "ignore",
     })
+    child.once("error", () => {})
     child.unref()
     if (child.pid === undefined) throw new Error("Owned service child did not receive a PID")
     try {
+      await input.onSpawn({
+        pid: child.pid,
+        command: [input.cliPath, ...SERVICE_ARGS, "--port", String(port)].join(" "),
+        spawnedAt: Date.now(),
+      })
       return await waitForProcessIdentity(child.pid, input.cliPath, [
         ...SERVICE_ARGS,
         "--port",
@@ -825,7 +865,13 @@ export class SystemLaunchDependencies implements LaunchDependencies {
         identity.command.includes(String(port))
       ) {
         process.kill(child.pid, "SIGTERM")
-        await waitUntilGone({ ...identity, command: identity.command }, SHUTDOWN_TIMEOUT_MS)
+        const exit = await waitUntilGone(identity, SHUTDOWN_TIMEOUT_MS)
+        if (exit.kind !== "observed-exited") {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}; spawned service cleanup: ${exit.kind}`,
+            { cause: error },
+          )
+        }
       }
       throw error
     }
@@ -2129,6 +2175,21 @@ async function writeManifestFile(path: string, manifest: OwnedLaunchManifest): P
   await rename(temporary, path)
 }
 
+function isSpawnedService(value: unknown): value is SpawnedService {
+  if (typeof value !== "object" || value === null) return false
+  const process = value as Record<string, unknown>
+  return (
+    typeof process.pid === "number" &&
+    Number.isSafeInteger(process.pid) &&
+    process.pid > 0 &&
+    typeof process.command === "string" &&
+    process.command.length > 0 &&
+    typeof process.spawnedAt === "number" &&
+    Number.isSafeInteger(process.spawnedAt) &&
+    process.spawnedAt > 0
+  )
+}
+
 async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
   const parsed = JSON.parse(await readFile(path, "utf8")) as OwnedLaunchManifest
   if (
@@ -2142,6 +2203,9 @@ async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
     !(typeof parsed.protocolHandlerBaseline === "string" || parsed.protocolHandlerBaseline === null)
   ) {
     throw new Error("Owned launch manifest is malformed")
+  }
+  if (parsed.pendingService !== undefined && !isSpawnedService(parsed.pendingService)) {
+    throw new Error("Owned launch unconfirmed service ownership is malformed")
   }
   if (parsed.nativeInteraction !== undefined) {
     const interaction = parsed.nativeInteraction as Record<string, unknown>
