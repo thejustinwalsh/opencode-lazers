@@ -25,6 +25,8 @@ import { registerNativeInteraction } from "./verification/opencode/native-intera
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
+import { registerModelTools } from "./models/tools.ts"
+import { registerModelsServer } from "./models/server.ts"
 
 export default Plugin.define({
   id: "lazers",
@@ -95,6 +97,8 @@ export default Plugin.define({
       yield* registerContextTools(ctx, projectIndex)
       yield* registerNativeInteraction(ctx).pipe(Effect.orDie)
       yield* registerTaskTools(ctx, repository)
+      yield* registerModelTools(ctx, repository)
+      yield* registerModelsServer(ctx, repository).pipe(Effect.orDie)
       yield* registerArchitect(ctx)
       const runnerStore = new RunnerStore(repository)
       const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
