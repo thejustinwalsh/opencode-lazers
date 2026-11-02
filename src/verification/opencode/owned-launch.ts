@@ -31,6 +31,8 @@ export type ProcessIdentity = {
   command: string
 }
 
+export class ServiceNotStartedError extends Error {}
+
 export type SpawnedService = {
   pid: number
   command: string
@@ -119,6 +121,7 @@ export type OwnedLaunchManifest = {
     serviceRegistrationPath: string
   }
   protocolHandlerBaseline: string | null
+  serviceStartupPending?: boolean
   pendingService?: SpawnedService
   service?: {
     process: ProcessIdentity
@@ -424,6 +427,8 @@ export async function startOwnedDesktop(
       ],
     }
     await dependencies.writeManifest(manifest)
+    manifest.serviceStartupPending = true
+    await dependencies.writeManifest(manifest)
 
     try {
       const serviceProcess = await dependencies.startService({
@@ -436,6 +441,7 @@ export async function startOwnedDesktop(
         },
       })
       delete manifest.pendingService
+      delete manifest.serviceStartupPending
       manifest.service = {
         process: serviceProcess,
         id: "",
@@ -508,6 +514,10 @@ export async function startOwnedDesktop(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       cleanupAttempted = true
+      if (error instanceof ServiceNotStartedError && manifest.pendingService === undefined) {
+        delete manifest.serviceStartupPending
+        await dependencies.writeManifest(manifest)
+      }
       const cleanup = await dependencies.cleanup(manifest).catch((cleanupError: unknown) => ({
         clean: false,
         reason: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
@@ -585,6 +595,15 @@ export async function cleanupOwnedDesktop(
     const issue = cleanupIssueForOutcome("service", serviceResult)
     if (issue !== undefined) return block(issue)
   }
+  if (
+    manifest.serviceStartupPending === true &&
+    manifest.pendingService === undefined &&
+    manifest.service === undefined
+  ) {
+    return block(
+      "Service startup began without durable process ownership; preserve the root for reconciliation",
+    )
+  }
   if (manifest.pendingService !== undefined) {
     const spawned = manifest.pendingService
     if (!isSpawnedService(spawned))
@@ -598,6 +617,7 @@ export async function cleanupOwnedDesktop(
       )
     }
     delete manifest.pendingService
+    delete manifest.serviceStartupPending
     await dependencies.writeManifest(manifest)
   }
   if (manifest.desktop !== undefined) {
@@ -833,17 +853,27 @@ export class SystemLaunchDependencies implements LaunchDependencies {
     onSpawn(process: SpawnedService): Promise<void>
   }): Promise<ProcessIdentity> {
     const paths = runtimePaths(input.root)
-    const port = await reserveLoopbackPort()
-    const env = isolatedEnvironment(input.root)
-    const child = spawn(input.cliPath, [...SERVICE_ARGS, "--port", String(port)], {
-      cwd: paths.root,
-      detached: true,
-      env,
-      stdio: "ignore",
+    const port = await reserveLoopbackPort().catch((error: unknown) => {
+      throw new ServiceNotStartedError("Owned service port preparation failed before spawn", {
+        cause: error,
+      })
     })
+    const env = isolatedEnvironment(input.root)
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(input.cliPath, [...SERVICE_ARGS, "--port", String(port)], {
+        cwd: paths.root,
+        detached: true,
+        env,
+        stdio: "ignore",
+      })
+    } catch (error) {
+      throw new ServiceNotStartedError("Owned service could not spawn", { cause: error })
+    }
     child.once("error", () => {})
     child.unref()
-    if (child.pid === undefined) throw new Error("Owned service child did not receive a PID")
+    if (child.pid === undefined)
+      throw new ServiceNotStartedError("Owned service child did not receive a PID")
     try {
       await input.onSpawn({
         pid: child.pid,
@@ -2203,6 +2233,12 @@ async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
     !(typeof parsed.protocolHandlerBaseline === "string" || parsed.protocolHandlerBaseline === null)
   ) {
     throw new Error("Owned launch manifest is malformed")
+  }
+  if (
+    parsed.serviceStartupPending !== undefined &&
+    typeof parsed.serviceStartupPending !== "boolean"
+  ) {
+    throw new Error("Owned launch service startup intent is malformed")
   }
   if (parsed.pendingService !== undefined && !isSpawnedService(parsed.pendingService)) {
     throw new Error("Owned launch unconfirmed service ownership is malformed")
