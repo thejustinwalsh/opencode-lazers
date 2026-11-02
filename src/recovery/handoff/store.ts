@@ -439,18 +439,17 @@ export class HandoffStore {
       if (
         policyInputCount &&
         requestedHeader &&
-        (canonical(JSON.parse(requestedHeader.owner_json)) !== canonical(reviewer) ||
-          requestedHeader.contract_version !== effectiveContractVersion ||
+        (requestedHeader.contract_version !== effectiveContractVersion ||
           requestedHeader.contract_json !== canonical(effectiveContract) ||
           requestedHeader.check_version !== checkVersion ||
           requestedHeader.checks_json !== canonical(checks))
       )
-        throw new Error("Review owner or effective contract/check version is stale")
+        throw new Error("Review effective contract/check version is stale")
 
+      // The contract owns the chain; each reservation retains its actual reviewer.
       const matching = policyInputCount
         ? headers.filter(
             (header) =>
-              canonical(JSON.parse(header.owner_json)) === canonical(reviewer) &&
               header.contract_version === effectiveContractVersion &&
               header.contract_json === canonical(effectiveContract!) &&
               header.check_version === checkVersion &&
@@ -509,13 +508,12 @@ export class HandoffStore {
         throw new Error("Review ID is already attached to another handoff request")
       if (review) {
         if (
-          canonical(JSON.parse(review.owner_json)) !== canonical(reviewer) ||
           review.contract_version !== reservation.effectiveContractVersion ||
           review.contract_json !== canonical(contract) ||
           review.check_version !== reservation.checkVersion ||
           review.checks_json !== canonical(checks)
         )
-          throw new Error("Review owner or effective contract/check version is stale")
+          throw new Error("Review effective contract/check version is stale")
       }
 
       const priorRound = db
@@ -542,7 +540,6 @@ export class HandoffStore {
         .all(this.repository.projectDirectory, reservation.requestID)
         .filter(
           (header) =>
-            canonical(JSON.parse(header.owner_json)) === canonical(reviewer) &&
             header.contract_version === reservation.effectiveContractVersion &&
             header.contract_json === canonical(contract) &&
             header.check_version === reservation.checkVersion &&
@@ -564,8 +561,7 @@ export class HandoffStore {
             .map((row) => HandoffReviewRoundRecord.parse(JSON.parse(row.payload)))
             .filter((round) => chainIDs.has(round.reviewID))
         : []
-      const expectedRound =
-        existingRounds.reduce((maximum, round) => Math.max(maximum, round.round), 0) + 1
+      const expectedRound = existingRounds.length + 1
       if (reservation.round !== expectedRound)
         return {
           status: "conflict" as const,

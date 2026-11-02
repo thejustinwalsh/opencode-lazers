@@ -780,14 +780,116 @@ test("reservation recovery is durable across reopen and late inference cannot ov
     ),
   )
   expect(recoveredLate.status).toBe("unavailable")
+  const newerResult = assertReviewed(
+    await competingReviewer.review(
+      {
+        requestID: f.request.requestID,
+        draftVersion: f.draftVersion,
+        evidence: [{ kind: "trajectory", reference: "attempt:newer-reviewed-evidence" }],
+        reviewID,
+      },
+      worker,
+      new AbortController().signal,
+    ),
+  )
+  expect(newerResult.round).toBe(3)
+  expect(newerResult.status).toBe("completed")
+  expect(newerResult.fingerprint).not.toBe(recoveredLate.fingerprint)
+  const callsBeforeLate = modelCalls
   release()
   const lateResult = assertReviewed(await late)
   expect(lateResult).toEqual(recoveredLate)
   expect(
     reopened.handoffs.getReviewRound(f.request.requestID, reviewID, 2)?.outcome?.result,
   ).toEqual(recoveredLate)
-  expect(roundCount(f)).toBe(2)
-  expect(modelCalls).toBe(1)
+  expect(roundCount(f)).toBe(3)
+  expect(modelCalls).toBe(callsBeforeLate)
+})
+
+test("authorized reviewers share one three-round chain across IDs and reopened connections", async () => {
+  const f = fixture()
+  let calls = 0
+  const reviewedBy: HandoffActor[] = []
+  const makeReviewer = (store: HandoffStore) =>
+    new HandoffReviewer(
+      store,
+      { systemOne: async (input) => (calls++, reply(input, () => 0.2)) },
+      (actor) => {
+        reviewedBy.push(actor)
+      },
+    )
+  let reviewer = makeReviewer(f.handoffs())
+  const signal = new AbortController().signal
+  const first = assertReviewed(
+    await reviewer.review(
+      { requestID: f.request.requestID, draftVersion: f.draftVersion },
+      worker,
+      signal,
+    ),
+  )
+  expect(first.round).toBe(1)
+  for (const [index, actor] of [architect, worker].entries()) {
+    reviewer = makeReviewer(index === 0 ? f.reopen().handoffs : f.openStore())
+    const input = {
+      requestID: f.request.requestID,
+      draftVersion: f.draftVersion,
+      evidence: [{ kind: "trajectory" as const, reference: `attempt:round-${index + 2}` }],
+    }
+    const beforeAlias = calls
+    const alias = await reviewer.review({ ...input, reviewID: crypto.randomUUID() }, actor, signal)
+    expect(alias.status).toBe("stale")
+    expect(calls).toBe(beforeAlias)
+    expect(roundCount(f)).toBe(index + 1)
+    const result = assertReviewed(
+      await reviewer.review({ ...input, reviewID: first.reviewID }, actor, signal),
+    )
+    expect(result.round).toBe(index + 2)
+    expect(
+      f.handoffs().getReviewRound(f.request.requestID, first.reviewID, index + 2)?.reviewer,
+    ).toEqual(actor)
+  }
+  expect(roundCount(f)).toBe(3)
+  const beforeFourth = calls
+  const fourth = await makeReviewer(f.reopen().handoffs).review(
+    {
+      requestID: f.request.requestID,
+      draftVersion: f.draftVersion,
+      reviewID: crypto.randomUUID(),
+      evidence: [{ kind: "trajectory", reference: "attempt:fourth-actor-reset" }],
+    },
+    architect,
+    signal,
+  )
+  expect(fourth.status).toBe("stale")
+  expect(calls).toBe(beforeFourth)
+  expect(roundCount(f)).toBe(3)
+  expect(reviewedBy.some((actor) => actor.role === "architect")).toBe(true)
+  expect(reviewedBy.some((actor) => actor.role === "worker")).toBe(true)
+  const firstRound = f.handoffs().getReviewRound(f.request.requestID, first.reviewID, 1)!
+  expect(firstRound.reviewer).toEqual(worker)
+  expect(() =>
+    f.handoffs().recordReviewOutcome(
+      {
+        requestID: f.request.requestID,
+        reviewID: first.reviewID,
+        round: 1,
+        outcome: firstRound.outcome,
+      },
+      architect,
+    ),
+  ).toThrow("another request or caller")
+  await expect(
+    reviewer.review(
+      {
+        requestID: f.request.requestID,
+        draftVersion: f.draftVersion,
+        reviewID: first.reviewID,
+      },
+      { ...architect, sessionID: "unrelated-architect" },
+      signal,
+    ),
+  ).rejects.toThrow("not the current owner")
+  expect(calls).toBe(beforeFourth)
 })
 
 test("changed source task contracts cannot inherit a stored pass", async () => {

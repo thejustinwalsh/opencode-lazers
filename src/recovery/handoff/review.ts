@@ -245,7 +245,7 @@ function priorResult(context: HandoffReviewContext): HandoffReviewResult | undef
 
 function progressionRecord(context: HandoffReviewContext): ProgressRecord {
   const record: ProgressRecord = {
-    round: context.rounds.reduce((maximum, round) => Math.max(maximum, round.round), 0),
+    round: context.rounds.length,
     focus: null,
     previous: [],
     completed: {},
@@ -653,14 +653,23 @@ export class HandoffReviewer {
           },
           reviewer,
         )
-        return (
-          this.resultFromRecord(recorded.rounds.at(-1)?.outcome?.result) ?? {
-            status: "busy",
-            requestID: state.requestID,
-            reviewID: id,
-            next: "A concurrent immutable result was recorded; retry to read it.",
-          }
+        const reservedRound = recorded.rounds.find(
+          (entry) => entry.reviewID === id && entry.round === round,
         )
+        const outcome = this.resultFromRecord(reservedRound?.outcome?.result)
+        if (
+          outcome?.requestID === state.requestID &&
+          outcome.reviewID === id &&
+          outcome.round === round &&
+          outcome.fingerprint === fingerprint
+        )
+          return outcome
+        return {
+          status: "busy",
+          requestID: state.requestID,
+          reviewID: id,
+          next: "A concurrent immutable result was recorded; retry to read this exact reservation.",
+        }
       }
       return this.resultFromRecord(saved.record.outcome?.result) ?? result
     } finally {
