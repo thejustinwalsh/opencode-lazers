@@ -47,7 +47,7 @@ const rawSnapshot = {
   truncated: false,
 }
 
-function harness(snapshots: unknown[]) {
+function harness(snapshots: unknown[], onRead?: (count: number) => void) {
   const events: unknown[] = []
   const scripts: string[] = []
   let rendererPID = 30001
@@ -60,6 +60,7 @@ function harness(snapshots: unknown[]) {
     getURL: () => "oc://renderer/index.html",
     executeJavaScript: async (code) => {
       scripts.push(code)
+      onRead?.(scripts.length)
       return snapshots.shift() ?? rawSnapshot
     },
     capturePage: async () => {
@@ -249,6 +250,27 @@ describe("owned native Desktop adapter", () => {
     expect(result.delivery).toBe("not-delivered")
     expect(result.message).toContain("lost focus")
     expect(target.events).toHaveLength(0)
+  })
+
+  test("rechecks focus and renderer identity after the awaited DOM read before any input", async () => {
+    for (const change of ["focus", "renderer"] as const) {
+      const target = harness([rawSnapshot, rawSnapshot], (count) => {
+        if (count !== 2) return
+        if (change === "focus") target.setFocused(false)
+        else target.setRendererPID(30002)
+      })
+      const window = reference(target)
+      const initial = await target.adapter.perform({ kind: "snapshot", window })
+      const result = await target.adapter.perform({
+        kind: "click",
+        window,
+        snapshotID: initial.snapshot!.snapshotID,
+        elementRef: "e1",
+      })
+      expect(result.delivery).toBe("not-delivered")
+      expect(result.message).toContain("changed before native input")
+      expect(target.events).toHaveLength(0)
+    }
   })
 
   test("rejects a changed renderer generation and never replays after delivery uncertainty", async () => {

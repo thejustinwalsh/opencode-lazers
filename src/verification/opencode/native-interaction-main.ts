@@ -576,6 +576,17 @@ export class NativeInteractionMainAdapter {
       }
     }
 
+    const dispatchReference = this.currentReference(window.id)
+    if (
+      dispatchReference === undefined ||
+      !sameWindow(dispatchReference, operation.window) ||
+      !dispatchReference.visible ||
+      !dispatchReference.focused ||
+      !window.isFocused()
+    ) {
+      return { delivery: "not-delivered", message: "Owned window changed before native input" }
+    }
+
     let attempted = false
     try {
       attempted = true

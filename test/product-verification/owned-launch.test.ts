@@ -19,6 +19,7 @@ import {
   processInventoryFromProbe,
   processObservationFromProbe,
   readManifest,
+  resolveNativeInteraction,
   runtimePaths,
   sameCandidateIdentity,
   startOwnedDesktop,
@@ -691,6 +692,11 @@ describe("owned Desktop boundaries", () => {
         baseDirectory: canonicalBase,
         protocolHandlerBaseline: null,
         observations: [],
+        nativeInteraction: {
+          state: "idle",
+          requestID: "resolved-request",
+          message: "Resolved from the sidecar as not-delivered; no command was replayed",
+        },
       }
       await writeFile(paths.owner, ownerPath, { mode: 0o600 })
       await writeFile(paths.manifest, JSON.stringify(manifestValue), { mode: 0o600 })
@@ -703,6 +709,12 @@ describe("owned Desktop boundaries", () => {
         root: canonicalRoot,
         baseDirectory: canonicalBase,
       })
+      await expect(
+        resolveNativeInteraction(canonicalRoot, "resolved-request", "not-delivered"),
+      ).resolves.toMatchObject({ nativeInteraction: manifestValue.nativeInteraction })
+      await expect(
+        resolveNativeInteraction(canonicalRoot, "different-request", "not-delivered"),
+      ).rejects.toThrow("does not match")
 
       process.env.TMPDIR = paths.tempHome
       expect(defaultBaseDirectory()).toBe(stableBase)

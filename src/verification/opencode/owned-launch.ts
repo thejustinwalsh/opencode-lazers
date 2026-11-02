@@ -959,12 +959,18 @@ export class SystemLaunchDependencies implements LaunchDependencies {
       throw new Error("Candidate source or built GUI identity changed after owned setup")
     }
     const env = isolatedEnvironment(input.root)
-    const child = spawn(bundle.executable, [], {
-      cwd: input.candidatePath,
-      detached: true,
-      env,
-      stdio: "ignore",
-    })
+    const output = await open(join(input.root, "desktop-process.log"), "ax", 0o600)
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(bundle.executable, [], {
+        cwd: input.candidatePath,
+        detached: true,
+        env,
+        stdio: ["ignore", output.fd, output.fd],
+      })
+    } finally {
+      await output.close()
+    }
     child.unref()
     if (child.pid === undefined) throw new Error("Owned Desktop child did not receive a PID")
     return waitForProcessIdentity(child.pid, bundle.executable, [])
@@ -1487,6 +1493,11 @@ export async function resolveNativeInteraction(
   outcome: "delivered" | "not-delivered",
 ): Promise<OwnedLaunchManifest> {
   const initial = await readManifest(root)
+  if (
+    initial.nativeInteraction?.state === "idle" &&
+    initial.nativeInteraction.requestID === requestID
+  )
+    return initial
   if (
     initial.nativeInteraction?.requestID !== requestID ||
     (initial.nativeInteraction.state !== "pending" &&
