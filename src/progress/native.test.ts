@@ -781,6 +781,62 @@ test.each([
   }
 })
 
+test("idle producer failures retain timestamped safe diagnostics before terminal mismatch", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      messages: [{ id: "msg_compacted", type: "compaction", status: "completed" }],
+    })
+    const readTrace = () =>
+      fixture.store.atomic((db) =>
+        db
+          .query<{ at: number; payload: string }, [string]>(
+            "SELECT at,payload FROM runner_progress WHERE session_id=? AND kind='native-observation' ORDER BY seq",
+          )
+          .all(sessionID),
+      )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project", async () => {
+            throw new Error("Input transport failed token=diagnostic-secret")
+          })
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 600)),
+          )
+          yield* Effect.sleep(5)
+          yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 601)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () =>
+              readTrace().some((row) => JSON.parse(row.payload).phase === "execution-success"),
+            ),
+          )
+          const rows = readTrace()
+          expect(rows.map((row) => JSON.parse(row.payload).phase)).toEqual([
+            "idle-entered",
+            "idle-input-failed",
+            "execution-success",
+          ])
+          expect(rows.every((row) => Number.isSafeInteger(row.at) && row.at > 0)).toBe(true)
+          expect(JSON.stringify(rows)).not.toContain("diagnostic-secret")
+          expect(JSON.parse(rows[1]!.payload).error).toContain("Input transport failed")
+          expect(JSON.parse(rows[0]!.payload)).toMatchObject({ executionStartSequence: 600 })
+          expect(JSON.parse(rows[2]!.payload)).toMatchObject({ eventSequence: 601 })
+          expect(JSON.parse(rows[2]!.payload).idleSequence).toBeUndefined()
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
 test("registered idle and success retain compacted input identity and reject a changed retained input", async () => {
   for (const changedInput of [false, true]) {
     const fixture = makeFixture()

@@ -23,7 +23,10 @@ import { ProgressInput } from "./schema.ts"
 import { resolveNativeInputID } from "../runner/native-input.ts"
 import type { ProgressRecorder } from "./recorder.ts"
 
-type ProgressContext = Pick<Plugin.Context, "event" | "permission" | "session" | "tool">
+type ProgressContext = Pick<
+  Plugin.Context,
+  "event" | "permission" | "session" | "tool" | "location"
+>
 
 const NATIVE_EVENT_TYPES = [
   "session.usage.updated",
@@ -237,23 +240,41 @@ export function registerProgress(
 ) {
   return Effect.gen(function* () {
     const readInputID = (sessionID: Session.ID) =>
-      ctx.session
-        .context({ sessionID })
-        .pipe(
-          Effect.flatMap((messages) =>
-            Effect.tryPromise(() =>
-              resolveNativeInputID(messages, () => retainedInputID(sessionID)),
-            ),
-          ),
-        )
+      ctx.session.context({ sessionID }).pipe(
+        Effect.flatMap((messages) =>
+          Effect.tryPromise({
+            try: () => resolveNativeInputID(messages, () => retainedInputID(sessionID)),
+            catch: (error) => error,
+          }),
+        ),
+      )
     const observer = Symbol("native-idle-observer")
+    const listenerID = crypto.randomUUID()
     let observing = true
     const projectDirectory = recorder.store.repository.projectDirectory
+    const trace = (
+      sessionID: string,
+      phase: string,
+      details: Partial<Parameters<ProgressRecorder["recordNativeObservation"]>[0]> = {},
+    ) => {
+      try {
+        recorder.recordNativeObservation({
+          ...details,
+          sessionID,
+          listenerID,
+          directory: ctx.location?.directory ?? projectDirectory,
+          phase,
+        })
+      } catch {
+        // Diagnostic storage cannot change the native observation or worker execution.
+      }
+    }
     const sessionEventCursors = new Map<string, SessionEventCursor>(
       nativeExecutionCursors(projectDirectory),
     )
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
+        for (const sessionID of sessionEventCursors.keys()) trace(sessionID, "listener-disposed")
         observing = false
         releaseNativeIdleObserver(observer)
       }),
@@ -322,10 +343,20 @@ export function registerProgress(
     yield* ctx.session.hook("experimental.idle", (idle) =>
       Effect.gen(function* () {
         const stillCurrent = nativeIdleObservationFence(idle.sessionID)
+        const enteredCursor = sessionEventCursors.get(idle.sessionID)
+        trace(idle.sessionID, "idle-entered", {
+          executionStartSequence: enteredCursor?.executionStartSequence,
+          eventSequence: enteredCursor?.lastSequence,
+          backgroundCount: idle.background.length,
+        })
         let stale = false
         yield* readInputID(idle.sessionID).pipe(
           Effect.match({
             onSuccess: (inputID) => {
+              trace(idle.sessionID, "idle-input-read", {
+                inputID,
+                current: observing && stillCurrent(),
+              })
               if (!observing || !stillCurrent()) {
                 stale = true
                 return
@@ -356,6 +387,7 @@ export function registerProgress(
                 executionStartSequence: cursor.executionStartSequence,
                 eventSequence: cursor.lastSequence,
               }
+              trace(idle.sessionID, "idle-report", lineage)
               if (
                 observeNativeIdleBackground(
                   idle.sessionID,
@@ -371,7 +403,11 @@ export function registerProgress(
                 cursor.idle = undefined
               }
             },
-            onFailure: () => {
+            onFailure: (error) => {
+              trace(idle.sessionID, "idle-input-failed", {
+                error,
+                current: observing && stillCurrent(),
+              })
               if (!observing || !stillCurrent()) {
                 stale = true
                 return
@@ -440,6 +476,12 @@ export function registerProgress(
                     )
                 } else if (type === "session.execution.succeeded") {
                   const idle = cursor.idle
+                  trace(sessionID, "execution-success", {
+                    executionStartSequence: cursor.executionStartSequence,
+                    eventSequence: sequence,
+                    idleSequence: idle?.eventSequence,
+                    inputID: idle?.inputID,
+                  })
                   if (
                     !idle ||
                     idle.executionStartSequence !== cursor.executionStartSequence ||
@@ -508,7 +550,8 @@ export function registerProgress(
         }),
       ).pipe(
         Effect.match({
-          onFailure: () => {
+          onFailure: (error) => {
+            for (const id of sessionEventCursors.keys()) trace(id, "stream-failed", { error })
             for (const [id, cursor] of sessionEventCursors)
               forgetNativeExecution(projectDirectory, id, cursor.lastSequence)
             invalidateNativeIdleObserver(observer, "Native event stream disconnected")
@@ -521,6 +564,7 @@ export function registerProgress(
               )
           },
           onSuccess: () => {
+            for (const id of sessionEventCursors.keys()) trace(id, "stream-ended")
             for (const [id, cursor] of sessionEventCursors)
               forgetNativeExecution(projectDirectory, id, cursor.lastSequence)
             invalidateNativeIdleObserver(observer, "Native event stream ended")

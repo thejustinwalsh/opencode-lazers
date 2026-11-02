@@ -24,6 +24,7 @@ export type ProgressKind =
   | "artifact"
   | "gap"
   | "reminder"
+  | "native-observation"
 
 export type ProgressAssignment = {
   projectID: string
@@ -474,6 +475,32 @@ export class ProgressRecorder {
     return this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
       return assignment ? this.appendIn(db, assignment, fact) : undefined
+    })
+  }
+
+  recordNativeObservation(input: {
+    sessionID: string
+    listenerID: string
+    directory: string
+    phase: string
+    executionStartSequence?: number
+    eventSequence?: number
+    idleSequence?: number
+    inputID?: string
+    backgroundCount?: number
+    current?: boolean
+    error?: unknown
+  }): number | undefined {
+    const { sessionID, error, ...details } = input
+    return this.appendForSession(sessionID, {
+      source: "native-event",
+      kind: "native-observation",
+      dedupeKey: `native-observation:${crypto.randomUUID()}`,
+      at: Date.now(),
+      payload: {
+        ...details,
+        ...(error === undefined ? {} : { error: safeError(error, privacyStats()) }),
+      },
     })
   }
 
