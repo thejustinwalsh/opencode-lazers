@@ -85,6 +85,12 @@ measurement scope; unknown cost remains unknown. Never expose private reasoning.
 Help choose a capable model that completes the intended work efficiently, using
 our research, live catalogs/prices/benchmarks and historical task outcomes. The
 primary view is **comparison for a task class/persona**, not a config editor.
+Use live APIs wherever the relevant data is available. When configured,
+OpenRouter is the default fallback for prices, benchmark evidence and related
+model metadata. Reuse its native configured connection; retain dated source
+observations and refresh without blocking the panel. Native OpenCode remains
+the authority for available execution routes; the data source does not choose
+or restrict the execution provider.
 Show a focused Pareto plot and readable candidate rows with quality/acceptance,
 sample size, tokens, cost and time. Keep a complete keyboard-accessible table
 alternative. Selecting a model reveals the task estimate, relevant past runs,

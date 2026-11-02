@@ -8,6 +8,13 @@ task cost. Assignment editing is secondary. The first two concepts below cover
 only that secondary editor; they do not satisfy the full Models feature.
 Use `../../DESIGN.md` and the Phase 2 research for the full accounting contract.
 
+Use available live APIs for source data. With OpenRouter configured, it is the
+default fallback index for pricing, benchmark evidence and useful model metadata.
+Reuse the configured native credential, keep source-specific fields/dates and
+refresh asynchronously over retained observations. This is independent of the
+execution provider. Do not substitute static model claims where an API can
+provide the current fact, or turn a metadata fetch into an inference call.
+
 ## Current connected UI review
 
 Tera 6.1 High compared the actual owned Models panel with `tasks-focus-v2.png`.
@@ -79,6 +86,13 @@ source-as-of `2026-11-02T12:00:09.958Z`, saved in
 `benchmarks-read-20261102.json`. The key was obtained via OpenCode's supported
 credential API and used only in memory for the OpenRouter request; no inference
 was requested. Public source scores are not LAZERS task results or estimates.
+
+Further authorized API reads returned HTTP200 for Design Arena UI-component
+(157 records) and data-visualization (154) results, plus OpenRouter's own
+evaluation results (315). `benchmark-sources-read-20261102.json` retains the
+public source-specific records and dated provenance. These are result counts,
+not unique model counts. UI Elo/win rate, coding indices and evaluation accuracy
+are different measures; do not combine them into an unexplained universal score.
 
 ## Implementation boundaries for Architect
 
