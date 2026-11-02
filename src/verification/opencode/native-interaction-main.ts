@@ -91,6 +91,7 @@ export type NativeWindow = {
 
 type WindowTracker = {
   window: NativeWindow
+  contents: NativeWebContents
   generation: number
   rendererPID: number
   onNavigation: (...args: unknown[]) => void
@@ -730,20 +731,23 @@ export class NativeInteractionMainAdapter {
 
   private track(window: NativeWindow): void {
     if (window.isDestroyed() || window.webContents.isDestroyed()) return
-    const existing = this.windows.get(window.id)
-    if (existing !== undefined && existing.window.webContents.id === window.webContents.id) return
-    if (existing !== undefined) this.forget(window.id)
-    const onNavigation = () => this.invalidate(window.id)
-    const onRendererGone = () => this.invalidate(window.id)
-    const onClosed = () => this.forget(window.id)
-    window.webContents.on("did-start-navigation", onNavigation)
-    window.webContents.on("render-process-gone", onRendererGone)
-    window.webContents.on("destroyed", onRendererGone)
+    const windowID = window.id
+    const contents = window.webContents
+    const existing = this.windows.get(windowID)
+    if (existing !== undefined && existing.contents.id === contents.id) return
+    if (existing !== undefined) this.forget(windowID)
+    const onNavigation = () => this.invalidate(windowID)
+    const onRendererGone = () => this.invalidate(windowID)
+    const onClosed = () => this.forget(windowID)
+    contents.on("did-start-navigation", onNavigation)
+    contents.on("render-process-gone", onRendererGone)
+    contents.on("destroyed", onRendererGone)
     window.on("closed", onClosed)
-    this.windows.set(window.id, {
+    this.windows.set(windowID, {
       window,
+      contents,
       generation: 1,
-      rendererPID: safeRendererPID(window.webContents),
+      rendererPID: safeRendererPID(contents),
       onNavigation,
       onRendererGone,
       onClosed,
@@ -754,16 +758,16 @@ export class NativeInteractionMainAdapter {
     const tracker = this.windows.get(windowID)
     if (tracker === undefined) return
     tracker.generation++
-    tracker.rendererPID = safeRendererPID(tracker.window.webContents)
+    tracker.rendererPID = safeRendererPID(tracker.contents)
     this.snapshots.delete(windowID)
   }
 
   private forget(windowID: number): void {
     const tracker = this.windows.get(windowID)
     if (tracker === undefined) return
-    tracker.window.webContents.removeListener("did-start-navigation", tracker.onNavigation)
-    tracker.window.webContents.removeListener("render-process-gone", tracker.onRendererGone)
-    tracker.window.webContents.removeListener("destroyed", tracker.onRendererGone)
+    tracker.contents.removeListener("did-start-navigation", tracker.onNavigation)
+    tracker.contents.removeListener("render-process-gone", tracker.onRendererGone)
+    tracker.contents.removeListener("destroyed", tracker.onRendererGone)
     tracker.window.removeListener("closed", tracker.onClosed)
     this.windows.delete(windowID)
     this.snapshots.delete(windowID)

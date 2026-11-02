@@ -53,10 +53,16 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void, onActiv
   let rendererPID = 30001
   let captureCount = 0
   let focused = true
+  let destroyed = false
+  const windowListeners = new Map<string, (...args: unknown[]) => void>()
+  const contentsListeners = new Map<string, (...args: unknown[]) => void>()
   const webContents: NativeWebContents = {
     id: 42,
-    isDestroyed: () => false,
-    getOSProcessId: () => rendererPID,
+    isDestroyed: () => destroyed,
+    getOSProcessId: () => {
+      if (destroyed) throw new TypeError("Object has been destroyed")
+      return rendererPID
+    },
     getURL: () => "oc://renderer/index.html",
     executeJavaScript: async (code) => {
       scripts.push(code)
@@ -69,21 +75,32 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void, onActiv
     },
     sendInputEvent: (event) => events.push(event),
     insertText: (text) => events.push({ insertText: text }),
-    on: () => undefined,
-    removeListener: () => undefined,
+    on: (name, callback) => {
+      contentsListeners.set(name, callback)
+    },
+    removeListener: (name) => {
+      contentsListeners.delete(name)
+    },
   }
   const window: NativeWindow = {
     id: 12,
-    isDestroyed: () => false,
+    isDestroyed: () => destroyed,
     isVisible: () => true,
     isFocused: () => focused,
     show: () => undefined,
     focus: () => {
       focused = true
     },
-    webContents,
-    on: () => undefined,
-    removeListener: () => undefined,
+    get webContents() {
+      if (destroyed) throw new TypeError("Object has been destroyed")
+      return webContents
+    },
+    on: (name, callback) => {
+      windowListeners.set(name, callback)
+    },
+    removeListener: (name) => {
+      windowListeners.delete(name)
+    },
   }
   const ctx = {
     windows: { list: () => [window], focused: () => (focused ? window : undefined) },
@@ -106,6 +123,13 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void, onActiv
     window,
     setRendererPID: (pid: number) => (rendererPID = pid),
     setFocused: (value: boolean) => (focused = value),
+    setDestroyed: () => {
+      destroyed = true
+    },
+    fireDestroyed: () => {
+      contentsListeners.get("destroyed")?.()
+      windowListeners.get("closed")?.()
+    },
     captureCount: () => captureCount,
   }
 }
@@ -115,6 +139,14 @@ function reference(harnessValue: ReturnType<typeof harness>): NativeWindowRefere
 }
 
 describe("owned native Desktop adapter", () => {
+  test("shutdown forgets an already destroyed Electron window without accessing its webContents", () => {
+    const h = harness([rawSnapshot])
+    h.setDestroyed()
+    expect(() => h.fireDestroyed()).not.toThrow()
+    expect(() => h.adapter.stop()).not.toThrow()
+    expect(() => h.adapter.stop()).not.toThrow()
+    expect(h.adapter.currentWindowReferences()).toEqual([])
+  })
   test("focuses only the referenced owned window and returns a fresh observation without input", async () => {
     const h = harness([rawSnapshot])
     h.setFocused(false)
