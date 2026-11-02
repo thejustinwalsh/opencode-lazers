@@ -17,6 +17,7 @@ import {
   RENDERER_ARMED_SAMPLING_INTERVAL_US,
   RENDERER_ARMED_STOP_MS,
 } from "./renderer-armed-capture.ts"
+import { DesktopInferenceRelay } from "./relay/desktop.ts"
 
 const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) => {
   try {
@@ -28,9 +29,14 @@ const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) 
 }
 
 export const setupMain: Plugin.MainSetup = (ctx) => {
+  const inferenceRelay = new DesktopInferenceRelay(
+    () => ctx.client,
+    ctx.signal ?? new AbortController().signal,
+  )
   const configured = ctx.options.dataDirectory
   if (configured !== undefined && typeof configured !== "string")
     throw new Error("dataDirectory must be a string")
+  inferenceRelay.start()
   const cache = new ModelCache(modelCacheDirectory(configured))
   const decisions = new ModelCache(
     join(dirname(cache.directory), DECISION_REVISION),
@@ -230,6 +236,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     rendererArmedStopMs: RENDERER_ARMED_STOP_MS,
   })
   return async () => {
+    await inferenceRelay.close()
     await armedCaptures.shutdown()
     await Promise.all([cache.stop(), decisions.stop()])
   }

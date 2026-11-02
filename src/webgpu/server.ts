@@ -2,9 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { InferenceBroker, failed } from "./broker.ts"
 import { LocalInference, RendererInference } from "./rpc.ts"
-import { OpenCode } from "@opencode/client"
 import type { RpcClient } from "@opencode/client"
-import { Service } from "@opencode/client/service"
 import { adaptDecision, decisionQuestion } from "./decisions.ts"
 import type { DecisionInput } from "./decisions.ts"
 import { validateSystemOne } from "./system-one.ts"
@@ -15,6 +13,11 @@ import { TaskReviewer } from "./task-review.ts"
 import { registerTaskReviewTool, REVIEW_COMMUNICATION } from "./review-tool.ts"
 import { defaultFeatures, FeaturePolicy, FeatureSettings, featureEnabled } from "./features.ts"
 import type { LocalFeature } from "./features.ts"
+import { InferenceRelay } from "./relay/protocol.ts"
+import type { RelayRequestMethod } from "./relay/protocol.ts"
+import { LocationInferenceRelay } from "./relay/location.ts"
+
+type RendererClient = RpcClient<typeof RendererInference>
 
 export function registerLocalInference(
   ctx: Pick<
@@ -48,16 +51,43 @@ export function registerLocalInference(
       featureEnabled(policy.read(), feature)
         ? undefined
         : `LAZERS ${feature} is turned off in Settings → LAZERS.`
-    // Location plugins forward to the default-location queue/settings authority used by Desktop.
-    const worker =
-      resolveWorker ??
-      (async () => {
-        const endpoint = await Service.discover()
-        if (!endpoint) throw new Error("The local OpenCode Desktop service is unavailable")
-        return OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }).rpc(
-          RendererInference,
-        )
+    let emitRelayEvent: ((event: "available" | "cancelled", requestID: string) => void) | undefined
+    const relay = resolveWorker
+      ? undefined
+      : new LocationInferenceRelay((event, requestID) => emitRelayEvent?.(event, requestID))
+    if (relay) {
+      const registration = yield* ctx.rpc.register(InferenceRelay, {
+        discover: () => Effect.sync(() => relay.discover()),
+        claim: ({ requestID, claimToken }) => Effect.sync(() => relay.claim(requestID, claimToken)),
+        begin: ({ requestID, claimToken }) => Effect.sync(() => relay.begin(requestID, claimToken)),
+        complete: ({ requestID, claimToken, completion }) =>
+          Effect.sync(() => relay.complete(requestID, claimToken, completion)),
+        recover: ({ requestID }) => Effect.sync(() => relay.recover(requestID)),
+        acknowledge: ({ requestID }) => Effect.sync(() => relay.acknowledge(requestID)),
       })
+      emitRelayEvent = (event, requestID) => {
+        void Effect.runPromise(registration.events.emit(event, { requestID })).catch(() => {})
+      }
+      yield* Effect.acquireRelease(Effect.succeed(relay), (activeRelay) =>
+        Effect.sync(() => activeRelay.close()),
+      )
+    }
+    const invokeWorker = async <K extends RelayRequestMethod>(
+      method: K,
+      input: Parameters<RendererClient[K]>[0],
+      signal: AbortSignal,
+    ): Promise<Awaited<ReturnType<RendererClient[K]>>> => {
+      if (relay)
+        return (await relay.forward(method, input, signal)) as Awaited<
+          ReturnType<RendererClient[K]>
+        >
+      const client = await resolveWorker!()
+      const call = client[method] as (
+        value: Parameters<RendererClient[K]>[0],
+        options: { signal: AbortSignal },
+      ) => Promise<unknown>
+      return (await call(input, { signal })) as Awaited<ReturnType<RendererClient[K]>>
+    }
     const systemOne = async (
       input: SystemOneInput,
       signal: AbortSignal,
@@ -101,13 +131,12 @@ export function registerLocalInference(
       }
     }
     yield* ctx.rpc.register(LocalInference, {
-      settings: () => Effect.promise(async (signal) => (await worker()).settings({}, { signal })),
-      configure: (input) =>
-        Effect.promise(async (signal) => (await worker()).configure(input, { signal })),
+      settings: () => Effect.promise((signal) => invokeWorker("settings", {}, signal)),
+      configure: (input) => Effect.promise((signal) => invokeWorker("configure", input, signal)),
       review: (input) =>
         Effect.promise(async (signal) => {
           try {
-            return await (await worker()).review(input, { signal })
+            return await invokeWorker("review", input, signal)
           } catch (error) {
             return { error: String(error) }
           }
@@ -115,7 +144,7 @@ export function registerLocalInference(
       ask: (input) =>
         Effect.promise(async (signal) => {
           try {
-            return await (await worker()).ask(input, { signal })
+            return await invokeWorker("ask", input, signal)
           } catch (error) {
             return failed(String(error))
           }
@@ -123,7 +152,7 @@ export function registerLocalInference(
       speak: (input) =>
         Effect.promise(async (signal) => {
           try {
-            return await (await worker()).speak(input, { signal })
+            return await invokeWorker("speak", input, signal)
           } catch (error) {
             return failed(String(error))
           }
@@ -131,7 +160,7 @@ export function registerLocalInference(
       decide: (input) =>
         Effect.promise(async (signal) => {
           try {
-            return await (await worker()).decide(input, { signal })
+            return await invokeWorker("decide", input, signal)
           } catch (error) {
             return { ok: false as const, error: String(error) }
           }
@@ -139,7 +168,7 @@ export function registerLocalInference(
       transcribe: (input) =>
         Effect.promise(async (signal) => {
           try {
-            return await (await worker()).transcribe(input, { signal })
+            return await invokeWorker("transcribe", input, signal)
           } catch (error) {
             return failed(String(error))
           }
@@ -147,7 +176,7 @@ export function registerLocalInference(
       systemOne: (input) =>
         Effect.promise(async (signal) => {
           try {
-            return await (await worker()).systemOne(input, { signal })
+            return await invokeWorker("systemOne", input, signal)
           } catch (error) {
             return { error: String(error) }
           }
@@ -243,9 +272,11 @@ export function registerLocalInference(
       syncing = true
       const epoch = settingsEpoch
       try {
-        const next = await (
-          await worker()
-        ).settings({}, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]) })
+        const next = await invokeWorker(
+          "settings",
+          {},
+          AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
+        )
         if (epoch !== settingsEpoch || controller.signal.aborted) return
         if (JSON.stringify(next) !== JSON.stringify(features)) {
           features = next
