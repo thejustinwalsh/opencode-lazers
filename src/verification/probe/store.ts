@@ -554,7 +554,7 @@ export class ProbeRepository {
           eligible &&
           run.lifecycle === "completed" &&
           run.verdict === "passed" &&
-          run.cleanupState === "complete",
+          (run.cleanupState === "complete" || run.cleanupState === "not-required"),
         reasons: uniqueReasons,
         lifecycle: run.lifecycle,
         verdict: run.verdict,

@@ -351,6 +351,71 @@ test("task and combined-candidate definitions reject foreign task and plan owner
   ).toThrow("Attempt not found in this project")
 })
 
+test("no-fixture probes accept honest cleanup not-required while unfinished cleanup and failed probes remain unsatisfied", () => {
+  const path = databasePath()
+  const repository = open(path)
+  const task = addTask(repository, "cleanup-not-required-task")
+  const attempt = addAttempt(repository, task.id)
+  const probes = new ProbeRepository(repository)
+  const definition = probes.define(definitionInput(task.id), architect)
+  if (definition.status === "conflict") throw new Error("Expected definition")
+  const cases = [
+    { lifecycle: "completed", verdict: "passed", cleanup: "not-required", satisfied: true },
+    { lifecycle: "completed", verdict: "passed", cleanup: "complete", satisfied: true },
+    { lifecycle: "completed", verdict: "passed", cleanup: "pending", satisfied: false },
+    { lifecycle: "completed", verdict: "passed", cleanup: "failed", satisfied: false },
+    {
+      lifecycle: "completed",
+      verdict: "product-failed",
+      cleanup: "not-required",
+      satisfied: false,
+    },
+    {
+      lifecycle: "completed",
+      verdict: "environment-blocked",
+      cleanup: "not-required",
+      satisfied: false,
+    },
+    { lifecycle: "interrupted", verdict: null, cleanup: "not-required", satisfied: false },
+    { lifecycle: "cancelled", verdict: null, cleanup: "not-required", satisfied: false },
+  ] as const
+  const saved = cases.map((scenario, index) => {
+    const input = {
+      ...startInput(attempt.attemptID, `cleanup-start-${index}`),
+      definitionID: definition.definition.definitionID,
+      fixtureReferences: [],
+    }
+    const started = probes.startRun(input, worker)
+    if (started.status === "conflict") throw new Error("Expected probe run")
+    const finished = probes.updateRun(
+      finishInput(
+        started.run.runID,
+        `cleanup-finish-${index}`,
+        1,
+        scenario.lifecycle,
+        scenario.verdict,
+        scenario.cleanup,
+      ),
+      worker,
+    )
+    if (finished.status === "conflict") throw new Error("Expected probe update")
+    return { input, scenario, runID: finished.run.runID }
+  })
+  repository.close()
+  const reopened = new ProbeRepository(open(path))
+  for (const { input, scenario, runID } of saved) {
+    expect(
+      reopened.eligibility(runID, { candidate: input.candidate, procedure, inputs, environment }),
+    ).toMatchObject({
+      eligible: true,
+      satisfied: scenario.satisfied,
+      cleanupState: scenario.cleanup,
+      lifecycle: scenario.lifecycle,
+      verdict: scenario.verdict,
+    })
+  }
+})
+
 test("SQLite reopen preserves independent, actor-bound probe receipts and cleanup remains separate from pass", () => {
   const path = databasePath()
   const repository = open(path)
