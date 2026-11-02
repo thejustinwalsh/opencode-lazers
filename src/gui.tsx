@@ -545,6 +545,12 @@ export default Plugin.define({
                   {new Date(rendererCapture()!.profilerCleanup!.settledAt).toISOString()}
                 </p>
               </Show>
+              <Show when={rendererCapture()?.persistenceFailure === "late-metadata-update"}>
+                <p role="alert">
+                  Late profiler metadata could not be updated. The original capture outcome remains
+                  authoritative.
+                </p>
+              </Show>
               <Show when={rendererCapture()?.lastJobID}>
                 <p class="lazers-local-meta">
                   Target: request {rendererCapture()?.lastRequestID} · job{" "}

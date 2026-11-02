@@ -275,6 +275,73 @@ test("abort races the active profiler command and detaches", async () => {
   expect(transport.calls.at(-1)).toBe("detach")
 })
 
+test("late metadata write failure does not replace an aborted profiler-start result", async () => {
+  const transport = new FakeDebugger()
+  const controller = new AbortController()
+  let releaseStart!: () => void
+  let reachedStart!: () => void
+  const startReached = new Promise<void>((resolve) => (reachedStart = resolve))
+  let jsonWriteCount = 0
+  let originalMetadata = ""
+  transport.sendCommand = async (method) => {
+    transport.calls.push(method)
+    if (method === "Profiler.start") {
+      reachedStart()
+      await new Promise<void>((resolve) => (releaseStart = resolve))
+    }
+    return {}
+  }
+
+  const pending = captureRendererDebug(
+    options(transport, {
+      signal: controller.signal,
+      write: async (path: string, data: string) => {
+        if (!path.endsWith(".json")) return
+        jsonWriteCount++
+        if (jsonWriteCount > 1) throw new Error("diagnostics storage unavailable")
+        originalMetadata = data
+      },
+    }),
+  )
+  await startReached
+  controller.abort()
+  const result = await pending
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+  })
+  expect(typeof result.path).toBe("string")
+
+  releaseStart()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  expect(jsonWriteCount).toBe(2)
+  expect(result).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+    persistenceFailure: "late-metadata-update",
+  })
+  expect(result.profilerDiagnostics?.commands.at(-1)).toMatchObject({
+    method: "Profiler.start",
+    outcome: "aborted",
+    nativePending: false,
+    nativeOutcome: "succeeded",
+  })
+  const savedMetadata = JSON.parse(originalMetadata)
+  expect(savedMetadata).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-start",
+  })
+  expect(savedMetadata.profilerDiagnostics.commands.at(-1)).toMatchObject({
+    method: "Profiler.start",
+    outcome: "aborted",
+    nativePending: true,
+  })
+})
+
 test("empty profiler output is not reported as a successful capture", async () => {
   const transport = new FakeDebugger()
   transport.stopResponse = { profile: { nodes: [], samples: [], timeDeltas: [] } }

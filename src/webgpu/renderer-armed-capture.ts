@@ -52,6 +52,7 @@ export type RendererArmedCaptureStatus = {
   triggeredAt?: number
   profilerCommands?: readonly RendererProfilerCommandObservation[]
   profilerCleanup?: RendererProfilerCleanupObservation
+  persistenceFailure?: "late-metadata-update"
 }
 
 export type RendererArmedCaptureOptions = RendererDebugPersistenceOptions & {
@@ -644,6 +645,7 @@ export class RendererArmedCaptureManager {
       ...(result.failure ? { failure: result.failure } : {}),
       ...(result.path ? { path: result.path } : {}),
       ...(result.profilePath ? { profilePath: result.profilePath } : {}),
+      ...(result.persistenceFailure ? { persistenceFailure: result.persistenceFailure } : {}),
       ...(metadata ? { stopTrigger: metadata.stopTrigger, outcome: metadata.outcome } : {}),
       ...(metadata
         ? {

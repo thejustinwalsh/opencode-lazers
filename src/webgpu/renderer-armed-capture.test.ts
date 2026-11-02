@@ -473,6 +473,72 @@ test("disarm aborts diagnostic intent but retains pending CDP ownership through 
   await manager.stop(23)
 })
 
+test("late metadata write failure is separate from the original aborted capture outcome", async () => {
+  let jsonWriteCount = 0
+  let originalMetadata = ""
+  const { manager } = fixture({
+    write: async (path: string, data: string) => {
+      if (!path.endsWith(".json")) return
+      jsonWriteCount++
+      if (jsonWriteCount > 1) throw new Error("diagnostics storage unavailable")
+      originalMetadata = data
+    },
+  })
+  const transport = new FakeDebugger()
+  let releaseEnable!: () => void
+  let reachedEnable!: () => void
+  const enableReached = new Promise<void>((resolve) => (reachedEnable = resolve))
+  transport.sendCommand = async (method) => {
+    transport.calls.push(method)
+    if (method === "Profiler.enable") {
+      reachedEnable()
+      await new Promise<void>((resolve) => (releaseEnable = resolve))
+    }
+    return {}
+  }
+
+  const arming = manager.arm(25, { debugger: transport }, { ...correlation, windowID: 25 })
+  await enableReached
+  const disarmed = await manager.stop(25)
+  expect(disarmed).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-enable",
+    stopTrigger: "manual-disarm",
+  })
+  expect(typeof disarmed.path).toBe("string")
+
+  releaseEnable()
+  await arming
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  const status = manager.status(25)
+  expect(jsonWriteCount).toBe(2)
+  expect(status).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-enable",
+    persistenceFailure: "late-metadata-update",
+    profilerCommands: [
+      {
+        method: "Profiler.enable",
+        outcome: "aborted",
+        nativePending: false,
+        nativeOutcome: "succeeded",
+      },
+    ],
+  })
+  expect(JSON.parse(originalMetadata)).toMatchObject({
+    captured: false,
+    reason: "aborted",
+    failure: "profiler-enable",
+    armedCapture: {
+      stopTrigger: "manual-disarm",
+      profilerCommands: [{ method: "Profiler.enable", outcome: "aborted", nativePending: true }],
+    },
+  })
+})
+
 test("a late successful Profiler.start keeps unresolved profiler ownership reserved", async () => {
   const { manager, writes } = fixture()
   const transport = new FakeDebugger()

@@ -77,12 +77,14 @@ test("armed-capture status IPC stays bounded and content-free", () => {
         startedAt: 1_793_561_973_174,
         settledAt: 1_793_561_973_174,
       },
+      persistenceFailure: "late-metadata-update",
     }),
   ).toMatchObject({
     state: "recording",
     lastJobID: "job-1",
     profilerCommands: [{ outcome: "timed-out", nativePending: true, profilerStateUncertain: true }],
     profilerCleanup: { outcome: "detached" },
+    persistenceFailure: "late-metadata-update",
   })
   expect(() =>
     decodeStatus({ state: "recording", message: "x", stageCount: 2, prompt: "secret" }),

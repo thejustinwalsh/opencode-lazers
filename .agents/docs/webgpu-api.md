@@ -121,6 +121,8 @@ the transport remains reserved even after the command settles. Disarm cancels
 diagnostic intent only; it does not cancel inference. If explicit profiler
 startup fails, the main process suppresses automatic unresponsive CDP capture in
 that window. Explicit retry is possible only after native ownership is resolved.
+If a late metadata refresh itself cannot be written, status reports that update
+failure separately while retaining the original capture reason and failure.
 Metadata does not retain prompt/context contents, audio, scopes, source text, or
 arbitrary object dumps.
 

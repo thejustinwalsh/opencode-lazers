@@ -58,6 +58,7 @@ export type RendererDebugResult = RendererDebugCorrelation & {
   profileOmitted?: "too-large"
   armedCapture?: RendererArmedMetadata
   profilerDiagnostics?: RendererProfilerDiagnostics
+  persistenceFailure?: "late-metadata-update"
 }
 
 export type RendererArmedStopTrigger =
@@ -791,6 +792,7 @@ const persist = async (
         persistedProfile = true
       } catch {
         // Preserve a metadata breadcrumb even when the larger profile artifact cannot be written.
+        if (options.metadataPath) return { ...report, persistenceFailure: "late-metadata-update" }
         boundedReport = {
           ...boundedReport,
           captured: false,
@@ -809,6 +811,7 @@ const persist = async (
     await write(path, JSON.stringify(metadata))
     return { ...boundedReport, path, ...(persistedProfile ? { profilePath } : {}) }
   } catch {
+    if (options.metadataPath) return { ...report, persistenceFailure: "late-metadata-update" }
     return {
       ...boundedReport,
       captured: false,
@@ -861,7 +864,10 @@ export async function captureRendererDebug(options: CaptureOptions): Promise<Ren
           { ...latest, profilerDiagnostics: current },
           { ...options, metadataPath: latest.path },
         )
-        if (updated.path === latest.path && persistedReport === latest) persistedReport = updated
+        if (updated.path === latest.path && persistedReport === latest) {
+          persistedReport = updated
+          if (updated.persistenceFailure) latest.persistenceFailure = updated.persistenceFailure
+        }
       })
       .catch(() => {
         // A late native reply cannot invalidate the already persisted timeout/abort outcome.

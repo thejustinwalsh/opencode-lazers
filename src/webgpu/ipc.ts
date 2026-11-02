@@ -150,6 +150,7 @@ export const RendererCaptureStatus = Schema.Struct({
   ),
   path: Schema.optionalKey(capturePath),
   profilePath: Schema.optionalKey(capturePath),
+  persistenceFailure: Schema.optionalKey(Schema.Literals(["late-metadata-update"])),
   stopTrigger: Schema.optionalKey(
     Schema.Literals([
       "terminal",

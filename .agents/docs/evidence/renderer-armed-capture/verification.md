@@ -23,8 +23,9 @@
   ownership reserves that renderer transport until settlement; explicit retries
   cannot overlap it. Late settlement updates the original capture record only and
   cannot detach a later owner. A late start acknowledgement or failed stop keeps
-  the transport reserved until the profiler is confirmed stopped. Disarm does not
-  cancel inference.
+  the transport reserved until the profiler is confirmed stopped. A failed late
+  metadata refresh is shown separately and does not replace the original command
+  outcome. Disarm does not cancel inference.
 - Failed armed startup suppresses automatic CDP fallback in that window across
   later unresponsive/responsive events. Other windows and never-armed automatic
   capture remain independent.
@@ -36,9 +37,9 @@
 
 ## Verification
 
-- `bun test src/webgpu/renderer-debug.test.ts src/webgpu/renderer-armed-capture.test.ts src/webgpu/main-trace.test.ts src/webgpu/inference-trace.test.ts` — 35 passed, including no-job stop failure, detach failure, deferred-start/disarm, late settlement ownership, and fallback-suppression regressions.
+- `bun test src/webgpu/renderer-debug.test.ts src/webgpu/renderer-armed-capture.test.ts src/webgpu/main-trace.test.ts src/webgpu/inference-trace.test.ts` — 37 passed, including no-job stop failure, detach failure, deferred-start/disarm, late settlement/metadata-write failure ownership, and fallback-suppression regressions.
 - `bun run verify` — passed formatting, lint, and strict typecheck.
-- `bun test` — 440 passed across 84 files.
+- `bun test` — 442 passed across 84 files.
 - `bun run build:gui` passed before the final profiler-state label change; Vite
   emitted its existing `import.meta` warnings from `onnxruntime-web`. The final
   GUI source was typechecked but not rebundled for this pass.
