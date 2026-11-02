@@ -1,0 +1,56 @@
+{
+  "recordedAt": 1793591589397,
+  "sessionID": "ses_e68a9ed37ffeVqzPWRXN5SB7Uw",
+  "compactionMessageID": "msg_19a57290f002N2AGhRg5Q7V8hd",
+  "source": "OpenCode2.2.5 public message.list metadata",
+  "status": "completed",
+  "reason": "auto",
+  "model": {
+    "providerID": "openai",
+    "id": "gpt-6.1-sol",
+    "variant": "high"
+  },
+  "compactionCreatedAt": 1793590765839,
+  "nextAssistantCreatedAt": 1793591414551,
+  "observedGapMs": 648712,
+  "timingProvenance": "Interval from native compaction-created timestamp to the next assistant-created timestamp; compaction completion endpoint is not present in this message schema.",
+  "tokens": {
+    "input": 996,
+    "output": 3652,
+    "reasoning": 12844,
+    "cache": {
+      "read": 425216,
+      "write": 0
+    }
+  },
+  "nativeReportedCostUSD": 0,
+  "marketPriceEstimateUSD": null,
+  "pricingProvenance": "Native subscription cost is not a market-price estimate; no OpenRouter rate applied here.",
+  "interpretation": "Observed orchestration gap around compaction, not implementer execution time; cache-read tokens contradict a blanket cache-miss explanation.",
+  "subsequentAssistantSteps": [
+    {
+      "messageID": "msg_19a610eeb0024RZDVoCBKujLBy",
+      "createdAt": 1793591414551,
+      "completedAt": 1793591419835,
+      "durationMs": 5284
+    },
+    {
+      "messageID": "msg_19a613705001GMBMN3DACAL1SE",
+      "createdAt": 1793591424776,
+      "completedAt": 1793591430938,
+      "durationMs": 6162
+    },
+    {
+      "messageID": "msg_19a614f2a001TGD3uEebg8Zj4h",
+      "createdAt": 1793591430957,
+      "completedAt": 1793591433986,
+      "durationMs": 3029
+    },
+    {
+      "messageID": "msg_19a615b0f001ePfVbx7wjpb6uf",
+      "createdAt": 1793591434002,
+      "completedAt": 1793591440093,
+      "durationMs": 6091
+    }
+  ]
+}

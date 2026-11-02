@@ -210,7 +210,7 @@ src/task.ts                          Zod proposal/specification and generated JS
 src/storage.ts                       Plugin-owned SQLite repository
 src/submission.ts                    Validation and runtime-owned task identity/provenance
 src/tools.ts                         Native submit/get/list tools with permission checks
-.opencode/plugins/lazers/index.ts    Project-local loader
+.opencode/plugins/lazers/index.ts    Legacy project-local loader
 opencode.json                       Default agent for new sessions
 .agents/docs/opencode-api.md         Verified host API reference
 package.json and bun.lock            Package entry point and pinned dependencies
@@ -219,9 +219,9 @@ tsconfig.json                       Strict typechecking
 
 The scaffold targets the installed OpenCode CLI and Desktop 2.2.5 with `@opencode/plugin` 2.2.5. It exports TypeScript source directly; the server plugin needs no bundle step. Effect setup opens the task repository, registers native tools and Architect, writes a persistent `loaded` marker, and logs the host version/database path. The package includes its agent definition and registers it through `agent.transform().update()`, which creates missing agents in the pinned host. A packed artifact loaded and registered Architect in a clean project without an agent file. Desktop trials verify structured interviewing and persisted task submission; see the [capability and definition audit](.agents/docs/architect-validation.md) and [evaluation evidence](.agents/docs/spikes/006-architect-interview.md). Task execution and scheduling have since been added incrementally; current worker selection is described in [spike 016](.agents/docs/spikes/016-native-worker-selection.md).
 
-Use the Bun version pinned in `package.json`, then run `bun install --frozen-lockfile`. The selected canary package is `1.4.4-canary.20261030.1`, verified as binary revision `1.4.4-canary.1+da867c60b`. Run native `bun fmt` to format, `bun fmt --check` to check formatting, `bun lint` to lint, and `bun check` to typecheck. `bun run verify` runs the non-mutating checks together.
+Use the Bun version pinned in `package.json`, then run `bun install --frozen-lockfile`. The selected canary package is `1.4.4-canary.20261030.1`, verified as binary revision `1.4.4-canary.1+da867c60b`. Run native `bun fmt` to format, `bun fmt --check` to check formatting, `bun lint` to lint, and `bun check` to typecheck. `bun run verify` autoformats, then runs lint and typechecking.
 
-Open this repository in OpenCode Desktop to discover the local plugin. LAZERS is one reusable package, dogfooded through the project-local loader. It stays private until a release is prepared. Run `bun test` for contract, persistence, and tool behavior tests.
+LAZERS is one reusable package. The development installation selects the repository package directory through global `plugins` configuration; native `plugin.use` policies exclude the known legacy project/worktree loader targets so they do not compete with it. The [observed development migration](.agents/docs/evidence/native-liveness/development-source-rollout-20261102.jsonl) preserves the exact selected targets and effective inventories. Plugin replacement needs an external operator because unloading LAZERS also removes Architect's registrations. Clean installation and upgrade qualification remain release work. Run `bun test` for contract, persistence, and tool behavior tests.
 
 | Tooling                                   | Status                                                                                 |
 | ----------------------------------------- | -------------------------------------------------------------------------------------- |
