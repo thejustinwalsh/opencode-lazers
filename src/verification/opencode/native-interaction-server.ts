@@ -126,13 +126,25 @@ export class NativeInteractionBroker {
     const currentWindow = host.windows.find(
       (window) => window.windowID === input.operation.window.windowID,
     )
-    if (currentWindow === undefined || !same(currentWindow, input.operation.window)) {
-      throw new Error("Native window reference is stale; take a fresh snapshot")
-    }
-    if (!currentWindow.visible) throw new Error("Native target window is not visible")
-    if (input.operation.kind !== "snapshot" && input.operation.kind !== "capture") {
-      if (!currentWindow.focused)
-        throw new Error("Focus the owned Desktop window before native input")
+    const rejection =
+      currentWindow === undefined || !same(currentWindow, input.operation.window)
+        ? "Native window reference is stale; take a fresh snapshot"
+        : !currentWindow.visible
+          ? "Native target window is not visible"
+          : !["snapshot", "capture", "focus"].includes(input.operation.kind) &&
+              !currentWindow.focused
+            ? "Focus the owned Desktop window before native input"
+            : undefined
+    if (rejection !== undefined) {
+      // Retain a conclusive negative receipt even if the enqueue response is lost.
+      // The adapter never receives this operation.
+      this.requests.set(input.requestID, {
+        bindingKey: stable(input.binding),
+        request: { requestID: input.requestID, operation: input.operation },
+        state: "completed",
+        result: { delivery: "not-delivered", message: rejection },
+      })
+      return { state: "completed" as const }
     }
     this.requests.set(input.requestID, {
       bindingKey: stable(input.binding),

@@ -101,6 +101,7 @@ const Windowed = { window: NativeWindowReference }
 export const NativeOperation = Schema.Union([
   Schema.Struct({ kind: Schema.Literals(["snapshot"]), ...Windowed }),
   Schema.Struct({ kind: Schema.Literals(["capture"]), ...Windowed }),
+  Schema.Struct({ kind: Schema.Literals(["focus"]), ...Windowed }),
   Schema.Struct({
     kind: Schema.Literals(["click"]),
     ...Windowed,
@@ -175,7 +176,9 @@ export const NativeInteraction = Rpc.define({
           operation: NativeOperation,
         }),
       ),
-      output: portable(Schema.Struct({ state: Schema.Literals(["queued", "existing"]) })),
+      output: portable(
+        Schema.Struct({ state: Schema.Literals(["queued", "existing", "completed"]) }),
+      ),
     },
     poll: {
       input: portable(

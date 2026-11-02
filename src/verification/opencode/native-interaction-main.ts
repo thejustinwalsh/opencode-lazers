@@ -81,6 +81,7 @@ export type NativeWindow = {
   isDestroyed(): boolean
   isVisible(): boolean
   isFocused(): boolean
+  focus(): void
   readonly webContents: NativeWebContents
   on(event: string, listener: (...args: unknown[]) => void): void
   removeListener(event: string, listener: (...args: unknown[]) => void): void
@@ -470,6 +471,13 @@ export class NativeInteractionMainAdapter {
     const currentReference = this.currentReference(window.id)
     if (currentReference === undefined)
       return { delivery: "not-delivered", message: "Native window reference is stale" }
+    if (operation.kind === "focus") {
+      window.focus()
+      const focused = this.currentReference(window.id)
+      if (focused === undefined || !focused.focused || !window.isFocused())
+        return { delivery: "not-delivered", message: "Owned Desktop window could not be focused" }
+      return { delivery: "delivered", snapshot: await this.readSnapshot(window, focused) }
+    }
     if (operation.kind === "snapshot") {
       return { delivery: "delivered", snapshot: await this.readSnapshot(window, currentReference) }
     }

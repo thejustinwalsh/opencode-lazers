@@ -20,7 +20,7 @@ const POLL_INTERVAL_MS = 200
 const allowedKeys = new Set(["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown"])
 type NativeKey = "Enter" | "Escape" | "Tab" | "Backspace" | "ArrowUp" | "ArrowDown"
 
-type NativeKind = "snapshot" | "capture" | "click" | "type" | "key"
+type NativeKind = "snapshot" | "capture" | "focus" | "click" | "type" | "key"
 
 export type NativeCommandInput = {
   root: string
@@ -54,7 +54,7 @@ function nativeWindow(
 }
 
 function operation(input: NativeCommandInput, window: NativeWindowReference): NativeOperation {
-  if (input.kind === "snapshot" || input.kind === "capture") {
+  if (input.kind === "snapshot" || input.kind === "capture" || input.kind === "focus") {
     return { kind: input.kind, window }
   }
   const snapshotID = input.snapshotID
@@ -140,6 +140,9 @@ export async function runNativeInteraction(input: NativeCommandInput): Promise<v
     }
     const target = nativeWindow(status.windows, input.windowID)
     const command = operation(input, target)
+    if (!["snapshot", "capture", "focus"].includes(input.kind) && !target.focused) {
+      throw new Error("Focus the owned Desktop window before native input")
+    }
     mayHaveReachedSidecar = true
     await rpc.enqueue(
       { binding, requestID, operation: command },

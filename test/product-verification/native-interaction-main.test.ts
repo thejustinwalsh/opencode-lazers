@@ -76,6 +76,9 @@ function harness(snapshots: unknown[]) {
     isDestroyed: () => false,
     isVisible: () => true,
     isFocused: () => focused,
+    focus: () => {
+      focused = true
+    },
     webContents,
     on: () => undefined,
     removeListener: () => undefined,
@@ -102,6 +105,17 @@ function reference(harnessValue: ReturnType<typeof harness>): NativeWindowRefere
 }
 
 describe("owned native Desktop adapter", () => {
+  test("focuses only the referenced owned window and returns a fresh observation without input", async () => {
+    const h = harness([rawSnapshot])
+    h.setFocused(false)
+    const result = await h.adapter.perform({ kind: "focus", window: reference(h) })
+    expect(result.delivery).toBe("delivered")
+    expect(result.snapshot?.window.focused).toBe(true)
+    expect(h.events).toEqual([])
+    expect(
+      await h.adapter.perform({ kind: "focus", window: { ...reference(h), generation: 999 } }),
+    ).toMatchObject({ delivery: "not-delivered" })
+  })
   test("categorizes startup failures without logging untrusted error details", () => {
     expect(
       nativeAdapterFailureCategory(

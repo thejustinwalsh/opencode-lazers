@@ -164,18 +164,37 @@ describe("owned native interaction broker", () => {
       snapshotID: "snapshot-1",
       elementRef: "e1",
     }
-    expect(() => value.enqueue({ binding, requestID, operation: stale })).toThrow("stale")
+    expect(value.enqueue({ binding, requestID, operation: stale })).toEqual({ state: "completed" })
+    expect(value.result(binding, requestID)).toMatchObject({
+      state: "completed",
+      result: { delivery: "not-delivered", message: expect.stringContaining("stale") },
+    })
+    expect(value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })).toBeNull()
     const unfocused: NativeOperation = {
       kind: "key",
       window: { ...windowRef, focused: false },
       snapshotID: "snapshot-1",
       key: "Enter",
     }
-    expect(() => value.enqueue({ binding, requestID, operation: unfocused })).toThrow("stale")
+    const unfocusedID = "9fc30312-7715-4a1a-a12f-2bb8e53f17c3"
     value.attach({ binding, adapterID: "adapter-1", windows: [{ ...windowRef, focused: false }] })
-    expect(() => value.enqueue({ binding, requestID, operation: unfocused })).toThrow(
-      "Focus the owned",
-    )
+    expect(value.enqueue({ binding, requestID: unfocusedID, operation: unfocused })).toEqual({
+      state: "completed",
+    })
+    expect(value.result(binding, unfocusedID)).toMatchObject({
+      state: "completed",
+      result: { delivery: "not-delivered", message: expect.stringContaining("Focus the owned") },
+    })
+    expect(value.enqueue({ binding, requestID: unfocusedID, operation: unfocused })).toEqual({
+      state: "existing",
+    })
+    expect(
+      value.enqueue({
+        binding,
+        requestID: "afc30312-7715-4a1a-a12f-2bb8e53f17c4",
+        operation: { kind: "focus", window: unfocused.window },
+      }),
+    ).toEqual({ state: "queued" })
   })
 
   test("fails closed on ambiguous delivery and stale completion", () => {

@@ -94,8 +94,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       "--confirm-safe-page",
     ])
     const kind = required(args, "--kind")
-    if (!["snapshot", "capture", "click", "type", "key"].includes(kind)) {
-      throw new Error("Native kind must be snapshot, capture, click, type, or key")
+    if (!["snapshot", "capture", "focus", "click", "type", "key"].includes(kind)) {
+      throw new Error("Native kind must be snapshot, capture, focus, click, type, or key")
     }
     const windowID = args.has("--window")
       ? positiveInteger(required(args, "--window"), "--window")
@@ -106,7 +106,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
     await runNativeInteraction({
       root: resolve(required(args, "--root")),
-      kind: kind as "snapshot" | "capture" | "click" | "type" | "key",
+      kind: kind as "snapshot" | "capture" | "focus" | "click" | "type" | "key",
       ...(windowID === undefined ? {} : { windowID }),
       ...(args.has("--snapshot") ? { snapshotID: required(args, "--snapshot") } : {}),
       ...(args.has("--element") ? { elementRef: required(args, "--element") } : {}),
