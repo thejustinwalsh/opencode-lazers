@@ -14,9 +14,9 @@ this preflight. The admission blockers below remain independent of source qualit
 
 ## Exact retained bindings
 
-| Case | Original plan/version | Task | Original attempt | Old artifact |
-| --- | --- | --- | --- | --- |
-| LZ-50 failed task checks | `b76de1a5-4c2b-423e-8867-0afa7e704c07` / 9 | `f556cb00-8c8c-4579-a45d-5b9ccefc7ab7` | `29cbd76a-f700-4617-a22a-13de12362420` | `69822e6f3702658155d6dffabababf42f90b1722` |
+| Case                                         | Original plan/version                       | Task                                   | Original attempt                       | Old artifact                               |
+| -------------------------------------------- | ------------------------------------------- | -------------------------------------- | -------------------------------------- | ------------------------------------------ |
+| LZ-50 failed task checks                     | `b76de1a5-4c2b-423e-8867-0afa7e704c07` / 9  | `f556cb00-8c8c-4579-a45d-5b9ccefc7ab7` | `29cbd76a-f700-4617-a22a-13de12362420` | `69822e6f3702658155d6dffabababf42f90b1722` |
 | LZ-59 accepted task / failed combined checks | `b6e9aab5-0a11-4ca7-aeae-aab0e5f4f134` / 10 | `968ea69f-189b-4673-89c6-a3ee2dc53282` | `a6ee844e-e8da-4b0c-adfe-13aed1f69e5d` | `a2fd5c4f00f359b2e7becffa10fff5c807adb849` |
 
 Both original plans are blocked, not cancelled, and have no pending effects.
