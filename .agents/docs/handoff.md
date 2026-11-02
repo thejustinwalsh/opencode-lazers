@@ -1,7 +1,7 @@
 # LAZERS current handoff
 
-2026-11-02 17:10 UTC checkpoint. Recheck native state.
-Later Root checkpoint: [native continuation](evidence/native-liveness/20261102-native-continuation.md) records the real LZ-65 completion chain, retained relay deadline correction `e64c90d`, and Tera’s blocking Radar `graphEdges: []` finding. Deliver that Radar correction and relay return to Architect through Desktop when Computer Use is available; do not activate the disconnected candidate.
+2026-11-02 17:38 UTC checkpoint. Recheck native state.
+Later Root checkpoint: [native continuation](evidence/native-liveness/20261102-native-continuation.md) records the real LZ-65 completion chain. Relay correction `e64c90d` and Radar correction `486614b` are committed in their original retained worker trees. Deliver both returns to Architect through Desktop; its pending question recommends Root fixing these candidates, already authorized. Do not activate relay server/Desktop halves separately. Desktop still explicitly reports locked after the unlock reply; an async clarification is pending.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -92,11 +92,15 @@ Current returns and active work:
   assertions and 21 profiler tests/102 assertions pass. Real location-scoped
   inference/cold-start remain open. Re-review cleared capacity and event-stream
   corrections but found an absolute-deadline race when timer callbacks are delayed.
-  Hold integration. The task is accepted, so ordinary Resume cannot reopen it;
-  use the planned LZ-57 same-attempt repair capability, not a replacement task.
-- LZ-62 is active correcting `2eaceec` for gap/pulse recovery, active worker and
-  truthful typed-flow prominence, and stable keyboard focus. Native narrow
-  capture/Tera 6.1 High acceptance still pending. Old main GUI is not the candidate.
+  Root corrected it in retained `e64c90d`; regression reproduced late success,
+  then all 11 relay tests / 68 assertions and quality checks passed. No activation.
+- LZ-62 returned `997c84c`, now task-accepted but source review found omitted SVG
+  flows and premature recovery-pulse release. Root corrected both in retained
+  `486614b`: bounded existing graphical flow, complete counted relationship list,
+  aligned-projection quiet baseline. Tera source review cleared the parallel-label
+  concern after its regression. 34 tests / 269 assertions, quality and Desktop
+  build pass. Not integrated/activated; actual narrow/wide Desktop captures and
+  Tera screenshot review remain open. Old main GUI is not this candidate.
 - LZ-63 returned clean `56c2a94`, 197 runner tests/2,877 assertions and 14 dedicated
   tests/187 assertions. Original worker finished. Its plan was held on a
   new observed idle/success mismatch; earlier continuity/cancellation repairs do

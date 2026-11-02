@@ -56,6 +56,24 @@ Then capture the actual 330–450 px native panel and wide view and obtain Tera
 screenshot review. This finding still needs delivery to native Architect through
 Desktop once Computer Use works; no SDK/CLI model prompt was sent.
 
+## Corrected retained Radar return
+
+Root correction `486614b` atop `997c84c` restores a recorded focal flow with
+adjacent endpoints and one existing edge per graphical segment, keeping all
+relationships in the counted inspector. ELK's documented inline labels preserve
+native text size at 330 px. Both the missing-edge and premature quiet-baseline
+release defects reproduced before correction. A parallel-kind fixture covers
+Tera's additional geometry concern. Tera source review found no further definitive
+blocker; actual native screenshots/interactions remain required. Final checks:
+34 tests / 269 assertions, formatter/lint/typecheck/diff and Desktop build pass.
+This is committed in the original retained tree, not activated. Relay `e64c90d`
+also remains retained: coordinate server/Desktop loading to preserve inference.
+
+Architect's current Desktop question asks Root fixes vs waiting for LZ-57; existing
+user authorization supports these narrow repairs. Answer through Desktop when
+available with both commit IDs and remaining gates. No SDK/CLI prompt or form
+answer was sent. Do not create replacement implementation workers for the fixes.
+
 ## Independent work
 
 Architect and three implementors were foreground-active: LZ-67 Models authority,
