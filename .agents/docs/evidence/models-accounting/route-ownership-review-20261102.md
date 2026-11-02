@@ -35,8 +35,9 @@ The new unpaged effort payload repeats per-session category details in both
 per-attempt assessments and mismatch copies. Shared sessions can multiply route
 records across attempts. Check response size and production read behavior while
 repairing the ownership bug; do not add a rejecting token cap. Prefer a concise
-summary with relevant drilldown. This payload concern is source-inspected, not
-a demonstrated native freeze or measured performance regression.
+summary with relevant drilldown. The two-attempt/two-step regression fixture returned22,381bytes for this effort
+basis alone. This is a measured fixture payload size, not a native freeze or
+latency benchmark; do not generalize it into a measured production regression.
 
 Full artifact review is unfinished. Tests claimed by the worker do not resolve
 this reproduced ownership defect.

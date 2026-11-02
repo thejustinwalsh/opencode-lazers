@@ -42,3 +42,33 @@ after correction; mocked positive-price records did not cover this failure.
 Root's other source finding for LZ-78 is in
 [route ownership review](route-ownership-review-20261102.md). Neither finding
 is a file hash, a model approval, or native product acceptance.
+
+## Prepared correction and reprobe
+
+The first `-1` correction alone did not make the full feed succeed. A per-row
+review of the same real catalog isolated three further failures: MiniMax
+`minimax/minimax-m3.1-flash` and Tencent `tencent/hy4-preview` / `tencent/hy3`
+publish overrides with `utc_start` and `utc_end`, without `min_prompt_tokens`.
+The candidate incorrectly required a context threshold for every override.
+
+Root prepared [this three-file correction](openrouter-source-correction.json)
+against the exact returned source, in a disposable source-review directory.
+The active artifact and native task state were not edited. It maps the observed
+`-1` quote to unknown, preserves normal/explicit-zero quotes, and retains raw
+published UTC markers separately from context thresholds. No clock interpretation
+or scheduled-price calculation is invented; the inspected API docs do not explain
+those markers. [Auto pricing](https://openrouter.ai/pricing) confirms routed
+model charges, so an unavailable router quote must not become a free estimate.
+
+Both added regressions failed before their respective fixes. Corrected source:
+11 source/store tests, 65 assertions; strict typecheck of five files; lint of
+three changed files; formatting clear, using pinned Bun1.4.4-canary.1.
+
+A second full real reprobe at Unix ms `1793656457077` succeeded for **all three
+sources**:470 native models,415 OpenRouter models,152 coding benchmark records.
+Each used HTTP200 or the native model API; disposable DBs were cleaned. The
+registered plugin/RPC path and Desktop remain unproven. Apply/review this patch
+through the native workflow after Desktop unlock; do not assert it is integrated.
+
+The correction artifact stores the exact unified diff in its JSON `patch` field;
+write that field to a temporary file and check/apply it against the stated base.
