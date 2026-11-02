@@ -74,6 +74,7 @@ export type AdoptionRow = {
   descendant_commit: string
   target_branch: string
   landing_head: string
+  reviewed_baseline: string
   candidate_tree: string
   input_fingerprint: string
   environment_identity: string
@@ -103,6 +104,8 @@ export type AdoptionCheckRow = {
 export type AdoptionEvidenceRow = {
   id: string
   adoption_id: string
+  task_id: string | null
+  phase: "task" | "combined" | "legacy"
   assertion_id: string
   artifact: string
   body: string
@@ -311,7 +314,8 @@ export class RunnerStore {
         plan_version INTEGER NOT NULL, task_revision INTEGER NOT NULL, attempt_id TEXT NOT NULL,
         node_state TEXT NOT NULL, attempt_state TEXT NOT NULL,
         old_artifact TEXT NOT NULL, descendant_commit TEXT NOT NULL, target_branch TEXT NOT NULL,
-        landing_head TEXT NOT NULL, candidate_tree TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
+        landing_head TEXT NOT NULL, reviewed_baseline TEXT NOT NULL DEFAULT '',
+        candidate_tree TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
         environment_identity TEXT NOT NULL,
         reason TEXT NOT NULL, combined_artifact TEXT NOT NULL, task_workspace TEXT,
         combined_workspace TEXT, state TEXT NOT NULL, hold_reason TEXT,
@@ -327,8 +331,9 @@ export class RunnerStore {
         PRIMARY KEY(adoption_id,phase,check_id)
       );
       CREATE TABLE IF NOT EXISTS runner_adoption_evidence (
-        id TEXT PRIMARY KEY, adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id),
-        assertion_id TEXT NOT NULL, artifact TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
+        id TEXT PRIMARY KEY, adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id), task_id TEXT,
+        phase TEXT NOT NULL DEFAULT 'legacy', assertion_id TEXT NOT NULL,
+        artifact TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS runner_adoption_evidence_lookup
         ON runner_adoption_evidence(adoption_id,assertion_id,artifact);
@@ -443,6 +448,32 @@ export class RunnerStore {
         db.exec(
           "ALTER TABLE runner_progress_reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1",
         )
+      const adoptionColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_adoptions)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!adoptionColumns.has("reviewed_baseline"))
+        db.exec(
+          "ALTER TABLE runner_adoptions ADD COLUMN reviewed_baseline TEXT NOT NULL DEFAULT ''",
+        )
+      const adoptionEvidenceColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_adoption_evidence)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!adoptionEvidenceColumns.has("task_id"))
+        db.exec("ALTER TABLE runner_adoption_evidence ADD COLUMN task_id TEXT")
+      if (!adoptionEvidenceColumns.has("phase"))
+        db.exec(
+          "ALTER TABLE runner_adoption_evidence ADD COLUMN phase TEXT NOT NULL DEFAULT 'legacy'",
+        )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS runner_adoption_evidence_phase_lookup
+         ON runner_adoption_evidence(adoption_id,phase,task_id,assertion_id,artifact)`,
+      )
       // One native Architect successor may own multiple plans. Older databases
       // made the session ID unique, accidentally forcing one successor per plan.
       const continuationIndexes = db
@@ -2504,6 +2535,7 @@ export class RunnerStore {
     descendantCommit: string
     targetBranch: string
     landingHead: string
+    reviewedBaseline: string
     candidateTree: string
     inputFingerprint: string
     environmentIdentity: string
@@ -2513,13 +2545,20 @@ export class RunnerStore {
     return this.atomic((db) => {
       if (this.activeAdoptions(input.planID).length)
         throw new Error("A descendant adoption is already pending for this plan")
-      const activeAttempt = db
-        .query<{ id: string }, [string]>(
-          `SELECT a.id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
-           WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying') LIMIT 1`,
+      const activeAttempts = db
+        .query<{ id: string; task_id: string; workspace: string }, [string]>(
+          `SELECT a.id,a.task_id,a.workspace FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')`,
         )
-        .get(this.repository.projectDirectory)
-      if (activeAttempt) throw new Error("An active worker prevents descendant adoption")
+        .all(this.repository.projectDirectory)
+      if (
+        activeAttempts.some(
+          (attempt) =>
+            attempt.workspace === this.repository.projectDirectory ||
+            scopePatternsConflict(input.writeScope, this.effectiveWriteScope(attempt.task_id)),
+        )
+      )
+        throw new Error("A conflicting worker prevents descendant adoption")
       if (
         this.activeAdoptions().some((adoption) =>
           scopePatternsConflict(input.writeScope, this.effectiveWriteScope(adoption.task_id)),
@@ -2542,10 +2581,10 @@ export class RunnerStore {
       db.query(
         `INSERT INTO runner_adoptions(
           id,plan_id,task_id,request_id,owner,plan_version,task_revision,attempt_id,node_state,attempt_state,
-          old_artifact,descendant_commit,target_branch,landing_head,candidate_tree,
+          old_artifact,descendant_commit,target_branch,landing_head,reviewed_baseline,candidate_tree,
           input_fingerprint,environment_identity,reason,combined_artifact,task_workspace,combined_workspace,
           state,hold_reason,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'pending',NULL,?,?)`,
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'pending',NULL,?,?)`,
       ).run(
         input.id,
         input.planID,
@@ -2561,6 +2600,7 @@ export class RunnerStore {
         input.descendantCommit,
         input.targetBranch,
         input.landingHead,
+        input.reviewedBaseline,
         input.candidateTree,
         input.inputFingerprint,
         input.environmentIdentity,
@@ -2576,6 +2616,7 @@ export class RunnerStore {
         descendantCommit: input.descendantCommit,
         targetBranch: input.targetBranch,
         landingHead: input.landingHead,
+        reviewedBaseline: input.reviewedBaseline,
         reason: input.reason,
       })
       this.repository.changed()
@@ -2753,6 +2794,8 @@ export class RunnerStore {
   recordAdoptionEvidence(input: {
     id: string
     adoptionID: string
+    taskID: string | null
+    phase: "task" | "combined"
     assertionID: string
     artifact: string
     body: unknown
@@ -2761,14 +2804,22 @@ export class RunnerStore {
       const row: AdoptionEvidenceRow = {
         id: input.id,
         adoption_id: input.adoptionID,
+        task_id: input.taskID,
+        phase: input.phase,
         assertion_id: input.assertionID,
         artifact: input.artifact,
         body: JSON.stringify(input.body),
         created_at: Date.now(),
       }
-      db.query("INSERT INTO runner_adoption_evidence VALUES(?,?,?,?,?,?)").run(
+      db.query(
+        `INSERT INTO runner_adoption_evidence(
+           id,adoption_id,task_id,phase,assertion_id,artifact,body,created_at
+         ) VALUES(?,?,?,?,?,?,?,?)`,
+      ).run(
         row.id,
         row.adoption_id,
+        row.task_id,
+        row.phase,
         row.assertion_id,
         row.artifact,
         row.body,
@@ -2787,14 +2838,21 @@ export class RunnerStore {
         .all(adoptionID),
     )
   }
-  hasAdoptionEvidence(adoptionID: string, assertionID: string, artifact: string): boolean {
+  hasAdoptionEvidence(
+    adoptionID: string,
+    phase: "task" | "combined",
+    taskID: string | null,
+    assertionID: string,
+    artifact: string,
+  ): boolean {
     return this.atomic((db) =>
       Boolean(
         db
           .query(
-            "SELECT 1 FROM runner_adoption_evidence WHERE adoption_id=? AND assertion_id=? AND artifact=? LIMIT 1",
+            `SELECT 1 FROM runner_adoption_evidence
+             WHERE adoption_id=? AND phase=? AND task_id IS ? AND assertion_id=? AND artifact=? LIMIT 1`,
           )
-          .get(adoptionID, assertionID, artifact),
+          .get(adoptionID, phase, taskID, assertionID, artifact),
       ),
     )
   }

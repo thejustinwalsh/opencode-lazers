@@ -10,6 +10,7 @@ import {
   combineArtifacts,
   commitArtifact,
   git,
+  reviewedScopeBase,
   runCheck,
   scopeViolations,
   scopePatternsConflict,
@@ -75,6 +76,7 @@ type AdoptionSeed = {
   descendantCommit: string
   targetBranch: string
   landingHead: string
+  reviewedBaseline: string
   candidateTree: string
   environmentIdentity: string
   inputFingerprint: string
@@ -130,6 +132,7 @@ export class TaskRuntime {
     descendantCommit: string
     targetBranch: string
     landingHead: string
+    reviewedBaseline: string
     candidateTree: string
     combinedArtifact: string
     reason: string
@@ -154,12 +157,86 @@ export class TaskRuntime {
       descendantCommit: input.descendantCommit,
       targetBranch: input.targetBranch,
       landingHead: input.landingHead,
+      reviewedBaseline: input.reviewedBaseline,
       candidateTree: input.candidateTree,
       combinedArtifact: input.combinedArtifact,
       effectiveWriteScope: this.store.effectiveWriteScope(input.taskID),
       reason: input.reason,
       environmentIdentity: input.environmentIdentity,
     })
+  }
+
+  private conflictingActiveAttempt(taskID: string): AttemptRow | undefined {
+    const scope = this.store.effectiveWriteScope(taskID)
+    return this.store
+      .plans()
+      .flatMap((candidate) => this.store.attempts(candidate.id))
+      .find(
+        (attempt) =>
+          ["preparing", "running", "verifying"].includes(attempt.state) &&
+          (attempt.workspace === this.directory ||
+            scopePatternsConflict(scope, this.store.effectiveWriteScope(attempt.task_id))),
+      )
+  }
+
+  private reviewedAdoptionBaseline(targetBranch: string, oldArtifact: string, candidate: string) {
+    const rows = this.store.atomic((db) =>
+      db
+        .query<{ event: string; payload: string }, [string]>(
+          `SELECT t.event,t.payload FROM runner_transitions t
+           JOIN runner_plans p ON p.id=t.plan_id
+           WHERE p.project_directory=? AND t.event IN ('INTEGRATION_RECORDED','TASK_INTEGRATION_RECORDED')
+           ORDER BY t.id`,
+        )
+        .all(this.directory),
+    )
+    const firstParent = git(this.directory, ["rev-list", "--first-parent", candidate])
+      .split(/\s+/)
+      .filter(Boolean)
+    const firstParentIndex = new Map(firstParent.map((commit, index) => [commit, index]))
+    let baseline = oldArtifact
+    let nearest = Number.POSITIVE_INFINITY
+    for (const row of rows) {
+      let payload: { artifact?: unknown; branch?: unknown; head?: unknown }
+      try {
+        payload = JSON.parse(row.payload) as typeof payload
+      } catch {
+        continue
+      }
+      if (
+        payload.branch !== targetBranch ||
+        typeof payload.artifact !== "string" ||
+        typeof payload.head !== "string" ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.artifact) ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.head) ||
+        payload.head === candidate
+      )
+        continue
+      const position = firstParentIndex.get(payload.head)
+      if (position === undefined || position >= nearest) continue
+      try {
+        git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, payload.head])
+        git(this.directory, ["merge-base", "--is-ancestor", payload.artifact, payload.head])
+      } catch {
+        continue
+      }
+      baseline = payload.head
+      nearest = position
+    }
+    return baseline
+  }
+
+  private adoptionWorkerIdle(attempt: AttemptRow, worker: HostSession): boolean {
+    return (
+      worker.busy === false &&
+      worker.pendingInput !== true &&
+      !worker.observationUnstable &&
+      (worker.pendingPermissions ?? 0) === 0 &&
+      (worker.pendingForms ?? 0) === 0 &&
+      Boolean(worker.outcome) &&
+      ["completed", "interrupted"].includes(worker.turn?.state ?? "unknown") &&
+      !this.backgroundBlockReason(worker, attempt, true)
+    )
   }
 
   private async prepareAdoption(
@@ -231,14 +308,8 @@ export class TaskRuntime {
     )
       throw new Error("All other plan tasks must be accepted before adopting a descendant")
 
-    const active = this.store
-      .plans()
-      .flatMap((candidate) =>
-        this.store
-          .attempts(candidate.id)
-          .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state)),
-      )
-    if (active.length) throw new Error("An active worker prevents descendant adoption")
+    if (this.conflictingActiveAttempt(command.taskID))
+      throw new Error("A conflicting worker prevents descendant adoption")
     const scopes = this.store.effectiveWriteScope(command.taskID)
     if (
       this.store
@@ -249,7 +320,7 @@ export class TaskRuntime {
     )
       throw new Error("An active descendant reservation conflicts with this task scope")
 
-    const worker = await this.host.session(latest.session_id)
+    const worker = await this.host.session(latest.session_id, { messages: true })
     if (
       !worker ||
       worker.id !== latest.session_id ||
@@ -260,15 +331,7 @@ export class TaskRuntime {
       worker.metadata?.lazersAttemptID !== latest.id
     )
       throw new Error("Latest worker session is not the owned attempt")
-    if (
-      worker.busy !== false ||
-      worker.pendingInput !== false ||
-      worker.observationUnstable ||
-      worker.pendingPermissions !== 0 ||
-      worker.pendingForms !== 0 ||
-      !worker.outcome ||
-      this.backgroundBlockReason(worker, latest, true)
-    )
+    if (!this.adoptionWorkerIdle(latest, worker))
       throw new Error("Latest worker activity or control state is not conclusively idle")
 
     const branch = git(this.directory, ["branch", "--show-current"])
@@ -290,7 +353,14 @@ export class TaskRuntime {
     if (oldArtifact === descendantCommit)
       throw new Error("Reviewed candidate must be a strict descendant of the old artifact")
     git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
-    const violations = scopeViolations(changedPaths(this.directory, oldArtifact), scopes)
+    const reviewedBaseline = this.reviewedAdoptionBaseline(branch, oldArtifact, descendantCommit)
+    const scopeBase = reviewedScopeBase(
+      this.directory,
+      oldArtifact,
+      descendantCommit,
+      reviewedBaseline,
+    )
+    const violations = scopeViolations(changedPaths(this.directory, scopeBase), scopes)
     if (violations.length)
       throw new Error(
         `Descendant contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
@@ -314,6 +384,7 @@ export class TaskRuntime {
       descendantCommit,
       targetBranch: branch,
       landingHead: head,
+      reviewedBaseline,
       candidateTree,
       combinedArtifact,
       reason: command.reason,
@@ -499,6 +570,7 @@ export class TaskRuntime {
           descendantCommit: adoptionSeed.descendantCommit,
           targetBranch: adoptionSeed.targetBranch,
           landingHead: adoptionSeed.landingHead,
+          reviewedBaseline: adoptionSeed.reviewedBaseline,
           candidateTree: adoptionSeed.candidateTree,
           inputFingerprint: adoptionSeed.inputFingerprint,
           environmentIdentity: adoptionSeed.environmentIdentity,
@@ -650,6 +722,8 @@ export class TaskRuntime {
           this.store.recordAdoptionEvidence({
             id: crypto.randomUUID(),
             adoptionID: adoption.id,
+            taskID: taskEvidence ? adoption.task_id : null,
+            phase: taskEvidence ? "task" : "combined",
             assertionID: assertion.id,
             artifact,
             body: { decision: command.reason, caller },
@@ -3143,7 +3217,13 @@ export class TaskRuntime {
           missing.push(`${assertion.id}:${evidence.reference}`)
         if (evidence.kind === "human") {
           const found = adoptionID
-            ? this.store.hasAdoptionEvidence(adoptionID, assertion.id, artifact)
+            ? this.store.hasAdoptionEvidence(
+                adoptionID,
+                taskID === null ? "combined" : "task",
+                taskID,
+                assertion.id,
+                artifact,
+              )
             : this.store.atomic((db) =>
                 db
                   .query(
@@ -3252,16 +3332,8 @@ export class TaskRuntime {
         )
     )
       throw new Error("Combined adoption inputs are no longer fully accepted")
-    if (
-      this.store
-        .plans()
-        .some((candidate) =>
-          this.store
-            .attempts(candidate.id)
-            .some((item) => ["preparing", "running", "verifying"].includes(item.state)),
-        )
-    )
-      throw new Error("An active worker prevents descendant adoption")
+    if (this.conflictingActiveAttempt(adoption.task_id))
+      throw new Error("A conflicting worker prevents descendant adoption")
     if (
       this.store
         .effects(plan.id)
@@ -3282,7 +3354,7 @@ export class TaskRuntime {
       )
     )
       throw new Error("A conflicting descendant reservation became active")
-    const worker = await this.host.session(attempt.session_id)
+    const worker = await this.host.session(attempt.session_id, { messages: true })
     if (
       !worker ||
       worker.id !== attempt.session_id ||
@@ -3291,14 +3363,7 @@ export class TaskRuntime {
       worker.agent !== "lazers-implementor" ||
       worker.archived ||
       worker.metadata?.lazersAttemptID !== attempt.id ||
-      worker.busy !== false ||
-      worker.pendingInput !== false ||
-      worker.observationUnstable ||
-      worker.pendingPermissions !== 0 ||
-      worker.pendingForms !== 0 ||
-      !worker.outcome ||
-      !["completed", "interrupted"].includes(worker.turn?.state ?? "unknown") ||
-      this.backgroundBlockReason(worker, attempt, true)
+      !this.adoptionWorkerIdle(attempt, worker)
     )
       throw new Error("Latest worker activity or control state is not conclusively idle")
     const branch = git(this.directory, ["branch", "--show-current"])
@@ -3320,8 +3385,16 @@ export class TaskRuntime {
     )
       throw new Error("Candidate or index no longer matches the reviewed adoption inputs")
     git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, candidate])
+    const reviewedBaseline = this.reviewedAdoptionBaseline(
+      adoption.target_branch,
+      oldArtifact,
+      candidate,
+    )
+    if (reviewedBaseline !== adoption.reviewed_baseline)
+      throw new Error("Reviewed adoption baseline changed during adoption")
+    const scopeBase = reviewedScopeBase(this.directory, oldArtifact, candidate, reviewedBaseline)
     const violations = scopeViolations(
-      changedPaths(this.directory, oldArtifact),
+      changedPaths(this.directory, scopeBase),
       this.store.effectiveWriteScope(adoption.task_id),
     )
     if (violations.length)
@@ -3353,6 +3426,7 @@ export class TaskRuntime {
       descendantCommit: candidate,
       targetBranch: branch,
       landingHead: head,
+      reviewedBaseline,
       candidateTree: adoption.candidate_tree,
       combinedArtifact,
       reason: adoption.reason,
@@ -3804,14 +3878,9 @@ export class TaskRuntime {
         verificationEnvironmentIdentity() !== adoption!.environment_identity
       )
         return
-      const activeWorker = db
-        .query<{ id: string }, [string]>(
-          `SELECT a.id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
-           WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying') LIMIT 1`,
-        )
-        .get(this.directory)
+      const activeWorker = this.conflictingActiveAttempt(adoption!.task_id)
       if (activeWorker) {
-        const reason = "An active worker prevents descendant adoption publication"
+        const reason = "A conflicting worker prevents descendant adoption publication"
         const held = db
           .query(
             `UPDATE runner_adoptions SET state='held',hold_reason=?,updated_at=?
@@ -4058,6 +4127,144 @@ export class TaskRuntime {
       )
     })
   }
+  private assertAdoptionWorkspaceQuiescent(plan: PlanRow, effect: EffectRow, workspace: string) {
+    const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
+    if (typeof payload.adoptionID !== "string")
+      throw new Error("Adoption worktree ownership is missing; preserve the workspace")
+    const adoption = this.store.adoption(payload.adoptionID)
+    const phase = effect.kind === "adoption-task-worktree" ? "task" : "combined"
+    const expectedWorkspace =
+      phase === "task" ? adoption?.task_workspace : adoption?.combined_workspace
+    if (
+      !adoption ||
+      adoption.plan_id !== plan.id ||
+      adoption.state !== "accepted" ||
+      expectedWorkspace !== workspace
+    )
+      throw new Error("Adoption worktree is not owned by an accepted adoption; preserve it")
+    const task = this.store.repository.get(adoption.task_id)
+    const checks =
+      phase === "task"
+        ? task?.proposal.verification
+        : PlanInput.parse(JSON.parse(plan.body)).verification
+    if (!checks) throw new Error("Adoption check procedure is missing; preserve the workspace")
+    const rows = this.store.adoptionChecks(adoption.id, phase)
+    if (rows.length !== checks.length)
+      throw new Error("Adoption worktree has no complete receipt for every check; preserve it")
+    const artifact = phase === "task" ? adoption.descendant_commit : adoption.combined_artifact
+    for (const check of checks) {
+      const row = rows.find((item) => item.check_id === check.id)
+      let receipt: CheckReceipt | undefined
+      try {
+        if (row?.receipt) receipt = JSON.parse(row.receipt) as CheckReceipt
+      } catch {
+        receipt = undefined
+      }
+      if (
+        !row ||
+        row.state !== "completed" ||
+        row.workspace !== workspace ||
+        row.artifact !== artifact ||
+        row.environment_identity !== adoption.environment_identity ||
+        fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
+        !receipt ||
+        !this.adoptionCheckReceiptMatches(receipt, row, check) ||
+        receipt.exitCode !== 0 ||
+        receipt.timedOut ||
+        !receipt.unchanged
+      )
+        throw new Error(
+          "Adoption worktree check activity is not conclusively complete; preserve it",
+        )
+    }
+  }
+
+  private assertGraphWorkspaceQuiescent(plan: PlanRow, workspace: string) {
+    if (!plan.artifact) throw new Error("Combined artifact is missing; preserve the workspace")
+    const checks = PlanInput.parse(JSON.parse(plan.body)).verification
+    const effects = this.store.effects(plan.id)
+    for (const check of checks) {
+      const matches = effects.filter((effect) => {
+        if (effect.kind !== `graph-verify:${check.id}`) return false
+        try {
+          const payload = JSON.parse(effect.payload) as { workspace?: unknown; artifact?: unknown }
+          return payload.workspace === workspace && payload.artifact === plan.artifact
+        } catch {
+          return false
+        }
+      })
+      const effect = matches.at(-1)
+      let receipt: CheckReceipt | undefined
+      let payload: { check?: unknown } | undefined
+      try {
+        if (effect) {
+          payload = JSON.parse(effect.payload) as typeof payload
+          const body = JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }
+          receipt = body.check
+        }
+      } catch {
+        receipt = undefined
+      }
+      if (
+        !effect ||
+        effect.state !== "completed" ||
+        fingerprint(payload?.check) !== fingerprint(check) ||
+        !receipt ||
+        receipt.id !== check.id ||
+        receipt.command !== check.command ||
+        receipt.cwd !== workspace ||
+        receipt.artifact !== plan.artifact ||
+        receipt.inputIdentity !== plan.artifact ||
+        receipt.exitCode !== 0 ||
+        receipt.timedOut ||
+        !receipt.unchanged
+      )
+        throw new Error(
+          "Combined worktree check activity is not conclusively complete; preserve it",
+        )
+    }
+  }
+
+  private async assertWorktreeQuiescent(plan: PlanRow, effect: EffectRow, workspace: string) {
+    if (effect.kind.startsWith("adoption-")) {
+      if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
+        throw new Error("Adoption worktree unexpectedly has an attempt owner; preserve it")
+      this.assertAdoptionWorkspaceQuiescent(plan, effect, workspace)
+      return
+    }
+    if (effect.kind === "graph-worktree") {
+      if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
+        throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
+      this.assertGraphWorkspaceQuiescent(plan, workspace)
+      return
+    }
+    const attempts = this.store
+      .attempts(plan.id)
+      .filter((attempt) => attempt.workspace === workspace)
+    if (!attempts.length)
+      throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
+    for (const attempt of attempts) {
+      const session = await this.host.session(attempt.session_id, { messages: true })
+      if (
+        !session ||
+        session.id !== attempt.session_id ||
+        session.projectID !== this.projectID ||
+        session.directory !== workspace ||
+        session.agent !== "lazers-implementor" ||
+        session.metadata?.lazersAttemptID !== attempt.id ||
+        session.busy !== false ||
+        session.pendingInput === true ||
+        session.observationUnstable ||
+        (session.pendingPermissions ?? 0) !== 0 ||
+        (session.pendingForms ?? 0) !== 0 ||
+        !session.outcome ||
+        !["completed", "interrupted"].includes(session.turn?.state ?? "unknown") ||
+        this.backgroundBlockReason(session, attempt, true)
+      )
+        throw new Error("Owned worktree worker activity is not conclusively idle; preserve it")
+    }
+  }
+
   private async cleanupWorktrees(plan: PlanRow, fence: number) {
     const owned = [
       ...new Set(
@@ -4086,15 +4293,28 @@ export class TaskRuntime {
           ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
       try {
-        const active = await Promise.all(
-          this.store
-            .attempts(plan.id)
-            .filter((attempt) => attempt.workspace === workspace)
-            .map((attempt) => this.host.session(attempt.session_id)),
-        )
-        if (active.some((session) => session?.busy)) throw new Error("Worker is still active")
         const listed = await this.host.worktrees()
         if (listed.includes(workspace)) {
+          const sourceEffect = this.store.effects(plan.id).find((entry) => {
+            if (
+              ![
+                "worktree",
+                "graph-worktree",
+                "adoption-task-worktree",
+                "adoption-combined-worktree",
+              ].includes(entry.kind) ||
+              entry.state !== "completed"
+            )
+              return false
+            try {
+              return JSON.parse(entry.receipt ?? "{}").workspace === workspace
+            } catch {
+              return false
+            }
+          })
+          if (!sourceEffect)
+            throw new Error("Owned worktree has no completed creation receipt; preserve it")
+          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace)
           if (git(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
           const head = git(workspace, ["rev-parse", "HEAD"])

@@ -181,6 +181,23 @@ function mergedScopeTree(directory: string, base: string, incorporated: string):
   return tree
 }
 
+/** Select the same reviewed comparison baseline used when an isolated artifact is verified. */
+export function reviewedScopeBase(
+  directory: string,
+  base: string,
+  head: string,
+  reviewedHead?: string,
+): string {
+  let scopeBase = base
+  if (reviewedHead) {
+    const common = singleMergeBase(directory, head, reviewedHead)
+    const baseRelation = singleMergeBase(directory, base, common)
+    if (baseRelation === base) scopeBase = common
+    else if (baseRelation !== common) scopeBase = mergedScopeTree(directory, base, common)
+  }
+  return scopeBase
+}
+
 /** Only a private runtime-created worktree may be snapshotted. Never stages origin. */
 export function commitArtifact(
   directory: string,
@@ -191,13 +208,7 @@ export function commitArtifact(
 ): { commit: string; paths: string[]; identity: string; scopeBase: string } {
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
-  let scopeBase = base
-  if (snapshot && reviewedHead) {
-    const common = singleMergeBase(directory, head, reviewedHead)
-    const baseRelation = singleMergeBase(directory, base, common)
-    if (baseRelation === base) scopeBase = common
-    else if (baseRelation !== common) scopeBase = mergedScopeTree(directory, base, common)
-  }
+  const scopeBase = reviewedScopeBase(directory, base, head, snapshot ? reviewedHead : undefined)
   const paths = changedPaths(directory, scopeBase)
   const violations = scopeViolations(paths, scope)
   if (violations.length) throw new ArtifactScopeViolation(violations)
@@ -309,15 +320,27 @@ export type CheckReceipt = {
   unchanged: boolean
 }
 
-/** A credential-safe fingerprint for all environment inputs inherited by checks. */
-export function verificationEnvironmentIdentity(): string {
+const verificationRuntimeGeneration = crypto.randomUUID()
+const identityEnvironmentKeys = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "CI"] as const
+const verificationEnvironment = () =>
+  Object.fromEntries(
+    identityEnvironmentKeys.flatMap((key) =>
+      process.env[key] === undefined ? [] : [[key, process.env[key]]],
+    ),
+  )
+
+/** Binds evidence to the loaded check runtime without persisting inherited credentials. */
+export function verificationEnvironmentIdentity(
+  runtimeGeneration: string = verificationRuntimeGeneration,
+): string {
   return fingerprint({
-    bun: Bun.revision,
+    bunRevision: Bun.revision,
+    bunVersion: Bun.version,
+    executable: process.execPath,
     platform: process.platform,
     architecture: process.arch,
-    environment: Object.fromEntries(
-      Object.entries(process.env).sort(([left], [right]) => left.localeCompare(right)),
-    ),
+    runtimeGeneration,
+    environment: verificationEnvironment(),
   })
 }
 async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768) {

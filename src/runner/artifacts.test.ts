@@ -3,7 +3,31 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { artifactExists, commitArtifact, git } from "./artifacts.ts"
+import {
+  artifactExists,
+  commitArtifact,
+  git,
+  verificationEnvironmentIdentity,
+} from "./artifacts.ts"
+
+test("verification identity uses runtime generations without hashing unrelated credentials", () => {
+  const identity = verificationEnvironmentIdentity()
+  const previous = process.env.LAZERS_IDENTITY_SECRET_CANARY
+  const previousLanguage = process.env.LANG
+  process.env.LAZERS_IDENTITY_SECRET_CANARY = "must-not-be-persisted-or-hashed"
+  try {
+    expect(verificationEnvironmentIdentity()).toBe(identity)
+    expect(verificationEnvironmentIdentity("different-process-generation")).not.toBe(identity)
+    expect(identity).not.toContain("must-not-be-persisted-or-hashed")
+    process.env.LANG = `${previousLanguage ?? ""}.lazers-test`
+    expect(verificationEnvironmentIdentity()).not.toBe(identity)
+  } finally {
+    if (previous === undefined) delete process.env.LAZERS_IDENTITY_SECRET_CANARY
+    else process.env.LAZERS_IDENTITY_SECRET_CANARY = previous
+    if (previousLanguage === undefined) delete process.env.LANG
+    else process.env.LANG = previousLanguage
+  }
+})
 
 function initRepository(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))

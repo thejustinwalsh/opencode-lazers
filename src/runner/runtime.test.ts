@@ -4098,6 +4098,98 @@ test("native cleanup follows verified integration, preserves dirty work, and ret
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
 })
 
+test("cleanup retries require detailed worker inactivity and never rerun product checks", async () => {
+  const f = fixture({ commit: true })
+  await runPlan(f)
+  await drive(f.runtime)
+  const plan = f.store.plan(f.receipt.planID)!
+  const artifact = plan.artifact!
+  const attempt = f.store.attempts(plan.id)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  const originalBackground = structuredClone(worker.background)
+  const worktree = attempt.workspace
+  const checksBefore = f.store
+    .effects(plan.id)
+    .filter(
+      (effect) => effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:"),
+    )
+    .map((effect) => [effect.id, effect.state, effect.receipt])
+  const workerAdmissionsBefore = f.events.filter((event) => /^(create|prompt):/.test(event)).length
+  git(f.root, ["merge", "--ff-only", artifact])
+
+  const retryCleanup = async (requestID: string) => {
+    await f.runtime.command(
+      {
+        requestID,
+        planID: plan.id,
+        expectedVersion: f.store.plan(plan.id)!.version,
+        action: "integrated",
+        artifact,
+        targetBranch: "main",
+        reason: "Retry cleanup after the worker was observed idle",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+    expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+    expect(await f.host.worktrees()).toContain(worktree)
+  }
+
+  f.sessions.delete(attempt.session_id)
+  await retryCleanup("cleanup-missing-session")
+  f.sessions.set(attempt.session_id, worker)
+  worker.pendingInput = true
+  await retryCleanup("cleanup-pending-input")
+  worker.pendingInput = false
+  worker.pendingPermissions = 1
+  await retryCleanup("cleanup-pending-permission")
+  worker.pendingPermissions = 0
+  worker.pendingForms = 1
+  await retryCleanup("cleanup-pending-form")
+  worker.pendingForms = 0
+  worker.observationUnstable = true
+  await retryCleanup("cleanup-unstable-observation")
+  worker.observationUnstable = false
+  worker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "fixture cannot establish worker quiescence",
+  }
+  await retryCleanup("cleanup-unknown-background")
+
+  worker.background = originalBackground
+  delete worker.pendingInput
+  delete worker.pendingPermissions
+  delete worker.pendingForms
+  await f.runtime.command(
+    {
+      requestID: "cleanup-conclusive-idle",
+      planID: plan.id,
+      expectedVersion: f.store.plan(plan.id)!.version,
+      action: "integrated",
+      artifact,
+      targetBranch: "main",
+      reason: "Detailed native observation confirms cleanup is safe",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+
+  expect(f.store.plan(plan.id)?.state).toBe("integrated")
+  expect(await f.host.worktrees()).not.toContain(worktree)
+  expect(
+    f.store
+      .effects(plan.id)
+      .filter(
+        (effect) => effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:"),
+      )
+      .map((effect) => [effect.id, effect.state, effect.receipt]),
+  ).toEqual(checksBefore)
+  expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
+    workerAdmissionsBefore,
+  )
+})
+
 test("explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance", async () => {
   const model = { providerID: "openai", id: "gpt-6-luna", variant: "max" }
   const f = fixture({ shared: true, workerModel: model })

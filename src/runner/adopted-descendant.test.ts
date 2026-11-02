@@ -16,7 +16,7 @@ import type { HostSession, RunnerHost } from "./host.ts"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
-import { git } from "./artifacts.ts"
+import { git, verificationEnvironmentIdentity } from "./artifacts.ts"
 
 type Mode = "failed-task" | "blocked-combined"
 type TestFixture = ReturnType<typeof fixture>
@@ -26,7 +26,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-function fixture(mode: Mode) {
+function fixture(mode: Mode, sharedAssertionID?: string) {
   const root = mkdtempSync(join(tmpdir(), "lazers-adopt-descendant-"))
   const data = mkdtempSync(join(tmpdir(), "lazers-adopt-data-"))
   git(root, ["init", "--initial-branch=main"])
@@ -72,12 +72,13 @@ function fixture(mode: Mode) {
         assertion: "The task result satisfies its fresh check",
         evidence: [
           { kind: "verification", verificationID: "task-check" },
-          ...(mode === "failed-task"
+          ...(mode === "failed-task" || sharedAssertionID
             ? [{ kind: "human" as const, decision: "Review this exact task artifact" }]
             : []),
         ],
       },
     ]
+    if (sharedAssertionID) proposal.acceptance[0]!.id = sharedAssertionID
     proposal.limits.maxRepairAttempts = 0
     return repository.insert({
       schemaVersion: 1,
@@ -97,7 +98,7 @@ function fixture(mode: Mode) {
   })()
   const taskAcceptance = [
     {
-      id: "combined-result",
+      id: sharedAssertionID ?? "combined-result",
       assertion: "The reviewed combined artifact contains the repaired result",
       evidence: [
         { kind: "verification" as const, verificationID: "combined-check" },
@@ -107,6 +108,7 @@ function fixture(mode: Mode) {
   ]
   const events: string[] = []
   const sessions = new Map<string, HostSession>()
+  const sessionReads: { id: string; messages: boolean }[] = []
   const inbox = new Map<string, OutcomeInboxEntry[]>()
   let loseNextWorktreeResponse = false
   let observationGate:
@@ -162,7 +164,8 @@ function fixture(mode: Mode) {
       git(root, ["worktree", "remove", directory])
       events.push(`remove:${directory}`)
     },
-    session: async (id) => {
+    session: async (id, options) => {
+      sessionReads.push({ id, messages: options?.messages === true })
       if (observationGate && id !== "owner") return observationGate.promise
       if (id !== "owner" && workerSessionHook) {
         workerSessionHook.remaining--
@@ -172,7 +175,14 @@ function fixture(mode: Mode) {
           hook()
         }
       }
-      return structuredClone(sessions.get(id) ?? null)
+      const session = structuredClone(sessions.get(id) ?? null)
+      if (session && id !== "owner") {
+        if (!options?.messages) delete session.turn
+        if (session.pendingInput === false) delete session.pendingInput
+        if (session.pendingPermissions === 0) delete session.pendingPermissions
+        if (session.pendingForms === 0) delete session.pendingForms
+      }
+      return session
     },
     outcomeInbox: async (sessionID) => structuredClone(inbox.get(sessionID) ?? []),
     architectInputPage: async (sessionID) => ({
@@ -317,6 +327,7 @@ function fixture(mode: Mode) {
     store,
     events,
     sessions,
+    sessionReads,
     host,
     planID: submitted.planID,
     planInput,
@@ -476,6 +487,29 @@ async function recordHumanEvidence(
   )
 }
 
+async function recordPhaseHumanEvidence(
+  f: TestFixture,
+  adoptionID: string,
+  phase: "task" | "combined",
+  assertionID: string,
+  artifact: string,
+) {
+  await f.runtime.command(
+    {
+      requestID: `human-${phase}-${adoptionID}`,
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "human-evidence",
+      adoptionID,
+      ...(phase === "task" ? { taskID: f.task.id } : {}),
+      assertionID,
+      artifact,
+      reason: `Reviewed the exact ${phase} adoption artifact`,
+    },
+    "owner",
+  )
+}
+
 function adoptionCommand(
   f: TestFixture,
   attemptID: string,
@@ -494,6 +528,60 @@ function adoptionCommand(
     targetBranch: "main",
     reason: "Reviewed and landed the correction on main",
   }
+}
+
+function reserveActiveWriter(f: TestFixture, writeScope: string[], label: string) {
+  const taskID = crypto.randomUUID()
+  const proposal = validProposal()
+  proposal.writeScope = writeScope
+  const task = f.repository.insert({
+    schemaVersion: 1,
+    id: taskID,
+    revision: 1,
+    status: "submitted",
+    createdAt: new Date().toISOString(),
+    provenance: {
+      projectID: "project",
+      projectDirectory: f.root,
+      workspaceDirectory: f.root,
+      sessionID: "owner",
+      startingRevision: { kind: "git", commit: f.base },
+    },
+    proposal,
+  })
+  const receipt = f.store.submit(
+    {
+      ...f.planInput,
+      requestID: `active-writer-${label}`,
+      nodes: [{ taskID: task.id, revision: 1 as const }],
+      integrationOrder: [task.id],
+    },
+    "owner",
+  )
+  const writerPlan = f.store.plan(receipt.planID)!
+  const attemptID = crypto.randomUUID()
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_attempts(
+           id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,
+           policy,state,started_at,token_count,tool_count,retry_count,cost
+         ) VALUES(?,?,?,?,?,?,?,?,NULL,?,'running',?,NULL,0,0,NULL)`,
+      )
+      .run(
+        attemptID,
+        writerPlan.id,
+        task.id,
+        1,
+        `session-${label}`,
+        `message-${label}`,
+        join(f.data, `worktree-${label}`),
+        f.base,
+        JSON.stringify({ source: f.base, model: { providerID: "fixture", id: "worker" } }),
+        Date.now(),
+      ),
+  )
+  return { task, plan: writerPlan, attemptID }
 }
 
 async function integratePlan(f: TestFixture) {
@@ -523,7 +611,13 @@ test("failed/READY task adopts only after fresh checks and new task/combined hum
   const candidate = landCandidate(f, node.artifact!)
   f.loseNextWorktreeResponse = true
   const command = adoptionCommand(f, attempt.id, node.artifact!, candidate)
+  const readsBeforeAdoption = f.sessionReads.length
   const requested = (await f.runtime.command(command, "owner")) as { adoptionID: string }
+  expect(
+    f.sessionReads
+      .slice(readsBeforeAdoption)
+      .some((read) => read.id === attempt.session_id && read.messages),
+  ).toBe(true)
   expect(await f.runtime.command(command, "owner")).toEqual(requested)
   await expect(
     f.runtime.command({ ...command, reason: "changed payload" }, "owner"),
@@ -651,7 +745,239 @@ test("accepted task with blocked combined check adopts a descendant without rewr
   expect(f.store.plan(f.planID)?.state).toBe("integrated")
 })
 
-test("adoption evidence is isolated by operation and environment changes hold publication", async () => {
+test("adoption scope uses the latest reviewed integration baseline, not intervening accepted work", async () => {
+  const f = fixture("blocked-combined")
+  const { node, attempt } = await strand(f)
+  const oldArtifact = node.artifact!
+  git(f.root, ["merge", "--ff-only", oldArtifact])
+  await f.runtime.command(
+    {
+      requestID: "record-source-before-intervening-work",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "integrated",
+      taskID: f.task.id,
+      artifact: oldArtifact,
+      targetBranch: "main",
+      reason: "Reviewed the accepted task source landing",
+    },
+    "owner",
+  )
+  writeFileSync(join(f.root, "reviewed-other.txt"), "independent integrated work\n")
+  git(f.root, ["add", "reviewed-other.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=reviewer",
+    "-c",
+    "user.email=reviewer@example.invalid",
+    "commit",
+    "-m",
+    "independent integrated work",
+  ])
+  const reviewedBaseline = git(f.root, ["rev-parse", "HEAD"])
+  f.store.record(f.planID, null, "INTEGRATION_RECORDED", {
+    artifact: reviewedBaseline,
+    branch: "main",
+    head: reviewedBaseline,
+    reason: "An independent accepted plan was integrated",
+  })
+  const candidate = landCandidate(f, oldArtifact)
+  const requested = (await f.runtime.command(
+    adoptionCommand(f, attempt.id, oldArtifact, candidate),
+    "owner",
+  )) as { adoptionID: string }
+  expect(f.store.adoption(requested.adoptionID)?.reviewed_baseline).toBe(reviewedBaseline)
+  await recordHumanEvidence(f, requested.adoptionID, candidate, false)
+  await drive(f.runtime, 3)
+  expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
+  expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
+})
+
+test("reviewed baseline does not authorize later out-of-scope candidate changes", async () => {
+  const f = fixture("blocked-combined")
+  const { node, attempt } = await strand(f)
+  const oldArtifact = node.artifact!
+  git(f.root, ["merge", "--ff-only", oldArtifact])
+  await f.runtime.command(
+    {
+      requestID: "record-task-before-unreviewed-work",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "integrated",
+      taskID: f.task.id,
+      artifact: oldArtifact,
+      targetBranch: "main",
+      reason: "Reviewed the accepted task source landing",
+    },
+    "owner",
+  )
+  writeFileSync(join(f.root, "reviewed-other.txt"), "independent integrated work\n")
+  git(f.root, ["add", "reviewed-other.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=reviewer",
+    "-c",
+    "user.email=reviewer@example.invalid",
+    "commit",
+    "-m",
+    "independent integrated work",
+  ])
+  const reviewedBaseline = git(f.root, ["rev-parse", "HEAD"])
+  f.store.record(f.planID, null, "INTEGRATION_RECORDED", {
+    artifact: reviewedBaseline,
+    branch: "main",
+    head: reviewedBaseline,
+    reason: "An independent accepted plan was integrated",
+  })
+  writeFileSync(join(f.root, "unreviewed.txt"), "not part of the reviewed baseline\n")
+  git(f.root, ["add", "unreviewed.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=reviewer",
+    "-c",
+    "user.email=reviewer@example.invalid",
+    "commit",
+    "-m",
+    "unreviewed out-of-scope change",
+  ])
+  writeFileSync(join(f.root, "result.txt"), "good\n")
+  git(f.root, ["add", "result.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=reviewer",
+    "-c",
+    "user.email=reviewer@example.invalid",
+    "commit",
+    "-m",
+    "reviewed task correction",
+  ])
+  const candidate = git(f.root, ["rev-parse", "HEAD"])
+  await expect(
+    f.runtime.command(adoptionCommand(f, attempt.id, oldArtifact, candidate), "owner"),
+  ).rejects.toThrow("outside the task's authorized scope")
+  expect(f.store.adoptions(f.planID)).toHaveLength(0)
+})
+
+test("identical task and combined assertion/artifact evidence remains phase- and task-bound", async () => {
+  for (const firstPhase of ["task", "combined"] as const) {
+    const f = fixture("failed-task", "shared-result")
+    const { node, attempt } = await strand(f)
+    const candidate = landCandidate(f, node.artifact!)
+    const requested = (await f.runtime.command(
+      adoptionCommand(f, attempt.id, node.artifact!, candidate),
+      "owner",
+    )) as { adoptionID: string; combinedArtifact: string }
+    expect(requested.combinedArtifact).toBe(candidate)
+    await drive(f.runtime, 4)
+    expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+
+    await recordPhaseHumanEvidence(f, requested.adoptionID, firstPhase, "shared-result", candidate)
+    await drive(f.runtime, 1)
+    expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+    expect(f.store.plan(f.planID)?.state).toBe("blocked")
+    expect(
+      f.store.hasAdoptionEvidence(
+        requested.adoptionID,
+        firstPhase,
+        firstPhase === "task" ? f.task.id : null,
+        "shared-result",
+        candidate,
+      ),
+    ).toBe(true)
+    expect(
+      f.store.hasAdoptionEvidence(
+        requested.adoptionID,
+        firstPhase === "task" ? "combined" : "task",
+        firstPhase === "task" ? null : f.task.id,
+        "shared-result",
+        candidate,
+      ),
+    ).toBe(false)
+
+    await recordPhaseHumanEvidence(
+      f,
+      requested.adoptionID,
+      firstPhase === "task" ? "combined" : "task",
+      "shared-result",
+      candidate,
+    )
+    await drive(f.runtime, 2)
+    expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
+  }
+})
+
+test("restart recovers task and combined check receipt cuts without replaying checks", async () => {
+  for (const cutPhase of ["task", "combined"] as const) {
+    const f = fixture("failed-task")
+    const { node, attempt } = await strand(f)
+    const candidate = landCandidate(f, node.artifact!)
+    const requested = (await f.runtime.command(
+      adoptionCommand(f, attempt.id, node.artifact!, candidate),
+      "owner",
+    )) as { adoptionID: string }
+    const complete = f.store.completeAdoptionCheck.bind(f.store)
+    let cut = false
+    f.store.completeAdoptionCheck = (adoptionID, phase, checkID, receipt, fence) => {
+      if (!cut && phase === cutPhase) {
+        cut = true
+        throw new Error(`simulated ${phase} receipt database cut`)
+      }
+      return complete(adoptionID, phase, checkID, receipt, fence)
+    }
+    await drive(f.runtime, 1)
+    expect(cut).toBe(true)
+    expect(f.store.adoptionChecks(requested.adoptionID, cutPhase)[0]?.state).toBe("uncertain")
+    const checkCountsBeforeRestart = {
+      task: existsSync(f.taskLog) ? readFileSync(f.taskLog, "utf8").length : 0,
+      combined: existsSync(f.graphLog) ? readFileSync(f.graphLog, "utf8").length : 0,
+    }
+    const checkRow = f.store.adoptionChecks(requested.adoptionID, cutPhase)[0]!
+    expect(existsSync(checkRow.receipt_path)).toBe(true)
+    const attemptsBeforeRestart = f.store.attempts(f.planID).length
+    const admissionsBeforeRestart = f.events.filter((event) =>
+      /^(create|prompt):/.test(event),
+    ).length
+
+    await f.reopen()
+    await drive(f.runtime, 2)
+
+    expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+    expect(
+      f.store.adoptionChecks(requested.adoptionID).every((check) => check.state === "completed"),
+    ).toBe(true)
+    expect(existsSync(f.taskLog) ? readFileSync(f.taskLog, "utf8").length : 0).toBe(
+      checkCountsBeforeRestart.task,
+    )
+    expect(existsSync(f.graphLog) ? readFileSync(f.graphLog, "utf8").length : 0).toBe(
+      checkCountsBeforeRestart.combined + (cutPhase === "task" ? 1 : 0),
+    )
+    expect(f.store.attempts(f.planID)).toHaveLength(attemptsBeforeRestart)
+    expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
+      admissionsBeforeRestart,
+    )
+  }
+})
+
+test("only active worker reservations with conflicting write scopes block adoption", async () => {
+  for (const [label, scope, blocked] of [
+    ["unrelated", ["unrelated/**"], false],
+    ["conflicting", ["result.txt"], true],
+  ] as const) {
+    const f = fixture("failed-task")
+    const { node, attempt } = await strand(f)
+    const candidate = landCandidate(f, node.artifact!)
+    reserveActiveWriter(f, [...scope], label)
+    const command = adoptionCommand(f, attempt.id, node.artifact!, candidate)
+    if (blocked)
+      await expect(f.runtime.command(command, "owner")).rejects.toThrow("conflicting worker")
+    else {
+      const requested = (await f.runtime.command(command, "owner")) as { adoptionID: string }
+      expect(f.store.adoption(requested.adoptionID)?.state).toBe("pending")
+    }
+  }
+})
+
+test("irrelevant environment churn is ignored while runtime generations and operation evidence stay isolated", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -661,8 +987,17 @@ test("adoption evidence is isolated by operation and environment changes hold pu
   expect(f.store.adoption(first.adoptionID)?.state).toBe("waiting-human")
   await recordHumanEvidence(f, first.adoptionID, candidate, true)
 
+  const currentEnvironment = verificationEnvironmentIdentity()
   const oldValue = process.env.LAZERS_ADOPTION_TEST_ENV
-  process.env.LAZERS_ADOPTION_TEST_ENV = "changed"
+  process.env.LAZERS_ADOPTION_TEST_ENV = "credential-value-must-not-enter-evidence"
+  expect(verificationEnvironmentIdentity()).toBe(currentEnvironment)
+  const nextRuntimeIdentity = verificationEnvironmentIdentity("next-runtime-generation")
+  expect(nextRuntimeIdentity).not.toBe(currentEnvironment)
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_adoptions SET environment_identity=? WHERE id=?")
+      .run(nextRuntimeIdentity, first.adoptionID),
+  )
   try {
     await f.runtime.tick()
   } finally {
@@ -916,6 +1251,7 @@ test("active adoption scopes are reserved transactionally across plans", async (
         descendantCommit: candidate,
         targetBranch: "main",
         landingHead: candidate,
+        reviewedBaseline: node.artifact!,
         candidateTree: git(f.root, ["rev-parse", `${candidate}^{tree}`]),
         inputFingerprint: "competing-input",
         environmentIdentity: "competing-environment",
