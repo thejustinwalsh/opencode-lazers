@@ -30,12 +30,17 @@ import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
 import { radarProjectIdentity } from "./project.ts"
 import { taskTitle } from "../tasks/presentation.ts"
+import { RadarLayout } from "./layout-ipc.ts"
+import { RadarMapInspector, RadarMapView } from "./map-view.tsx"
+import { createRadarMapModel } from "./map-model.ts"
 
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
-  view: Schema.Literals(["flow", "timeline"]),
+  view: Schema.Literals(["map", "flow", "timeline"]),
+  includeUnmanagedSessions: Schema.Boolean,
   planID: Schema.NullOr(Schema.String),
   taskID: Schema.NullOr(Schema.String),
+  selectedMapID: Schema.NullOr(Schema.String),
   selectedTransition: Schema.NullOr(Schema.Number),
   selectedState: Schema.NullOr(Schema.String),
   selectedAttemptID: Schema.NullOr(Schema.String),
@@ -46,9 +51,11 @@ const View = Schema.Struct({
 })
 const initial: typeof View.Type = {
   scope: "session",
-  view: "flow",
+  view: "map",
+  includeUnmanagedSessions: false,
   planID: null,
   taskID: null,
+  selectedMapID: null,
   selectedTransition: null,
   selectedState: null,
   selectedAttemptID: null,
@@ -109,10 +116,12 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
+  const radarLayout = ctx.main(RadarLayout)
   const [data, setData] = createSignal<RadarPanelData>({
     key: "",
     loading: true,
     stale: true,
+    resynchronizing: true,
     error: "",
   })
   const [split, setSplit] = createSignal(initial.split)
@@ -192,7 +201,13 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
       if (!value || !frame.visible() || !ctx.stores.radarView(props.session).ready())
         return undefined
       const view = prefs()
-      const key = JSON.stringify([value.server, value.project, value.session, view.scope])
+      const key = JSON.stringify([
+        value.server,
+        value.project,
+        value.session,
+        view.scope,
+        view.includeUnmanagedSessions,
+      ])
       return { value, key, view }
     },
     ({ value, key, view }) => {
@@ -206,7 +221,13 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
         value.directory,
         () => props.session.server.connected,
       )
-      state.connect(key, value.projectID, observationScope, transport)
+      state.connect(
+        key,
+        value.projectID,
+        observationScope,
+        transport,
+        view.includeUnmanagedSessions,
+      )
       onCleanup(() => state.close())
     },
     {
@@ -217,10 +238,22 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
 
   const expectedKey = () => {
     const value = current()
-    return value ? JSON.stringify([value.server, value.project, value.session, prefs().scope]) : ""
+    return value
+      ? JSON.stringify([
+          value.server,
+          value.project,
+          value.session,
+          prefs().scope,
+          prefs().includeUnmanagedSessions,
+        ])
+      : ""
   }
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const snapshot = () => visible()?.snapshot
+  const radar = () => visible()?.radar
+  const mapModel = createMemo(() =>
+    radar() ? createRadarMapModel(radar()!, snapshot()) : undefined,
+  )
   const plan = () => {
     const currentSnapshot = snapshot()
     return currentSnapshot ? selectedPlan(currentSnapshot, prefs().planID) : undefined
@@ -286,6 +319,8 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
       chosenAttempt()?.id,
       chosenCheck() ? checkKey(chosenCheck()!) : undefined,
       chosenState()?.id,
+      prefs().view,
+      prefs().selectedMapID,
     ])
   const selectedAttemptID = (attempt: TimelineAttempt) =>
     save({
@@ -366,13 +401,13 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
     const view = prefs()
     visualRestore.restore(
       `${expectedKey()}:${view.view}`,
-      Boolean(value && value.snapshot),
+      Boolean(value && (value.snapshot || value.radar)),
       visual,
       view.visualScroll,
     )
     detailRestore.restore(
       selectionKey(),
-      Boolean(value && value.snapshot),
+      Boolean(value && (value.snapshot || value.radar)),
       detail,
       view.detailScroll,
     )
@@ -482,7 +517,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
           </span>
         </div>
         <div class="lazers-radar-controls">
-          <Show when={snapshot()}>
+          <Show when={prefs().view !== "map" ? snapshot() : undefined}>
             {(value) => (
               <div class="lazers-radar-pickers">
                 <Show when={value().plans.length > 0}>
@@ -539,7 +574,25 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
               </div>
             )}
           </Show>
+          <Show when={prefs().view === "map"}>
+            <button
+              type="button"
+              class="lazers-radar-other-sessions"
+              aria-pressed={prefs().includeUnmanagedSessions}
+              onClick={() => save({ includeUnmanagedSessions: !prefs().includeUnmanagedSessions })}
+            >
+              {prefs().includeUnmanagedSessions ? "Other sessions shown" : "Managed sessions"}
+            </button>
+          </Show>
           <div class="lazers-radar-tabs" role="tablist" aria-label="Radar view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={prefs().view === "map"}
+              onClick={() => save({ view: "map" })}
+            >
+              Map
+            </button>
             <button
               type="button"
               role="tab"
@@ -584,403 +637,489 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
             </Show>
           </div>
         </Show>
-        <Show
-          when={snapshot()}
-          fallback={
-            <div class="lazers-radar-note">
-              {visible()?.loading ? "Loading observation…" : "No observation is available."}
-            </div>
-          }
-        >
-          {(value) => (
-            <>
-              <Show when={stale() && (visible()?.error || !props.session.server.connected)}>
-                <div class="lazers-radar-note" role="status">
-                  {!props.session.server.connected
-                    ? "The server is disconnected. Displayed records are not live."
-                    : `Last observation ${timeLabel(Date.parse(value().observedAt))}.`}
+        <Show when={prefs().view === "map"}>
+          <Show
+            when={radar()}
+            fallback={
+              <div class="lazers-radar-note">
+                {visible()?.loading
+                  ? "Loading operational Radar data…"
+                  : "No operational Radar data is available."}
+              </div>
+            }
+          >
+            {(operational) => (
+              <>
+                <div class="lazers-radar-map-freshness" role="status">
+                  <span>{stale() ? "Last observed" : "Observed"}</span>
+                  <time dateTime={operational().observedAt}>
+                    {timeLabel(Date.parse(operational().observedAt))}
+                  </time>
+                  <span>
+                    {operational().coverage.managedSessionCount} managed ·{" "}
+                    {operational().coverage.sessionCount} scoped sessions
+                  </span>
+                  <span>
+                    Runner {operational().freshness.runner} · inventory{" "}
+                    {operational().freshness.nativeInventory} · native events{" "}
+                    {operational().freshness.nativeEvents}
+                  </span>
+                  <Show
+                    when={
+                      operational().coverage.inventoryTruncated ||
+                      operational().coverage.workTruncated ||
+                      operational().coverage.progressTruncated ||
+                      operational().coverage.routeTruncated ||
+                      operational().coverage.toolTruncated ||
+                      operational().coverage.edgeTruncated
+                    }
+                  >
+                    <span>
+                      Some scoped records are bounded; inspect the related coverage in the
+                      accessible list.
+                    </span>
+                  </Show>
                 </div>
-              </Show>
-              <Show
-                when={value().plans.length > 0}
-                fallback={
-                  <div class="lazers-radar-note">
-                    {value().unplannedTasks.length
-                      ? "No runner plan is recorded for the submitted tasks in this scope."
-                      : "No recorded runner activity in this scope."}
+                <Show when={visible()?.snapshotError}>
+                  <div class="lazers-radar-note" role="status">
+                    Timeline and Flow lifecycle detail is unavailable: {visible()?.snapshotError}
                   </div>
-                }
-              >
+                </Show>
                 <Show
-                  when={!planMissing()}
+                  when={mapModel()}
+                  fallback={<div class="lazers-radar-note">No map records are available.</div>}
+                >
+                  {(model) => (
+                    <RadarMapView
+                      model={model()}
+                      scopeKey={expectedKey()}
+                      resynchronizing={Boolean(
+                        visible()?.resynchronizing || !props.session.server.connected,
+                      )}
+                      selectedID={prefs().selectedMapID}
+                      onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
+                      layout={radarLayout}
+                      monoFont={ctx.appearance.font("mono")}
+                    />
+                  )}
+                </Show>
+                <div class="lazers-radar-map-key" aria-label="Relationship type key">
+                  <span data-kind="architecture">Architecture</span>
+                  <span data-kind="dependency">Dependency</span>
+                  <span data-kind="assignment">Dispatch</span>
+                  <span data-kind="prompt">Prompt / delivery</span>
+                  <span data-kind="outcome">Outcome</span>
+                  <span data-kind="model-request">Model request</span>
+                  <span data-kind="model-response">Model response</span>
+                  <span data-kind="tool-call">Tool call</span>
+                  <span data-kind="tool-result">Tool result</span>
+                  <span data-kind="observation">Read</span>
+                </div>
+              </>
+            )}
+          </Show>
+        </Show>
+        <Show when={prefs().view !== "map"}>
+          <Show
+            when={snapshot()}
+            fallback={
+              <div class="lazers-radar-note">
+                {visible()?.loading ? "Loading observation…" : "No observation is available."}
+              </div>
+            }
+          >
+            {(value) => (
+              <>
+                <Show when={stale() && (visible()?.error || !props.session.server.connected)}>
+                  <div class="lazers-radar-note" role="status">
+                    {!props.session.server.connected
+                      ? "The server is disconnected. Displayed records are not live."
+                      : `Last observation ${timeLabel(Date.parse(value().observedAt))}.`}
+                  </div>
+                </Show>
+                <Show
+                  when={value().plans.length > 0}
                   fallback={
                     <div class="lazers-radar-note">
-                      The previously selected plan is no longer available in this scope.
+                      {value().unplannedTasks.length
+                        ? "No runner plan is recorded for the submitted tasks in this scope."
+                        : "No recorded runner activity in this scope."}
                     </div>
                   }
                 >
                   <Show
-                    when={plan()}
-                    fallback={<div class="lazers-radar-note">Select a recorded plan.</div>}
+                    when={!planMissing()}
+                    fallback={
+                      <div class="lazers-radar-note">
+                        The previously selected plan is no longer available in this scope.
+                      </div>
+                    }
                   >
                     <Show
-                      when={!taskMissing()}
-                      fallback={
-                        <div class="lazers-radar-note">
-                          The previously selected task is no longer part of this plan.
-                        </div>
-                      }
+                      when={plan()}
+                      fallback={<div class="lazers-radar-note">Select a recorded plan.</div>}
                     >
                       <Show
-                        when={prefs().view === "flow"}
+                        when={!taskMissing()}
                         fallback={
-                          <>
-                            <Show
-                              when={chart().lanes.length > 0}
-                              fallback={
-                                <div class="lazers-radar-note">
-                                  No recorded timeline intervals or transitions in this plan.
-                                </div>
-                              }
-                            >
-                              <div class="lazers-radar-chart" aria-label="Recorded timeline">
-                                <div class="lazers-radar-axis" aria-label="Observed time axis">
-                                  <span />
-                                  <div class="lazers-radar-axis-plot">
-                                    <time dateTime={timeValue(chart().startAt)}>
-                                      {timeLabel(chart().startAt)}
-                                    </time>
-                                    <Show when={chart().startAt !== chart().endAt}>
-                                      <time dateTime={timeValue(chart().endAt)}>
-                                        {timeLabel(chart().endAt)}
-                                      </time>
-                                    </Show>
-                                  </div>
-                                </div>
-                                <For each={chart().lanes}>
-                                  {(lane) => {
-                                    const markTop = (index: number) => {
-                                      const mark = lane.marks[index]!
-                                      return mark.kind === "execution"
-                                        ? 6
-                                        : mark.kind === "check"
-                                          ? 24
-                                          : 42
-                                    }
-                                    return (
-                                      <div class="lazers-radar-lane" title={lane.label}>
-                                        <div class="lazers-radar-lane-label">
-                                          <span>{laneLabel(lane)}</span>
-                                        </div>
-                                        <div class="lazers-radar-lane-plot">
-                                          <For each={lane.marks}>
-                                            {(mark, index) => {
-                                              const start = () => markStart(mark)
-                                              const end = () => markEnd(mark)
-                                              const startPosition = () =>
-                                                start() === null
-                                                  ? undefined
-                                                  : timePercent(start()!, chart())
-                                              const endPosition = () =>
-                                                end() === null
-                                                  ? undefined
-                                                  : timePercent(end()!, chart())
-                                              const interval = () =>
-                                                startPosition() !== undefined &&
-                                                endPosition() !== undefined &&
-                                                start() !== end()
-                                              const reversed = () =>
-                                                start() !== null &&
-                                                end() !== null &&
-                                                end()! < start()!
-                                              const ariaLabel = () =>
-                                                `${timelineLabel(mark)}${reversed() ? "; recorded end precedes start" : ""}`
-                                              return (
-                                                <>
-                                                  <Show when={interval()}>
-                                                    <button
-                                                      type="button"
-                                                      class="lazers-radar-mark"
-                                                      data-kind={mark.kind}
-                                                      data-open={mark.openThroughObservation}
-                                                      data-reversed={reversed()}
-                                                      aria-label={ariaLabel()}
-                                                      aria-pressed={Boolean(markPressed(mark))}
-                                                      title={ariaLabel()}
-                                                      style={{
-                                                        left: `${Math.min(startPosition()!, endPosition()!)}%`,
-                                                        width: `${Math.max(1, Math.abs(endPosition()! - startPosition()!))}%`,
-                                                        top: `${markTop(index())}px`,
-                                                      }}
-                                                      onClick={() => chooseMark(mark)}
-                                                    />
-                                                  </Show>
-                                                  <Show
-                                                    when={
-                                                      !interval() && startPosition() !== undefined
-                                                    }
-                                                  >
-                                                    <button
-                                                      type="button"
-                                                      class="lazers-radar-mark-point"
-                                                      data-kind={mark.kind}
-                                                      aria-label={ariaLabel()}
-                                                      aria-pressed={Boolean(markPressed(mark))}
-                                                      title={ariaLabel()}
-                                                      style={{
-                                                        left: `${startPosition()}%`,
-                                                        top: `${markTop(index())}px`,
-                                                        transform: "translateX(-6px)",
-                                                      }}
-                                                      onClick={() => chooseMark(mark)}
-                                                    >
-                                                      <span class="lazers-radar-mark-point-dot" />
-                                                      <span class="lazers-radar-mark-point-label">
-                                                        {mark.label}
-                                                      </span>
-                                                    </button>
-                                                  </Show>
-                                                  <Show
-                                                    when={
-                                                      startPosition() === undefined &&
-                                                      endPosition() === undefined
-                                                    }
-                                                  >
-                                                    <button
-                                                      type="button"
-                                                      class="lazers-radar-mark-unknown"
-                                                      data-kind={mark.kind}
-                                                      aria-label={`${mark.label}; time unavailable`}
-                                                      aria-pressed={Boolean(markPressed(mark))}
-                                                      style={{ top: `${markTop(index())}px` }}
-                                                      onClick={() => chooseMark(mark)}
-                                                    >
-                                                      {mark.label} · time unavailable
-                                                    </button>
-                                                  </Show>
-                                                </>
-                                              )
-                                            }}
-                                          </For>
-                                        </div>
-                                      </div>
-                                    )
-                                  }}
-                                </For>
-                                <div
-                                  class="lazers-radar-timeline-key"
-                                  aria-label="Timeline record kinds"
-                                >
-                                  <span data-kind="execution">
-                                    <i />
-                                    Execution
-                                  </span>
-                                  <span data-kind="check">
-                                    <i />
-                                    Check
-                                  </span>
-                                  <span data-kind="transition">
-                                    <i />
-                                    Transition
-                                  </span>
-                                </div>
-                              </div>
-                            </Show>
-                          </>
+                          <div class="lazers-radar-note">
+                            The previously selected task is no longer part of this plan.
+                          </div>
                         }
                       >
                         <Show
-                          when={flowNode() && machineSupported(flowNode()!, value())}
+                          when={prefs().view === "flow"}
                           fallback={
-                            <div class="lazers-radar-note">
-                              {flowNode()
-                                ? `Machine version ${flowNode()!.machineVersion} is unsupported; Flow topology is unavailable.`
-                                : "No task instance is recorded in this plan."}
-                            </div>
-                          }
-                        >
-                          <Show when={flowNode()!.snapshotMatchesState}>
-                            <Show when={flowNode()!.snapshot === null}>
-                              <div class="lazers-radar-note">
-                                The persisted machine snapshot is unavailable.
-                              </div>
-                            </Show>
-                          </Show>
-                          <Show when={!flowNode()!.snapshotMatchesState}>
-                            <div class="lazers-radar-note">
-                              The persisted snapshot disagrees with the recorded task state; no
-                              current state is highlighted.
-                            </div>
-                          </Show>
-                          <Show when={flowGraph()}>
-                            {(graph) => (
-                              <>
-                                <svg
-                                  class="lazers-radar-statechart"
-                                  viewBox={`0 0 ${graph().width} ${graph().height}`}
-                                  role="group"
-                                  aria-label={`${value().machine.id} ${value().machine.version} state topology`}
-                                  preserveAspectRatio="xMidYMin meet"
-                                >
-                                  <For each={graph().edges}>
-                                    {(edge) => (
-                                      <g data-recorded={Boolean(edge.recorded)}>
-                                        <path
-                                          class="lazers-radar-statechart-edge"
-                                          data-recorded={Boolean(edge.recorded)}
-                                          d={edge.path}
-                                        />
-                                        <path
-                                          class="lazers-radar-statechart-edge-arrow"
-                                          data-recorded={Boolean(edge.recorded)}
-                                          d={edge.arrow}
-                                        />
-                                        <Show
-                                          when={
-                                            edge.recorded &&
-                                            chosenTransition()?.sequence === edge.recorded.sequence
-                                          }
-                                        >
-                                          <text
-                                            class="lazers-radar-statechart-edge-label"
-                                            data-recorded={Boolean(edge.recorded)}
-                                            x={edge.labelX}
-                                            y={edge.labelY}
-                                            text-anchor={edge.labelAnchor}
-                                          >
-                                            {edge.event}
-                                          </text>
-                                        </Show>
-                                        <Show when={edge.recorded}>
-                                          {(recorded) => (
-                                            <path
-                                              class="lazers-radar-statechart-edge-hit"
-                                              d={edge.path}
-                                              role="button"
-                                              tabIndex={0}
-                                              aria-label={`Observed ${recorded().event} from ${recorded().from} to ${recorded().to} at ${timeLabel(recorded().recordedAt)}`}
-                                              aria-pressed={
-                                                chosenTransition()?.sequence === recorded().sequence
-                                              }
-                                              onClick={() => chooseTransition(recorded())}
-                                              onKeyDown={(event) => {
-                                                if (event.key === "Enter" || event.key === " ") {
-                                                  event.preventDefault()
-                                                  chooseTransition(recorded())
-                                                }
-                                              }}
-                                            />
-                                          )}
-                                        </Show>
-                                      </g>
-                                    )}
-                                  </For>
-                                  <For each={graph().nodes}>
-                                    {(stateNode) => (
-                                      <g
-                                        class="lazers-radar-statechart-node"
-                                        data-active={stateNode.active}
-                                        data-selected={chosenState()?.id === stateNode.id}
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-label={`${stateNode.id}${stateNode.active ? ", current state" : ""}${stateNode.initial ? ", initial state" : ""}${stateNode.final ? ", final state" : ""}`}
-                                        aria-pressed={chosenState()?.id === stateNode.id}
-                                        onClick={() => selectedStateID(stateNode.id)}
-                                        onKeyDown={(event) => {
-                                          if (event.key === "Enter" || event.key === " ") {
-                                            event.preventDefault()
-                                            selectedStateID(stateNode.id)
-                                          }
-                                        }}
-                                      >
-                                        <rect
-                                          x={stateNode.x}
-                                          y={stateNode.y - stateNode.height / 2}
-                                          width={stateNode.width}
-                                          height={stateNode.height}
-                                          rx={4}
-                                        />
-                                        <text
-                                          class="lazers-radar-statechart-name"
-                                          x={stateNode.x + 10}
-                                          y={stateNode.y + 4}
-                                        >
-                                          {stateNode.id}
-                                        </text>
-                                        <text
-                                          class="lazers-radar-statechart-flag"
-                                          x={stateNode.x + stateNode.width - 8}
-                                          y={stateNode.y + 3}
-                                          text-anchor="end"
-                                        >
-                                          {[
-                                            stateNode.initial ? "Initial" : "",
-                                            stateNode.final ? "Final" : "",
-                                            stateNode.active ? "Current" : "",
-                                          ]
-                                            .filter(Boolean)
-                                            .join(" · ")}
-                                        </text>
-                                      </g>
-                                    )}
-                                  </For>
-                                </svg>
-                                <details class="lazers-radar-statechart-accessible">
-                                  <summary>State and transition list</summary>
-                                  <ol>
-                                    <For each={value().machine.states}>
-                                      {(machineState) => (
-                                        <li>
-                                          <button
-                                            type="button"
-                                            aria-pressed={chosenState()?.id === machineState.id}
-                                            onClick={() => selectedStateID(machineState.id)}
-                                          >
-                                            {machineState.id}
-                                            {value().machine.initialState === machineState.id
-                                              ? " · Initial"
-                                              : ""}
-                                            {machineState.type === "final" ? " · Final" : ""}
-                                            {flowActiveState() === machineState.id
-                                              ? " · Current"
-                                              : ""}
-                                          </button>
-                                          <ul>
-                                            <For each={machineState.transitions}>
-                                              {(transition) => {
-                                                const recorded = observedTransition(
-                                                  currentPlanTransitions(),
-                                                  flowNode()!,
-                                                  transition,
-                                                  machineState.id,
-                                                )
+                            <>
+                              <Show
+                                when={chart().lanes.length > 0}
+                                fallback={
+                                  <div class="lazers-radar-note">
+                                    No recorded timeline intervals or transitions in this plan.
+                                  </div>
+                                }
+                              >
+                                <div class="lazers-radar-chart" aria-label="Recorded timeline">
+                                  <div class="lazers-radar-axis" aria-label="Observed time axis">
+                                    <span />
+                                    <div class="lazers-radar-axis-plot">
+                                      <time dateTime={timeValue(chart().startAt)}>
+                                        {timeLabel(chart().startAt)}
+                                      </time>
+                                      <Show when={chart().startAt !== chart().endAt}>
+                                        <time dateTime={timeValue(chart().endAt)}>
+                                          {timeLabel(chart().endAt)}
+                                        </time>
+                                      </Show>
+                                    </div>
+                                  </div>
+                                  <For each={chart().lanes}>
+                                    {(lane) => {
+                                      const markTop = (index: number) => {
+                                        const mark = lane.marks[index]!
+                                        return mark.kind === "execution"
+                                          ? 6
+                                          : mark.kind === "check"
+                                            ? 24
+                                            : 42
+                                      }
+                                      return (
+                                        <div class="lazers-radar-lane" title={lane.label}>
+                                          <div class="lazers-radar-lane-label">
+                                            <span>{laneLabel(lane)}</span>
+                                          </div>
+                                          <div class="lazers-radar-lane-plot">
+                                            <For each={lane.marks}>
+                                              {(mark, index) => {
+                                                const start = () => markStart(mark)
+                                                const end = () => markEnd(mark)
+                                                const startPosition = () =>
+                                                  start() === null
+                                                    ? undefined
+                                                    : timePercent(start()!, chart())
+                                                const endPosition = () =>
+                                                  end() === null
+                                                    ? undefined
+                                                    : timePercent(end()!, chart())
+                                                const interval = () =>
+                                                  startPosition() !== undefined &&
+                                                  endPosition() !== undefined &&
+                                                  start() !== end()
+                                                const reversed = () =>
+                                                  start() !== null &&
+                                                  end() !== null &&
+                                                  end()! < start()!
+                                                const ariaLabel = () =>
+                                                  `${timelineLabel(mark)}${reversed() ? "; recorded end precedes start" : ""}`
                                                 return (
-                                                  <li>
-                                                    {transition.event} → {transition.target}
-                                                    {recorded
-                                                      ? " · Observed"
-                                                      : " · Defined, not observed"}
-                                                  </li>
+                                                  <>
+                                                    <Show when={interval()}>
+                                                      <button
+                                                        type="button"
+                                                        class="lazers-radar-mark"
+                                                        data-kind={mark.kind}
+                                                        data-open={mark.openThroughObservation}
+                                                        data-reversed={reversed()}
+                                                        aria-label={ariaLabel()}
+                                                        aria-pressed={Boolean(markPressed(mark))}
+                                                        title={ariaLabel()}
+                                                        style={{
+                                                          left: `${Math.min(startPosition()!, endPosition()!)}%`,
+                                                          width: `${Math.max(1, Math.abs(endPosition()! - startPosition()!))}%`,
+                                                          top: `${markTop(index())}px`,
+                                                        }}
+                                                        onClick={() => chooseMark(mark)}
+                                                      />
+                                                    </Show>
+                                                    <Show
+                                                      when={
+                                                        !interval() && startPosition() !== undefined
+                                                      }
+                                                    >
+                                                      <button
+                                                        type="button"
+                                                        class="lazers-radar-mark-point"
+                                                        data-kind={mark.kind}
+                                                        aria-label={ariaLabel()}
+                                                        aria-pressed={Boolean(markPressed(mark))}
+                                                        title={ariaLabel()}
+                                                        style={{
+                                                          left: `${startPosition()}%`,
+                                                          top: `${markTop(index())}px`,
+                                                          transform: "translateX(-6px)",
+                                                        }}
+                                                        onClick={() => chooseMark(mark)}
+                                                      >
+                                                        <span class="lazers-radar-mark-point-dot" />
+                                                        <span class="lazers-radar-mark-point-label">
+                                                          {mark.label}
+                                                        </span>
+                                                      </button>
+                                                    </Show>
+                                                    <Show
+                                                      when={
+                                                        startPosition() === undefined &&
+                                                        endPosition() === undefined
+                                                      }
+                                                    >
+                                                      <button
+                                                        type="button"
+                                                        class="lazers-radar-mark-unknown"
+                                                        data-kind={mark.kind}
+                                                        aria-label={`${mark.label}; time unavailable`}
+                                                        aria-pressed={Boolean(markPressed(mark))}
+                                                        style={{ top: `${markTop(index())}px` }}
+                                                        onClick={() => chooseMark(mark)}
+                                                      >
+                                                        {mark.label} · time unavailable
+                                                      </button>
+                                                    </Show>
+                                                  </>
                                                 )
                                               }}
                                             </For>
-                                          </ul>
-                                        </li>
+                                          </div>
+                                        </div>
+                                      )
+                                    }}
+                                  </For>
+                                  <div
+                                    class="lazers-radar-timeline-key"
+                                    aria-label="Timeline record kinds"
+                                  >
+                                    <span data-kind="execution">
+                                      <i />
+                                      Execution
+                                    </span>
+                                    <span data-kind="check">
+                                      <i />
+                                      Check
+                                    </span>
+                                    <span data-kind="transition">
+                                      <i />
+                                      Transition
+                                    </span>
+                                  </div>
+                                </div>
+                              </Show>
+                            </>
+                          }
+                        >
+                          <Show
+                            when={flowNode() && machineSupported(flowNode()!, value())}
+                            fallback={
+                              <div class="lazers-radar-note">
+                                {flowNode()
+                                  ? `Machine version ${flowNode()!.machineVersion} is unsupported; Flow topology is unavailable.`
+                                  : "No task instance is recorded in this plan."}
+                              </div>
+                            }
+                          >
+                            <Show when={flowNode()!.snapshotMatchesState}>
+                              <Show when={flowNode()!.snapshot === null}>
+                                <div class="lazers-radar-note">
+                                  The persisted machine snapshot is unavailable.
+                                </div>
+                              </Show>
+                            </Show>
+                            <Show when={!flowNode()!.snapshotMatchesState}>
+                              <div class="lazers-radar-note">
+                                The persisted snapshot disagrees with the recorded task state; no
+                                current state is highlighted.
+                              </div>
+                            </Show>
+                            <Show when={flowGraph()}>
+                              {(graph) => (
+                                <>
+                                  <svg
+                                    class="lazers-radar-statechart"
+                                    viewBox={`0 0 ${graph().width} ${graph().height}`}
+                                    role="group"
+                                    aria-label={`${value().machine.id} ${value().machine.version} state topology`}
+                                    preserveAspectRatio="xMidYMin meet"
+                                  >
+                                    <For each={graph().edges}>
+                                      {(edge) => (
+                                        <g data-recorded={Boolean(edge.recorded)}>
+                                          <path
+                                            class="lazers-radar-statechart-edge"
+                                            data-recorded={Boolean(edge.recorded)}
+                                            d={edge.path}
+                                          />
+                                          <path
+                                            class="lazers-radar-statechart-edge-arrow"
+                                            data-recorded={Boolean(edge.recorded)}
+                                            d={edge.arrow}
+                                          />
+                                          <Show
+                                            when={
+                                              edge.recorded &&
+                                              chosenTransition()?.sequence ===
+                                                edge.recorded.sequence
+                                            }
+                                          >
+                                            <text
+                                              class="lazers-radar-statechart-edge-label"
+                                              data-recorded={Boolean(edge.recorded)}
+                                              x={edge.labelX}
+                                              y={edge.labelY}
+                                              text-anchor={edge.labelAnchor}
+                                            >
+                                              {edge.event}
+                                            </text>
+                                          </Show>
+                                          <Show when={edge.recorded}>
+                                            {(recorded) => (
+                                              <path
+                                                class="lazers-radar-statechart-edge-hit"
+                                                d={edge.path}
+                                                role="button"
+                                                tabIndex={0}
+                                                aria-label={`Observed ${recorded().event} from ${recorded().from} to ${recorded().to} at ${timeLabel(recorded().recordedAt)}`}
+                                                aria-pressed={
+                                                  chosenTransition()?.sequence ===
+                                                  recorded().sequence
+                                                }
+                                                onClick={() => chooseTransition(recorded())}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === "Enter" || event.key === " ") {
+                                                    event.preventDefault()
+                                                    chooseTransition(recorded())
+                                                  }
+                                                }}
+                                              />
+                                            )}
+                                          </Show>
+                                        </g>
                                       )}
                                     </For>
-                                  </ol>
-                                </details>
-                              </>
-                            )}
+                                    <For each={graph().nodes}>
+                                      {(stateNode) => (
+                                        <g
+                                          class="lazers-radar-statechart-node"
+                                          data-active={stateNode.active}
+                                          data-selected={chosenState()?.id === stateNode.id}
+                                          role="button"
+                                          tabIndex={0}
+                                          aria-label={`${stateNode.id}${stateNode.active ? ", current state" : ""}${stateNode.initial ? ", initial state" : ""}${stateNode.final ? ", final state" : ""}`}
+                                          aria-pressed={chosenState()?.id === stateNode.id}
+                                          onClick={() => selectedStateID(stateNode.id)}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter" || event.key === " ") {
+                                              event.preventDefault()
+                                              selectedStateID(stateNode.id)
+                                            }
+                                          }}
+                                        >
+                                          <rect
+                                            x={stateNode.x}
+                                            y={stateNode.y - stateNode.height / 2}
+                                            width={stateNode.width}
+                                            height={stateNode.height}
+                                            rx={4}
+                                          />
+                                          <text
+                                            class="lazers-radar-statechart-name"
+                                            x={stateNode.x + 10}
+                                            y={stateNode.y + 4}
+                                          >
+                                            {stateNode.id}
+                                          </text>
+                                          <text
+                                            class="lazers-radar-statechart-flag"
+                                            x={stateNode.x + stateNode.width - 8}
+                                            y={stateNode.y + 3}
+                                            text-anchor="end"
+                                          >
+                                            {[
+                                              stateNode.initial ? "Initial" : "",
+                                              stateNode.final ? "Final" : "",
+                                              stateNode.active ? "Current" : "",
+                                            ]
+                                              .filter(Boolean)
+                                              .join(" · ")}
+                                          </text>
+                                        </g>
+                                      )}
+                                    </For>
+                                  </svg>
+                                  <details class="lazers-radar-statechart-accessible">
+                                    <summary>State and transition list</summary>
+                                    <ol>
+                                      <For each={value().machine.states}>
+                                        {(machineState) => (
+                                          <li>
+                                            <button
+                                              type="button"
+                                              aria-pressed={chosenState()?.id === machineState.id}
+                                              onClick={() => selectedStateID(machineState.id)}
+                                            >
+                                              {machineState.id}
+                                              {value().machine.initialState === machineState.id
+                                                ? " · Initial"
+                                                : ""}
+                                              {machineState.type === "final" ? " · Final" : ""}
+                                              {flowActiveState() === machineState.id
+                                                ? " · Current"
+                                                : ""}
+                                            </button>
+                                            <ul>
+                                              <For each={machineState.transitions}>
+                                                {(transition) => {
+                                                  const recorded = observedTransition(
+                                                    currentPlanTransitions(),
+                                                    flowNode()!,
+                                                    transition,
+                                                    machineState.id,
+                                                  )
+                                                  return (
+                                                    <li>
+                                                      {transition.event} → {transition.target}
+                                                      {recorded
+                                                        ? " · Observed"
+                                                        : " · Defined, not observed"}
+                                                    </li>
+                                                  )
+                                                }}
+                                              </For>
+                                            </ul>
+                                          </li>
+                                        )}
+                                      </For>
+                                    </ol>
+                                  </details>
+                                </>
+                              )}
+                            </Show>
                           </Show>
                         </Show>
                       </Show>
                     </Show>
                   </Show>
                 </Show>
-              </Show>
-            </>
-          )}
+              </>
+            )}
+          </Show>
         </Show>
       </div>
       <div
@@ -1019,162 +1158,185 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
             save({ detailScroll: event.currentTarget.scrollTop })
         }}
       >
-        <Show
-          when={chosenTransition() || chosenAttempt() || chosenCheck() || chosenState()}
-          fallback={
-            <div class="lazers-radar-note">
-              {missingSelection()
-                ? "The selected record is no longer available in this observation."
-                : "Select a recorded state, transition, attempt, or check."}
-            </div>
-          }
-        >
-          <Show when={chosenTransition()}>
-            {(transition) => (
-              <>
-                <h3>{transition().event}</h3>
-                <dl>
-                  <dt>Sequence</dt>
-                  <dd>{transition().sequence}</dd>
-                  <dt>Recorded</dt>
-                  <dd>
-                    <time dateTime={timeValue(transition().recordedAt)}>
-                      {timeLabel(transition().recordedAt)}
-                    </time>
-                  </dd>
-                  <Show when={transition().from}>
-                    <dt>From</dt>
-                    <dd>{transition().from}</dd>
-                  </Show>
-                  <Show when={transition().to}>
-                    <dt>To</dt>
-                    <dd>{transition().to}</dd>
-                  </Show>
-                  <dt>Record</dt>
-                  <dd>{transition().kind}</dd>
-                  <Show when={transition().taskID}>
-                    <dt>Task</dt>
-                    <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                      {transition().taskID}
-                    </dd>
-                  </Show>
-                  <Show when={transition().attemptID}>
-                    <dt>Attempt</dt>
-                    <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                      {transition().attemptID}
-                    </dd>
-                  </Show>
-                  <Show when={transition().reason}>
-                    <dt>Reason</dt>
-                    <dd>{transition().reason}</dd>
-                  </Show>
-                </dl>
-              </>
+        <Show when={prefs().view === "map"}>
+          <Show
+            when={mapModel()}
+            fallback={<div class="lazers-radar-note">Operational details are unavailable.</div>}
+          >
+            {(model) => (
+              <RadarMapInspector
+                model={model()}
+                selectedID={prefs().selectedMapID}
+                onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
+                monoFont={ctx.appearance.font("mono")}
+              />
             )}
           </Show>
-          <Show when={chosenAttempt()}>
-            {(attempt) => (
-              <>
-                <h3>Attempt {attempt().number}</h3>
-                <dl>
-                  <dt>State</dt>
-                  <dd>{attempt().state}</dd>
-                  <dt>Started</dt>
-                  <dd>
-                    <time dateTime={timeValue(attempt().startedAt)}>
-                      {timeLabel(attempt().startedAt)}
-                    </time>
-                  </dd>
-                  <dt>Ended</dt>
-                  <dd>Unavailable</dd>
-                  <dt>Task</dt>
-                  <dd style={{ "font-family": ctx.appearance.font("mono") }}>{attempt().taskID}</dd>
-                </dl>
-                <p>{attempt().timingBasis}</p>
-                <For each={attempt().executions}>
-                  {(execution, index) => (
-                    <details class="lazers-radar-disclosure">
-                      <summary>Execution {index() + 1}</summary>
-                      <dl>
-                        <dt>Started</dt>
-                        <dd>{timeLabel(execution.startedAt)}</dd>
-                        <dt>Ended</dt>
-                        <dd>{timeLabel(execution.endedAt)}</dd>
-                        <dt>Start sequence</dt>
-                        <dd>{execution.startSequence ?? "Unavailable"}</dd>
-                        <dt>End sequence</dt>
-                        <dd>{execution.endSequence ?? "Unavailable"}</dd>
-                      </dl>
-                      <p>{execution.timingBasis}</p>
-                    </details>
-                  )}
-                </For>
-              </>
-            )}
-          </Show>
-          <Show when={chosenCheck()}>
-            {(check) => (
-              <>
-                <h3>{check().checkID}</h3>
-                <dl>
-                  <dt>State</dt>
-                  <dd>{check().state}</dd>
-                  <dt>Scope</dt>
-                  <dd>{check().scope}</dd>
-                  <dt>Started</dt>
-                  <dd>
-                    <time dateTime={timeValue(check().startedAt)}>
-                      {timeLabel(check().startedAt)}
-                    </time>
-                  </dd>
-                  <dt>Ended</dt>
-                  <dd>
-                    <time dateTime={timeValue(check().endedAt)}>{timeLabel(check().endedAt)}</time>
-                  </dd>
-                  <dt>Exit code</dt>
-                  <dd>{check().exitCode ?? "Unavailable"}</dd>
-                  <Show when={check().taskID}>
-                    <dt>Task</dt>
-                    <dd style={{ "font-family": ctx.appearance.font("mono") }}>{check().taskID}</dd>
-                  </Show>
-                  <Show when={check().attemptID}>
-                    <dt>Attempt</dt>
-                    <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                      {check().attemptID}
-                    </dd>
-                  </Show>
-                </dl>
-                <p>{check().timingBasis}</p>
-              </>
-            )}
-          </Show>
-          <Show when={chosenState()}>
-            {(machineState) => {
-              const inspector = flowStateInspector(flowNode, snapshot, () => machineState().id)
-              return (
+        </Show>
+        <Show when={prefs().view !== "map"}>
+          <Show
+            when={chosenTransition() || chosenAttempt() || chosenCheck() || chosenState()}
+            fallback={
+              <div class="lazers-radar-note">
+                {missingSelection()
+                  ? "The selected record is no longer available in this observation."
+                  : "Select a recorded state, transition, attempt, or check."}
+              </div>
+            }
+          >
+            <Show when={chosenTransition()}>
+              {(transition) => (
                 <>
-                  <h3>{machineState().id}</h3>
+                  <h3>{transition().event}</h3>
                   <dl>
-                    <dt>Type</dt>
-                    <dd>{machineState().type}</dd>
-                    <dt>Initial</dt>
-                    <dd>{inspector().initial}</dd>
-                    <dt>Current</dt>
-                    <dd>{inspector().current}</dd>
-                    <Show when={inspector().matchesRecordedState}>
-                      <dt>Recorded reason</dt>
-                      <dd>{inspector().reason}</dd>
-                    </Show>
-                    <dt>Machine</dt>
-                    <dd>{inspector().machine}</dd>
-                    <dt>Task</dt>
-                    <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                      {inspector().taskID}
+                    <dt>Sequence</dt>
+                    <dd>{transition().sequence}</dd>
+                    <dt>Recorded</dt>
+                    <dd>
+                      <time dateTime={timeValue(transition().recordedAt)}>
+                        {timeLabel(transition().recordedAt)}
+                      </time>
                     </dd>
+                    <Show when={transition().from}>
+                      <dt>From</dt>
+                      <dd>{transition().from}</dd>
+                    </Show>
+                    <Show when={transition().to}>
+                      <dt>To</dt>
+                      <dd>{transition().to}</dd>
+                    </Show>
+                    <dt>Record</dt>
+                    <dd>{transition().kind}</dd>
+                    <Show when={transition().taskID}>
+                      <dt>Task</dt>
+                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                        {transition().taskID}
+                      </dd>
+                    </Show>
+                    <Show when={transition().attemptID}>
+                      <dt>Attempt</dt>
+                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                        {transition().attemptID}
+                      </dd>
+                    </Show>
+                    <Show when={transition().reason}>
+                      <dt>Reason</dt>
+                      <dd>{transition().reason}</dd>
+                    </Show>
                   </dl>
                 </>
-              )
-            }}
+              )}
+            </Show>
+            <Show when={chosenAttempt()}>
+              {(attempt) => (
+                <>
+                  <h3>Attempt {attempt().number}</h3>
+                  <dl>
+                    <dt>State</dt>
+                    <dd>{attempt().state}</dd>
+                    <dt>Started</dt>
+                    <dd>
+                      <time dateTime={timeValue(attempt().startedAt)}>
+                        {timeLabel(attempt().startedAt)}
+                      </time>
+                    </dd>
+                    <dt>Ended</dt>
+                    <dd>Unavailable</dd>
+                    <dt>Task</dt>
+                    <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                      {attempt().taskID}
+                    </dd>
+                  </dl>
+                  <p>{attempt().timingBasis}</p>
+                  <For each={attempt().executions}>
+                    {(execution, index) => (
+                      <details class="lazers-radar-disclosure">
+                        <summary>Execution {index() + 1}</summary>
+                        <dl>
+                          <dt>Started</dt>
+                          <dd>{timeLabel(execution.startedAt)}</dd>
+                          <dt>Ended</dt>
+                          <dd>{timeLabel(execution.endedAt)}</dd>
+                          <dt>Start sequence</dt>
+                          <dd>{execution.startSequence ?? "Unavailable"}</dd>
+                          <dt>End sequence</dt>
+                          <dd>{execution.endSequence ?? "Unavailable"}</dd>
+                        </dl>
+                        <p>{execution.timingBasis}</p>
+                      </details>
+                    )}
+                  </For>
+                </>
+              )}
+            </Show>
+            <Show when={chosenCheck()}>
+              {(check) => (
+                <>
+                  <h3>{check().checkID}</h3>
+                  <dl>
+                    <dt>State</dt>
+                    <dd>{check().state}</dd>
+                    <dt>Scope</dt>
+                    <dd>{check().scope}</dd>
+                    <dt>Started</dt>
+                    <dd>
+                      <time dateTime={timeValue(check().startedAt)}>
+                        {timeLabel(check().startedAt)}
+                      </time>
+                    </dd>
+                    <dt>Ended</dt>
+                    <dd>
+                      <time dateTime={timeValue(check().endedAt)}>
+                        {timeLabel(check().endedAt)}
+                      </time>
+                    </dd>
+                    <dt>Exit code</dt>
+                    <dd>{check().exitCode ?? "Unavailable"}</dd>
+                    <Show when={check().taskID}>
+                      <dt>Task</dt>
+                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                        {check().taskID}
+                      </dd>
+                    </Show>
+                    <Show when={check().attemptID}>
+                      <dt>Attempt</dt>
+                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                        {check().attemptID}
+                      </dd>
+                    </Show>
+                  </dl>
+                  <p>{check().timingBasis}</p>
+                </>
+              )}
+            </Show>
+            <Show when={chosenState()}>
+              {(machineState) => {
+                const inspector = flowStateInspector(flowNode, snapshot, () => machineState().id)
+                return (
+                  <>
+                    <h3>{machineState().id}</h3>
+                    <dl>
+                      <dt>Type</dt>
+                      <dd>{machineState().type}</dd>
+                      <dt>Initial</dt>
+                      <dd>{inspector().initial}</dd>
+                      <dt>Current</dt>
+                      <dd>{inspector().current}</dd>
+                      <Show when={inspector().matchesRecordedState}>
+                        <dt>Recorded reason</dt>
+                        <dd>{inspector().reason}</dd>
+                      </Show>
+                      <dt>Machine</dt>
+                      <dd>{inspector().machine}</dd>
+                      <dt>Task</dt>
+                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                        {inspector().taskID}
+                      </dd>
+                    </dl>
+                  </>
+                )
+              }}
+            </Show>
           </Show>
         </Show>
       </div>

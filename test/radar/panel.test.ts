@@ -3,7 +3,6 @@ import { Command, MenuItem, Panel, Style } from "@opencode/plugin/gui"
 import type { PanelProps } from "@opencode/plugin/gui"
 import type { Component } from "solid-js"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
-import { ObservationReads } from "../../src/observability/read.ts"
 import type { ObservationScope } from "../../src/observability/contract.ts"
 import { makeFixture } from "../trajectory/fixture.ts"
 import { RadarPanelState } from "../../src/radar/state.ts"
@@ -11,6 +10,7 @@ import { createRadarTransport } from "../../src/radar/transport.ts"
 import type { RadarRPC } from "../../src/radar/transport.ts"
 import { registerRadarPanel } from "../../src/radar/registration.ts"
 import { radarProjectIdentity } from "../../src/radar/project.ts"
+import { operationalReads } from "./operational.ts"
 
 async function until(predicate: () => boolean) {
   for (let attempt = 0; attempt < 200; attempt++) {
@@ -29,11 +29,12 @@ test("native registration exposes its closable tab and renders through real obse
     const identity = radarProjectIdentity({ id: nativeProjectID, canonical: canonicalDirectory })
     expect(identity).toEqual({ project: canonicalDirectory, projectID: nativeProjectID })
     const secret = new Uint8Array(32).fill(11)
-    const reads = new ObservationReads(fixture.store, fixture.host, nativeProjectID, secret)
+    const reads = operationalReads(fixture, nativeProjectID, secret)
     const tracker = new ObservationChangeTracker(fixture.repository, secret, nativeProjectID)
     tracker.initialize()
     const rpc: RadarRPC = {
       snapshot: async ({ scope }) => reads.snapshot(scope, tracker),
+      radar: async (input, _options) => reads.radar(input, tracker, _options.signal),
       events: {
         subscribe: (_name, { signal }) =>
           (async function* () {
@@ -96,11 +97,12 @@ test("native registration exposes its closable tab and renders through real obse
     menu.run()
     expect(opened).toHaveLength(2)
     panel.render({} as PanelProps)
-    await until(() => Boolean(state?.data.snapshot))
+    await until(() => Boolean(state?.data.snapshot) && Boolean(state?.data.radar))
     expect(state?.data.snapshot?.machine.version).toBe("lazers-task/1")
     expect(state?.data.snapshot?.projectID).toBe(nativeProjectID)
     expect(state?.data.snapshot?.transitions.map((item) => item.sequence)).toEqual([1, 2, 3])
     expect(state?.data.snapshot?.plans[0]?.nodes[0]?.state).toBe("accepted")
+    expect(state?.data.radar?.sessions.map((item) => item.sessionID)).toContain("ses-failed")
   } finally {
     state?.close()
     fixture.close()
