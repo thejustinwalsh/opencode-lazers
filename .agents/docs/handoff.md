@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 20:24 UTC. Recheck native state before acting.
+2026-11-02, approximately 21:09 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -29,79 +29,94 @@ from observations. This checkpoint is not completion.
 
 ## Current live state and immediate continuation
 
-Latest20:29UTC: user supplied the exact owned-instance exception. It is our
-`forget` lifecycle reading destroyed Electron window.webContents. Root7191d7f
-reproduces/fixes it with retained references;19tests90assertions+quality clear.
-Root0a39277 adds actual bounded OS focus acknowledgement. Candidatea6223ad
-built from same Models tree; ownedryHCJa real focus succeeded, then first-call
-supported shutdown/cleanup succeeded in0.778s with no exception dialog observed.
-All prior owned trials and ryHCJa now cleaned; no current trial. MainPID7793
-preserved. Native review cleared08057c8 (73tests492assertions); latest0a39277+
-7191d7f independently reviewed/live evidence needs return to Architect.
+Main service PID7793 remains unchanged. Main source includes reviewed Radar
+assignment provenance bf4d667 and timing/replay correction 2cac34e. Root commits
+030754d and 1deeabc add DESIGN.md, reviewed Models concepts and public API data.
+Native Architect remains ses_e68a9ed37ffeVqzPWRXN5SB7Uw, Sol6.1High; configured
+implementor readback is openai/gpt-6-luna#max. No main restart or inference disable.
 
-Checkpoint update (supersedes older task states below): LZ-68 original Models source
-`d0e0045` independently clear, native UI/tool gate still open. Same stopped tree
-now additionally contains Root driver fixes; original artifact/attempt preserved.
-Architect amended the existing scope through plan command v29. User-authorized
-owned native bridge replaces unavailable CUA process selection only in that trial.
+### Models design and source data
 
-Owned trials LP3NFn, 7cmXMg and gIG0Vk are cleaned through supported cleanup;
-no owned trial currently runs. Main PID7793 never restarted. 7cmXMg exposed
-broker focus rejection misclassified as ambiguous: Root explicitly audited the
-unchanged service/adapter and absent never-enqueued request, resolved using the
-supported helper with recorded driver assistance, then cleaned without replay.
-67ae256 adds negative receipts and owned focus; 8a50a02 adds macOS application
-activation; 6f7b679 adds final dispatch ownership check, idempotent same-request
-resolution and private Desktop stdout/stderr retention; 600ef12 binds focus to
-original renderer throughout asynchronous observation. Latest 47-test lifecycle
-run before final focus extension:252assertions; subsequent18interactiontests86assertions;
-quality clear. Independent native review of the latest corrections is pending.
-The user reported a JS error in an isolated instance; exception text was not
-retained by old stdio-ignore launch. Startup netlog warning alone is not its cause.
+User rejected a config-only Models panel: comparison/selection is primary,
+assignment secondary. Use root DESIGN.md (linked from README), existing Phase2
+research and design/models-panel/review.md. Tera6.1High reviewed the actual owned
+UI, Tasks/Trajectory/Radar references, two editor concepts and two comparison
+rounds. models-compare-v2.png is the reviewed primary direction; models-focus-v2.png
+is the secondary editor only. Numeric examples are explicitly illustrative, not
+measured outcomes or prices. Actual implementation must derive eligible cohort,
+frontier, cost/quality/time measures and task estimates from source records;
+preserve unknowns, source dates, confidence and contributing trajectories.
 
-LZ-61 b9b7ad2 and LZ-71 d891ea1 passed native verification but independent source
-review found replay non-convergence and prerequisite dispatch races, respectively;
-neither source integrated. Native Architect dispatched linked small corrections:
-LZ-74 (plan a9c4ade6-3df4-4164-9672-afefe3099f2e, worker
-ses_59097d8889e2491e9b3d311e20a90d9e, original Luna Max route) and LZ-75
-(plan e7308bed-1fe9-4c8a-b688-122abe42e1a3, worker
-ses_19fd0710d651419091bf1891f2d97045). Both native workers active at20:23UTC.
-LZ-74's displayed permission wait was stale: authoritative permissions/inbox empty.
-LZ-73 assignment projection returned accepted; independent review/integration pending.
-LZ-72 cleanup diagnostics stays queued behind corrected runtime prerequisite.
+Use available live APIs. User configured OpenRouter: it is the default fallback
+for pricing, benchmarks and useful model metadata when configured, independent
+of execution provider. Reuse native configured credentials through supported
+APIs; no extra credential config or copied secrets. Refresh asynchronously over
+dated snapshots so network reads never block a panel. OpenRouter catalog returned
+451 models; native registered Models catalog returned470 options/446 priced in24ms
+at Unix ms1793653317222, configured LunaMax. Initially unauthenticated benchmarks401;
+after user login authorized metadata calls succeeded: Artificial Analysis coding152,
+Design Arena UI-component157 and dataviz154, OpenRouter evaluations315 records.
+Public observations/provenance are saved under design/models-panel; no key/headers,
+no paid inference calls. These source-specific metrics are not LAZERS outcomes.
 
-Service PID 7793 remains live; no background restart. Native Architect is running
-and consumed Root repair/activation updates through Desktop. Its old Root-fixes
-question is resolved. It is reviewing/recording landed modules, retaining unsafe
-cleanup resources and continuing the editor and recovery roadmap.
+Native Architect consumed the design/source findings and is specifying small
+source-snapshot/accounting increments, then comparison/cohorts/live route resolution.
+Reuse queued work, preserve LZ68; do not substitute config-only polish or four
+epic-sized tasks. Root answered native route precedence: intentional explicit
+override wins, otherwise current task→project→shared mapping at dispatch, then
+configured implementor. Never manufacture explicit overrides from inherited
+defaults; waiting tasks must retain live mapping behavior. No human question pending
+at this checkpoint; recheck native interview before assuming.
 
-LZ-68 Models editor returned `3e432be`; native independent source review found
-uncertain-write tracking lost across personas/scopes and project-resolution errors
-stuck as loading. Architect cancelled the stopped original attempt, installed
-focused instructions and resumed it (plan v22). Worker
-`ses_7792aab8db1843c5bce9ca688a5632d6`, attempt
-`dffe9628-84f2-42cc-8774-109a2c610717`, remains OpenAI Luna Max in its original native
-tree. It is now patching those defects; latest focused 23 tests / 212 assertions
-and quality pass. Return/review/integration and the actual candidate-owned Desktop
-walkthrough remain open. `707a50c` clarifies the Portless developer-tool exclusion;
-Root will drive supported native ChatGPT OAuth in the owned profile when ready.
-No credential copying or fake registered-tool dispatch.
+### Authenticated owned Desktop trial — retain
 
-Root actually clicked native Tasks → LZ-61 → Start. Task is running, attempt
-`b20b9aa7-8466-43a7-83eb-57f48408eedc`, worker
-`ses_1f1d4570c48f412697ca0e56ccef3893`, isolated native tree and independently
-confirmed OpenAI Luna Max. Models repair is concurrently active. Coordinate
-LZ-61's progress/store/observability scopes, preserve both workers. Desktop is
-unlocked and accessible. Native Completed → Load more → LZ-20 → Open trajectory
-worked with actual historical attempt/check data. Tasks was restored to Project /
-Open with LZ-61 selected; both workers are still active and patching their own scopes. [Timestamped parallel/manual-Start proof and captures](evidence/native-liveness/20261102-parallel-workers.md).
+There IS a current owned instance, unlike older notes. Root:
+`/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-zA6wCr`.
+Service PID96177, Desktop96186, renderer96201, URL http://127.0.0.1:62330,
+window1/generation1, adapterc23a310f-e70a-480d-91be-fbcddb99c21e. Candidate
+a6223ad9116b8ba60fbf1cc87d574320f4cd81e6 in LZ68's retained tree
+`~/.local/share/opencode/plugins/lazers/runner/worktrees/dffe9628-84f2-42cc-8774-109a2c610717`.
+Do not clean/relaunch it or copy auth by mistake. User explicitly approved owned
+native bridge prompt entry, OpenAI consent and ChatGPT plan usage for the isolated
+profile. Label LAZERS owned verification was Root's name for that OpenCode grant,
+not a new LAZERS account. Earlier auto-review consent rejections were resolved.
 
-LZ-70 producer worker returned `9f68dcf`, original attempt
-`ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c` / session
-`ses_f96b29058c6347e294d7e0889ad3e627`. Native independent review cleared it;
-Architect merged it as `a5e52c4`. Actual producer activation observation and the
-remaining detector/notification/steering roadmap are not implied by that merge.
-Desktop remains accessible; service PID7793 was observed live without restart.
+Native session ses_e61fa47efffdHSgWX22VHhY1Kk performed initial settings query
+through Build/SolMedium: all three personas unassigned in fresh Default Project.
+This is a baseline, not Architect/SolHigh gate completion. Models editor is open.
+Actual native typing exposed another driver defect: click events followed by
+immediate insertText can insert into the previously focused field. Screenshot
+models-write-check.png shows provider openaigpt-6-luna, empty model, effort max;
+save stays disabled. No mapping was saved; do not claim write/readback evidence or
+replay the save. Unsaved fixture is disposable; preserve profile for remaining test.
+Current driver misses agent/menuitem selectors and passes ArrowDown rather than
+Electron Down. Fix/test proportionally through native workflow; no private UI
+handler calls. Helpers in /private/tmp use supported native CLI bridge, not model
+API prompts. Capture paths are inside candidate .agents/docs/evidence/full-instance-qualification.
+
+### Independent work
+
+- Radar compact multiworker task returned49a1170, original attempt95779e09,
+  session ses_95ecef3d88f34e2787af30c8c17eb36d; real initial viewport/Tera gate
+  remains unproven. Review/integration can proceed independently from Models.
+- LZ75 prerequisite race correction returnedf65d8cc, worker
+  ses_19fd0710d651419091bf1891f2d97045. Do not infer integration from return.
+- LZ61+LZ74 original/correction source merged2cac34e; native Architect recorded
+  separate integration receipts and requested native non-forced cleanup.
+- LZ72 audit-only cleanup diagnostics remains queued behind runtime correction.
+- Native idle observer release overwrites completed worker background report with
+  unknown, blocking LZ68. Native Architect researched bounded preservation/recovery;
+  do not replay worker or assume native foreground-idle proves no background work.
+- Inference pill user wants model short name only, including target when loading;
+  status icon carries state, normal theme color for available, theme error color
+  for failure. No Ready/vendor/green decoration. Root answered Show target name
+  in native interview; recheck actual task dispatch, do not assume UI implemented.
+
+Root driver7191d7f fixes the supplied exact destroyed-window forget exception with
+retained references,19tests90assertions. Actual ownedryHCJa focus then supported
+cleanup succeeded0.778s with no dialog observed. All prior owned trials cleaned;
+current zA6wCr remains. No broader lifecycle claim. Older source tables below may
+describe pre-checkpoint states; inspect actual native plans before acting.
 
 ## Inference repair and native observations
 
