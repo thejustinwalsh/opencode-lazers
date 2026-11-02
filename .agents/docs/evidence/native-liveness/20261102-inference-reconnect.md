@@ -29,6 +29,15 @@ Native observation: built Main GUI activated through Desktop View → Reload.
 No background-service restart. The enabled runtime automatically loaded cached
 chat and reached Ready / apple. Desktop Run locally returned `local GPU ready.`
 with 19 input and 4 output tokens. No profiler was armed. This proves loaded native
-chat generation, not a fresh live transport-failure/reconnect cycle. The separate
-repeated-device-loss circuit still requires a new request after two recovery
-attempts in a minute; this correction does not claim to change that policy.
+chat generation, not a fresh live transport-failure/reconnect cycle. The built-in single-device-loss test then recovered automatically to Ready;
+a fresh typed decision returned `{"ok":true,"kind":"boolean","value":true}`
+both before and after that actual device loss.
+
+A second regression reproduced the permanent repeated-loss stop after its window
+had elapsed. Root `4d5ce21` changes that stop into a one-minute cooldown followed
+by automatic recovery; an explicit new request can still try sooner. The fixture
+proves no allocation during cooldown, recovery with no queued request after the
+window, successful fresh inference, and early explicit retry. All 106 WebGPU tests
+/ 532 assertions and quality pass afterward. This later correction is committed
+but not yet activated or observed natively: Desktop locked before the next GUI
+activation. One unlock request is pending; the native worker continues.
