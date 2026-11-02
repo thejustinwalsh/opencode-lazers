@@ -82,6 +82,7 @@ export type NativeWindow = {
   isDestroyed(): boolean
   isVisible(): boolean
   isFocused(): boolean
+  show(): void
   focus(): void
   readonly webContents: NativeWebContents
   on(event: string, listener: (...args: unknown[]) => void): void
@@ -479,9 +480,25 @@ export class NativeInteractionMainAdapter {
     if (currentReference === undefined)
       return { delivery: "not-delivered", message: "Native window reference is stale" }
     if (operation.kind === "focus") {
-      this.activate()
-      window.focus()
-      await new Promise<void>((resolve) => setImmediate(resolve))
+      await new Promise<void>((resolve, reject) => {
+        const finish = () => {
+          clearTimeout(timer)
+          window.removeListener("focus", finish)
+          resolve()
+        }
+        const timer = setTimeout(finish, 1_000)
+        window.on("focus", finish)
+        try {
+          this.activate()
+          window.show()
+          window.focus()
+          if (window.isFocused()) finish()
+        } catch (error) {
+          clearTimeout(timer)
+          window.removeListener("focus", finish)
+          reject(error)
+        }
+      })
       const focused = this.currentReference(window.id)
       if (
         focused === undefined ||

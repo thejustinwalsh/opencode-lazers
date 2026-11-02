@@ -77,6 +77,7 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void, onActiv
     isDestroyed: () => false,
     isVisible: () => true,
     isFocused: () => focused,
+    show: () => undefined,
     focus: () => {
       focused = true
     },
