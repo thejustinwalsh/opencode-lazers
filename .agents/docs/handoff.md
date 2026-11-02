@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 18:35 UTC. Recheck native state before acting.
+2026-11-02, approximately 19:05 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -33,19 +33,21 @@ and consumed Root repair/activation updates through Desktop. Its old Root-fixes
 question is resolved. It is reviewing/recording landed modules, retaining unsafe
 cleanup resources and continuing the editor and recovery roadmap.
 
-LZ-68 Models editor is actually running, attempt
+LZ-68 Models editor returned `3e432be`, attempt
 `dffe9628-84f2-42cc-8774-109a2c610717`, worker
-`ses_7792aab8db1843c5bce9ca688a5632d6`, in the native worktree with that attempt ID.
-Readback confirms `openai/gpt-6-luna#max`; latest observed worker activity is code
-patching. This is real execution, not merely task submission. Architect removed
-only the satisfied source prerequisite from its schedule; retained backend cleanup
-still does not block the editor. Current native reviewers may also be active.
+`ses_7792aab8db1843c5bce9ca688a5632d6`, OpenAI Luna Max. Source review, integration
+and actual candidate-owned Desktop verification remain pending. `707a50c` clarifies
+that the supported native OpenCode launcher uses the existing Portless developer-
+tool exclusion; project-owned preview servers still use Portless. Architect was
+informed through Desktop; preserve the worker/artifact and resume verification
+without replaying implementation or claiming direct RPC as a registered tool run.
 
-Desktop is accessible again after the unlock reply. The latest Radar/GPU GUI
-candidate is activated; native model prompts/form answers remain Desktop-only.
-LZ-70 producer worker returned `9f68dcf` from original attempt
+LZ-70 producer worker returned `9f68dcf`, original attempt
 `ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c` / session
-`ses_f96b29058c6347e294d7e0889ad3e627`; review/integration remain for Architect.
+`ses_f96b29058c6347e294d7e0889ad3e627`. Native independent review cleared it;
+Architect merged it as `a5e52c4`. Actual producer activation observation and the
+remaining detector/notification/steering roadmap are not implied by that merge.
+Desktop remains accessible; service PID7793 was observed live without restart.
 
 ## Inference repair and native observations
 
@@ -89,25 +91,28 @@ selection. [Portable captures and limits](evidence/native-liveness/20261102-rada
 Actual animated pulse and quiet recovery/resynchronization remain unproven.
 Do not mark the complete Radar task accepted merely from this visual pass.
 
-Root read Architect's concrete [H3 correction brief](evidence/native-liveness/handoff-review-correction-request-20261102.md)
-and reserved the reviewer/store plus focused regressions through Desktop. Correct
-exact-reservation late-result selection and handoff-wide three-round accounting
-across authorized actors; preserve per-operation identity/authorization. No
-replacement worker/task or duplicate merge. Original H3 runtime integration and
-cleanup remain held. Native Architect continues LZ-70 review and Models editor.
+Root `83a5c31` resolves the native [H3 correction brief](evidence/native-liveness/handoff-review-correction-request-20261102.md):
+exact-reservation late-result selection and shared three-round accounting across
+authorized actors. Native independent review cleared those two findings and
+Architect recorded the original artifact's integration, preserving held resources.
+A further production regression exposed cross-actor expired reservation recovery;
+Root added an explicit authorized interruption write, preserving original reviewer
+identity and auditing the actual recovery actor. [Correction and checks](evidence/native-liveness/handoff-review-recovery-20261102.md).
+Independent review of this follow-up remains pending. Worker tools, finalization,
+delivery and live use remain open; do not infer those from this module landing.
 
 ## Source landings and remaining runtime boundaries
 
-| Work                    | Current result                                                                                                                  | Still required                                                                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-56 relay             | Retained `e64c90d` fixes absolute-deadline race atop worker `b164643`; 11 relay tests/68 assertions and quality pass            | Coordinate server and Desktop halves together; actual nondefault-location inference/cold start; do not activate server half alone                                                              |
-| LZ-62 Radar             | Main `fe5cd61` plus `fb0d54a`                                                                                                   | Narrow/wide visual review and selection pass; live pulse/recovery observations remain                                                                                                          |
-| LZ-63 adoption          | Native accepted worker `3178932`; Root `01a4006` removes random per-import identity/environment digest; source merged `10c389b` | Native preserved-work adoption and actual combined closure evidence; plan's missing human closure gate is not fabricated                                                                       |
-| LZ-64 mapping           | Source `ee6960f`, merged `0d82057`                                                                                              | Original attempt cancelled/null artifact; preserve history, no replay or forced acceptance                                                                                                     |
-| LZ-65 resources         | Wrong-root fix `44bc7ee` merged `8cc8d7d`; 18 resource/probe tests/222 assertions pass                                          | Original formal closure and resource lifecycle walkthrough; unnecessary old-baseline repair is cancelled v581, not deleted                                                                     |
-| LZ-67 Models authority  | Source `24f87e0` plus Root cancellation safety `b6237f1`, merged `ea188c2`; native readbacks pass                               | Architect recorded task/plan integration; plan cleanup-blocked v16 because inactivity inconclusive, tree retained; reviewer investigating exact predicate                                      |
-| LZ-68 Models editor     | Running original attempt above; plan `27506b73-91ec-45ba-923d-55b844f2f09e`                                                     | Review/merge, real save/remove/reopen/conflict, native cross-surface readback and narrow/wide capture                                                                                          |
-| LZ-69 handoff hardening | Native accepted `75d3d67`, source merged `00fbde6`; 28 compatibility tests/303 assertions pass                                  | Native review found late-result substitution and actor-partitioned three-round accounting; Root correction brief pending. Worker tools, finalization/delivery and live walkthrough remain open |
+| Work                    | Current result                                                                                                                  | Still required                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-56 relay             | Retained `e64c90d` fixes absolute-deadline race atop worker `b164643`; 11 relay tests/68 assertions and quality pass            | Coordinate server and Desktop halves together; actual nondefault-location inference/cold start; do not activate server half alone                                                                       |
+| LZ-62 Radar             | Main `fe5cd61` plus `fb0d54a`                                                                                                   | Narrow/wide visual review and selection pass; live pulse/recovery observations remain                                                                                                                   |
+| LZ-63 adoption          | Native accepted worker `3178932`; Root `01a4006` removes random per-import identity/environment digest; source merged `10c389b` | Native preserved-work adoption and actual combined closure evidence; plan's missing human closure gate is not fabricated                                                                                |
+| LZ-64 mapping           | Source `ee6960f`, merged `0d82057`                                                                                              | Original attempt cancelled/null artifact; preserve history, no replay or forced acceptance                                                                                                              |
+| LZ-65 resources         | Wrong-root fix `44bc7ee` merged `8cc8d7d`; 18 resource/probe tests/222 assertions pass                                          | Original formal closure and resource lifecycle walkthrough; unnecessary old-baseline repair is cancelled v581, not deleted                                                                              |
+| LZ-67 Models authority  | Source `24f87e0` plus Root cancellation safety `b6237f1`, merged `ea188c2`; native readbacks pass                               | Architect recorded task/plan integration; plan cleanup-blocked v16 because inactivity inconclusive, tree retained; reviewer investigating exact predicate                                               |
+| LZ-68 Models editor     | Returned `3e432be` from original attempt above; plan `27506b73-91ec-45ba-923d-55b844f2f09e`                                     | Review/merge, real save/remove/reopen/conflict, native cross-surface readback and narrow/wide capture                                                                                                   |
+| LZ-69 handoff hardening | Native accepted `75d3d67`, source merged `00fbde6`; 28 compatibility tests/303 assertions pass                                  | Native reviewed `83a5c31` clears late-result and shared-round findings; interruption recovery follow-up awaits independent review. Worker tools, finalization/delivery and live walkthrough remain open |
 
 Retained tree root: `~/.local/share/opencode/plugins/lazers/runner/worktrees/`.
 Original attempts for LZ-56 `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`, LZ-62

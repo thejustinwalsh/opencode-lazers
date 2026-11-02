@@ -31,7 +31,7 @@ const architect: HandoffActor = {
   role: "architect",
 }
 
-function fixture() {
+function fixture(now: () => string = () => new Date().toISOString()) {
   const projectDirectory = mkdtempSync(join(tmpdir(), "lazers-handoff-review-project-"))
   const stateDirectory = mkdtempSync(join(tmpdir(), "lazers-handoff-review-state-"))
   const workspace = join(projectDirectory, "worker-worktree")
@@ -97,7 +97,7 @@ function fixture() {
       null,
     )
   })
-  let handoffs = new HandoffStore(repository)
+  let handoffs = new HandoffStore(repository, now)
   const requested = handoffs.request(
     {
       requestID: "review-request-1",
@@ -120,13 +120,13 @@ function fixture() {
   const openStore = () => {
     const next = new TaskRepository(path, projectDirectory)
     repositories.push(next)
-    return new HandoffStore(next)
+    return new HandoffStore(next, now)
   }
   const reopen = () => {
     repository.close()
     repository = new TaskRepository(path, projectDirectory)
     repositories.push(repository)
-    handoffs = new HandoffStore(repository)
+    handoffs = new HandoffStore(repository, now)
     return { repository, handoffs }
   }
   cleanup.push(() => {
@@ -654,9 +654,9 @@ test("aborted inference is durable without invented usage, and an authority revo
   ).toBeUndefined()
 })
 
-test("reservation recovery is durable across reopen and late inference cannot overwrite it", async () => {
-  const f = fixture()
+test("authorized Architect recovers expired worker reservations without substituting late outcomes", async () => {
   let now = Date.now()
+  const f = fixture(() => new Date(now).toISOString())
   let modelCalls = 0
   const denyInference = new HandoffReviewer(
     f.handoffs(),
@@ -719,13 +719,21 @@ test("reservation recovery is durable across reopen and late inference cannot ov
   const recovered = assertReviewed(
     await recoveryReviewer.review(
       { requestID: f.request.requestID, draftVersion: f.draftVersion, reviewID },
-      worker,
+      architect,
       new AbortController().signal,
     ),
   )
   expect(recovered.status).toBe("unavailable")
   expect(recovered.errors[0]).toContain("interrupted before a result")
   expect(modelCalls).toBe(0)
+  expect(reopened.handoffs.getReviewRound(f.request.requestID, reviewID, 1)?.reviewer).toEqual(
+    worker,
+  )
+  expect(
+    reopened.handoffs
+      .readHistory({ requestID: f.request.requestID })!
+      .events.find((event) => event.kind === "review-completed")?.data,
+  ).toMatchObject({ reviewer: worker, completedBy: architect, recovered: true })
 
   let entered!: () => void
   let release!: () => void
@@ -758,6 +766,43 @@ test("reservation recovery is durable across reopen and late inference cannot ov
     new AbortController().signal,
   )
   await started
+  const interruptedInput = {
+    requestID: f.request.requestID,
+    reviewID,
+    round: 2,
+    outcome: {
+      ...reopened.handoffs.getReviewRound(f.request.requestID, reviewID, 1)!.outcome!,
+      result: { ...recovered, round: 2 },
+    },
+  }
+  expect(() => reopened.handoffs.recoverReviewOutcome(interruptedInput, architect)).toThrow(
+    "still within its recovery window",
+  )
+  expect(() =>
+    reopened.handoffs.recoverReviewOutcome(
+      {
+        ...interruptedInput,
+        outcome: {
+          ...interruptedInput.outcome,
+          result: { ...recovered, round: 2, status: "completed" },
+        },
+      },
+      architect,
+    ),
+  ).toThrow("cannot establish a semantic pass")
+  const replacementArchitect = { ...architect, sessionID: "replacement-current-architect" }
+  f.repository().atomic((db) => {
+    db.query("UPDATE runner_plans SET owner=? WHERE id=?").run(
+      replacementArchitect.sessionID,
+      f.planID,
+    )
+  })
+  expect(() => reopened.handoffs.recoverReviewOutcome(interruptedInput, architect)).toThrow(
+    "not the current owner",
+  )
+  expect(
+    reopened.handoffs.getReviewRound(f.request.requestID, reviewID, 2)?.outcome,
+  ).toBeUndefined()
   now += 120_001
   const competingStore = f.openStore()
   const competingReviewer = new HandoffReviewer(
@@ -775,11 +820,33 @@ test("reservation recovery is durable across reopen and late inference cannot ov
         evidence: nextEvidence,
         reviewID,
       },
-      worker,
+      replacementArchitect,
       new AbortController().signal,
     ),
   )
   expect(recoveredLate.status).toBe("unavailable")
+  expect(
+    competingStore.recoverReviewOutcome(
+      {
+        ...interruptedInput,
+        outcome: competingStore.getReviewRound(f.request.requestID, reviewID, 2)!.outcome!,
+      },
+      replacementArchitect,
+    ).status,
+  ).toBe("replayed")
+  expect(
+    competingStore
+      .readHistory({ requestID: f.request.requestID })!
+      .events.filter((event) => event.kind === "review-completed")
+      .map((event) => event.data),
+  ).toEqual([
+    expect.objectContaining({
+      reviewer: worker,
+      completedBy: replacementArchitect,
+      recovered: true,
+    }),
+    expect.objectContaining({ reviewer: worker, completedBy: architect, recovered: true }),
+  ])
   const newerResult = assertReviewed(
     await competingReviewer.review(
       {
@@ -804,6 +871,55 @@ test("reservation recovery is durable across reopen and late inference cannot ov
   ).toEqual(recoveredLate)
   expect(roundCount(f)).toBe(3)
   expect(modelCalls).toBe(callsBeforeLate)
+})
+
+test("interrupted recovery exhausts shared rounds with recorded concerns and no semantic pass", async () => {
+  let now = Date.now()
+  const f = fixture(() => new Date(now).toISOString())
+  let reviewID: string | undefined
+  let modelCalls = 0
+  const transport = { systemOne: async (input: SystemOneInput) => (modelCalls++, reply(input)) }
+  const signal = new AbortController().signal
+  for (let round = 1; round <= 3; round++) {
+    const store = f.reopen().handoffs
+    const input = {
+      requestID: f.request.requestID,
+      draftVersion: f.draftVersion,
+      reviewID,
+      evidence: [{ kind: "trajectory" as const, reference: `attempt:interrupted-${round}` }],
+    }
+    const reserving = new HandoffReviewer(
+      store,
+      transport,
+      (_actor, _requestID, phase) => {
+        if (phase === "inference") throw new Error("worker stopped before inference")
+      },
+      () => true,
+      () => now,
+    )
+    await expect(reserving.review(input, worker, signal)).rejects.toThrow(
+      "worker stopped before inference",
+    )
+    now += 120_001
+    const recovery = new HandoffReviewer(
+      store,
+      transport,
+      authorize(),
+      () => true,
+      () => now,
+    )
+    const result = assertReviewed(await recovery.review(input, architect, signal))
+    reviewID = result.reviewID
+    expect(result.round).toBe(round)
+    expect(result.status).toBe(round === 3 ? "completed_with_concerns" : "unavailable")
+    expect(result.limitation).toContain("did not produce a durable result")
+    const persisted = store.getReviewRound(f.request.requestID, reviewID, round)!
+    expect(persisted.reviewer).toEqual(worker)
+    expect(persisted.outcome?.status).toBe("unavailable")
+    expect(persisted.outcome?.concerns.length).toBeGreaterThan(0)
+  }
+  expect(modelCalls).toBe(0)
+  expect(roundCount(f)).toBe(3)
 })
 
 test("authorized reviewers share one three-round chain across IDs and reopened connections", async () => {

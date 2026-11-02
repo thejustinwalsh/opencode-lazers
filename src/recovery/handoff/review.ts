@@ -18,7 +18,7 @@ import {
 } from "./schema.ts"
 import { HANDOFF_REVIEW_VERSION, handoffReviewChecks, handoffReviewDefinitions } from "./checks.ts"
 import type { HandoffReviewDefinition } from "./checks.ts"
-import { HandoffStore } from "./store.ts"
+import { HandoffStore, HANDOFF_REVIEW_RESERVATION_LEASE_MS } from "./store.ts"
 import type { HandoffReviewContext } from "./store.ts"
 import { SystemOneRequest, SystemOneAnswer, systemOneClient } from "../../webgpu/system-one.ts"
 import type { SystemOneInput, SystemOneOutput } from "../../webgpu/system-one.ts"
@@ -119,7 +119,6 @@ type ReviewResponse =
     }
   | { status: "busy"; requestID: string; reviewID: string; next: string }
 
-const RESERVATION_LEASE_MS = 120_000
 const INFERENCE_DEADLINE_MS = 60_000
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex")
@@ -437,7 +436,7 @@ export class HandoffReviewer {
             },
           }
         const age = this.now() - Date.parse(latest.reservedAt)
-        if (age < RESERVATION_LEASE_MS)
+        if (age < HANDOFF_REVIEW_RESERVATION_LEASE_MS)
           return {
             status: "busy",
             requestID: state.requestID,
@@ -459,7 +458,7 @@ export class HandoffReviewer {
           modelUsed: false,
         })
         await this.authorize(reviewer, state.requestID, "persist")
-        const receipt = this.store.recordReviewOutcome(
+        const receipt = this.store.recoverReviewOutcome(
           {
             requestID: state.requestID,
             reviewID: latest.reviewID,

@@ -48,6 +48,8 @@ type Receipt<T> =
   | { status: "replayed"; record: T }
   | { status: "conflict"; message: string }
 
+export const HANDOFF_REVIEW_RESERVATION_LEASE_MS = 120_000
+
 type SourceRow = {
   task_body: string
   plan_id: string
@@ -631,9 +633,37 @@ export class HandoffStore {
     input: unknown,
     reviewerInput: unknown,
   ): Receipt<HandoffReviewRoundRecordType> {
+    return this.completeReviewOutcome(input, reviewerInput, false)
+  }
+
+  /** A current authorized actor may close an expired reservation as interrupted. */
+  recoverReviewOutcome(
+    input: unknown,
+    reviewerInput: unknown,
+  ): Receipt<HandoffReviewRoundRecordType> {
+    return this.completeReviewOutcome(input, reviewerInput, true)
+  }
+
+  private completeReviewOutcome(
+    input: unknown,
+    reviewerInput: unknown,
+    recovering: boolean,
+  ): Receipt<HandoffReviewRoundRecordType> {
     const parsed = HandoffReviewOutcomeInput.parse(input)
     const reviewer = HandoffActor.parse(reviewerInput)
     const outcome = HandoffReviewOutcome.parse(parsed.outcome)
+    if (recovering) {
+      const result = JsonObjectSchema.parse(outcome.result)
+      if (
+        outcome.status !== "unavailable" ||
+        (result.status !== "unavailable" && result.status !== "completed_with_concerns") ||
+        result.requestID !== parsed.requestID ||
+        result.reviewID !== parsed.reviewID ||
+        result.round !== parsed.round ||
+        result.limitation !== outcome.limitation
+      )
+        throw new Error("Interrupted review recovery cannot establish a semantic pass")
+    }
     return this.repository.atomic((db) => {
       const request = this.requireRequest(db, parsed.requestID)
       this.assertReviewAuthority(db, request, reviewer)
@@ -647,7 +677,7 @@ export class HandoffStore {
       const reserved = HandoffReviewRoundRecord.parse(JSON.parse(row.payload))
       if (
         reserved.requestID !== parsed.requestID ||
-        canonical(reserved.reviewer) !== canonical(reviewer)
+        (!recovering && canonical(reserved.reviewer) !== canonical(reviewer))
       )
         throw new Error("Review round belongs to another request or caller")
       if (row.outcome_json !== null) {
@@ -657,6 +687,12 @@ export class HandoffStore {
           : { status: "conflict" as const, message: "Review outcome is immutable once recorded" }
       }
       const completedAt = this.timestamp()
+      if (
+        recovering &&
+        Date.parse(completedAt) - Date.parse(reserved.reservedAt) <
+          HANDOFF_REVIEW_RESERVATION_LEASE_MS
+      )
+        throw new Error("Review reservation is still within its recovery window")
       const record = HandoffReviewRoundRecord.parse({
         ...reserved,
         outcome,
@@ -686,6 +722,9 @@ export class HandoffStore {
           errorCount: outcome.errors.length,
           elapsedMs: outcome.elapsedMs,
           usage: outcome.usage,
+          reviewer: reserved.reviewer,
+          completedBy: reviewer,
+          recovered: recovering,
         },
         completedAt,
       )
