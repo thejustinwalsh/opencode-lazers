@@ -98,16 +98,11 @@ export default Plugin.define({
       yield* registerArchitect(ctx)
       const runnerStore = new RunnerStore(repository)
       const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
-      const runtime = new TaskRuntime(
-        runnerStore,
-        nativeHost(ctx, repository),
-        ctx.location.project.id,
-        progress,
-        {
-          architectIdleWindowMs: architectIdleWindowMs(ctx.options.architectIdleWindowMs),
-          architectPromptHook: true,
-        },
-      )
+      const host = nativeHost(ctx, repository)
+      const runtime = new TaskRuntime(runnerStore, host, ctx.location.project.id, progress, {
+        architectIdleWindowMs: architectIdleWindowMs(ctx.options.architectIdleWindowMs),
+        architectPromptHook: true,
+      })
       yield* ctx.session.hook("prompt", (prompt) =>
         Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
       )
@@ -116,7 +111,7 @@ export default Plugin.define({
       )
       yield* registerWorker(ctx, runtime.store)
       yield* registerRunnerTools(ctx, runtime)
-      yield* registerProgress(ctx, progress, ctx.location.project.id)
+      yield* registerProgress(ctx, progress, ctx.location.project.id, host.retainedInputID)
       const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
       const radarSessionHost = nativeRadarSessionHost(ctx)
       yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)

@@ -20,6 +20,7 @@ import {
 } from "../runner/native.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
+import { resolveNativeInputID } from "../runner/native-input.ts"
 import type { ProgressRecorder } from "./recorder.ts"
 
 type ProgressContext = Pick<Plugin.Context, "event" | "permission" | "session" | "tool">
@@ -78,15 +79,6 @@ function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
-}
-
-function latestInputID(messages: readonly unknown[]): string | undefined {
-  for (const message of [...messages].reverse()) {
-    const value = object(message)
-    if ((value?.type === "user" || value?.type === "synthetic") && typeof value.id === "string")
-      return value.id
-  }
-  return undefined
 }
 
 function eventSequence(event: unknown, sessionID: string): number | undefined {
@@ -241,8 +233,19 @@ export function registerProgress(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
   projectID: string,
+  retainedInputID: (sessionID: string) => Promise<string | undefined> = async () => undefined,
 ) {
   return Effect.gen(function* () {
+    const readInputID = (sessionID: Session.ID) =>
+      ctx.session
+        .context({ sessionID })
+        .pipe(
+          Effect.flatMap((messages) =>
+            Effect.tryPromise(() =>
+              resolveNativeInputID(messages, () => retainedInputID(sessionID)),
+            ),
+          ),
+        )
     const observer = Symbol("native-idle-observer")
     let observing = true
     const projectDirectory = recorder.store.repository.projectDirectory
@@ -320,9 +323,9 @@ export function registerProgress(
       Effect.gen(function* () {
         const stillCurrent = nativeIdleObservationFence(idle.sessionID)
         let stale = false
-        yield* ctx.session.context({ sessionID: idle.sessionID }).pipe(
+        yield* readInputID(idle.sessionID).pipe(
           Effect.match({
-            onSuccess: (messages) => {
+            onSuccess: (inputID) => {
               if (!observing || !stillCurrent()) {
                 stale = true
                 return
@@ -335,7 +338,6 @@ export function registerProgress(
                   sessionEventCursors.set(idle.sessionID, inherited)
                 }
               }
-              const inputID = latestInputID(messages)
               if (
                 !inputID ||
                 cursor?.executionStartSequence === undefined ||
@@ -451,16 +453,14 @@ export function registerProgress(
                     )
                   } else {
                     const stillCurrent = nativeIdleObservationFence(sessionID, observer)
-                    const messages = yield* ctx.session
-                      .context({ sessionID: Session.ID.make(sessionID) })
-                      .pipe(
-                        Effect.match({
-                          onSuccess: (value) => value,
-                          onFailure: () => undefined,
-                        }),
-                      )
+                    const inputID = yield* readInputID(Session.ID.make(sessionID)).pipe(
+                      Effect.match({
+                        onSuccess: (value) => value,
+                        onFailure: () => undefined,
+                      }),
+                    )
                     if (observing && stillCurrent()) {
-                      if (latestInputID(messages ?? []) !== idle.inputID) {
+                      if (inputID !== idle.inputID) {
                         cursor.idle = undefined
                         markNativeIdleBackgroundUnknown(
                           sessionID,

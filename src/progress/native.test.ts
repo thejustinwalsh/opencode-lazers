@@ -781,6 +781,51 @@ test.each([
   }
 })
 
+test("registered idle and success retain compacted input identity and reject a changed retained input", async () => {
+  for (const changedInput of [false, true]) {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const sessionID = "ses-accepted"
+      const ctx = makeContext(fixture, {
+        liveEvents: true,
+        messages: [{ id: "msg_compacted", type: "compaction", status: "completed" }],
+      })
+      const native = nativeLivenessFixture({ sessionID, directory: fixture.directory })
+      let inputID = "msg_retained_assignment"
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(ctx.context, recorder, "project", async () => inputID)
+            yield* Effect.promise(() =>
+              ctx.emitEvent(executionEvent("session.execution.started", sessionID, 200)),
+            )
+            yield* Effect.sleep(5)
+            yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+            expect(
+              (yield* Effect.promise(() => native.host.session(sessionID)))?.background,
+            ).toMatchObject({ state: "observed", inputID, count: 0 })
+            if (changedInput) inputID = "msg_foreign_new_input"
+            yield* Effect.promise(() =>
+              ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 201)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => {
+                const background = (await native.host.session(sessionID))?.background
+                return changedInput
+                  ? background?.state === "unknown" && background.reason.includes("input lineage")
+                  : background?.state === "observed" && background.terminalSequence === 201
+              }),
+            )
+          }),
+        ),
+      )
+    } finally {
+      fixture.close()
+    }
+  }
+})
+
 test("registered native idle order preserves matching success and ignores delayed older terminal events", async () => {
   const fixture = makeFixture()
   try {

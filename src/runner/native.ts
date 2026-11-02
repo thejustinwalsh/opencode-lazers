@@ -18,6 +18,7 @@ import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
+import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -394,7 +395,7 @@ export function nativeHost(
   ctx: Plugin.Context,
   repository: TaskRepository,
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
-): RunnerHost {
+): RunnerHost & { retainedInputID(sessionID: string): Promise<string | undefined> } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
   const invalidate = (client: NativeInboxClient) => {
@@ -428,7 +429,12 @@ export function nativeHost(
   }
   const observeWorker = (client: NativeInboxClient, sessionID: string, directory?: string) =>
     runNative(client, () => workerObservation(client, sessionID, directory))
+  const retainedInputID = async (sessionID: string) => {
+    const client = await connectedClient()
+    return runNative(client, () => retainedNativeInputID(client, sessionID))
+  }
   return {
+    retainedInputID,
     async workerModel() {
       const agent = await Effect.runPromise(
         ctx.agent.get({ agentID: Agent.ID.make("lazers-implementor") }),
@@ -495,6 +501,9 @@ export function nativeHost(
             Effect.runPromise(ctx.session.context({ sessionID: session.id })),
           )
         : []
+      const currentInputID = options?.messages
+        ? await resolveNativeInputID(messages, () => retainedInputID(id))
+        : undefined
       const latest = options?.messages ? await readSession() : session
       const after = options?.messages
         ? await observeWorker(client, id, latest?.location.directory ?? session.location.directory)
@@ -537,13 +546,11 @@ export function nativeHost(
             -1,
           )
         : -1
-      const lastInput = lastInputIndex >= 0 ? messages[lastInputIndex] : undefined
-      const response =
-        lastInputIndex >= 0
-          ? [...messages.slice(lastInputIndex + 1)]
-              .reverse()
-              .find((message) => message.type === "assistant")
-          : undefined
+      const response = currentInputID
+        ? [...messages.slice(lastInputIndex + 1)]
+            .reverse()
+            .find((message) => message.type === "assistant")
+        : undefined
       const unfinishedAssistant =
         response !== undefined &&
         (response.time.completed === undefined ||
@@ -562,8 +569,8 @@ export function nativeHost(
         (busyAt > idleAt || unfinishedAssistant)
       const turn = options?.messages
         ? {
-            inputID: lastInput?.id ?? null,
-            state: (lastInput === undefined
+            inputID: currentInputID ?? null,
+            state: (currentInputID === undefined
               ? "unknown"
               : interrupted
                 ? "interrupted"

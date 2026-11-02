@@ -788,6 +788,40 @@ test("native session heartbeat reads metadata without context and opts into mess
   ])
 })
 
+test("compacted worker turns retain the actual latest input without replaying history", async () => {
+  for (const latestType of ["user", "synthetic"] as const) {
+    const fixture = nativeLivenessFixture({
+      busy: DateTime.nowUnsafe(),
+      idle: DateTime.nowUnsafe(),
+      history: [
+        { id: "msg_z_old", type: latestType === "user" ? "synthetic" : "user" },
+        { id: "msg_a_current", type: latestType },
+      ],
+      messages: [
+        { id: "msg_compaction", type: "compaction", status: "completed" },
+        { id: "msg_done", type: "assistant", time: { completed: 1 }, finish: "stop", content: [] },
+      ],
+    })
+    expect((await fixture.host.session("ses_worker", { messages: true }))?.turn).toEqual({
+      inputID: "msg_a_current",
+      state: "completed",
+    })
+  }
+})
+
+test("compacted worker with no response remains pending and no durable input stays unknown", async () => {
+  for (const history of [[], [{ id: "msg_assigned", type: "user" }]]) {
+    const fixture = nativeLivenessFixture({
+      history,
+      messages: [{ id: "msg_compaction", type: "compaction", status: "completed" }],
+    })
+    expect((await fixture.host.session("ses_worker", { messages: true }))?.turn).toEqual({
+      inputID: history[0]?.id ?? null,
+      state: history.length ? "pending" : "unknown",
+    })
+  }
+})
+
 test("foreground inventory overrides idle-looking timestamps and cached discovery is reused", async () => {
   const now = DateTime.nowUnsafe()
   const fixture = nativeLivenessFixture({

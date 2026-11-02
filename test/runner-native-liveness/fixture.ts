@@ -24,6 +24,7 @@ export type NativeLivenessFixtureOptions = {
   permissions?: Array<{ id: string; sessionID: string }>
   forms?: Array<{ id: string; sessionID: string }>
   messages?: unknown[]
+  history?: Array<{ id: string; type: string }>
   busy?: ReturnType<typeof DateTime.nowUnsafe>
   idle?: ReturnType<typeof DateTime.nowUnsafe>
   outcome?: "succeeded" | "failed" | "interrupted"
@@ -107,6 +108,19 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
           cancel: async () => {},
         },
         update: async () => {},
+      },
+      message: {
+        list: async (input: { type: string; cursor?: string }) => {
+          const history = options.history ?? []
+          const boundary = input.cursor
+            ? history.findIndex((entry) => entry.id === input.cursor)
+            : -1
+          const entries = history.filter(
+            (entry, index) => entry.type === input.type && (!input.cursor || index > boundary),
+          )
+          const entry = entries.at(-1)
+          return { data: entry ? [entry] : [], cursor: { previous: entry?.id } }
+        },
       },
     } as unknown as NativeInboxClient
   }
