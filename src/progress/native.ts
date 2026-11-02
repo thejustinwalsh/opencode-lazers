@@ -7,6 +7,7 @@ import { z } from "zod"
 import {
   confirmNativeIdleBackgroundSuccess,
   invalidateNativeIdleObserver,
+  nativeIdleObservationFence,
   markNativeIdleBackgroundUnknown,
   noteStaleNativeIdleBackgroundEvent,
   observeNativeIdleBackground,
@@ -237,11 +238,13 @@ export function registerProgress(
 ) {
   return Effect.gen(function* () {
     const observer = Symbol("native-idle-observer")
+    let observing = true
     const sessionEventCursors = new Map<string, SessionEventCursor>()
     yield* Effect.addFinalizer(() =>
-      Effect.sync(() =>
-        invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed"),
-      ),
+      Effect.sync(() => {
+        observing = false
+        invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed")
+      }),
     )
     yield* ctx.tool.transform((editor) =>
       editor.add({
@@ -306,9 +309,15 @@ export function registerProgress(
 
     yield* ctx.session.hook("experimental.idle", (idle) =>
       Effect.gen(function* () {
+        const stillCurrent = nativeIdleObservationFence(idle.sessionID)
+        let stale = false
         yield* ctx.session.context({ sessionID: idle.sessionID }).pipe(
           Effect.match({
             onSuccess: (messages) => {
+              if (!observing || !stillCurrent()) {
+                stale = true
+                return
+              }
               const cursor = sessionEventCursors.get(idle.sessionID)
               const inputID = latestInputID(messages)
               if (
@@ -339,6 +348,10 @@ export function registerProgress(
               )
             },
             onFailure: () => {
+              if (!observing || !stillCurrent()) {
+                stale = true
+                return
+              }
               sessionEventCursors.delete(idle.sessionID)
               markNativeIdleBackgroundUnknown(
                 idle.sessionID,
@@ -348,7 +361,8 @@ export function registerProgress(
             },
           }),
         )
-        yield* reminderEffect(ctx, recorder, idle.sessionID, idle.background.length)
+        if (!stale && observing)
+          yield* reminderEffect(ctx, recorder, idle.sessionID, idle.background.length)
       }),
     )
 
@@ -361,6 +375,7 @@ export function registerProgress(
             const type = typeof rawType === "string" ? rawType : undefined
             const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
             if (
+              observing &&
               type &&
               sessionID &&
               (BACKGROUND_INVALIDATING_EVENTS.has(type) || type === "session.execution.succeeded")
@@ -403,6 +418,7 @@ export function registerProgress(
                       observer,
                     )
                   } else {
+                    const stillCurrent = nativeIdleObservationFence(sessionID, observer)
                     const messages = yield* ctx.session
                       .context({ sessionID: Session.ID.make(sessionID) })
                       .pipe(
@@ -411,22 +427,24 @@ export function registerProgress(
                           onFailure: () => undefined,
                         }),
                       )
-                    if (latestInputID(messages ?? []) !== idle.inputID) {
-                      cursor.idle = undefined
-                      markNativeIdleBackgroundUnknown(
-                        sessionID,
-                        "Native execution success no longer matched the idle report input lineage",
-                        observer,
-                      )
-                    } else if (
-                      !confirmNativeIdleBackgroundSuccess(sessionID, idle, sequence, observer)
-                    ) {
-                      cursor.idle = undefined
-                      markNativeIdleBackgroundUnknown(
-                        sessionID,
-                        "Native execution success could not confirm the current idle report",
-                        observer,
-                      )
+                    if (observing && stillCurrent()) {
+                      if (latestInputID(messages ?? []) !== idle.inputID) {
+                        cursor.idle = undefined
+                        markNativeIdleBackgroundUnknown(
+                          sessionID,
+                          "Native execution success no longer matched the idle report input lineage",
+                          observer,
+                        )
+                      } else if (
+                        !confirmNativeIdleBackgroundSuccess(sessionID, idle, sequence, observer)
+                      ) {
+                        cursor.idle = undefined
+                        markNativeIdleBackgroundUnknown(
+                          sessionID,
+                          "Native execution success could not confirm the current idle report",
+                          observer,
+                        )
+                      }
                     }
                   }
                 } else {
@@ -442,7 +460,11 @@ export function registerProgress(
             recorder.recordNativeEvent(event)
           } catch {
             const sessionID = object(object(event)?.data)?.sessionID
-            if (typeof sessionID === "string")
+            if (
+              typeof sessionID === "string" &&
+              observing &&
+              nativeIdleObservationFence(sessionID, observer)()
+            )
               markNativeIdleBackgroundUnknown(
                 sessionID,
                 "Native event observation failed; experimental.idle lineage is unknown",

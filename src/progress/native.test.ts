@@ -5,7 +5,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { Effect, Queue, Stream } from "effect"
+import { Effect, Fiber, Queue, Stream } from "effect"
 import { firstAttemptID, makeFixture, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { nativeLivenessFixture } from "../../test/runner-native-liveness/fixture.ts"
 import { ProgressRecorder } from "./recorder.ts"
@@ -32,6 +32,7 @@ function makeContext(
     liveEvents?: boolean
     eventFailure?: boolean
     messages?: unknown[]
+    readContext?: () => Effect.Effect<unknown[]>
     synthetic?: (input: unknown) => Effect.Effect<unknown, unknown, never>
   } = {},
 ) {
@@ -77,7 +78,7 @@ function makeContext(
           agent: "lazers-implementor",
           location: { directory: fixture.directory },
         }),
-      context: () => Effect.succeed(options.messages ?? []),
+      context: () => options.readContext?.() ?? Effect.succeed(options.messages ?? []),
       synthetic: (input: unknown) => {
         syntheticCalls++
         syntheticInputs.push(input)
@@ -442,6 +443,144 @@ test("independent listeners preserve each other while own loss and disposal inva
   }
 })
 
+test.each(["idle", "success-input-changed", "success-owned"])(
+  "a suspended %s callback and old observer disposal preserve a newer same-session report",
+  async (stage) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const oldMessages: unknown[] = [
+        { id: "msg_old_input", type: "user" },
+        {
+          id: "msg_old_reply",
+          type: "assistant",
+          finish: "stop",
+          content: [{ type: "text", text: "Completed." }],
+        },
+      ]
+      const newMessages: unknown[] = [
+        { id: "msg_new_input", type: "user" },
+        {
+          id: "msg_new_reply",
+          type: "assistant",
+          finish: "stop",
+          content: [{ type: "text", text: "Completed." }],
+        },
+      ]
+      const entered = Promise.withResolvers<void>()
+      const released = Promise.withResolvers<unknown[]>()
+      const ready = Promise.withResolvers<void>()
+      const terminalProcessed = Promise.withResolvers<void>()
+      let suspend = false
+      const old = makeContext(fixture, {
+        liveEvents: true,
+        messages: oldMessages,
+        readContext: () => {
+          if (!suspend) return Effect.succeed(oldMessages)
+          suspend = false
+          return Effect.promise(() => {
+            entered.resolve()
+            return released.promise
+          })
+        },
+      })
+      const next = makeContext(fixture, { liveEvents: true, messages: newMessages })
+      const native = nativeLivenessFixture({
+        sessionID: "ses-accepted",
+        directory: fixture.directory,
+      })
+      const record = recorder.recordNativeEvent.bind(recorder)
+      recorder.recordNativeEvent = (event) => {
+        const result = record(event)
+        if ((event as { id?: string }).id === "event-21") terminalProcessed.resolve()
+        return result
+      }
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const oldFiber = yield* Effect.forkScoped(
+              Effect.scoped(
+                Effect.gen(function* () {
+                  yield* registerProgress(old.context, recorder, "project")
+                  ready.resolve()
+                  yield* Effect.never
+                }),
+              ),
+            )
+            yield* Effect.promise(() => ready.promise)
+            yield* Effect.promise(() =>
+              old.emitEvent(executionEvent("session.execution.started", "ses-accepted", 20)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => {
+                const background = (await native.host.session("ses-accepted"))?.background
+                return (
+                  background?.state === "unknown" &&
+                  background.reason.includes("foreground execution started")
+                )
+              }),
+            )
+            if (stage !== "idle")
+              yield* old.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+            suspend = true
+            const idleFiber =
+              stage === "idle"
+                ? yield* Effect.forkScoped(
+                    old.idle()!({ sessionID: "ses-accepted", background: [] } as never),
+                  )
+                : undefined
+            if (stage !== "idle")
+              yield* Effect.promise(() =>
+                old.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 21)),
+              )
+            yield* Effect.promise(() => entered.promise)
+            yield* registerProgress(next.context, recorder, "project")
+            yield* Effect.promise(() =>
+              next.emitEvent(executionEvent("session.execution.started", "ses-accepted", 40)),
+            )
+            yield* Effect.sleep(5)
+            yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+            expect(
+              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+            ).toMatchObject({
+              state: "observed",
+              inputID: "msg_new_input",
+              executionStartSequence: 40,
+            })
+            released.resolve(stage === "success-input-changed" ? newMessages : oldMessages)
+            if (idleFiber) yield* Fiber.join(idleFiber)
+            else yield* Effect.promise(() => terminalProcessed.promise)
+            expect(
+              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+            ).toMatchObject({
+              state: "observed",
+              inputID: "msg_new_input",
+              executionStartSequence: 40,
+            })
+            yield* Fiber.interrupt(oldFiber)
+            expect(
+              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+            ).toMatchObject({
+              state: "observed",
+              inputID: "msg_new_input",
+              executionStartSequence: 40,
+            })
+            yield* Effect.promise(() => next.failEvents())
+            yield* Effect.promise(() =>
+              waitForNativeState(
+                async () =>
+                  (await native.host.session("ses-accepted"))?.background?.state === "unknown",
+              ),
+            )
+          }),
+        ),
+      )
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
 test("registered native idle order preserves matching success and ignores delayed older terminal events", async () => {
   const fixture = makeFixture()
   try {
@@ -754,16 +893,24 @@ test("concurrent idle hooks claim and admit only one bounded reminder", async ()
     )
     const recorder = new ProgressRecorder(fixture.store, "project")
     const ctx = makeContext(fixture)
-    await Effect.runPromise(Effect.scoped(registerProgress(ctx.context, recorder, "project")))
-    const idle = ctx.idle()!
-    await Promise.all([
-      Effect.runPromise(
-        idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never),
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          const idle = ctx.idle()!
+          yield* Effect.all(
+            [
+              idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never),
+              idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never),
+            ],
+            { concurrency: "unbounded" },
+          )
+        }),
       ),
-      Effect.runPromise(
-        idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never),
-      ),
-    ])
+    )
+    await Effect.runPromise(
+      ctx.idle()!({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never),
+    )
     expect(ctx.syntheticCalls()).toBe(1)
     expect(
       fixture.store.progressFacts([secondAttemptID]).filter((row) => row.kind === "reminder"),

@@ -51,6 +51,16 @@ type NativeIdleBackgroundLineage = {
 const idleBackground = new Map<string, HostBackgroundObservation>()
 const idleBackgroundOwners = new Map<string, symbol>()
 
+/** An asynchronous read may update only the observation it started from. */
+export function nativeIdleObservationFence(sessionID: string, observer?: symbol): () => boolean {
+  const observation = idleBackground.get(sessionID)
+  const owner = idleBackgroundOwners.get(sessionID)
+  return () =>
+    idleBackground.get(sessionID) === observation &&
+    idleBackgroundOwners.get(sessionID) === owner &&
+    (observer === undefined || observer === owner)
+}
+
 /** Stores only the public experimental idle-hook report, not a complete resource inventory. */
 export function observeNativeIdleBackground(
   sessionID: string,
