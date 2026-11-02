@@ -44,6 +44,9 @@ assertions, no source change or actual service launch. Main log:
 `/private/tmp/lazers-main-postmerge-all.log`; qualified boundary log:
 `/private/tmp/lazers-owned-launch-unsandboxed.log`. Do not report the initial
 full-suite run itself as green or label these as product failures.
+The focused private-base case also fails inside the restricted shell, with
+`Owned verification base is outside its stable system-temp location`, and passes
+with normal host access. No ownership/path guard was relaxed to make it pass.
 
 Computer Use remained locked after resetting its connection. Independent read-only
 macOS console inspection returned onConsole true, screenLocked true. No lock,
