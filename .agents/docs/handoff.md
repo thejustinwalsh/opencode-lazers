@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 16:49 UTC checkpoint. Recheck native state.
+2026-11-02 16:54 UTC checkpoint. Recheck native state.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -62,7 +62,15 @@ and host ordering cursors when compaction hides inputs. 213 runner/progress/nati
 checks / 2,811 assertions plus fmt/lint/check/diff pass. Both original LZ-56 and
 LZ-62 plans actually settled cancellation in PID7793 (v27/v21) without restart or
 replacement. [Evidence and limits](evidence/native-liveness/20261102-compacted-input.md).
-Architect has been asked for independent review and same-worker scoped corrections.
+Independent native review `ses_e65f2f689ffeyogHdgkRNj0WpY` cleared the repair.
+At Unix ms 1793638474784, the original Radar and relay sessions were foreground-active
+again in their original distinct native worktrees, both OpenAI Luna Max, no pending
+permissions/inbox. Together with LZ-63, three native implementation workers run
+in parallel. Architect resumed Radar from v21 to v23 and relay v27 to v29 using
+journaled same-attempt commands after durable correction instructions were
+installed and read back. Instruction consumption/completion is not yet proven.
+Models service/API task `1baed348-eaa5-418c-b231-8866f930b63e` was submitted;
+its scheduling/dispatch has not yet been observed.
 
 Current returns:
 
@@ -77,10 +85,10 @@ Current returns:
   the runner follow-up. Do not replay sibling LZ-64.
 - LZ-56 `4535c6c` relay review found disconnect capacity leakage, early short
   deadline rejection, and resync blocking consumption. Original plan cancellation
-  settled; Architect should resume the same worker only for those corrections.
+  settled; the same worker is active again for those corrections.
 - LZ-62 `2eaceec` compact Radar review found catch-up pulse replay, hidden busy
   workers/missing existing operational edges, and unstable keyboard focus.
-  Original cancellation settled. Same-worker corrections precede activation and
+  Original cancellation settled; the same worker is active for corrections before activation and
   actual narrow Desktop screenshot/Tera 6.1 High acceptance. Old main screenshot
   was reviewed by Tera and remains unusable; do not mistake it for the candidate.
 - LZ-63 remains foreground-active in its original session/tree. Dedicated adoption
@@ -104,8 +112,8 @@ No inference settings changed or additional service restart was performed.
 
 | Work                                   | Retained identity                                                                                                                                                                                                                                                                                  |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`. Returned, cancelled for scoped corrections.                                                                                                            |
-| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`. Returned, cancelled for scoped corrections.                                                                                                            |
+| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`. Returned candidate retained; original worker resumed for scoped corrections.                                                                           |
+| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`. Returned candidate retained; original worker resumed for scoped corrections.                                                                           |
 | LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`. Active, no final return.                                                                                                                               |
 | LZ-64/65 independent foundations       | Plan `7fcc114a-9b7e-4689-8d10-2adae8943ac8`; attempts `76f764e5-e0b9-437e-bcd2-ae612e9b4afe` / `a79ce707-a048-4324-83d4-cec0c2bcf8e3`; workers `ses_4f4066c3848c4ba3bb14855fd66cac39` / `ses_534b5c181ba949b393631717d15cb97f`. Both returned; mapping source merged, resource correction pending. |
 
