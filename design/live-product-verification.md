@@ -190,8 +190,9 @@ for persistence, and runtime facts for backend effects. A screenshot alone does
 not establish an interaction succeeded. Do not retain hidden reasoning, raw
 credential-bearing logs, whole contexts or unrelated user data.
 
-For temporary fixtures, record owned files/data/resources before creation, setup
-and teardown procedure, and how cleanup can be retried. Fixtures may establish
+For temporary fixtures, runtime registers owned files/data/resources at creation
+and runs teardown automatically. Cleanup is idempotent and reconciled after
+interruption or restart. Fixtures may establish
 test state, deterministic failure conditions or scoped diagnostic access; the
 application under test must still execute the real changed behavior. Identify
 mocks/stubs and which boundaries they do not prove.
@@ -204,9 +205,10 @@ of the resulting final candidate; pre-removal evidence cannot certify a differen
 shipped code path. Leave the product usable and unrelated work intact.
 
 A failed probe still triggers cleanup. Cleanup failure remains visible and
-retryable; it must not erase evidence or permit another worker to seize a dirty
-shared environment. Distinguish behavior acceptance from unresolved cleanup and
-do not report the whole delivery complete while owned cleanup remains required.
+retryable; it cannot revoke a product pass, block review/integration of valid
+work, trigger implementation repair or require repeating a passed probe. It must
+not permit another worker to seize a dirty shared environment. Track cleanup
+separately and do not report it complete while owned resources remain.
 
 ### Integrate with proactive recovery and measurement
 

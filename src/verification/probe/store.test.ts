@@ -351,7 +351,7 @@ test("task and combined-candidate definitions reject foreign task and plan owner
   ).toThrow("Attempt not found in this project")
 })
 
-test("no-fixture probes accept honest cleanup not-required while unfinished cleanup and failed probes remain unsatisfied", () => {
+test("behavior satisfaction is independent of cleanup while failed and unfinished probes remain unsatisfied", () => {
   const path = databasePath()
   const repository = open(path)
   const task = addTask(repository, "cleanup-not-required-task")
@@ -362,8 +362,8 @@ test("no-fixture probes accept honest cleanup not-required while unfinished clea
   const cases = [
     { lifecycle: "completed", verdict: "passed", cleanup: "not-required", satisfied: true },
     { lifecycle: "completed", verdict: "passed", cleanup: "complete", satisfied: true },
-    { lifecycle: "completed", verdict: "passed", cleanup: "pending", satisfied: false },
-    { lifecycle: "completed", verdict: "passed", cleanup: "failed", satisfied: false },
+    { lifecycle: "completed", verdict: "passed", cleanup: "pending", satisfied: true },
+    { lifecycle: "completed", verdict: "passed", cleanup: "failed", satisfied: true },
     {
       lifecycle: "completed",
       verdict: "product-failed",
@@ -534,13 +534,16 @@ test("SQLite reopen preserves independent, actor-bound probe receipts and cleanu
       inputs,
       environment,
     }),
-  ).toMatchObject({ eligible: true, satisfied: false, verdict: "passed", cleanupState: "pending" })
+  ).toMatchObject({ eligible: true, satisfied: true, verdict: "passed", cleanupState: "pending" })
 
   const cleanup = reopened.updateRun(
     finishInput(first.run.runID, "cleanup-confirmed", 2, "completed", "passed", "complete"),
     worker,
   )
   if (cleanup.status === "conflict") throw new Error("Expected cleanup update")
+  expect(cleanup.run.runID).toBe(first.run.runID)
+  expect(cleanup.run.verdict).toBe("passed")
+  expect(reopened.runsForAttempt(attempt.attemptID)).toHaveLength(2)
   expect(
     reopened.eligibility(first.run.runID, {
       candidate: firstInput.candidate,

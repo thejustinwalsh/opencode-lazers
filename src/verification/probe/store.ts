@@ -145,6 +145,7 @@ export type ProbeRunUpdate =
 export type ProbeEligibility = {
   runID: string
   eligible: boolean
+  /** Current completed product pass; cleanup is an independent obligation. */
   satisfied: boolean
   reasons: string[]
   lifecycle: ProbeRun["lifecycle"]
@@ -550,11 +551,7 @@ export class ProbeRepository {
       return {
         runID: run.runID,
         eligible,
-        satisfied:
-          eligible &&
-          run.lifecycle === "completed" &&
-          run.verdict === "passed" &&
-          (run.cleanupState === "complete" || run.cleanupState === "not-required"),
+        satisfied: eligible && run.lifecycle === "completed" && run.verdict === "passed",
         reasons: uniqueReasons,
         lifecycle: run.lifecycle,
         verdict: run.verdict,
