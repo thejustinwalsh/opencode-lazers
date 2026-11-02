@@ -30,6 +30,20 @@ import { RuntimeTrace } from "./runtime-trace.ts"
 
 type ModelKind = "chat" | "decision"
 
+// Native RPC failures are structured values, not necessarily Error instances.
+const errorDetail = (error: unknown): string => {
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    const type = "type" in error && typeof error.type === "string" ? `${error.type}: ` : ""
+    return `${type}${error.message}`.slice(0, 2_000)
+  }
+  return String(error).slice(0, 2_000)
+}
+
 export function createInferenceRuntime(
   ctx: Parameters<Plugin.Setup>[0],
   keepAliveMs: () => number = () => -1,
@@ -37,6 +51,7 @@ export function createInferenceRuntime(
   features: () => Features,
   timing: {
     now?: () => number
+    wallNow?: () => number
     schedule?: (callback: () => void, delayMs: number) => () => void
   } = {},
 ) {
@@ -50,6 +65,7 @@ export function createInferenceRuntime(
       .catch(() => {})
   }
   const now = timing.now ?? (() => performance.now())
+  const wallNow = timing.wallNow ?? Date.now
   const runtimeTrace = new RuntimeTrace(writeTrace, now)
   let activeInputTokens: number | undefined
   const traceStage = async (stage: TraceStage, metadata?: InferenceTraceMark) => {
@@ -94,6 +110,7 @@ export function createInferenceRuntime(
   let losses: number[] = []
   let recoveryBlocked = false
   let nextLoadAttempt = 0
+  let loadFailures = 0
   const serviceSignal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
   const rpc = () => ctx.client.rpc(LocalInference)
   const worker = () => ctx.client.rpc(RendererInference)
@@ -132,7 +149,7 @@ export function createInferenceRuntime(
   const fail = (error: unknown) => {
     setState("error")
     setPhase("error")
-    setDetail(String(error))
+    setDetail(errorDetail(error))
   }
 
   const ensureModel = async (kind: ModelKind, signal: AbortSignal) => {
@@ -419,6 +436,7 @@ export function createInferenceRuntime(
   }
 
   const unload = (): Promise<void> => {
+    autoload = false
     if (unloading) return unloading
     const operation = Promise.resolve().then(async () => {
       try {
@@ -454,8 +472,8 @@ export function createInferenceRuntime(
   const load = async () => {
     if (disposed || unloading || models.current() || !usesGPU(features())) return
     if (initializing) return initializing
-    if (Date.now() < nextLoadAttempt) return
-    nextLoadAttempt = Date.now() + 5_000
+    if (wallNow() < nextLoadAttempt) return
+    nextLoadAttempt = wallNow() + Math.min(30_000, 1_000 * 2 ** Math.min(loadFailures++, 5))
     loadController = new AbortController()
     const controller = loadController
     const signal = AbortSignal.any([ctx.signal, controller.signal, AbortSignal.timeout(600_000)])
@@ -482,13 +500,17 @@ export function createInferenceRuntime(
         await Promise.all(cacheOperations)
         await ensureModel(needsChat(features()) ? "chat" : "decision", signal)
         nextLoadAttempt = 0
+        loadFailures = 0
+        autoload = false
         ready()
       } catch (error) {
+        autoload = !controller.signal.aborted && !disposed && usesGPU(features())
         controller.abort()
         await Promise.allSettled(cacheOperations)
         try {
           await models.release()
         } catch (cleanup) {
+          autoload = false
           setResident(models.current())
           fail(`Model cleanup failed; GPU ownership retained: ${String(cleanup)}`)
           return
@@ -506,6 +528,7 @@ export function createInferenceRuntime(
             await files.release({ owner: token })
             owner = undefined
           } catch (cleanup) {
+            autoload = false
             fail(`Cache ownership cleanup failed: ${String(cleanup)}`)
             return
           }
@@ -536,7 +559,6 @@ export function createInferenceRuntime(
         return
       }
       if (autoload && !owner && !initializing) {
-        autoload = false
         void load()
         return
       }
@@ -570,7 +592,12 @@ export function createInferenceRuntime(
           }
         } catch (error) {
           await unload()
-          fail(`Local model disconnected: ${String(error)}`)
+          if (!owner && !models.isTainted() && !disposed && usesGPU(features())) {
+            autoload = true
+            loadFailures = 1
+            nextLoadAttempt = wallNow() + 1_000
+            fail(`Local model disconnected: ${errorDetail(error)}. Reconnecting automatically.`)
+          }
         } finally {
           polling = false
         }
@@ -682,7 +709,6 @@ export function createInferenceRuntime(
     } else if (!wasEnabled) {
       autoload = true
       if (!unloading) {
-        autoload = false
         void load()
       }
     }

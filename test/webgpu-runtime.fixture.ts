@@ -22,6 +22,10 @@ let generationStarted = Promise.withResolvers<void>()
 let fakeNow = 1_000
 let rendererTimer: (() => void) | undefined
 let automaticTicks = false
+let wallNow = Date.now()
+let pollFailure: unknown
+let attachFailures = 0
+let attachCalls = 0
 let allocations = 0
 let maximum = 0
 let releases = 0
@@ -100,11 +104,17 @@ const broker = new InferenceBroker()
 const lease = new ModelLease(async () => {})
 const controller = new AbortController()
 const worker = {
-  attach: async ({ owner }: { owner: string }) => broker.attach(owner),
+  attach: async ({ owner }: { owner: string }) => {
+    attachCalls++
+    if (attachFailures-- > 0) throw { type: "rpc.unavailable", message: "Service is reconnecting" }
+    broker.attach(owner)
+  },
   detach: async ({ owner, error }: { owner: string; error?: string }) =>
     broker.detach(owner, error),
-  poll: async ({ owner, available }: { owner: string; available: boolean }) =>
-    broker.poll(owner, available),
+  poll: async ({ owner, available }: { owner: string; available: boolean }) => {
+    if (pollFailure) throw pollFailure
+    return broker.poll(owner, available)
+  },
   complete: async ({
     owner,
     id,
@@ -136,6 +146,7 @@ const ctx = {
 const [features, setFeatures] = solid.createSignal(defaultFeatures(true))
 const timing = {
   now: () => fakeNow,
+  wallNow: () => wallNow,
   schedule: (callback: () => void, delayMs: number) => {
     assert.equal(delayMs, 500)
     rendererTimer = callback
@@ -386,6 +397,45 @@ try {
     "Trace schema must not carry prompt, output or audio content",
   )
   assert.ok(traces.every((event) => event.observedEP === "unknown"))
+  automaticTicks = false
+  pollFailure = { type: "rpc.unavailable", message: "Renderer mailbox unavailable" }
+  timerTick()
+  await until(() => runtime.state() === "error")
+  assert.match(runtime.detail(), /rpc\.unavailable: Renderer mailbox unavailable/)
+  assert.equal(lease.occupied(), false)
+  assert.equal(broker.demand().requested, false, "Recovery must not need another user request")
+  pollFailure = undefined
+  const beforeReconnect = attachCalls
+  attachFailures = 1
+  timerTick()
+  await Bun.sleep(20)
+  assert.equal(attachCalls, beforeReconnect, "Reconnection waits for its backoff")
+  wallNow += 1_000
+  timerTick()
+  await until(() => attachCalls === beforeReconnect + 1 && runtime.state() === "error")
+  assert.match(runtime.detail(), /Service is reconnecting/)
+  timerTick()
+  await Bun.sleep(20)
+  assert.equal(attachCalls, beforeReconnect + 1, "A failed reattach does not spin")
+  wallNow += 2_000
+  timerTick()
+  await until(() => runtime.state() === "ready")
+  assert.equal(attachCalls, beforeReconnect + 2)
+  assert.equal(allocations, 1)
+  assert.equal(broker.demand().requested, false)
+  pollFailure = new Error("Temporary transport loss before disable")
+  timerTick()
+  await until(() => runtime.state() === "error")
+  pollFailure = undefined
+  setFeatures(defaultFeatures(false))
+  await until(() => runtime.state() === "disabled")
+  wallNow += 30_000
+  timerTick()
+  await Bun.sleep(20)
+  assert.equal(allocations, 0, "Disabling inference cancels a scheduled reconnect")
+  setFeatures(defaultFeatures(true))
+  await until(() => runtime.state() === "ready")
+  automaticTicks = true
   failTracing = true
   const withoutLogs = await broker.generate(
     { prompt: "private", maxTokens: 16, timeoutMs: 3_000 },
@@ -434,6 +484,9 @@ try {
   cleanupGate = undefined
   assert.equal(lease.occupied(), false)
   assert.equal(allocations, 0)
+  timerTick()
+  await Bun.sleep(20)
+  assert.equal(allocations, 0, "Manual unload does not rearm automatic loading")
 
   // Demand can reload after an unload; a disposal failure must retain the main lease.
   assert.equal((await decision()).ok, true)
