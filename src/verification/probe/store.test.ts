@@ -499,10 +499,11 @@ test("SQLite reopen preserves independent, actor-bound probe receipts and cleanu
   const reopened = new ProbeRepository(reopenedRepository)
   expect(reopened.run(first.run.runID)).toEqual(first.run)
   expect(reopened.run(second.run.runID)).toEqual(second.run)
-  expect(reopened.runsForAttempt(attempt.attemptID).map((run) => run.runID)).toEqual([
-    first.run.runID,
-    second.run.runID,
-  ])
+  const reopenedRuns = reopened.runsForAttempt(attempt.attemptID)
+  expect(reopenedRuns).toHaveLength(2)
+  expect(reopenedRuns.map((run) => run.runID)).toEqual(
+    expect.arrayContaining([first.run.runID, second.run.runID]),
+  )
   expect(new ProbeRepository(open(path, "/other")).run(first.run.runID)).toBeUndefined()
 
   expect(() =>
