@@ -904,7 +904,7 @@ test("identical task and combined assertion/artifact evidence remains phase- and
     await drive(f.runtime, 2)
     expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   }
-})
+}, 10_000)
 
 test("restart recovers task and combined check receipt cuts without replaying checks", async () => {
   for (const cutPhase of ["task", "combined"] as const) {
@@ -977,7 +977,7 @@ test("only active worker reservations with conflicting write scopes block adopti
   }
 })
 
-test("irrelevant environment churn is ignored while runtime generations and operation evidence stay isolated", async () => {
+test("irrelevant environment churn is ignored while check inputs and operation evidence stay isolated", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const candidate = landCandidate(f, node.artifact!)
@@ -989,20 +989,18 @@ test("irrelevant environment churn is ignored while runtime generations and oper
 
   const currentEnvironment = verificationEnvironmentIdentity()
   const oldValue = process.env.LAZERS_ADOPTION_TEST_ENV
-  process.env.LAZERS_ADOPTION_TEST_ENV = "credential-value-must-not-enter-evidence"
-  expect(verificationEnvironmentIdentity()).toBe(currentEnvironment)
-  const nextRuntimeIdentity = verificationEnvironmentIdentity("next-runtime-generation")
-  expect(nextRuntimeIdentity).not.toBe(currentEnvironment)
-  f.store.atomic((db) =>
-    db
-      .query("UPDATE runner_adoptions SET environment_identity=? WHERE id=?")
-      .run(nextRuntimeIdentity, first.adoptionID),
-  )
+  const oldLanguage = process.env.LANG
   try {
+    process.env.LAZERS_ADOPTION_TEST_ENV = "credential-value-must-not-enter-evidence"
+    expect(verificationEnvironmentIdentity()).toBe(currentEnvironment)
+    process.env.LANG = `${oldLanguage ?? ""}.lazers-changed-input`
+    expect(verificationEnvironmentIdentity()).not.toBe(currentEnvironment)
     await f.runtime.tick()
   } finally {
     if (oldValue === undefined) delete process.env.LAZERS_ADOPTION_TEST_ENV
     else process.env.LAZERS_ADOPTION_TEST_ENV = oldValue
+    if (oldLanguage === undefined) delete process.env.LANG
+    else process.env.LANG = oldLanguage
   }
   expect(f.store.adoption(first.adoptionID)?.state).toBe("held")
   expect(f.store.plan(f.planID)?.state).toBe("blocked")

@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { fingerprint } from "../identity.ts"
+import { canonical } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
 
 export function git(
@@ -320,7 +320,6 @@ export type CheckReceipt = {
   unchanged: boolean
 }
 
-const verificationRuntimeGeneration = crypto.randomUUID()
 const identityEnvironmentKeys = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "CI"] as const
 const verificationEnvironment = () =>
   Object.fromEntries(
@@ -329,17 +328,14 @@ const verificationEnvironment = () =>
     ),
   )
 
-/** Binds evidence to the loaded check runtime without persisting inherited credentials. */
-export function verificationEnvironmentIdentity(
-  runtimeGeneration: string = verificationRuntimeGeneration,
-): string {
-  return fingerprint({
+/** Stable, readable check-runtime metadata; module replacement is not an environment change. */
+export function verificationEnvironmentIdentity(): string {
+  return canonical({
     bunRevision: Bun.revision,
     bunVersion: Bun.version,
     executable: process.execPath,
     platform: process.platform,
     architecture: process.arch,
-    runtimeGeneration,
     environment: verificationEnvironment(),
   })
 }
