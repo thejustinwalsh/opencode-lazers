@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
 
 export function git(
@@ -307,6 +308,18 @@ export type CheckReceipt = {
   stderr: string
   unchanged: boolean
 }
+
+/** A credential-safe fingerprint for all environment inputs inherited by checks. */
+export function verificationEnvironmentIdentity(): string {
+  return fingerprint({
+    bun: Bun.revision,
+    platform: process.platform,
+    architecture: process.arch,
+    environment: Object.fromEntries(
+      Object.entries(process.env).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  })
+}
 async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768) {
   const reader = stream.getReader()
   let bytes = 0
@@ -328,10 +341,7 @@ export async function runCheck(
 ): Promise<CheckReceipt> {
   const inputIdentity = artifact
   // Record runtime metadata without persisting environment credentials.
-  const environmentIdentity = JSON.stringify({
-    bun: Bun.revision,
-    platform: process.platform,
-  })
+  const environmentIdentity = verificationEnvironmentIdentity()
   const startedAt = Date.now()
   let timedOut = false
   const child = Bun.spawn(["/bin/sh", "-c", check.command], {
