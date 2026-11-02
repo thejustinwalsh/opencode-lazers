@@ -43,6 +43,24 @@ const GROUPS: ReadonlyArray<{ id: RadarOverviewGroupID; label: string }> = [
 ]
 
 const MAX_VISIBLE_WORKERS = 2
+const ACTIVE_ATTEMPT_STATES = new Set(["preparing", "running", "verifying"])
+const TERMINAL_ATTEMPT_STATES = new Set([
+  "accepted",
+  "cancelled",
+  "exhausted",
+  "failed",
+  "interrupted",
+  "succeeded",
+])
+
+type RadarSessionRecord = Extract<RadarMapNodeRecord, { kind: "session" }>
+type RadarSessionAttempt = RadarSessionRecord["attempts"][number]
+type RadarSessionTask = RadarSessionRecord["tasks"][number]
+type RadarSessionAssignment = {
+  kind: "current" | "last"
+  task: RadarSessionTask
+  attempts: RadarSessionAttempt[]
+}
 
 function agentName(node: RadarMapNode) {
   return node.record.kind === "session" ? node.record.value.agent?.trim().toLowerCase() : undefined
@@ -70,9 +88,11 @@ function hasWorkerEvidence(node: RadarMapNode) {
 }
 
 function latestAttemptAt(node: RadarMapNode) {
-  return node.record.kind === "session"
-    ? Math.max(0, ...node.record.attempts.map((attempt) => attempt.startedAt))
-    : 0
+  if (node.record.kind !== "session") return 0
+  return (sessionBoundAttempts(node.record) ?? []).reduce(
+    (latest, attempt) => Math.max(latest, attempt.startedAt),
+    0,
+  )
 }
 
 function isActiveWorker(node: RadarMapNode) {
@@ -86,11 +106,53 @@ function isActiveWorker(node: RadarMapNode) {
 
 function hasActiveWorkEvidence(node: RadarMapNode) {
   if (node.record.kind !== "session") return false
-  const activeStates = new Set(["queued", "ready", "running", "verifying"])
-  return (
-    node.record.attempts.some((attempt) => activeStates.has(attempt.state)) ||
-    node.record.tasks.some((task) => activeStates.has(task.state))
+  return (sessionBoundAttempts(node.record) ?? []).some((attempt) =>
+    ACTIVE_ATTEMPT_STATES.has(attempt.state),
   )
+}
+
+function sessionBoundAttempts(record: RadarSessionRecord): RadarSessionAttempt[] | undefined {
+  const listedIDs = new Set(record.value.attemptIDs)
+  const observedIDs = new Set(record.attempts.map((attempt) => attempt.id))
+  if (
+    listedIDs.size !== record.value.attemptIDs.length ||
+    observedIDs.size !== record.attempts.length ||
+    listedIDs.size !== observedIDs.size ||
+    [...listedIDs].some((id) => !observedIDs.has(id)) ||
+    record.attempts.some((attempt) => attempt.sessionID !== record.value.sessionID)
+  )
+    return undefined
+  return record.attempts
+}
+
+function sessionAssignment(record: RadarSessionRecord): RadarSessionAssignment | undefined {
+  const attempts = sessionBoundAttempts(record)
+  if (!attempts?.length) return undefined
+
+  const activeAttempts = attempts.filter((attempt) => ACTIVE_ATTEMPT_STATES.has(attempt.state))
+  if (activeAttempts.length) {
+    const taskIDs = new Set(activeAttempts.map((attempt) => attempt.taskID))
+    if (taskIDs.size !== 1) return undefined
+    const task = sessionTask(record, taskIDs.values().next().value!)
+    return task ? { kind: "current", task, attempts: activeAttempts } : undefined
+  }
+
+  const latestStartedAt = attempts.reduce(
+    (latest, attempt) => Math.max(latest, attempt.startedAt),
+    Number.NEGATIVE_INFINITY,
+  )
+  const latestAttempts = attempts.filter((attempt) => attempt.startedAt === latestStartedAt)
+  if (latestAttempts.some((attempt) => !TERMINAL_ATTEMPT_STATES.has(attempt.state)))
+    return undefined
+  const taskIDs = new Set(latestAttempts.map((attempt) => attempt.taskID))
+  if (taskIDs.size !== 1) return undefined
+  const task = sessionTask(record, taskIDs.values().next().value!)
+  return task ? { kind: "last", task, attempts: latestAttempts } : undefined
+}
+
+function sessionTask(record: RadarSessionRecord, taskID: string) {
+  const matches = record.tasks.filter((task) => task.id === taskID && task.state !== "unavailable")
+  return matches.length === 1 ? matches[0] : undefined
 }
 
 function workerPriority(node: RadarMapNode) {
@@ -118,8 +180,10 @@ export function radarSessionModelContext(record: Extract<RadarMapNodeRecord, { k
   const model = route
     ? `${route.providerID}/${route.modelID} · effort ${route.variant ?? "unavailable"} · ${route.source}`
     : "Model/effort unavailable · route provenance unavailable"
-  const task = record.tasks[0]
-  const taskContext = task ? `Task: ${task.label} · ${task.state}` : "Task context unavailable"
+  const assignment = sessionAssignment(record)
+  const taskContext = assignment
+    ? `${assignment.kind === "current" ? "Task" : "Last task"}: ${assignment.task.label} · ${assignment.task.state}`
+    : "Task context unavailable"
   return { model, task: taskContext }
 }
 
@@ -233,9 +297,26 @@ export function createRadarOverview(
       latestAttemptAt(right) - latestAttemptAt(left) || left.id.localeCompare(right.id),
   )
   const taskConnections = stableVisibleWorkers.flatMap((worker) => {
+    if (worker.record.kind !== "session") return []
+    const assignment = sessionAssignment(worker.record)
+    if (assignment?.kind !== "current") return []
+    const taskNode = model.nodes.find(
+      (node) => node.record.kind === "task" && node.record.value.id === assignment.task.id,
+    )
+    if (!taskNode) return []
+    const currentAttemptIDs = new Set(assignment.attempts.map((attempt) => attempt.id))
     const assignments = model.edges
       .filter(
-        (edge) => edge.kind === "assignment" && (edge.from === worker.id || edge.to === worker.id),
+        (edge) =>
+          edge.kind === "assignment" &&
+          ((edge.from === worker.id && edge.to === taskNode.id) ||
+            (edge.to === worker.id && edge.from === taskNode.id)) &&
+          edge.records.some(
+            (record) =>
+              record.taskID === assignment.task.id &&
+              record.attemptID !== null &&
+              currentAttemptIDs.has(record.attemptID),
+          ),
       )
       .flatMap((edge) => {
         const taskID = edge.from === worker.id ? edge.to : edge.from
