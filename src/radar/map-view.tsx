@@ -6,7 +6,12 @@ import type { RadarLayoutClient } from "./layout-state.ts"
 import { edgeLabel, measureRadarMap } from "./map-layout.ts"
 import type { RadarMapEdge, RadarMapModel, RadarMapNode, RadarMapNodeRecord } from "./map-model.ts"
 import { defaultTextMeasure } from "./map-layout.ts"
-import { createRadarOverview, radarSessionModelContext } from "./map-overview.ts"
+import {
+  createRadarOverview,
+  radarOverviewConnectionForID,
+  radarOverviewConnectionIDs,
+  radarSessionModelContext,
+} from "./map-overview.ts"
 import type { RadarOverview } from "./map-overview.ts"
 import { RadarPulseTracker } from "./pulse.ts"
 import type { RadarPulse } from "./pulse.ts"
@@ -700,14 +705,16 @@ export function RadarMapView(props: RadarMapViewProps) {
   const pulseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const model = () => props.model
   const overview = createMemo(() => createRadarOverview(model(), props.currentSessionID))
+  const overviewConnectionIDs = createMemo(() => radarOverviewConnectionIDs(overview().edges))
+  const overviewConnection = (id: string) => radarOverviewConnectionForID(overview().edges, id)
   const displayModel = createMemo<RadarMapModel>(() => {
     const summary = overview()
     return {
       ...model(),
       nodes: summary.nodes,
-      edges: summary.edges,
+      edges: summary.graphEdges,
       nodeByID: new Map(summary.nodes.map((node) => [node.id, node])),
-      edgeByID: new Map(summary.edges.map((edge) => [edge.id, edge])),
+      edgeByID: new Map(summary.graphEdges.map((edge) => [edge.id, edge])),
     }
   })
   const measured = createMemo(() => {
@@ -873,23 +880,27 @@ export function RadarMapView(props: RadarMapViewProps) {
         </div>
         <Show when={overview().edges.length > 0}>
           <div>
-            <strong>Recorded connections</strong>
+            <strong>Recorded connections · {overview().edges.length}</strong>
             <ol>
-              <For each={overview().edges}>
-                {(edge) => (
-                  <li>
-                    <button
-                      type="button"
-                      class="lazers-radar-map-connection"
-                      aria-pressed={isSelected(edge.id)}
-                      onClick={() => focusEdge(edge.id)}
-                    >
-                      {displayModel().nodeByID.get(edge.from)?.label ?? edge.from} ·{" "}
-                      {edgeLabel(edge.kind)} →{" "}
-                      {displayModel().nodeByID.get(edge.to)?.label ?? edge.to} · {edge.status}
-                    </button>
-                  </li>
-                )}
+              <For each={overviewConnectionIDs()}>
+                {(edgeID) => {
+                  const edge = () => overviewConnection(edgeID)!
+                  return (
+                    <li>
+                      <button
+                        type="button"
+                        class="lazers-radar-map-connection"
+                        aria-pressed={isSelected(edgeID)}
+                        onClick={() => focusEdge(edgeID)}
+                      >
+                        {displayModel().nodeByID.get(edge().from)?.label ?? edge().from} ·{" "}
+                        {edgeLabel(edge().kind)} →{" "}
+                        {displayModel().nodeByID.get(edge().to)?.label ?? edge().to} ·{" "}
+                        {edge().status}
+                      </button>
+                    </li>
+                  )
+                }}
               </For>
             </ol>
           </div>
@@ -920,7 +931,7 @@ export function RadarMapView(props: RadarMapViewProps) {
             height={result().height}
             viewBox={`0 0 ${result().width} ${result().height}`}
             role="group"
-            aria-label="C4-style operational architecture and activity map"
+            aria-label="Compact operational node overview with recorded relationships listed above"
             preserveAspectRatio="xMinYMin meet"
           >
             <For each={result().groups}>

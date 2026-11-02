@@ -1,5 +1,4 @@
 import type { RadarMapEdge, RadarMapModel, RadarMapNode, RadarMapNodeRecord } from "./map-model.ts"
-import { radarTaskNodeID } from "./map-model.ts"
 
 export type RadarOverviewGroupID =
   "runtime" | "sessions" | "work" | "routes" | "tools" | "relationships"
@@ -25,6 +24,8 @@ export type RadarOverview = {
   nodes: RadarMapNode[]
   workerSessions: RadarMapNode[]
   activeWorkerSessions: RadarMapNode[]
+  /** Focused relationships are listed as buttons rather than widening the compact graph. */
+  graphEdges: RadarMapEdge[]
   edges: RadarMapEdge[]
   groups: RadarOverviewGroup[]
   currentArchitectID: string | null
@@ -41,7 +42,7 @@ const GROUPS: ReadonlyArray<{ id: RadarOverviewGroupID; label: string }> = [
   { id: "relationships", label: "Recorded relationships" },
 ]
 
-const MAX_VISIBLE_WORKERS = 3
+const MAX_VISIBLE_WORKERS = 2
 
 function agentName(node: RadarMapNode) {
   return node.record.kind === "session" ? node.record.value.agent?.trim().toLowerCase() : undefined
@@ -83,6 +84,22 @@ function isActiveWorker(node: RadarMapNode) {
   )
 }
 
+function hasActiveWorkEvidence(node: RadarMapNode) {
+  if (node.record.kind !== "session") return false
+  const activeStates = new Set(["queued", "ready", "running", "verifying"])
+  return (
+    node.record.attempts.some((attempt) => activeStates.has(attempt.state)) ||
+    node.record.tasks.some((task) => activeStates.has(task.state))
+  )
+}
+
+function workerPriority(node: RadarMapNode) {
+  if (isActiveWorker(node)) return 0
+  if (node.record.kind === "session" && node.record.value.state === "busy") return 1
+  if (hasActiveWorkEvidence(node)) return 2
+  return 3
+}
+
 export function radarSessionModelContext(record: Extract<RadarMapNodeRecord, { kind: "session" }>) {
   const current = record.value.currentRouteID
     ? record.routes.find((route) => route.id === record.value.currentRouteID)
@@ -104,6 +121,14 @@ export function radarSessionModelContext(record: Extract<RadarMapNodeRecord, { k
   const task = record.tasks[0]
   const taskContext = task ? `Task: ${task.label} · ${task.state}` : "Task context unavailable"
   return { model, task: taskContext }
+}
+
+export function radarOverviewConnectionIDs(edges: readonly RadarMapEdge[]) {
+  return edges.map((edge) => edge.id)
+}
+
+export function radarOverviewConnectionForID(edges: readonly RadarMapEdge[], id: string) {
+  return edges.find((edge) => edge.id === id)
 }
 
 export function radarOverviewNode(node: RadarMapNode, currentArchitect = false): RadarMapNode {
@@ -196,51 +221,65 @@ export function createRadarOverview(
     )
     .sort(
       (left, right) =>
-        latestAttemptAt(right) - latestAttemptAt(left) || left.id.localeCompare(right.id),
+        workerPriority(left) - workerPriority(right) ||
+        latestAttemptAt(right) - latestAttemptAt(left) ||
+        left.id.localeCompare(right.id),
     )
   const visibleWorkers = workerCandidates.slice(0, MAX_VISIBLE_WORKERS)
-  const taskConnection = visibleWorkers
-    .flatMap((worker) =>
-      worker.record.kind === "session"
-        ? worker.record.tasks.map((task) => ({ worker, id: radarTaskNodeID(task.id) }))
-        : [],
-    )
-    .map(({ worker, id }) => ({ worker, node: model.nodeByID.get(id) }))
-    .find(
-      ({ worker, node }) =>
-        node?.record.kind === "task" &&
-        model.edges.some(
-          (edge) =>
-            (edge.kind === "assignment" && edge.from === node.id && edge.to === worker.id) ||
-            (edge.kind === "assignment" && edge.to === node.id && edge.from === worker.id),
-        ),
-    )
-  const visibleTask = taskConnection?.node
-  const representativeWorker = taskConnection?.worker ?? visibleWorkers[0]
-  const visibleNodeIDs = new Set(
-    [scheduler, architect, visibleTask, representativeWorker].flatMap((node) =>
-      node ? [node.id] : [],
-    ),
+  // Selection favors current work, but the selected nodes retain a stable order
+  // so status-only priority changes do not request a different ELK layout.
+  const stableVisibleWorkers = visibleWorkers.toSorted(
+    (left, right) =>
+      latestAttemptAt(right) - latestAttemptAt(left) || left.id.localeCompare(right.id),
   )
-  const nodes = [scheduler, architect, visibleTask, representativeWorker]
+  const taskConnections = stableVisibleWorkers.flatMap((worker) => {
+    const assignments = model.edges
+      .filter(
+        (edge) => edge.kind === "assignment" && (edge.from === worker.id || edge.to === worker.id),
+      )
+      .flatMap((edge) => {
+        const taskID = edge.from === worker.id ? edge.to : edge.from
+        const task = model.nodeByID.get(taskID)
+        return task?.record.kind === "task" ? [{ worker, task, edge }] : []
+      })
+      .sort(
+        (left, right) =>
+          (right.edge.records.at(-1)?.observedAt ?? 0) -
+            (left.edge.records.at(-1)?.observedAt ?? 0) ||
+          left.task.id.localeCompare(right.task.id),
+      )
+    return assignments.slice(0, 1)
+  })
+  const assignedWorkerIDs = new Set(taskConnections.map(({ worker }) => worker.id))
+  const focusNodes = [
+    ...taskConnections.flatMap(({ task, worker }) => [task, worker]),
+    ...stableVisibleWorkers.filter((worker) => !assignedWorkerIDs.has(worker.id)),
+  ]
+  const visibleNodeIDs = new Set(
+    [scheduler, architect, ...focusNodes].flatMap((node) => (node ? [node.id] : [])),
+  )
+  const nodes = [scheduler, architect, ...focusNodes]
     .filter((node): node is RadarMapNode => Boolean(node))
     .filter((node, index, values) => values.findIndex((value) => value.id === node.id) === index)
     .map((node) => ({
       ...radarOverviewNode(node, node.id === architect?.id),
       group: "overview" as const,
     }))
-  const edges = taskConnection
-    ? model.edges
-        .filter(
-          (edge) =>
-            edge.kind === "assignment" &&
-            ((edge.from === visibleTask?.id && edge.to === representativeWorker?.id) ||
-              (edge.to === visibleTask?.id && edge.from === representativeWorker?.id)),
-        )
-        .slice(0, 1)
-    : model.edges
-        .filter((edge) => visibleNodeIDs.has(edge.from) && visibleNodeIDs.has(edge.to))
-        .slice(0, 1)
+  const selectedAssignmentIDs = new Set(taskConnections.map(({ edge }) => edge.id))
+  const controlNodeIDs = new Set([scheduler?.id, architect?.id].filter((id): id is string => !!id))
+  const workerNodeIDs = new Set(stableVisibleWorkers.map((node) => node.id))
+  const edges = model.edges.filter((edge) => {
+    if (edge.kind === "assignment") return selectedAssignmentIDs.has(edge.id)
+    if (edge.kind !== "prompt" && edge.kind !== "outcome") return false
+    return (
+      visibleNodeIDs.has(edge.from) &&
+      visibleNodeIDs.has(edge.to) &&
+      (controlNodeIDs.has(edge.from) ||
+        controlNodeIDs.has(edge.to) ||
+        workerNodeIDs.has(edge.from) ||
+        workerNodeIDs.has(edge.to))
+    )
+  })
 
   const recordsFor = (id: RadarOverviewGroupID) => {
     if (id === "relationships") return model.edges.map((edge) => edgeEntry(edge, model))
@@ -271,7 +310,7 @@ export function createRadarOverview(
     return { id, label, entries, count: entries.length, sourceCount }
   })
   const activeWorkerCount = workerCandidates.filter(isActiveWorker).length
-  const workerSessions = visibleWorkers.map((node) => ({
+  const workerSessions = stableVisibleWorkers.map((node) => ({
     ...radarOverviewNode(node),
     group: "overview" as const,
   }))
@@ -279,6 +318,7 @@ export function createRadarOverview(
     nodes,
     workerSessions,
     activeWorkerSessions: workerSessions.filter(isActiveWorker),
+    graphEdges: [],
     edges,
     groups,
     currentArchitectID: architect?.id ?? null,

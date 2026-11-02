@@ -61,6 +61,9 @@ export class RadarPanelState {
   private includeUnmanagedSessions = false
   private reconnecting = false
   private poll?: ReturnType<typeof setInterval>
+  /** Keep gap/reconnect catch-up quiet until Radar has crossed its recovery fence. */
+  private recoveryFence?: number
+  private recoveryBaselinePending = false
   private readonly snapshotRuns = new Map<number, { pending: boolean; retries: number }>()
 
   constructor(
@@ -176,6 +179,14 @@ export class RadarPanelState {
           !sameBoundary(displayedRadar.boundary, displayedSnapshot.boundary),
         )
         const liveSequence = this.sync.eventSequence
+        if (
+          acceptedRadar &&
+          radar &&
+          this.recoveryFence !== undefined &&
+          radar.boundary.eventSequence >= this.recoveryFence &&
+          radar.boundary.eventSequence >= (liveSequence ?? radar.boundary.eventSequence)
+        )
+          this.recoveryBaselinePending = true
         const behindLiveChanges = Boolean(
           liveSequence !== undefined &&
           ((displayedRadar && displayedRadar.boundary.eventSequence < liveSequence) ||
@@ -198,7 +209,7 @@ export class RadarPanelState {
             ...(acceptedSnapshot ? { snapshot } : {}),
             loading: false,
             stale: !acceptedRadar || needsResynchronization,
-            resynchronizing: !acceptedRadar,
+            resynchronizing: !acceptedRadar || this.recoveryFence !== undefined,
             error: radarError || freshnessError,
             snapshotError,
           })
@@ -252,9 +263,21 @@ export class RadarPanelState {
           const previous = this.sync.eventSequence
           const contiguous = this.sync.acceptChange(generation, projectID, change)
           if (this.sync.eventSequence === previous) continue
+          const releasedBaseline = contiguous && this.recoveryBaselinePending
+          if (!contiguous) {
+            this.recoveryFence = change.sequence
+            this.recoveryBaselinePending = false
+          } else if (releasedBaseline) {
+            this.recoveryFence = undefined
+            this.recoveryBaselinePending = false
+          }
+          const resynchronizing =
+            !contiguous ||
+            this.recoveryFence !== undefined ||
+            (this.data.resynchronizing && !releasedBaseline)
           this.update({
             stale: true,
-            resynchronizing: this.data.resynchronizing || !contiguous,
+            resynchronizing,
             error: contiguous ? "" : "Observation gap; refreshing the snapshot.",
           })
           void this.refresh(epoch, generation, transport, signal)
@@ -264,6 +287,8 @@ export class RadarPanelState {
       } catch (error) {
         if (!this.current(epoch, transport, signal)) return
         this.reconnecting = true
+        this.recoveryFence = 0
+        this.recoveryBaselinePending = false
         generation = this.sync.reconnect()
         this.update({
           loading: !this.data.radar,
@@ -285,6 +310,8 @@ export class RadarPanelState {
   close() {
     this.epoch++
     this.reconnecting = false
+    this.recoveryFence = undefined
+    this.recoveryBaselinePending = false
     this.controller.abort()
     if (this.poll) clearInterval(this.poll)
     this.poll = undefined

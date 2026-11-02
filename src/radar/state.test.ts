@@ -288,6 +288,123 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
   }
 })
 
+test("a gap catch-up remains a quiet baseline until Radar covers the recovery sequence", async () => {
+  const { fixture, session, sessionRadar } = snapshots()
+  let state: RadarPanelState | undefined
+  try {
+    const radar = await sessionRadar
+    const queue = new EventQueue<ObservationChange>()
+    const base = radar.boundary.eventSequence
+    const gap = base + 3
+    const delayedRadar = deferred<void>()
+    const delayedCatchup = deferred<void>()
+    let radarCalls = 0
+    let snapshotCalls = 0
+    const sequenceFor = (index: number) =>
+      index === 0 ? base : index === 1 ? base + 1 : index === 2 ? gap : gap + 1
+    const waitForRead = async (index: number) => {
+      if (index === 1) await delayedRadar.promise
+      if (index === 2) await delayedCatchup.promise
+    }
+    const transport: RadarTransport = {
+      snapshot: async () => {
+        const index = snapshotCalls++
+        const eventSequence = sequenceFor(index)
+        await waitForRead(index)
+        return { ...session, boundary: { ...session.boundary, eventSequence } }
+      },
+      radar: async () => {
+        const index = radarCalls++
+        const eventSequence = sequenceFor(index)
+        await waitForRead(index)
+        return { ...radar, boundary: { ...radar.boundary, eventSequence } }
+      },
+      changes: (signal) => changesFrom(queue, signal),
+      online: () => true,
+    }
+    const pulses: string[] = []
+    const pulseTracker = new RadarPulseTracker()
+    state = new RadarPanelState(
+      (data) => {
+        if (!data.radar) return
+        const edge: RadarMapEdge = {
+          id: "outcome",
+          kind: "outcome",
+          from: "worker",
+          to: "runner",
+          status: "succeeded",
+          records: [],
+          evidence: [],
+          routeRecords: [],
+          related: [],
+          pulseEventIDs: [`event-${data.radar.boundary.eventSequence}`],
+        }
+        pulses.push(
+          ...pulseTracker.update([edge], data.resynchronizing, true).map((pulse) => pulse.eventID),
+        )
+      },
+      async () => {},
+    )
+    state.connect(
+      "session-view",
+      "project",
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+    )
+    await until(() => state!.data.radar?.boundary.eventSequence === base && !state!.data.stale)
+    expect(state.data.resynchronizing).toBe(false)
+
+    queue.push({
+      projectID: "project",
+      sequence: gap,
+      repositoryVersion: session.boundary.repositoryVersion,
+      sourceRevision: session.boundary.sourceRevision,
+      nativeRevision: session.boundary.nativeRevision,
+      cause: "gap",
+      resnapshotRequired: true,
+    })
+    await until(() => radarCalls === 2 && snapshotCalls === 2)
+    delayedRadar.resolve(undefined)
+    await until(
+      () =>
+        radarCalls >= 3 &&
+        snapshotCalls >= 3 &&
+        state!.data.radar?.boundary.eventSequence === base + 1 &&
+        state!.data.resynchronizing,
+    )
+    expect(pulses).toEqual([])
+
+    delayedCatchup.resolve(undefined)
+    await until(
+      () =>
+        state!.data.radar?.boundary.eventSequence === gap &&
+        !state!.data.stale &&
+        state!.data.resynchronizing,
+    )
+    expect(pulses).toEqual([])
+
+    queue.push({
+      projectID: "project",
+      sequence: gap + 1,
+      repositoryVersion: session.boundary.repositoryVersion,
+      sourceRevision: session.boundary.sourceRevision,
+      nativeRevision: session.boundary.nativeRevision,
+      cause: "runner",
+      resnapshotRequired: false,
+    })
+    await until(
+      () =>
+        state!.data.radar?.boundary.eventSequence === gap + 1 &&
+        !state!.data.stale &&
+        !state!.data.resynchronizing,
+    )
+    expect(pulses).toEqual([`event-${gap + 1}`])
+  } finally {
+    state?.close()
+    fixture.close()
+  }
+})
+
 test("wrong-project and wrong-scope snapshot responses remain unavailable", async () => {
   const { fixture, session, project, sessionRadar, projectRadar } = snapshots()
   try {
