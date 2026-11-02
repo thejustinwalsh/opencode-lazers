@@ -188,7 +188,7 @@ function makeRequest(f: ReturnType<typeof fixture>, requestID = "handoff-request
 function reservation(
   requestID: string,
   draftVersion: number,
-  reviewID = crypto.randomUUID(),
+  reviewID: string = crypto.randomUUID(),
   round = 1,
 ): HandoffReviewReservationInput {
   return {
@@ -696,7 +696,8 @@ test("disabled/unavailable review limitations and append-only Architect disposit
   const unavailableReview = reservation(
     request.requestID,
     unavailableDraft.record.draftVersion,
-    crypto.randomUUID(),
+    input.reviewID,
+    2,
   )
   f.handoffs().reserveRound(unavailableReview, architect)
   const unavailable = outcome("unavailable")
