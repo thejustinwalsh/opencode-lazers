@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -441,6 +442,82 @@ test("failed cleanup is durable and retry does not replay the callback or change
   expect(adapter.removes).toBe(2)
   expect(existsSync(join(root, input.name))).toBe(false)
   expect(lifecycle.resources.cleanupReceiptCount(run.runID)).toBe(1)
+})
+
+test("reopened cleanup with a different filesystem root stays uncertain until the original root returns", async () => {
+  const directory = temporaryDirectory()
+  const databasePath = join(directory, "tasks.sqlite")
+  const originalRoot = join(directory, "original-fixtures")
+  const wrongRoot = join(directory, "wrong-fixtures")
+  mkdirSync(originalRoot)
+  mkdirSync(wrongRoot)
+  let repository = open(databasePath)
+  const { actor, probes, run } = addRun(repository, "wrong-root-cleanup")
+  const originalAdapter = new CountingAdapter(new FilesystemFixtureAdapter(originalRoot))
+  originalAdapter.removeFailure = "before"
+  let lifecycle = lifecycleFor(repository, probes, originalAdapter)
+  const input = resourceInput("wrong-root-cleanup-input", "root-bound-fixture")
+  let callbacks = 0
+
+  const first = await lifecycle.withOwnedResources(
+    { runID: run.runID, actor, resources: [input] },
+    () => {
+      callbacks++
+      return { verdict: "passed", value: "passed once" }
+    },
+  )
+  expect(first.run).toMatchObject({
+    lifecycle: "completed",
+    verdict: "passed",
+    cleanupState: "failed",
+  })
+  expect(existsSync(join(originalRoot, input.name))).toBe(true)
+  expect(lifecycle.resources.cleanupReceiptCount(run.runID)).toBe(0)
+
+  const persisted = lifecycle.resources.resourcesForRun(run.runID)[0]!
+  const coordinatorID = lifecycle.resources.coordinatorID()
+  const wrongAdapter = new CountingAdapter(new FilesystemFixtureAdapter(wrongRoot))
+  expect(wrongAdapter.inner.observe(persisted, coordinatorID)).toMatchObject({
+    state: "unknown",
+    authoritative: false,
+  })
+  expect(() => wrongAdapter.inner.reserve(persisted, coordinatorID)).toThrow("another fixture root")
+  expect(() => wrongAdapter.inner.create(persisted, coordinatorID)).toThrow()
+  expect(() => wrongAdapter.inner.remove(persisted, coordinatorID)).toThrow()
+  expect(() => wrongAdapter.inner.release(persisted, coordinatorID)).toThrow("another fixture root")
+
+  repository.close()
+  repository = open(databasePath)
+  lifecycle = lifecycleFor(repository, new ProbeRepository(repository), wrongAdapter)
+  const wrongRootRetry = lifecycle.retryCleanup(run.runID, actor)
+  expect(wrongRootRetry).toMatchObject({
+    run: { lifecycle: "completed", verdict: "passed", cleanupState: "failed" },
+    cleanupState: "failed",
+  })
+  expect(lifecycle.resources.resourcesForRun(run.runID)).toMatchObject([{ state: "uncertain" }])
+  expect(lifecycle.resources.claimed(persisted.resourceKey)?.resourceID).toBe(persisted.resourceID)
+  expect(lifecycle.resources.cleanupReceiptCount(run.runID)).toBe(0)
+  expect(existsSync(join(originalRoot, input.name))).toBe(true)
+  expect(existsSync(join(wrongRoot, input.name))).toBe(false)
+  expect(readdirSync(wrongRoot)).toEqual([])
+  expect(wrongAdapter.removes).toBe(0)
+  expect(callbacks).toBe(1)
+
+  lifecycle = lifecycleFor(
+    repository,
+    new ProbeRepository(repository),
+    new CountingAdapter(new FilesystemFixtureAdapter(originalRoot)),
+  )
+  const correctRootRetry = lifecycle.retryCleanup(run.runID, actor)
+  expect(correctRootRetry).toMatchObject({
+    run: { lifecycle: "completed", verdict: "passed", cleanupState: "complete" },
+    cleanupState: "complete",
+  })
+  expect(callbacks).toBe(1)
+  expect(existsSync(join(originalRoot, input.name))).toBe(false)
+  expect(existsSync(join(wrongRoot, input.name))).toBe(false)
+  expect(lifecycle.resources.cleanupReceiptCount(run.runID)).toBe(1)
+  expect(lifecycle.resources.claimed(persisted.resourceKey)).toBeUndefined()
 })
 
 test("reopen reconciles before-create and after-create-before-receipt cuts without duplicate creation", async () => {

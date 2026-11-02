@@ -31,6 +31,8 @@ type Claim = {
   generation: number
 }
 
+class ResourceIdentityMismatch extends Error {}
+
 function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? String(error.code)
@@ -102,11 +104,13 @@ export class FilesystemFixtureAdapter implements OwnedResourceAdapter {
   }
 
   path(resource: OwnedResource): string {
+    this.assertResourceIdentity(resource)
     this.assertRoot()
     return join(this.root, resource.name)
   }
 
   reserve(resource: OwnedResource, coordinatorID: string): void {
+    this.assertResourceIdentity(resource)
     this.assertRoot()
     const claim = this.expectedClaim(resource, coordinatorID)
     const path = this.claimPath(resource)
@@ -124,6 +128,7 @@ export class FilesystemFixtureAdapter implements OwnedResourceAdapter {
 
   observe(resource: OwnedResource, coordinatorID: string): ResourceObservation {
     try {
+      this.assertResourceIdentity(resource)
       this.assertRoot()
       const path = this.path(resource)
       let stats: ReturnType<typeof lstatSync>
@@ -189,7 +194,13 @@ export class FilesystemFixtureAdapter implements OwnedResourceAdapter {
           }
       }
       return { state: "owned", authoritative: true }
-    } catch {
+    } catch (error) {
+      if (error instanceof ResourceIdentityMismatch)
+        return {
+          state: "unknown",
+          authoritative: false,
+          reason: "Persisted resource identity does not match the configured filesystem root",
+        }
       return {
         state: "unknown",
         authoritative: false,
@@ -253,6 +264,7 @@ export class FilesystemFixtureAdapter implements OwnedResourceAdapter {
   }
 
   release(resource: OwnedResource, coordinatorID: string): void {
+    this.assertResourceIdentity(resource)
     this.assertRoot()
     const path = this.claimPath(resource)
     let stats: ReturnType<typeof lstatSync>
@@ -291,8 +303,27 @@ export class FilesystemFixtureAdapter implements OwnedResourceAdapter {
   }
 
   private claimPath(resource: OwnedResource): string {
+    this.assertResourceIdentity(resource)
     const hash = createHash("sha256").update(resource.resourceKey).digest("hex")
     return join(this.root, `.lazers-resource-claim-${hash}`)
+  }
+
+  private assertResourceIdentity(resource: OwnedResource): void {
+    const parsed = ResourceRegistrationInputSchema.parse({
+      requestID: resource.requestID,
+      generation: resource.generation,
+      name: resource.name,
+      contents: resource.contents,
+    })
+    if (this.resourceKeyFor(parsed.name) !== resource.resourceKey)
+      throw new ResourceIdentityMismatch(
+        "Persisted resource identity belongs to another fixture root",
+      )
+  }
+
+  private resourceKeyFor(name: string): string {
+    const foldedName = name.normalize("NFC").toLowerCase()
+    return `filesystem:${this.root.normalize("NFC").toLowerCase()}/${foldedName}`
   }
 
   private readClaim(path: string): unknown | undefined {
