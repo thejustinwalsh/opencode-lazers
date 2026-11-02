@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { git } from "../runner/artifacts.ts"
 import { TaskRepository } from "../storage.ts"
 import { ProjectIndex } from "./index.ts"
-import { registerContextTools } from "./tools.ts"
+import { nativeContextPermission, registerContextTools } from "./tools.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -139,4 +139,53 @@ test("native permission denial prevents Architect refresh from creating a snapsh
   await expect(f.index.manifest({ sessionID: "architect", agent: "architect" })).rejects.toThrow(
     "Architect must refresh",
   )
+})
+
+test("cancelling an index tool interrupts its native permission wait and stops the scan", async () => {
+  const f = await setup()
+  writeFileSync(join(f.root, "second.ts"), "export const value = 2")
+  await f.index.refresh({ sessionID: "architect", agent: "architect" })
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let finish!: () => void
+  let checks = 0
+  let interrupted = false
+  let principalSignal: AbortSignal | undefined
+  const native = nativeContextPermission({
+    permission: {
+      assert: () =>
+        Effect.callback<void>((resume) => {
+          checks++
+          enter()
+          finish = () => resume(Effect.void)
+          return Effect.sync(() => {
+            interrupted = true
+          })
+        }),
+    },
+  } as unknown as Plugin.Context)
+  Object.defineProperty(f.index, "allow", {
+    value: (path: string, principal: Parameters<typeof native>[1], workspace: string) => {
+      principalSignal = principal.signal
+      return native(path, principal, workspace)
+    },
+  })
+  const controller = new AbortController()
+  const pending = Effect.runPromiseExit(
+    f.tools.get("lazers_project_index")!.execute({}, callContext("lazers-implementor")),
+    { signal: controller.signal },
+  )
+  try {
+    await entered
+    controller.abort()
+    await pending
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(principalSignal?.aborted).toBe(true)
+    expect(interrupted).toBe(true)
+    expect(checks).toBe(1)
+  } finally {
+    finish?.()
+  }
 })

@@ -32,6 +32,8 @@ an observation-based improvements plan. This is not completion.
 
 ## Current direct repair
 
+Root also repaired the proven cached-index cancellation leak: [incident and regression](evidence/native-liveness/20261102-index-cancellation.md). Native tool interruption now reaches file permission waits and scan boundaries. The old already-detached LZ-65 replacement scan still needs reconciliation; do not infer fresh cleanup from the source fix. Preserve `nativeContextPermission(ctx)` when integrating LZ-67 setup registration.
+
 `fbfddf2` fixes the demonstrated service bottleneck: per-location full-history
 polling became transactional per-project observation revisions. Direct settings
 now take 2 ms, forwarding 4–5 ms; all six flags stayed ON. Tasks reconnects.

@@ -1,8 +1,34 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
+import { Agent } from "@opencode/schema/agent"
+import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
+import { join } from "node:path"
 import { z } from "zod"
 import type { ProjectIndex } from "./index.ts"
+
+export function nativeContextPermission(
+  ctx: Plugin.Context,
+): ConstructorParameters<typeof ProjectIndex>[3] {
+  return async (path, principal, workspace) => {
+    try {
+      principal.signal?.throwIfAborted()
+      await Effect.runPromise(
+        ctx.permission.assert({
+          sessionID: Session.ID.make(principal.sessionID),
+          agent: Agent.ID.make(principal.agent),
+          action: "read",
+          resources: [join(workspace, path)],
+        }),
+        { signal: principal.signal },
+      )
+      return true
+    } catch {
+      principal.signal?.throwIfAborted()
+      return false
+    }
+  }
+}
 
 const paths = z.array(z.string().min(1).max(1024)).max(20).default([])
 const IndexInput = z.strictObject({ paths })
@@ -83,9 +109,9 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () => {
+                try: async (signal) => {
                   const output = await index.manifest(
-                    { sessionID: call.sessionID, agent: call.agent },
+                    { sessionID: call.sessionID, agent: call.agent, signal },
                     input.paths,
                   )
                   return { content: JSON.stringify(output), output }
@@ -117,10 +143,11 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
                   new Tool.Error({ message: "Only Architect may refresh the workspace index" }),
                 )
               return Effect.tryPromise({
-                try: async () => {
+                try: async (signal) => {
                   const snapshot = await index.refresh({
                     sessionID: call.sessionID,
                     agent: call.agent,
+                    signal,
                   })
                   const output = {
                     snapshotID: snapshot.id,
@@ -158,9 +185,9 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () => {
+                try: async (signal) => {
                   const output = await index.evidence(
-                    { sessionID: call.sessionID, agent: call.agent },
+                    { sessionID: call.sessionID, agent: call.agent, signal },
                     input,
                   )
                   return { content: JSON.stringify(output), output }

@@ -34,7 +34,7 @@ type Snapshot = {
   tokens: number
   files: FileRecord[]
 }
-type Principal = { sessionID: string; agent: string }
+type Principal = { sessionID: string; agent: string; signal?: AbortSignal }
 type Permission = (path: string, principal: Principal, workspace: string) => Promise<boolean>
 export type ContextSession = {
   id: string
@@ -203,6 +203,7 @@ export class ProjectIndex {
   private activeRefresh?: Promise<Snapshot>
 
   async refresh(principal: Principal): Promise<Snapshot> {
+    principal.signal?.throwIfAborted()
     if (principal.agent !== "architect")
       throw new Error("Only Architect may refresh the workspace index")
     if (this.host) {
@@ -225,6 +226,7 @@ export class ProjectIndex {
 
   private async publish(principal: Principal): Promise<Snapshot> {
     const snapshot = await this.collectWorkspace(principal)
+    principal.signal?.throwIfAborted()
     const filename = `${this.cacheID}-${snapshot.id}.json`
     const cache = join(this.cacheDirectory, filename)
     const temporary = `${cache}.${crypto.randomUUID()}.tmp`
@@ -292,6 +294,7 @@ export class ProjectIndex {
     let visited = 0,
       total = 0
     const walk = async (path: string, inherited: { base: string; rules: Ignore }[] = []) => {
+      principal.signal?.throwIfAborted()
       const rules = [...inherited]
       for (const control of [".ignore", ".repomixignore"]) {
         const name = path ? `${path}/${control}` : control
@@ -307,6 +310,7 @@ export class ProjectIndex {
       const directory = opendirSync(join(this.root, path))
       try {
         while (true) {
+          principal.signal?.throwIfAborted()
           const entry = directory.readSync()
           if (!entry) break
           if (++visited > 20000 || Date.now() - started > 30000)
@@ -562,16 +566,20 @@ export class ProjectIndex {
     candidates: FileRecord[] = snapshot.files,
   ) {
     const files: FileRecord[] = []
-    for (const file of candidates)
+    for (const file of candidates) {
+      principal.signal?.throwIfAborted()
       if (
         validSourcePath(file.path) &&
         (await this.allow(file.path, principal, snapshot.workspace))
       )
         files.push(file)
+      principal.signal?.throwIfAborted()
+    }
     return files
   }
 
   async manifest(principal: Principal, paths: string[] = []) {
+    principal.signal?.throwIfAborted()
     const snapshot = await this.snapshotFor(principal)
     const selected = this.selectedFiles(snapshot, paths)
     const matches = await this.permittedFiles(snapshot, principal, selected)
@@ -590,6 +598,7 @@ export class ProjectIndex {
     }
   }
   async evidence(principal: Principal, focus: Focus) {
+    principal.signal?.throwIfAborted()
     const snapshot = await this.snapshotFor(principal)
     const paths = focus.paths ?? []
     const selected = this.selectedFiles(snapshot, paths, focus.search)

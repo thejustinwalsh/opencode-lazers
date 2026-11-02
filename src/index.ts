@@ -12,7 +12,7 @@ import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
 import { ProjectIndex } from "./context/index.ts"
 import type { ContextHost } from "./context/index.ts"
-import { registerContextTools } from "./context/tools.ts"
+import { nativeContextPermission, registerContextTools } from "./context/tools.ts"
 import { nativeTrajectoryHost } from "./trajectory/native.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
 import { AssociationTaskReads } from "./observability/task-reads.ts"
@@ -22,7 +22,6 @@ import { nativeRadarSessionHost } from "./observability/native.ts"
 import { ProgressRecorder } from "./progress/recorder.ts"
 import { registerProgress } from "./progress/native.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
-import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
 
@@ -72,21 +71,7 @@ export default Plugin.define({
             ctx.location.directory,
             join(dirname(repository.path), "context"),
             repository,
-            async (path, principal, workspace) => {
-              try {
-                await Effect.runPromise(
-                  ctx.permission.assert({
-                    sessionID: Session.ID.make(principal.sessionID),
-                    agent: Agent.ID.make(principal.agent),
-                    action: "read",
-                    resources: [join(workspace, path)],
-                  }),
-                )
-                return true
-              } catch {
-                return false
-              }
-            },
+            nativeContextPermission(ctx),
             contextHost,
           )
         }),
