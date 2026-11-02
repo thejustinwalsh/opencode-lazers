@@ -281,6 +281,70 @@ describe("owned Desktop launch proof", () => {
     expect(calls.at(-1)).toBe("release")
   })
 
+  test("persists spawned-service ownership before fallible identity discovery", async () => {
+    const { deps, calls, written } = dependencies()
+    const spawned = { pid: serviceProcess.pid, command: serviceProcess.command, spawnedAt: 1793538000000 }
+    deps.startService = async ({ onSpawn }) => {
+      calls.push("service")
+      await onSpawn(spawned)
+      expect(written.at(-1)?.pendingService).toEqual(spawned)
+      throw new Error("process identity unavailable")
+    }
+    deps.cleanup = async (value) => {
+      calls.push("cleanup")
+      const result = await cleanupOwnedDesktop(value, {
+        writeManifest: deps.writeManifest,
+        observeProcess: () => ({ kind: "observation-unavailable", reason: "probe-error" }),
+        verifyAndStopDesktop: async () => "already-stopped",
+        verifyAndStopService: async () => "already-stopped",
+        protocolHandler: deps.protocolHandler,
+        removeRoot: async () => { calls.push("remove") },
+      })
+      return { clean: result.status === "cleaned", reason: result.cleanupIssue }
+    }
+    await expect(startOwnedDesktop(input, deps)).rejects.toThrow("cleanup remains retryable")
+    expect(written.at(-1)?.pendingService).toEqual(spawned)
+    expect(calls).toContain("retain")
+    expect(calls).not.toContain("remove")
+    expect(calls).not.toContain("release")
+    expect(calls).not.toContain("desktop")
+  })
+
+  test("unconfirmed service ownership survives failed cleanup and permits cleanup after authoritative exit", async () => {
+    const spawned = { pid: serviceProcess.pid, command: serviceProcess.command, spawnedAt: 1793538000000 }
+    for (const observation of [
+      { kind: "live", identity: serviceProcess },
+      { kind: "observation-unavailable", reason: "probe-error" },
+    ] as const) {
+      const value = manifest({ service: undefined, desktop: undefined, pendingService: spawned })
+      let removals = 0
+      let signals = 0
+      const written: OwnedLaunchManifest[] = []
+      const cleanup = {
+        writeManifest: async (next: OwnedLaunchManifest) => { written.push(structuredClone(next)) },
+        observeProcess: () => observation,
+        verifyAndStopDesktop: async () => { signals += 1; return "stopped" as const },
+        verifyAndStopService: async () => { signals += 1; return "stopped" as const },
+        protocolHandler: async () => "ai.opencode.desktop",
+        removeRoot: async () => { removals += 1 },
+      }
+      const blocked = await cleanupOwnedDesktop(value, cleanup)
+      expect(blocked.status).toBe("cleanup-blocked")
+      expect(written.at(-1)?.pendingService).toEqual(spawned)
+      expect(removals).toBe(0)
+      expect(signals).toBe(0)
+      const reopened = structuredClone(written.at(-1)!)
+      const cleaned = await cleanupOwnedDesktop(reopened, {
+        ...cleanup,
+        observeProcess: () => ({ kind: "authoritatively-absent" }),
+      })
+      expect(cleaned.status).toBe("cleaned")
+      expect(cleaned.pendingService).toBeUndefined()
+      expect(removals).toBe(1)
+      expect(signals).toBe(0)
+    }
+  })
+
   test("blocks a registration whose authenticated endpoint reports another process", async () => {
     const { deps, calls } = dependencies()
     deps.waitForService = async () => ({
