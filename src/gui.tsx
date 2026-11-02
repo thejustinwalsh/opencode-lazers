@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { ModelFiles } from "./webgpu/ipc.ts"
 import { setupMain } from "./webgpu/main.ts"
+import { setupNativeInteractionMain } from "./verification/opencode/native-interaction-main.ts"
 import { createInferenceRuntime } from "./webgpu/runtime.ts"
 import { LocalModel } from "./webgpu/contract.ts"
 import {
@@ -45,7 +46,13 @@ export default Plugin.define({
     ),
   },
   main(ctx) {
-    return setupMain(ctx)
+    return Promise.resolve(setupMain(ctx)).then((cleanup) => {
+      const cleanupNativeInteraction = setupNativeInteractionMain(ctx)
+      return async () => {
+        cleanupNativeInteraction?.()
+        await cleanup?.()
+      }
+    })
   },
   setup(ctx) {
     const openTaskTrajectory: TaskTrajectoryOpener = (session, request) => {
