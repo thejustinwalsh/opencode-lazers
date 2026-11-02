@@ -147,6 +147,8 @@ Use `ctx.add(token, valueOrReactiveGetter)`; `ctx.list(token)` reads contributio
 
 The [event manifest][events] indexes event names and payloads, including execution/step/tool/usage, inbox/forms/permissions, registry changes, filesystem/LSP, shell/worktree/VCS, TUI, and RPC events. The [configuration schema][config-schema] is the complete lookup for agent/model/tool/permission/MCP and experimental feature settings.
 
+Public `location.reload()` is server-wide across loaded locations, not scoped to the caller's worktree: the [pinned handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/location.ts) calls [`LocationServiceMap.reload`](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/location-service-map.ts#L20-L35), which invalidates all loaded refs and boots their replacements. Coordinate a quiet boundary before using it; source inclusion is not proof of effective worker registration.
+
 ## Complete HTTP operation index
 
 The following is the **entire versioned OpenAPI operation inventory**, grouped for lookup. Names are **OpenAPI operation IDs**, not a claim that every method exists on plugin `ctx`. Follow each resource's source for paths, verbs, payloads, schemas, and errors. Client spelling differs in places: HTTP `fs.*` → `client.file.*`; `session.permission.*` → `client.permission.*`; `session.message.list` → `client.message.list`. Experimental client aliases do not change API maturity. [Generated client][client] · [all 363 schemas][schemas] · [raw specification][protocol].
