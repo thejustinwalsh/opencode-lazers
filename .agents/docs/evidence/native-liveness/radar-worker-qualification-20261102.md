@@ -28,8 +28,7 @@ They do not clear source review or `native-visual`.
   2186902, independently present in SQLite with native event identities.
 - Assigned/current user input was `msg_e3fa72d1835c43e2a36150f3d9541394`.
   The worker listener (reported prefix `a6ef1505-`) recorded background zero at
-  1793639892126, current input resolution at 1793639892175 and an idle report at
-  1793639892176. Start sequence 2532, idle fence 2534 and matching terminal 3892
+  1793639892126, current input resolution at 1793639892175 and an idle report at 1793639892176. Start sequence 2532, idle fence 2534 and matching terminal 3892
   at 1793639892186 accompanied native succeeded idle at 1793639892181.
   Earlier listener disposal at 1793639262272 demonstrates generation replacement.
 - Current inspected native inventory showed no foreground worker, empty inbox,
