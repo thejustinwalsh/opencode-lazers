@@ -843,75 +843,6 @@ export function RadarMapView(props: RadarMapViewProps) {
         setRootReady(true)
       }}
     >
-      <div class="lazers-radar-map-overview-summary" aria-label="Current operational overview">
-        <div>
-          <strong>Scheduler</strong>
-          <span>{schedulerSummary() ?? "Task runtime unavailable"}</span>
-        </div>
-        <div>
-          <strong>Current Architect</strong>
-          <span>{architectSummary() ?? "Not identified from this active native session"}</span>
-        </div>
-        <div>
-          <strong>Active workers · {overview().activeWorkerCount}</strong>
-          <Show when={overview().activeWorkerCount === 0}>
-            <span>No currently available busy worker session is evidenced</span>
-          </Show>
-          <For each={visibleActiveWorkers()}>
-            {(node) => {
-              const context = () =>
-                node.record.kind === "session" ? radarSessionModelContext(node.record) : undefined
-              return (
-                <span>
-                  {node.record.kind === "session"
-                    ? (node.record.value.agent ?? "Native worker")
-                    : "Worker"}
-                  · {node.status} · {context()?.model ?? "Model/effort unavailable"}
-                </span>
-              )
-            }}
-          </For>
-          <Show when={overview().activeWorkerCount > visibleActiveWorkers().length}>
-            <span>
-              {overview().activeWorkerCount - visibleActiveWorkers().length} more active sessions in
-              Native sessions
-            </span>
-          </Show>
-        </div>
-        <Show when={overview().edges.length > 0}>
-          <div>
-            <strong>Recorded connections · {overview().edges.length}</strong>
-            <ol>
-              <For each={overviewConnectionIDs()}>
-                {(edgeID) => {
-                  const edge = () => overviewConnection(edgeID)!
-                  return (
-                    <li>
-                      <button
-                        type="button"
-                        class="lazers-radar-map-connection"
-                        aria-pressed={isSelected(edgeID)}
-                        onClick={() => focusEdge(edgeID)}
-                      >
-                        {displayModel().nodeByID.get(edge().from)?.label ?? edge().from} ·{" "}
-                        {edgeLabel(edge().kind)} →{" "}
-                        {displayModel().nodeByID.get(edge().to)?.label ?? edge().to} ·{" "}
-                        {edge().status}
-                      </button>
-                    </li>
-                  )
-                }}
-              </For>
-            </ol>
-          </div>
-        </Show>
-      </div>
-      <AccessibleMap
-        overview={overview()}
-        model={model()}
-        selectedID={props.selectedID}
-        onSelect={props.onSelect}
-      />
       <Show
         when={layoutResult()}
         fallback={
@@ -931,7 +862,7 @@ export function RadarMapView(props: RadarMapViewProps) {
             height={result().height}
             viewBox={`0 0 ${result().width} ${result().height}`}
             role="group"
-            aria-label="Compact operational node overview with recorded relationships listed above"
+            aria-label="Compact operational node overview with recorded relationships in details below"
             preserveAspectRatio="xMinYMin meet"
           >
             <For each={result().groups}>
@@ -1077,6 +1008,81 @@ export function RadarMapView(props: RadarMapViewProps) {
           </svg>
         )}
       </Show>
+      <details class="lazers-radar-disclosure lazers-radar-map-details">
+        <summary>
+          Details · {overview().activeWorkerCount} active workers · {overview().edges.length}{" "}
+          connections
+        </summary>
+        <div class="lazers-radar-map-overview-summary" aria-label="Current operational overview">
+          <div>
+            <strong>Scheduler</strong>
+            <span>{schedulerSummary() ?? "Task runtime unavailable"}</span>
+          </div>
+          <div>
+            <strong>Current Architect</strong>
+            <span>{architectSummary() ?? "Not identified from this active native session"}</span>
+          </div>
+          <div>
+            <strong>Active workers · {overview().activeWorkerCount}</strong>
+            <Show when={overview().activeWorkerCount === 0}>
+              <span>No currently available busy worker session is evidenced</span>
+            </Show>
+            <For each={visibleActiveWorkers()}>
+              {(node) => {
+                const context = () =>
+                  node.record.kind === "session" ? radarSessionModelContext(node.record) : undefined
+                return (
+                  <span>
+                    {node.record.kind === "session"
+                      ? (node.record.value.agent ?? "Native worker")
+                      : "Worker"}
+                    · {node.status} · {context()?.model ?? "Model/effort unavailable"}
+                  </span>
+                )
+              }}
+            </For>
+            <Show when={overview().activeWorkerCount > visibleActiveWorkers().length}>
+              <span>
+                {overview().activeWorkerCount - visibleActiveWorkers().length} more active sessions
+                in Native sessions
+              </span>
+            </Show>
+          </div>
+          <Show when={overview().edges.length > 0}>
+            <div>
+              <strong>Recorded connections · {overview().edges.length}</strong>
+              <ol>
+                <For each={overviewConnectionIDs()}>
+                  {(edgeID) => {
+                    const edge = () => overviewConnection(edgeID)!
+                    return (
+                      <li>
+                        <button
+                          type="button"
+                          class="lazers-radar-map-connection"
+                          aria-pressed={isSelected(edgeID)}
+                          onClick={() => focusEdge(edgeID)}
+                        >
+                          {displayModel().nodeByID.get(edge().from)?.label ?? edge().from} ·{" "}
+                          {edgeLabel(edge().kind)} →{" "}
+                          {displayModel().nodeByID.get(edge().to)?.label ?? edge().to} ·{" "}
+                          {edge().status}
+                        </button>
+                      </li>
+                    )
+                  }}
+                </For>
+              </ol>
+            </div>
+          </Show>
+        </div>
+        <AccessibleMap
+          overview={overview()}
+          model={model()}
+          selectedID={props.selectedID}
+          onSelect={props.onSelect}
+        />
+      </details>
     </div>
   )
 }

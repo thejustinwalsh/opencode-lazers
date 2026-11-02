@@ -26,14 +26,17 @@
 }
 .lazers-radar-header {
   min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 12px 16px 8px;
 }
 .lazers-radar-heading {
   min-width: 0;
+  width: 100%;
   display: flex;
   flex: 1 1 100%;
   flex-wrap: wrap;
@@ -78,6 +81,7 @@
 .lazers-radar-controls {
   min-width: 0;
   width: 100%;
+  max-width: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -104,7 +108,8 @@
 .lazers-radar-tabs {
   min-width: 0;
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-left: auto;
