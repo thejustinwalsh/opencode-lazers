@@ -442,15 +442,18 @@
 }
 .lazers-radar-map-freshness {
   min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 3px 12px;
-  padding: 3px 0 10px;
+  padding: 0 0 8px;
   color: var(--text-weak);
   font-size: 0.85em;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+.lazers-radar-map-freshness summary {
+  padding: 3px 0;
+  cursor: pointer;
+}
+.lazers-radar-map-freshness dl {
+  margin: 8px 0;
 }
 .lazers-radar-map-freshness time {
   color: var(--text-base);

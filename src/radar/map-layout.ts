@@ -96,10 +96,10 @@ function nodeGeometry(node: RadarMapNode, measure: (value: string) => number) {
   const maxContentWidth = 210
   const label = compactLines(node.label, maxContentWidth, measure, 2)
   const subtitle = compactLines(node.subtitle, maxContentWidth, measure, 2)
-  const status = compactLines(node.status, maxContentWidth, measure, 2)
+  const status = compactLines(node.status, maxContentWidth, measure, 1)
   // Reserve status-independent native-sized text space so a busy/idle or route
   // update cannot move the operational overview or invalidate ELK geometry.
-  return { label, subtitle, status, width: 242, height: 128 }
+  return { label, subtitle, status, width: 242, height: 96 }
 }
 
 export function edgeLabel(kind: RadarMapEdge["kind"]) {

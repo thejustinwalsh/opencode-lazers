@@ -78,6 +78,12 @@ export function elkGraph(input: RadarLayoutInput): ElkCompoundNode {
     layoutOptions: {
       ...ELK_OPTIONS,
       "elk.direction": input.direction ?? "RIGHT",
+      ...(input.direction === "DOWN"
+        ? {
+            "elk.spacing.nodeNode": "20",
+            "elk.layered.spacing.nodeNodeBetweenLayers": "28",
+          }
+        : {}),
     },
   } as ElkCompoundNode
 }

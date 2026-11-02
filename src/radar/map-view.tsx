@@ -936,8 +936,8 @@ export function RadarMapView(props: RadarMapViewProps) {
                 const placed = () => nodes().get(nodeID) as SvgBox | undefined
                 const lines = () => measured().text.get(nodeID)
                 const status = () => mapStatus(node())
-                const labelY = () => (placed()?.y ?? 0) + 22
-                const subtitleY = () => labelY() + (lines()?.label.length ?? 1) * 18 + 13
+                const labelY = () => (placed()?.y ?? 0) + 20
+                const subtitleY = () => labelY() + ((lines()?.label.length ?? 1) - 1) * 18 + 22
                 const statusY = () =>
                   (placed()?.y ?? 0) +
                   (placed()?.height ?? 0) -

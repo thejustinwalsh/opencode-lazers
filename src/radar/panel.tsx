@@ -670,53 +670,52 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
           >
             {(operational) => (
               <>
-                <div class="lazers-radar-map-freshness" role="status">
-                  <span>{stale() ? "Last observed" : "Observed"}</span>
-                  <time dateTime={operational().observedAt}>
-                    {timeLabel(Date.parse(operational().observedAt))}
-                  </time>
-                  <span>
-                    {operational().coverage.managedSessionCount} managed ·{" "}
-                    {operational().coverage.sessionCount} scoped sessions
-                  </span>
-                  <span>
-                    Runner {operational().freshness.runner} · inventory{" "}
-                    {operational().freshness.nativeInventory} · events{" "}
-                    {operational().freshness.nativeEvents === "connected"
-                      ? "connected"
-                      : "gap / unavailable"}
-                  </span>
-                  <details class="lazers-radar-disclosure">
-                    <summary>Coverage and observation boundary</summary>
-                    <dl>
-                      <dt>Sessions</dt>
-                      <dd>
-                        {operational().coverage.managedSessionCount} managed of{" "}
-                        {operational().coverage.sessionCount} scoped · unmanaged included{" "}
-                        {operational().coverage.includeUnmanagedSessions ? "yes" : "no"}
-                      </dd>
-                      <dt>Truncation</dt>
-                      <dd>
-                        {[
-                          operational().coverage.inventoryTruncated ? "sessions" : "",
-                          operational().coverage.workTruncated ? "work" : "",
-                          operational().coverage.progressTruncated ? "progress" : "",
-                          operational().coverage.routeTruncated ? "routes" : "",
-                          operational().coverage.toolTruncated ? "tools" : "",
-                          operational().coverage.edgeTruncated ? "relationships" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(", ") || "No projection truncation reported"}
-                      </dd>
-                      <dt>Boundary</dt>
-                      <dd>
-                        {operational().boundary.repositoryVersion} repository ·{" "}
-                        {operational().boundary.sourceRevision} source ·{" "}
-                        {operational().boundary.nativeRevision} native
-                      </dd>
-                    </dl>
-                  </details>
-                </div>
+                <details class="lazers-radar-map-freshness">
+                  <summary>
+                    {stale() ? "Last observed" : "Live"} ·{" "}
+                    {new Date(operational().observedAt).toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}{" "}
+                    · {operational().coverage.managedSessionCount} sessions
+                  </summary>
+                  <dl>
+                    <dt>Observed</dt>
+                    <dd>{operational().observedAt}</dd>
+                    <dt>Sources</dt>
+                    <dd>
+                      Runner {operational().freshness.runner} · inventory{" "}
+                      {operational().freshness.nativeInventory} · events{" "}
+                      {operational().freshness.nativeEvents}
+                    </dd>
+                    <dt>Sessions</dt>
+                    <dd>
+                      {operational().coverage.managedSessionCount} managed of{" "}
+                      {operational().coverage.sessionCount} scoped · unmanaged included{" "}
+                      {operational().coverage.includeUnmanagedSessions ? "yes" : "no"}
+                    </dd>
+                    <dt>Truncation</dt>
+                    <dd>
+                      {[
+                        operational().coverage.inventoryTruncated ? "sessions" : "",
+                        operational().coverage.workTruncated ? "work" : "",
+                        operational().coverage.progressTruncated ? "progress" : "",
+                        operational().coverage.routeTruncated ? "routes" : "",
+                        operational().coverage.toolTruncated ? "tools" : "",
+                        operational().coverage.edgeTruncated ? "relationships" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(", ") || "No projection truncation reported"}
+                    </dd>
+                    <dt>Boundary</dt>
+                    <dd>
+                      {operational().boundary.repositoryVersion} repository ·{" "}
+                      {operational().boundary.sourceRevision} source ·{" "}
+                      {operational().boundary.nativeRevision} native
+                    </dd>
+                  </dl>
+                </details>
                 <Show when={visible()?.snapshotError}>
                   <div class="lazers-radar-note" role="status">
                     Timeline and Flow lifecycle detail is unavailable: {visible()?.snapshotError}
