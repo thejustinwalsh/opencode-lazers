@@ -15,6 +15,7 @@ import {
   releaseNativeIdleObserver,
   rememberNativeExecution,
   nativeExecutionCursor,
+  nativeExecutionCursors,
   forgetNativeExecution,
 } from "../runner/native.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
@@ -245,7 +246,9 @@ export function registerProgress(
     const observer = Symbol("native-idle-observer")
     let observing = true
     const projectDirectory = recorder.store.repository.projectDirectory
-    const sessionEventCursors = new Map<string, SessionEventCursor>()
+    const sessionEventCursors = new Map<string, SessionEventCursor>(
+      nativeExecutionCursors(projectDirectory),
+    )
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         observing = false

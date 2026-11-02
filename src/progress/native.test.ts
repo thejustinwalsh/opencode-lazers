@@ -509,6 +509,62 @@ test.each(["msg_initial", "msg_resumed"])(
   },
 )
 
+test("a replacement stream gap before its first event invalidates inherited execution identity", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const messages = [
+      { id: "msg_current", type: "user" },
+      { id: "msg_reply", type: "assistant", content: [{ type: "text", text: "Done." }] },
+    ]
+    const old = makeContext(fixture, { liveEvents: true, messages })
+    const next = makeContext(fixture, { liveEvents: true, messages })
+    const native = nativeLivenessFixture({
+      sessionID: "ses-accepted",
+      directory: fixture.directory,
+    })
+    const gap = Promise.withResolvers<void>()
+    const original = recorder.markRecoveryGap.bind(recorder)
+    recorder.markRecoveryGap = (...args) => {
+      const result = original(...args)
+      if (args[2] === "event-stream") gap.resolve()
+      return result
+    }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(old.context, recorder, "project")
+          yield* Effect.promise(() =>
+            old.emitEvent(executionEvent("session.execution.started", "ses-accepted", 20)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                (await native.host.session("ses-accepted"))?.background?.state === "unknown",
+            ),
+          )
+          yield* Effect.sleep(5)
+        }),
+      ),
+    )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(next.context, recorder, "project")
+          yield* Effect.promise(() => next.failEvents())
+          yield* Effect.promise(() => gap.promise)
+          yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          expect(
+            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background?.state,
+          ).toBe("unknown")
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
 test.each(["idle", "success-input-changed", "success-owned"])(
   "a suspended %s callback and old observer disposal preserve a newer same-session report",
   async (stage) => {

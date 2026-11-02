@@ -97,6 +97,15 @@ export function nativeExecutionCursor(projectDirectory: string, sessionID: strin
   return cursor ? { ...cursor } : undefined
 }
 
+export function nativeExecutionCursors(projectDirectory: string) {
+  const prefix = `${projectDirectory}\0`
+  return new Map(
+    [...executionCursors].flatMap(([key, cursor]) =>
+      key.startsWith(prefix) ? [[key.slice(prefix.length), { ...cursor }] as const] : [],
+    ),
+  )
+}
+
 /** A real event-stream gap cannot supply continuity to a replacement listener. */
 export function forgetNativeExecution(
   projectDirectory: string,
