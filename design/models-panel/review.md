@@ -2,6 +2,13 @@
 
 ## Product purpose
 
+The user explicitly rejected and cancelled the old Models editor UI task and
+its Desktop qualification. Preserve useful backend work/history, supersede the
+obsolete UI target, and build the reviewed comparison direction. The owned trial
+was stopped and cleaned through supported cleanup; no saved mapping/readback was
+established. Do not resume testing that screen. Public entry is `/lz-models`,
+under the requested `lz-*` command/tool namespace, rather than bare `/models`.
+
 Models is primarily a model-selection decision surface: task/persona comparison,
 historical outcomes, sourced benchmarks/prices, Pareto efficiency and projected
 task cost. Assignment editing is secondary. The first two concepts below cover

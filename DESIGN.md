@@ -6,6 +6,9 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
 
 ## Shared patterns
 
+- Public plugin commands and tools use the short `lz-*` namespace: `/lz-models`,
+  `/lz-tasks`, `/lz-radar`, `/lz-trajectory`. Keep bare command names available to
+  the host. Follow native naming and Code Mode invocation semantics.
 - One continuous panel surface, restrained selection, subtle separators, compact
   rows. Use a 4px spacing rhythm; existing references suggest 32–36px list rows
   and 12–20px panel insets, adjusted to host sizing. Image pixels are not CSS sizes.
