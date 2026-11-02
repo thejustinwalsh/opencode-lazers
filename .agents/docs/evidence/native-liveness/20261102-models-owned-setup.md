@@ -70,3 +70,23 @@ Follow-up trials and driver assistance (20:24UTC):
   reviewer found the post-DOM ownership race and repeat-resolution defect;
   fixes preserve actual transport ambiguity and never replay input. Final
   native macOS activation observation and Models feature scenario remain open.
+
+User screenshot resolved the exception (20:29UTC):
+
+`TypeError: Object has been destroyed`, at `In.forget` in the evaluated GUI
+plugin, through BrowserWindow closed and process.exit. This identifies our
+native bridge listener teardown; the netlog startup warning was unrelated.
+A regression with an Electron-like destroyed `webContents` getter reproduced
+that exact TypeError before7191d7f. The fix retains the original contents and
+window ID, so destroy/invalidate/forget never fetch contents from a destroyed
+BrowserWindow. Destruction→closed→repeatedstop is covered:19tests90assertions,
+quality clear. No WebGPU configuration or driving-service restart.
+
+Owned native observation: corrected clean candidatea6223ad, rootryHCJa,
+service95315/62110, Desktop95322, renderer95336. Explicit focus returned delivered,
+window1/generation1 focusedtrue, snapshotad3e44a5-3938-4831-8247-ca41ad840e84.
+The bounded OS focus acknowledgement0a39277 resolved prior premature negative
+focus results. Supported cleanup returned cleaned on its first invocation in
+0.778s; no exception dialog was observed. This is one successful real shutdown,
+not evidence that every future lifecycle variant is proven. Root and process
+removal were handled by supported cleanup; Models feature gate is still open.

@@ -29,6 +29,16 @@ from observations. This checkpoint is not completion.
 
 ## Current live state and immediate continuation
 
+Latest20:29UTC: user supplied the exact owned-instance exception. It is our
+`forget` lifecycle reading destroyed Electron window.webContents. Root7191d7f
+reproduces/fixes it with retained references;19tests90assertions+quality clear.
+Root0a39277 adds actual bounded OS focus acknowledgement. Candidatea6223ad
+built from same Models tree; ownedryHCJa real focus succeeded, then first-call
+supported shutdown/cleanup succeeded in0.778s with no exception dialog observed.
+All prior owned trials and ryHCJa now cleaned; no current trial. MainPID7793
+preserved. Native review cleared08057c8 (73tests492assertions); latest0a39277+
+7191d7f independently reviewed/live evidence needs return to Architect.
+
 Checkpoint update (supersedes older task states below): LZ-68 original Models source
 `d0e0045` independently clear, native UI/tool gate still open. Same stopped tree
 now additionally contains Root driver fixes; original artifact/attempt preserved.
