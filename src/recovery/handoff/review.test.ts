@@ -770,26 +770,10 @@ test("authorized Architect recovers expired worker reservations without substitu
     requestID: f.request.requestID,
     reviewID,
     round: 2,
-    outcome: {
-      ...reopened.handoffs.getReviewRound(f.request.requestID, reviewID, 1)!.outcome!,
-      result: { ...recovered, round: 2 },
-    },
   }
   expect(() => reopened.handoffs.recoverReviewOutcome(interruptedInput, architect)).toThrow(
     "still within its recovery window",
   )
-  expect(() =>
-    reopened.handoffs.recoverReviewOutcome(
-      {
-        ...interruptedInput,
-        outcome: {
-          ...interruptedInput.outcome,
-          result: { ...recovered, round: 2, status: "completed" },
-        },
-      },
-      architect,
-    ),
-  ).toThrow("cannot establish a semantic pass")
   const replacementArchitect = { ...architect, sessionID: "replacement-current-architect" }
   f.repository().atomic((db) => {
     db.query("UPDATE runner_plans SET owner=? WHERE id=?").run(
@@ -805,6 +789,33 @@ test("authorized Architect recovers expired worker reservations without substitu
   ).toBeUndefined()
   now += 120_001
   const competingStore = f.openStore()
+  for (const injected of [
+    { status: "completed_with_concerns", next: { action: "continue" } },
+    { answers: { "preserve-target": { type: "noul", noul: 1 } } },
+    {
+      findings: recovered.findings.map((finding) => ({
+        ...finding,
+        score: 1,
+        disposition: "resolved",
+      })),
+    },
+    { fingerprint: "a".repeat(64) },
+    { usage: { ...recovered.usage, inputTokens: 100, costUSD: 1 } },
+  ]) {
+    expect(() =>
+      competingStore.recoverReviewOutcome(
+        {
+          ...interruptedInput,
+          outcome: {
+            ...reopened.handoffs.getReviewRound(f.request.requestID, reviewID, 1)!.outcome!,
+            result: { ...recovered, round: 2, ...injected },
+          },
+        },
+        replacementArchitect,
+      ),
+    ).toThrow(/Unrecognized key/)
+    expect(competingStore.getReviewRound(f.request.requestID, reviewID, 2)?.outcome).toBeUndefined()
+  }
   const competingReviewer = new HandoffReviewer(
     competingStore,
     { systemOne: async (input) => (modelCalls++, reply(input)) },
@@ -825,15 +836,25 @@ test("authorized Architect recovers expired worker reservations without substitu
     ),
   )
   expect(recoveredLate.status).toBe("unavailable")
+  expect(recoveredLate.answers).toEqual({})
   expect(
-    competingStore.recoverReviewOutcome(
-      {
-        ...interruptedInput,
-        outcome: competingStore.getReviewRound(f.request.requestID, reviewID, 2)!.outcome!,
-      },
-      replacementArchitect,
-    ).status,
-  ).toBe("replayed")
+    recoveredLate.findings.every(
+      (finding) =>
+        finding.score === null && finding.probability === null && finding.disposition === "pending",
+    ),
+  ).toBe(true)
+  expect(recoveredLate.usage).toEqual({
+    inputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    costUSD: null,
+  })
+  expect(recoveredLate.model).toBeUndefined()
+  expect(competingStore.recoverReviewOutcome(interruptedInput, replacementArchitect).status).toBe(
+    "replayed",
+  )
   expect(
     competingStore
       .readHistory({ requestID: f.request.requestID })!
@@ -862,6 +883,13 @@ test("authorized Architect recovers expired worker reservations without substitu
   expect(newerResult.round).toBe(3)
   expect(newerResult.status).toBe("completed")
   expect(newerResult.fingerprint).not.toBe(recoveredLate.fingerprint)
+  const lateRecoveryReplay = competingStore.recoverReviewOutcome(
+    interruptedInput,
+    replacementArchitect,
+  )
+  expect(lateRecoveryReplay.status).toBe("replayed")
+  if (lateRecoveryReplay.status === "conflict") throw new Error(lateRecoveryReplay.message)
+  expect(lateRecoveryReplay.record.outcome?.result).toEqual(recoveredLate)
   const callsBeforeLate = modelCalls
   release()
   const lateResult = assertReviewed(await late)

@@ -3,12 +3,7 @@ import { z } from "zod"
 import { canonical } from "../../identity.ts"
 import { reviewProgression, REVIEW_ROUNDS } from "../../review/progression.ts"
 import type { ReviewDisposition, ReviewProgressionRecord } from "../../review/progression.ts"
-import type {
-  HandoffActor as HandoffActorType,
-  HandoffEvidence,
-  HandoffReviewCheck,
-  HandoffUsage,
-} from "./schema.ts"
+import type { HandoffActor as HandoffActorType, HandoffEvidence, HandoffUsage } from "./schema.ts"
 import {
   HandoffActor,
   HandoffEvidence as HandoffEvidenceSchema,
@@ -19,6 +14,7 @@ import {
 import { HANDOFF_REVIEW_VERSION, handoffReviewChecks, handoffReviewDefinitions } from "./checks.ts"
 import type { HandoffReviewDefinition } from "./checks.ts"
 import { HandoffStore, HANDOFF_REVIEW_RESERVATION_LEASE_MS } from "./store.ts"
+import { handoffReviewFingerprint as makeFingerprint } from "./review-state.ts"
 import type { HandoffReviewContext } from "./store.ts"
 import { SystemOneRequest, SystemOneAnswer, systemOneClient } from "../../webgpu/system-one.ts"
 import type { SystemOneInput, SystemOneOutput } from "../../webgpu/system-one.ts"
@@ -140,41 +136,6 @@ function effectiveContract(context: HandoffReviewContext) {
     revision: context.request.source.task.revision,
     proposal: context.request.source.task.proposal,
   })
-}
-
-function makeFingerprint(
-  context: HandoffReviewContext,
-  evidence: HandoffEvidence[],
-  contract: ReturnType<typeof effectiveContract>,
-  contractVersion: string,
-  evidenceVersion: string,
-  checks: HandoffReviewCheck[],
-): string {
-  const attachment = context.request.source.attachment
-  return sha256(
-    canonical({
-      version: HANDOFF_REVIEW_VERSION,
-      requestID: context.request.requestID,
-      request: context.request.request,
-      source: {
-        projectDirectory: attachment.projectDirectory,
-        planID: attachment.planID,
-        taskID: attachment.taskID,
-        specRevision: attachment.specRevision,
-        attemptID: attachment.attemptID,
-        sourceSessionID: attachment.sourceSessionID,
-        requestGeneration: attachment.requestGeneration,
-      },
-      draftVersion: context.draft.draftVersion,
-      draft: context.draft.draft,
-      evidenceVersion,
-      evidence,
-      contractVersion,
-      contract,
-      checkVersion: HANDOFF_REVIEW_VERSION,
-      checks,
-    }),
-  )
 }
 
 function modelState(
@@ -444,32 +405,27 @@ export class HandoffReviewer {
             next: "A previously reserved review round is still within its recovery window.",
           }
         await this.authorize(reviewer, state.requestID, "recover")
-        const interrupted = this.makeUnavailableResult({
-          context,
-          reviewID: latest.reviewID,
-          fingerprint,
-          record: progressionRecord(context),
-          answers: {},
-          errors: ["The reserved review round was interrupted before a result was recorded."],
-          usage: undefined,
-          elapsedMs: null,
-          limitation:
-            "The prior inference did not produce a durable result; its reservation remains consumed.",
-          modelUsed: false,
-        })
         await this.authorize(reviewer, state.requestID, "persist")
         const receipt = this.store.recoverReviewOutcome(
           {
             requestID: state.requestID,
             reviewID: latest.reviewID,
             round: latest.round,
-            outcome: this.toStoredOutcome(interrupted),
           },
           reviewer,
         )
         if (receipt.status === "conflict")
           throw new Error("Interrupted handoff review result conflicted with an immutable outcome")
-        return this.resultFromRecord(receipt.record.outcome?.result) ?? interrupted
+        const recovered = this.resultFromRecord(receipt.record.outcome?.result)
+        if (
+          !recovered ||
+          recovered.requestID !== state.requestID ||
+          recovered.reviewID !== latest.reviewID ||
+          recovered.round !== latest.round ||
+          recovered.fingerprint !== fingerprint
+        )
+          throw new Error("Stored interrupted handoff result does not match its reservation")
+        return recovered
       }
 
       const record = progressionRecord(context)

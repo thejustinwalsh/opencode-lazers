@@ -3,6 +3,7 @@ import { canonical } from "../../identity.ts"
 import type { TaskRepository } from "../../storage.ts"
 import { TaskSpecSchema } from "../../task.ts"
 import { RunnerStore } from "../../runner/store.ts"
+import { interruptedHandoffReviewOutcome } from "./review-state.ts"
 import {
   HandoffActor,
   HandoffAttachment,
@@ -19,7 +20,6 @@ import {
   HandoffRequestInput,
   HandoffRequestRecord,
   HandoffReviewCheck,
-  HandoffReviewOutcome,
   HandoffReviewOutcomeInput,
   HandoffReviewReservationInput,
   HandoffReviewRoundRecord,
@@ -633,7 +633,8 @@ export class HandoffStore {
     input: unknown,
     reviewerInput: unknown,
   ): Receipt<HandoffReviewRoundRecordType> {
-    return this.completeReviewOutcome(input, reviewerInput, false)
+    const { outcome, ...identity } = HandoffReviewOutcomeInput.parse(input)
+    return this.completeReviewOutcome(identity, reviewerInput, outcome)
   }
 
   /** A current authorized actor may close an expired reservation as interrupted. */
@@ -641,29 +642,17 @@ export class HandoffStore {
     input: unknown,
     reviewerInput: unknown,
   ): Receipt<HandoffReviewRoundRecordType> {
-    return this.completeReviewOutcome(input, reviewerInput, true)
+    const identity = HandoffReviewOutcomeInput.omit({ outcome: true }).parse(input)
+    return this.completeReviewOutcome(identity, reviewerInput)
   }
 
   private completeReviewOutcome(
-    input: unknown,
+    parsed: { requestID: string; reviewID: string; round: number },
     reviewerInput: unknown,
-    recovering: boolean,
+    suppliedOutcome?: HandoffReviewOutcomeType,
   ): Receipt<HandoffReviewRoundRecordType> {
-    const parsed = HandoffReviewOutcomeInput.parse(input)
     const reviewer = HandoffActor.parse(reviewerInput)
-    const outcome = HandoffReviewOutcome.parse(parsed.outcome)
-    if (recovering) {
-      const result = JsonObjectSchema.parse(outcome.result)
-      if (
-        outcome.status !== "unavailable" ||
-        (result.status !== "unavailable" && result.status !== "completed_with_concerns") ||
-        result.requestID !== parsed.requestID ||
-        result.reviewID !== parsed.reviewID ||
-        result.round !== parsed.round ||
-        result.limitation !== outcome.limitation
-      )
-        throw new Error("Interrupted review recovery cannot establish a semantic pass")
-    }
+    const recovering = suppliedOutcome === undefined
     return this.repository.atomic((db) => {
       const request = this.requireRequest(db, parsed.requestID)
       this.assertReviewAuthority(db, request, reviewer)
@@ -680,6 +669,27 @@ export class HandoffStore {
         (!recovering && canonical(reserved.reviewer) !== canonical(reviewer))
       )
         throw new Error("Review round belongs to another request or caller")
+      // Recovery supplies no outcome to compare. A durable result always wins,
+      // even if more rounds were completed after this reservation.
+      if (recovering && row.outcome_json !== null)
+        return { status: "replayed" as const, record: reserved }
+      const outcome =
+        suppliedOutcome ??
+        interruptedHandoffReviewOutcome(
+          this.readReviewContext(
+            {
+              requestID: parsed.requestID,
+              draftVersion: reserved.draftVersion,
+              reviewID: reserved.reviewID,
+              effectiveContractVersion: reserved.effectiveContractVersion,
+              effectiveContract: reserved.effectiveContract,
+              checkVersion: reserved.checkVersion,
+              checks: reserved.checks,
+            },
+            reviewer,
+          ),
+          reserved,
+        )
       if (row.outcome_json !== null) {
         const saved = HandoffReviewRoundRecord.parse(JSON.parse(row.payload))
         return canonical(saved.outcome) === canonical(outcome)

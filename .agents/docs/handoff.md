@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 19:05 UTC. Recheck native state before acting.
+2026-11-02, approximately 19:15 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -98,7 +98,10 @@ Architect recorded the original artifact's integration, preserving held resource
 A further production regression exposed cross-actor expired reservation recovery;
 Root added an explicit authorized interruption write, preserving original reviewer
 identity and auditing the actual recovery actor. [Correction and checks](evidence/native-liveness/handoff-review-recovery-20261102.md).
-Independent review of this follow-up remains pending. Worker tools, finalization,
+Native review of `eccd06f` found that caller-supplied recovery fields could inject
+semantic state. Root replaced that payload with deterministic derivation from
+the saved reservation; only request/review/round IDs are accepted. Current
+compatibility: 39 tests / 475 assertions, quality clear; re-review remains pending. Worker tools, finalization,
 delivery and live use remain open; do not infer those from this module landing.
 
 ## Source landings and remaining runtime boundaries

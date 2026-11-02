@@ -25,7 +25,35 @@ rounds and confirms continuation with concerns, zero inference calls and retaine
 unavailable outcomes. No source hashes or fabricated live acceptance are involved.
 
 Checks: `bun test src/recovery src/review src/webgpu/task-review.test.ts` —
-39 passing tests, 460 assertions, six files. `bun fmt`, `bun lint`, `bun check`
+39 passing tests, 475 assertions, six files. `bun fmt`, `bun lint`, `bun check`
 and `git diff --check` pass. This does not establish the future handoff tools,
 request delivery, finalization, Architect disposition or subsequent worker use;
 those remain on the native roadmap and require live observations.
+
+## Independent review correction
+
+Native reviewer `ses_e627a81dbffe6k9adTYtUzDisG` found that `eccd06f` accepted
+caller-supplied interruption payloads too broadly: an unavailable outer outcome
+could carry premature terminal status or fabricated semantic observations. That
+review did not clear the follow-up.
+
+Recovery now accepts only request ID, review ID and round. The store derives the
+interruption result from the durable source, draft, exact reservation/checks and
+actual shared reservation count. It shares the existing review-input identity
+function with normal review; this is not file or source freshness evidence.
+It records no answers, probabilities, scores, model or invented usage. Continuation
+with concerns occurs only once the shared three-round policy is exhausted.
+Existing durable outcomes replay before recomputation, including after later rounds.
+
+Expired-reservation regressions reject supplied premature terminal status,
+answers, resolved findings, alternate identity and invented usage without writing
+an outcome. Production review then derives the matching interruption, retains
+unknown usage, and preserves exact replay after a later genuinely reviewed round.
+The updated 39-test / 475-assertion compatibility run and fmt/lint/check/diff pass.
+Independent native re-review remains necessary.
+
+Broader Main run before this final derivation change: 680 pass and two owned-launch
+boundary failures inside the restricted sandbox. The full owned-launch file then
+passes with host process/private-temp access: 29 tests / 165 assertions. Those two
+failures did not require a source fix. Do not report the broad run as all-green or
+as a live Desktop feature walkthrough.
