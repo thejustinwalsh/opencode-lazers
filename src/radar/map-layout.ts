@@ -13,6 +13,7 @@ export type MeasuredRadarMap = {
 }
 
 const GROUPS = [
+  ["overview", "Operational overview"],
   ["runtime", "LAZERS runtime"],
   ["work", "Plans and tasks"],
   ["sessions", "Native sessions"],
@@ -92,17 +93,13 @@ function compactLines(
 }
 
 function nodeGeometry(node: RadarMapNode, measure: (value: string) => number) {
-  const maxContentWidth = 272
+  const maxContentWidth = 210
   const label = compactLines(node.label, maxContentWidth, measure, 2)
   const subtitle = compactLines(node.subtitle, maxContentWidth, measure, 2)
   const status = compactLines(node.status, maxContentWidth, measure, 2)
-  const textWidth = Math.max(...[...label, ...subtitle, ...status].map(measure), 0)
-  const width = Math.min(304, Math.max(184, Math.ceil(textWidth + 26)))
-  const height = Math.max(
-    76,
-    18 + label.length * 18 + subtitle.length * 15 + status.length * 13 + 18,
-  )
-  return { label, subtitle, status, width, height }
+  // Reserve status-independent native-sized text space so a busy/idle or route
+  // update cannot move the operational overview or invalidate ELK geometry.
+  return { label, subtitle, status, width: 242, height: 128 }
 }
 
 export function edgeLabel(kind: RadarMapEdge["kind"]) {
@@ -114,6 +111,7 @@ export function measureRadarMap(
   scopeKey: string,
   fontKey: string,
   measure: (text: string) => number,
+  direction: "RIGHT" | "DOWN" = "RIGHT",
 ): MeasuredRadarMap {
   const text = new Map<string, RadarMapText>()
   const nodeDimensions = model.nodes.map((node) => {
@@ -155,6 +153,8 @@ export function measureRadarMap(
   const geometry = JSON.stringify([
     scopeKey,
     fontKey,
+    direction,
+    direction === "DOWN" ? nodeDimensions.map(({ id }) => id) : [],
     groups.map(({ id, label, width, height }) => [id, label, width, height]),
     nodeDimensions.map(({ id, group, width, height }) => [id, group, width, height]),
     edgeDimensions.map(({ id, source, target, label, labelWidth, labelHeight }) => [
@@ -170,6 +170,8 @@ export function measureRadarMap(
     input: {
       key: hash(geometry),
       scopeKey: hash(scopeKey),
+      direction,
+      ...(direction === "DOWN" ? { order: nodeDimensions.map(({ id }) => id) } : {}),
       groups,
       nodes: nodeDimensions,
       edges: edgeDimensions,

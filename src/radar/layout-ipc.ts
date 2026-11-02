@@ -26,6 +26,8 @@ const GroupBox = Schema.Struct({ id: ID, x: Position, y: Position, width: Extent
 export const RadarLayoutInput = Schema.Struct({
   key: Schema.String.check(Schema.isBetweenLength(1, 128)),
   scopeKey: Schema.String.check(Schema.isBetweenLength(1, 512)),
+  direction: Schema.optional(Schema.Literals(["RIGHT", "DOWN"])),
+  order: Schema.optional(Schema.Array(ID).check(Schema.isBetweenLength(0, 25_000))),
   groups: Schema.Array(Group).check(Schema.isBetweenLength(1, 20)),
   nodes: Schema.Array(Node).check(Schema.isBetweenLength(1, 25_000)),
   edges: Schema.Array(Edge).check(Schema.isBetweenLength(0, 50_000)),

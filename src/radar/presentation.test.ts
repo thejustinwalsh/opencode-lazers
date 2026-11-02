@@ -9,34 +9,57 @@ import { makeFixture } from "../../test/trajectory/fixture.ts"
 test("independent pane scroll restores once for each selection key", () => {
   const scheduled: (() => void)[] = []
   const restore = new ScrollRestoration((apply) => scheduled.push(apply))
-  const visual = { scrollTop: 0 }
-  const detail = { scrollTop: 0 }
+  const visual = { scrollTop: 0, scrollLeft: 0 }
+  const detail = { scrollTop: 0, scrollLeft: 0 }
 
-  restore.restore("session:flow", true, visual, 120)
+  restore.restore("session:flow", true, visual, { top: 120, left: 24 })
   expect(restore.restored("session:flow")).toBe(false)
   scheduled.shift()?.()
   expect(visual.scrollTop).toBe(120)
+  expect(visual.scrollLeft).toBe(24)
   expect(restore.restored("session:flow")).toBe(true)
-  restore.restore("session:flow", true, visual, 250)
+  restore.restore("session:flow", true, visual, { top: 250, left: 60 })
   scheduled.shift()?.()
   expect(visual.scrollTop).toBe(120)
+  expect(visual.scrollLeft).toBe(24)
 
-  restore.restore("session:selection", true, detail, 42)
+  restore.restore("session:selection", true, detail, { top: 42, left: 12 })
   scheduled.shift()?.()
   expect(detail.scrollTop).toBe(42)
+  expect(detail.scrollLeft).toBe(12)
   expect(restore.restored("session:selection")).toBe(true)
 })
 
 test("a pending restoration cannot write into a later scope", () => {
   const scheduled: (() => void)[] = []
   const restore = new ScrollRestoration((apply) => scheduled.push(apply))
-  const pane = { scrollTop: 0 }
-  restore.restore("old", true, pane, 90)
-  restore.restore("new", true, pane, 24)
+  const pane = { scrollTop: 0, scrollLeft: 0 }
+  restore.restore("old", true, pane, { top: 90, left: 40 })
+  restore.restore("new", true, pane, { top: 24, left: 8 })
   scheduled.shift()?.()
   expect(pane.scrollTop).toBe(0)
+  expect(pane.scrollLeft).toBe(0)
   scheduled.shift()?.()
   expect(pane.scrollTop).toBe(24)
+  expect(pane.scrollLeft).toBe(8)
+})
+
+test("scope scroll restoration waits for async map readiness and preserves both axes", () => {
+  const scheduled: (() => void)[] = []
+  const restore = new ScrollRestoration((apply) => scheduled.push(apply))
+  const pane = { scrollTop: 0, scrollLeft: 0 }
+  restore.restore("old-project:map", false, pane, { top: 180, left: 60 })
+  restore.restore("new-project:map", false, pane, { top: 72, left: 24 })
+  expect(scheduled).toHaveLength(0)
+  expect(pane).toEqual({ scrollTop: 0, scrollLeft: 0 })
+
+  restore.restore("old-project:map", true, pane, { top: 180, left: 60 })
+  restore.restore("new-project:map", true, pane, { top: 72, left: 24 })
+  scheduled.shift()?.()
+  expect(pane).toEqual({ scrollTop: 0, scrollLeft: 0 })
+  scheduled.shift()?.()
+  expect(pane).toEqual({ scrollTop: 72, scrollLeft: 24 })
+  expect(restore.restored("new-project:map")).toBe(true)
 })
 
 test("one mounted Flow inspector follows task, snapshot and selected-state changes", () => {

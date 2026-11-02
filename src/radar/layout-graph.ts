@@ -43,6 +43,7 @@ export function elkGraph(input: RadarLayoutInput): ElkCompoundNode {
         })),
         layoutOptions: {
           "elk.padding": "[top=38,left=16,bottom=16,right=16]",
+          "elk.direction": input.direction ?? "RIGHT",
           "elk.nodeSize.constraints": "MINIMUM_SIZE",
         },
       },
@@ -61,11 +62,20 @@ export function elkGraph(input: RadarLayoutInput): ElkCompoundNode {
       },
     ],
   }))
+  for (let index = 1; index < (input.order?.length ?? 0); index++)
+    edges.push({
+      id: `__radar_layout_order_${index}`,
+      sources: [input.order![index - 1]!],
+      targets: [input.order![index]!],
+    })
   return {
     id: "radar",
     children: groups,
     edges,
-    layoutOptions: ELK_OPTIONS,
+    layoutOptions: {
+      ...ELK_OPTIONS,
+      "elk.direction": input.direction ?? "RIGHT",
+    },
   } as ElkCompoundNode
 }
 
@@ -162,10 +172,13 @@ export function radarLayoutResult(
     const box = boxByID.get(node.id)
     return box ? [{ ...box }] : []
   })
-  const edges = (graph.edges ?? []).flatMap((edge) => {
-    const routed = toEdge(edge)
-    return routed ? [routed] : []
-  })
+  const visibleEdgeIDs = new Set(input.edges.map((edge) => edge.id))
+  const edges = (graph.edges ?? [])
+    .filter((edge) => visibleEdgeIDs.has(edge.id))
+    .flatMap((edge) => {
+      const routed = toEdge(edge)
+      return routed ? [routed] : []
+    })
   return {
     key: input.key,
     width: graph.width ?? 0,

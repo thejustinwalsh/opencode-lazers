@@ -16,7 +16,7 @@ function scopeMatches(
   )
 }
 
-/** Reject stale responses and make live-only RPC event gaps require a full resnapshot. */
+/** Reject per-projection out-of-order reads and track gaps in the shared live event stream. */
 export class ObservationSyncState {
   generation = 0
   projectID = ""
@@ -49,11 +49,12 @@ export class ObservationSyncState {
       snapshot.projectID !== this.projectID ||
       !this.scope ||
       !scopeMatches(snapshot, this.scope) ||
-      (this.eventSequence !== undefined && snapshot.boundary.eventSequence < this.eventSequence)
+      (this.snapshot !== undefined &&
+        snapshot.boundary.eventSequence < this.snapshot.boundary.eventSequence)
     )
       return false
     this.snapshot = snapshot
-    this.eventSequence = snapshot.boundary.eventSequence
+    this.eventSequence = Math.max(this.eventSequence ?? 0, snapshot.boundary.eventSequence)
     this.stale = false
     return true
   }
@@ -64,11 +65,11 @@ export class ObservationSyncState {
       radar.projectID !== this.projectID ||
       !this.scope ||
       !scopeMatches(radar, this.scope) ||
-      (this.eventSequence !== undefined && radar.boundary.eventSequence < this.eventSequence)
+      (this.radar !== undefined && radar.boundary.eventSequence < this.radar.boundary.eventSequence)
     )
       return false
     this.radar = radar
-    this.eventSequence = radar.boundary.eventSequence
+    this.eventSequence = Math.max(this.eventSequence ?? 0, radar.boundary.eventSequence)
     this.stale = false
     return true
   }

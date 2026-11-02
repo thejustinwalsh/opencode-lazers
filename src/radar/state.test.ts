@@ -323,19 +323,29 @@ test("wrong-project and wrong-scope snapshot responses remain unavailable", asyn
   }
 })
 
-test("operational and lifecycle snapshots do not publish mixed repository revisions", async () => {
+test("independently publishes changing Radar and lifecycle reads without claiming a coherent boundary", async () => {
   const { fixture, session, sessionRadar } = snapshots()
   try {
     const radar = await sessionRadar
     const queue = new EventQueue<ObservationChange>()
-    let calls = 0
+    let radarCalls = 0
+    let snapshotCalls = 0
+    let aligned = false
+    const alignedSequence = radar.boundary.eventSequence + 4
     const transport: RadarTransport = {
-      snapshot: async () => session,
+      snapshot: async () => {
+        snapshotCalls++
+        const eventSequence = aligned
+          ? alignedSequence
+          : session.boundary.eventSequence + snapshotCalls - 1
+        return { ...session, boundary: { ...session.boundary, eventSequence } }
+      },
       radar: async () => {
-        calls++
+        radarCalls++
+        const eventSequence = aligned ? alignedSequence : radar.boundary.eventSequence + radarCalls
         return {
           ...radar,
-          boundary: { ...radar.boundary, sourceRevision: radar.boundary.sourceRevision + 1 },
+          boundary: { ...radar.boundary, eventSequence },
         }
       },
       changes: (signal) => changesFrom(queue, signal),
@@ -351,11 +361,28 @@ test("operational and lifecycle snapshots do not publish mixed repository revisi
       { kind: "session", sessionID: "ses-failed" },
       transport,
     )
-    await until(() => calls === 3)
-    expect(state.data.radar).toBeUndefined()
-    expect(state.data.snapshot).toBeUndefined()
+    await until(
+      () =>
+        radarCalls === 3 &&
+        state.data.radar?.boundary.eventSequence === alignedSequence - 1 &&
+        state.data.snapshot?.boundary.eventSequence === alignedSequence - 2,
+    )
+    expect(snapshotCalls).toBe(3)
+    expect(state.data.radar?.boundary.eventSequence).toBe(alignedSequence - 1)
+    expect(state.data.snapshot?.boundary.eventSequence).toBe(alignedSequence - 2)
     expect(state.data.stale).toBe(true)
-    expect(state.data.error).toContain("changed while reading")
+    expect(state.data.resynchronizing).toBe(false)
+    expect(state.data.error).toContain("different read boundaries")
+
+    aligned = true
+    state.refreshNow()
+    await until(
+      () =>
+        state.data.radar?.boundary.eventSequence === alignedSequence &&
+        state.data.snapshot?.boundary.eventSequence === alignedSequence &&
+        !state.data.stale,
+    )
+    expect(state.data.error).toBe("")
     state.close()
   } finally {
     fixture.close()

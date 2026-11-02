@@ -6,6 +6,8 @@ import type { RadarLayoutClient } from "./layout-state.ts"
 import { edgeLabel, measureRadarMap } from "./map-layout.ts"
 import type { RadarMapEdge, RadarMapModel, RadarMapNode, RadarMapNodeRecord } from "./map-model.ts"
 import { defaultTextMeasure } from "./map-layout.ts"
+import { createRadarOverview, radarSessionModelContext } from "./map-overview.ts"
+import type { RadarOverview } from "./map-overview.ts"
 import { RadarPulseTracker } from "./pulse.ts"
 import type { RadarPulse } from "./pulse.ts"
 
@@ -14,7 +16,9 @@ type RadarMapViewProps = {
   scopeKey: string
   resynchronizing: boolean
   selectedID: string | null
+  currentSessionID: string
   onSelect(id: string): void
+  onLayoutReady?(scopeKey: string): void
   layout: RadarLayoutClient
   monoFont: string
 }
@@ -120,14 +124,10 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
   return (
     <>
       <h3>{node().label}</h3>
-      <p>{node().subtitle}</p>
+      <p>{node().status}</p>
       <dl>
         <dt>Type</dt>
         <dd>{node().kind}</dd>
-        <dt>Identity</dt>
-        <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-          {node().id}
-        </dd>
         <dt>State</dt>
         <dd>{node().status}</dd>
       </dl>
@@ -149,6 +149,27 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
         {(record) => (
           <>
             <dl>
+              <dt>Agent</dt>
+              <dd>{record().value.agent ?? "Unavailable"}</dd>
+              <dt>Native state</dt>
+              <dd>{record().value.state}</dd>
+              <dt>Availability / freshness</dt>
+              <dd>
+                {record().value.availability} · {record().value.freshness}
+              </dd>
+              <dt>Model / effort provenance</dt>
+              <dd>{radarSessionModelContext(record()).model}</dd>
+              <dt>Task context</dt>
+              <dd>
+                {record()
+                  .tasks.map((task) => `${task.label} · ${task.state}`)
+                  .join("; ") || "Unavailable"}
+              </dd>
+              <dt>Classification / associations</dt>
+              <dd>
+                {record().value.classification} ·{" "}
+                {record().value.associations.join(", ") || "None recorded"}
+              </dd>
               <dt>Session ID</dt>
               <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
                 {record().value.sessionID}
@@ -157,18 +178,6 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
               <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
                 {record().value.projectID}
               </dd>
-              <dt>Classification</dt>
-              <dd>{record().value.classification}</dd>
-              <dt>Associations</dt>
-              <dd>{record().value.associations.join(", ") || "None recorded"}</dd>
-              <dt>Availability</dt>
-              <dd>{record().value.availability}</dd>
-              <dt>Freshness</dt>
-              <dd>{record().value.freshness}</dd>
-              <dt>Agent</dt>
-              <dd>{record().value.agent ?? "Unavailable"}</dd>
-              <dt>Native state</dt>
-              <dd>{record().value.state}</dd>
               <dt>Parent session</dt>
               <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
                 {record().value.parentSessionID ?? "Unavailable"}
@@ -247,7 +256,7 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
               {(route) => (
                 <details class="lazers-radar-disclosure" open={record().value.length === 1}>
                   <summary>
-                    {route.source} · {route.id}
+                    {route.providerID} / {route.modelID} · {route.source}
                   </summary>
                   <RouteDetails route={route} monoFont={props.monoFont} />
                 </details>
@@ -259,23 +268,19 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
       <Show when={recordKind(node(), "plan")}>
         {(record) => (
           <dl>
+            <dt>Title</dt>
+            <dd>{record().value.title ?? "Unavailable"}</dd>
+            <dt>State</dt>
+            <dd>{record().value.state}</dd>
+            <dt>Related tasks</dt>
+            <dd>{record().tasks.length} recorded</dd>
             <dt>Plan ID</dt>
             <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
               {record().value.id}
             </dd>
-            <dt>State</dt>
-            <dd>{record().value.state}</dd>
-            <dt>Owner session</dt>
+            <dt>Owner session ID</dt>
             <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
               {record().value.ownerSessionID}
-            </dd>
-            <dt>Title</dt>
-            <dd>{record().value.title ?? "Unavailable"}</dd>
-            <dt>Related tasks</dt>
-            <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-              {record()
-                .tasks.map((task) => task.id)
-                .join("\n") || "None recorded"}
             </dd>
           </dl>
         )}
@@ -284,20 +289,20 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
         {(record) => (
           <>
             <dl>
-              <dt>Task ID</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.id}
-              </dd>
               <dt>State</dt>
               <dd>{record().value.state}</dd>
-              <dt>Plan ID</dt>
-              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-                {record().value.planID ?? "Unplanned"}
-              </dd>
               <dt>Objective</dt>
               <dd>{record().objective ?? "Unavailable in the lifecycle projection"}</dd>
               <dt>Reason</dt>
               <dd>{record().reason ?? "None recorded"}</dd>
+              <dt>Plan ID</dt>
+              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
+                {record().value.planID ?? "Unplanned"}
+              </dd>
+              <dt>Task ID</dt>
+              <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
+                {record().value.id}
+              </dd>
             </dl>
             <Show when={record().attempts.length > 0}>
               <h4>Attempts</h4>
@@ -328,12 +333,14 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
       <Show when={recordKind(node(), "tool")}>
         {(record) => (
           <dl>
+            <dt>Name</dt>
+            <dd>{record().value.name}</dd>
+            <dt>Associated sessions</dt>
+            <dd>{record().sessions.length} recorded</dd>
             <dt>Tool ID</dt>
             <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
               {record().value.id}
             </dd>
-            <dt>Name</dt>
-            <dd>{record().value.name}</dd>
             <dt>Sessions</dt>
             <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
               {record()
@@ -343,6 +350,12 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
           </dl>
         )}
       </Show>
+      <dl>
+        <dt>Identity</dt>
+        <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
+          {node().id}
+        </dd>
+      </dl>
       {links()}
     </>
   )
@@ -351,10 +364,6 @@ function NodeDetails(props: RadarMapInspectorProps & { node: RadarMapNode }) {
 function RouteDetails(props: { route: RadarResponse["routes"][number]; monoFont: string }) {
   return (
     <dl>
-      <dt>Route ID</dt>
-      <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
-        {props.route.id}
-      </dd>
       <dt>Provider / model</dt>
       <dd>
         {props.route.providerID} / {props.route.modelID}
@@ -363,6 +372,10 @@ function RouteDetails(props: { route: RadarResponse["routes"][number]; monoFont:
       <dd>{props.route.variant ?? "Unavailable"}</dd>
       <dt>Source</dt>
       <dd>{props.route.source}</dd>
+      <dt>Route ID</dt>
+      <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
+        {props.route.id}
+      </dd>
       <dt>Session / attempt</dt>
       <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
         {props.route.sessionID ?? "Unavailable"} / {props.route.attemptID ?? "Unavailable"}
@@ -379,16 +392,27 @@ function RouteDetails(props: { route: RadarResponse["routes"][number]; monoFont:
 
 function EdgeDetails(props: RadarMapInspectorProps & { edge: RadarMapEdge }) {
   const edge = () => props.edge
+  const from = () => props.model.nodeByID.get(edge().from)?.label ?? edge().from
+  const to = () => props.model.nodeByID.get(edge().to)?.label ?? edge().to
   return (
     <>
       <h3>{edgeLabel(edge().kind)}</h3>
+      <p>
+        {from()} → {to()} · {edge().status}
+      </p>
+      <dl>
+        <dt>Kind</dt>
+        <dd>{edge().kind}</dd>
+        <dt>Latest status</dt>
+        <dd>{edge().status}</dd>
+        <dt>Records</dt>
+        <dd>{edge().records.length || edge().routeRecords.length || "Code-backed structure"}</dd>
+      </dl>
       <dl>
         <dt>Relationship ID</dt>
         <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
           {edge().id}
         </dd>
-        <dt>Kind</dt>
-        <dd>{edge().kind}</dd>
         <dt>From</dt>
         <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
           {edge().from}
@@ -397,10 +421,6 @@ function EdgeDetails(props: RadarMapInspectorProps & { edge: RadarMapEdge }) {
         <dd class="lazers-radar-code" style={{ "font-family": props.monoFont }}>
           {edge().to}
         </dd>
-        <dt>Latest status</dt>
-        <dd>{edge().status}</dd>
-        <dt>Records</dt>
-        <dd>{edge().records.length || edge().routeRecords.length || "Code-backed structure"}</dd>
       </dl>
       <Show when={edge().routeRecords.length > 0}>
         <h4>Route evidence</h4>
@@ -596,56 +616,76 @@ export function RadarMapInspector(props: RadarMapInspectorProps) {
 }
 
 function AccessibleMap(props: {
+  overview: RadarOverview
   model: RadarMapModel
   selectedID: string | null
   onSelect(id: string): void
 }) {
+  const groupByID = createMemo(
+    () => new Map(props.overview.groups.map((group) => [group.id, group])),
+  )
   return (
-    <details class="lazers-radar-map-accessible">
-      <summary>Accessible ordered component and relationship list</summary>
-      <section aria-label="Operational components and records">
-        <h4>Nodes</h4>
-        <ol>
-          <For each={props.model.nodes.map((node) => node.id)}>
-            {(id) => {
-              const node = () => props.model.nodeByID.get(id)!
-              return (
-                <li>
-                  <button
-                    type="button"
-                    aria-pressed={props.selectedID === id}
-                    onClick={() => props.onSelect(id)}
-                  >
-                    {node().kind}: {node().label} · {node().status} · {id}
-                  </button>
-                </li>
-              )
-            }}
-          </For>
-        </ol>
-      </section>
-      <section aria-label="Typed operational relationships">
-        <h4>Relationships</h4>
-        <ol>
-          <For each={props.model.edges.map((edge) => edge.id)}>
-            {(id) => {
-              const edge = () => props.model.edgeByID.get(id)!
-              return (
-                <li>
-                  <button
-                    type="button"
-                    aria-pressed={props.selectedID === id}
-                    onClick={() => props.onSelect(id)}
-                  >
-                    {edgeLabel(edge().kind)}: {edge().from} → {edge().to} · {edge().status} · {id}
-                  </button>
-                </li>
-              )
-            }}
-          </For>
-        </ol>
-      </section>
-    </details>
+    <section class="lazers-radar-map-accessible" aria-label="All supplied scoped records">
+      <h3>All scoped records</h3>
+      <For each={props.overview.groups.map((group) => group.id)}>
+        {(groupID) => {
+          const group = () => groupByID().get(groupID)!
+          const entriesByID = createMemo(
+            () => new Map(group().entries.map((entry) => [entry.id, entry])),
+          )
+          return (
+            <details class="lazers-radar-disclosure" data-group={groupID}>
+              <summary>
+                {group().label} · {group().count}{" "}
+                {groupID === "relationships" ? "mapped relationships" : "records"} ·{" "}
+                {group().sourceCount} source records
+              </summary>
+              <ol>
+                <For each={group().entries.map((entry) => entry.id)}>
+                  {(entryID) => {
+                    const entry = () => entriesByID().get(entryID)!
+                    return (
+                      <li>
+                        <button
+                          type="button"
+                          aria-pressed={props.selectedID === entryID}
+                          onClick={() => props.onSelect(entryID)}
+                        >
+                          <strong>
+                            {entry().kind === "edge"
+                              ? edgeLabel(props.model.edgeByID.get(entryID)!.kind)
+                              : entry().title}
+                          </strong>
+                          <span>{entry().status}</span>
+                          <span>{entry().context}</span>
+                          <code>{entryID}</code>
+                        </button>
+                        <Show when={(entry().sourceIDs?.length ?? 0) > 1}>
+                          <details class="lazers-radar-disclosure">
+                            <summary>
+                              {entry().sourceIDs!.length - 1} original source identities
+                            </summary>
+                            <ul>
+                              <For each={entry().sourceIDs!.slice(1)}>
+                                {(id) => (
+                                  <li>
+                                    <code>{id}</code>
+                                  </li>
+                                )}
+                              </For>
+                            </ul>
+                          </details>
+                        </Show>
+                      </li>
+                    )
+                  }}
+                </For>
+              </ol>
+            </details>
+          )
+        }}
+      </For>
+    </section>
   )
 }
 
@@ -659,6 +699,17 @@ export function RadarMapView(props: RadarMapViewProps) {
   const pulseTracker = new RadarPulseTracker()
   const pulseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const model = () => props.model
+  const overview = createMemo(() => createRadarOverview(model(), props.currentSessionID))
+  const displayModel = createMemo<RadarMapModel>(() => {
+    const summary = overview()
+    return {
+      ...model(),
+      nodes: summary.nodes,
+      edges: summary.edges,
+      nodeByID: new Map(summary.nodes.map((node) => [node.id, node])),
+      edgeByID: new Map(summary.edges.map((edge) => [edge.id, edge])),
+    }
+  })
   const measured = createMemo(() => {
     const revision = fontRevision()
     const ready = rootReady()
@@ -682,7 +733,7 @@ export function RadarMapView(props: RadarMapViewProps) {
     const measure = canvas
       ? (value: string) => canvas!.measureText(value).width + [...value].length * letterSpacing
       : defaultTextMeasure
-    return measureRadarMap(model(), props.scopeKey, fontKey, measure)
+    return measureRadarMap(displayModel(), props.scopeKey, fontKey, measure, "DOWN")
   })
   const layoutInput = createMemo(() => measured().input, undefined, {
     equals: (left, right) => left.key === right.key,
@@ -698,7 +749,11 @@ export function RadarMapView(props: RadarMapViewProps) {
   const isSelected = (id: string) => props.selectedID === id
   const focusNode = (id: string) => props.onSelect(id)
   const focusEdge = (id: string) => props.onSelect(id)
+  createEffect(() => {
+    if (layoutResult()) props.onLayoutReady?.(props.scopeKey)
+  })
   const groupLabels = new Map([
+    ["overview", "Operational overview"],
     ["runtime", "LAZERS runtime"],
     ["work", "Plans and tasks"],
     ["sessions", "Native sessions"],
@@ -706,6 +761,20 @@ export function RadarMapView(props: RadarMapViewProps) {
     ["tools", "Native tools"],
   ])
   const activePulses = (edgeID: string) => pulses().filter((pulse) => pulse.edgeID === edgeID)
+  const schedulerSummary = () => {
+    const node = overview().nodes.find((value) => value.id === "component:runner-runtime")
+    return node?.record.kind === "component"
+      ? `${node.label} · ${node.record.value.responsibility}`
+      : undefined
+  }
+  const architectSummary = () => {
+    const node = overview().nodes.find((value) => value.id === overview().currentArchitectID)
+    if (node?.record.kind !== "session") return undefined
+    const context = radarSessionModelContext(node.record)
+    return `${node.record.value.state} · ${context.model} · ${context.task}`
+  }
+  const visibleActiveWorkers = () =>
+    overview().activeWorkerSessions.filter((node) => node.id !== overview().currentArchitectID)
 
   createEffect(() => {
     const fresh = pulseTracker.update(model().edges, props.resynchronizing, !reducedMotion())
@@ -767,6 +836,71 @@ export function RadarMapView(props: RadarMapViewProps) {
         setRootReady(true)
       }}
     >
+      <div class="lazers-radar-map-overview-summary" aria-label="Current operational overview">
+        <div>
+          <strong>Scheduler</strong>
+          <span>{schedulerSummary() ?? "Task runtime unavailable"}</span>
+        </div>
+        <div>
+          <strong>Current Architect</strong>
+          <span>{architectSummary() ?? "Not identified from this active native session"}</span>
+        </div>
+        <div>
+          <strong>Active workers · {overview().activeWorkerCount}</strong>
+          <Show when={overview().activeWorkerCount === 0}>
+            <span>No currently available busy worker session is evidenced</span>
+          </Show>
+          <For each={visibleActiveWorkers()}>
+            {(node) => {
+              const context = () =>
+                node.record.kind === "session" ? radarSessionModelContext(node.record) : undefined
+              return (
+                <span>
+                  {node.record.kind === "session"
+                    ? (node.record.value.agent ?? "Native worker")
+                    : "Worker"}
+                  · {node.status} · {context()?.model ?? "Model/effort unavailable"}
+                </span>
+              )
+            }}
+          </For>
+          <Show when={overview().activeWorkerCount > visibleActiveWorkers().length}>
+            <span>
+              {overview().activeWorkerCount - visibleActiveWorkers().length} more active sessions in
+              Native sessions
+            </span>
+          </Show>
+        </div>
+        <Show when={overview().edges.length > 0}>
+          <div>
+            <strong>Recorded connections</strong>
+            <ol>
+              <For each={overview().edges}>
+                {(edge) => (
+                  <li>
+                    <button
+                      type="button"
+                      class="lazers-radar-map-connection"
+                      aria-pressed={isSelected(edge.id)}
+                      onClick={() => focusEdge(edge.id)}
+                    >
+                      {displayModel().nodeByID.get(edge.from)?.label ?? edge.from} ·{" "}
+                      {edgeLabel(edge.kind)} →{" "}
+                      {displayModel().nodeByID.get(edge.to)?.label ?? edge.to} · {edge.status}
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ol>
+          </div>
+        </Show>
+      </div>
+      <AccessibleMap
+        overview={overview()}
+        model={model()}
+        selectedID={props.selectedID}
+        onSelect={props.onSelect}
+      />
       <Show
         when={layoutResult()}
         fallback={
@@ -799,12 +933,12 @@ export function RadarMapView(props: RadarMapViewProps) {
                 </g>
               )}
             </For>
-            <For each={model().edges.map((edge) => edge.id)}>
+            <For each={displayModel().edges.map((edge) => edge.id)}>
               {(edgeID) => {
-                const edge = () => model().edgeByID.get(edgeID)!
+                const edge = () => displayModel().edgeByID.get(edgeID)!
                 const layout = () => edges().get(edgeID)
-                const from = () => model().nodeByID.get(edge().from)
-                const to = () => model().nodeByID.get(edge().to)
+                const from = () => displayModel().nodeByID.get(edge().from)
+                const to = () => displayModel().nodeByID.get(edge().to)
                 const edgeLabelText = () => edgeLabel(edge().kind)
                 const accessibleLabel = () =>
                   `${edgeLabelText()} from ${from()?.label ?? edge().from} to ${to()?.label ?? edge().to}; ${edge().status}; ${edge().records.length} recorded operational records`
@@ -854,9 +988,9 @@ export function RadarMapView(props: RadarMapViewProps) {
                 )
               }}
             </For>
-            <For each={model().nodes.map((node) => node.id)}>
+            <For each={displayModel().nodes.map((node) => node.id)}>
               {(nodeID) => {
-                const node = () => model().nodeByID.get(nodeID)!
+                const node = () => displayModel().nodeByID.get(nodeID)!
                 const placed = () => nodes().get(nodeID) as SvgBox | undefined
                 const lines = () => measured().text.get(nodeID)
                 const status = () => mapStatus(node())
@@ -932,7 +1066,6 @@ export function RadarMapView(props: RadarMapViewProps) {
           </svg>
         )}
       </Show>
-      <AccessibleMap model={model()} selectedID={props.selectedID} onSelect={props.onSelect} />
     </div>
   )
 }
