@@ -8,6 +8,7 @@ const CLIENT_CHECK_INTERVAL_MS = 250
 const RPC_TIMEOUT_MS = 2_000
 const MAX_RESYNC_LOCATIONS = 32
 const MAX_DISCOVERY_CONCURRENCY = 8
+const MAX_QUEUED_DISCOVERIES = MAX_RESYNC_LOCATIONS
 const MAX_IN_FLIGHT = 8
 
 type RelayEvent = {
@@ -35,7 +36,12 @@ type MainRelayOptions = {
 
 const isRelayEvent = (event: unknown): event is RelayEvent => {
   if (typeof event !== "object" || event === null) return false
-  if (!("type" in event) || typeof event.type !== "string") return false
+  if (
+    !("type" in event) ||
+    (event.type !== `rpc.${InferenceRelay.id}.available` &&
+      event.type !== `rpc.${InferenceRelay.id}.cancelled`)
+  )
+    return false
   if (!("location" in event) || typeof event.location !== "object" || event.location === null)
     return false
   if (!("directory" in event.location) || typeof event.location.directory !== "string") return false
@@ -51,11 +57,10 @@ const timeoutSignal = (signal: AbortSignal, timeoutMs = RPC_TIMEOUT_MS) =>
 
 function adjustedInput(request: RelayRequestEnvelope, remainingMs: number) {
   if (request.method === "settings" || request.method === "configure") return request.input
-  if (remainingMs < 1_000) throw new Error("Local inference deadline exceeded before delivery")
+  if (remainingMs <= 0) throw new Error("Local inference deadline exceeded before delivery")
   if (typeof request.input !== "object" || request.input === null || Array.isArray(request.input))
     throw new Error("Invalid relayed inference request")
-  const input = request.input as Record<string, unknown>
-  return { ...input, timeoutMs: Math.min(120_000, Math.floor(remainingMs)) }
+  return request.input
 }
 
 async function forward(
@@ -92,12 +97,15 @@ export class DesktopInferenceRelay {
   private readonly active = new Map<string, ActiveRequest>()
   private readonly scanning = new Map<string, OpenCodeClient>()
   private readonly rescanRequested = new Set<string>()
+  private readonly scanQueue = new Set<string>()
   private client: OpenCodeClient | undefined
   private watchController: AbortController | undefined
   private timer: ReturnType<typeof setInterval> | undefined
   private scanTimer: ReturnType<typeof setInterval> | undefined
   private locationCursor = 0
+  private activeScans = 0
   private resyncing = false
+  private resyncScheduled = false
   private closed = false
 
   constructor(
@@ -125,7 +133,7 @@ export class DesktopInferenceRelay {
     this.observeClient()
   }
 
-  async handleEvent(value: unknown) {
+  handleEvent(value: unknown) {
     if (!isRelayEvent(value)) {
       if (
         typeof value === "object" &&
@@ -133,18 +141,22 @@ export class DesktopInferenceRelay {
         "type" in value &&
         value.type === "server.connected"
       )
-        await this.resync()
+        this.scheduleResync()
       return
     }
-    const current = this.currentClient()
-    if (!current) return
     const requestID = eventID(value)
     const key = requestKey(value.location.directory, requestID)
-    if (value.type === `rpc.${InferenceRelay.id}.cancelled`) {
-      const active = this.active.get(key)
-      if (active) active.controller.abort(new Error("Inference cancelled by its location"))
-    }
-    await this.scanLocation(value.location.directory)
+    if (value.type === `rpc.${InferenceRelay.id}.cancelled`) this.cancelActive(key)
+    this.scheduleScan(value.location.directory)
+  }
+
+  private scheduleResync() {
+    if (this.closed || this.resyncScheduled) return
+    this.resyncScheduled = true
+    queueMicrotask(() => {
+      this.resyncScheduled = false
+      void this.resync()
+    })
   }
 
   async resync() {
@@ -166,13 +178,7 @@ export class DesktopInferenceRelay {
         (_, index) => directories[(start + index) % directories.length]!,
       )
       this.locationCursor = (start + count) % directories.length
-      for (let offset = 0; offset < batch.length; offset += MAX_DISCOVERY_CONCURRENCY) {
-        await Promise.all(
-          batch
-            .slice(offset, offset + MAX_DISCOVERY_CONCURRENCY)
-            .map((directory) => this.scanLocation(directory)),
-        )
-      }
+      for (const directory of batch) this.scheduleScan(directory)
     } catch {
       // Discovery is a bounded recovery path; the next event or interval retries it.
     } finally {
@@ -189,6 +195,8 @@ export class DesktopInferenceRelay {
     this.scanTimer = undefined
     this.signal.removeEventListener("abort", this.onAbort)
     this.watchController?.abort()
+    this.scanQueue.clear()
+    this.rescanRequested.clear()
     const cleanup = [...this.active.values()].map(async (entry) => {
       entry.controller.abort(new Error("Desktop inference relay stopped"))
       if (entry.workerStarted) {
@@ -223,6 +231,8 @@ export class DesktopInferenceRelay {
     this.client = current
     this.watchController?.abort()
     this.scanning.clear()
+    this.scanQueue.clear()
+    this.rescanRequested.clear()
     if (this.closed) return
     for (const entry of this.active.values()) {
       if (entry.workerStarted && entry.client !== current) {
@@ -249,7 +259,7 @@ export class DesktopInferenceRelay {
         for await (const event of client.event.subscribe({ signal })) {
           if (signal.aborted || this.closed) return
           if (this.currentClient() !== client) return
-          await this.handleEvent(event)
+          this.handleEvent(event)
         }
       } catch {
         // Event streams are live-only. Reconnect and resync rather than assuming replay.
@@ -269,7 +279,7 @@ export class DesktopInferenceRelay {
     }
   }
 
-  private async scanLocation(directory: string) {
+  private scheduleScan(directory: string) {
     if (this.closed) return
     const actualClient = this.currentClient()
     if (!actualClient) return
@@ -277,6 +287,32 @@ export class DesktopInferenceRelay {
       this.rescanRequested.add(directory)
       return
     }
+    if (this.scanQueue.has(directory) || this.scanQueue.size >= MAX_QUEUED_DISCOVERIES) return
+    this.scanQueue.add(directory)
+    this.pumpScans()
+  }
+
+  private pumpScans() {
+    while (!this.closed && this.activeScans < MAX_DISCOVERY_CONCURRENCY && this.scanQueue.size) {
+      const directory = this.scanQueue.values().next().value as string | undefined
+      if (directory === undefined) return
+      this.scanQueue.delete(directory)
+      const client = this.currentClient()
+      if (!client) return
+      if (this.scanning.get(directory) === client) {
+        this.rescanRequested.add(directory)
+        continue
+      }
+      this.activeScans++
+      void this.scanLocation(directory, client).finally(() => {
+        this.activeScans--
+        this.pumpScans()
+      })
+    }
+  }
+
+  private async scanLocation(directory: string, actualClient: OpenCodeClient) {
+    if (this.closed || this.currentClient() !== actualClient) return
     this.scanning.set(directory, actualClient)
     try {
       const signal = timeoutSignal(this.watchController?.signal ?? this.signal)
@@ -289,7 +325,22 @@ export class DesktopInferenceRelay {
       // A location may unload between enumeration and RPC; its caller retains its own deadline.
     } finally {
       if (this.scanning.get(directory) === actualClient) this.scanning.delete(directory)
-      if (this.rescanRequested.delete(directory) && !this.closed) void this.scanLocation(directory)
+      if (
+        this.rescanRequested.delete(directory) &&
+        !this.closed &&
+        this.currentClient() === actualClient
+      )
+        this.scheduleScan(directory)
+    }
+  }
+
+  private cancelActive(key: string) {
+    const entry = this.active.get(key)
+    if (!entry) return
+    entry.controller.abort(new Error("Inference cancelled by its location"))
+    if (!entry.workerStarted) {
+      entry.settled = true
+      this.active.delete(key)
     }
   }
 
@@ -301,7 +352,7 @@ export class DesktopInferenceRelay {
     const key = requestKey(directory, requestID)
     const active = this.active.get(key)
     if (state === "cancelled") {
-      if (active) active.controller.abort(new Error("Inference cancelled by its location"))
+      this.cancelActive(key)
       void this.acknowledge(directory, requestID)
       return
     }
@@ -376,10 +427,7 @@ export class DesktopInferenceRelay {
 
       const remaining =
         begun.deadlineAt === null ? Number.POSITIVE_INFINITY : begun.deadlineAt - this.now()
-      if (
-        remaining <= 0 ||
-        (begun.method !== "settings" && begun.method !== "configure" && remaining < 1_000)
-      ) {
+      if (remaining <= 0) {
         await this.settle(entry, {
           status: "error",
           uncertain: false,
@@ -412,6 +460,15 @@ export class DesktopInferenceRelay {
         await this.acknowledge(entry.directory, entry.requestID)
         this.active.delete(entry.key)
         entry.settled = true
+        return
+      }
+      if (signal.aborted) {
+        await this.settle(entry, {
+          status: "error",
+          uncertain: true,
+          error:
+            "Local inference deadline elapsed after forwarding; completion is uncertain and the request was not replayed",
+        })
         return
       }
       if (this.currentClient() !== current) {
