@@ -1,4 +1,4 @@
-import { Plugin, SettingsPage, Slot, Store, Style, bindPlugin } from "@opencode/plugin/gui"
+import { Plugin, SettingsPage, Store, Style, bindPlugin } from "@opencode/plugin/gui"
 import { Schema } from "effect"
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { ModelFiles } from "./webgpu/ipc.ts"
@@ -25,6 +25,7 @@ import { LocalInference } from "./webgpu/rpc.ts"
 import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
+import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 
 const formatBytes = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(2)} GB`
 
@@ -840,67 +841,12 @@ export default Plugin.define({
         </div>
       )
     })
-    const Icon = bindPlugin(() => (
-      <Ui.Tooltip value={`Local model: ${runtime.state()}`}>
-        <button
-          type="button"
-          aria-label={`Local model settings — ${runtime.phase()}`}
-          class="lazers-local-icon"
-          data-phase={runtime.phase()}
-          onClick={() => ctx.layout.settings(pageID)}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
-            <circle
-              class="lazers-gpu-track"
-              cx="12"
-              cy="12"
-              r="9"
-              stroke="currentColor"
-              stroke-width="1.3"
-              opacity="0.2"
-            />
-            <g class="lazers-gpu-orbit">
-              <path
-                d="M12 3a9 9 0 0 1 9 9"
-                stroke="currentColor"
-                stroke-width="1.7"
-                stroke-linecap="round"
-              />
-              <circle cx="3" cy="12" r="1.5" fill="currentColor" />
-            </g>
-            <Show
-              when={runtime.phase() === "downloading"}
-              fallback={
-                <path
-                  class="lazers-gpu-core"
-                  d="m12 7 4.3 5-4.3 5-4.3-5Z"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                  stroke-linejoin="round"
-                />
-              }
-            >
-              <path
-                class="lazers-gpu-download"
-                d="M12 7v9m-3-3 3 3 3-3"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </Show>
-          </svg>
-        </button>
-      </Ui.Tooltip>
-    ))
-    ctx.add(Slot, {
-      at: "session.header",
-      render: () => (
-        <Show when={usesGPU(features())}>
-          <Icon />
-        </Show>
-      ),
-    })
+    registerInferenceIndicator(
+      ctx,
+      runtime,
+      () => usesGPU(features()),
+      () => ctx.layout.settings(pageID),
+    )
     ctx.add(SettingsPage, {
       id: pageID,
       title: "LAZERS",
@@ -932,21 +878,7 @@ export default Plugin.define({
       .lazers-local-diagnostics summary { padding: 16px 0; cursor: pointer; font-size: 13px; font-weight: 500; }
       .lazers-local-audio-label { display: grid; gap: 8px; margin-top: 20px; font-size: 13px; }
       .lazers-local audio { width: 100%; max-width: 420px; }
-      .lazers-local-icon { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 0; border-radius: 8px; background: transparent; color: var(--text-weak); cursor: pointer; }
-      .lazers-local-icon:hover { background: var(--surface-base-hover); }
-      .lazers-local-icon:focus-visible { outline: 2px solid var(--text-base); outline-offset: -2px; }
-      .lazers-local-icon:active svg { transform: scale(.94); }
-      .lazers-local-icon[data-phase="ready"], .lazers-local-icon[data-phase="busy"] { color: var(--icon-success-base, #40ad83); }
-      .lazers-local-icon[data-phase="error"] { color: var(--icon-critical-base, #dc6666); }
-      .lazers-gpu-orbit { transform-origin: 12px 12px; }
-      .lazers-local-icon[data-phase="loading"] .lazers-gpu-orbit { animation: lazers-gpu-spin 2s linear infinite; }
-      .lazers-local-icon[data-phase="busy"] .lazers-gpu-orbit { animation: lazers-gpu-spin .9s linear infinite; }
-      .lazers-local-icon[data-phase="loading"] .lazers-gpu-core { animation: lazers-gpu-breathe 1.6s ease-in-out infinite; }
-      .lazers-local-icon[data-phase="downloading"] .lazers-gpu-download { animation: lazers-gpu-drop 1.1s ease-in-out infinite; }
-      @keyframes lazers-gpu-spin { to { transform: rotate(360deg); } }
-      @keyframes lazers-gpu-breathe { 50% { opacity: .35; } }
-      @keyframes lazers-gpu-drop { 50% { transform: translateY(2px); opacity: .45; } }
-      @media (prefers-reduced-motion: reduce) { .lazers-local-icon * { animation: none !important; } .lazers-local-icon:active svg { transform: none; } }
+      ${inferenceIndicatorStyles}
       @media (max-width: 560px) { .lazers-local { padding: 24px 16px; } .lazers-local-row { flex-wrap: wrap; gap: 4px; } }
     `,
     )
