@@ -4564,6 +4564,81 @@ test("worker-location permissions and forms block terminal work and surface acti
   expect(f.store.attempts(planID)).toHaveLength(1)
 })
 
+test("a durably admitted same-attempt handoff reminder can finish with fresh matching evidence", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  const claim = f.runtime.progress.claimReminder(
+    attempt.session_id,
+    "Provide the remaining handoff",
+    "msg_owned_final_handoff",
+  )!
+  expect(claim).toBeDefined()
+  f.runtime.progress.finishReminder(claim, "admitted")
+  worker.busy = false
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: claim.messageID, state: "completed" }
+  worker.background = {
+    state: "observed",
+    source: "experimental.idle",
+    observedAt: Date.now(),
+    inputID: claim.messageID,
+    executionStartSequence: 10,
+    eventSequence: 11,
+    count: 0,
+    kinds: { shell: 0, subagent: 0, image: 0 },
+  }
+  await drive(f.runtime, 10)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
+test.each(["unconfirmed", "foreign", "stale-assignment", "pre-reminder-report"])(
+  "reminder completion rejects %s lineage",
+  async (mode) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await f.runtime.tick()
+    const attempt = f.store.attempts(f.receipt.planID)[0]!
+    const worker = f.sessions.get(attempt.session_id)!
+    const claim = f.runtime.progress.claimReminder(
+      attempt.session_id,
+      "Remaining handoff",
+      "msg_claimed_handoff",
+    )!
+    f.runtime.progress.finishReminder(claim, mode === "unconfirmed" ? "unknown" : "admitted")
+    if (mode === "stale-assignment")
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_attempts SET message_id=? WHERE id=?")
+          .run("msg_resumed_assignment", attempt.id),
+      )
+    const inputID = mode === "foreign" ? "msg_foreign_synthetic" : claim.messageID
+    worker.busy = false
+    worker.outcome = "succeeded"
+    worker.turn = { inputID, state: "completed" }
+    worker.background = {
+      state: "observed",
+      source: "experimental.idle",
+      observedAt: Date.now(),
+      inputID: mode === "pre-reminder-report" ? attempt.message_id : inputID,
+      executionStartSequence: 10,
+      eventSequence: 11,
+      count: 0,
+      kinds: { shell: 0, subagent: 0, image: 0 },
+    }
+    await f.runtime.tick()
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+    expect(
+      f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+    ).toBe(false)
+  },
+)
+
 test("terminal verification rejects a fresh idle report from a different native input", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)

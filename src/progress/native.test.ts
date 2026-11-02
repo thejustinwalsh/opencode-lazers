@@ -48,6 +48,7 @@ function makeContext(
   let idleHook: ((idle: never) => Effect.Effect<void>) | undefined
   let syntheticCalls = 0
   const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
+  const streamFailure = Symbol("fixture-stream-failure")
   const syntheticInputs: unknown[] = []
   const context = {
     permission: {
@@ -88,7 +89,13 @@ function makeContext(
         options.eventFailure
           ? Stream.fail(new Error("fixture event stream unavailable"))
           : options.liveEvents
-            ? Stream.fromQueue(eventQueue)
+            ? Stream.fromQueue(eventQueue).pipe(
+                Stream.mapEffect((event) =>
+                  event === streamFailure
+                    ? Effect.fail(new Error("fixture stream lost"))
+                    : Effect.succeed(event),
+                ),
+              )
             : options.holdEvents
               ? Stream.never
               : Stream.fromIterable(options.events ?? []),
@@ -102,6 +109,7 @@ function makeContext(
     syntheticCalls: () => syntheticCalls,
     syntheticInputs: () => syntheticInputs,
     emitEvent: (event: unknown) => Effect.runPromise(Queue.offer(eventQueue, event)),
+    failEvents: () => Effect.runPromise(Queue.offer(eventQueue, streamFailure)),
   }
 }
 
@@ -116,7 +124,7 @@ function executionEvent(type: string, sessionID: string, sequence: number) {
 }
 
 async function waitForNativeState(predicate: () => Promise<boolean>) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 400; attempt++) {
     if (await predicate()) return
     await new Promise<void>((resolve) => setTimeout(resolve, 5))
   }
@@ -179,7 +187,7 @@ test("registered report tool, hook, native events, and recovery share one record
           yield* registerProgress(ctx.context, recorder, "project")
           const report = ctx.tools.get("lazers_report_progress")!
           expect(report.options).toMatchObject({
-            codemode: false,
+            codemode: true,
             permission: "lazers_report_progress",
           })
           const result = yield* report.execute(
@@ -319,87 +327,115 @@ test("idle handoff reminder is concise, persisted, and sent at most once per att
   }
 })
 
-test("experimental idle background report is shared with the runner and signal loss is unknown", async () => {
+test("independent listeners preserve each other while own loss and disposal invalidate observations", async () => {
   const fixture = makeFixture()
   try {
-    fixture.store.atomic((db) =>
-      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(secondAttemptID),
-    )
     const recorder = new ProgressRecorder(fixture.store, "project")
-    const ctx = makeContext(fixture, {
-      liveEvents: true,
-      messages: [
-        { id: "msg_background_turn", type: "user" },
-        {
-          id: "msg_background_handoff",
-          type: "assistant",
-          finish: "stop",
-          content: [{ type: "text", text: "Background jobs remain; waiting for their notices." }],
-        },
-      ],
+    const messages = [
+      { id: "msg_current", type: "user" },
+      {
+        id: "msg_reply",
+        type: "assistant",
+        finish: "stop",
+        content: [{ type: "text", text: "Completed." }],
+      },
+    ]
+    const first = makeContext(fixture, { liveEvents: true, messages })
+    const second = makeContext(fixture, { liveEvents: true, messages })
+    const firstNative = nativeLivenessFixture({
+      sessionID: "ses-accepted",
+      directory: fixture.directory,
     })
-    const sessionID = "ses-accepted"
-    const native = nativeLivenessFixture({ sessionID, directory: fixture.directory })
+    const secondNative = nativeLivenessFixture({
+      sessionID: "ses_other_location",
+      directory: fixture.directory,
+    })
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerProgress(ctx.context, recorder, "project")
+          yield* registerProgress(first.context, recorder, "project")
           yield* Effect.promise(() =>
-            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 10)),
+            first.emitEvent(executionEvent("session.execution.started", "ses-accepted", 10)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                (await firstNative.host.session("ses-accepted"))?.background?.state === "unknown",
+            ),
+          )
+          yield* Effect.sleep(5)
+          yield* first.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* registerProgress(second.context, recorder, "other-project")
+              expect(
+                (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
+                  ?.state,
+              ).toBe("observed")
+              yield* Effect.promise(() =>
+                second.emitEvent(
+                  executionEvent("session.execution.started", "ses_other_location", 20),
+                ),
+              )
+              yield* Effect.sleep(5)
+              yield* second.idle()!({ sessionID: "ses_other_location", background: [] } as never)
+              expect(
+                (yield* Effect.promise(() => secondNative.host.session("ses_other_location")))
+                  ?.background?.state,
+              ).toBe("observed")
+              yield* Effect.promise(() => second.failEvents())
+              yield* Effect.promise(() =>
+                waitForNativeState(
+                  async () =>
+                    (await secondNative.host.session("ses_other_location"))?.background?.state ===
+                    "unknown",
+                ),
+              )
+              expect(
+                (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
+                  ?.state,
+              ).toBe("observed")
+            }),
+          )
+          expect(
+            (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
+              ?.state,
+          ).toBe("observed")
+          yield* Effect.promise(() => first.failEvents())
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                (await firstNative.host.session("ses-accepted"))?.background?.state === "unknown",
+            ),
+          )
+          yield* first.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          expect(
+            (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
+              ?.state,
+          ).toBe("unknown")
+          yield* Effect.promise(() =>
+            first.emitEvent(executionEvent("session.execution.started", "ses-accepted", 30)),
           )
           yield* Effect.promise(() =>
             waitForNativeState(async () => {
-              const background = (await native.host.session(sessionID))?.background
+              const background = (await firstNative.host.session("ses-accepted"))?.background
               return (
                 background?.state === "unknown" &&
                 background.reason.includes("foreground execution started")
               )
             }),
           )
-          yield* ctx.idle()!({
-            sessionID: Session.ID.make(sessionID),
-            background: [
-              {
-                kind: "shell",
-                sessionID: Session.ID.make(sessionID),
-                shellID: "shell-1",
-                command: "test",
-              },
-              {
-                kind: "subagent",
-                sessionID: Session.ID.make(sessionID),
-                childSessionID: Session.ID.make("ses_child"),
-                agent: "implementor",
-                description: "finish assigned work",
-              },
-            ],
-          } as never)
+          yield* first.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          expect(
+            (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
+              ?.state,
+          ).toBe("observed")
         }),
       ),
     )
-    expect((await native.host.session(sessionID))?.background).toMatchObject({
-      state: "observed",
-      source: "experimental.idle",
-      inputID: "msg_background_turn",
-      executionStartSequence: 10,
-      eventSequence: 10,
-      count: 2,
-      kinds: { shell: 1, subagent: 1, image: 0 },
-    })
-
-    const failed = makeContext(fixture, { eventFailure: true })
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* registerProgress(failed.context, recorder, "project")
-          yield* Effect.sleep(5)
-        }),
-      ),
-    )
-    expect((await native.host.session(sessionID))?.background).toMatchObject({
+    expect((await firstNative.host.session("ses-accepted"))?.background).toMatchObject({
       state: "unknown",
-      source: "experimental.idle",
-      reason: "Native event stream disconnected",
+      reason: "Native idle hook listener was disposed",
     })
   } finally {
     fixture.close()

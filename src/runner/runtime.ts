@@ -1973,7 +1973,8 @@ export class TaskRuntime {
         )
       if (
         promptCompleted &&
-        (session.turn?.inputID !== attempt.message_id ||
+        (!session.turn ||
+          !this.matchesWorkerInput(attempt, session.turn.inputID) ||
           (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
       ) {
         waiting = true
@@ -2049,6 +2050,15 @@ export class TaskRuntime {
     )
   }
 
+  private matchesWorkerInput(attempt: AttemptRow, inputID: string | null | undefined): boolean {
+    return this.progress.matchesAssignedInput(
+      attempt.id,
+      attempt.session_id,
+      attempt.message_id,
+      inputID,
+    )
+  }
+
   private backgroundBlockReason(
     session: HostSession,
     attempt: AttemptRow,
@@ -2059,8 +2069,8 @@ export class TaskRuntime {
     if (background.state === "unknown")
       return `Native idle background observation is unknown: ${background.reason}`
     if (
-      background.inputID !== attempt.message_id ||
-      (requireTurnLineage && session.turn?.inputID !== attempt.message_id)
+      !this.matchesWorkerInput(attempt, background.inputID) ||
+      (requireTurnLineage && session.turn?.inputID !== background.inputID)
     )
       return "Native idle background observation does not match the current worker input lineage"
     if (background.count > 0) {
@@ -2529,10 +2539,15 @@ export class TaskRuntime {
     if (
       session.outcome === "succeeded" &&
       (!session.turn ||
-        session.turn.inputID !== attempt.message_id ||
+        !this.matchesWorkerInput(attempt, session.turn.inputID) ||
         session.turn.state !== "completed")
     ) {
-      if (session.turn?.inputID === attempt.message_id && session.turn.state === "pending") return
+      if (
+        session.turn &&
+        this.matchesWorkerInput(attempt, session.turn.inputID) &&
+        session.turn.state === "pending"
+      )
+        return
       this.hold(
         plan,
         "Native worker success does not match a completed response to the current assigned input",

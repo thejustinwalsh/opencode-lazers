@@ -6,7 +6,7 @@ import { Effect, Stream } from "effect"
 import { z } from "zod"
 import {
   confirmNativeIdleBackgroundSuccess,
-  markAllNativeIdleBackgroundUnknown,
+  invalidateNativeIdleObserver,
   markNativeIdleBackgroundUnknown,
   noteStaleNativeIdleBackgroundEvent,
   observeNativeIdleBackground,
@@ -63,8 +63,6 @@ type SessionEventCursor = {
   executionStartSequence?: number
   idle?: IdleLineage
 }
-
-const sessionEventCursors = new Map<string, SessionEventCursor>()
 
 const HANDOFF_REMINDER =
   "Provide only any remaining concise handoff: changes, checks/artifact/commit, blockers, or judgment needed from the plan owner. Do not repeat recorded facts, claim acceptance, or alter task state."
@@ -238,12 +236,13 @@ export function registerProgress(
   projectID: string,
 ) {
   return Effect.gen(function* () {
-    yield* Effect.sync(() =>
-      markAllNativeIdleBackgroundUnknown(
-        "Native idle hook listener was initialized after an observation gap",
+    const observer = Symbol("native-idle-observer")
+    const sessionEventCursors = new Map<string, SessionEventCursor>()
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() =>
+        invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed"),
       ),
     )
-    yield* Effect.sync(() => sessionEventCursors.clear())
     yield* ctx.tool.transform((editor) =>
       editor.add({
         name: "lazers_report_progress",
@@ -252,7 +251,7 @@ export function registerProgress(
         input: z.toJSONSchema(ProgressInput, { io: "input" }),
         output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
         options: {
-          codemode: false,
+          codemode: true,
           permission: "lazers_report_progress",
         },
         execute: (input, call) =>
@@ -321,6 +320,7 @@ export function registerProgress(
                 markNativeIdleBackgroundUnknown(
                   idle.sessionID,
                   "Experimental idle report could not be tied to the current execution and input",
+                  observer,
                 )
                 return
               }
@@ -330,13 +330,20 @@ export function registerProgress(
                 eventSequence: cursor.lastSequence,
               }
               cursor.idle = lineage
-              observeNativeIdleBackground(idle.sessionID, idle.background, lineage)
+              observeNativeIdleBackground(
+                idle.sessionID,
+                idle.background,
+                lineage,
+                Date.now(),
+                observer,
+              )
             },
             onFailure: () => {
               sessionEventCursors.delete(idle.sessionID)
               markNativeIdleBackgroundUnknown(
                 idle.sessionID,
                 "Native input lineage was unavailable at experimental.idle",
+                observer,
               )
             },
           }),
@@ -367,10 +374,11 @@ export function registerProgress(
                 markNativeIdleBackgroundUnknown(
                   sessionID,
                   `Native ${type} had no trustworthy durable session sequence`,
+                  observer,
                 )
               } else if (cursor.lastSequence !== undefined && sequence <= cursor.lastSequence) {
                 if (cursor.idle && sequence < cursor.idle.eventSequence)
-                  noteStaleNativeIdleBackgroundEvent(sessionID, sequence)
+                  noteStaleNativeIdleBackgroundEvent(sessionID, sequence, observer)
               } else {
                 cursor.lastSequence = sequence
                 if (type === "session.execution.started") {
@@ -379,6 +387,7 @@ export function registerProgress(
                   markNativeIdleBackgroundUnknown(
                     sessionID,
                     "A newer native foreground execution started after the last experimental.idle report",
+                    observer,
                   )
                 } else if (type === "session.execution.succeeded") {
                   const idle = cursor.idle
@@ -391,6 +400,7 @@ export function registerProgress(
                     markNativeIdleBackgroundUnknown(
                       sessionID,
                       "Native execution success did not match the current experimental.idle execution",
+                      observer,
                     )
                   } else {
                     const messages = yield* ctx.session
@@ -406,12 +416,16 @@ export function registerProgress(
                       markNativeIdleBackgroundUnknown(
                         sessionID,
                         "Native execution success no longer matched the idle report input lineage",
+                        observer,
                       )
-                    } else if (!confirmNativeIdleBackgroundSuccess(sessionID, idle, sequence)) {
+                    } else if (
+                      !confirmNativeIdleBackgroundSuccess(sessionID, idle, sequence, observer)
+                    ) {
                       cursor.idle = undefined
                       markNativeIdleBackgroundUnknown(
                         sessionID,
                         "Native execution success could not confirm the current idle report",
+                        observer,
                       )
                     }
                   }
@@ -420,6 +434,7 @@ export function registerProgress(
                   markNativeIdleBackgroundUnknown(
                     sessionID,
                     `Native ${type} was observed after the last experimental.idle background report`,
+                    observer,
                   )
                 }
               }
@@ -431,13 +446,14 @@ export function registerProgress(
               markNativeIdleBackgroundUnknown(
                 sessionID,
                 "Native event observation failed; experimental.idle lineage is unknown",
+                observer,
               )
           }
         }),
       ).pipe(
         Effect.match({
           onFailure: () => {
-            markAllNativeIdleBackgroundUnknown("Native event stream disconnected")
+            invalidateNativeIdleObserver(observer, "Native event stream disconnected")
             sessionEventCursors.clear()
             for (const assignment of recorder.assignments())
               recorder.markRecoveryGap(
@@ -447,7 +463,7 @@ export function registerProgress(
               )
           },
           onSuccess: () => {
-            markAllNativeIdleBackgroundUnknown("Native event stream ended")
+            invalidateNativeIdleObserver(observer, "Native event stream ended")
             sessionEventCursors.clear()
             for (const assignment of recorder.assignments())
               recorder.markRecoveryGap(
