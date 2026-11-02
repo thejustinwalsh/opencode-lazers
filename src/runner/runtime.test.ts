@@ -4400,6 +4400,60 @@ test("heartbeat avoids context and rechecks a stopped worker after detailed acco
   expect(f.store.attempts(f.receipt.planID)[0]!.tool_count).toBe(9)
 })
 
+test.each(["interrupted", "succeeded", "missing"] as const)(
+  "cancellation wins over a stale %s detailed worker observation",
+  async (result) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await f.runtime.tick()
+    const planID = f.receipt.planID
+    const attempt = f.store.attempts(planID)[0]!
+    const worker = f.sessions.get(attempt.session_id)!
+    worker.busy = false
+    worker.outcome = result === "succeeded" ? "succeeded" : "interrupted"
+    worker.turn = { inputID: attempt.message_id, state: "interrupted" }
+    worker.background = {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "Host restarted before observing an idle report",
+    }
+    const originalSession = f.host.session
+    let raced = false
+    f.host.session = async (id, options) => {
+      const snapshot = await originalSession(id, options)
+      if (id === worker.id && options?.messages && !raced) {
+        raced = true
+        await f.runtime.command(
+          {
+            requestID: `cancel-during-${result}-detail`,
+            planID,
+            expectedVersion: f.store.plan(planID)!.version,
+            action: "cancel",
+          },
+          "owner",
+        )
+        return result === "missing" ? null : snapshot
+      }
+      return snapshot
+    }
+
+    const prompts = f.events.filter((event) => event.startsWith("prompt:")).length
+    await f.runtime.tick()
+    expect(raced).toBe(true)
+    expect(f.store.plan(planID)?.state).toBe("cancelled")
+    expect(f.store.attempts(planID)).toHaveLength(1)
+    expect(f.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      state: "cancelled",
+      session_id: attempt.session_id,
+      workspace: attempt.workspace,
+    })
+    expect(existsSync(attempt.workspace)).toBe(true)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)
+    expect(f.store.effects(planID).some((effect) => effect.kind.startsWith("verify:"))).toBe(false)
+  },
+)
+
 test("terminal verification waits for active foreground, exact input completion, and background settlement", async () => {
   const f = fixture({ delayed: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)

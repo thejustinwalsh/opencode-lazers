@@ -2500,6 +2500,10 @@ export class TaskRuntime {
     }
     if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
       const detailed = await this.host.session(attempt.session_id, { messages: true })
+      if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) {
+        if (detailed) this.observeUsage(attempt, detailed, fence)
+        return
+      }
       if (!detailed) {
         this.hold(plan, "Owned worker session disappeared during terminal observation")
         return
