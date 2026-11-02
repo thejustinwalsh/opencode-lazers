@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 21:09 UTC. Recheck native state before acting.
+2026-11-02, approximately 21:14 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -68,31 +68,40 @@ configured implementor. Never manufacture explicit overrides from inherited
 defaults; waiting tasks must retain live mapping behavior. No human question pending
 at this checkpoint; recheck native interview before assuming.
 
-### Authenticated owned Desktop trial — retain
+### Rejected Models UI superseded — do not resume
 
-There IS a current owned instance, unlike older notes. Root:
-`/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-zA6wCr`.
-Service PID96177, Desktop96186, renderer96201, URL http://127.0.0.1:62330,
-window1/generation1, adapterc23a310f-e70a-480d-91be-fbcddb99c21e. Candidate
-a6223ad9116b8ba60fbf1cc87d574320f4cd81e6 in LZ68's retained tree
-`~/.local/share/opencode/plugins/lazers/runner/worktrees/dffe9628-84f2-42cc-8774-109a2c610717`.
-Do not clean/relaunch it or copy auth by mistake. User explicitly approved owned
-native bridge prompt entry, OpenAI consent and ChatGPT plan usage for the isolated
-profile. Label LAZERS owned verification was Root's name for that OpenCode grant,
-not a new LAZERS account. Earlier auto-review consent rejections were resolved.
+User explicitly cancelled the old Models UI and its testing. Architect cancelled
+LZ68 plan27506b73-91ec-45ba-923d-55b844f2f09e v33 and original dffe9628 attempt,
+then disposed/superseded the task at2026-11-02T21:12:29.684Z, linking LZ77. No UI
+save/readback or human acceptance claimed; retained backend/source/history kept.
+Root stopped and successfully cleaned owned zA6wCr through supported cleanup.
+All owned verification instances are now cleaned. Do not relaunch the old screen.
 
-Native session ses_e61fa47efffdHSgWX22VHhY1Kk performed initial settings query
-through Build/SolMedium: all three personas unassigned in fresh Default Project.
-This is a baseline, not Architect/SolHigh gate completion. Models editor is open.
-Actual native typing exposed another driver defect: click events followed by
-immediate insertText can insert into the previously focused field. Screenshot
-models-write-check.png shows provider openaigpt-6-luna, empty model, effort max;
-save stays disabled. No mapping was saved; do not claim write/readback evidence or
-replay the save. Unsaved fixture is disposable; preserve profile for remaining test.
-Current driver misses agent/menuitem selectors and passes ArrowDown rather than
-Electron Down. Fix/test proportionally through native workflow; no private UI
-handler calls. Helpers in /private/tmp use supported native CLI bridge, not model
-API prompts. Capture paths are inside candidate .agents/docs/evidence/full-instance-qualification.
+LZ77 source snapshots task4c39aaaf-8a81-49b5-a97a-cf94b25aa98c is running through
+plan c5ff050c-0b5b-4f22-8b48-f729e26f4d94 v2, attempt6ed80fb1-7192-4da0-a17c-e034ce14c0bc,
+native worker ses_a4de6965d7cb4c259db83fc85f7bb1c8, actual OpenAI GPT6LunaMax,
+native tree ~/.local/share/opencode/plugins/lazers/runner/worktrees/6ed80fb1-7192-4da0-a17c-e034ce14c0bc.
+No pending permissions/inbox at21:14. Architect is specifying the other small
+comparison/accounting/UI/routing increments; do not infer those are submitted yet.
+
+New public naming requirement: commands /lz-models, /lz-tasks, /lz-radar,
+/lz-trajectory and lz-* public tools. Avoid bare native command collisions and
+the long lazers_* prefix. Root recorded this in DESIGN.md; Architect received
+native task request to research pinned host Code Mode/tool-name semantics and
+rename coherently, including prompts/skills/permissions/automatic hooks. Preserve
+stored history and active work; no runtime rename implemented yet. Root79a1ccc
+records rejected UI and desired namespace.
+
+Owned setup did prove actual Build/SolMedium initial read of all-unassigned fresh
+Default Project settings. It did NOT prove Architect/SolHigh cross-surface writes.
+Native typing can insert into the previously focused field when mouse events and
+insertText execute back-to-back. Root observed provider openaigpt-6-luna, empty
+model, effort max; save was disabled. Further native Backspace attempt lost focus;
+no saved mapping claimed. Screenshots retained in original source tree evidence.
+Future new-UI verification can repair/use the general native bridge as needed,
+but must not resume the rejected screen's acceptance task. Agent/menuitem snapshot
+selectors and ArrowDown→Electron Down are known driver gaps. User already approved
+owned bridge input, OpenAI consent and ChatGPT usage; no outstanding approval.
 
 ### Independent work
 
@@ -105,7 +114,7 @@ API prompts. Capture paths are inside candidate .agents/docs/evidence/full-insta
   separate integration receipts and requested native non-forced cleanup.
 - LZ72 audit-only cleanup diagnostics remains queued behind runtime correction.
 - Native idle observer release overwrites completed worker background report with
-  unknown, blocking LZ68. Native Architect researched bounded preservation/recovery;
+  unknown; this previously blocked the now-superseded LZ68. Native Architect researched bounded preservation/recovery;
   do not replay worker or assume native foreground-idle proves no background work.
 - Inference pill user wants model short name only, including target when loading;
   status icon carries state, normal theme color for available, theme error color
@@ -115,7 +124,7 @@ API prompts. Capture paths are inside candidate .agents/docs/evidence/full-insta
 Root driver7191d7f fixes the supplied exact destroyed-window forget exception with
 retained references,19tests90assertions. Actual ownedryHCJa focus then supported
 cleanup succeeded0.778s with no dialog observed. All prior owned trials cleaned;
-current zA6wCr remains. No broader lifecycle claim. Older source tables below may
+zA6wCr is now cleaned after user cancellation. No broader lifecycle claim. Older source tables below may
 describe pre-checkpoint states; inspect actual native plans before acting.
 
 ## Inference repair and native observations
