@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 16:25 UTC checkpoint. Recheck native state.
+2026-11-02 16:31 UTC checkpoint. Recheck native state.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -45,15 +45,18 @@ integrating LZ-63. Main is available again after this repair lands.
 
 ## Latest native returns and blocker repair
 
-`9d294be` preserves observed busy-period identity across same-process progress
+`9d294be` plus review correction `42f1ec2` preserves observed busy-period identity across same-process progress
 listener replacement. Fresh idle/current input/ordered success are still required;
 old reports invalidate and stream gaps lose continuity. Both initial/resumed
 registered-hook cases fail on old source and pass now; full runner/progress/recovery
 217 tests/2,883 assertions plus fmt/lint/check pass. This does not reconstruct
-already-lost hook payloads or establish live post-repair completion.
+already-lost hook payloads or establish live post-repair completion. The reviewer’s
+pre-first-event stream-gap case failed before `42f1ec2` and passes now; final focused
+native/progress checks are 47 tests/204 assertions with quality checks passing.
 [Continuity report](evidence/native-liveness/20261102-reload-continuity.md).
 
-LZ-64 returned clean `ee6960f` (persona mapping core), source review clear and
+LZ-64 returned clean `ee6960f` (persona mapping core), merged natively as
+`0d82057` with postmerge checks passing. Source review clear and
 4 tests/52 assertions independently pass. Original worker
 `ses_4f4066c3848c4ba3bb14855fd66cac39`, attempt
 `76f764e5-e0b9-437e-bcd2-ae612e9b4afe`, is finished, not foreground-active.
@@ -67,7 +70,8 @@ disconnect capacity leak, premature short-deadline rejection, and resync blockin
 event consumption. Architect placed original plan into cancelling v25 to retain
 and correct the same work. Do not activate this uncorrected candidate. LZ-62 and
 LZ-63 are still foreground-active in their original sessions/trees; Radar now also
-owns the freshness-state correction and has built its candidate bundle. No native
+owns the freshness-state correction and returned `2eaceec` with a built candidate
+bundle. No native
 visual acceptance yet. Main is free after Root's repair; preserve both it and
 `fbfddf2`/`1d322c3` during integration. Do not replay implementations to close
 retained verification gaps.

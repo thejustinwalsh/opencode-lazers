@@ -13,3 +13,11 @@ Two registered-hook regressions cover initial and resumed input identities. Both
 Validation: full runner/progress/recovery suite 217 tests, 2,883 assertions; formatter, lint, typecheck and diff checks pass. Temporary local logs: /private/tmp/lazers-reload-red.log and /private/tmp/lazers-reload-continuity-all.log.
 
 This fixes forward continuity; it does not manufacture already lost idle observations, prove a native post-repair completion, accept an artifact, or complete the broader roadmap. LZ-63's explicit retained-candidate verification work remains the recovery route for stranded reviewed work. LZ-56's source review separately found three blockers (disconnect capacity, short deadlines and event-consumption blocking); it must be corrected before integration. LZ-64's mapping source review and independent 4-test/52-assertion run are clear within its core-only scope.
+
+## Independent review correction
+
+Native review of `9d294be` found a genuine ordering gap: a replacement listener could lose its event stream before its first event/idle observation, leaving inherited continuity outside its local cleanup scope. `42f1ec2` snapshots the inheritable project/session execution cursors at registration, so gap cleanup covers that baseline while its existing sequence comparison preserves later facts from another observer.
+
+A synchronized registered-hook regression fails against `9d294be` in an isolated source copy (expected unknown, received observed) and passes after the correction. All 47 native/progress tests / 204 assertions, formatter, lint, typecheck and diff checks pass. The previous 217-test suite covers the original continuity patch; the final correction was verified with the focused suites that exercise its two changed producer modules. Native post-repair completion remains unproven.
+
+Native Architect merged the independently reviewed mapping core as `0d82057`, with postmerge checks passing. This is source integration; LZ-64's original runtime hold remains pending. Radar returned `2eaceec` and awaits native source/visual review and activation. Actual Trajectory navigation loaded LZ-51 historical checks, token usage, captured activity and live progress with connected status while implementation continued.
