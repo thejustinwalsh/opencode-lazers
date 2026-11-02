@@ -1,6 +1,7 @@
 # LAZERS current handoff
 
 2026-11-02 17:10 UTC checkpoint. Recheck native state.
+Later Root checkpoint: [native continuation](evidence/native-liveness/20261102-native-continuation.md) records the real LZ-65 completion chain, retained relay deadline correction `e64c90d`, and Tera’s blocking Radar `graphEdges: []` finding. Deliver that Radar correction and relay return to Architect through Desktop when Computer Use is available; do not activate the disconnected candidate.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
