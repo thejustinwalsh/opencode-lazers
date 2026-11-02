@@ -35,6 +35,7 @@ async function authorize(
   projectID: string,
   action: string,
   resources: string[],
+  signal: AbortSignal,
 ) {
   const session = await Effect.runPromise(
     ctx.session
@@ -44,6 +45,7 @@ async function authorize(
           isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
         ),
       ),
+    { signal },
   )
   if (
     !session ||
@@ -62,6 +64,7 @@ async function authorize(
       action,
       resources,
     }),
+    { signal },
   )
   return session
 }
@@ -85,11 +88,17 @@ export function registerModelsServer(ctx: ModelsContext, repository: TaskReposit
     yield* ctx.rpc.register(Models, {
       settings: (input) =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             const request = ModelSettingsRPCInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, "lazers_get_model_settings", [
-              request.taskID ?? projectDirectory,
-            ])
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lazers_get_model_settings",
+              [request.taskID ?? projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
             const output = withService((service) => service.settings({ taskID: request.taskID }))
             return ModelSettingsOutputSchema.parse(output)
           },
@@ -97,13 +106,19 @@ export function registerModelsServer(ctx: ModelsContext, repository: TaskReposit
         }).pipe(Effect.orDie),
       configure: (input) =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             const request = ModelConfigureRPCInputSchema.parse(input)
             const resource =
               request.target.scope === "task" ? request.target.taskID : projectDirectory
-            await authorize(ctx, request.sessionID, projectID, "lazers_configure_models", [
-              resource,
-            ])
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lazers_configure_models",
+              [resource],
+              signal,
+            )
+            signal.throwIfAborted()
             const update = {
               target: request.target,
               persona: request.persona,
@@ -118,11 +133,17 @@ export function registerModelsServer(ctx: ModelsContext, repository: TaskReposit
         }).pipe(Effect.orDie),
       catalog: (input) =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             const request = ModelCatalogRPCInputSchema.parse(input)
-            await authorize(ctx, request.sessionID, projectID, "lazers_models_catalog", [
-              projectDirectory,
-            ])
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lazers_models_catalog",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
             return ModelCatalogOutputSchema.parse(await nativeWorkerOptions(ctx))
           },
           catch: failure,

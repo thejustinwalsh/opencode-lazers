@@ -80,6 +80,7 @@ function modelContext(options: {
   denied?: () => boolean
   catalogFailure?: () => boolean
   permissionCalls?: unknown[]
+  permissionWait?: () => Effect.Effect<void>
 }) {
   let actor: NativeSession | null = options.actor ?? {
     id: "ses-native",
@@ -106,7 +107,9 @@ function modelContext(options: {
     permission: {
       assert: (input: unknown) => {
         permissionCalls.push(input)
-        return options.denied?.() ? Effect.fail(new Error("native permission denied")) : Effect.void
+        return options.denied?.()
+          ? Effect.fail(new Error("native permission denied"))
+          : (options.permissionWait?.() ?? Effect.void)
       },
     },
     session: {
@@ -462,6 +465,52 @@ test("RPC validates live native session and permission before any settings acces
       "desktop-settings-user",
     ])
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("cancelled Desktop configuration cannot save a route after a late permission grant", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let grant!: () => void
+  let interrupted = false
+  const harness = await register(repository, {
+    permissionWait: () =>
+      Effect.callback<void>((resume) => {
+        grant = () => resume(Effect.void)
+        enter()
+        return Effect.sync(() => {
+          interrupted = true
+        })
+      }),
+  })
+  repository.close()
+  const controller = new AbortController()
+  const pending = Effect.runPromiseExit(
+    harness.methods().configure({
+      sessionID: "ses-native",
+      target: { scope: "project" },
+      persona: "ui",
+      expectedRevision: 0,
+      route: { providerID: "private", id: "exact-model", variant: "high" },
+    }),
+    { signal: controller.signal },
+  )
+  try {
+    await entered
+    controller.abort()
+    await pending
+    grant()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(tableExists(path, "model_mappings")).toBe(false)
+    expect(interrupted).toBe(true)
+  } finally {
+    grant?.()
     rmSync(root, { recursive: true, force: true })
   }
 })
