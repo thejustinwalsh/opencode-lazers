@@ -75,6 +75,7 @@ type PrerequisiteIntegrationRow = {
   integration_id: number | null
   integration_version: number | null
   integration_payload: string | null
+  invalidation_id: number | null
 }
 
 export type TaskRuntimeOptions = {
@@ -2671,7 +2672,12 @@ export class TaskRuntime {
                       accepted.id AS accepted_id,accepted.version AS accepted_version,
                       accepted.payload AS accepted_payload,
                       integration.id AS integration_id,integration.version AS integration_version,
-                      integration.payload AS integration_payload
+                      integration.payload AS integration_payload,
+                      -- Lifecycle labels can be stale; a cancellation invalidates
+                      -- older acceptance until a new acceptance/integration pair.
+                      (SELECT t.id FROM runner_transitions t
+                       WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='CANCEL_REQUESTED'
+                       ORDER BY t.id DESC LIMIT 1) AS invalidation_id
                FROM runner_plans p
                LEFT JOIN runner_transitions accepted
                  ON accepted.id=(
@@ -2719,7 +2725,9 @@ export class TaskRuntime {
         row.integration_id === null ||
         row.integration_version === null ||
         row.accepted_id >= row.integration_id ||
-        row.integration_version < row.accepted_version
+        row.integration_version < row.accepted_version ||
+        (row.invalidation_id !== null &&
+          (!Number.isSafeInteger(row.invalidation_id) || row.accepted_id <= row.invalidation_id))
       )
         return undefined
 
@@ -2940,8 +2948,35 @@ export class TaskRuntime {
     if (!prerequisites.length) return true
 
     try {
-      const baseline = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
-      if (!isCommitID(baseline) || baseline !== currentAttempt.base_commit) return false
+      // The reservation base is immutable prerequisite proof. A later HEAD is
+      // acceptable only as scoped progress from a prompt already admitted to this attempt.
+      const baseline = currentAttempt.base_commit
+      const head = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
+      if (!isCommitID(baseline) || !isCommitID(head)) return false
+      const retainedPrompt = this.store.effects(planID).some((effect) => {
+        if (
+          effect.attempt_id !== currentAttempt.id ||
+          effect.kind !== "prompt" ||
+          effect.state !== "completed"
+        )
+          return false
+        const payload = JSON.parse(effect.payload) as {
+          sessionID?: unknown
+          workspace?: unknown
+          messageID?: unknown
+        }
+        return (
+          payload.sessionID === currentAttempt.session_id &&
+          payload.workspace === currentAttempt.workspace &&
+          typeof payload.messageID === "string"
+        )
+      })
+      const changed = changedPaths(currentAttempt.workspace, baseline)
+      if ((head !== baseline || changed.length > 0) && !retainedPrompt) return false
+      git(currentAttempt.workspace, ["merge-base", "--is-ancestor", baseline, head])
+      if (git(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
+      if (scopeViolations(changed, this.store.effectiveWriteScope(currentAttempt.task_id)).length)
+        return false
       return this.integratedPrerequisiteBaseline(prerequisites, baseline) === baseline
     } catch {
       return false
