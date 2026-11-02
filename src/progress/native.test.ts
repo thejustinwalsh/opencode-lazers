@@ -118,6 +118,24 @@ test("registered report tool, hook, native events, and recovery share one record
     const callID = "report-call-1"
     const ctx = makeContext(fixture, {
       events: [
+        {
+          id: "native-step-start",
+          type: "session.step.started",
+          created: 80,
+          data: {
+            sessionID: "ses-accepted",
+            assistantMessageID: "msg-worker-call",
+            agent: "lazers-implementor",
+            model: { providerID: "openai", id: "test-model" },
+            started: 80,
+          },
+        },
+        {
+          id: "native-step-streamed",
+          type: "session.step.streamed",
+          created: 95,
+          data: { sessionID: "ses-accepted", assistantMessageID: "msg-worker-call" },
+        },
         toolEvent("session.tool.called", "native-call", callID),
         toolEvent("session.tool.success", "native-success", callID),
       ],
@@ -199,6 +217,17 @@ test("registered report tool, hook, native events, and recovery share one record
       expect.arrayContaining(["tool-commentary", "native-event", "recovery"]),
     )
     expect(rows.filter((row) => row.call_id === callID)).toHaveLength(1)
+    const step = rows.find((row) => row.kind === "step")!
+    expect(JSON.parse(step.payload)).toMatchObject({
+      status: "streamed",
+      timing: {
+        unit: "unix-epoch-ms",
+        endpoints: {
+          startedAt: { at: 80, source: "native-event" },
+          streamedAt: { at: 95, source: "native-event" },
+        },
+      },
+    })
     expect(comment.payload).not.toContain("private model input field")
     expect(comment.payload).not.toContain("must not be captured as a tool input")
     expect(comment.payload).not.toContain("token fields")
@@ -555,6 +584,9 @@ test("reminder completion stays bound to its claimed attempt, session and messag
       "A concise handoff is needed.",
       "msg_stable_reminder",
     )!
+    const claimedRow = fixture.store
+      .progressFacts([secondAttemptID])
+      .find((fact) => fact.kind === "reminder")!
     fixture.store.atomic((db) =>
       db.query("UPDATE runner_attempts SET state='cancelled' WHERE id=?").run(secondAttemptID),
     )
@@ -563,6 +595,14 @@ test("reminder completion stays bound to its claimed attempt, session and messag
       .progressFacts([secondAttemptID])
       .find((fact) => fact.kind === "reminder")!
     expect(JSON.parse(row.payload).delivery).toBe("admitted")
+    expect(Number.isSafeInteger(claimedRow.recorded_at)).toBe(true)
+    expect(Number.isSafeInteger(row.recorded_at)).toBe(true)
+    expect(row.recorded_at).toBeGreaterThanOrEqual(claimedRow.recorded_at!)
+    expect(recorder.finishReminder(claim, "admitted")).toBe(false)
+    expect(
+      fixture.store.progressFacts([secondAttemptID]).find((fact) => fact.kind === "reminder")!
+        .recorded_at,
+    ).toBe(row.recorded_at)
     const forged = { ...claim, sessionID: "ses-other", attemptID: fixture.attempts[0]!.id }
     expect(recorder.finishReminder(forged, "rejected")).toBe(false)
     expect(

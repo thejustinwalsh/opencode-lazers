@@ -60,6 +60,7 @@ export type ReminderDelivery = "admitted" | "unknown" | "rejected"
 
 type Fact = {
   source: ProgressSource
+  sourceType?: string
   kind: ProgressKind
   dedupeKey: string
   at: number
@@ -82,6 +83,23 @@ type ToolCall = {
 
 type JsonObject = Record<string, unknown>
 
+type TimingSource = "native-event" | "recovery" | "runtime"
+
+type TimingEndpoint = {
+  at: number
+  source: TimingSource
+  sourceType: string
+  meaning: string
+}
+
+const EPOCH_MILLIS = "unix-epoch-ms" as const
+const timingSourceRank: Record<string, number> = {
+  "native-event": 3,
+  recovery: 2,
+  runtime: 2,
+  "tool-hook": 1,
+}
+
 const object = (value: unknown): JsonObject | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
@@ -93,13 +111,37 @@ const number = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined
 
 function dateMillis(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (value === null || value === undefined) return undefined
-  try {
-    return DateTime.toEpochMillis(value as DateTime.DateTime)
-  } catch {
-    return undefined
+  let millis: number
+  if (typeof value === "number" && Number.isFinite(value)) millis = value
+  else {
+    if (value === null || value === undefined) return undefined
+    try {
+      millis = DateTime.toEpochMillis(value as DateTime.DateTime)
+    } catch {
+      return undefined
+    }
   }
+  const integer = Math.trunc(millis)
+  return Number.isSafeInteger(integer) ? integer : undefined
+}
+
+function timedEndpoint(
+  value: unknown,
+  source: TimingSource,
+  sourceType: string,
+  meaning: string,
+): TimingEndpoint | undefined {
+  const at = dateMillis(value)
+  return at === undefined ? undefined : { at, source, sourceType, meaning }
+}
+
+function factTiming(endpoints: Record<string, TimingEndpoint | undefined>) {
+  const present = Object.fromEntries(
+    Object.entries(endpoints).filter((entry): entry is [string, TimingEndpoint] =>
+      Boolean(entry[1]),
+    ),
+  )
+  return Object.keys(present).length ? { unit: EPOCH_MILLIS, endpoints: present } : undefined
 }
 
 function visibleContent(
@@ -179,16 +221,187 @@ function mergeObservations(previous: unknown, incoming: unknown): JsonObject[] {
     const identity =
       text(item.eventID) ??
       `${text(item.source) ?? "unknown"}:${text(item.eventType) ?? "unknown"}:${number(item.at) ?? "unknown"}`
-    unique.set(identity, item)
+    const prior = unique.get(identity)
+    if (!prior || JSON.stringify(item).localeCompare(JSON.stringify(prior)) < 0)
+      unique.set(identity, item)
   }
   return [...unique.values()].slice(-25)
 }
 
 const toolStatusRank: Record<string, number> = {
-  "not-executed": 0,
-  running: 1,
-  succeeded: 2,
+  "input-started": 0,
+  unknown: -1,
+  "not-executed": 1,
+  running: 2,
+  succeeded: 3,
+  failed: 3,
+}
+
+const stepStatusRank: Record<string, number> = {
+  unknown: -1,
+  started: 0,
+  streamed: 1,
+  ended: 2,
   failed: 2,
+}
+
+const shellStatusRank: Record<string, number> = {
+  unknown: -1,
+  running: 0,
+  exited: 2,
+  timeout: 2,
+  killed: 2,
+}
+
+function statusRank(kind: ProgressKind, status: string) {
+  if (kind === "tool") return toolStatusRank[status] ?? -1
+  if (kind === "step") return stepStatusRank[status] ?? -1
+  return shellStatusRank[status] ?? -1
+}
+
+function sourcePriority(value: unknown, fallback = "unknown") {
+  const provenance = object(value)
+  const source = text(provenance?.source) ?? fallback
+  return timingSourceRank[source] ?? 0
+}
+
+function mergeStatus(
+  kind: ProgressKind,
+  previous: JsonObject,
+  incoming: JsonObject,
+): { status: string; provenance: JsonObject } | undefined {
+  const oldStatus = text(previous.status)
+  const nextStatus = text(incoming.status)
+  if (!oldStatus && !nextStatus) return undefined
+  if (!oldStatus)
+    return {
+      status: nextStatus!,
+      provenance: object(incoming.statusProvenance) ?? {},
+    }
+  if (!nextStatus) return { status: oldStatus, provenance: object(previous.statusProvenance) ?? {} }
+
+  const oldRank = statusRank(kind, oldStatus)
+  const nextRank = statusRank(kind, nextStatus)
+  if (oldRank > nextRank)
+    return { status: oldStatus, provenance: object(previous.statusProvenance) ?? {} }
+  if (nextRank > oldRank)
+    return { status: nextStatus, provenance: object(incoming.statusProvenance) ?? {} }
+
+  const oldProvenance = object(previous.statusProvenance) ?? {}
+  const nextProvenance = object(incoming.statusProvenance) ?? {}
+  const oldPriority = sourcePriority(oldProvenance)
+  const nextPriority = sourcePriority(nextProvenance)
+  if (oldPriority > nextPriority) return { status: oldStatus, provenance: oldProvenance }
+  if (nextPriority > oldPriority) return { status: nextStatus, provenance: nextProvenance }
+  if (oldStatus === nextStatus) {
+    const oldSourceType = text(oldProvenance.sourceType) ?? ""
+    const nextSourceType = text(nextProvenance.sourceType) ?? ""
+    return oldSourceType.localeCompare(nextSourceType) <= 0
+      ? { status: oldStatus, provenance: oldProvenance }
+      : { status: nextStatus, provenance: nextProvenance }
+  }
+  // If equally authoritative terminal observations conflict, retain the
+  // conservative failure without depending on which observation arrived last.
+  const terminalRank = kind === "tool" ? 3 : 2
+  if (oldRank === terminalRank && (oldStatus === "failed" || nextStatus === "failed"))
+    return oldStatus === "failed"
+      ? { status: oldStatus, provenance: oldProvenance }
+      : { status: nextStatus, provenance: nextProvenance }
+  return oldStatus.localeCompare(nextStatus) <= 0
+    ? { status: oldStatus, provenance: oldProvenance }
+    : { status: nextStatus, provenance: nextProvenance }
+}
+
+function mergeTiming(previousValue: unknown, incomingValue: unknown): JsonObject | undefined {
+  const previous = object(previousValue)
+  const incoming = object(incomingValue)
+  const previousEndpoints = object(previous?.endpoints) ?? {}
+  const incomingEndpoints = object(incoming?.endpoints) ?? {}
+  const endpoints: JsonObject = { ...previousEndpoints }
+  for (const [key, rawIncoming] of Object.entries(incomingEndpoints)) {
+    const candidate = object(rawIncoming)
+    const candidateAt = dateMillis(candidate?.at)
+    if (
+      !candidate ||
+      candidateAt === undefined ||
+      (candidate.source !== "native-event" &&
+        candidate.source !== "recovery" &&
+        candidate.source !== "runtime")
+    )
+      continue
+    const normalized: JsonObject = { ...candidate, at: candidateAt }
+    const existing = object(endpoints[key])
+    const existingAt = dateMillis(existing?.at)
+    if (!existing || existingAt === undefined) {
+      endpoints[key] = normalized
+      continue
+    }
+    const existingPriority = sourcePriority(existing)
+    const candidatePriority = sourcePriority(normalized)
+    if (candidatePriority > existingPriority) {
+      endpoints[key] = normalized
+      continue
+    }
+    if (candidatePriority < existingPriority) continue
+
+    const starts = new Set([
+      "startedAt",
+      "inputAt",
+      "calledAt",
+      "ranAt",
+      "createdAt",
+      "scheduledAt",
+    ])
+    const preferredAt = starts.has(key)
+      ? Math.min(existingAt, candidateAt)
+      : Math.max(existingAt, candidateAt)
+    if (preferredAt !== existingAt) {
+      endpoints[key] = normalized
+      continue
+    }
+    if (preferredAt !== candidateAt) continue
+    const existingType = text(existing.sourceType) ?? ""
+    const candidateType = text(normalized.sourceType) ?? ""
+    if (candidateType.localeCompare(existingType) < 0) endpoints[key] = normalized
+  }
+  if (!Object.keys(endpoints).length) return undefined
+  return { unit: EPOCH_MILLIS, endpoints }
+}
+
+function mergeExecution(previousValue: unknown, incomingValue: unknown): JsonObject | undefined {
+  const previous = object(previousValue)
+  const incoming = object(incomingValue)
+  if (!previous) return incoming
+  if (!incoming) return previous
+  const oldState = text(previous.status) ?? "unknown"
+  const nextState = text(incoming.status) ?? "unknown"
+  const oldPriority = sourcePriority(previous)
+  const nextPriority = sourcePriority(incoming)
+  if (oldPriority > nextPriority) return previous
+  if (nextPriority > oldPriority) return incoming
+  const phase = (value: JsonObject) => {
+    const sourceType = text(value.sourceType) ?? ""
+    if (sourceType === "session.tool.success" || sourceType === "session.tool.failed") return 2
+    if (sourceType === "session.tool.called") return 1
+    return 0
+  }
+  const oldPhase = phase(previous)
+  const nextPhase = phase(incoming)
+  if (oldPhase > nextPhase) return previous
+  if (nextPhase > oldPhase) return incoming
+  if (oldState === nextState) {
+    return (text(previous.sourceType) ?? "").localeCompare(text(incoming.sourceType) ?? "") <= 0
+      ? previous
+      : incoming
+  }
+  if (oldState === "unknown") return incoming
+  if (nextState === "unknown") return previous
+  return {
+    status: "unknown",
+    source: text(previous.source) ?? text(incoming.source),
+    sourceType: [text(previous.sourceType) ?? "", text(incoming.sourceType) ?? ""].toSorted()[0],
+    meaning: "Execution state is conflicting in equally authoritative native observations",
+  }
 }
 
 function mergeFactPayload(
@@ -199,30 +412,17 @@ function mergeFactPayload(
   const merged = mergeObjects(previous, incoming)
   const observations = mergeObservations(previous.observations, incoming.observations)
   if (observations.length) merged.observations = observations
-  if (kind === "tool") {
-    const oldStatus = text(previous.status)
-    const newStatus = text(incoming.status)
-    if (
-      oldStatus &&
-      newStatus &&
-      (toolStatusRank[oldStatus] ?? -1) > (toolStatusRank[newStatus] ?? -1)
-    )
-      merged.status = oldStatus
+  if (kind === "tool" || kind === "step" || kind === "shell") {
+    const status = mergeStatus(kind, previous, incoming)
+    if (status) {
+      merged.status = status.status
+      merged.statusProvenance = status.provenance
+    }
   }
-  if (kind === "step") {
-    const rank: Record<string, number> = { started: 0, ended: 1, failed: 2 }
-    const oldStatus = text(previous.status)
-    const newStatus = text(incoming.status)
-    if (oldStatus && newStatus && (rank[oldStatus] ?? -1) > (rank[newStatus] ?? -1))
-      merged.status = oldStatus
-  }
-  if (kind === "shell") {
-    const terminal = new Set(["exited", "timeout", "killed"])
-    const oldStatus = text(previous.status)
-    const newStatus = text(incoming.status)
-    if (oldStatus && newStatus && terminal.has(oldStatus) && !terminal.has(newStatus))
-      merged.status = oldStatus
-  }
+  const timing = mergeTiming(previous.timing, incoming.timing)
+  if (timing) merged.timing = timing
+  const execution = mergeExecution(previous.execution, incoming.execution)
+  if (execution) merged.execution = execution
   return merged
 }
 
@@ -350,13 +550,21 @@ export class ProgressRecorder {
 
   private appendIn(db: Database, assignment: ProgressAssignment, fact: Fact): number {
     const directory = this.store.repository.projectDirectory
-    const payload = JSON.stringify(fact.payload)
+    const factAt = dateMillis(fact.at) ?? Date.now()
+    const factPayload = { ...fact.payload }
+    if (text(factPayload.status) && !object(factPayload.statusProvenance))
+      factPayload.statusProvenance = {
+        source: fact.source,
+        sourceType: fact.sourceType ?? fact.kind,
+      }
+    const payload = JSON.stringify(factPayload)
+    const insertedAt = Date.now()
     const inserted = db
       .query(
         `INSERT OR IGNORE INTO runner_progress
-         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
           sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         directory,
@@ -365,7 +573,8 @@ export class ProgressRecorder {
         assignment.taskID,
         assignment.attemptID,
         assignment.sessionID,
-        fact.at,
+        factAt,
+        insertedAt,
         fact.source,
         JSON.stringify([fact.source]),
         fact.kind,
@@ -384,15 +593,18 @@ export class ProgressRecorder {
         {
           seq: number
           at: number
+          recorded_at: number | null
           source: string
           sources_json: string
           kind: string
           event_ids_json: string
+          call_id: string | null
+          message_id: string | null
           payload: string
         },
         [string, string]
       >(
-        "SELECT seq,at,source,sources_json,kind,event_ids_json,payload FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
+        "SELECT seq,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,payload FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
       )
       .get(directory, fact.dedupeKey)
     if (!existing) throw new Error("Progress fact disappeared during append")
@@ -405,32 +617,67 @@ export class ProgressRecorder {
     const nextKind =
       existing.kind === "tool" && fact.kind === "commentary" ? "commentary" : existing.kind
     const cumulative = fact.kind === "usage-snapshot" || fact.kind === "outcome-snapshot"
-    const replaceCumulative = cumulative && fact.at >= existing.at
+    const replaceCumulative = cumulative && factAt >= existing.at
     const nextPayload = cumulative
       ? replaceCumulative
-        ? fact.payload
+        ? factPayload
         : priorPayload
-      : mergeFactPayload(nextKind as ProgressKind, priorPayload, fact.payload)
+      : mergeFactPayload(nextKind as ProgressKind, priorPayload, factPayload)
     const sources = [
       ...new Set([...parseSources(existing.sources_json), existing.source, fact.source]),
-    ]
+    ].toSorted()
     const eventIDs = [
       ...new Set([...parseIDs(existing.event_ids_json), ...(fact.eventID ? [fact.eventID] : [])]),
     ]
-    db.query(
-      `UPDATE runner_progress SET kind=?,payload=?,sources_json=?,event_ids_json=?,
-       call_id=COALESCE(call_id,?),message_id=COALESCE(message_id,?),at=? WHERE seq=?`,
-    ).run(
-      nextKind,
-      JSON.stringify(nextPayload),
-      JSON.stringify(sources),
-      JSON.stringify(eventIDs),
-      fact.callID ?? null,
-      fact.messageID ?? null,
-      replaceCumulative ? fact.at : existing.at,
-      existing.seq,
-    )
+    const nextPayloadText = JSON.stringify(nextPayload)
+    const nextSourcesText = JSON.stringify(sources)
+    const nextEventIDsText = JSON.stringify(eventIDs)
+    const nextCallID = existing.call_id ?? fact.callID ?? null
+    const nextMessageID = existing.message_id ?? fact.messageID ?? null
+    const nextAt = replaceCumulative ? factAt : existing.at
+    const changed =
+      existing.kind !== nextKind ||
+      existing.payload !== nextPayloadText ||
+      existing.sources_json !== nextSourcesText ||
+      existing.event_ids_json !== nextEventIDsText ||
+      existing.call_id !== nextCallID ||
+      existing.message_id !== nextMessageID ||
+      existing.at !== nextAt
+    if (changed) {
+      const recordedAt = Math.max(existing.recorded_at ?? Number.MIN_SAFE_INTEGER, Date.now())
+      db.query(
+        `UPDATE runner_progress SET kind=?,payload=?,sources_json=?,event_ids_json=?,
+         call_id=?,message_id=?,at=?,recorded_at=? WHERE seq=?`,
+      ).run(
+        nextKind,
+        nextPayloadText,
+        nextSourcesText,
+        nextEventIDsText,
+        nextCallID,
+        nextMessageID,
+        nextAt,
+        recordedAt,
+        existing.seq,
+      )
+    }
     return existing.seq
+  }
+
+  private updateProgressPayloadIn(db: Database, seq: number, value: JsonObject): boolean {
+    const row = db
+      .query<{ payload: string; recorded_at: number | null }, [number]>(
+        "SELECT payload,recorded_at FROM runner_progress WHERE seq=?",
+      )
+      .get(seq)
+    if (!row) return false
+    const payload = JSON.stringify(value)
+    if (payload === row.payload) return false
+    const recordedAt = Math.max(row.recorded_at ?? Number.MIN_SAFE_INTEGER, Date.now())
+    return Boolean(
+      db
+        .query("UPDATE runner_progress SET payload=?,recorded_at=? WHERE seq=?")
+        .run(payload, recordedAt, seq).changes,
+    )
   }
 
   private appendForSession(sessionID: string, fact: Fact): number | undefined {
@@ -488,6 +735,7 @@ export class ProgressRecorder {
     }
     return this.appendForSession(call.sessionID, {
       source: "tool-hook",
+      sourceType: "tool-hook.execute.after",
       kind: "tool",
       dedupeKey: `tool:${call.sessionID}:${call.callID}`,
       at: Date.now(),
@@ -504,7 +752,8 @@ export class ProgressRecorder {
     const sessionID = text(data?.sessionID)
     if (!event || !data || !type || !sessionID) return undefined
     const eventID = text(event.id)
-    const at = number(event.created) ?? Date.now()
+    const eventAt = dateMillis(event.created)
+    const at = eventAt ?? Date.now()
     const messageID = text(data.assistantMessageID)
     const stats = privacyStats()
     if (type === "session.synthetic")
@@ -526,14 +775,46 @@ export class ProgressRecorder {
           ? { tool: safeText(text(data.name)!, stats, 160) }
           : {}),
         status:
-          type === "session.tool.input.started" || type === "session.tool.called"
-            ? data.executed === false
-              ? "not-executed"
-              : "running"
-            : type === "session.tool.success"
-              ? "succeeded"
-              : "failed",
+          type === "session.tool.input.started"
+            ? "input-started"
+            : type === "session.tool.called"
+              ? data.executed === false
+                ? "not-executed"
+                : data.executed === true
+                  ? "running"
+                  : "unknown"
+              : type === "session.tool.success"
+                ? "succeeded"
+                : "failed",
       }
+      if (type !== "session.tool.input.started") payload.callStatus = "called"
+      if (typeof data.executed === "boolean")
+        payload.execution = {
+          status: data.executed ? "executed" : "not-executed",
+          source: "native-event",
+          sourceType: type,
+          meaning: "OpenCode executed flag; a tool call is not execution proof",
+        }
+      const toolTiming = factTiming({
+        inputAt:
+          type === "session.tool.input.started"
+            ? timedEndpoint(eventAt, "native-event", type, "OpenCode tool input-started boundary")
+            : undefined,
+        calledAt:
+          type === "session.tool.called"
+            ? timedEndpoint(
+                eventAt,
+                "native-event",
+                type,
+                "OpenCode tool call boundary; distinct from explicit executed status",
+              )
+            : undefined,
+        completedAt:
+          type === "session.tool.success" || type === "session.tool.failed"
+            ? timedEndpoint(eventAt, "native-event", type, "OpenCode tool result terminal boundary")
+            : undefined,
+      })
+      if (toolTiming) payload.timing = toolTiming
       if (type === "session.tool.success" || type === "session.tool.failed") {
         const content = visibleContent(data.content, stats)
         if (content !== undefined) payload.content = content
@@ -548,6 +829,8 @@ export class ProgressRecorder {
           ...(eventID ? { eventID } : {}),
           eventType: type,
           at,
+          unit: EPOCH_MILLIS,
+          meaning: "Native event creation time; not a substitute for an absent tool endpoint",
           status: payload.status,
           messageID: messageID ?? null,
           callID,
@@ -558,6 +841,7 @@ export class ProgressRecorder {
       ]
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "tool",
         dedupeKey: `tool:${sessionID}:${callID}`,
         at,
@@ -568,15 +852,19 @@ export class ProgressRecorder {
       }
     } else if (
       type === "session.step.started" ||
+      type === "session.step.streamed" ||
       type === "session.step.ended" ||
       type === "session.step.failed"
     ) {
       if (!messageID) return undefined
-      const status = type.endsWith("started")
-        ? "started"
-        : type.endsWith("failed")
-          ? "failed"
-          : "ended"
+      const status =
+        type === "session.step.started"
+          ? "started"
+          : type === "session.step.streamed"
+            ? "streamed"
+            : type === "session.step.failed"
+              ? "failed"
+              : "ended"
       const payload: Record<string, unknown> = { status }
       const observedAgent = type === "session.step.started" ? text(data.agent) : undefined
       const model = type === "session.step.started" ? object(data.model) : undefined
@@ -594,10 +882,42 @@ export class ProgressRecorder {
       if (observedAgent) payload.agent = safeText(observedAgent, stats, 200)
       if (route) payload.route = route
       if (type === "session.step.ended" || type === "session.step.failed") {
-        payload.measurementBasis = "additive-step-measurement"
-        payload.usage = measuredUsage(data.tokens, data.cost)
+        if (object(data.tokens) || number(data.cost) !== undefined) {
+          payload.measurementBasis = "additive-step-measurement"
+          payload.usage = measuredUsage(data.tokens, data.cost)
+        }
         if (text(data.finish)) payload.finish = safeText(text(data.finish)!, stats, 80)
       }
+      const stepTiming = factTiming({
+        startedAt:
+          type === "session.step.started"
+            ? timedEndpoint(
+                data.started,
+                "native-event",
+                type,
+                "OpenCode request dispatch time before provider output",
+              )
+            : undefined,
+        streamedAt:
+          type === "session.step.streamed"
+            ? timedEndpoint(
+                eventAt,
+                "native-event",
+                type,
+                "OpenCode provider response-body end before tool settlement",
+              )
+            : undefined,
+        completedAt:
+          type === "session.step.ended" || type === "session.step.failed"
+            ? timedEndpoint(
+                eventAt,
+                "native-event",
+                type,
+                "OpenCode assistant step terminal boundary after tool settlement",
+              )
+            : undefined,
+      })
+      if (stepTiming) payload.timing = stepTiming
       const error = errorView(data.error, stats)
       if (error !== undefined) payload.error = error
       payload.observations = [
@@ -606,17 +926,20 @@ export class ProgressRecorder {
           ...(eventID ? { eventID } : {}),
           eventType: type,
           at,
+          unit: EPOCH_MILLIS,
+          meaning: "Native event creation time; step endpoints are recorded separately",
           status,
           messageID,
           ...(observedAgent ? { agent: safeText(observedAgent, stats, 200) } : {}),
           ...(route ? { route } : {}),
-          ...(type === "session.step.started" && number(data.started) !== undefined
-            ? { startedAt: number(data.started) }
+          ...(type === "session.step.started" && dateMillis(data.started) !== undefined
+            ? { startedAt: dateMillis(data.started) }
             : {}),
         },
       ]
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "step",
         dedupeKey: `step:${sessionID}:${messageID}`,
         at,
@@ -627,6 +950,7 @@ export class ProgressRecorder {
     } else if (type === "session.usage.updated") {
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "usage-snapshot",
         dedupeKey: `usage-snapshot:${sessionID}`,
         at,
@@ -640,16 +964,26 @@ export class ProgressRecorder {
       if (!messageID) return undefined
       const attemptNumber = number(data.attempt)
       const error = errorView(data.error, stats)
+      const retryTiming = factTiming({
+        scheduledAt: timedEndpoint(
+          data.at,
+          "native-event",
+          type,
+          "OpenCode provider retry scheduled time",
+        ),
+      })
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "provider-retry",
         dedupeKey: `retry:${sessionID}:${messageID}:${attemptNumber ?? "unknown"}`,
-        at: number(data.at) ?? at,
+        at: dateMillis(data.at) ?? at,
         eventID,
         messageID,
         payload: {
           ...(attemptNumber !== undefined ? { attempt: attemptNumber } : {}),
           ...(error !== undefined ? { error } : {}),
+          ...(retryTiming ? { timing: retryTiming } : {}),
         },
       }
     } else if (type.startsWith("session.execution.")) {
@@ -661,6 +995,7 @@ export class ProgressRecorder {
       const terminalMessageID = eventID?.replace(/^evt_/, "msg_")
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "execution-outcome",
         dedupeKey:
           outcome !== "started" && terminalMessageID
@@ -688,11 +1023,28 @@ export class ProgressRecorder {
       const shellOutput = text(output?.output)
       if (shellOutput) payload.output = safeText(shellOutput, stats)
       if (output?.truncated === true) payload.truncated = true
+      const shellTime = object(shell.time)
+      const shellTiming = factTiming({
+        startedAt: timedEndpoint(
+          shellTime?.started,
+          "native-event",
+          `${type}.shell.time.started`,
+          "OpenCode shell process start time",
+        ),
+        completedAt: timedEndpoint(
+          shellTime?.completed,
+          "native-event",
+          `${type}.shell.time.completed`,
+          "OpenCode shell process completion time",
+        ),
+      })
+      if (shellTiming) payload.timing = shellTiming
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "shell",
         dedupeKey: `shell:${sessionID}:${shellID}`,
-        at: number(object(shell.time)?.started) ?? at,
+        at: dateMillis(shellTime?.started) ?? at,
         eventID,
         payload,
       }
@@ -701,6 +1053,7 @@ export class ProgressRecorder {
         return undefined
       fact = {
         source: "native-event",
+        sourceType: type,
         kind: "visible-text",
         dedupeKey: `text:${sessionID}:${messageID}:${data.ordinal}`,
         at,
@@ -723,7 +1076,9 @@ export class ProgressRecorder {
         const message = object(raw)
         const messageID = text(message?.id)
         if (!message || !messageID) continue
-        const at = dateMillis(object(message.time)?.created) ?? Date.now()
+        const messageTime = object(message.time)
+        const messageCreatedAt = dateMillis(messageTime?.created)
+        const at = messageCreatedAt ?? Date.now()
         if (message.type === "assistant") {
           const parts = Array.isArray(message.content) ? message.content : []
           for (const [index, rawPart] of parts.entries()) {
@@ -733,6 +1088,7 @@ export class ProgressRecorder {
             if (part.type === "text" && typeof part.text === "string") {
               this.appendIn(db, assignment, {
                 source: "recovery",
+                sourceType: "retained-assistant-message.text",
                 kind: "visible-text",
                 dedupeKey: `text:${sessionID}:${messageID}:${index}`,
                 at,
@@ -745,49 +1101,102 @@ export class ProgressRecorder {
           }
           const tokens = object(message.tokens)
           const messageCost = number(message.cost)
-          if (tokens || messageCost !== undefined) {
+          const streamedAt = dateMillis(messageTime?.streamed)
+          const completedAt = dateMillis(messageTime?.completed)
+          const status = message.error
+            ? "failed"
+            : completedAt !== undefined
+              ? "ended"
+              : streamedAt !== undefined
+                ? "streamed"
+                : messageCreatedAt !== undefined
+                  ? "started"
+                  : "unknown"
+          const assistantTiming = factTiming({
+            startedAt: timedEndpoint(
+              messageTime?.created,
+              "recovery",
+              "retained-assistant-message.time.created",
+              "Retained assistant message start time",
+            ),
+            streamedAt: timedEndpoint(
+              messageTime?.streamed,
+              "recovery",
+              "retained-assistant-message.time.streamed",
+              "Retained assistant provider response-body end before tool settlement",
+            ),
+            completedAt: timedEndpoint(
+              messageTime?.completed,
+              "recovery",
+              "retained-assistant-message.time.completed",
+              "Retained assistant completion after tool settlement",
+            ),
+          })
+          if (assistantTiming || tokens || messageCost !== undefined || message.error) {
+            const payload: Record<string, unknown> = {
+              status,
+              ...(tokens || messageCost !== undefined
+                ? {
+                    measurementBasis: "additive-step-measurement",
+                    usage: measuredUsage(tokens, messageCost),
+                  }
+                : {}),
+              observations: [
+                {
+                  source: "recovery",
+                  eventType: "retained-assistant-message",
+                  at: messageCreatedAt ?? null,
+                  unit: EPOCH_MILLIS,
+                  meaning:
+                    "Retained assistant message creation when available; endpoints are separate",
+                  status,
+                  messageID,
+                },
+              ],
+              ...(assistantTiming ? { timing: assistantTiming } : {}),
+              ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
+            }
             this.appendIn(db, assignment, {
               source: "recovery",
+              sourceType: "retained-assistant-message",
               kind: "step",
               dedupeKey: `step:${sessionID}:${messageID}`,
               at,
               messageID,
-              payload: {
-                status: message.error ? "failed" : "ended",
-                measurementBasis: "additive-step-measurement",
-                usage: measuredUsage(tokens, messageCost),
-                observations: [
-                  {
-                    source: "recovery",
-                    eventType: "retained-assistant-message",
-                    at,
-                    status: message.error ? "failed" : "ended",
-                    messageID,
-                  },
-                ],
-                ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
-              },
+              payload,
             })
           }
           const retry = object(message.retry)
           if (retry) {
             const retryAttempt = number(retry.attempt)
             const error = errorView(retry.error, privacyStats())
+            const retryAt = dateMillis(retry.at)
+            const retryTiming = factTiming({
+              scheduledAt: timedEndpoint(
+                retry.at,
+                "recovery",
+                "retained-assistant-message.retry.at",
+                "Retained provider retry scheduled time",
+              ),
+            })
             this.appendIn(db, assignment, {
               source: "recovery",
+              sourceType: "retained-assistant-message.retry",
               kind: "provider-retry",
               dedupeKey: `retry:${sessionID}:${messageID}:${retryAttempt ?? "unknown"}`,
-              at: number(retry.at) ?? at,
+              at: retryAt ?? at,
               messageID,
               payload: {
                 ...(retryAttempt !== undefined ? { attempt: retryAttempt } : {}),
                 ...(error !== undefined ? { error } : {}),
+                ...(retryTiming ? { timing: retryTiming } : {}),
               },
             })
           }
           if (message.error) {
             this.appendIn(db, assignment, {
               source: "recovery",
+              sourceType: "retained-assistant-message.error",
               kind: "execution-outcome",
               dedupeKey: `assistant-error:${sessionID}:${messageID}`,
               at,
@@ -803,8 +1212,23 @@ export class ProgressRecorder {
           if (shellID) {
             const output = object(message.output)
             const shellOutput = text(output?.output)
+            const shellTiming = factTiming({
+              createdAt: timedEndpoint(
+                messageTime?.created,
+                "recovery",
+                "retained-shell-message.time.created",
+                "Retained shell message creation; not process start",
+              ),
+              completedAt: timedEndpoint(
+                messageTime?.completed,
+                "recovery",
+                "retained-shell-message.time.completed",
+                "Retained shell completion time",
+              ),
+            })
             this.appendIn(db, assignment, {
               source: "recovery",
+              sourceType: "retained-shell-message",
               kind: "shell",
               dedupeKey: `shell:${sessionID}:${shellID}`,
               at,
@@ -818,6 +1242,7 @@ export class ProgressRecorder {
                 ...(number(message.exit) !== undefined ? { exit: number(message.exit) } : {}),
                 ...(shellOutput ? { output: safeText(shellOutput, stats) } : {}),
                 ...(output?.truncated === true ? { truncated: true } : {}),
+                ...(shellTiming ? { timing: shellTiming } : {}),
               },
             })
           }
@@ -828,6 +1253,7 @@ export class ProgressRecorder {
           const error = errorView(message.error, privacyStats())
           this.appendIn(db, assignment, {
             source: "recovery",
+            sourceType: "retained-session-idle-message",
             kind: "execution-outcome",
             dedupeKey: `turn:${sessionID}:${messageID}`,
             at,
@@ -846,6 +1272,7 @@ export class ProgressRecorder {
         if (message.type === "compaction") {
           this.appendIn(db, assignment, {
             source: "recovery",
+            sourceType: "retained-compaction-message",
             kind: "gap",
             dedupeKey: `compaction-gap:${sessionID}:${messageID}`,
             at,
@@ -890,30 +1317,64 @@ export class ProgressRecorder {
     if (!toolID) return
     const state = object(part.state)
     const status = text(state?.status)
+    const executed = typeof part.executed === "boolean" ? part.executed : undefined
     const stats = privacyStats()
-    const payload: Record<string, unknown> = {
-      ...(text(part.name) ? { tool: safeText(text(part.name)!, stats, 160) } : {}),
-      status:
-        status === "completed"
+    const projectedStatus =
+      executed === false
+        ? "not-executed"
+        : status === "completed"
           ? "succeeded"
           : status === "error"
             ? "failed"
             : status === "running" || status === "streaming"
               ? "running"
-              : "not-executed",
+              : "unknown"
+    const partTime = object(part.time)
+    const timing = factTiming({
+      inputAt: timedEndpoint(
+        partTime?.created,
+        "recovery",
+        "retained-assistant-tool.time.created",
+        "Retained assistant tool input creation boundary",
+      ),
+      calledAt: timedEndpoint(
+        partTime?.ran,
+        "recovery",
+        "retained-assistant-tool.time.ran",
+        "Retained assistant tool call boundary; not proof that the tool executed",
+      ),
+      completedAt: timedEndpoint(
+        partTime?.completed,
+        "recovery",
+        "retained-assistant-tool.time.completed",
+        "Retained assistant tool result terminal boundary",
+      ),
+    })
+    const payload: Record<string, unknown> = {
+      ...(text(part.name) ? { tool: safeText(text(part.name)!, stats, 160) } : {}),
+      status: projectedStatus,
+      ...(dateMillis(partTime?.ran) !== undefined || executed !== undefined
+        ? { callStatus: "called" }
+        : {}),
+      ...(typeof executed === "boolean"
+        ? {
+            execution: {
+              status: executed ? "executed" : "not-executed",
+              source: "recovery",
+              sourceType: "retained-assistant-tool.executed",
+              meaning: "Retained explicit executed flag; timing alone is not execution proof",
+            },
+          }
+        : {}),
+      ...(timing ? { timing } : {}),
       observations: [
         {
           source: "recovery",
           eventType: "retained-tool-message",
-          at,
-          status:
-            status === "completed"
-              ? "succeeded"
-              : status === "error"
-                ? "failed"
-                : status === "running" || status === "streaming"
-                  ? "running"
-                  : "not-executed",
+          at: null,
+          unit: EPOCH_MILLIS,
+          meaning: "Retained tool state; timing endpoints are separate",
+          status: projectedStatus,
           messageID,
           ...(text(part.name) ? { tool: safeText(text(part.name)!, stats, 160) } : {}),
         },
@@ -929,6 +1390,7 @@ export class ProgressRecorder {
     }
     this.appendIn(db, assignment, {
       source: "recovery",
+      sourceType: "retained-assistant-tool",
       kind: "tool",
       dedupeKey: `tool:${assignment.sessionID}:${toolID}`,
       at,
@@ -1025,12 +1487,29 @@ export class ProgressRecorder {
       typeof result.artifact === "string" &&
       result.inputIdentity === result.artifact
     const passed = exitCode === 0 && timedOut === false && unchanged === true && identityMatches
+    const startedAt = dateMillis(result.startedAt)
+    const endedAt = dateMillis(result.endedAt)
+    const timing = factTiming({
+      startedAt: timedEndpoint(
+        result.startedAt,
+        "runtime",
+        "verification.receipt.startedAt",
+        "LAZERS verification command start time",
+      ),
+      completedAt: timedEndpoint(
+        result.endedAt,
+        "runtime",
+        "verification.receipt.endedAt",
+        "LAZERS verification command completion time",
+      ),
+    })
     return this.store.atomic((db) =>
       this.appendIn(db, assignment, {
         source: "runtime",
+        sourceType: "verification.receipt",
         kind: "verification",
         dedupeKey: `verification:${attemptID}:${effectID}`,
-        at: number(result.endedAt) ?? Date.now(),
+        at: endedAt ?? Date.now(),
         payload: {
           checkID: text(result.id) ?? "unknown",
           result: passed ? "passed" : "failed",
@@ -1041,8 +1520,9 @@ export class ProgressRecorder {
           ...(text(result.command)
             ? { command: safeText(text(result.command)!, privacyStats()) }
             : {}),
-          startedAt: number(result.startedAt) ?? null,
-          endedAt: number(result.endedAt) ?? null,
+          startedAt,
+          endedAt,
+          ...(timing ? { timing } : {}),
         },
       }),
     )
@@ -1256,10 +1736,7 @@ export class ProgressRecorder {
       payload.deliveryAttempt = claim.attemptNumber
       if (error !== undefined) payload.deliveryError = safeError(error, privacyStats())
       else if (status === "admitted") delete payload.deliveryError
-      db.query("UPDATE runner_progress SET payload=? WHERE seq=?").run(
-        JSON.stringify(payload),
-        row.seq,
-      )
+      this.updateProgressPayloadIn(db, row.seq, payload)
       return true
     })
   }
@@ -1311,31 +1788,49 @@ export class ProgressRecorder {
       claim.ownership.lazersTaskID !== assignment.taskID
     )
       return undefined
-    const changed = db
-      .query(
-        `UPDATE runner_progress_reminders SET status=?,updated_at=?
-         WHERE attempt_id=? AND session_id=? AND message_id=? AND ownership_json=?
-           AND status IN ('dispatching','unknown','admitted')`,
+    const nextStatus = claim.status === "admitted" && status === "unknown" ? "admitted" : status
+    const existingProgress = db
+      .query<{ seq: number; payload: string }, [string, string, string, string]>(
+        "SELECT seq,payload FROM runner_progress WHERE project_directory=? AND attempt_id=? AND dedupe_key=? AND message_id=?",
       )
-      .run(
-        status,
-        Date.now(),
-        attemptID,
-        sessionID,
-        messageID,
-        JSON.stringify(claim.ownership),
-      ).changes
-    if (!changed) return undefined
+      .get(this.store.repository.projectDirectory, attemptID, `reminder:${attemptID}`, messageID)
+    if (!existingProgress) return undefined
+    let previousPayload: JsonObject = {}
+    try {
+      previousPayload = object(JSON.parse(existingProgress.payload)) ?? {}
+    } catch {
+      // The safe current projection will repair malformed legacy JSON below.
+    }
+    const previousAt = number(previousPayload.reconciledAt)
+    const reconciledAt =
+      previousPayload.delivery === nextStatus && previousAt !== undefined ? previousAt : at
+    if (claim.status !== nextStatus) {
+      const changed = db
+        .query(
+          `UPDATE runner_progress_reminders SET status=?,updated_at=?
+           WHERE attempt_id=? AND session_id=? AND message_id=? AND ownership_json=?
+             AND status IN ('dispatching','unknown','admitted')`,
+        )
+        .run(
+          nextStatus,
+          Date.now(),
+          attemptID,
+          sessionID,
+          messageID,
+          JSON.stringify(claim.ownership),
+        ).changes
+      if (!changed) return undefined
+    }
     const sequence = this.appendIn(db, assignment, {
       source: eventID ? "native-event" : "recovery",
       kind: "reminder",
       dedupeKey: `reminder:${attemptID}`,
-      at,
+      at: reconciledAt,
       ...(eventID ? { eventID } : {}),
       messageID,
       payload: {
-        delivery: status,
-        reconciledAt: at,
+        delivery: nextStatus,
+        reconciledAt,
         ...(eventID ? { nativeEventID: eventID } : {}),
       },
     })
@@ -1345,10 +1840,7 @@ export class ProgressRecorder {
     if (row) {
       const payload = object(JSON.parse(row.payload)) ?? {}
       delete payload.deliveryError
-      db.query("UPDATE runner_progress SET payload=? WHERE seq=?").run(
-        JSON.stringify(payload),
-        sequence,
-      )
+      this.updateProgressPayloadIn(db, sequence, payload)
     }
     return sequence
   }

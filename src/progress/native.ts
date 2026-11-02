@@ -18,6 +18,7 @@ const NATIVE_EVENT_TYPES = [
   "session.execution.interrupted",
   "session.synthetic",
   "session.step.started",
+  "session.step.streamed",
   "session.step.ended",
   "session.step.failed",
   "session.text.ended",

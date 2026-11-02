@@ -371,11 +371,16 @@ function loadRadarSource(
        WHERE plan_id IN (${placeholders}) ORDER BY rowid LIMIT 10001`,
     )
     .all(...planIDs)
+  const hasRecordedAt = db
+    .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
+    .all()
+    .some((column) => column.name === "recorded_at")
+  const recordedAtColumn = hasRecordedAt ? "g.recorded_at" : "NULL AS recorded_at"
   const progressRows = db
     .query<ProgressRow, (string | number)[]>(
       `WITH scoped AS (
          SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
-                g.session_id,g.at,g.source,g.sources_json,g.kind,g.event_ids_json,g.call_id,
+                 g.session_id,g.at,${recordedAtColumn},g.source,g.sources_json,g.kind,g.event_ids_json,g.call_id,
                 g.message_id,g.dedupe_key,g.payload,
                  (SELECT MAX(
                     CASE WHEN observation.type='object' THEN
@@ -399,7 +404,7 @@ function loadRadarSource(
            FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
           WHERE p.project_directory=? AND g.plan_id IN (${placeholders})
        )
-       SELECT seq,project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,
+        SELECT seq,project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,
               source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload
          FROM scoped
         ORDER BY max(at, COALESCE(observed_at,at)) DESC, seq DESC
