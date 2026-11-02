@@ -94,7 +94,10 @@ Current returns and active work:
   not establish this completion. Root `1a5b2a8` adds timestamped automatic producer
   diagnostics, 61 tests/293 assertions plus quality checks passing. Investigate
   the next real completion; no fabricated idle reports or worker replay.
-  Review the returned all-process-environment hash freshness gate before landing.
+  Root review also found a native optional-field/detail-read guard that always
+  rejects adoption, a global active-worker veto, and an unqualified whole-Main
+  scope comparison, plus the all-environment hash gate. Returned source is not
+  cleared; see the linked review before integration.
   [Failure, diagnostics and review concern](evidence/native-liveness/20261102-idle-producer-trace.md).
 - LZ-67 Models authority task `1baed348-eaa5-418c-b231-8866f930b63e` is running
   in plan `67f3790e-17a9-4cf3-97bf-c21eef98a3ca`, attempt
@@ -102,6 +105,12 @@ Current returns and active work:
   `ses_226e542b12a047dd973a6c3be0bc479e`. OpenAI Luna Max route and distinct native
   worktree verified; no pending permissions/inbox at 1793639403029. Baseline
   `cac3918`; preserve later Root producer diagnostics during integration.
+
+Root `ec2b48c` fixes the unrelated probe reopen test's timestamp-tie ordering
+assumption: both independent receipts must survive, UUID order is irrelevant.
+Six probe tests/71 assertions and quality checks pass. LZ-65 observed the old
+failure twice; its retained baseline needs this correction during integration
+rather than treating it as a resource production defect.
 
 Root `cac3918` adds one concise Architect sentence for readable status reasons.
 Subsequent native command reasons are readable; old reasons remain history.
