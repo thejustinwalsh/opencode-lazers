@@ -2650,7 +2650,10 @@ export class TaskRuntime {
     return combineArtifacts(this.directory, input.baseCommit, artifacts as string[])
   }
 
-  private integratedPrerequisiteBaseline(prerequisites: string[]): string | undefined {
+  private integratedPrerequisiteBaseline(
+    prerequisites: string[],
+    candidateBaseline?: string,
+  ): string | undefined {
     if (!prerequisites.length || new Set(prerequisites).size !== prerequisites.length)
       return undefined
 
@@ -2694,7 +2697,8 @@ export class TaskRuntime {
 
     let baseline: string
     try {
-      baseline = git(this.directory, ["rev-parse", "HEAD"])
+      baseline = candidateBaseline ?? git(this.directory, ["rev-parse", "HEAD"])
+      if (git(this.directory, ["rev-parse", `${baseline}^{commit}`]) !== baseline) return undefined
     } catch {
       return undefined
     }
@@ -2920,6 +2924,30 @@ export class TaskRuntime {
     return true
   }
 
+  private promptAdmissionAllowed(planID: string, attempt: AttemptRow) {
+    const plan = this.store.plan(planID)
+    const currentAttempt = this.store
+      .attempts(planID)
+      .find((candidate) => candidate.id === attempt.id)
+    if (
+      plan?.state !== "running" ||
+      currentAttempt?.state !== "preparing" ||
+      !this.preparationAllowed(currentAttempt)
+    )
+      return false
+
+    const prerequisites = PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? []
+    if (!prerequisites.length) return true
+
+    try {
+      const baseline = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
+      if (!isCommitID(baseline) || baseline !== currentAttempt.base_commit) return false
+      return this.integratedPrerequisiteBaseline(prerequisites, baseline) === baseline
+    } catch {
+      return false
+    }
+  }
+
   private observeUsage(attempt: AttemptRow, session: HostSession, fence: number) {
     this.store.fenced(this.owner, fence, (db) =>
       db
@@ -2943,11 +2971,10 @@ export class TaskRuntime {
   }
 
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    if (!this.preparationAllowed(attempt)) return
+    if (!this.promptAdmissionAllowed(plan.id, attempt)) return
     const existing = this.store.effects(plan.id)
     if (!existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")) {
-      if (this.store.plan(plan.id)?.state !== "running") return
-      if (!this.preparationAllowed(attempt)) return
+      if (!this.promptAdmissionAllowed(plan.id, attempt)) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -2980,8 +3007,7 @@ export class TaskRuntime {
           JSON.parse(e.payload).messageID === attempt.message_id,
       )
     ) {
-      if (this.store.plan(plan.id)?.state !== "running") return
-      if (!this.preparationAllowed(attempt)) return
+      if (!this.promptAdmissionAllowed(plan.id, attempt)) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -4386,7 +4412,31 @@ export class TaskRuntime {
     }
   }
 
+  private abandonCleanupEffect(effect: EffectRow, fence: number) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const plan = db
+        .query<{ state: string }, [string]>("SELECT state FROM runner_plans WHERE id=?")
+        .get(effect.plan_id)
+      if (plan?.state === "cleaning") return
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state='failed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+        )
+        .run(
+          JSON.stringify({ notSent: true, reason: "Cleanup was superseded before removal" }),
+          effect.id,
+        ).changes
+      if (changed)
+        this.store.record(effect.plan_id, null, "EFFECT_NOT_SENT", {
+          effectID: effect.id,
+          kind: effect.kind,
+          reason: "Cleanup was superseded before removal",
+        })
+    })
+  }
   private async cleanupWorktrees(plan: PlanRow, fence: number) {
+    const cleanupCurrent = () => this.store.plan(plan.id)?.state === "cleaning"
+    if (!cleanupCurrent()) return
     const owned = [
       ...new Set(
         this.store
@@ -4413,8 +4463,13 @@ export class TaskRuntime {
               entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
           ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
+      let removalStarted = false
       try {
         const listed = await this.host.worktrees()
+        if (!cleanupCurrent()) {
+          this.abandonCleanupEffect(effect, fence)
+          return
+        }
         if (listed.includes(workspace)) {
           const sourceEffect = this.store.effects(plan.id).find((entry) => {
             if (
@@ -4436,6 +4491,10 @@ export class TaskRuntime {
           if (!sourceEffect)
             throw new Error("Owned worktree has no completed creation receipt; preserve it")
           await this.assertWorktreeQuiescent(plan, sourceEffect, workspace)
+          if (!cleanupCurrent()) {
+            this.abandonCleanupEffect(effect, fence)
+            return
+          }
           if (git(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
           const head = git(workspace, ["rev-parse", "HEAD"])
@@ -4444,24 +4503,35 @@ export class TaskRuntime {
           } catch {
             throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
           }
+          removalStarted = true
           await this.host.removeWorktree(workspace)
         } else if (existsSync(workspace))
           throw new Error(
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )
         this.receipt(effect, { workspace, removed: true, native: true }, fence)
+        if (!cleanupCurrent()) return
       } catch (error) {
         const reason = errorText(error)
+        if (!cleanupCurrent() && !removalStarted) {
+          this.abandonCleanupEffect(effect, fence)
+          return
+        }
+        let blocked = false
         this.store.fenced(this.owner, fence, (db) => {
           db.query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?").run(
             JSON.stringify({ error: reason }),
             effect.id,
           )
-          db.query(
-            "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=?",
-          ).run(reason, plan.id)
-          this.store.record(plan.id, null, "CLEANUP_BLOCKED", { workspace, reason })
+          blocked =
+            db
+              .query(
+                "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state='cleaning'",
+              )
+              .run(reason, plan.id).changes === 1
+          if (blocked) this.store.record(plan.id, null, "CLEANUP_BLOCKED", { workspace, reason })
         })
+        if (!blocked) return
         this.outcome(
           plan.id,
           {
@@ -4475,15 +4545,21 @@ export class TaskRuntime {
         return
       }
     }
+    let integrated = false
     this.store.fenced(this.owner, fence, (db) => {
-      db.query(
-        "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=?",
-      ).run(plan.id)
-      this.store.record(plan.id, null, "WORKTREES_RECONCILED", {
-        directories: owned,
-        artifact: plan.artifact,
-      })
+      integrated =
+        db
+          .query(
+            "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=? AND state='cleaning'",
+          )
+          .run(plan.id).changes === 1
+      if (integrated)
+        this.store.record(plan.id, null, "WORKTREES_RECONCILED", {
+          directories: owned,
+          artifact: plan.artifact,
+        })
     })
+    if (!integrated) return
     this.outcome(
       plan.id,
       { status: "integrated", artifact: plan.artifact, worktreesRemoved: owned },

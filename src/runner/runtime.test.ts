@@ -1689,6 +1689,27 @@ async function acceptAndIntegratePlan(
   await recordPlanIntegration(f, planID, options)
   return accepted
 }
+async function prepareAfterPlanDependency(
+  f: ReturnType<typeof fixture>,
+  requestID: string,
+  priority = 10,
+) {
+  const parentID = f.receipt.planID
+  const childTask = f.createTask("b", "b.txt")
+  const child = f.store.submit(
+    {
+      ...f.inputFor([childTask], { requestID }),
+      afterPlans: [parentID],
+      priority,
+    },
+    "owner",
+  )
+  await runPlan(f, child.planID, `${requestID}-run`)
+  const accepted = await acceptPlan(f, parentID)
+  includeArtifact(f, accepted.plan.artifact!)
+  await recordPlanIntegration(f, parentID)
+  return { parentID, child, accepted }
+}
 async function cancelUnstartedPlan(f: ReturnType<typeof fixture>, planID = f.receipt.planID) {
   await runPlan(f, planID, `run-${planID}`)
   const plan = f.store.plan(planID)!
@@ -4449,6 +4470,350 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
     expect(childAttempt.workspace).not.toBe(accepted.attempt.workspace)
     expect(childAttempt.base_commit).toBe(accepted.plan.artifact!)
   }
+})
+
+test("afterPlans cleanup cannot publish over cancellation or reuse the historical integration proof", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-cleanup", -10)
+  const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
+  writeFileSync(sentinel, "still owned")
+  const originalSession = f.host.session
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  f.host.session = async (id, options) => {
+    if (id === accepted.attempt.session_id && options?.messages) {
+      enter()
+      await blocked
+    }
+    return originalSession(id, options)
+  }
+
+  const cleanup = f.runtime.tick()
+  await entered
+  await f.runtime.command(
+    {
+      requestID: "cancel-during-cleanup",
+      planID: parentID,
+      expectedVersion: f.store.plan(parentID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  release()
+  await cleanup
+
+  expect(f.store.plan(parentID)?.state).toBe("cancelling")
+  expect(f.store.plan(parentID)?.artifact).toBe(accepted.plan.artifact)
+  expect(
+    f.store.latestTransition<{ artifact?: string }>(parentID, null, "INTEGRATION_RECORDED")
+      ?.artifact,
+  ).toBe(accepted.plan.artifact!)
+  expect(f.store.attempts(child.planID)).toHaveLength(0)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(existsSync(accepted.attempt.workspace)).toBe(true)
+  expect(readFileSync(sentinel, "utf8")).toBe("still owned")
+  expect(await f.host.worktrees()).toContain(accepted.attempt.workspace)
+
+  await f.runtime.tick()
+  expect(f.store.plan(parentID)?.state).toBe("cancelled")
+  expect(f.store.attempts(child.planID)).toHaveLength(0)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+})
+
+test("afterPlans invalidation during child worktree creation keeps the owned workspace and suppresses prompt admission", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-worktree")
+  const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
+  writeFileSync(sentinel, "still owned")
+  const originalWorktree = f.host.worktree
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  f.host.worktree = async (input) => {
+    if (input.base === accepted.plan.artifact) {
+      enter()
+      await blocked
+    }
+    return originalWorktree(input)
+  }
+
+  const dispatch = f.runtime.tick()
+  await entered
+  await f.runtime.command(
+    {
+      requestID: "cancel-parent-during-child-worktree",
+      planID: parentID,
+      expectedVersion: f.store.plan(parentID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  release()
+  await dispatch
+
+  const attempt = f.store.attempts(child.planID)[0]!
+  expect(f.store.attempts(child.planID)).toHaveLength(1)
+  expect(attempt.state).toBe("preparing")
+  expect(attempt.base_commit).toBe(accepted.plan.artifact!)
+  expect(existsSync(attempt.workspace)).toBe(true)
+  expect(f.store.effects(child.planID).find((effect) => effect.kind === "worktree")?.state).toBe(
+    "completed",
+  )
+  expect(f.store.effects(child.planID).some((effect) => effect.kind === "session")).toBe(false)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(readFileSync(sentinel, "utf8")).toBe("still owned")
+  expect(await f.host.worktrees()).toContain(accepted.attempt.workspace)
+  expect(await f.host.worktrees()).toContain(attempt.workspace)
+
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(child.planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(existsSync(attempt.workspace)).toBe(true)
+})
+
+test("cancelling a child during session creation prevents prompt intent and preserves owned resources", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const { child, accepted } = await prepareAfterPlanDependency(f, "cancel-session")
+  const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
+  writeFileSync(sentinel, "still owned")
+  const originalCreate = f.host.create
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  f.host.create = async (input) => {
+    enter()
+    await blocked
+    await originalCreate(input)
+  }
+
+  const preparation = f.runtime.tick()
+  await entered
+  await f.runtime.command(
+    {
+      requestID: "cancel-child-during-session-create",
+      planID: child.planID,
+      expectedVersion: f.store.plan(child.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  release()
+  await preparation
+
+  const attempt = f.store.attempts(child.planID)[0]!
+  expect(f.store.plan(child.planID)?.state).toBe("cancelling")
+  expect(attempt.state).toBe("preparing")
+  expect(f.store.effects(child.planID).find((effect) => effect.kind === "session")?.state).toBe(
+    "completed",
+  )
+  expect(f.store.effects(child.planID).some((effect) => effect.kind === "prompt")).toBe(false)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(2)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(existsSync(attempt.workspace)).toBe(true)
+  expect(f.sessions.has(attempt.session_id)).toBe(true)
+  expect(readFileSync(sentinel, "utf8")).toBe("still owned")
+
+  await f.runtime.tick()
+  expect(f.store.plan(child.planID)?.state).toBe("cancelled")
+  expect(f.store.attempts(child.planID)).toHaveLength(1)
+  expect(existsSync(attempt.workspace)).toBe(true)
+})
+
+test("afterPlans invalidation during retained preparation reconciliation blocks the later prompt", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const { parentID, child, accepted } = await prepareAfterPlanDependency(f, "cancel-reconcile")
+  const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
+  writeFileSync(sentinel, "still owned")
+  const originalCreate = f.host.create
+  let createCalls = 0
+  f.host.create = async (input) => {
+    createCalls++
+    await originalCreate(input)
+    throw new Error("session creation reply lost")
+  }
+  await f.runtime.tick()
+  const attempt = f.store.attempts(child.planID)[0]!
+  expect(f.store.plan(parentID)?.state).toBe("cleanup-blocked")
+  expect(f.store.plan(child.planID)?.state).toBe("blocked")
+  expect(attempt.state).toBe("preparing")
+  expect(f.store.effects(child.planID).find((effect) => effect.kind === "session")?.state).toBe(
+    "uncertain",
+  )
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+
+  const originalSession = f.host.session
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  f.host.session = async (id, options) => {
+    if (id === attempt.session_id && !options?.messages) {
+      enter()
+      await blocked
+    }
+    return originalSession(id, options)
+  }
+  const reconciliation = f.runtime.tick()
+  await entered
+  // Cleanup-blocked is terminal for the current command contract. Model a
+  // newer durable cancellation invalidation while the retained effect is read.
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='cancelled',reason=?,version=version+1 WHERE id=?").run(
+      "Cancellation requested",
+      parentID,
+    )
+    f.store.record(parentID, null, "CANCEL_REQUESTED", {
+      caller: "owner",
+      phase: "retained-preparation-reconciliation",
+    })
+  })
+  release()
+  await reconciliation
+  expect(f.store.effects(child.planID).find((effect) => effect.kind === "session")?.state).toBe(
+    "completed",
+  )
+  expect(createCalls).toBe(1)
+
+  await f.runtime.command(
+    {
+      requestID: "resume-retained-child",
+      planID: child.planID,
+      expectedVersion: f.store.plan(child.planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+
+  expect(f.store.attempts(child.planID)).toHaveLength(1)
+  expect(f.store.attempts(child.planID)[0]?.state).toBe("preparing")
+  expect(f.store.effects(child.planID).some((effect) => effect.kind === "prompt")).toBe(false)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(2)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(existsSync(attempt.workspace)).toBe(true)
+  expect(f.sessions.has(attempt.session_id)).toBe(true)
+  expect(readFileSync(sentinel, "utf8")).toBe("still owned")
+})
+
+test("afterPlans dispatches after genuine combined-check recovery while preserving failed receipts", async () => {
+  const f = fixture({
+    independent: true,
+    delayed: true,
+    commit: true,
+    requireVerifierPreparation: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const parentID = f.receipt.planID
+  const childTask = f.createTask("b", "b.txt")
+  const child = f.store.submit(
+    {
+      ...f.inputFor([childTask], { requestID: "recovered-child" }),
+      afterPlans: [parentID],
+      priority: 10,
+    },
+    "owner",
+  )
+  await runPlan(f, child.planID, "run-recovered-child")
+  await runPlan(f, parentID, "run-recovered-parent")
+  await f.runtime.tick()
+  const parentAttempt = f.store.attempts(parentID)[0]!
+  f.completeWorker(parentAttempt.session_id)
+  await drive(f.runtime, 6)
+
+  expect(f.store.plan(parentID)?.state).toBe("blocked")
+  expect(f.store.attempts(child.planID)).toHaveLength(0)
+  const failedReceipt = f.store
+    .effects(parentID)
+    .find((effect) => effect.kind === "graph-verify:combined")!
+  expect(JSON.parse(failedReceipt.receipt!).check.exitCode).not.toBe(0)
+  const failedReceiptSnapshot = [failedReceipt.id, failedReceipt.state, failedReceipt.receipt]
+
+  writeFileSync(join(dirname(f.repository.path), "verifier-ready"), "repaired environment")
+  await f.runtime.command(
+    {
+      requestID: "reconcile-genuine-parent",
+      planID: parentID,
+      expectedVersion: f.store.plan(parentID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 6)
+  const accepted = f.store.plan(parentID)!
+  expect(accepted.state).toBe("accepted")
+  const recoveredArtifact = accepted.artifact
+  if (!recoveredArtifact) throw new Error("Expected genuine combined acceptance artifact")
+  const acceptedTransition = f.store.latestTransition<{ artifact: string; checks: CheckReceipt[] }>(
+    parentID,
+    null,
+    "PLAN_ACCEPTED",
+  )!
+  expect(acceptedTransition.artifact).toBe(recoveredArtifact)
+  expect(acceptedTransition.checks.every((check) => check.exitCode === 0)).toBe(true)
+  expect(f.store.effects(parentID).find((effect) => effect.id === failedReceipt.id)).toMatchObject({
+    id: failedReceiptSnapshot[0],
+    state: failedReceiptSnapshot[1],
+    receipt: failedReceiptSnapshot[2],
+  })
+
+  includeArtifact(f, recoveredArtifact)
+  await recordPlanIntegration(f, parentID)
+  const parentSentinel = join(parentAttempt.workspace, "keep-owned-worktree.txt")
+  writeFileSync(parentSentinel, "still owned")
+  await f.runtime.tick()
+
+  expect(f.store.plan(parentID)?.state).toBe("cleanup-blocked")
+  const childAttempt = f.store.attempts(child.planID)[0]!
+  expect(childAttempt.state).toBe("running")
+  expect(childAttempt.base_commit).toBe(recoveredArtifact)
+  expect(readFileSync(join(childAttempt.workspace, "a.txt"), "utf8")).toBe("a")
+  expect(readFileSync(parentSentinel, "utf8")).toBe("still owned")
+  expect(f.events.some((event) => event.startsWith("prompt:"))).toBe(true)
+  expect(f.store.effects(parentID).find((effect) => effect.id === failedReceipt.id)).toMatchObject({
+    id: failedReceiptSnapshot[0],
+    state: failedReceiptSnapshot[1],
+    receipt: failedReceiptSnapshot[2],
+  })
 })
 
 test("afterPlans rejects task-only, missing, malformed, mismatched and foreign integration evidence", async () => {
