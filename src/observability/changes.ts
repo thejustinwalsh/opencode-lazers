@@ -30,70 +30,16 @@ export function sourceStampFromDatabase(
       "SELECT COALESCE(MAX(id),0) AS version FROM task_changes WHERE project_directory=?",
     )
     .get(projectDirectory)!.version
-  const source = {
-    tasks: db
-      .query("SELECT id,created_version,body FROM tasks WHERE project_directory=? ORDER BY rowid")
-      .all(projectDirectory),
-    dispositions: db
-      .query(
-        "SELECT task_id,payload,disposition,reason FROM task_dispositions WHERE project_directory=? ORDER BY id",
+  const revision =
+    db
+      .query<{ revision: number }, [string]>(
+        "SELECT revision FROM observation_revisions WHERE project_directory=?",
       )
-      .all(projectDirectory),
-    plans: db
-      .query(
-        "SELECT id,owner,revision,version,state,body,reason,artifact FROM runner_plans WHERE project_directory=? ORDER BY rowid",
-      )
-      .all(projectDirectory),
-    nodes: db
-      .query(
-        "SELECT n.plan_id,n.task_id,n.ordinal,n.state,n.version,n.reason,n.artifact,n.snapshot,n.machine_version FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=? ORDER BY p.rowid,n.ordinal",
-      )
-      .all(projectDirectory),
-    dependencies: db
-      .query(
-        "SELECT d.plan_id,d.prerequisite,d.successor FROM runner_dependencies d JOIN runner_plans p ON p.id=d.plan_id WHERE p.project_directory=? ORDER BY d.plan_id,d.prerequisite,d.successor",
-      )
-      .all(projectDirectory),
-    attempts: db
-      .query(
-        "SELECT a.id,a.plan_id,a.task_id,a.number,a.session_id,a.state,a.started_at,a.token_count,a.tool_count,a.retry_count,a.cost,a.artifact,a.policy FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE p.project_directory=? ORDER BY a.started_at,a.number",
-      )
-      .all(projectDirectory),
-    effects: db
-      .query(
-        "SELECT e.id,e.plan_id,e.task_id,e.attempt_id,e.kind,e.state,e.payload,e.receipt,e.fence FROM runner_effects e JOIN runner_plans p ON p.id=e.plan_id WHERE p.project_directory=? ORDER BY e.rowid",
-      )
-      .all(projectDirectory),
-    continuations: db
-      .query(
-        `SELECT c.plan_id,c.session_id,c.parent_id,c.directory,c.model,c.generation
-         FROM runner_continuations c JOIN runner_plans p ON p.id=c.plan_id
-         WHERE p.project_directory=? ORDER BY c.plan_id`,
-      )
-      .all(projectDirectory),
-    outbox: db
-      .query(
-        `SELECT o.id,o.plan_id,o.session_id,o.message_id,o.payload,o.state,o.resume,o.metadata,o.receipt
-         FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
-         WHERE p.project_directory=? ORDER BY o.rowid`,
-      )
-      .all(projectDirectory),
-    progress: db
-      .query(
-        `SELECT seq,plan_id,task_id,attempt_id,session_id,at,source,sources_json,kind,
-                event_ids_json,call_id,message_id,dedupe_key,payload
-         FROM runner_progress WHERE project_directory=? ORDER BY seq`,
-      )
-      .all(projectDirectory),
-    transitions: db
-      .query(
-        "SELECT t.id,t.plan_id,t.task_id,t.version,t.event,t.payload,t.created_at FROM runner_transitions t JOIN runner_plans p ON p.id=t.plan_id WHERE p.project_directory=? ORDER BY t.id",
-      )
-      .all(projectDirectory),
-  }
+      .get(projectDirectory)?.revision ?? 0
+
   return {
     repositoryVersion,
-    sourceFingerprint: createHmac("sha256", secret).update(JSON.stringify(source)).digest("hex"),
+    sourceFingerprint: createHmac("sha256", secret).update(String(revision)).digest("hex"),
     sessionIDs: associatedSessionIDs(db, projectDirectory),
   }
 }

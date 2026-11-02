@@ -185,6 +185,9 @@ test("legacy delivered outbox schema migrates across an actual close and reopen 
       "msg_legacy_outbox",
       JSON.stringify({ planID: plan.planID, status: "accepted" }),
     )
+    // Reconstruct the historical table before observation triggers existed.
+    for (const event of ["INSERT", "UPDATE", "DELETE"])
+      db.exec(`DROP TRIGGER observation_revision_runner_outbox_${event}`)
     db.exec(
       "ALTER TABLE runner_outbox DROP COLUMN metadata; ALTER TABLE runner_outbox DROP COLUMN receipt",
     )

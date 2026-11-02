@@ -1,3 +1,4 @@
+import { ensureObservationRevision } from "../observability/source-revision.ts"
 import type { Database } from "bun:sqlite"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
@@ -440,6 +441,7 @@ export class RunnerStore {
       db.query(
         "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
       ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
+      ensureObservationRevision(db)
     })
   }
   atomic<T>(run: (db: Database) => T): T {
