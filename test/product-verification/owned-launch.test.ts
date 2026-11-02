@@ -849,16 +849,20 @@ describe("owned Desktop boundaries", () => {
     ).toBe(false)
     expect(
       candidateIdentityDifferences(
-        { ...candidate, guiEntryModifiedAt: "2026-11-02T02:00:00.000Z" },
-        candidate,
-      ),
-    ).toEqual(["guiEntryModifiedAt"])
-    expect(
-      candidateIdentityDifferences(
         { ...candidate, dirtyPaths: [...candidate.dirtyPaths, "src/changed.ts"] },
         candidate,
       ),
     ).toEqual(["dirtyPaths"])
+  })
+
+  test("same-revision GUI rebuild timestamps do not invalidate an owned candidate", () => {
+    const rebuilt = { ...candidate, guiEntryModifiedAt: "2026-11-02T02:00:00.000Z" }
+    expect(candidateIdentityDifferences(rebuilt, candidate)).toEqual([])
+    expect(sameCandidateIdentity(rebuilt, candidate)).toBe(true)
+    expect(sameCandidateIdentity({ ...rebuilt, revision: "b".repeat(40) }, candidate)).toBe(false)
+    expect(
+      sameCandidateIdentity({ ...rebuilt, guiEntryBytes: rebuilt.guiEntryBytes + 1 }, candidate),
+    ).toBe(false)
   })
 
   test("blocks all cleanup side effects while native interaction delivery is pending or ambiguous", async () => {

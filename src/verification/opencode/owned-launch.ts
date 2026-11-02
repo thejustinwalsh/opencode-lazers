@@ -955,7 +955,7 @@ export class SystemLaunchDependencies implements LaunchDependencies {
     const bundle = await inspectDesktop(input.desktopBundle)
     const stored = await readManifestFile(runtimePaths(input.root).manifest)
     const currentCandidate = await inspectCandidate(input.candidatePath)
-    if (JSON.stringify(currentCandidate) !== JSON.stringify(stored.candidate)) {
+    if (!sameCandidateIdentity(currentCandidate, stored.candidate)) {
       throw new Error("Candidate source or built GUI identity changed after owned setup")
     }
     const env = isolatedEnvironment(input.root)
@@ -1669,9 +1669,10 @@ export function candidateIdentityDifferences(
     "pluginEntry",
     "guiEntry",
     "guiEntryBytes",
-    "guiEntryModifiedAt",
     "architectDescription",
   ]
+  // Build timestamps are provenance, not source identity. Rebuilding an unchanged
+  // candidate must not invalidate an otherwise owned, observable Desktop trial.
   return fields.filter((field) => {
     const left =
       field === "dirtyPaths"

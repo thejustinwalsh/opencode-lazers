@@ -75,7 +75,9 @@ endpoint to satisfy a rule intended for project servers.
    `dist/`; the owned profile symlinks only that GUI entry while importing the
    candidate server entry directly from `src/index.ts`. The CLI must report the
    same version embedded in the app bundle; the launcher checks this before
-   creating any trial process.
+   creating any trial process. GUI build modification time is recorded for
+   diagnosis; a timestamp-only rebuild of the same candidate does not invalidate
+   setup or constitute a failed product probe.
 
    ```sh
    cd /path/to/assigned-candidate
