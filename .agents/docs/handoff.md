@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 17:44 UTC checkpoint. Recheck native state.
+2026-11-02 17:47 UTC checkpoint. Recheck native state.
 Later Root checkpoint: [native continuation](evidence/native-liveness/20261102-native-continuation.md) records the real LZ-65 completion chain. Relay correction `e64c90d` and Radar correction `486614b` are committed in their original retained worker trees. Deliver both returns to Architect through Desktop; its pending question recommends Root fixing these candidates, already authorized. Do not activate relay server/Desktop halves separately. Desktop still explicitly reports locked after the unlock reply; an async clarification is pending.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
@@ -32,7 +32,7 @@ an observation-based improvements plan. This is not completion.
 
 ## Current direct repair
 
-Root also repaired the proven cached-index cancellation leak: [incident and regression](evidence/native-liveness/20261102-index-cancellation.md). Native tool interruption now reaches file permission waits and scan boundaries. The old already-detached LZ-65 replacement scan still needs reconciliation; do not infer fresh cleanup from the source fix. Preserve `nativeContextPermission(ctx)` when integrating LZ-67 setup registration.
+Root also repaired the proven cached-index cancellation leak: [incident and regression](evidence/native-liveness/20261102-index-cancellation.md). Native tool interruption now reaches file permission waits and scan boundaries. The old LZ-65 replacement has now settled cancellation at v581 with permissions/inbox empty; no resource deletion is inferred. LZ-67 integration preserved `nativeContextPermission(ctx)`.
 
 `fbfddf2` fixes the demonstrated service bottleneck: per-location full-history
 polling became transactional per-project observation revisions. Direct settings
@@ -124,21 +124,25 @@ Current returns and active work:
   resumed at v26 after all five focused corrections were installed/read back.
   Own runner checks passed 189 tests/2,798 assertions plus quality, not source
   clearance. Cancelled/null-artifact LZ-64 remains outside this adoption boundary.
-- LZ-67 Models authority task `1baed348-eaa5-418c-b231-8866f930b63e` is running
-  in plan `67f3790e-17a9-4cf3-97bf-c21eef98a3ca`, attempt
-  `abcec5dc-7feb-4de1-a9dd-73da004cfb74`, worker
-  `ses_226e542b12a047dd973a6c3be0bc479e`. OpenAI Luna Max route and distinct native
-  worktree verified; no pending permissions/inbox at 1793639403029. Baseline
-  `cac3918`; preserve later Root producer diagnostics during integration.
+- LZ-67 Models authority `1baed348-eaa5-418c-b231-8866f930b63e` is native
+  accepted v13 and integrated as `ea188c2` including Root `b6237f1`. Original
+  attempt `abcec5dc-7feb-4de1-a9dd-73da004cfb74` / worker
+  `ses_226e542b12a047dd973a6c3be0bc479e` is stopped, retained tree clean. Actual
+  settings/catalog readback and test results are above. Native landing/cleanup
+  bookkeeping remains for Architect; do not replay this implementation.
 - LZ-68 `29d7af6c-3d4b-4cef-8cee-13262901f476` Models editor is queued in plan
-  `27506b73-91ec-45ba-923d-55b844f2f09e` after integrated LZ-67. Actual candidate-owned
-  keyboard save/remove/reopen/conflict, bidirectional real tool readback and
-  narrow/wide captures are required; fixture success alone cannot close it.
-- LZ-69 `1aef650b-86d5-494c-a927-a21f90e7b2cf` handoff semantic-review module is
-  running in plan `8715d804-8543-4fa6-8031-7e9bbb6847c4`, independently of runner
-  scopes. It reuses H1/H2, not H3 tools/delivery or finalization. Local proposal
-  review for LZ-68/69 was interrupted without answers; no semantic pass or retry
-  claimed. Deterministic tests and independent source review remain necessary.
+  `27506b73-91ec-45ba-923d-55b844f2f09e`; its backend is now integrated. Dispatch
+  from a fresh Main baseline. Actual keyboard save/remove/reopen/conflict,
+  bidirectional native tool readback and narrow/wide captures remain required.
+- LZ-69 `1aef650b-86d5-494c-a927-a21f90e7b2cf` handoff review module returned
+  `75d3d67`, native accepted v17, independently reviewed and integrated as
+  `00fbde6`. Postmerge handoff/shared-policy compatibility: 28 tests / 303
+  assertions, formatting/lint/typecheck/diff pass. Original worker
+  `ses_8bf4b3242d584cfbaf9058523ca714ae` is stopped and its tree clean. Module
+  binds persisted drafts and authorized requests to durable three-round review;
+  disabled/unavailable/interrupted results remain explicit and concerns survive.
+  No worker tools/delivery/finalization, live local inference or end-to-end native
+  handoff walkthrough was exercised here. Their roadmap tasks remain open.
 
 Next runner boundaries after corrected LZ-63: R2 producer activation, then bounded
 durable detection → R3 dispositions/delivery → R4 same-worker requests → H3 tools.
@@ -155,10 +159,13 @@ rather than treating it as a resource production defect.
 
 Root `cac3918` adds one concise Architect sentence for readable status reasons.
 Subsequent native command reasons are readable; old reasons remain history.
-Architect wrote continuity revision 39 and dispatched Models while workers run.
-Native reviewer `ses_e62c33c74ffeet3CIJdFoIYS38` is active inspecting current state.
-Computer Use explicitly reported macOS locked; one unlock request is pending.
-Continue read-only diagnosis/review; model prompts remain Desktop-only.
+Architect continuity is revision 44 and its native question asks Root fixes vs
+waiting for LZ-57. Root completed the authorized retained Radar/relay repairs;
+answer with `486614b`/`e64c90d` and the new Models/H3 integration commits through
+Desktop. Native research/reviewer returns are retained, not currently active.
+Computer Use still reports locked after the user's unlock reply; one clarification
+is pending. Model prompts and form answers remain Desktop-only. The original
+LZ-63 worker is still active on its focused source-review corrections.
 
 Live panels: Tasks connected; Completed filter lists old tasks; Open trajectory
 opened historical LZ-59 checks/tokens/activity. Local model Ready, all six flags

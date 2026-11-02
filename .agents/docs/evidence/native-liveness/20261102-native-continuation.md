@@ -81,3 +81,15 @@ LZ-69 handoff hardening module, LZ-63 same-worker adoption corrections. Root did
 not replay their work. Current permissions and plans must be read again before
 action. Main remains on the wider roadmap; none of these source checks closes
 outstanding native UI, live probe, handoff or release gates.
+
+## Subsequent prerequisite integration
+
+LZ-67 Models authority, including cancelled-request correction `b6237f1`, is
+integrated as `ea188c2`; native settings/catalog readback is in
+[Models evidence](20261102-models-authority.md). LZ-69 returned `75d3d67` and reached
+native accepted v17. Root reviewed its source-bound context, shared progression,
+concurrency/recovery and explicit unavailable behavior; all 28 handoff/compatibility
+tests / 303 assertions passed again after integration as `00fbde6`. Formatting,
+lint, typecheck and diff checks pass. The module has no native tool registration
+or delivery path yet and no live inference/handoff claim was made. Keep those
+next increments, native landing bookkeeping and owned worktree cleanup open.
