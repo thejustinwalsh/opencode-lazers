@@ -13,10 +13,18 @@ The first worker qualification is recorded in
   not satisfy the native interaction gate.
 - The launcher supports macOS and requires an explicit Desktop `.app` bundle,
   its same-version CLI executable, and the same candidate/target checkout.
-- The launcher creates a unique directory beneath
-  `$(bun -e 'import { tmpdir } from "node:os"; console.log(tmpdir())')/opencode/lazers-product-verification`.
-  It records the candidate revision, dirty paths, app/CLI versions, test-root
-  XDG paths, service identity and protocol-handler baseline. It does not copy
+- The launcher creates a unique directory beneath the stable per-user system
+  temp root reported by `getconf DARWIN_USER_TEMP_DIR`, at
+  `opencode/lazers-product-verification`. It records the canonical base/root,
+  candidate revision and dirty paths, app/CLI versions, test-root XDG paths,
+  service identity and protocol-handler baseline. The isolated environment also
+  carries `OPENCODE_LAZERS_VERIFICATION_BASE`; manifest, owner marker, private
+  permissions, symlink status, and containment under the system temp root are
+  checked independently. The spawned service and Desktop also use matching
+  owned `HOME` and `CFFIXED_USER_HOME` paths beneath the test root; the latter
+  keeps macOS Foundation's Documents path inside the profile, so a default
+  project cannot resolve to the operator's real home. Validation does not
+  recompute the base from the owned profile's `TMPDIR`. It does not copy
   the driving profile, provider credentials, service registration, or service
   authentication. Set up any model access through a separately authorized,
   supported mechanism in the trial profile; if that is unavailable, stop before
@@ -103,7 +111,7 @@ The first worker qualification is recorded in
    setup fails before a root is returned, locate only this tool's roots with:
 
    ```sh
-   bun -e 'import { tmpdir } from "node:os"; import { join } from "node:path"; console.log(join(tmpdir(), "opencode", "lazers-product-verification"))'
+   bun -e 'import { defaultBaseDirectory } from "./src/verification/opencode/owned-launch.ts"; console.log(defaultBaseDirectory())'
    ```
 
    Inspect candidate `owned-launch.json` files; never guess a PID or remove a
@@ -136,8 +144,11 @@ bun src/verification/opencode/cli.ts native --root "$ROOT" --kind snapshot
 references. Select the visible, focused window shown by the result. A snapshot
 prints its `snapshotID` and bounded visible controls (`e0`, `e1`, ...). Review
 that output in context; do not paste secrets into the command line or use it to
-inspect unrelated content. For example, after confirming the exact visible
-control and fresh snapshot:
+inspect unrelated content. Before any input, positively recheck the owned
+root/base, authenticated service, candidate identity, and window generation, and
+confirm the visible project is the owned fixture or exact candidate checkout;
+stop if a real-home or unrelated project appears. For example, after confirming
+the exact visible control and fresh snapshot:
 
 ```sh
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind type \
@@ -154,9 +165,10 @@ focused owned window; if its rendered content or generation changed, take a new
 snapshot and decide again rather than retrying the old action. Each returned
 snapshot is a new observation, not proof that a task was submitted or completed.
 If `native-status` reports `ready: false`, do not send input. Inspect only the
-owned Desktop's `main.log` for the adapter's categorized `reason` field before
-teardown; do not publish the full log. Cleanup removes the owned logs with the
-test root, so record only the safe reason category and necessary timestamps.
+owned Desktop's `main.log` for the adapter's allowlisted `reason` and redacted,
+bounded `detail` fields before teardown; do not publish the full log. Cleanup
+removes the owned logs with the test root, so record only those safe fields and
+necessary timestamps.
 
 The optional screenshot command captures the owned Desktop window, not a
 browser-tool screenshot. Use it only after a human has confirmed that the entire
@@ -170,10 +182,14 @@ bun src/verification/opencode/cli.ts native --root "$ROOT" --kind capture \
 
 The command writes a new, mode-restricted PNG under
 `.agents/docs/evidence/full-instance-qualification/` in the candidate checkout.
-Only such simple PNG evidence filenames are excluded from the candidate dirty-
-path recheck; source, build, and other workspace changes still invalidate the
-launch proof. Keep screenshots only when they contain no credentials, unrelated
-chats, personal data, or other sensitive material. If native delivery becomes
+Only single-component `.png`, `.md`, or `.json` outputs in that task-scoped
+evidence directory are treated as probe evidence rather than material source
+changes. The manifest retains the initial candidate revision and dirty-path
+provenance; edits elsewhere, or other file types in that directory, invalidate
+the launch proof and require fresh setup/observation. This narrow evidence
+scope is not a clean-tree requirement or a general exemption for docs/data.
+Keep screenshots only when they contain no credentials, unrelated chats,
+personal data, or other sensitive material. If native delivery becomes
 pending or ambiguous, inspect only that request:
 
 ```sh
@@ -187,64 +203,67 @@ leave the trial root and reservation intact and do not run cleanup.
 
 ## Native feature scenario and retained evidence
 
-1. In the launched Desktop window, confirm it is the isolated profile. Open a
-   disposable project under `ROOT/fixture`, select **Architect**, and use the
-   native controls to check the loaded candidate. Keep the fixture and messages
-   free of secrets. The host model may use only separately authorized trial
-   authentication; never import the driver's credentials.
+1. Before touching a window, confirm `native-status` is ready and positively
+   validate its owned root/base, authenticated service, candidate identity, and
+   visible focused window/generation. The macOS Documents path must resolve below
+   `ROOT`; stop without input if the visible project is outside the owned root.
+   Keep the fixture and messages free of secrets. The host model may use only
+   separately authorized trial authentication; never import the driver's
+   credentials.
 
-2. Prepare this small repository in the isolated root from a separate shell:
+2. The isolated OpenCode 2.2.5 profile uses
+   `ROOT/desktop/Documents/Default Project` as its default project. Only use it if
+   the path is an empty directory resolving beneath `ROOT`. Create a clean Git
+   baseline from a separate shell:
 
    ```sh
-   mkdir -p "$ROOT/fixture/src" "$ROOT/fixture/test"
-   cat > "$ROOT/fixture/README.md" <<'EOF'
-   # Product verification fixture
-   A throwaway Bun project for a single scoped LAZERS task.
-   EOF
-   cat > "$ROOT/fixture/src/greeting.ts" <<'EOF'
-   export function greeting(): string {
-     return "Hello"
-   }
-   EOF
-   cat > "$ROOT/fixture/test/greeting.test.ts" <<'EOF'
-   import { expect, test } from "bun:test"
-   import { greeting } from "../src/greeting.ts"
+   FIXTURE="$ROOT/desktop/Documents/Default Project"
+   test -d "$FIXTURE"
+   test -z "$(find "$FIXTURE" -mindepth 1 -maxdepth 1 -print -quit)"
+   cat > "$FIXTURE/README.md" <<'EOF'
+   # Disposable LAZERS Desktop verification fixture
 
-   test("returns the greeting", () => {
-     expect(greeting()).toBe("Hello")
-   })
+   Empty baseline for a single no-secret greeting-task submission scenario.
    EOF
-   cat > "$ROOT/fixture/package.json" <<'EOF'
-   { "name": "lazers-desktop-fixture", "private": true, "type": "module" }
-   EOF
-   git -C "$ROOT/fixture" init -q
-   git -C "$ROOT/fixture" add .
-   git -C "$ROOT/fixture" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm baseline
+   git -C "$FIXTURE" init --quiet --initial-branch=main
+   git -C "$FIXTURE" add README.md
+   git -C "$FIXTURE" -c user.name='LAZERS Qualification' \
+     -c user.email='lazers-qualification@example.invalid' \
+     -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+     commit --quiet -m 'Add owned qualification fixture'
+   git -C "$FIXTURE" status --short
    ```
 
-3. In Desktop, open `ROOT/fixture` and ask Architect to inspect it, prepare and
-   submit one task to change `greeting()` to return `Hello, world!`, with
-   `src/greeting.ts` as its only write scope and `bun test` as verification.
-   Explicitly ask it not to create unrelated work. Verify the submitted task is
-   visible in LAZERS' task UI and has the expected candidate-authored scope. If
-   authorized, request one normal runtime dispatch, then observe the worker,
-   verification result, and terminal task state in Desktop. Do not use a manual
-   SDK call or browser-only UI as a substitute for this scenario.
+   Record the fixture's starting revision. Do not add credentials, user files,
+   dependencies, or unrelated source.
+
+3. In the owned Desktop, select **Architect** and submit exactly one task to add
+   a pure exported `greet(name: string): string` helper that returns
+   `Hello, <name>!`, with acceptance for `greet("Ada") === "Hello, Ada!"`,
+   `greet("") === "Hello, !"`, and passing focused Bun tests. Limit writes to
+   `src/greeting.ts` and `test/greeting.test.ts`; exclude UI, dependencies,
+   configuration and unrelated work. Use a fresh idempotency key. For this
+   submission scenario, stop at `submitted`: do not dispatch a worker or execute
+   the task. Verify the task through the visible LAZERS task UI and, when needed,
+   a read-only query of the owned task database. Do not use a manual SDK call or
+   browser-only UI as a substitute for native input.
 
 4. Retain only non-sensitive evidence outside `ROOT`, beneath
-   `.agents/docs/evidence/full-instance-qualification/`: timestamp, candidate
-   revision/dirty paths, Desktop/CLI versions, task reference, exact observed
-   task scope and verification result, screenshots or notes made through the
-   permitted native surface, any driver assistance, actual measured effort, and
-   cleanup outcome. Separate source-derived facts from native observations and
-   label missing observations unresolved. Do not retain authentication tokens,
-   unrelated chats, or full provider transcripts.
+   `.agents/docs/evidence/full-instance-qualification/`: candidate revision and
+   dirty paths, Desktop/CLI versions, fixture starting revision, native request
+   and snapshot IDs, stale-action denial and correction, task reference/status,
+   exact task scope, persisted facts, driver assistance, measured effort and
+   cleanup outcome. Keep source-derived facts separate from native observations.
+   Text observations or a safely reviewed owned-window screenshot are sufficient;
+   do not retain authentication tokens, unrelated chats, personal data or full
+   provider transcripts.
 
 ## Teardown and restoration
 
-1. Wait for all fixture tasks and workers to reach a terminal/idle state. Record
-   the final behavior and task state outside the owned root. Do not remove the
-   fixture while an owned worker is still using it.
+1. Record final behavior and task state outside the owned root. Ensure no
+   dispatched worker or active task is still using the fixture. A task
+   intentionally left `submitted` with no dispatch, as in the scenario above,
+   may be removed with its owned profile after the status is recorded.
 2. Run cleanup with the exact root returned by `launch`:
 
    ```sh
@@ -256,9 +275,11 @@ leave the trial root and reservation intact and do not run cleanup.
    confirms/restores the protocol handler, checks for remaining owned Desktop
    helpers, and removes the owned root only when all checks pass. It prints
    `cleaned` after removal. A `cleanup-blocked` result preserves the root and
-   reservation; inspect without editing it, resolve the concrete issue, then
-   retry the same command. Never force-delete a blocked root or send a signal by
-   PID/name yourself.
+   reservation; the reason distinguishes a live main process, changed identity,
+   unavailable process observation, remaining helpers, and unavailable helper
+   inventory. Inspect only the owned resource identities without editing them,
+   resolve or re-observe the concrete issue, then retry the same command. Never
+   force-delete a blocked root or send a signal by PID/name yourself.
 
 3. Repeat the read-only driver listener/handler check from setup. Confirm the
    original driver PID/start time, authenticated endpoint (using only its
@@ -268,9 +289,10 @@ leave the trial root and reservation intact and do not run cleanup.
 
 ## Known qualification boundary
 
-Automated focused tests establish the launcher state machine and failure
-boundaries; they do not establish native Desktop interaction. The runbook becomes
-a qualified human procedure only after an admitted implementer completes the
-native feature scenario, retains its observations, removes the fixture, and
-confirms service/app cleanup and driver preservation. The current worker's
-unresolved gate is recorded in the linked trial evidence.
+The linked worker trial qualifies the owned native task-submission path and
+persisted `submitted` task behavior. It does not claim a dispatched worker edit
+or focused greeting-test execution; those require a separately authorized
+scenario. Focused tests cover cleanup decision branches, while live cleanup
+blockers in the recorded trial required retries and their precise cause remains
+unknown. The report preserves that limitation rather than inferring a cause from
+the tests.

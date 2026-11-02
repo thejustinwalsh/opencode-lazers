@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "qualificationDate": "2026-11-02",
+  "candidate": {
+    "revision": "bb159b83ecfd29786bbcf5371789ce1f40fffdb4",
+    "desktopVersion": "2.2.5",
+    "cliVersion": "2.2.5",
+    "dirtyPathsAtLaunch": [
+      ".agents/docs/product-verification.md",
+      "src/verification/opencode/native-interaction-contract.ts",
+      "src/verification/opencode/native-interaction-main.ts",
+      "src/verification/opencode/native-interaction-server.ts",
+      "src/verification/opencode/owned-launch.ts",
+      "test/product-verification/native-interaction-main.test.ts",
+      "test/product-verification/native-interaction.test.ts",
+      "test/product-verification/owned-launch.test.ts"
+    ]
+  },
+  "driverBaseline": {
+    "pid": 40217,
+    "startedAt": "Sun Nov 1 19:09:01 2026",
+    "listener": "127.0.0.1:49374",
+    "authenticatedVersion": "2.2.5",
+    "protocolHandler": "ai.opencode.desktop"
+  },
+  "launchHistory": [
+    {
+      "rootSuffix": "bB3Lby",
+      "source": "earlier retained worker-trial report",
+      "outcome": "native adapter unavailable; no snapshot or input; cleanup reported cleaned",
+      "recordedIdentity": {
+        "desktopPID": 66393,
+        "servicePID": 66330,
+        "servicePort": 61222,
+        "candidateRevision": "b35c1d3f41118abe43b203f4c2e679a5df144e94"
+      }
+    },
+    {
+      "rootSuffix": "z1DCM8",
+      "outcome": "adapter did not attach; no input; candidate proof reported only guiEntryModifiedAt differed because Bun and Node rounded the same nanosecond mtime differently; cleanup reported cleaned",
+      "recordedIdentity": {
+        "desktopPID": 53190,
+        "servicePID": 53182,
+        "servicePort": 64288,
+        "candidateRevision": "bb159b83ecfd29786bbcf5371789ce1f40fffdb4"
+      },
+      "correction": "Canonicalize the GUI mtime by flooring filesystem mtimeNs to whole milliseconds; retain byte, revision, dirty-path, and timestamp identity checks."
+    },
+    {
+      "rootSuffix": "Qm5WAN",
+      "outcome": "adapter attached, but the first bounded snapshot showed the project at the operator's real Documents path; no input was sent; cleanup returned cleanup-blocked twice and then cleaned",
+      "recordedIdentity": {
+        "desktopPID": 58152,
+        "servicePID": 58144,
+        "servicePort": 64695,
+        "rendererPID": 58178,
+        "windowID": 1,
+        "generation": 1,
+        "candidateRevision": "bb159b83ecfd29786bbcf5371789ce1f40fffdb4"
+      },
+      "correction": "Set the spawned process HOME to the owned root and reject an effective environment that changes it."
+    },
+    {
+      "rootSuffix": "LvVRJY",
+      "outcome": "adapter attached, but macOS Foundation still resolved Documents to the operator's home despite isolated HOME; no input was sent; cleanup returned cleanup-blocked twice and then cleaned",
+      "recordedIdentity": {
+        "desktopPID": 67623,
+        "servicePID": 67568,
+        "servicePort": 65050,
+        "rendererPID": 67685,
+        "windowID": 1,
+        "generation": 1,
+        "candidateRevision": "bb159b83ecfd29786bbcf5371789ce1f40fffdb4"
+      },
+      "correction": "Set and validate CFFIXED_USER_HOME alongside HOME; this controls the macOS Documents path."
+    }
+  ],
+  "qualifiedLaunch": {
+    "rootSuffix": "HXoIsS",
+    "root": "/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-HXoIsS",
+    "verificationBase": "/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification",
+    "service": {
+      "pid": 80322,
+      "version": "2.2.5",
+      "url": "http://127.0.0.1:49390"
+    },
+    "desktopPID": 80331,
+    "window": {
+      "windowID": 1,
+      "webContentsID": 1,
+      "rendererPID": 80361,
+      "generation": 1,
+      "visible": true,
+      "focused": true
+    },
+    "candidateProof": {
+      "revision": "bb159b83ecfd29786bbcf5371789ce1f40fffdb4",
+      "candidateDifferences": [],
+      "effectiveRegistrationPath": "<owned-root>/state/opencode/service.json",
+      "effectiveStateHome": "<owned-root>/state",
+      "homeAndDocumentsUnderOwnedRoot": true
+    },
+    "fixture": {
+      "path": "<owned-root>/desktop/Documents/Default Project",
+      "startingRevision": "8cf45d73cd2815352f88c8c34d06e94c0d6d9c39",
+      "statusBeforeInteraction": "clean"
+    },
+    "nativeObservations": [
+      {
+        "snapshotID": "6bf539a8-c87f-4f4b-b3f8-65b81e0fa1b6",
+        "purpose": "confirm the displayed project path is under the owned root",
+        "windowGeneration": 1,
+        "result": "Default Project path was under the owned root"
+      },
+      {
+        "requestID": "ff97bc48-c2a5-4045-af4c-0972c755b30c",
+        "snapshotID": "f58e8fa5-7865-48dd-a644-9188b66d8978",
+        "operation": "click stale Home-button reference",
+        "delivery": "not-delivered",
+        "message": "Snapshot reference is stale; take a fresh observation"
+      },
+      {
+        "snapshotID": "042be8ac-3b84-4101-bf8b-bc7aa8158974",
+        "purpose": "fresh observation after stale-action denial",
+        "windowGeneration": 1,
+        "result": "owned project and prompt composer observed"
+      },
+      {
+        "requestID": "dc2cc808-395f-498f-9f7f-0ce2f9f93529",
+        "operation": "type the single bounded task-submission request into the observed Architect prompt",
+        "delivery": "delivered",
+        "returnedSnapshotID": "84f9a9fa-2038-4309-9ccc-77db26d55486"
+      },
+      {
+        "requestID": "4f841f3d-3624-4d62-8497-46e6bee04677",
+        "operation": "click the observed Send control",
+        "delivery": "delivered",
+        "returnedSnapshotID": "ba221d06-8987-45bb-9c43-d8dd4d7359b3"
+      },
+      {
+        "requestID": "9b7d1822-d482-45a8-9675-8019793f4e2b",
+        "snapshotID": "46d6de56-3038-42b3-aa49-1945a7c2a506",
+        "capturedAt": 1793587706478,
+        "windowGeneration": 1,
+        "title": "Pure greet helper · OpenCode",
+        "observedResult": "Desktop response said the task was submitted and reported LZ-1; the final persisted facts were independently checked read-only below."
+      }
+    ],
+    "persistedTask": {
+      "taskCountInOwnedDatabase": 1,
+      "reference": "LZ-1",
+      "taskID": "fb119a84-b8f7-4cca-b63e-0874646e60a7",
+      "revision": 1,
+      "status": "submitted",
+      "startingRevision": "8cf45d73cd2815352f88c8c34d06e94c0d6d9c39",
+      "writeScope": ["src/greeting.ts", "test/greeting.test.ts"],
+      "acceptanceIDs": ["greet-hello-ada", "greet-empty-string", "greet-tests-pass"],
+      "executionOrDispatch": false,
+      "verification": "Read-only Bun SQLite query of the owned task database returned exactly this single task, its canonical project path, submitted status, starting revision, write scope, and acceptance IDs."
+    },
+    "interactionStateAfterObservation": "idle",
+    "cleanup": {
+      "outcomes": [
+        "cleanup-blocked: Owned Desktop process did not exit; retry cleanup",
+        "cleanup-blocked: Owned Desktop process did not exit; retry cleanup",
+        "cleanup-blocked: Owned service did not exit; retry cleanup",
+        "cleaned"
+      ],
+      "postRetryReadOnlyObservations": "After the second Desktop blocker, the recorded Desktop PID and root-referencing helpers were absent. After the service blocker, the recorded service PID and reserved port were absent. These observations do not establish why earlier bounded cleanup calls returned blockers; no zombie, ps failure, or other root cause is inferred.",
+      "ownedRootAndFixtureRemoved": true,
+      "ownedDesktopAndServicePIDsAbsent": true,
+      "ownedPort49390Absent": true,
+      "protocolHandlerAfterCleanup": "ai.opencode.desktop",
+      "driverAfterCleanup": {
+        "pid": 40217,
+        "startedAt": "Sun Nov 1 19:09:01 2026",
+        "listener": "127.0.0.1:49374",
+        "authenticatedVersion": "2.2.5"
+      }
+    }
+  },
+  "measuredWorkerEffortSnapshot": {
+    "asOf": "2026-11-02T02:57:08.153Z",
+    "attemptState": "running; no end time or final wall-clock duration inferred",
+    "toolCalls": 778,
+    "providerRetries": 1,
+    "sessionTokens": {
+      "uncachedInput": 1804275,
+      "cacheRead": 96366848,
+      "cacheWrite": 0,
+      "output": 183353,
+      "reasoning": 407763
+    },
+    "recordedCost": "unknown; no API-equivalent estimate inferred"
+  }
+}

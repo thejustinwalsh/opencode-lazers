@@ -1,7 +1,8 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import {
+  NATIVE_VERIFICATION_BASE_ENV,
   NativeInteraction,
   type NativeActionResult,
   type NativeBinding,
@@ -56,6 +57,7 @@ export class NativeInteractionBroker {
   constructor(
     private readonly expected: {
       root: string
+      verificationBase: string
       servicePID: number
       version: string
     },
@@ -227,6 +229,8 @@ export class NativeInteractionBroker {
     const portMatch = /(?:^|\s)--port(?:=|\s+)(\d+)(?:\s|$)/.exec(binding.service.process.command)
     if (
       binding.root !== this.expected.root ||
+      binding.verificationBase !== this.expected.verificationBase ||
+      dirname(resolve(binding.root)) !== this.expected.verificationBase ||
       binding.service.process.pid !== this.expected.servicePID ||
       binding.service.version !== this.expected.version ||
       binding.target.cliVersion !== this.expected.version ||
@@ -295,8 +299,13 @@ export class NativeInteractionBroker {
 export function registerNativeInteraction(ctx: Pick<Plugin.Context, "rpc" | "app">) {
   const root = process.env.OPENCODE_DESKTOP_TEST_ROOT
   if (root === undefined || root.length === 0) return Effect.void
+  const verificationBase = process.env[NATIVE_VERIFICATION_BASE_ENV]
+  if (verificationBase === undefined || dirname(resolve(root)) !== resolve(verificationBase)) {
+    return Effect.die(new Error("Owned native verification base identity is unavailable"))
+  }
   const broker = new NativeInteractionBroker({
     root,
+    verificationBase: resolve(verificationBase),
     servicePID: process.pid,
     version: ctx.app.version,
   })

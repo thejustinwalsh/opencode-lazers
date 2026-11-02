@@ -14,10 +14,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { OpenCode } from "@opencode/client"
-import type { NativeBinding } from "./native-interaction-contract.ts"
+import { NATIVE_VERIFICATION_BASE_ENV, type NativeBinding } from "./native-interaction-contract.ts"
 
 export const DEFAULT_SERVICE_PORT = 49374
 const MANIFEST_NAME = "owned-launch.json"
@@ -31,6 +30,49 @@ export type ProcessIdentity = {
   startedAt: string
   command: string
 }
+
+export type ProcessObservation =
+  | { kind: "authoritatively-absent" }
+  | { kind: "live"; identity: ProcessIdentity }
+  | {
+      kind: "observation-unavailable"
+      reason: "probe-error" | "unexpected-exit" | "malformed-output"
+    }
+
+export type ProcessObservationFailure = Extract<
+  ProcessObservation,
+  { kind: "observation-unavailable" }
+>["reason"]
+
+export type OwnedProcessObservation =
+  | { kind: "authoritatively-absent" }
+  | { kind: "matching-live"; identity: ProcessIdentity }
+  | { kind: "identity-changed"; identity: ProcessIdentity }
+  | { kind: "observation-unavailable"; reason: ProcessObservationFailure }
+
+export type ProcessExitObservation =
+  | { kind: "observed-exited" }
+  | { kind: "main-still-live" }
+  | { kind: "identity-changed" }
+  | { kind: "observation-unavailable"; reason: ProcessObservationFailure }
+
+export type ProcessInventoryObservation =
+  | { kind: "observed"; processes: string[] }
+  | {
+      kind: "observation-unavailable"
+      reason: "probe-error" | "unexpected-exit" | "malformed-output"
+    }
+
+export type OwnedCleanupOutcome =
+  | "stopped"
+  | "already-stopped"
+  | "ambiguous"
+  | "timeout"
+  | "observation-unavailable"
+  | "identity-changed"
+  | "main-still-live"
+  | "helpers-remain"
+  | "helper-observation-unavailable"
 
 export type ServiceRegistration = {
   id: string
@@ -58,6 +100,7 @@ export type OwnedLaunchManifest = {
     "preparing" | "service-ready" | "desktop-starting" | "ready" | "cleanup-blocked" | "cleaned"
   createdAt: string
   root: string
+  baseDirectory?: string
   candidate: CandidateIdentity
   target: {
     desktopBundle: string
@@ -133,11 +176,13 @@ export function runtimePaths(root: string): RuntimePaths {
 export function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
   const paths = runtimePaths(root)
   const env: NodeJS.ProcessEnv = {
-    HOME: process.env.HOME ?? homedir(),
+    HOME: paths.desktopHome,
+    CFFIXED_USER_HOME: paths.desktopHome,
     PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
     SHELL: "/bin/zsh",
     ZDOTDIR: paths.shellHome,
     TMPDIR: paths.tempHome,
+    [NATIVE_VERIFICATION_BASE_ENV]: dirname(paths.root),
     XDG_DATA_HOME: paths.dataHome,
     XDG_CONFIG_HOME: paths.configHome,
     XDG_CACHE_HOME: paths.cacheHome,
@@ -169,8 +214,11 @@ export function assertEffectiveIsolation(
 ): void {
   const paths = runtimePaths(root)
   const expected: Record<string, string> = {
+    HOME: paths.desktopHome,
+    CFFIXED_USER_HOME: paths.desktopHome,
     OPENCODE_DESKTOP_TEST_ROOT: paths.root,
     TMPDIR: paths.tempHome,
+    [NATIVE_VERIFICATION_BASE_ENV]: dirname(paths.root),
     XDG_DATA_HOME: paths.dataHome,
     XDG_CONFIG_HOME: paths.configHome,
     XDG_CACHE_HOME: paths.cacheHome,
@@ -344,6 +392,7 @@ export async function startOwnedDesktop(
       status: "preparing",
       createdAt: dependencies.now(),
       root: paths.root,
+      baseDirectory: dirname(paths.root),
       candidate: prepared.candidate,
       target: {
         desktopBundle: resolve(input.desktopBundle),
@@ -479,12 +528,8 @@ export async function startOwnedDesktop(
 }
 
 export type CleanupDependencies = Pick<LaunchDependencies, "writeManifest"> & {
-  verifyAndStopDesktop(
-    process: ProcessIdentity,
-  ): Promise<"stopped" | "already-stopped" | "ambiguous" | "timeout">
-  verifyAndStopService(
-    manifest: OwnedLaunchManifest,
-  ): Promise<"stopped" | "already-stopped" | "ambiguous" | "timeout">
+  verifyAndStopDesktop(process: ProcessIdentity): Promise<OwnedCleanupOutcome>
+  verifyAndStopService(manifest: OwnedLaunchManifest): Promise<OwnedCleanupOutcome>
   protocolHandler(): Promise<string | null>
   restoreProtocolHandler?(handlerID: string): Promise<void>
   effectiveRegistrationPath?(root: string): Promise<string>
@@ -514,15 +559,13 @@ export async function cleanupOwnedDesktop(
   }
   if (manifest.desktop !== undefined) {
     const desktopResult = await dependencies.verifyAndStopDesktop(manifest.desktop)
-    if (desktopResult === "ambiguous") return block("Desktop process identity is ambiguous")
-    if (desktopResult === "timeout")
-      return block("Owned Desktop process did not exit; retry cleanup")
+    const issue = cleanupIssueForOutcome("Desktop", desktopResult)
+    if (issue !== undefined) return block(issue)
   }
   if (manifest.service !== undefined) {
     const serviceResult = await dependencies.verifyAndStopService(manifest)
-    if (serviceResult === "ambiguous")
-      return block("Service registration or authenticated process identity is ambiguous")
-    if (serviceResult === "timeout") return block("Owned service did not exit; retry cleanup")
+    const issue = cleanupIssueForOutcome("service", serviceResult)
+    if (issue !== undefined) return block(issue)
   }
   if (manifest.desktop !== undefined) {
     const currentHandler = await dependencies.protocolHandler()
@@ -556,6 +599,33 @@ export async function cleanupOwnedDesktop(
   manifest.status = "cleaned"
   delete manifest.cleanupIssue
   return manifest
+}
+
+function cleanupIssueForOutcome(
+  resource: "Desktop" | "service",
+  outcome: OwnedCleanupOutcome,
+): string | undefined {
+  switch (outcome) {
+    case "stopped":
+    case "already-stopped":
+      return undefined
+    case "ambiguous":
+      return resource === "Desktop"
+        ? "Desktop process identity is ambiguous; preserve the owned root"
+        : "Service registration or authenticated process identity is ambiguous; preserve the owned root"
+    case "timeout":
+      return `Owned ${resource} shutdown timed out; preserve the root and retry cleanup`
+    case "observation-unavailable":
+      return `Owned ${resource} process identity observation is unavailable; preserve the root`
+    case "identity-changed":
+      return `Owned ${resource} process identity changed during cleanup; preserve the root`
+    case "main-still-live":
+      return `Owned ${resource} process remains live after the bounded shutdown wait; retry cleanup`
+    case "helpers-remain":
+      return "Owned Desktop helper processes still reference the test root; retry cleanup"
+    case "helper-observation-unavailable":
+      return "Owned Desktop helper-process inventory is unavailable; preserve the root"
+  }
 }
 
 type DesktopBundle = {
@@ -598,17 +668,12 @@ export class SystemLaunchDependencies implements LaunchDependencies {
         "This qualification requires the candidate workspace to be the target workspace",
       )
     }
+    const expectedBase = await canonicalVerificationBase(this.baseDirectory, true)
     await mkdir(this.baseDirectory, { recursive: true, mode: 0o700 })
-    const baseInfo = await lstat(this.baseDirectory)
-    if (
-      !baseInfo.isDirectory() ||
-      baseInfo.isSymbolicLink() ||
-      (baseInfo.mode & 0o077) !== 0 ||
-      (typeof process.getuid === "function" && baseInfo.uid !== process.getuid())
-    ) {
-      throw new Error("Owned verification base must be a private, user-owned directory")
+    const base = await canonicalVerificationBase(this.baseDirectory)
+    if (base !== expectedBase) {
+      throw new Error("Owned verification base identity changed during setup")
     }
-    const base = await realpath(this.baseDirectory)
     this.reservation = await acquireReservation(base)
     let root: string | undefined
     let ownerID: string | undefined
@@ -626,6 +691,7 @@ export class SystemLaunchDependencies implements LaunchDependencies {
         status: "preparing",
         createdAt: this.now(),
         root,
+        baseDirectory: dirname(root),
         candidate,
         target: {
           desktopBundle: desktop.path,
@@ -750,9 +816,10 @@ export class SystemLaunchDependencies implements LaunchDependencies {
         String(port),
       ])
     } catch (error) {
-      const identity = await processIdentity(child.pid)
+      const observed = observeProcess(child.pid)
+      const identity = observed.kind === "live" ? observed.identity : undefined
       if (
-        identity !== null &&
+        identity !== undefined &&
         identity.command.includes(input.cliPath) &&
         SERVICE_ARGS.every((argument) => identity.command.includes(argument)) &&
         identity.command.includes(String(port))
@@ -783,13 +850,12 @@ export class SystemLaunchDependencies implements LaunchDependencies {
         if (registration.password === undefined)
           throw new Error("The owned service has no auth token")
         const health = await authenticatedServiceInfo(registration, 1_000)
-        const current = await processIdentity(input.process.pid)
-        if (
-          current === null ||
-          current.startedAt !== input.process.startedAt ||
-          !current.command.includes(input.process.command)
-        ) {
-          throw new Error("The registered process is no longer the owned service process")
+        const current = classifyOwnedProcessObservation(
+          input.process,
+          observeProcess(input.process.pid),
+        )
+        if (current.kind !== "matching-live") {
+          throw new Error(ownedProcessObservationError("registered service", current.kind))
         }
         return {
           registration,
@@ -869,17 +935,18 @@ export class SystemLaunchDependencies implements LaunchDependencies {
             authorization: `Basic ${Buffer.from(`opencode:${registration.password}`).toString("base64")}`,
           },
         })
-        const process = await processIdentity(input.desktop.pid)
-        if (
-          process === null ||
-          process.startedAt !== input.desktop.startedAt ||
-          !process.command.includes(input.desktop.command)
-        ) {
-          throw new Error("Desktop target process identity is no longer present")
+        const process = classifyOwnedProcessObservation(
+          input.desktop,
+          observeProcess(input.desktop.pid),
+        )
+        if (process.kind !== "matching-live") {
+          throw new Error(ownedProcessObservationError("Desktop target", process.kind))
         }
-        if (
-          !(await processesUsing(input.root)).some((line) => line.includes(`${input.root}/desktop`))
-        ) {
+        const inventory = observeProcessesUsing(input.root)
+        if (inventory.kind === "observation-unavailable") {
+          throw new Error("Owned Desktop process inventory is unavailable")
+        }
+        if (!inventory.processes.some((line) => line.includes(`${input.root}/desktop`))) {
           throw new Error("Desktop is not using its owned test-root user-data directory")
         }
         const result = await client.agent.list(
@@ -958,21 +1025,124 @@ export function launchDependencies(
 }
 
 export function defaultBaseDirectory(): string {
-  return join(resolve(tmpdir()), "opencode", "lazers-product-verification")
+  return join(stableSystemTemporaryDirectory(), "opencode", "lazers-product-verification")
+}
+
+function stableSystemTemporaryDirectory(): string {
+  if (process.platform === "darwin") {
+    const result = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    const directory = result.stdout?.trim() ?? ""
+    if (result.status !== 0 || result.error || !isAbsolute(directory)) {
+      throw new Error("Could not establish the stable per-user temporary directory")
+    }
+    return resolve(directory)
+  }
+  if (process.platform === "linux") return "/tmp"
+  throw new Error("Owned Desktop verification requires a stable system temporary directory")
+}
+
+async function prospectiveRealpath(path: string): Promise<string> {
+  let current = resolve(path)
+  const suffix: string[] = []
+  while (true) {
+    try {
+      return resolve(await realpath(current), ...suffix)
+    } catch (error) {
+      if (!isCode(error, "ENOENT")) throw error
+      const parent = dirname(current)
+      if (parent === current) throw error
+      suffix.unshift(basename(current))
+      current = parent
+    }
+  }
+}
+
+async function canonicalVerificationBase(
+  baseDirectory: string,
+  allowMissing = false,
+): Promise<string> {
+  const requested = resolve(baseDirectory)
+  const info = await lstat(requested).catch((error: unknown) => {
+    if (allowMissing && isCode(error, "ENOENT")) return undefined
+    throw error
+  })
+  if (
+    info !== undefined &&
+    (!info.isDirectory() ||
+      info.isSymbolicLink() ||
+      (info.mode & 0o077) !== 0 ||
+      (typeof process.getuid === "function" && info.uid !== process.getuid()))
+  ) {
+    throw new Error("Owned verification base must be a private, user-owned directory")
+  }
+  const canonical = await prospectiveRealpath(requested)
+  const systemTemp = await realpath(stableSystemTemporaryDirectory())
+  const fromSystemTemp = relative(systemTemp, canonical)
+  const segments = fromSystemTemp.split(sep)
+  if (
+    fromSystemTemp === "" ||
+    fromSystemTemp === "." ||
+    fromSystemTemp === ".." ||
+    fromSystemTemp.startsWith(`..${sep}`) ||
+    isAbsolute(fromSystemTemp) ||
+    segments.length < 2 ||
+    segments.at(-2) !== "opencode" ||
+    segments.at(-1) !== "lazers-product-verification"
+  ) {
+    throw new Error("Owned verification base is outside its stable system-temp location")
+  }
+  if (info !== undefined && (await realpath(requested)) !== canonical) {
+    throw new Error("Owned verification base identity changed during validation")
+  }
+  return canonical
 }
 
 export async function readManifest(root: string): Promise<OwnedLaunchManifest> {
-  const canonicalRoot = await realpath(root)
-  const expectedBase = await realpath(defaultBaseDirectory())
+  const requestedRoot = resolve(root)
+  const rootInfo = await lstat(requestedRoot)
+  if (
+    rootInfo.isSymbolicLink() ||
+    !rootInfo.isDirectory() ||
+    (rootInfo.mode & 0o077) !== 0 ||
+    (typeof process.getuid === "function" && rootInfo.uid !== process.getuid())
+  ) {
+    throw new Error("Owned launch root is not a private, user-owned directory")
+  }
+  const canonicalRoot = await realpath(requestedRoot)
+  const manifest = await readManifestFile(runtimePaths(canonicalRoot).manifest)
+  const declaredBase =
+    process.env[NATIVE_VERIFICATION_BASE_ENV] ?? manifest.baseDirectory ?? defaultBaseDirectory()
+  const expectedBase = await canonicalVerificationBase(declaredBase)
+  if (
+    process.env[NATIVE_VERIFICATION_BASE_ENV] !== undefined &&
+    manifest.baseDirectory !== undefined &&
+    (await canonicalVerificationBase(manifest.baseDirectory)) !== expectedBase
+  ) {
+    throw new Error("Owned verification base does not match the launch manifest")
+  }
   if (dirname(canonicalRoot) !== expectedBase) {
     throw new Error("Owned launch root is outside the product-verification temporary directory")
   }
-  const manifest = await readManifestFile(runtimePaths(canonicalRoot).manifest)
   if (manifest.root !== canonicalRoot)
     throw new Error("Owned launch manifest root does not match its directory")
+  if (
+    manifest.baseDirectory !== undefined &&
+    (await canonicalVerificationBase(manifest.baseDirectory)) !== expectedBase
+  ) {
+    throw new Error("Owned verification base does not match the launch manifest")
+  }
   const markerPath = runtimePaths(canonicalRoot).owner
   const markerInfo = await lstat(markerPath)
-  if (markerInfo.isSymbolicLink() || !markerInfo.isFile()) {
+  if (
+    markerInfo.isSymbolicLink() ||
+    !markerInfo.isFile() ||
+    (markerInfo.mode & 0o077) !== 0 ||
+    (typeof process.getuid === "function" && markerInfo.uid !== process.getuid())
+  ) {
     throw new Error("Owned launch marker is not a regular file")
   }
   const marker = JSON.parse(await readFile(markerPath, "utf8")) as {
@@ -987,8 +1157,10 @@ export async function readManifest(root: string): Promise<OwnedLaunchManifest> {
 
 export async function cleanManifest(root: string): Promise<OwnedLaunchManifest> {
   const manifest = await readManifest(root)
-  const expectedBase = await realpath(defaultBaseDirectory())
   const canonicalRoot = await realpath(root)
+  const expectedBase = await canonicalVerificationBase(
+    manifest.baseDirectory ?? defaultBaseDirectory(),
+  )
   if (canonicalRoot !== manifest.root || dirname(canonicalRoot) !== expectedBase) {
     throw new Error("Owned launch root is outside the product-verification temporary directory")
   }
@@ -1066,13 +1238,12 @@ export async function verifyOwnedSidecar(
   const registration = parseServiceRegistration(
     JSON.parse(await readFile(paths.serviceRegistration, "utf8")) as unknown,
   )
-  const process = await processIdentity(manifest.service.process.pid)
-  if (
-    process === null ||
-    process.startedAt !== manifest.service.process.startedAt ||
-    !process.command.includes(manifest.service.process.command)
-  ) {
-    throw new Error("Owned service process identity is unavailable or changed")
+  const process = classifyOwnedProcessObservation(
+    manifest.service.process,
+    observeProcess(manifest.service.process.pid),
+  )
+  if (process.kind !== "matching-live") {
+    throw new Error(ownedProcessObservationError("owned service", process.kind))
   }
   const health = await authenticatedServiceInfo(registration, 1_000)
   assertOwnedService(registration, health, {
@@ -1090,8 +1261,11 @@ export async function verifyOwnedSidecar(
     throw new Error("Owned service registration no longer matches its launch manifest")
   }
   const candidate = await inspectCandidate(manifest.candidate.workspace)
-  if (!sameCandidateIdentity(candidate, manifest.candidate)) {
-    throw new Error("Candidate source or built GUI identity changed after owned setup")
+  const changedCandidateFields = candidateIdentityDifferences(candidate, manifest.candidate)
+  if (changedCandidateFields.length > 0) {
+    throw new Error(
+      `Candidate source or built GUI identity changed after owned setup (fields: ${changedCandidateFields.join(",")})`,
+    )
   }
   return { manifest, registration, health }
 }
@@ -1113,17 +1287,18 @@ export async function verifyOwnedLaunch(
     throw new Error("A native interaction is pending or ambiguous; do not replay it")
   }
   if (manifest.desktop === undefined) throw new Error("Owned Desktop process identity is missing")
-  const desktop = await processIdentity(manifest.desktop.pid)
-  if (
-    desktop === null ||
-    desktop.startedAt !== manifest.desktop.startedAt ||
-    !desktop.command.includes(manifest.desktop.command)
-  ) {
-    throw new Error("Owned Desktop process identity is unavailable or changed")
+  const desktop = classifyOwnedProcessObservation(
+    manifest.desktop,
+    observeProcess(manifest.desktop.pid),
+  )
+  if (desktop.kind !== "matching-live") {
+    throw new Error(ownedProcessObservationError("owned Desktop", desktop.kind))
   }
-  if (
-    !(await processesUsing(manifest.root)).some((line) => line.includes(`${manifest.root}/desktop`))
-  ) {
+  const inventory = observeProcessesUsing(manifest.root)
+  if (inventory.kind === "observation-unavailable") {
+    throw new Error("Owned Desktop process inventory is unavailable")
+  }
+  if (!inventory.processes.some((line) => line.includes(`${manifest.root}/desktop`))) {
     throw new Error("Owned Desktop is not using its isolated test-root profile")
   }
   return proof
@@ -1137,6 +1312,7 @@ export function nativeBindingFromManifest(manifest: OwnedLaunchManifest): Native
     ownerID: manifest.ownerID,
     createdAt: manifest.createdAt,
     root: manifest.root,
+    verificationBase: manifest.baseDirectory ?? dirname(manifest.root),
     candidate: manifest.candidate,
     target: manifest.target,
     service: manifest.service,
@@ -1364,11 +1540,15 @@ export async function inspectCandidate(candidatePath: string): Promise<Candidate
   }
   const agent = await readFile(architectPath, "utf8")
   const guiEntry = join(workspace, "dist", "gui-experimental.cjs")
-  const guiStat = await lstat(guiEntry).catch(() => undefined)
+  const guiStat = await lstat(guiEntry, { bigint: true }).catch(() => undefined)
   if (guiStat === undefined || !guiStat.isFile() || guiStat.isSymbolicLink()) {
     throw new Error(
       "Candidate Desktop GUI bundle is missing; run the project GUI build before launch",
     )
+  }
+  const guiEntryBytes = Number(guiStat.size)
+  if (!Number.isSafeInteger(guiEntryBytes) || guiEntryBytes > 2_147_483_647) {
+    throw new Error("Candidate Desktop GUI bundle exceeds the supported identity size")
   }
   const match = /^description:\s*(.+)$/m.exec(agent)
   if (!match) throw new Error("Candidate Architect definition does not declare a description")
@@ -1378,29 +1558,62 @@ export async function inspectCandidate(candidatePath: string): Promise<Candidate
     dirtyPaths,
     pluginEntry,
     guiEntry,
-    guiEntryBytes: guiStat.size,
-    guiEntryModifiedAt: guiStat.mtime.toISOString(),
+    guiEntryBytes,
+    guiEntryModifiedAt: candidateMtimeFromNanoseconds(guiStat.mtimeNs),
     architectDescription: match[1]!.trim(),
   }
+}
+
+export function candidateMtimeFromNanoseconds(mtimeNs: bigint): string {
+  const milliseconds = Number(mtimeNs / 1_000_000n)
+  if (!Number.isSafeInteger(milliseconds)) {
+    throw new Error("Candidate modification time is outside the supported range")
+  }
+  const date = new Date(milliseconds)
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Candidate modification time is invalid")
+  }
+  return date.toISOString()
+}
+
+export function candidateIdentityDifferences(
+  actual: CandidateIdentity,
+  expected: CandidateIdentity,
+): Array<keyof CandidateIdentity> {
+  // This task explicitly scopes probe evidence to this directory; only simple PNG,
+  // Markdown, and JSON outputs are non-source writes for candidate identity.
+  const isRetainedEvidenceOutput = (path: string) =>
+    /^\.agents\/docs\/evidence\/full-instance-qualification\/[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(?:png|md|json)$/i.test(
+      path,
+    )
+  const fields: Array<keyof CandidateIdentity> = [
+    "workspace",
+    "revision",
+    "dirtyPaths",
+    "pluginEntry",
+    "guiEntry",
+    "guiEntryBytes",
+    "guiEntryModifiedAt",
+    "architectDescription",
+  ]
+  return fields.filter((field) => {
+    const left =
+      field === "dirtyPaths"
+        ? actual.dirtyPaths.filter((path) => !isRetainedEvidenceOutput(path)).sort()
+        : actual[field]
+    const right =
+      field === "dirtyPaths"
+        ? expected.dirtyPaths.filter((path) => !isRetainedEvidenceOutput(path)).sort()
+        : expected[field]
+    return JSON.stringify(left) !== JSON.stringify(right)
+  })
 }
 
 export function sameCandidateIdentity(
   actual: CandidateIdentity,
   expected: CandidateIdentity,
 ): boolean {
-  const isRetainedCapture = (path: string) =>
-    /^\.agents\/docs\/evidence\/full-instance-qualification\/[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.png$/.test(
-      path,
-    )
-  const stableActual = {
-    ...actual,
-    dirtyPaths: actual.dirtyPaths.filter((path) => !isRetainedCapture(path)).sort(),
-  }
-  const stableExpected = {
-    ...expected,
-    dirtyPaths: expected.dirtyPaths.filter((path) => !isRetainedCapture(path)).sort(),
-  }
-  return JSON.stringify(stableActual) === JSON.stringify(stableExpected)
+  return candidateIdentityDifferences(actual, expected).length === 0
 }
 
 async function probeLoginShell(env: NodeJS.ProcessEnv): Promise<Map<string, string>> {
@@ -1505,40 +1718,232 @@ async function waitForProcessIdentity(
   const expected = [executable, ...args].join(" ")
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
-    const current = await processIdentity(pid)
+    const observed = observeProcess(pid)
     if (
-      current !== null &&
-      current.command.includes(executable) &&
-      args.every((argument) => current.command.includes(argument))
+      observed.kind === "live" &&
+      observed.identity.command.includes(executable) &&
+      args.every((argument) => observed.identity.command.includes(argument))
     ) {
-      return { ...current, command: expected }
+      return { ...observed.identity, command: expected }
     }
     await delay(50)
   }
   throw new Error(`Could not identify owned process ${pid} as ${executable}`)
 }
 
-async function processIdentity(pid: number): Promise<ProcessIdentity | null> {
+export type ProcessProbeResult = {
+  status: number | null
+  stdout: string
+  error?: Error
+}
+
+export function processObservationFromProbe(
+  pid: number,
+  result: ProcessProbeResult,
+): ProcessObservation {
+  if (result.error !== undefined) return { kind: "observation-unavailable", reason: "probe-error" }
+  const output = result.stdout.trim()
+  if (result.status === 1 && output.length === 0) return { kind: "authoritatively-absent" }
+  if (result.status !== 0) return { kind: "observation-unavailable", reason: "unexpected-exit" }
+  const match = /^(.{24})\s+(.+)$/.exec(output)
+  if (match === null) return { kind: "observation-unavailable", reason: "malformed-output" }
+  return {
+    kind: "live",
+    identity: { pid, startedAt: match[1]!.trim(), command: match[2]! },
+  }
+}
+
+export function classifyOwnedProcessObservation(
+  expected: ProcessIdentity,
+  observed: ProcessObservation,
+): OwnedProcessObservation {
+  if (observed.kind === "authoritatively-absent") return observed
+  if (observed.kind === "observation-unavailable") return observed
+  if (
+    observed.identity.startedAt === expected.startedAt &&
+    observed.identity.command.includes(expected.command)
+  ) {
+    return { kind: "matching-live", identity: observed.identity }
+  }
+  return { kind: "identity-changed", identity: observed.identity }
+}
+
+function ownedProcessObservationError(
+  resource: string,
+  kind: OwnedProcessObservation["kind"],
+): string {
+  switch (kind) {
+    case "authoritatively-absent":
+      return `The ${resource} process is absent`
+    case "identity-changed":
+      return `The ${resource} process identity changed`
+    case "observation-unavailable":
+      return `The ${resource} process identity could not be observed`
+    case "matching-live":
+      return `The ${resource} process is live`
+  }
+}
+
+export function observeProcess(pid: number, timeoutMs = 2_000): ProcessObservation {
   const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
     encoding: "utf8",
-    timeout: 2_000,
+    timeout: Math.max(1, timeoutMs),
   })
-  if (result.status !== 0 || result.error) return null
-  const output = result.stdout.trim()
-  const match = /^(.{24})\s+(.+)$/.exec(output)
-  if (match === null) return null
-  return { pid, startedAt: match[1]!.trim(), command: match[2]! }
+  return processObservationFromProbe(pid, result)
+}
+
+export function processInventoryFromProbe(
+  root: string,
+  result: ProcessProbeResult,
+): ProcessInventoryObservation {
+  if (result.error !== undefined) {
+    return { kind: "observation-unavailable", reason: "probe-error" }
+  }
+  if (result.status !== 0) return { kind: "observation-unavailable", reason: "unexpected-exit" }
+  if (result.stdout.trim().length === 0) {
+    return { kind: "observation-unavailable", reason: "malformed-output" }
+  }
+  const marker = join(resolve(root), "desktop")
+  return {
+    kind: "observed",
+    processes: result.stdout.split("\n").filter((line) => line.includes(marker)),
+  }
+}
+
+export function observeProcessesUsing(
+  root: string,
+  timeoutMs = 2_000,
+): ProcessInventoryObservation {
+  const result = spawnSync("/bin/ps", ["-axo", "command="], {
+    encoding: "utf8",
+    timeout: Math.max(1, timeoutMs),
+  })
+  return processInventoryFromProbe(root, result)
+}
+
+export type DesktopProcessStopDependencies = {
+  observeProcess(pid: number, timeoutMs: number): ProcessObservation
+  observeProcessesUsing(root: string, timeoutMs: number): ProcessInventoryObservation
+  signal(pid: number, signal: NodeJS.Signals): void
+  now(): number
+  delay(ms: number): Promise<void>
+}
+
+const desktopProcessStopDependencies: DesktopProcessStopDependencies = {
+  observeProcess,
+  observeProcessesUsing,
+  signal: (pid, signal) => process.kill(pid, signal),
+  now: Date.now,
+  delay,
+}
+
+async function observeExpectedProcessUntilKnown(
+  expected: ProcessIdentity,
+  deadline: number,
+  dependencies: DesktopProcessStopDependencies,
+): Promise<OwnedProcessObservation> {
+  let lastReason: ProcessObservationFailure = "unexpected-exit"
+  while (dependencies.now() < deadline) {
+    const remaining = deadline - dependencies.now()
+    const current = classifyOwnedProcessObservation(
+      expected,
+      dependencies.observeProcess(expected.pid, Math.min(2_000, remaining)),
+    )
+    if (current.kind !== "observation-unavailable") return current
+    lastReason = current.reason
+    await dependencies.delay(Math.min(100, Math.max(1, deadline - dependencies.now())))
+  }
+  return { kind: "observation-unavailable", reason: lastReason }
+}
+
+export async function waitUntilGone(
+  expected: ProcessIdentity,
+  timeoutMs: number,
+  dependencies: Pick<
+    DesktopProcessStopDependencies,
+    "observeProcess" | "now" | "delay"
+  > = desktopProcessStopDependencies,
+): Promise<ProcessExitObservation> {
+  const deadline = dependencies.now() + timeoutMs
+  let lastObservation: OwnedProcessObservation | undefined
+  while (dependencies.now() < deadline) {
+    const remaining = deadline - dependencies.now()
+    lastObservation = classifyOwnedProcessObservation(
+      expected,
+      dependencies.observeProcess(expected.pid, Math.min(2_000, remaining)),
+    )
+    if (lastObservation.kind === "authoritatively-absent") return { kind: "observed-exited" }
+    if (lastObservation.kind === "identity-changed") return { kind: "identity-changed" }
+    if (lastObservation.kind === "observation-unavailable") {
+      await dependencies.delay(Math.min(100, Math.max(1, deadline - dependencies.now())))
+      continue
+    }
+    await dependencies.delay(Math.min(100, Math.max(1, deadline - dependencies.now())))
+  }
+  if (lastObservation?.kind === "observation-unavailable") {
+    return { kind: "observation-unavailable", reason: lastObservation.reason }
+  }
+  return { kind: "main-still-live" }
+}
+
+function cleanupOutcomeFromExitObservation(
+  observation: ProcessExitObservation,
+): OwnedCleanupOutcome {
+  switch (observation.kind) {
+    case "observed-exited":
+      return "stopped"
+    case "main-still-live":
+      return "main-still-live"
+    case "identity-changed":
+      return "identity-changed"
+    case "observation-unavailable":
+      return "observation-unavailable"
+  }
+}
+
+export async function stopOwnedDesktopProcess(
+  desktop: ProcessIdentity,
+  root: string,
+  overrides: Partial<DesktopProcessStopDependencies> = {},
+): Promise<OwnedCleanupOutcome> {
+  const dependencies = { ...desktopProcessStopDependencies, ...overrides }
+  const deadline = dependencies.now() + SHUTDOWN_TIMEOUT_MS
+  const initial = await observeExpectedProcessUntilKnown(desktop, deadline, dependencies)
+  if (initial.kind === "observation-unavailable") return "observation-unavailable"
+  if (initial.kind === "identity-changed") return "identity-changed"
+
+  const wasAbsent = initial.kind === "authoritatively-absent"
+  if (initial.kind === "matching-live") {
+    dependencies.signal(desktop.pid, "SIGTERM")
+    const remaining = Math.max(0, deadline - dependencies.now())
+    const exit = await waitUntilGone(desktop, remaining, dependencies)
+    if (exit.kind !== "observed-exited") return cleanupOutcomeFromExitObservation(exit)
+  }
+
+  let lastInventory: ProcessInventoryObservation | undefined
+  while (dependencies.now() < deadline) {
+    const remaining = deadline - dependencies.now()
+    lastInventory = dependencies.observeProcessesUsing(root, Math.min(2_000, remaining))
+    if (lastInventory.kind === "observed" && lastInventory.processes.length === 0) {
+      return wasAbsent ? "already-stopped" : "stopped"
+    }
+    await dependencies.delay(Math.min(100, Math.max(1, deadline - dependencies.now())))
+  }
+  if (lastInventory?.kind === "observation-unavailable") return "helper-observation-unavailable"
+  if (lastInventory?.processes.length) return "helpers-remain"
+  return "helper-observation-unavailable"
 }
 
 async function stopOwnedServiceProcess(
   manifest: OwnedLaunchManifest,
-): Promise<"stopped" | "already-stopped" | "ambiguous" | "timeout"> {
+): Promise<OwnedCleanupOutcome> {
   const service = manifest.service
   if (service === undefined) return "already-stopped"
   const paths = runtimePaths(manifest.root)
   const pendingIdentity = service.id.length === 0 || service.url.length === 0
-  const identity = await processIdentity(service.process.pid)
-  if (identity === null) {
+  const observed = observeProcess(service.process.pid)
+  if (observed.kind === "observation-unavailable") return "observation-unavailable"
+  if (observed.kind === "authoritatively-absent") {
     const registration = await readRegistrationMaybe(paths.serviceRegistration)
     if (registration === undefined) {
       if (await exists(paths.serviceRegistration)) return "ambiguous"
@@ -1557,11 +1962,12 @@ async function stopOwnedServiceProcess(
     await rm(paths.serviceRegistration)
     return "already-stopped"
   }
+  const identity = observed.identity
   if (
     identity.startedAt !== service.process.startedAt ||
     !identity.command.includes(service.process.command)
   )
-    return "ambiguous"
+    return "identity-changed"
   const registration = await readRegistrationMaybe(paths.serviceRegistration)
   if (pendingIdentity) {
     if (
@@ -1574,7 +1980,8 @@ async function stopOwnedServiceProcess(
     )
       return "ambiguous"
     process.kill(service.process.pid, "SIGTERM")
-    if (!(await waitUntilGone(service.process, SHUTDOWN_TIMEOUT_MS))) return "timeout"
+    const exit = await waitUntilGone(service.process, SHUTDOWN_TIMEOUT_MS)
+    if (exit.kind !== "observed-exited") return cleanupOutcomeFromExitObservation(exit)
     const remaining = await readRegistrationMaybe(paths.serviceRegistration)
     if (remaining !== undefined) {
       if (
@@ -1606,7 +2013,8 @@ async function stopOwnedServiceProcess(
     return "ambiguous"
   }
   process.kill(service.process.pid, "SIGTERM")
-  if (!(await waitUntilGone(service.process, SHUTDOWN_TIMEOUT_MS))) return "timeout"
+  const exit = await waitUntilGone(service.process, SHUTDOWN_TIMEOUT_MS)
+  if (exit.kind !== "observed-exited") return cleanupOutcomeFromExitObservation(exit)
   const remaining = await readRegistrationMaybe(paths.serviceRegistration)
   if (remaining !== undefined) {
     if (
@@ -1619,39 +2027,6 @@ async function stopOwnedServiceProcess(
     await rm(paths.serviceRegistration)
   }
   return "stopped"
-}
-
-async function stopOwnedDesktopProcess(
-  desktop: ProcessIdentity,
-  root: string,
-): Promise<"stopped" | "already-stopped" | "ambiguous" | "timeout"> {
-  const identity = await processIdentity(desktop.pid)
-  if (identity === null) return "already-stopped"
-  if (identity.startedAt !== desktop.startedAt || !identity.command.includes(desktop.command))
-    return "ambiguous"
-  process.kill(desktop.pid, "SIGTERM")
-  if (!(await waitUntilGone(desktop, SHUTDOWN_TIMEOUT_MS))) return "timeout"
-  const remaining = await processesUsing(root)
-  return remaining.length === 0 ? "stopped" : "timeout"
-}
-
-async function waitUntilGone(process: ProcessIdentity, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const current = await processIdentity(process.pid)
-    if (current === null) return true
-    if (current.startedAt !== process.startedAt || !current.command.includes(process.command))
-      return false
-    await delay(100)
-  }
-  return false
-}
-
-async function processesUsing(root: string): Promise<string[]> {
-  const result = spawnSync("/bin/ps", ["-axo", "command="], { encoding: "utf8", timeout: 2_000 })
-  if (result.status !== 0 || result.error) return ["process inventory unavailable"]
-  const marker = join(resolve(root), "desktop")
-  return result.stdout.split("\n").filter((line) => line.includes(marker))
 }
 
 async function readRegistrationMaybe(path: string): Promise<ServiceRegistration | undefined> {
@@ -1690,7 +2065,11 @@ async function removeOwnedRoot(
   if (owner.ownerID !== ownerID || owner.root !== canonicalRoot) {
     throw new Error("Owned root marker changed; it was not removed")
   }
-  if ((await processesUsing(canonicalRoot)).length > 0) {
+  const inventory = observeProcessesUsing(canonicalRoot)
+  if (inventory.kind === "observation-unavailable") {
+    throw new Error("Owned Desktop helper-process inventory is unavailable; root was not removed")
+  }
+  if (inventory.processes.length > 0) {
     throw new Error("Owned Desktop helpers still reference the test root; it was not removed")
   }
   await rm(canonicalRoot, { recursive: true, force: false })
@@ -1757,6 +2136,9 @@ async function readManifestFile(path: string): Promise<OwnedLaunchManifest> {
     typeof parsed.ownerID !== "string" ||
     typeof parsed.root !== "string" ||
     parsed.root !== resolve(parsed.root) ||
+    (parsed.baseDirectory !== undefined &&
+      (typeof parsed.baseDirectory !== "string" ||
+        parsed.baseDirectory !== resolve(parsed.baseDirectory))) ||
     !(typeof parsed.protocolHandlerBaseline === "string" || parsed.protocolHandlerBaseline === null)
   ) {
     throw new Error("Owned launch manifest is malformed")
@@ -1783,8 +2165,9 @@ async function exists(path: string): Promise<boolean> {
   try {
     await lstat(path)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return false
+    throw error
   }
 }
 

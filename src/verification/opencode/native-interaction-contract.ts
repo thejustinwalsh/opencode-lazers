@@ -22,6 +22,8 @@ export const NativeProcessIdentity = Schema.Struct({
   command: pathText,
 })
 
+export const NATIVE_VERIFICATION_BASE_ENV = "OPENCODE_LAZERS_VERIFICATION_BASE"
+
 export const NativeCandidateIdentity = Schema.Struct({
   workspace: pathText,
   revision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40,64}$/)),
@@ -37,6 +39,7 @@ export const NativeBinding = Schema.Struct({
   ownerID: shortText,
   createdAt: shortText,
   root: pathText,
+  verificationBase: pathText,
   candidate: NativeCandidateIdentity,
   target: Schema.Struct({
     desktopBundle: pathText,

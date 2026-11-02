@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { dirname } from "node:path"
 import { NativeInteractionBroker } from "../../src/verification/opencode/native-interaction-server.ts"
 import type {
   NativeActionResult,
@@ -21,6 +22,7 @@ const binding: NativeBinding = {
   ownerID: "owner-12",
   createdAt: "2026-11-01T12:00:00.000Z",
   root,
+  verificationBase: dirname(root),
   candidate: {
     workspace: candidatePath,
     revision: "a".repeat(40),
@@ -61,7 +63,12 @@ const binding: NativeBinding = {
 function broker(now = 1_000) {
   let currentTime = now
   const value = new NativeInteractionBroker(
-    { root, servicePID: binding.service.process.pid, version: binding.service.version },
+    {
+      root,
+      verificationBase: binding.verificationBase,
+      servicePID: binding.service.process.pid,
+      version: binding.service.version,
+    },
     () => currentTime,
   )
   return { value, advance: (milliseconds: number) => (currentTime += milliseconds) }
@@ -102,6 +109,13 @@ describe("owned native interaction broker", () => {
             command: "/Applications/Other.app/Contents/MacOS/OpenCode",
           },
         },
+        adapterID: "adapter-1",
+        windows: [windowRef],
+      }),
+    ).toThrow("does not match the owned sidecar")
+    expect(() =>
+      value.attach({
+        binding: { ...binding, verificationBase: "/Users/tjw/.local/state/opencode" },
         adapterID: "adapter-1",
         windows: [windowRef],
       }),

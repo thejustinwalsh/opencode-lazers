@@ -57,7 +57,7 @@ export const BOUNDED_DOM_SNAPSHOT_SCRIPT = `(() => {
   };
 })()`
 
-const ADAPTER_STARTUP_TIMEOUT_MS = 90_000
+const ADAPTER_STARTUP_TIMEOUT_MS = 30_000
 
 export type NativeInputEvent =
   | { type: "mouseDown" | "mouseUp"; x: number; y: number; button: "left"; clickCount: 1 }
@@ -167,23 +167,80 @@ export function nativeSnapshotMatches(
 }
 
 export function nativeAdapterFailureCategory(error: unknown): string {
-  const patterns: Array<[RegExp, string]> = [
-    [/not in a ready verification state/i, "launch-not-ready"],
-    [/service registration path/i, "service-registration-mismatch"],
-    [/candidate source or built gui identity/i, "candidate-identity-mismatch"],
-    [/not running in the owned desktop process/i, "desktop-process-mismatch"],
-    [/not connected to the owned sidecar/i, "sidecar-endpoint-mismatch"],
-    [/authenticated desktop sidecar identity changed/i, "sidecar-authentication-mismatch"],
-    [/different native adapter generation/i, "adapter-generation-conflict"],
-  ]
+  const messages: string[] = []
   let current: unknown = error
-  for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
-    for (const [pattern, category] of patterns) {
-      if (pattern.test(current.message)) return category
-    }
+  for (let depth = 0; depth < 6 && current instanceof Error; depth++) {
+    messages.push(current.message)
     current = current.cause
   }
+  const patterns: Array<[RegExp, string]> = [
+    [/candidate source or built gui identity/i, "candidate-identity-mismatch"],
+    [
+      /service registration path|service registration (?:is not a regular file|no longer matches)/i,
+      "service-registration-mismatch",
+    ],
+    [/owned service process identity/i, "service-process-identity-mismatch"],
+    [/owned desktop process identity/i, "desktop-process-identity-mismatch"],
+    [/desktop is not using its isolated test-root profile/i, "desktop-profile-mismatch"],
+    [/not in a ready verification state/i, "launch-not-ready"],
+    [/native desktop process identity check failed/i, "desktop-runtime-identity-check-failed"],
+    [/owned launch verification failed/i, "owned-launch-verification-failed"],
+    [
+      /native adapter is not running in the owned desktop process/i,
+      "desktop-runtime-identity-mismatch",
+    ],
+    [/sidecar endpoint lookup failed/i, "sidecar-endpoint-lookup-failed"],
+    [
+      /sidecar endpoint is unavailable|sidecar endpoint is not local/i,
+      "sidecar-endpoint-unavailable",
+    ],
+    [
+      /sidecar endpoint does not match|not connected to the owned sidecar/i,
+      "sidecar-endpoint-mismatch",
+    ],
+    [/sidecar authentication probe failed/i, "sidecar-authentication-probe-failed"],
+    [/authenticated desktop sidecar identity changed/i, "sidecar-authentication-mismatch"],
+    [/native (?:adapter )?rpc attachment failed/i, "sidecar-rpc-attach-failed"],
+    [/different native adapter generation/i, "adapter-generation-conflict"],
+  ]
+  for (const [pattern, category] of patterns) {
+    if (messages.some((message) => pattern.test(message))) return category
+  }
   return "adapter-readiness-check-failed"
+}
+
+export function nativeAdapterFailureHint(error: unknown): string {
+  let message = ""
+  let current: unknown = error
+  for (let depth = 0; depth < 6; depth++) {
+    if (current instanceof Error) {
+      if (current.message.length > 0) message = current.message
+      current = current.cause
+      continue
+    }
+    if (typeof current === "object" && current !== null && "message" in current) {
+      const candidate = (current as { message?: unknown }).message
+      if (typeof candidate === "string" && candidate.length > 0) message = candidate
+    }
+    break
+  }
+  if (message.length === 0) return "No safe startup error detail was available"
+  return redactVisibleText(message)
+    .replace(/\b(?:https?|file):\/\/[^\s)'"<>]+/gi, "[endpoint]")
+    .replace(
+      /(?:^|\s)(\/?(?:Users|private|Applications|Library|opt|var|tmp|System|Volumes)\/[^\s,'";)]+)/g,
+      " [path]",
+    )
+    .replace(
+      /\b((?:authorization|password|secret|api[_ -]?key|access[_ -]?token|refresh[_ -]?token)\s*[:=]?\s*)[^\s,;]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\b[A-Za-z0-9+/_=-]{32,}\b/g, "[REDACTED]")
+    .replace(/[\r\n\t]/g, " ")
+    .replace(/[^A-Za-z0-9 .,:;_(){}-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180)
 }
 
 export function dispatchNativeInput(
@@ -275,11 +332,15 @@ export class NativeInteractionMainAdapter {
       this.track(window as unknown as NativeWindow),
     )
     this.unwatchClose = this.ctx.windows.on("close", (window) => this.forget(window.id))
-    await this.rpc().attach({
-      binding,
-      adapterID: this.adapterID,
-      windows: this.windowReferences(),
-    })
+    try {
+      await this.rpc().attach({
+        binding,
+        adapterID: this.adapterID,
+        windows: this.windowReferences(),
+      })
+    } catch (error) {
+      throw new Error("Native adapter RPC attachment failed", { cause: error })
+    }
     void this.poll()
   }
 
@@ -316,24 +377,44 @@ export class NativeInteractionMainAdapter {
   }
 
   private async verifyRuntime(allowPending: boolean): Promise<NativeBinding> {
-    const proof = await verifyOwnedLaunch(this.root, { allowPendingInteraction: allowPending })
-    if (
-      this.ctx.app.version !== proof.manifest.target.version ||
-      process.pid !== proof.manifest.desktop?.pid ||
-      (await realpath(process.execPath)) !==
-        (await realpath(join(proof.manifest.target.desktopBundle, "Contents", "MacOS", "OpenCode")))
-    ) {
+    let proof: Awaited<ReturnType<typeof verifyOwnedLaunch>>
+    try {
+      proof = await verifyOwnedLaunch(this.root, { allowPendingInteraction: allowPending })
+    } catch (error) {
+      throw new Error("Owned launch verification failed", { cause: error })
+    }
+    let ownedDesktopProcess: boolean
+    try {
+      ownedDesktopProcess =
+        this.ctx.app.version === proof.manifest.target.version &&
+        process.pid === proof.manifest.desktop?.pid &&
+        (await realpath(process.execPath)) ===
+          (await realpath(
+            join(proof.manifest.target.desktopBundle, "Contents", "MacOS", "OpenCode"),
+          ))
+    } catch (error) {
+      throw new Error("Native Desktop process identity check failed", { cause: error })
+    }
+    if (!ownedDesktopProcess) {
       throw new Error("Native adapter is not running in the owned Desktop process")
     }
-    const endpoint = this.ctx.serverEndpoints.get("sidecar")
-    if (
-      endpoint === undefined ||
-      !endpoint.sameMachine ||
-      endpoint.url !== proof.registration.url
-    ) {
+    let endpoint
+    try {
+      endpoint = this.ctx.serverEndpoints.get("sidecar")
+    } catch (error) {
+      throw new Error("Native sidecar endpoint lookup failed", { cause: error })
+    }
+    if (endpoint === undefined) throw new Error("Native sidecar endpoint is unavailable")
+    if (!endpoint.sameMachine) throw new Error("Native sidecar endpoint is not local")
+    if (endpoint.url !== proof.registration.url) {
       throw new Error("Native adapter is not connected to the owned sidecar")
     }
-    const info = await this.ctx.client.server.info()
+    let info
+    try {
+      info = await this.ctx.client.server.info()
+    } catch (error) {
+      throw new Error("Native sidecar authentication probe failed", { cause: error })
+    }
     if (info.pid !== proof.registration.pid || info.version !== proof.registration.version) {
       throw new Error("Authenticated Desktop sidecar identity changed")
     }
@@ -713,6 +794,7 @@ export function setupNativeInteractionMain(ctx: MainContext): void | (() => void
     try {
       ctx.log.write("warn", "Owned LAZERS native verification adapter is unavailable", {
         reason: nativeAdapterFailureCategory(error),
+        detail: nativeAdapterFailureHint(error),
       })
     } catch {
       // Verification support must never affect Desktop startup.

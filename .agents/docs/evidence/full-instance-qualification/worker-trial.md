@@ -2,129 +2,173 @@
 
 ## Result
 
-**Native full-instance gate unresolved.** This worker launched one owned
-OpenCode Desktop and invoked the implemented `native-status` path. The isolated
-service and candidate readiness checks passed, but the MainContext adapter never
-attached: `native-status` returned `ready: false`, `blocked: false`, and no
-windows. No native snapshot or input was dispatched. The worker therefore did
-not submit a LAZERS task or create a fixture; source checks and sidecar health
-are not substitutes for the feature walkthrough.
+**Native candidate feature scenario completed and retained.** In an isolated
+OpenCode Desktop 2.2.5, this admitted worker used the candidate's owned native
+interaction adapter to submit one Architect task from the visible prompt. The
+task database in the owned profile contained exactly one matching persisted
+task, `LZ-1`, with the requested acceptance criteria, write scope, project path,
+and fixture starting revision. No worker dispatch or task execution occurred.
+The stale-action test was denied before delivery, then a fresh observation
+preceded the corrected action. The owned fixture and app/service profile were
+removed by the owned cleanup path; the driver process, authenticated endpoint,
+listener and protocol-handler baseline remained unchanged.
 
-The owned-launch module, fixed MainContext interaction adapter, authenticated
-sidecar RPC/CLI path, negative tests and runbook were implemented. One concrete
-launch exposed a startup timing problem in the adapter path; a follow-up source
-fix and tests are recorded below, but they were not loaded into the already
-running Desktop and were not behaviorally qualified in another launch.
+The runbook and retained structured observations are in
+[`product-verification.md`](../../product-verification.md) and
+[`native-observation.json`](native-observation.json). This report distinguishes
+the actual worker-visible behavior from source analysis and records all owned
+relaunches. Cleanup needed bounded retries; the older generic error messages do
+not establish the underlying cause.
 
-## Source-derived findings
+## Source and implementation findings
 
-- The installed Desktop/service sources identified in LZ-50 show that
-  `OPENCODE_DESKTOP_TEST_ROOT` changes the Desktop/XDG data roots before app
-  startup, but a shell overlay may still alter `XDG_STATE_HOME`.
-- The pinned 2.2.5 service client defaults to
-  `$XDG_STATE_HOME/opencode/service.json`; `Service.ensure` can reuse or replace
-  a discovered process. The owned launcher does not call `ensure`: it verifies
-  the explicit isolated registration path, starts a CLI service with an
-  explicit selected port, authenticates `/api/info`, and checks PID/version
-  before launching the app.
-- The pinned service probe reads `/api/info` with the registration's Basic
-  credentials and treats an undecodable/authentication-failed response as no
-  discoverable service. A missing `discover()` result therefore does not prove
-  the registered process is absent.
-- The candidate redirect is a root-owned package whose entry imports the
-  assigned checkout's `src/index.ts`; merely launching from a worktree would not
-  activate that candidate. The package also exposes the candidate's built
-  `gui-experimental` export, so the Desktop UI is not silently omitted. OpenCode's
-  2.2.5 plugin config supports the package path plus options object. LAZERS task
-  storage derives from `XDG_DATA_HOME`, so the trial task database will remain
-  under the disposable test root.
-- The packaged app can register the `opencode://` handler. The launcher records
-  the existing handler and restores it only when the value changed to the exact
-  trial bundle ID; unrelated handler changes block cleanup.
+- OpenCode 2.2.5 resolves the isolated service registration under the effective
+  XDG state path. The launcher uses a fixed per-launch base, explicit selected
+  loopback port, isolated registration, authenticated `/api/info`, and matching
+  process PID/version before Desktop startup; it does not use `Service.ensure`
+  or the driving service's registration.
+- Desktop startup can reset the process working directory to the home directory.
+  Setting `HOME` alone did not isolate macOS Foundation's Documents path. The
+  working isolated environment now sets and validates matching `HOME` and
+  `CFFIXED_USER_HOME` values below each owned root.
+- Bun and Node/Electron read the same filesystem nanosecond mtime but rounded
+  `Date.toISOString()` differently at a millisecond boundary. The candidate GUI
+  identity now floors `mtimeNs` to whole milliseconds consistently; the
+  revision, byte length, timestamp and dirty-path checks remain in force.
+- `processIdentity` previously mapped all `ps` errors, nonzero exits and malformed
+  output to `null`, while cleanup treated `null` as proof of absence. The
+  implementation now distinguishes authoritative absence, matching live
+  identity, identity change and unavailable observations. Bounded shutdown
+  distinguishes a still-live main process, observed exit, helper drain, helper
+  inventory failure and identity/observation failure; no timeout inflation,
+  signal escalation or weaker identity match was introduced. Focused tests cover
+  actual `ps` observations for the current and an absent PID, parsed probe error
+  branches, process identity changes, persistent helpers and blocked root
+  removal. The actual cleanup retries below predated this final cleanup-code
+  revision and do not identify their own cause.
+- The native adapter is fixed to the owned MainContext/window and authenticated
+  sidecar binding. It returns bounded snapshots and rechecks a live focused
+  window, snapshot reference, generation and rendered content before input; it
+  does not offer arbitrary JavaScript, global CUA, automatic input replay or
+  driver-service fallback.
 
-These are code/bundle observations only. They do not establish that an Architect
-task behaves correctly in the native UI.
+These are implementation/source findings; the native interaction and persisted
+task below are the behavioral observations.
 
-- The candidate-only GUI export conditionally starts a MainContext adapter
-  only under the owned test-root environment. The adapter is designed to bind
-  the owned process/service/candidate, enumerate `MainContext.windows`, return a
-  bounded visible-DOM snapshot, use `capturePage`, and send allowlisted
-  `sendInputEvent`/`insertText` followed by a fresh observation. The CLI exposes
-  `native-status`, `native`, and no-replay `native-resolve`; candidate and
-  cleanup state fail closed on pending or ambiguous delivery. The actual
-  candidate Desktop ran this setup but reported the adapter unavailable after
-  its 30-second startup window; its log did not include a failure category.
-  Because the launcher and adapter both used 30-second readiness windows, the
-  observed timing is consistent with a race but does not prove the exact cause.
-- The in-scope follow-up raises the adapter's background startup window to 90
-  seconds and logs only a bounded failure category. That correction was made
-  after teardown, passed unit/quality/build checks, and was not loaded into or
-  re-probed in a second Desktop launch under the one-launch authorization.
+## Per-launch history
 
-## Worker actions and observations
+1. **Earlier recorded launch `bB3Lby` (candidate revision
+   `b35c1d3f41118abe43b203f4c2e679a5df144e94`):** the prior retained trial note
+   records an adapter-unavailable result, no native snapshot/input, and cleaned
+   root. Its recorded Desktop/service PIDs were 66393/66330 and port 61222. This
+   original failure history is preserved; it is not replaced with later results.
+2. **`z1DCM8`:** service PID 53182, Desktop PID 53190, port 64288, candidate
+   revision `bb159b83ecfd29786bbcf5371789ce1f40fffdb4`. The adapter did not
+   attach. The redacted startup category named only `guiEntryModifiedAt`; a
+   Bun-side probe and Node/Electron had observed identical nanoseconds but
+   returned different rounded ISO milliseconds. No input was sent. Cleanup
+   reported `cleaned`; the timestamp representation was then corrected without
+   relaxing the identity check.
+3. **`Qm5WAN`:** service PID 58144, Desktop PID 58152, renderer PID 58178,
+   window 1/generation 1, port 64695. The adapter attached, but the first
+   bounded snapshot exposed `/Users/tjw/Documents/Default Project`. No input was
+   sent. Cleanup returned `cleanup-blocked` twice and later `cleaned`; the root
+   was removed, its recorded PIDs and port were absent, and the handler baseline
+   remained `ai.opencode.desktop`. The initial `HOME` isolation change did not
+   alter Foundation's Documents path, so the trial remained stopped pending a
+   correction.
+4. **`LvVRJY`:** service PID 67568, Desktop PID 67623, renderer PID 67685,
+   window 1/generation 1, port 65050. Despite isolated `HOME`, the snapshot
+   again showed the operator's Documents path. No input was sent. Cleanup
+   returned `cleanup-blocked` twice and later `cleaned`; root/process/port checks
+   were clear and the protocol handler remained unchanged. Inspection of the
+   installed Electron app showed it uses macOS Foundation's Documents path;
+   matching `CFFIXED_USER_HOME` was added and positively checked before further
+   interaction.
+5. **Qualified launch `HXoIsS`:** candidate revision
+   `bb159b83ecfd29786bbcf5371789ce1f40fffdb4`, Desktop/service 2.2.5, Desktop PID
+   80331, service PID 80322 at `127.0.0.1:49390`. The explicit verification base
+   was `/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification`.
+   The native status and fresh owned-launch proof agreed on the root, service
+   identity, isolated state/registration paths, candidate revision with no
+   differences, and visible/focused window 1, webContents 1, renderer PID 80361,
+   generation 1. The displayed project resolved to
+   `<owned-root>/desktop/Documents/Default Project`.
 
-- Before launch, verified the installed `/Applications/OpenCode.app` and its
-  CLI were both 2.2.5. A first launcher preflight correctly stopped before
-  creating a root because CLI output `v2.2.5` did not match the packaged
-  `2.2.5`; the parser was corrected to normalize the conventional `v` prefix.
-- Read-only driver baseline before launch: PID `40217`, start time
-  `Sun Nov  1 19:09:01 2026`, listener `127.0.0.1:49374`, and Launch Services
-  handler `ai.opencode.desktop`. The existing credential in
-  `~/.config/opencode/service.json` was used only in memory for authenticated
-  read-only `/api/info`; it returned PID `40217`, version `2.2.5`. It was never
-  printed, copied, or used in the isolated profile. An SDK `Service.discover`
-  attempt against that password-only file failed with `Invalid URL`; it did not
-  start, stop, or alter a service.
-- The single owned launch returned `ready` with root
-  `/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-product-verification/lazers-full-instance-bB3Lby`,
-  Desktop PID `66393`, owned service PID `66330`, and reserved port `61222`.
-  Manifest evidence recorded the candidate checkout at revision
-  `b35c1d3f41118abe43b203f4c2e679a5df144e94`, candidate Architect identity,
-  isolated effective state/registration paths, and authenticated owned service
-  PID/version. The Desktop process tree used only the test-root profile.
-- `native-status` authenticated the owned sidecar and verified its PID/version,
-  but returned `ready: false`, `blocked: false`, `windows: []`. The owned
-  Desktop `main.log` recorded “Owned LAZERS native verification adapter is
-  unavailable” without a reason category. No click, text, key, screenshot,
-  browser-tool, driver-window, or other native input was used. No task or fixture
-  was created.
-- Cleanup returned `cleaned`. The owned root was removed, PIDs `66330` and
-  `66393` were absent, and port `61222` had no listener. The protocol handler
-  still equaled its pre-launch baseline (`ai.opencode.desktop`), so no
-  restoration mutation was needed. After cleanup the driver remained PID
-  `40217` with its original start time/listener, authenticated `/api/info` still
-  returned PID `40217` and version `2.2.5`, and the handler still equaled the
-  baseline. No driver service, process, credential, setting, or active worker
-  was changed.
-- After the launch failure and cleanup, and after the 90-second startup retry
-  correction, `bun test test/product-verification` passed (29 tests, 116
-  assertions); `bun run verify` passed formatting, lint
-  and type checking; `bun run build:gui` completed. The GUI build emitted the
-  existing Vite `inlineDynamicImports` deprecation and dependency `import.meta`
-  CommonJS warnings. These checks do not qualify a successful native adapter
-  attachment or feature task.
+## Native actions and persisted behavior
 
-## Driver assistance and effort
+- The owned project was confirmed empty and inside the launch root, then
+  initialized as a disposable Git repository. Its clean baseline revision was
+  `8cf45d73cd2815352f88c8c34d06e94c0d6d9c39`.
+- A click using a stale snapshot reference was denied with `not-delivered` and
+  “Snapshot reference is stale; take a fresh observation.” No stale input was
+  replayed. A new bounded snapshot established the current window generation and
+  visible prompt before typing.
+- Through the owned renderer only, the worker typed one request into the
+  observed Architect prompt and clicked its observed Send control. Both actions
+  returned `delivered`; a later bounded renderer snapshot showed the completed
+  “Pure greet helper” response and `LZ-1`. Relevant request/snapshot IDs and the
+  final observed title/result are retained in `native-observation.json`.
+- The submitted task requests a pure exported
+  `greet(name: string): string` helper, with `greet("Ada") === "Hello, Ada!"`,
+  `greet("") === "Hello, !"`, focused Bun tests, and only
+  `src/greeting.ts` / `test/greeting.test.ts` in its write scope. A read-only
+  query of the isolated task database found exactly one task: ID
+  `fb119a84-b8f7-4cca-b63e-0874646e60a7`, reference `LZ-1`, revision 1, status
+  `submitted`, the owned project directory, acceptance IDs and fixture starting
+  revision recorded above. No worker dispatch or execution was triggered; no
+  files in the fixture were changed by the task scenario.
+- The final native status was idle with the owned window generation unchanged.
+  Text snapshots, bounded task facts and operation IDs were retained; no page
+  screenshot or provider transcript was retained.
 
-- Driver assistance: Root supplied the discovery/authentication distinction and
-  the user warned against concurrent Desktop input during the isolated trial.
-  This assistance is not evidence of successful worker-native interaction.
-- At the 2026-11-02 01:49 UTC trajectory snapshot, the attempt was still running
-  with 419 measured tool calls and one provider retry. Its one session reported
-  1,132,725 uncached input, 50,926,848 cache-read, 0 cache-write, 110,955 output,
-  and 250,260 reasoning tokens. The attempt began at 2026-11-01 20:29:39 UTC,
-  about 5h20m before the snapshot; this is observed attempt wall time, not final
-  duration or model-active time. The recorded cost basis is unknown, so no
-  API-equivalent cost is inferred. Native input time was zero because the
-  adapter never attached.
+## Teardown and driver boundary
 
-## Remaining qualification
+For `HXoIsS`, four invocations of the same identity-checked cleanup path returned
+three retryable blockers followed by `cleaned`: two generic Desktop-exit blockers,
+then one service-exit blocker, then success. Read-only `ps`/listener checks
+between retries showed the owned Desktop/root-referencing helper processes had
+disappeared after the Desktop blockers, and the owned service PID/port had
+disappeared after its blocker. The cleanup path then confirmed the original
+`opencode://` handler and removed the owned root, including the fixture and task
+database. Post-cleanup checks confirmed the root and fixture absent, owned
+Desktop/service PIDs absent, and port 49390 without a listener. The observed
+sequence does **not** establish why earlier calls returned blockers; no zombie,
+`ps` failure, or other incident cause is inferred. The reservation was retained
+until cleanup reported success; nothing was force-deleted or signaled by process
+name.
 
-The adapter startup timing correction still needs a later explicitly authorized
-full Desktop qualification: confirm `native-status` is ready, use bounded
-snapshots and fresh native input for the disposable greeting-task scenario,
-retain sanitized behavior evidence, remove the fixture, and verify owned cleanup
-and the preserved driver boundary. That second launch was not attempted under
-the one-launch limit for this worker trial. Until the adapter actually attaches
-and the feature scenario completes, the native/full-instance acceptance
-condition remains unresolved.
+The driver baseline was PID 40217 (start time `Sun Nov 1 19:09:01 2026`),
+listener `127.0.0.1:49374`, authenticated `/api/info` version 2.2.5, and handler
+`ai.opencode.desktop`. After owned cleanup, the same PID/start time and listener
+were present; an in-memory, read-only authenticated check again returned PID
+40217/version 2.2.5; and the handler still equaled `ai.opencode.desktop`, so no
+handler mutation/restoration was needed. No driver credential was printed,
+copied, or used in the isolated profile. No canonical GUI, global CUA, profiler,
+inference retry, or worker dispatch was used.
+
+## Driver assistance and measured effort
+
+- Root/Architect findings supplied the distinction between service discovery,
+  authentication and process health; the stable explicit-base startup defect;
+  and the cleanup-observation review. The user authorized same-attempt owned
+  relaunches, warned against concurrent Desktop input, and clarified the owned
+  input resumption boundary. These findings and authorization were not treated as
+  interaction or behavior evidence.
+- At the trajectory snapshot `2026-11-02T02:57:08.153Z`, the LAZERS attempt was
+  still running and had 778 measured tool calls and 1 provider retry. Its one
+  OpenCode session snapshot reported 1,804,275 uncached input, 96,366,848
+  cache-read, 0 cache-write, 183,353 output, and 407,763 reasoning tokens. There
+  is no recorded attempt end time or final wall-clock span; model-active time is
+  not inferred. Recorded cost basis is unknown, so no API-equivalent cost is
+  inferred.
+
+## Remaining limits
+
+The owned native task-submission path and persisted candidate behavior were
+demonstrated in this trial. This scenario intentionally stopped at `submitted`;
+it does not claim that a worker edited the disposable project or ran its greeting
+tests. Cleanup blockers were retryable and ultimately resolved, but their precise
+mechanical cause remains unknown. The process-observation correction is covered
+by focused branch tests and actual local positive/absent `ps` observations; those
+tests do not retroactively prove the cause of this launch's cleanup retries.

@@ -4,6 +4,7 @@ import {
   BOUNDED_DOM_SNAPSHOT_SCRIPT,
   NativeInteractionMainAdapter,
   nativeAdapterFailureCategory,
+  nativeAdapterFailureHint,
   redactVisibleText,
 } from "../../src/verification/opencode/native-interaction-main.ts"
 import type {
@@ -112,6 +113,36 @@ describe("owned native Desktop adapter", () => {
     expect(nativeAdapterFailureCategory(new Error("untrusted token=secret"))).toBe(
       "adapter-readiness-check-failed",
     )
+    expect(
+      nativeAdapterFailureCategory(
+        new Error("Owned launch verification failed", {
+          cause: new Error("Owned service process identity is unavailable or changed"),
+        }),
+      ),
+    ).toBe("service-process-identity-mismatch")
+    expect(nativeAdapterFailureCategory(new Error("Native sidecar endpoint lookup failed"))).toBe(
+      "sidecar-endpoint-lookup-failed",
+    )
+    expect(nativeAdapterFailureCategory(new Error("Native adapter RPC attachment failed"))).toBe(
+      "sidecar-rpc-attach-failed",
+    )
+  })
+
+  test("keeps startup failure hints bounded and redacts secrets, URLs, and local paths", () => {
+    const hint = nativeAdapterFailureHint(
+      new Error("wrapper", {
+        cause: new Error(
+          "Could not read /private/var/folders/private.json from https://user:secret@example.invalid/api?token=abc123456789 with password=do-not-log",
+        ),
+      }),
+    )
+    expect(hint.length).toBeLessThanOrEqual(180)
+    expect(hint).toContain("Could not read")
+    expect(hint).not.toContain("/private/")
+    expect(hint).not.toContain("example.invalid")
+    expect(hint).not.toContain("secret")
+    expect(hint).not.toContain("do-not-log")
+    expect(hint).not.toContain("abc123456789")
   })
 
   test("uses one fixed bounded rendered-DOM script without reading form values or invoking handlers", async () => {
