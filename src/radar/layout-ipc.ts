@@ -8,6 +8,7 @@ const Dimension = Schema.Number.check(
   Schema.isGreaterThan(0),
   Schema.isLessThanOrEqualTo(2000),
 )
+const Extent = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0))
 const Position = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0))
 const Group = Schema.Struct({ id: ID, label: Label, width: Dimension, height: Dimension })
 const Node = Schema.Struct({ id: ID, group: ID, width: Dimension, height: Dimension })
@@ -20,6 +21,7 @@ const Edge = Schema.Struct({
   labelHeight: Dimension,
 })
 const Box = Schema.Struct({ id: ID, x: Position, y: Position, width: Dimension, height: Dimension })
+const GroupBox = Schema.Struct({ id: ID, x: Position, y: Position, width: Extent, height: Extent })
 
 export const RadarLayoutInput = Schema.Struct({
   key: Schema.String.check(Schema.isBetweenLength(1, 128)),
@@ -31,9 +33,9 @@ export const RadarLayoutInput = Schema.Struct({
 
 export const RadarLayoutResult = Schema.Struct({
   key: Schema.String.check(Schema.isBetweenLength(1, 128)),
-  width: Dimension,
-  height: Dimension,
-  groups: Schema.Array(Box).check(Schema.isBetweenLength(1, 20)),
+  width: Extent,
+  height: Extent,
+  groups: Schema.Array(GroupBox).check(Schema.isBetweenLength(1, 20)),
   nodes: Schema.Array(Box).check(Schema.isBetweenLength(1, 25_000)),
   edges: Schema.Array(
     Schema.Struct({

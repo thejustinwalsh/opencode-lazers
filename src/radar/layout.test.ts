@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test"
 import { existsSync } from "node:fs"
+import { Schema } from "effect"
 import { fileURLToPath } from "node:url"
 import { clampSplit, splitFromPointer } from "./layout.ts"
 import { createRadarLayoutService } from "./layout-main.ts"
 import { RadarLayoutCoordinator } from "./layout-state.ts"
-import type { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
+import { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
 
 function layoutInput(key: string): RadarLayoutInput {
   return {
@@ -110,6 +111,35 @@ test("ELK places grouped nodes and typed edges in a separate native worker threa
   expect(first.edges.map(({ id, path }) => [id, path])).toEqual(
     second.edges.map(({ id, path }) => [id, path]),
   )
+})
+
+test("IPC accepts large ELK graph and group extents while retaining individual measurement bounds", async () => {
+  const input: RadarLayoutInput = {
+    key: "many-sessions",
+    scopeKey: "project",
+    groups: [{ id: "sessions", label: "Native sessions", width: 140, height: 20 }],
+    nodes: Array.from({ length: 30 }, (_, index) => ({
+      id: `session:${index}`,
+      group: "sessions",
+      width: 240,
+      height: 90,
+    })),
+    edges: [],
+  }
+  const service = createRadarLayoutService(workerPath())
+  const result = await service.layout(input, new AbortController().signal)
+  expect(result.height).toBeGreaterThan(2000)
+  expect(result.groups[0]!.height).toBeGreaterThan(2000)
+  expect(Schema.decodeUnknownSync(RadarLayoutResult)(result).nodes).toHaveLength(30)
+  expect(() =>
+    Schema.decodeUnknownSync(RadarLayoutInput)({
+      ...input,
+      nodes: [{ ...input.nodes[0]!, height: 2001 }],
+    }),
+  ).toThrow()
+  expect(() =>
+    Schema.decodeUnknownSync(RadarLayoutResult)({ ...result, height: Number.POSITIVE_INFINITY }),
+  ).toThrow()
 })
 
 test("an aborted ELK request rejects instead of publishing obsolete layout", async () => {
