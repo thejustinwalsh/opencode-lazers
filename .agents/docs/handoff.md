@@ -83,6 +83,8 @@ The current independent work is listed below.
 
 Current returns and active work:
 
+LZ-63 is still active. Root reproduced a remaining false-invalidation defect in its in-progress correction: a random per-module check generation changes on identical module reload. [Focused finding and broader-suite qualification](evidence/native-liveness/20261102-adoption-reload-review.md). Review the final return and correct this before integration; do not touch its active files or invalidate evidence merely because an import instance changed.
+
 - LZ-64 clean `ee6960f` mapping core remains source-merged as `0d82057`;
   4 tests/52 assertions independently passed. Its original worker stays stopped,
   now cancelled by the paired plan recovery; no implementation replay.
