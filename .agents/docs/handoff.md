@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 19:15 UTC. Recheck native state before acting.
+2026-11-02, approximately 19:27 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -33,14 +33,24 @@ and consumed Root repair/activation updates through Desktop. Its old Root-fixes
 question is resolved. It is reviewing/recording landed modules, retaining unsafe
 cleanup resources and continuing the editor and recovery roadmap.
 
-LZ-68 Models editor returned `3e432be`, attempt
-`dffe9628-84f2-42cc-8774-109a2c610717`, worker
-`ses_7792aab8db1843c5bce9ca688a5632d6`, OpenAI Luna Max. Source review, integration
-and actual candidate-owned Desktop verification remain pending. `707a50c` clarifies
-that the supported native OpenCode launcher uses the existing Portless developer-
-tool exclusion; project-owned preview servers still use Portless. Architect was
-informed through Desktop; preserve the worker/artifact and resume verification
-without replaying implementation or claiming direct RPC as a registered tool run.
+LZ-68 Models editor returned `3e432be`; native independent source review found
+uncertain-write tracking lost across personas/scopes and project-resolution errors
+stuck as loading. Architect cancelled the stopped original attempt, installed
+focused instructions and resumed it (plan v22). Worker
+`ses_7792aab8db1843c5bce9ca688a5632d6`, attempt
+`dffe9628-84f2-42cc-8774-109a2c610717`, remains OpenAI Luna Max in its original native
+tree. It is now patching those defects; latest focused 23 tests / 212 assertions
+and quality pass. Return/review/integration and the actual candidate-owned Desktop
+walkthrough remain open. `707a50c` clarifies the Portless developer-tool exclusion;
+Root will drive supported native ChatGPT OAuth in the owned profile when ready.
+No credential copying or fake registered-tool dispatch.
+
+Root actually clicked native Tasks → LZ-61 → Start. Task is running, attempt
+`b20b9aa7-8466-43a7-83eb-57f48408eedc`, worker
+`ses_1f1d4570c48f412697ca0e56ccef3893`, isolated native tree and independently
+confirmed OpenAI Luna Max. Models repair is concurrently active. Coordinate
+LZ-61's progress/store/observability scopes, preserve both workers. Desktop is
+unlocked, accessible, on Radar. [Timestamped parallel/manual-Start proof and captures](evidence/native-liveness/20261102-parallel-workers.md).
 
 LZ-70 producer worker returned `9f68dcf`, original attempt
 `ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c` / session
@@ -88,7 +98,12 @@ activated via Desktop Reload. Tera High now accepts observed narrow/wide layouts
 Actual mouse/keyboard selection populates the matching lower inspector; scope
 menu works after resize; one natural refresh interval preserved upper scroll and
 selection. [Portable captures and limits](evidence/native-liveness/20261102-radar-native-review.md).
-Actual animated pulse and quiet recovery/resynchronization remain unproven.
+A subsequent actual two-worker workload does not meet Tera's initial-overview
+acceptance: only one worker is visible without scrolling and no active-worker
+count appears above the split. Architect received the new actual capture review.
+Assignment provenance also incorrectly uses the Architect's first authored task;
+a separate bounded correction is being scoped. Actual animated pulse and quiet
+recovery/resynchronization remain unproven.
 Do not mark the complete Radar task accepted merely from this visual pass.
 
 Root `83a5c31` resolves the native [H3 correction brief](evidence/native-liveness/handoff-review-correction-request-20261102.md):
@@ -101,21 +116,22 @@ identity and auditing the actual recovery actor. [Correction and checks](evidenc
 Native review of `eccd06f` found that caller-supplied recovery fields could inject
 semantic state. Root replaced that payload with deterministic derivation from
 the saved reservation; only request/review/round IDs are accepted. Current
-compatibility: 39 tests / 475 assertions, quality clear; re-review remains pending. Worker tools, finalization,
+compatibility: 39 tests / 475 assertions, quality clear. The same native reviewer
+`ses_e627a81dbffe6k9adTYtUzDisG` now clears `fdea89e` within this source delta. Worker tools, finalization,
 delivery and live use remain open; do not infer those from this module landing.
 
 ## Source landings and remaining runtime boundaries
 
-| Work                    | Current result                                                                                                                  | Still required                                                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-56 relay             | Retained `e64c90d` fixes absolute-deadline race atop worker `b164643`; 11 relay tests/68 assertions and quality pass            | Coordinate server and Desktop halves together; actual nondefault-location inference/cold start; do not activate server half alone                                                                       |
-| LZ-62 Radar             | Main `fe5cd61` plus `fb0d54a`                                                                                                   | Narrow/wide visual review and selection pass; live pulse/recovery observations remain                                                                                                                   |
-| LZ-63 adoption          | Native accepted worker `3178932`; Root `01a4006` removes random per-import identity/environment digest; source merged `10c389b` | Native preserved-work adoption and actual combined closure evidence; plan's missing human closure gate is not fabricated                                                                                |
-| LZ-64 mapping           | Source `ee6960f`, merged `0d82057`                                                                                              | Original attempt cancelled/null artifact; preserve history, no replay or forced acceptance                                                                                                              |
-| LZ-65 resources         | Wrong-root fix `44bc7ee` merged `8cc8d7d`; 18 resource/probe tests/222 assertions pass                                          | Original formal closure and resource lifecycle walkthrough; unnecessary old-baseline repair is cancelled v581, not deleted                                                                              |
-| LZ-67 Models authority  | Source `24f87e0` plus Root cancellation safety `b6237f1`, merged `ea188c2`; native readbacks pass                               | Architect recorded task/plan integration; plan cleanup-blocked v16 because inactivity inconclusive, tree retained; reviewer investigating exact predicate                                               |
-| LZ-68 Models editor     | Returned `3e432be` from original attempt above; plan `27506b73-91ec-45ba-923d-55b844f2f09e`                                     | Review/merge, real save/remove/reopen/conflict, native cross-surface readback and narrow/wide capture                                                                                                   |
-| LZ-69 handoff hardening | Native accepted `75d3d67`, source merged `00fbde6`; 28 compatibility tests/303 assertions pass                                  | Native reviewed `83a5c31` clears late-result and shared-round findings; interruption recovery follow-up awaits independent review. Worker tools, finalization/delivery and live walkthrough remain open |
+| Work                    | Current result                                                                                                                  | Still required                                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-56 relay             | Retained `e64c90d` fixes absolute-deadline race atop worker `b164643`; 11 relay tests/68 assertions and quality pass            | Coordinate server and Desktop halves together; actual nondefault-location inference/cold start; do not activate server half alone                                                                                       |
+| LZ-62 Radar             | Main `fe5cd61` plus `fb0d54a`                                                                                                   | Narrow/wide visual review and selection pass; live pulse/recovery observations remain                                                                                                                                   |
+| LZ-63 adoption          | Native accepted worker `3178932`; Root `01a4006` removes random per-import identity/environment digest; source merged `10c389b` | Native preserved-work adoption and actual combined closure evidence; plan's missing human closure gate is not fabricated                                                                                                |
+| LZ-64 mapping           | Source `ee6960f`, merged `0d82057`                                                                                              | Original attempt cancelled/null artifact; preserve history, no replay or forced acceptance                                                                                                                              |
+| LZ-65 resources         | Wrong-root fix `44bc7ee` merged `8cc8d7d`; 18 resource/probe tests/222 assertions pass                                          | Original formal closure and resource lifecycle walkthrough; unnecessary old-baseline repair is cancelled v581, not deleted                                                                                              |
+| LZ-67 Models authority  | Source `24f87e0` plus Root cancellation safety `b6237f1`, merged `ea188c2`; native readbacks pass                               | Architect recorded task/plan integration; plan cleanup-blocked v16 because inactivity inconclusive, tree retained; reviewer investigating exact predicate                                                               |
+| LZ-68 Models editor     | Returned `3e432be`; original worker resumed for two review fixes; plan `27506b73-91ec-45ba-923d-55b844f2f09e`                   | Review/merge, real save/remove/reopen/conflict, native cross-surface readback and narrow/wide capture                                                                                                                   |
+| LZ-69 handoff hardening | Native accepted `75d3d67`, source merged `00fbde6`; 28 compatibility tests/303 assertions pass                                  | Native reviewed `83a5c31` clears late-result and shared-round findings; interruption derivation `fdea89e` independently clear within source scope. Worker tools, finalization/delivery and live walkthrough remain open |
 
 Retained tree root: `~/.local/share/opencode/plugins/lazers/runner/worktrees/`.
 Original attempts for LZ-56 `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`, LZ-62
@@ -148,6 +164,17 @@ market pricing and no routes were changed.
   not creation order. Do not treat the old assertion as a production defect.
 - `1d322c3`: recheck cancellation after detailed native reads. Preserve across
   integrations. LZ-63 stable readable runtime check metadata is not a file hash.
+
+## Newly verified scheduler finding
+
+`runtime.ts` advancePlan requires every `afterPlans` state to be `integrated`.
+The actual integration command first records `INTEGRATION_RECORDED`, then sets
+`cleaning`; failed/uncertain resource removal leaves `cleanup-blocked`. Consequently
+reviewed recorded source integration cannot unblock dependencies until deletion
+succeeds. Root returned this precise finding through Desktop. Architect prioritizes
+a proportional receipt/ancestry-based fix, preserving task-only versus combined
+integration and all ownership checks, ahead of overlapping runner repair-lineage
+work. No Root runtime/GUI source edits remain active. Preserve both current workers.
 
 ## Full remaining roadmap
 
