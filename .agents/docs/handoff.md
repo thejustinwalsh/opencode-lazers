@@ -29,6 +29,20 @@ an observation-based improvements plan. This is not completion.
 - Start with README contracts and [API index](opencode-api.md), then focused
   source. Do not preload old transcripts or large evidence reports.
 
+## Current direct repair
+
+`fbfddf2` fixes the demonstrated service bottleneck: per-location full-history
+polling became transactional per-project observation revisions. Direct settings
+now take 2 ms, forwarding 4–5 ms; all six flags stayed ON. Tasks reconnects.
+Native Reload model restored Ready/apple/chat and Run locally returned
+`local GPU ready.` (19 input/4 output tokens). Same PID 7793, no restart.
+[Incident and checks](evidence/native-liveness/20261102-service-stall.md).
+Radar still has the existing oversized/stale presentation; LZ-62 owns its visual
+correction. LZ-56 owns relay work. All five workers are foreground active at
+1793635824198; the old retained-recovery table below is stale on active status.
+Architect was told to preserve the new RunnerStore schema import/call when
+integrating LZ-63. Main is available again after this repair lands.
+
 ## Live work
 
 After the user-confirmed restart, native service is PID 7793 at
