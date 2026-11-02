@@ -3,11 +3,16 @@ import { DateTime, Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
-import { nativeHost } from "./native.ts"
+import {
+  markNativeIdleBackgroundUnknown,
+  nativeHost,
+  observeNativeIdleBackground,
+} from "./native.ts"
 import type { NativeInboxClient, NativeInboxDependencies } from "./native.ts"
 import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
+import { nativeLivenessFixture } from "../../test/runner-native-liveness/fixture.ts"
 
 test("native adapter exposes inbox and paginated history reconciliation without claiming a sealed cutover", () => {
   const host = nativeHost(
@@ -747,54 +752,241 @@ test("native Architect history projects mutable assistant/tool status without pr
 })
 
 test("native session heartbeat reads metadata without context and opts into messages explicitly", async () => {
-  let contextReads = 0
   const now = DateTime.nowUnsafe()
-  const host = nativeHost(
-    {
-      session: {
-        get: () =>
-          Effect.succeed({
-            id: "ses_worker",
-            parentID: "ses_owner",
-            projectID: "project",
-            agent: "lazers-implementor",
-            metadata: {},
-            location: { directory: "/worker" },
-            time: { busy: now, idle: now, archived: undefined },
-            tokens: { input: 10, output: 4, reasoning: 2, cache: { read: 3, write: 1 } },
-            model: { providerID: "openai", id: "gpt-6-luna", variant: "max" },
-            outcome: "succeeded",
-          }),
-        context: () => {
-          contextReads++
-          return Effect.succeed([
-            { id: "msg_user", type: "user", text: "Implement it" },
-            {
-              id: "msg_done",
-              type: "assistant",
-              content: [
-                { type: "tool", name: "edit", state: "completed" },
-                { type: "text", text: "Done" },
-              ],
-            },
-          ])
-        },
+  const fixture = nativeLivenessFixture({
+    busy: now,
+    idle: now,
+    messages: [
+      { id: "msg_user", type: "user", text: "Implement it" },
+      {
+        id: "msg_done",
+        type: "assistant",
+        time: { completed: 1 },
+        finish: "stop",
+        content: [
+          { type: "tool", name: "edit", state: { status: "completed" } },
+          { type: "text", text: "Done" },
+        ],
       },
-    } as unknown as Plugin.Context,
-    {} as TaskRepository,
-  )
+    ],
+  })
 
-  const heartbeat = await host.session("ses_worker")
-  expect(contextReads).toBe(0)
+  const heartbeat = await fixture.host.session("ses_worker")
+  expect(fixture.contextReads).toBe(0)
   expect(heartbeat?.tokens).toBe(20)
   expect(heartbeat?.tools).toBe(0)
   expect(heartbeat?.messages).toEqual([])
+  expect(heartbeat?.busy).toBe(false)
 
-  const detailed = await host.session("ses_worker", { messages: true })
-  expect(contextReads).toBe(1)
+  const detailed = await fixture.host.session("ses_worker", { messages: true })
+  expect(fixture.contextReads).toBe(1)
   expect(detailed?.tools).toBe(1)
+  expect(detailed?.turn).toEqual({ inputID: "msg_user", state: "completed" })
   expect(detailed?.messages).toEqual([
     { id: "msg_user", text: "Implement it" },
     { id: "msg_done", text: "Done" },
   ])
+})
+
+test("foreground inventory overrides idle-looking timestamps and cached discovery is reused", async () => {
+  const now = DateTime.nowUnsafe()
+  const fixture = nativeLivenessFixture({
+    active: { ses_foreground: { type: "running" } },
+    sessionID: "ses_foreground",
+    busy: now,
+    idle: now,
+  })
+
+  const first = await fixture.host.session("ses_foreground")
+  const second = await fixture.host.session("ses_foreground")
+
+  expect(first).toMatchObject({ busy: true, outcome: undefined })
+  expect(second?.busy).toBe(true)
+  expect(fixture.discoveries).toBe(1)
+  expect(fixture.clients).toBe(1)
+  expect(fixture.identityReads).toBe(1)
+  expect(fixture.locationReads).toHaveLength(4)
+  expect(
+    fixture.locationReads.every((read) => read.directory === "/project/.worktrees/attempt"),
+  ).toBe(true)
+  expect(first?.background).toMatchObject({ state: "unknown", source: "experimental.idle" })
+})
+
+test("orphaned busy timestamps and unfinished latest assistant override historical success", async () => {
+  const unfinished = nativeLivenessFixture({
+    sessionID: "ses_unfinished",
+    busy: DateTime.nowUnsafe(),
+    outcome: "succeeded",
+    messages: [
+      { id: "msg_assigned", type: "user", text: "Continue work" },
+      {
+        id: "msg_partial",
+        type: "assistant",
+        time: { created: 1 },
+        content: [{ type: "tool", state: { status: "running" } }],
+      },
+    ],
+  })
+  const result = await unfinished.host.session("ses_unfinished", { messages: true })
+  expect(result).toMatchObject({
+    busy: false,
+    outcome: "interrupted",
+    turn: { inputID: "msg_assigned", state: "interrupted" },
+  })
+
+  const staleSucceeded = nativeLivenessFixture({
+    sessionID: "ses_stale_success",
+    busy: DateTime.nowUnsafe(),
+    outcome: "succeeded",
+  })
+  expect(await staleSucceeded.host.session("ses_stale_success")).toMatchObject({
+    busy: false,
+    outcome: "interrupted",
+  })
+})
+
+test("pending worker input and location-scoped approvals prevent terminal projection", async () => {
+  const fixture = nativeLivenessFixture({
+    sessionID: "ses_pending",
+    busy: DateTime.nowUnsafe(),
+    outcome: "succeeded",
+    inbox: [{ id: "msg_queued", type: "user", delivery: "queue" }],
+    permissions: [{ id: "permission", sessionID: "ses_pending" }],
+    forms: [{ id: "form", sessionID: "ses_pending" }],
+    messages: [
+      { id: "msg_current", type: "user", text: "Continue" },
+      {
+        id: "msg_done",
+        type: "assistant",
+        time: { completed: 1 },
+        finish: "stop",
+        content: [{ type: "text", text: "Done" }],
+      },
+    ],
+  })
+
+  const result = await fixture.host.session("ses_pending", { messages: true })
+  expect(result).toMatchObject({
+    pendingInput: true,
+    pendingPermissions: 1,
+    pendingForms: 1,
+    outcome: undefined,
+  })
+  expect(fixture.locationReads).toHaveLength(4)
+  expect(
+    fixture.locationReads.every((read) => read.directory === "/project/.worktrees/attempt"),
+  ).toBe(true)
+})
+
+test("active/detail-read changes remain explicitly unstable and fail closed", async () => {
+  const fixture = nativeLivenessFixture({
+    sessionID: "ses_race",
+    activeSnapshots: [{}, { ses_race: { type: "running" } }],
+    outcome: "succeeded",
+    messages: [
+      { id: "msg_current", type: "user", text: "Complete" },
+      {
+        id: "msg_done",
+        type: "assistant",
+        time: { completed: 1 },
+        finish: "stop",
+        content: [{ type: "text", text: "Done" }],
+      },
+    ],
+  })
+
+  expect(await fixture.host.session("ses_race", { messages: true })).toMatchObject({
+    busy: true,
+    observationUnstable: true,
+    outcome: undefined,
+  })
+})
+
+test("cached native transport invalidates on process replacement and rediscovers current host", async () => {
+  let expectedPID = 42
+  let transportFailure: Error | undefined
+  const fixture = nativeLivenessFixture({
+    sessionID: "ses_replaced",
+    active: { ses_replaced: { type: "running" } },
+    expectedPID: () => expectedPID,
+    activeError: () => transportFailure,
+    serverInfo: (clientNumber) => ({ pid: clientNumber === 1 ? 42 : 43, version: "2.2.5" }),
+  })
+  expect((await fixture.host.session("ses_replaced"))?.busy).toBe(true)
+  expect(fixture.identityReads).toBe(1)
+  transportFailure = new Error("host process was replaced")
+  await expect(fixture.host.session("ses_replaced")).rejects.toThrow("host process was replaced")
+  expectedPID = 43
+  transportFailure = undefined
+  expect((await fixture.host.session("ses_replaced"))?.busy).toBe(true)
+  expect(fixture.discoveries).toBe(2)
+  expect(fixture.clients).toBe(2)
+  expect(fixture.identityReads).toBe(2)
+})
+
+test("discovery, authentication, inventory, PID, and version failures remain explicit", async () => {
+  const cases = [
+    { options: { unavailable: true }, message: "Native outcome inbox is unavailable" },
+    { options: { discoveryError: new Error("discovery failed") }, message: "discovery failed" },
+    {
+      options: { infoError: new Error("authentication failed") },
+      message: "authentication failed",
+    },
+    { options: { activeError: new Error("inventory failed") }, message: "inventory failed" },
+    {
+      options: { serverInfo: () => ({ pid: 900, version: "2.2.5" }) },
+      message: "not this OpenCode host process",
+    },
+    {
+      options: { serverInfo: () => ({ pid: 42, version: "wrong" }) },
+      message: "not this OpenCode host process",
+    },
+  ] as const
+
+  for (const [index, scenario] of cases.entries()) {
+    const fixture = nativeLivenessFixture({
+      sessionID: `ses_unavailable_${index}`,
+      ...scenario.options,
+    })
+    await expect(fixture.host.session(`ses_unavailable_${index}`)).rejects.toThrow(scenario.message)
+    expect(fixture.discoveries).toBe(1)
+  }
+})
+
+test("idle background observations retain provenance and become unknown on signal loss", async () => {
+  const lineage = { inputID: "msg_current", executionStartSequence: 4, eventSequence: 7 }
+  observeNativeIdleBackground(
+    "ses_background",
+    [{ kind: "shell" }, { kind: "subagent" }],
+    lineage,
+    123,
+  )
+  const fixture = nativeLivenessFixture({
+    sessionID: "ses_background",
+    outcome: "succeeded",
+    messages: [
+      { id: "msg_current", type: "user", text: "Done" },
+      {
+        id: "msg_done",
+        type: "assistant",
+        time: { completed: 1 },
+        finish: "stop",
+        content: [{ type: "text", text: "Done" }],
+      },
+    ],
+  })
+  expect((await fixture.host.session("ses_background", { messages: true }))?.background).toEqual({
+    state: "observed",
+    source: "experimental.idle",
+    observedAt: 123,
+    ...lineage,
+    count: 2,
+    kinds: { shell: 1, subagent: 1, image: 0 },
+  })
+  markNativeIdleBackgroundUnknown("ses_background", "native signal lost")
+  expect((await fixture.host.session("ses_background"))?.background).toMatchObject({
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "native signal lost",
+  })
 })

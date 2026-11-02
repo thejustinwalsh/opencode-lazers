@@ -1879,10 +1879,10 @@ export class TaskRuntime {
     let waiting = false
     for (const attempt of active) {
       let session = await this.host.session(attempt.session_id)
-      if (session && !session.busy && session.outcome) {
-        session = (await this.host.session(attempt.session_id, { messages: true })) ?? session
+      if (!session) {
+        waiting = true
+        continue
       }
-      if (session) this.observeUsage(attempt, session, fence)
       const promptCompleted = this.store
         .effects(plan.id)
         .some(
@@ -1892,15 +1892,96 @@ export class TaskRuntime {
             JSON.parse(effect.payload).messageID === attempt.message_id &&
             effect.state === "completed",
         )
-      if (promptCompleted) {
-        this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
-        if (!session?.busy)
-          this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session?.outcome ?? "cancelled")
-      }
-      if (session?.busy) {
+      this.observeUsage(attempt, session, fence)
+      const backgroundReason = this.backgroundBlockReason(session, attempt)
+      const knownBackgroundWork =
+        session.background?.state === "observed" && session.background.count > 0
+      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+        this.approvalWait(plan, attempt, session, fence)
+      if (session.busy) {
         await this.host.interrupt(attempt.session_id)
+        if (backgroundReason)
+          this.backgroundWait(
+            plan,
+            attempt,
+            session,
+            backgroundReason,
+            fence,
+            knownBackgroundWork ? "WORKER_BACKGROUND_WAIT" : "WORKER_BACKGROUND_UNKNOWN",
+          )
         waiting = true
         continue
+      }
+      if (
+        session.pendingInput ||
+        session.observationUnstable ||
+        (session.pendingPermissions ?? 0) > 0 ||
+        (session.pendingForms ?? 0) > 0
+      ) {
+        waiting = true
+        continue
+      }
+      if (knownBackgroundWork) {
+        this.backgroundWait(plan, attempt, session, backgroundReason!, fence)
+        waiting = true
+        continue
+      }
+      if (backgroundReason)
+        this.backgroundWait(
+          plan,
+          attempt,
+          session,
+          backgroundReason,
+          fence,
+          "WORKER_BACKGROUND_UNKNOWN",
+        )
+      session = await this.host.session(attempt.session_id, { messages: true })
+      if (!session) {
+        waiting = true
+        continue
+      }
+      this.observeUsage(attempt, session, fence)
+      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+        this.approvalWait(plan, attempt, session, fence)
+      if (
+        session.busy ||
+        session.pendingInput ||
+        session.observationUnstable ||
+        (session.pendingPermissions ?? 0) > 0 ||
+        (session.pendingForms ?? 0) > 0
+      ) {
+        if (session.busy) await this.host.interrupt(attempt.session_id)
+        waiting = true
+        continue
+      }
+      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
+      const detailedKnownBackgroundWork =
+        session.background?.state === "observed" && session.background.count > 0
+      if (detailedKnownBackgroundWork) {
+        this.backgroundWait(plan, attempt, session, detailedBackgroundReason!, fence)
+        waiting = true
+        continue
+      }
+      if (detailedBackgroundReason)
+        this.backgroundWait(
+          plan,
+          attempt,
+          session,
+          detailedBackgroundReason,
+          fence,
+          "WORKER_BACKGROUND_UNKNOWN",
+        )
+      if (
+        promptCompleted &&
+        (session.turn?.inputID !== attempt.message_id ||
+          (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
+      ) {
+        waiting = true
+        continue
+      }
+      if (promptCompleted) {
+        this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
+        this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome ?? "cancelled")
       }
       if (
         this.store
@@ -1964,6 +2045,116 @@ export class TaskRuntime {
         workspace: attempt.workspace,
         observedAt: Date.now(),
         ...(outcome ? { outcome } : {}),
+      }),
+    )
+  }
+
+  private backgroundBlockReason(
+    session: HostSession,
+    attempt: AttemptRow,
+    requireTurnLineage = false,
+  ): string | undefined {
+    const background = session.background
+    if (!background) return "Native idle background observation is unknown"
+    if (background.state === "unknown")
+      return `Native idle background observation is unknown: ${background.reason}`
+    if (
+      background.inputID !== attempt.message_id ||
+      (requireTurnLineage && session.turn?.inputID !== attempt.message_id)
+    )
+      return "Native idle background observation does not match the current worker input lineage"
+    if (background.count > 0) {
+      const kinds = Object.entries(background.kinds)
+        .filter(([, count]) => count > 0)
+        .map(([kind, count]) => `${count} ${kind}`)
+        .join(", ")
+      return `Worker has ${background.count} known background job(s) in the last experimental.idle report${kinds ? ` (${kinds})` : ""}`
+    }
+    return undefined
+  }
+
+  private approvalWait(plan: PlanRow, attempt: AttemptRow, session: HostSession, fence: number) {
+    const pendingPermissions = session.pendingPermissions ?? 0
+    const pendingForms = session.pendingForms ?? 0
+    const previous = this.store.latestTransition<{
+      attemptID?: string
+      pendingPermissions?: number
+      pendingForms?: number
+    }>(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT")
+    if (
+      previous?.attemptID === attempt.id &&
+      previous.pendingPermissions === pendingPermissions &&
+      previous.pendingForms === pendingForms
+    )
+      return
+    this.store.fenced(this.owner, fence, () =>
+      this.store.record(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT", {
+        attemptID: attempt.id,
+        sessionID: attempt.session_id,
+        workspace: attempt.workspace,
+        directory: session.directory,
+        pendingPermissions,
+        pendingForms,
+        observedAt: Date.now(),
+      }),
+    )
+  }
+
+  private resumeTransientObservationWait(plan: PlanRow, fence: number) {
+    const current = this.store.plan(plan.id)
+    const reason = current?.reason
+    const backgroundWait =
+      reason?.startsWith("Native idle background observation is unknown") ||
+      reason?.includes(" known background job(s)")
+    const approvalWait =
+      reason?.startsWith("Worker at ") &&
+      reason.includes("pending permission request(s)") &&
+      reason.includes("pending form(s)")
+    if (current?.state !== "blocked" || !reason || (!backgroundWait && !approvalWait)) return
+    this.store.fenced(this.owner, fence, (db) => {
+      const changed =
+        db
+          .query(
+            "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+          )
+          .run(plan.id, reason).changes === 1
+      if (changed)
+        this.store.record(plan.id, null, "WORKER_OBSERVATION_SETTLED", {
+          previousReason: reason,
+          observation: approvalWait ? "worker-approvals" : "experimental.idle-background",
+        })
+    })
+  }
+
+  private backgroundWait(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    session: HostSession,
+    reason: string,
+    fence: number,
+    event: "WORKER_BACKGROUND_WAIT" | "WORKER_BACKGROUND_UNKNOWN" = "WORKER_BACKGROUND_WAIT",
+  ) {
+    const background = session.background ?? {
+      state: "unknown" as const,
+      source: "experimental.idle" as const,
+      reason: "Native idle background observation is unavailable",
+    }
+    const previous = this.store.latestTransition<{
+      attemptID?: string
+      background?: HostSession["background"]
+    }>(plan.id, attempt.task_id, event)
+    if (
+      previous?.attemptID === attempt.id &&
+      JSON.stringify(previous.background) === JSON.stringify(background)
+    )
+      return
+    this.store.fenced(this.owner, fence, () =>
+      this.store.record(plan.id, attempt.task_id, event, {
+        attemptID: attempt.id,
+        sessionID: attempt.session_id,
+        workspace: attempt.workspace,
+        reason,
+        background,
       }),
     )
   }
@@ -2276,14 +2467,89 @@ export class TaskRuntime {
     const task = this.store.repository.get(attempt.task_id)!
     this.observeUsage(attempt, session, fence)
     if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
-    if (!session.busy && session.outcome) {
-      session = (await this.host.session(attempt.session_id, { messages: true })) ?? session
-      this.observeUsage(attempt, session, fence)
-      if (!session.busy && session.outcome)
-        this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome)
+    const backgroundReason = this.backgroundBlockReason(session, attempt)
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
+      this.approvalWait(plan, attempt, session, fence)
+      this.hold(
+        plan,
+        `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
+        ["audit", "reconcile", "cancel"],
+      )
+      return
     }
-    if (session.busy || !session.outcome) return
+    if (
+      !session.busy &&
+      !session.pendingInput &&
+      !session.observationUnstable &&
+      backgroundReason &&
+      !session.outcome
+    ) {
+      this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"])
+      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+      return
+    }
+    if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
+      const detailed = await this.host.session(attempt.session_id, { messages: true })
+      if (!detailed) {
+        this.hold(plan, "Owned worker session disappeared during terminal observation")
+        return
+      }
+      session = detailed
+      this.observeUsage(attempt, session, fence)
+      if (session.pendingInput || session.observationUnstable) return
+      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
+      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
+        this.approvalWait(plan, attempt, session, fence)
+        this.hold(
+          plan,
+          `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
+          ["audit", "reconcile", "cancel"],
+        )
+        return
+      }
+      if (session.outcome === "interrupted") {
+        this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, "interrupted")
+        const reason = detailedBackgroundReason
+          ? `Worker execution was interrupted; ${detailedBackgroundReason}`
+          : "Worker execution was interrupted; explicit reconciliation or cancellation is required"
+        if (detailedBackgroundReason)
+          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
+        this.hold(plan, reason, ["audit", "reconcile", "cancel"])
+        return
+      }
+      if (detailedBackgroundReason) {
+        this.hold(plan, detailedBackgroundReason, ["audit", "reconcile", "cancel"])
+        this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
+        return
+      }
+    }
+    if (session.busy || session.pendingInput || session.observationUnstable || !session.outcome)
+      return
+    this.resumeTransientObservationWait(plan, fence)
+    if (
+      session.outcome === "succeeded" &&
+      (!session.turn ||
+        session.turn.inputID !== attempt.message_id ||
+        session.turn.state !== "completed")
+    ) {
+      if (session.turn?.inputID === attempt.message_id && session.turn.state === "pending") return
+      this.hold(
+        plan,
+        "Native worker success does not match a completed response to the current assigned input",
+        ["audit", "reconcile", "cancel"],
+      )
+      return
+    }
+    this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome)
     if (session.outcome !== "succeeded") {
+      if (session.outcome === "interrupted") {
+        this.hold(
+          plan,
+          "Worker execution was interrupted; explicit reconciliation or cancellation is required",
+          ["audit", "reconcile", "cancel"],
+        )
+        return
+      }
       this.failAttempt(plan, attempt, `Worker ${session.outcome}`)
       return
     }
@@ -3436,7 +3702,6 @@ export class TaskRuntime {
       )
       return
     }
-
     if (
       !this.outcomeState(
         message,
