@@ -296,6 +296,249 @@ test("35-session overview stays compact at 330/450px and discloses every scoped 
   }
 })
 
+test("current task context and overview links require the exact session-bound attempt", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(34)
+    const reads = operationalReads(fixture, "project", secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const base = await reads.radar(
+      { scope: { kind: "project", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    const seeded = with35Sessions(base)
+    const task = seeded.tasks[0]!
+    const decoyTaskID = "00000000-0000-4000-8000-000000000011"
+    const authoredTaskID = "00000000-0000-4000-8000-000000000012"
+    const decoyTask = { ...task, id: decoyTaskID, state: "running" as const }
+    const authoredTask = { ...task, id: authoredTaskID, state: "queued" as const }
+    const workerID = "session:ses-worker-01"
+    const workerAttempt = seeded.attempts.find((attempt) => attempt.sessionID === "ses-worker-01")!
+    const wrongSessionAttempt = {
+      ...workerAttempt,
+      id: "00000000-0000-4000-8000-000000000098",
+      taskID: decoyTaskID,
+      sessionID: "ses-unobserved",
+      state: "running",
+    }
+    const assignment = seeded.edges.find((edge) => edge.kind === "assignment")!
+    const wrongTaskAssignment = {
+      ...assignment,
+      id: "assignment:wrong-task-decoy",
+      from: `task:${decoyTaskID}`,
+      to: workerID,
+      taskID: decoyTaskID,
+      attemptID: workerAttempt.id,
+    }
+    const radar: RadarResponse = {
+      ...seeded,
+      tasks: [...seeded.tasks, decoyTask, authoredTask],
+      sessions: seeded.sessions.map((session) => {
+        if (session.sessionID === "ses-current-architect")
+          return { ...session, state: "busy" as const, taskIDs: [authoredTaskID] }
+        if (session.sessionID === "ses-worker-01")
+          return { ...session, taskIDs: [decoyTaskID, task.id] }
+        if (session.sessionID === "ses-worker-04")
+          return { ...session, taskIDs: [decoyTaskID], attemptIDs: [wrongSessionAttempt.id] }
+        return session
+      }),
+      attempts: [...seeded.attempts, wrongSessionAttempt],
+      edges: [...seeded.edges, wrongTaskAssignment],
+    }
+    const model = createRadarMapModel(radar)
+    const overview = createRadarOverview(model, "ses-current-architect")
+    const workerNode = overview.nodes.find((node) => node.id === workerID)!
+    const workerEntry = sessionDisclosure(overview, "ses-worker-01")!
+    const workerRecord = model.nodeByID.get(workerID)!.record
+    if (workerRecord.kind !== "session") throw new Error("Expected a session record")
+    const exactTask = workerRecord.tasks.find((candidate) => candidate.id === task.id)!
+    const decoyTaskContext = workerRecord.tasks.find((candidate) => candidate.id === decoyTaskID)!
+    const expectedTaskContext = `Task: ${exactTask.label} · ${exactTask.state}`
+
+    for (const state of ["preparing", "running", "verifying"] as const) {
+      const stateOverview = createRadarOverview(
+        createRadarMapModel({
+          ...radar,
+          attempts: radar.attempts.map((attempt) =>
+            attempt.id === workerAttempt.id ? { ...attempt, state } : attempt,
+          ),
+        }),
+        "ses-current-architect",
+      )
+      expect(sessionDisclosure(stateOverview, "ses-worker-01")?.context).toEndWith(
+        expectedTaskContext,
+      )
+    }
+
+    expect(workerNode.status).toEndWith(expectedTaskContext)
+    expect(workerEntry.context).toEndWith(expectedTaskContext)
+    expect(workerNode.status).not.toContain(decoyTaskContext.label)
+    const workerAssignments = overview.edges.filter(
+      (edge) => edge.kind === "assignment" && (edge.from === workerID || edge.to === workerID),
+    )
+    expect(workerAssignments).toHaveLength(1)
+    expect(
+      workerAssignments[0]!.from === workerID
+        ? workerAssignments[0]!.to
+        : workerAssignments[0]!.from,
+    ).toBe(`task:${task.id}`)
+
+    const architectEntry = sessionDisclosure(overview, "ses-current-architect")!
+    expect(architectEntry.context).toContain("Task context unavailable")
+    expect(
+      overview.nodes.find((node) => node.id === "session:ses-current-architect")?.status,
+    ).toContain("Task context unavailable")
+    const wrongSessionEntry = sessionDisclosure(overview, "ses-worker-04")!
+    expect(wrongSessionEntry.context).toContain("Task context unavailable")
+    expect(wrongSessionEntry.context).not.toContain("Task:")
+
+    const reordered = createRadarOverview(
+      createRadarMapModel({
+        ...radar,
+        sessions: radar.sessions.toReversed().map((session) => ({
+          ...session,
+          taskIDs: session.taskIDs.toReversed(),
+          attemptIDs: session.attemptIDs.toReversed(),
+        })),
+        tasks: radar.tasks.toReversed(),
+        attempts: radar.attempts.toReversed(),
+        edges: radar.edges.toReversed(),
+      }),
+      "ses-current-architect",
+    )
+    expect(sessionDisclosure(reordered, "ses-worker-01")?.context).toBe(workerEntry.context)
+    expect(
+      reordered.edges
+        .filter(
+          (edge) => edge.kind === "assignment" && (edge.from === workerID || edge.to === workerID),
+        )
+        .map((edge) => edge.id),
+    ).toEqual(workerAssignments.map((edge) => edge.id))
+
+    const ambiguousAttempt = {
+      ...workerAttempt,
+      id: "00000000-0000-4000-8000-000000000097",
+      taskID: decoyTaskID,
+      startedAt: workerAttempt.startedAt + 1,
+    }
+    const ambiguous = createRadarOverview(
+      createRadarMapModel({
+        ...radar,
+        sessions: radar.sessions.map((session) =>
+          session.sessionID === "ses-worker-01"
+            ? {
+                ...session,
+                taskIDs: [task.id, decoyTaskID],
+                attemptIDs: [...session.attemptIDs, ambiguousAttempt.id],
+              }
+            : session,
+        ),
+        attempts: [...radar.attempts, ambiguousAttempt],
+      }),
+      "ses-current-architect",
+    )
+    expect(sessionDisclosure(ambiguous, "ses-worker-01")?.context).toContain(
+      "Task context unavailable",
+    )
+    expect(
+      ambiguous.edges.some(
+        (edge) => edge.kind === "assignment" && (edge.from === workerID || edge.to === workerID),
+      ),
+    ).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("terminal attempts are labelled last and task state alone cannot promote work", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(35)
+    const reads = operationalReads(fixture, "project", secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const base = await reads.radar(
+      { scope: { kind: "project", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    const seeded = with35Sessions(base)
+    const task = seeded.tasks[0]!
+    const terminalAttempt = seeded.attempts.find(
+      (attempt) => attempt.sessionID === "ses-worker-03",
+    )!
+    const historicalRadar: RadarResponse = {
+      ...seeded,
+      sessions: seeded.sessions.map((session) => ({
+        ...session,
+        state: "idle",
+        taskIDs: session.sessionID === "ses-worker-03" ? [task.id] : [],
+        attemptIDs: session.sessionID === "ses-worker-03" ? [terminalAttempt.id] : [],
+      })),
+      attempts: [terminalAttempt],
+    }
+    const historicalOverview = createRadarOverview(createRadarMapModel(historicalRadar))
+    const historicalTaskContext = sessionDisclosure(historicalOverview, "ses-worker-03")!
+    expect(terminalAttempt.state).toBe("succeeded")
+    expect(historicalTaskContext.context).toContain("Last task:")
+    expect(historicalTaskContext.context).not.toContain("Task:")
+    expect(
+      historicalOverview.workerSessions.map(
+        (node) => node.record.kind === "session" && node.record.value.sessionID,
+      ),
+    ).toContain("ses-worker-03")
+    expect(
+      historicalOverview.edges.some(
+        (edge) =>
+          edge.kind === "assignment" &&
+          (edge.from === "session:ses-worker-03" || edge.to === "session:ses-worker-03"),
+      ),
+    ).toBe(false)
+    expect(
+      historicalOverview.nodes.find((node) => node.id === "session:ses-worker-03")?.status,
+    ).toContain("Last task:")
+
+    const authoredTaskID = "00000000-0000-4000-8000-000000000013"
+    const stateOnlyRadar: RadarResponse = {
+      ...seeded,
+      tasks: [
+        ...seeded.tasks.map((candidate) =>
+          candidate.id === task.id ? { ...candidate, state: "running" as const } : candidate,
+        ),
+        { ...task, id: authoredTaskID, state: "queued" },
+      ],
+      sessions: seeded.sessions.map((session) => ({
+        ...session,
+        state: session.sessionID === "ses-current-architect" ? "busy" : "idle",
+        taskIDs:
+          session.sessionID === "ses-worker-03"
+            ? [task.id]
+            : session.sessionID === "ses-current-architect"
+              ? [authoredTaskID]
+              : [],
+        attemptIDs: [],
+      })),
+      attempts: [],
+    }
+    const stateOnlyOverview = createRadarOverview(createRadarMapModel(stateOnlyRadar))
+    expect(stateOnlyOverview.workerSessions.map((node) => node.id)).toEqual([
+      "session:ses-worker-01",
+      "session:ses-worker-02",
+    ])
+    expect(sessionDisclosure(stateOnlyOverview, "ses-worker-03")?.context).toContain(
+      "Task context unavailable",
+    )
+    expect(sessionDisclosure(stateOnlyOverview, "ses-current-architect")?.context).toContain(
+      "Task context unavailable",
+    )
+    expect(stateOnlyOverview.edges.some((edge) => edge.kind === "assignment")).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("status-only session updates keep the compact layout request and coordinates stable", async () => {
   const fixture = makeFixture()
   try {
@@ -440,4 +683,10 @@ function overviewModel(model: RadarMapModel, overview: ReturnType<typeof createR
     nodeByID: new Map(overview.nodes.map((node) => [node.id, node])),
     edgeByID: new Map(overview.graphEdges.map((edge) => [edge.id, edge])),
   }
+}
+
+function sessionDisclosure(overview: ReturnType<typeof createRadarOverview>, sessionID: string) {
+  return overview.groups
+    .find((group) => group.id === "sessions")
+    ?.entries.find((entry) => entry.sourceIDs?.includes(sessionID))
 }
