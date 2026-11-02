@@ -581,6 +581,84 @@ test.each(["idle", "success-input-changed", "success-owned"])(
   },
 )
 
+test.each([
+  "session.shell.started",
+  "session.execution.started",
+  "session.inbox.enqueued",
+  "session.execution.failed",
+])("queued older %s cannot replace another listener's newer report", async (type) => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const messages = [
+      { id: "msg_current", type: "user" },
+      {
+        id: "msg_reply",
+        type: "assistant",
+        finish: "stop",
+        content: [{ type: "text", text: "Completed." }],
+      },
+    ]
+    const old = makeContext(fixture, { liveEvents: true, messages })
+    const next = makeContext(fixture, { liveEvents: true, messages })
+    const native = nativeLivenessFixture({
+      sessionID: "ses-accepted",
+      directory: fixture.directory,
+    })
+    const processed = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>()
+    const record = recorder.recordNativeEvent.bind(recorder)
+    recorder.recordNativeEvent = (event) => {
+      const result = record(event)
+      const sequence = (event as { durable?: { seq?: number } }).durable?.seq
+      if (sequence !== undefined) processed.get(sequence)?.resolve()
+      return result
+    }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(old.context, recorder, "project")
+          yield* registerProgress(next.context, recorder, "project")
+          for (const [context, sequence] of [
+            [old, 20],
+            [next, 40],
+          ] as const) {
+            const done = Promise.withResolvers<void>()
+            processed.set(sequence, done)
+            yield* Effect.promise(() =>
+              context.emitEvent(
+                executionEvent("session.execution.started", "ses-accepted", sequence),
+              ),
+            )
+            yield* Effect.promise(() => done.promise)
+            yield* context.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          }
+          expect(
+            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+          ).toMatchObject({ state: "observed", executionStartSequence: 40 })
+          const stale = Promise.withResolvers<void>()
+          processed.set(22, stale)
+          yield* Effect.promise(() => old.emitEvent(executionEvent(type, "ses-accepted", 22)))
+          yield* Effect.promise(() => stale.promise)
+          expect(
+            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+          ).toMatchObject({ state: "observed", executionStartSequence: 40 })
+          const fresh = Promise.withResolvers<void>()
+          processed.set(42, fresh)
+          yield* Effect.promise(() =>
+            old.emitEvent(executionEvent("session.execution.started", "ses-accepted", 42)),
+          )
+          yield* Effect.promise(() => fresh.promise)
+          expect(
+            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background?.state,
+          ).toBe("unknown")
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
 test("registered native idle order preserves matching success and ignores delayed older terminal events", async () => {
   const fixture = makeFixture()
   try {

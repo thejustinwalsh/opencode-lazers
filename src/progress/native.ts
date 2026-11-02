@@ -5,12 +5,14 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect, Stream } from "effect"
 import { z } from "zod"
 import {
+  advanceNativeIdleSequence,
   confirmNativeIdleBackgroundSuccess,
   invalidateNativeIdleObserver,
   nativeIdleObservationFence,
   markNativeIdleBackgroundUnknown,
   noteStaleNativeIdleBackgroundEvent,
   observeNativeIdleBackground,
+  releaseNativeIdleObserver,
 } from "../runner/native.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
@@ -243,7 +245,7 @@ export function registerProgress(
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         observing = false
-        invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed")
+        releaseNativeIdleObserver(observer)
       }),
     )
     yield* ctx.tool.transform((editor) =>
@@ -338,14 +340,20 @@ export function registerProgress(
                 executionStartSequence: cursor.executionStartSequence,
                 eventSequence: cursor.lastSequence,
               }
-              cursor.idle = lineage
-              observeNativeIdleBackground(
-                idle.sessionID,
-                idle.background,
-                lineage,
-                Date.now(),
-                observer,
+              if (
+                observeNativeIdleBackground(
+                  idle.sessionID,
+                  idle.background,
+                  lineage,
+                  Date.now(),
+                  observer,
+                )
               )
+                cursor.idle = lineage
+              else {
+                stale = true
+                cursor.idle = undefined
+              }
             },
             onFailure: () => {
               if (!observing || !stillCurrent()) {
@@ -383,6 +391,10 @@ export function registerProgress(
               const cursor = sessionEventCursors.get(sessionID) ?? {}
               sessionEventCursors.set(sessionID, cursor)
               const sequence = eventSequence(event, sessionID)
+              const ordering =
+                sequence === undefined
+                  ? undefined
+                  : advanceNativeIdleSequence(sessionID, sequence, observer)
               if (sequence === undefined) {
                 cursor.executionStartSequence = undefined
                 cursor.idle = undefined
@@ -391,6 +403,8 @@ export function registerProgress(
                   `Native ${type} had no trustworthy durable session sequence`,
                   observer,
                 )
+              } else if (ordering === "stale") {
+                noteStaleNativeIdleBackgroundEvent(sessionID, sequence, observer)
               } else if (cursor.lastSequence !== undefined && sequence <= cursor.lastSequence) {
                 if (cursor.idle && sequence < cursor.idle.eventSequence)
                   noteStaleNativeIdleBackgroundEvent(sessionID, sequence, observer)
@@ -399,11 +413,13 @@ export function registerProgress(
                 if (type === "session.execution.started") {
                   cursor.executionStartSequence = sequence
                   cursor.idle = undefined
-                  markNativeIdleBackgroundUnknown(
-                    sessionID,
-                    "A newer native foreground execution started after the last experimental.idle report",
-                    observer,
-                  )
+                  if (ordering === "newer")
+                    markNativeIdleBackgroundUnknown(
+                      sessionID,
+                      "A newer native foreground execution started after the last experimental.idle report",
+                      observer,
+                      true,
+                    )
                 } else if (type === "session.execution.succeeded") {
                   const idle = cursor.idle
                   if (
@@ -449,11 +465,13 @@ export function registerProgress(
                   }
                 } else {
                   cursor.idle = undefined
-                  markNativeIdleBackgroundUnknown(
-                    sessionID,
-                    `Native ${type} was observed after the last experimental.idle background report`,
-                    observer,
-                  )
+                  if (ordering === "newer")
+                    markNativeIdleBackgroundUnknown(
+                      sessionID,
+                      `Native ${type} was observed after the last experimental.idle background report`,
+                      observer,
+                      true,
+                    )
                 }
               }
             }

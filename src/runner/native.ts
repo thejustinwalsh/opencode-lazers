@@ -51,11 +51,37 @@ type NativeIdleBackgroundLineage = {
 const idleBackground = new Map<string, HostBackgroundObservation>()
 const idleBackgroundOwners = new Map<string, symbol>()
 
+const idleEventStates = new Map<string, { sequence?: number; observers: Set<symbol> }>()
+
+function idleEventState(sessionID: string, observer: symbol) {
+  let state = idleEventStates.get(sessionID)
+  if (!state) {
+    state = { observers: new Set() }
+    idleEventStates.set(sessionID, state)
+  }
+  state.observers.add(observer)
+  return state
+}
+
+export function advanceNativeIdleSequence(
+  sessionID: string,
+  sequence: number,
+  observer: symbol,
+): "newer" | "seen" | "stale" {
+  const state = idleEventState(sessionID, observer)
+  if (state.sequence !== undefined && sequence < state.sequence) return "stale"
+  if (sequence === state.sequence) return "seen"
+  state.sequence = sequence
+  return "newer"
+}
+
 /** An asynchronous read may update only the observation it started from. */
 export function nativeIdleObservationFence(sessionID: string, observer?: symbol): () => boolean {
   const observation = idleBackground.get(sessionID)
   const owner = idleBackgroundOwners.get(sessionID)
+  const sequence = idleEventStates.get(sessionID)?.sequence
   return () =>
+    idleEventStates.get(sessionID)?.sequence === sequence &&
     idleBackground.get(sessionID) === observation &&
     idleBackgroundOwners.get(sessionID) === owner &&
     (observer === undefined || observer === owner)
@@ -69,8 +95,12 @@ export function observeNativeIdleBackground(
   observedAt = Date.now(),
   observer?: symbol,
 ) {
-  if (observer) idleBackgroundOwners.set(sessionID, observer)
-  else idleBackgroundOwners.delete(sessionID)
+  if (observer) {
+    const state = idleEventState(sessionID, observer)
+    if (state.sequence !== undefined && lineage.eventSequence < state.sequence) return false
+    state.sequence = lineage.eventSequence
+    idleBackgroundOwners.set(sessionID, observer)
+  } else idleBackgroundOwners.delete(sessionID)
   const kinds = { shell: 0, subagent: 0, image: 0 }
   for (const work of background) kinds[work.kind]++
   idleBackground.set(sessionID, {
@@ -81,21 +111,28 @@ export function observeNativeIdleBackground(
     count: background.length,
     kinds,
   })
+  return true
 }
 
 export function markNativeIdleBackgroundUnknown(
   sessionID: string,
   reason: string,
   observer?: symbol,
+  replaceOwner = false,
 ) {
-  if (observer) idleBackgroundOwners.set(sessionID, observer)
-  else idleBackgroundOwners.delete(sessionID)
+  const owner = idleBackgroundOwners.get(sessionID)
+  if (observer && owner && owner !== observer && !replaceOwner) return false
+  if (observer) {
+    idleEventState(sessionID, observer)
+    idleBackgroundOwners.set(sessionID, observer)
+  } else idleBackgroundOwners.delete(sessionID)
   idleBackground.set(sessionID, {
     state: "unknown",
     source: "experimental.idle",
     reason,
     observedAt: Date.now(),
   })
+  return true
 }
 
 export function confirmNativeIdleBackgroundSuccess(
@@ -134,6 +171,14 @@ export function invalidateNativeIdleObserver(observer: symbol, reason: string) {
     if (owner !== observer) continue
     markNativeIdleBackgroundUnknown(sessionID, reason, observer)
     idleBackgroundOwners.delete(sessionID)
+  }
+}
+
+export function releaseNativeIdleObserver(observer: symbol) {
+  invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed")
+  for (const [sessionID, state] of idleEventStates) {
+    state.observers.delete(observer)
+    if (state.observers.size === 0) idleEventStates.delete(sessionID)
   }
 }
 
