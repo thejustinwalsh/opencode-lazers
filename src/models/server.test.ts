@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { registerModelTools } from "./tools.ts"
+import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { registerModelsServer } from "./server.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
@@ -16,6 +17,8 @@ type ModelRPC = {
   settings(input: unknown): Effect.Effect<unknown, unknown>
   configure(input: unknown): Effect.Effect<unknown, unknown>
   catalog(input: unknown): Effect.Effect<unknown, unknown>
+  sourceEvidence(input: unknown): Effect.Effect<unknown, unknown>
+  refreshSources(input: unknown): Effect.Effect<unknown, unknown>
 }
 type NativeSession = {
   id: string
@@ -81,6 +84,7 @@ function modelContext(options: {
   catalogFailure?: () => boolean
   permissionCalls?: unknown[]
   permissionWait?: () => Effect.Effect<void>
+  sourceAccessCalls?: { active: number; resolve: number }
 }) {
   let actor: NativeSession | null = options.actor ?? {
     id: "ses-native",
@@ -89,10 +93,13 @@ function modelContext(options: {
     time: {},
   }
   const permissionCalls = options.permissionCalls ?? []
+  const sourceAccessCalls = options.sourceAccessCalls ?? { active: 0, resolve: 0 }
   const server: ModelRPC = {
     settings: () => Effect.die(new Error("RPC not registered")),
     configure: () => Effect.die(new Error("RPC not registered")),
     catalog: () => Effect.die(new Error("RPC not registered")),
+    sourceEvidence: () => Effect.die(new Error("RPC not registered")),
+    refreshSources: () => Effect.die(new Error("RPC not registered")),
   }
   let registered: ModelRPC | undefined
   const rpc = {
@@ -126,6 +133,18 @@ function modelContext(options: {
           ? Effect.fail(new Error("native catalog unavailable"))
           : Effect.succeed({ data: [] }),
     },
+    integration: {
+      connection: {
+        active: () => {
+          sourceAccessCalls.active += 1
+          return Effect.succeed(undefined)
+        },
+        resolve: () => {
+          sourceAccessCalls.resolve += 1
+          return Effect.succeed(undefined)
+        },
+      },
+    },
     agent: { get: () => Effect.succeed({ data: { model: null } }) },
   }
   return {
@@ -136,19 +155,20 @@ function modelContext(options: {
       actor = next
     },
     permissionCalls,
+    sourceAccessCalls,
   }
 }
 
 async function register(
   repository: TaskRepository,
-  options: Parameters<typeof modelContext>[0] = {},
+  options: Parameters<typeof modelContext>[0] & { fetcher?: ModelEvidenceFetcher } = {},
 ) {
   const native = modelContext(options)
   const { tools, editor } = registeredEditor()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        yield* registerModelsServer(native.context as never, repository)
+        yield* registerModelsServer(native.context as never, repository, options.fetcher)
         yield* registerModelTools(
           {
             permission: native.context.permission,
@@ -511,6 +531,172 @@ test("cancelled Desktop configuration cannot save a route after a late permissio
     expect(interrupted).toBe(true)
   } finally {
     grant?.()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models evidence RPC reads cached state without credentials and refreshes only after authorization", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const permissionCalls: unknown[] = []
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const harness = await register(repository, {
+    permissionCalls,
+    sourceAccessCalls,
+    fetcher: async (input, init) => {
+      expect(String(input)).toBe("https://openrouter.ai/api/v1/models")
+      expect(init?.method).toBe("GET")
+      expect(new Headers(init?.headers).get("authorization")).toBeNull()
+      return new Response(JSON.stringify({ data: [] }))
+    },
+  })
+  repository.close()
+  const methods = harness.methods()
+  try {
+    const empty = (await Effect.runPromise(
+      methods.sourceEvidence({ sessionID: "ses-native" }),
+    )) as { sources: Array<{ source: string; state: string; latestSnapshotID: string | null }> }
+    expect(empty.sources.map(({ state }) => state)).toEqual(["never", "never", "never"])
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+
+    const refreshed = (await Effect.runPromise(
+      methods.refreshSources({ sessionID: "ses-native" }),
+    )) as {
+      sources: Array<{
+        source: string
+        state: string
+        errorCode: string | null
+        latestSnapshotID: string | null
+        latestRecordCount: number | null
+      }>
+    }
+    expect(refreshed.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "native-catalog",
+          state: "succeeded",
+          latestRecordCount: 0,
+        }),
+        expect.objectContaining({
+          source: "openrouter-models",
+          state: "succeeded",
+          latestRecordCount: 0,
+        }),
+        expect.objectContaining({
+          source: "openrouter-benchmarks",
+          state: "failed",
+          errorCode: "missing-credentials",
+        }),
+      ]),
+    )
+    expect(sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
+    const nativeSnapshotID = refreshed.sources.find(
+      ({ source }) => source === "native-catalog",
+    )!.latestSnapshotID!
+    expect(
+      await Effect.runPromise(
+        methods.sourceEvidence({ sessionID: "ses-native", snapshotID: nativeSnapshotID }),
+      ),
+    ).toMatchObject({
+      snapshot: {
+        snapshot: { snapshotID: nativeSnapshotID, source: "native-catalog", recordCount: 0 },
+        records: [],
+      },
+    })
+    expect(sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
+    expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
+      "lazers_read_model_evidence",
+      "lazers_refresh_model_evidence",
+      "lazers_read_model_evidence",
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models evidence denial, foreign and archived sessions do not initialize or access sources", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const permissionCalls: unknown[] = []
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  let denied = false
+  const harness = await register(repository, {
+    permissionCalls,
+    sourceAccessCalls,
+    denied: () => denied,
+  })
+  repository.close()
+  const methods = harness.methods()
+  try {
+    for (const actor of [
+      null,
+      { id: "ses-native", projectID: "foreign-project", agent: "desktop-settings-user", time: {} },
+      { id: "ses-native", projectID, agent: "desktop-settings-user", time: { archived: 10 } },
+    ]) {
+      harness.setActor(actor)
+      expect(await rejects(methods.refreshSources({ sessionID: "ses-native" }))).toBeInstanceOf(
+        Error,
+      )
+      expect(await rejects(methods.sourceEvidence({ sessionID: "ses-native" }))).toBeInstanceOf(
+        Error,
+      )
+    }
+    harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
+    denied = true
+    expect(await rejects(methods.refreshSources({ sessionID: "ses-native" }))).toMatchObject({
+      message: "native permission denied",
+    })
+    expect(await rejects(methods.sourceEvidence({ sessionID: "ses-native" }))).toMatchObject({
+      message: "native permission denied",
+    })
+
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(permissionCalls).toHaveLength(2)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("cancelled Models source refresh stops after late permission and writes no source state", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let interrupted = false
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const harness = await register(repository, {
+    sourceAccessCalls,
+    permissionWait: () =>
+      Effect.callback<void>((resume) => {
+        enter()
+        return Effect.sync(() => {
+          interrupted = true
+          resume(Effect.void)
+        })
+      }),
+  })
+  repository.close()
+  const controller = new AbortController()
+  const pending = Effect.runPromiseExit(
+    harness.methods().refreshSources({ sessionID: "ses-native" }),
+    { signal: controller.signal },
+  )
+  try {
+    await entered
+    controller.abort()
+    await pending
+    expect(interrupted).toBe(true)
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+  } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })

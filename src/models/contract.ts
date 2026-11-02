@@ -6,6 +6,7 @@ import {
   ModelMappingResolutionSchema,
   ModelMappingUpdateSchema,
 } from "./mapping-schema.ts"
+import { ModelEvidenceOutputSchema, ModelEvidenceReadInputSchema } from "./source-schema.ts"
 
 const SessionID = z.string().min(1).max(200)
 
@@ -25,6 +26,11 @@ export const ModelConfigureRPCInputSchema = z.strictObject({
 })
 
 export const ModelCatalogRPCInputSchema = z.strictObject({ sessionID: SessionID })
+export const ModelEvidenceRPCInputSchema = z.strictObject({
+  sessionID: SessionID,
+  ...ModelEvidenceReadInputSchema.shape,
+})
+export const ModelSourceRefreshRPCInputSchema = z.strictObject({ sessionID: SessionID })
 
 export const ModelPersonaSettingsSchema = z.strictObject({
   persona: WorkerPersona,
@@ -105,5 +111,7 @@ export const Models = Rpc.define({
     settings: { input: ModelSettingsRPCInputSchema, output: ModelSettingsOutputSchema },
     configure: { input: ModelConfigureRPCInputSchema, output: ModelMappingWriteOutputSchema },
     catalog: { input: ModelCatalogRPCInputSchema, output: ModelCatalogOutputSchema },
+    sourceEvidence: { input: ModelEvidenceRPCInputSchema, output: ModelEvidenceOutputSchema },
+    refreshSources: { input: ModelSourceRefreshRPCInputSchema, output: ModelEvidenceOutputSchema },
   },
 })
