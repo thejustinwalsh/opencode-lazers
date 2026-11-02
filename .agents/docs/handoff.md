@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 21:14 UTC. Recheck native state before acting.
+2026-11-02, approximately 21:32 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -103,23 +103,43 @@ but must not resume the rejected screen's acceptance task. Agent/menuitem snapsh
 selectors and ArrowDown→Electron Down are known driver gaps. User already approved
 owned bridge input, OpenAI consent and ChatGPT usage; no outstanding approval.
 
-### Independent work
+### Independent native work — five actual Luna Max workers
 
-- Radar compact multiworker task returned49a1170, original attempt95779e09,
-  session ses_95ecef3d88f34e2787af30c8c17eb36d; real initial viewport/Tera gate
-  remains unproven. Review/integration can proceed independently from Models.
-- LZ75 prerequisite race correction returnedf65d8cc, worker
-  ses_19fd0710d651419091bf1891f2d97045. Do not infer integration from return.
-- LZ61+LZ74 original/correction source merged2cac34e; native Architect recorded
-  separate integration receipts and requested native non-forced cleanup.
-- LZ72 audit-only cleanup diagnostics remains queued behind runtime correction.
-- Native idle observer release overwrites completed worker background report with
-  unknown; this previously blocked the now-superseded LZ68. Native Architect researched bounded preservation/recovery;
-  do not replay worker or assume native foreground-idle proves no background work.
-- Inference pill user wants model short name only, including target when loading;
-  status icon carries state, normal theme color for available, theme error color
-  for failure. No Ready/vendor/green decoration. Root answered Show target name
-  in native interview; recheck actual task dispatch, do not assume UI implemented.
+At21:32 each session below was read through the public native API: all actual
+openai/gpt-6-luna#max, separate native worktrees, no pending permissions/inbox.
+
+| Task | Work                                     | Plan                                 | Worker / attempt                                                           |
+| ---- | ---------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------- |
+| LZ77 | Model evidence snapshots                 | c5ff050c-0b5b-4f22-8b48-f729e26f4d94 | ses_a4de6965d7cb4c259db83fc85f7bb1c8 /6ed80fb1-7192-4da0-a17c-e034ce14c0bc |
+| LZ78 | Observed task effort                     | 40b9de31-bf51-4ae6-ac5a-e2d386a1637a | ses_b6e112931c9c43d7a45fc16fe789c468 /7a262dc8-8d59-42a6-999d-bf29564a15aa |
+| LZ79 | Remaining prerequisite fence defects     | 21625514-8f61-4f9e-be16-65a609f4710e | ses_833e712f73f849b3a3f5f1e28e3ba5f4 /e10ac4af-372c-45d7-bb63-98a5d7c2dfa8 |
+| LZ80 | Radar refresh row identity               | 9ed449d7-66d2-49a6-9297-fbe9a226f7a5 | ses_975268e96ac74fa4b5d3c19c862c8bfd /8c417015-b558-4fdc-8315-9bbcb5fb01c4 |
+| LZ81 | Model-name/icon-only inference indicator | recheck native plan                  | ses_8873c19750294f4d83ef3d6f31ab4308 /f9c183b6-55e0-4bb8-99a1-4c6e084654ea |
+
+Do not assume a plan's cached approval-wait reason means the native worker is
+actually stopped. Main reconciled several stale holds after actual native
+permissions/forms/inbox were empty, preserving attempts and avoiding replay.
+
+- Returned Radar49a1170 has a source-reviewed refresh-focus defect. User-role
+  Root answered Run focused successor; original LZ76 pending qualification was
+  cancelled with tree/history preserved and the genuine two-worker gate retained.
+  LZ80 starts from retained source; no native visual acceptance claimed yet.
+- Returned prerequisite correction f65d8cc is NOT merged: independent review found
+  recovery stalls, incomplete cancellation fencing and a fabricated acceptance
+  fixture. LZ79 corrects those; preserve original artifacts/history.
+- LZ61+LZ74 source merged2cac34e; integration receipts recorded, native non-forced
+  cleanup requested. LZ73 source integrated and owned tree removed successfully.
+- LZ72 audit-only cleanup diagnostic remains queued behind corrected runtime.
+- Native idle report disposal/preservation remains a separate researched gap;
+  no fabricated recovery report or assumption that foreground-idle proves zero
+  background work. LZ68 is superseded, so it is no longer that UI's gate.
+- Indicator requirement now genuinely tasked as LZ81, not merely recorded prose.
+  User wants target/resident short name only; theme/status icon semantics in DESIGN.
+- Namespace research finished in ses_e61e3c273ffehhF9DJnd6vjAdo. It recommends
+  coordinated panel slashes, atomic tool/permission/prompt/hook vocabulary and
+  current instructional docs, preserving stored/internal identities. Real Code
+  Mode discovery/invocation of hyphenated names remains an activation check.
+  Research is complete; no namespace task/activation was observed yet at checkpoint.
 
 Root driver7191d7f fixes the supplied exact destroyed-window forget exception with
 retained references,19tests90assertions. Actual ownedryHCJa focus then supported
@@ -198,7 +218,7 @@ delivery and live use remain open; do not infer those from this module landing.
 | LZ-64 mapping           | Source `ee6960f`, merged `0d82057`                                                                                              | Original attempt cancelled/null artifact; preserve history, no replay or forced acceptance                                                                                                                              |
 | LZ-65 resources         | Wrong-root fix `44bc7ee` merged `8cc8d7d`; 18 resource/probe tests/222 assertions pass                                          | Original formal closure and resource lifecycle walkthrough; unnecessary old-baseline repair is cancelled v581, not deleted                                                                                              |
 | LZ-67 Models authority  | Source `24f87e0` plus Root cancellation safety `b6237f1`, merged `ea188c2`; native readbacks pass                               | Architect recorded task/plan integration; plan cleanup-blocked v16 because inactivity inconclusive, tree retained; reviewer investigating exact predicate                                                               |
-| LZ-68 Models editor     | Returned `3e432be`; original worker resumed for two review fixes; plan `27506b73-91ec-45ba-923d-55b844f2f09e`                   | Review/merge, real save/remove/reopen/conflict, native cross-surface readback and narrow/wide capture                                                                                                                   |
+| LZ-68 Models editor     | User-cancelled and durably superseded; useful source/history retained                                                           | Do not resume old UI qualification; implement the reviewed comparison direction through successor work                                                                                                                  |
 | LZ-69 handoff hardening | Native accepted `75d3d67`, source merged `00fbde6`; 28 compatibility tests/303 assertions pass                                  | Native reviewed `83a5c31` clears late-result and shared-round findings; interruption derivation `fdea89e` independently clear within source scope. Worker tools, finalization/delivery and live walkthrough remain open |
 
 Retained tree root: `~/.local/share/opencode/plugins/lazers/runner/worktrees/`.
