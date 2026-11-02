@@ -25,6 +25,31 @@ export type ArchitectInputPage = {
   nextCursor: string | null
 }
 
+export type HostBackgroundObservation =
+  | {
+      state: "observed"
+      source: "experimental.idle"
+      observedAt: number
+      /** Current user/synthetic input reported by session context at the idle hook. */
+      inputID: string
+      /** Durable event epoch associated with the current foreground execution. */
+      executionStartSequence: number
+      /** Latest durable event sequence observed when the idle hook ran. */
+      eventSequence: number
+      /** Matching native execution success observed after the idle hook. */
+      terminalSequence?: number
+      /** Most recent older durable event ignored without overwriting this report. */
+      staleEventSequence?: number
+      count: number
+      kinds: { shell: number; subagent: number; image: number }
+    }
+  | {
+      state: "unknown"
+      source: "experimental.idle"
+      reason: string
+      observedAt?: number
+    }
+
 export type HostSession = {
   id: string
   parentID?: string
@@ -33,7 +58,22 @@ export type HostSession = {
   agent?: string
   metadata?: Record<string, unknown>
   archived: boolean
+  /** Current native foreground execution; absence is not a background-quiescence claim. */
   busy: boolean
+  /** A native inbox entry still awaits this worker. */
+  pendingInput?: boolean
+  /** Native permission/form requests remain open at this worker's assigned location. */
+  pendingPermissions?: number
+  pendingForms?: number
+  /** Native execution observations changed during a detail read; retry before acting. */
+  observationUnstable?: boolean
+  /** Detail-read lineage for the most recent admitted native input. */
+  turn?: {
+    inputID: string | null
+    state: "pending" | "completed" | "interrupted" | "unknown"
+  }
+  /** Reported idle-hook background work only; never a complete quiescence inventory. */
+  background?: HostBackgroundObservation
   idleAt?: number
   outcome?: "succeeded" | "failed" | "interrupted"
   model?: ModelPolicy

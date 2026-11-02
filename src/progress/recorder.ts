@@ -38,6 +38,7 @@ export type ProgressAssignment = {
 
 export type ReminderOwnership = {
   lazersKind: "worker-progress-reminder"
+  lazersAssignedMessageID?: string
   lazersProjectID: string
   lazersProjectDirectory: string
   lazersPlanID: string
@@ -239,7 +240,8 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
     actual.lazersTaskID === expected.lazersTaskID &&
     actual.lazersAttemptID === expected.lazersAttemptID &&
     actual.lazersSessionID === expected.lazersSessionID &&
-    actual.lazersMessageID === expected.lazersMessageID,
+    actual.lazersMessageID === expected.lazersMessageID &&
+    actual.lazersAssignedMessageID === expected.lazersAssignedMessageID,
   )
 }
 
@@ -314,6 +316,41 @@ export class ProgressRecorder {
 
   assignmentForSession(sessionID: string): ProgressAssignment | undefined {
     return this.store.atomic((db) => this.assignmentQuery(db, "session", sessionID))
+  }
+
+  matchesAssignedInput(
+    attemptID: string,
+    sessionID: string,
+    assignedMessageID: string,
+    inputID: string | null | undefined,
+  ): boolean {
+    if (!inputID) return false
+    return this.store.atomic((db) => {
+      const assignment = this.assignmentQuery(db, "attempt", attemptID)
+      if (
+        !assignment ||
+        assignment.sessionID !== sessionID ||
+        assignment.assignedMessageID !== assignedMessageID
+      )
+        return false
+      if (inputID === assignedMessageID) return true
+      const claim = this.reminderClaimIn(db, attemptID, sessionID, inputID)
+      return Boolean(
+        claim &&
+        claim.status === "admitted" &&
+        sameReminderOwnership(claim.ownership, {
+          lazersKind: "worker-progress-reminder",
+          lazersAssignedMessageID: assignedMessageID,
+          lazersProjectID: assignment.projectID,
+          lazersProjectDirectory: this.store.repository.projectDirectory,
+          lazersPlanID: assignment.planID,
+          lazersTaskID: assignment.taskID,
+          lazersAttemptID: attemptID,
+          lazersSessionID: sessionID,
+          lazersMessageID: inputID,
+        }),
+      )
+    })
   }
 
   assignments(): ProgressAssignment[] {
@@ -1139,6 +1176,7 @@ export class ProgressRecorder {
       }
       const ownership: ReminderOwnership = {
         lazersKind: "worker-progress-reminder",
+        lazersAssignedMessageID: assignment.assignedMessageID,
         lazersProjectID: assignment.projectID,
         lazersProjectDirectory: this.store.repository.projectDirectory,
         lazersPlanID: assignment.planID,

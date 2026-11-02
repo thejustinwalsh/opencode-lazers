@@ -8,7 +8,12 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { AbsolutePath } from "@opencode/schema/schema"
 import { DateTime, Effect } from "effect"
-import type { ArchitectInputPage, ArchitectSourceResult, RunnerHost } from "./host.ts"
+import type {
+  ArchitectInputPage,
+  ArchitectSourceResult,
+  HostBackgroundObservation,
+  RunnerHost,
+} from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
 import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
@@ -17,9 +22,11 @@ import { isOwnedQueuedOutcome } from "./inbox.ts"
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
   server: Pick<ReturnType<typeof OpenCode.make>["server"], "info">
+  form: Pick<ReturnType<typeof OpenCode.make>["form"], "list">
+  permission: Pick<ReturnType<typeof OpenCode.make>["permission"], "request">
   session: Pick<
     ReturnType<typeof OpenCode.make>["session"],
-    "get" | "synthetic" | "inbox" | "update"
+    "active" | "get" | "synthetic" | "inbox" | "update"
   >
   message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
 }
@@ -35,18 +42,230 @@ const nativeInboxDependencies: NativeInboxDependencies = {
   processID: () => process.pid,
 }
 
-async function inboxClient(
+type NativeIdleBackgroundWork = { kind: "shell" | "subagent" | "image" }
+type NativeIdleBackgroundLineage = {
+  inputID: string
+  executionStartSequence: number
+  eventSequence: number
+}
+const idleBackground = new Map<string, HostBackgroundObservation>()
+const idleBackgroundOwners = new Map<string, symbol>()
+
+const idleEventStates = new Map<string, { sequence?: number; observers: Set<symbol> }>()
+
+function idleEventState(sessionID: string, observer: symbol) {
+  let state = idleEventStates.get(sessionID)
+  if (!state) {
+    state = { observers: new Set() }
+    idleEventStates.set(sessionID, state)
+  }
+  state.observers.add(observer)
+  return state
+}
+
+export function advanceNativeIdleSequence(
+  sessionID: string,
+  sequence: number,
+  observer: symbol,
+): "newer" | "seen" | "stale" {
+  const state = idleEventState(sessionID, observer)
+  if (state.sequence !== undefined && sequence < state.sequence) return "stale"
+  if (sequence === state.sequence) return "seen"
+  state.sequence = sequence
+  return "newer"
+}
+
+/** An asynchronous read may update only the observation it started from. */
+export function nativeIdleObservationFence(sessionID: string, observer?: symbol): () => boolean {
+  const observation = idleBackground.get(sessionID)
+  const owner = idleBackgroundOwners.get(sessionID)
+  const sequence = idleEventStates.get(sessionID)?.sequence
+  return () =>
+    idleEventStates.get(sessionID)?.sequence === sequence &&
+    idleBackground.get(sessionID) === observation &&
+    idleBackgroundOwners.get(sessionID) === owner &&
+    (observer === undefined || observer === owner)
+}
+
+/** Stores only the public experimental idle-hook report, not a complete resource inventory. */
+export function observeNativeIdleBackground(
+  sessionID: string,
+  background: readonly NativeIdleBackgroundWork[],
+  lineage: NativeIdleBackgroundLineage,
+  observedAt = Date.now(),
+  observer?: symbol,
+) {
+  if (observer) {
+    const state = idleEventState(sessionID, observer)
+    if (state.sequence !== undefined && lineage.eventSequence < state.sequence) return false
+    state.sequence = lineage.eventSequence
+    idleBackgroundOwners.set(sessionID, observer)
+  } else idleBackgroundOwners.delete(sessionID)
+  const kinds = { shell: 0, subagent: 0, image: 0 }
+  for (const work of background) kinds[work.kind]++
+  idleBackground.set(sessionID, {
+    state: "observed",
+    source: "experimental.idle",
+    observedAt,
+    ...lineage,
+    count: background.length,
+    kinds,
+  })
+  return true
+}
+
+export function markNativeIdleBackgroundUnknown(
+  sessionID: string,
+  reason: string,
+  observer?: symbol,
+  replaceOwner = false,
+) {
+  const owner = idleBackgroundOwners.get(sessionID)
+  if (observer && owner && owner !== observer && !replaceOwner) return false
+  if (observer) {
+    idleEventState(sessionID, observer)
+    idleBackgroundOwners.set(sessionID, observer)
+  } else idleBackgroundOwners.delete(sessionID)
+  idleBackground.set(sessionID, {
+    state: "unknown",
+    source: "experimental.idle",
+    reason,
+    observedAt: Date.now(),
+  })
+  return true
+}
+
+export function confirmNativeIdleBackgroundSuccess(
+  sessionID: string,
+  lineage: NativeIdleBackgroundLineage,
+  terminalSequence: number,
+  observer?: symbol,
+) {
+  const current = idleBackground.get(sessionID)
+  if (
+    (observer !== undefined && idleBackgroundOwners.get(sessionID) !== observer) ||
+    current?.state !== "observed" ||
+    current.inputID !== lineage.inputID ||
+    current.executionStartSequence !== lineage.executionStartSequence ||
+    current.eventSequence !== lineage.eventSequence ||
+    terminalSequence <= current.eventSequence
+  )
+    return false
+  idleBackground.set(sessionID, { ...current, terminalSequence })
+  return true
+}
+
+export function noteStaleNativeIdleBackgroundEvent(
+  sessionID: string,
+  sequence: number,
+  observer?: symbol,
+) {
+  if (observer !== undefined && idleBackgroundOwners.get(sessionID) !== observer) return
+  const current = idleBackground.get(sessionID)
+  if (current?.state !== "observed") return
+  idleBackground.set(sessionID, { ...current, staleEventSequence: sequence })
+}
+
+export function invalidateNativeIdleObserver(observer: symbol, reason: string) {
+  for (const [sessionID, owner] of idleBackgroundOwners) {
+    if (owner !== observer) continue
+    markNativeIdleBackgroundUnknown(sessionID, reason, observer)
+    idleBackgroundOwners.delete(sessionID)
+  }
+}
+
+export function releaseNativeIdleObserver(observer: symbol) {
+  invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed")
+  for (const [sessionID, state] of idleEventStates) {
+    state.observers.delete(observer)
+    if (state.observers.size === 0) idleEventStates.delete(sessionID)
+  }
+}
+
+function nativeIdleBackgroundObservation(sessionID: string): HostBackgroundObservation {
+  return (
+    idleBackground.get(sessionID) ?? {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "No experimental.idle background report was observed in this host process",
+    }
+  )
+}
+
+class NativeProcessMismatchError extends Error {}
+
+async function assertNativeProcess(
   ctx: Plugin.Context,
+  client: NativeInboxClient,
   dependencies: NativeInboxDependencies,
-): Promise<NativeInboxClient> {
-  const endpoint = await dependencies.discover({ version: ctx.app.version })
-  if (!endpoint)
-    throw new Error(`Native outcome inbox is unavailable for OpenCode ${ctx.app.version}`)
-  const client = dependencies.make(endpoint)
+) {
   const info = await client.server.info()
   if (info.pid !== dependencies.processID() || info.version !== ctx.app.version)
-    throw new Error("Native outcome inbox service is not this OpenCode host process")
-  return client
+    throw new NativeProcessMismatchError(
+      "Native outcome inbox service is not this OpenCode host process",
+    )
+}
+
+type NativeWorkerObservation = {
+  active: boolean
+  pendingInput: boolean
+  inbox: string
+  pendingPermissions: number
+  permissionRequests: string
+  pendingForms: number
+  forms: string
+}
+
+async function workerObservation(
+  client: NativeInboxClient,
+  sessionID: string,
+  directory?: string,
+): Promise<NativeWorkerObservation> {
+  const [active, inbox, permissions, forms] = await Promise.all([
+    client.session.active(),
+    client.session.inbox.list({ sessionID }),
+    directory
+      ? client.permission.request.list({ location: { directory } })
+      : Promise.resolve(undefined),
+    directory ? client.form.list({ location: { directory } }) : Promise.resolve(undefined),
+  ])
+  if (
+    !active ||
+    typeof active !== "object" ||
+    Array.isArray(active) ||
+    !Array.isArray(inbox) ||
+    (permissions !== undefined && !Array.isArray(permissions.data)) ||
+    (forms !== undefined && !Array.isArray(forms.data))
+  )
+    throw new Error("Native worker execution inventory is unavailable")
+  if (
+    directory &&
+    (!permissions ||
+      !forms ||
+      permissions.location.directory !== directory ||
+      forms.location.directory !== directory)
+  )
+    throw new Error("Native worker approval inventory did not match its assigned location")
+  const permissionIDs = (permissions?.data ?? [])
+    .filter((entry) => entry.sessionID === sessionID)
+    .map((entry) => entry.id)
+    .sort()
+  const formIDs = (forms?.data ?? [])
+    .filter((entry) => entry.sessionID === sessionID)
+    .map((entry) => entry.id)
+    .sort()
+  return {
+    active: Object.prototype.hasOwnProperty.call(active, sessionID),
+    pendingInput: inbox.length > 0,
+    inbox: inbox
+      .map((entry) => `${entry.id}:${entry.type}:${entry.delivery}`)
+      .sort()
+      .join("\n"),
+    pendingPermissions: permissionIDs.length,
+    permissionRequests: permissionIDs.join("\n"),
+    pendingForms: formIDs.length,
+    forms: formIDs.join("\n"),
+  }
 }
 
 async function assertArchitectTarget(
@@ -111,6 +330,39 @@ export function nativeHost(
   repository: TaskRepository,
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost {
+  let connected: NativeInboxClient | undefined
+  let connecting: Promise<NativeInboxClient> | undefined
+  const invalidate = (client: NativeInboxClient) => {
+    if (connected === client) connected = undefined
+  }
+  const connectedClient = async () => {
+    if (connected) return connected
+    if (connecting) return connecting
+    connecting = (async () => {
+      const endpoint = await dependencies.discover({ version: ctx.app.version })
+      if (!endpoint)
+        throw new Error(`Native outcome inbox is unavailable for OpenCode ${ctx.app.version}`)
+      const client = dependencies.make(endpoint)
+      await assertNativeProcess(ctx, client, dependencies)
+      return client
+    })()
+    try {
+      connected = await connecting
+      return connected
+    } finally {
+      connecting = undefined
+    }
+  }
+  const runNative = async <A>(client: NativeInboxClient, operation: () => Promise<A>) => {
+    try {
+      return await operation()
+    } catch (error) {
+      invalidate(client)
+      throw error
+    }
+  }
+  const observeWorker = (client: NativeInboxClient, sessionID: string, directory?: string) =>
+    runNative(client, () => workerObservation(client, sessionID, directory))
   return {
     async workerModel() {
       const agent = await Effect.runPromise(
@@ -146,52 +398,155 @@ export function nativeHost(
       )
     },
     async session(id, options) {
-      const session = await Effect.runPromise(
-        ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(
-          Effect.catch((error) => {
-            if (
-              typeof error === "object" &&
-              error !== null &&
-              "_tag" in error &&
-              error._tag === "SessionNotFoundError"
-            )
-              return Effect.succeed(null)
-            return Effect.fail(error)
-          }),
-        ),
-      )
-      if (!session) return null
+      const client = await connectedClient()
+      const readSession = () =>
+        runNative(client, () =>
+          Effect.runPromise(
+            ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(
+              Effect.catch((error) => {
+                if (
+                  typeof error === "object" &&
+                  error !== null &&
+                  "_tag" in error &&
+                  error._tag === "SessionNotFoundError"
+                )
+                  return Effect.succeed(null)
+                return Effect.fail(error)
+              }),
+            ),
+          ),
+        )
+      const session = await readSession()
+      if (!session) {
+        const before = await observeWorker(client, id)
+        if (before.active || before.pendingInput)
+          throw new Error("Native worker session is absent while execution or input is observed")
+        return null
+      }
+      const backgroundBefore = nativeIdleBackgroundObservation(id)
+      const before = await observeWorker(client, id, session.location.directory)
       const messages = options?.messages
-        ? await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+        ? await runNative(client, () =>
+            Effect.runPromise(ctx.session.context({ sessionID: session.id })),
+          )
         : []
-      const busy = session.time.busy ? DateTime.toEpochMillis(session.time.busy) : 0
-      const idle = session.time.idle ? DateTime.toEpochMillis(session.time.idle) : 0
+      const latest = options?.messages ? await readSession() : session
+      const after = options?.messages
+        ? await observeWorker(client, id, latest?.location.directory ?? session.location.directory)
+        : before
+      const backgroundAfter = nativeIdleBackgroundObservation(id)
+      if (!latest) {
+        if (before.active || after.active || before.pendingInput || after.pendingInput)
+          throw new Error("Native worker session disappeared during execution observation")
+        return null
+      }
+
+      const sessionExecutionState = (value: NonNullable<typeof session>) =>
+        JSON.stringify({
+          busy: value.time.busy ? DateTime.toEpochMillis(value.time.busy) : 0,
+          idle: value.time.idle ? DateTime.toEpochMillis(value.time.idle) : 0,
+          outcome: value.outcome,
+          archived: value.time.archived !== undefined,
+        })
+      const beforeState = sessionExecutionState(session)
+      const afterState = sessionExecutionState(latest)
+      const observationUnstable =
+        options?.messages === true &&
+        (before.active !== after.active ||
+          before.inbox !== after.inbox ||
+          before.permissionRequests !== after.permissionRequests ||
+          before.forms !== after.forms ||
+          JSON.stringify(backgroundBefore) !== JSON.stringify(backgroundAfter) ||
+          session.location.directory !== latest.location.directory ||
+          beforeState !== afterState)
+      const active = before.active || after.active
+      const pendingInput = before.pendingInput || after.pendingInput
+      const pendingPermissions = Math.max(before.pendingPermissions, after.pendingPermissions)
+      const pendingForms = Math.max(before.pendingForms, after.pendingForms)
+      const busyAt = latest.time.busy ? DateTime.toEpochMillis(latest.time.busy) : 0
+      const idleAt = latest.time.idle ? DateTime.toEpochMillis(latest.time.idle) : 0
+      const lastInputIndex = options?.messages
+        ? messages.reduce(
+            (index, message, current) =>
+              message.type === "user" || message.type === "synthetic" ? current : index,
+            -1,
+          )
+        : -1
+      const lastInput = lastInputIndex >= 0 ? messages[lastInputIndex] : undefined
+      const response =
+        lastInputIndex >= 0
+          ? [...messages.slice(lastInputIndex + 1)]
+              .reverse()
+              .find((message) => message.type === "assistant")
+          : undefined
+      const unfinishedAssistant =
+        response !== undefined &&
+        (response.time.completed === undefined ||
+          response.finish === "tool-calls" ||
+          response.content.some(
+            (part) =>
+              part.type === "tool" &&
+              (part.state.status === "running" || part.state.status === "streaming"),
+          ))
+      const pendingInteraction = pendingPermissions > 0 || pendingForms > 0
+      const interrupted =
+        !active &&
+        !pendingInput &&
+        !pendingInteraction &&
+        !observationUnstable &&
+        (busyAt > idleAt || unfinishedAssistant)
+      const turn = options?.messages
+        ? {
+            inputID: lastInput?.id ?? null,
+            state: (lastInput === undefined
+              ? "unknown"
+              : interrupted
+                ? "interrupted"
+                : response === undefined
+                  ? "pending"
+                  : unfinishedAssistant
+                    ? "interrupted"
+                    : "completed") as "pending" | "completed" | "interrupted" | "unknown",
+          }
+        : undefined
+      const outcome =
+        active || pendingInput || pendingInteraction || observationUnstable
+          ? undefined
+          : interrupted
+            ? "interrupted"
+            : latest.outcome
       return {
-        id: session.id,
-        parentID: session.parentID,
-        projectID: session.projectID,
-        directory: session.location.directory,
-        agent: session.agent,
-        metadata: session.metadata,
-        archived: session.time.archived !== undefined,
-        busy: busy > idle,
-        ...(idle ? { idleAt: idle } : {}),
-        outcome: session.outcome,
-        model: session.model,
+        id: latest.id,
+        parentID: latest.parentID,
+        projectID: latest.projectID,
+        directory: latest.location.directory,
+        agent: latest.agent,
+        metadata: latest.metadata,
+        archived: latest.time.archived !== undefined,
+        busy: active,
+        ...(pendingInput ? { pendingInput: true } : {}),
+        ...(pendingPermissions ? { pendingPermissions } : {}),
+        ...(pendingForms ? { pendingForms } : {}),
+        ...(observationUnstable ? { observationUnstable: true } : {}),
+        ...(turn ? { turn } : {}),
+        background: backgroundAfter,
+        ...(idleAt ? { idleAt } : {}),
+        outcome,
+        model: latest.model,
         usage: {
-          input: session.tokens.input,
-          output: session.tokens.output,
-          reasoning: session.tokens.reasoning,
-          cacheRead: session.tokens.cache.read,
-          cacheWrite: session.tokens.cache.write,
+          input: latest.tokens.input,
+          output: latest.tokens.output,
+          reasoning: latest.tokens.reasoning,
+          cacheRead: latest.tokens.cache.read,
+          cacheWrite: latest.tokens.cache.write,
           provenance: "OpenCode 2.2.5 session.get cumulative token snapshot",
         },
         tokens:
-          session.tokens.input +
-          session.tokens.output +
-          session.tokens.reasoning +
-          session.tokens.cache.read +
-          session.tokens.cache.write,
+          latest.tokens.input +
+          latest.tokens.output +
+          latest.tokens.reasoning +
+          latest.tokens.cache.read +
+          latest.tokens.cache.write,
         tools: messages.reduce(
           (sum, message) =>
             sum +
@@ -219,20 +574,23 @@ export function nativeHost(
       }
     },
     async outcomeInbox(sessionID) {
-      const client = await inboxClient(ctx, dependencies)
-      await assertArchitectTarget(ctx, client, sessionID)
-      return (await client.session.inbox.list({ sessionID })).map(inboxEntry)
+      const client = await connectedClient()
+      await runNative(client, () => assertArchitectTarget(ctx, client, sessionID))
+      const entries = await runNative(client, () => client.session.inbox.list({ sessionID }))
+      return entries.map(inboxEntry)
     },
     async architectInputPage(sessionID, cursor): Promise<ArchitectInputPage> {
-      const client = await inboxClient(ctx, dependencies)
-      await assertArchitectTarget(ctx, client, sessionID)
+      const client = await connectedClient()
+      await runNative(client, () => assertArchitectTarget(ctx, client, sessionID))
       const [inbox, page] = await Promise.all([
-        client.session.inbox.list({ sessionID }),
-        client.message.list({
-          sessionID,
-          limit: 100,
-          ...(cursor ? { cursor } : { order: "asc" }),
-        }),
+        runNative(client, () => client.session.inbox.list({ sessionID })),
+        runNative(client, () =>
+          client.message.list({
+            sessionID,
+            limit: 100,
+            ...(cursor ? { cursor } : { order: "asc" }),
+          }),
+        ),
       ])
       return {
         inbox: inbox
@@ -265,14 +623,18 @@ export function nativeHost(
         input.ownership.lazersProjectDirectory !== repository.projectDirectory
       )
         throw new Error("Refusing to cancel an outcome with mismatched durable ownership")
-      const client = await inboxClient(ctx, dependencies)
-      await assertArchitectTarget(ctx, client, input.sessionID)
-      const entry = (await client.session.inbox.list({ sessionID: input.sessionID }))
+      const client = await connectedClient()
+      await runNative(client, () => assertArchitectTarget(ctx, client, input.sessionID))
+      const entry = (
+        await runNative(client, () => client.session.inbox.list({ sessionID: input.sessionID }))
+      )
         .map(inboxEntry)
         .find((candidate) => candidate.id === input.inboxID)
       if (!entry || !isOwnedQueuedOutcome(entry, input.ownership))
         throw new Error("Owned outcome is no longer queued; cancellation was not confirmed")
-      await client.session.inbox.cancel({ sessionID: input.sessionID, inboxID: input.inboxID })
+      await runNative(client, () =>
+        client.session.inbox.cancel({ sessionID: input.sessionID, inboxID: input.inboxID }),
+      )
     },
     async create(input) {
       // Preserve the admitted native ref verbatim. Catalog metadata is advisory;
@@ -323,8 +685,8 @@ export function nativeHost(
       )
     },
     async updateSession(input) {
-      const client = await inboxClient(ctx, dependencies)
-      await assertArchitectTarget(ctx, client, input.sessionID)
+      const client = await connectedClient()
+      await runNative(client, () => assertArchitectTarget(ctx, client, input.sessionID))
       let updateError: unknown
       try {
         await client.session.update({ sessionID: input.sessionID, archived: input.archived })
@@ -333,7 +695,7 @@ export function nativeHost(
       }
       let readback: Awaited<ReturnType<typeof client.session.get>>
       try {
-        readback = await client.session.get({ sessionID: input.sessionID })
+        readback = await runNative(client, () => client.session.get({ sessionID: input.sessionID }))
       } catch (error) {
         throw new Error(
           `Native Architect archival readback is unavailable${updateError ? ` after update error: ${String(updateError)}` : ""}: ${String(error)}`,
@@ -383,17 +745,19 @@ export function nativeHost(
           input.metadata.lazersMessageID !== input.id)
       )
         throw new Error("Native outcome notification has mismatched durable ownership")
-      const client = await inboxClient(ctx, dependencies)
-      await assertArchitectTarget(ctx, client, input.sessionID)
-      await client.session.synthetic({
-        sessionID: Session.ID.make(input.sessionID),
-        id: SessionMessage.ID.make(input.id),
-        text: input.text,
-        ...(input.metadata ? { metadata: input.metadata } : {}),
-        resume: input.resume,
-        delivery: "queue",
-        description: "LAZERS task outcome",
-      })
+      const client = await connectedClient()
+      await runNative(client, () => assertArchitectTarget(ctx, client, input.sessionID))
+      await runNative(client, () =>
+        client.session.synthetic({
+          sessionID: Session.ID.make(input.sessionID),
+          id: SessionMessage.ID.make(input.id),
+          text: input.text,
+          ...(input.metadata ? { metadata: input.metadata } : {}),
+          resume: input.resume,
+          delivery: "queue",
+          description: "LAZERS task outcome",
+        }),
+      )
     },
     async updateInstruction(input) {
       const sessionID = Session.ID.make(input.sessionID)

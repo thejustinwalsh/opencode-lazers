@@ -94,6 +94,16 @@ function fixture() {
         agent: "architect",
         archived: false,
         busy: false,
+        background: {
+          state: "observed",
+          source: "experimental.idle",
+          observedAt: Date.now(),
+          inputID: "owner-input",
+          executionStartSequence: 1,
+          eventSequence: 1,
+          count: 0,
+          kinds: { shell: 0, subagent: 0, image: 0 },
+        },
         tokens: null,
         tools: 0,
         cost: null,
@@ -124,6 +134,16 @@ function fixture() {
         metadata: { lazersAttemptID: input.attemptID },
         archived: false,
         busy: false,
+        background: {
+          state: "observed",
+          source: "experimental.idle",
+          observedAt: Date.now(),
+          inputID: "unassigned-input",
+          executionStartSequence: 1,
+          eventSequence: 1,
+          count: 0,
+          kinds: { shell: 0, subagent: 0, image: 0 },
+        },
         tokens: 0,
         tools: 0,
         cost: null,
@@ -149,6 +169,8 @@ function fixture() {
       session.messages.push({ id: input.id, text: input.text })
       session.busy = false
       session.outcome = "succeeded"
+      session.turn = { inputID: input.id, state: "completed" }
+      if (session.background?.state === "observed") session.background.inputID = input.id
       session.tokens = first ? 123 : 200
       session.tools = first ? 7 : 10
       session.cost = first ? 0.25 : 0.5
@@ -160,6 +182,7 @@ function fixture() {
       if (session) {
         session.busy = false
         session.outcome = "interrupted"
+        if (session.turn) session.turn = { inputID: session.turn.inputID, state: "interrupted" }
       }
     },
   }

@@ -162,7 +162,7 @@ function fixture(options: { evidenceDirectory?: EvidenceDirectory; failedCheck?:
         messages: [],
       })
     },
-    prompt: async ({ sessionID, directory }) => {
+    prompt: async ({ sessionID, directory, id }) => {
       events.push("prompt")
       const mode = options.evidenceDirectory ?? "populated"
       writeFileSync(join(directory, "result.txt"), "ok\n")
@@ -185,6 +185,17 @@ function fixture(options: { evidenceDirectory?: EvidenceDirectory; failedCheck?:
       const session = sessions.get(sessionID)!
       session.busy = false
       session.outcome = "succeeded"
+      session.turn = { inputID: id, state: "completed" }
+      session.background = {
+        state: "observed",
+        source: "experimental.idle",
+        observedAt: Date.now(),
+        inputID: id,
+        executionStartSequence: 1,
+        eventSequence: 2,
+        count: 0,
+        kinds: { shell: 0, subagent: 0, image: 0 },
+      }
     },
     updateInstruction: async () => {},
     notify: async () => {},
