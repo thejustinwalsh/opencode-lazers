@@ -69,27 +69,33 @@ permissions/inbox. Together with LZ-63, three native implementation workers run
 in parallel. Architect resumed Radar from v21 to v23 and relay v27 to v29 using
 journaled same-attempt commands after durable correction instructions were
 installed and read back. Instruction consumption/completion is not yet proven.
-Models service/API task `1baed348-eaa5-418c-b231-8866f930b63e` was submitted;
-its scheduling/dispatch has not yet been observed.
+Models service/API task `1baed348-eaa5-418c-b231-8866f930b63e` has since dispatched;
+the current independent work is listed below.
 
 Current returns and active work:
 
 - LZ-64 clean `ee6960f` mapping core remains source-merged as `0d82057`;
   4 tests/52 assertions independently passed. Its original worker stays stopped,
   now cancelled by the paired plan recovery; no implementation replay.
-- LZ-65 `4a9f0cd` resource lifecycle returned with a wrong-root cleanup identity
-  defect. Architect cancelled the pair using fresh version v562, then resumed only
-  original LZ-65 at v565→567. Worker `ses_534b5c181ba949b393631717d15cb97f`
-  is active again for the guard and real two-root/reopened-SQLite regression.
+- LZ-65's original worker returned wrong-root correction `44bc7ee`; independent
+  review cleared the canonical identity guard and real two-root/reopened SQLite
+  regression. Source merged as `8cc8d7d`, preserving Root's probe fixture correction;
+  merged resource/probe checks pass 18 tests/222 assertions and quality. Formal
+  runtime acceptance remains unresolved. The old-baseline probe ordering failure
+  automatically created replacement attempt `5627d0c3-52df-47b3-a381-eba3fd582863`;
+  Architect requested cancellation at v579. Latest inspection still says cancelling,
+  not stopped. Preserve both trees; no replacement/replay was requested.
 - LZ-56 returned corrected clean `b164643` atop `4535c6c`: 29 focused tests/185
   assertions and 21 profiler tests/102 assertions pass. Real location-scoped
-  inference/cold-start and final source review remain open. Original worker is
-  no longer foreground-active; preserve its return, do not replay.
+  inference/cold-start remain open. Re-review cleared capacity and event-stream
+  corrections but found an absolute-deadline race when timer callbacks are delayed.
+  Hold integration. The task is accepted, so ordinary Resume cannot reopen it;
+  use the planned LZ-57 same-attempt repair capability, not a replacement task.
 - LZ-62 is active correcting `2eaceec` for gap/pulse recovery, active worker and
   truthful typed-flow prominence, and stable keyboard focus. Native narrow
   capture/Tera 6.1 High acceptance still pending. Old main GUI is not the candidate.
 - LZ-63 returned clean `56c2a94`, 197 runner tests/2,877 assertions and 14 dedicated
-  tests/187 assertions. Original worker finished. Plan remains blocked v20 on a
+  tests/187 assertions. Original worker finished. Its plan was held on a
   new observed idle/success mismatch; earlier continuity/cancellation repairs do
   not establish this completion. Root `1a5b2a8` adds timestamped automatic producer
   diagnostics, 61 tests/293 assertions plus quality checks passing. Investigate
@@ -99,12 +105,33 @@ Current returns and active work:
   scope comparison, plus the all-environment hash gate. Returned source is not
   cleared; see the linked review before integration.
   [Failure, diagnostics and review concern](evidence/native-liveness/20261102-idle-producer-trace.md).
+  Independent review additionally found task/combined human-evidence collisions
+  and inconclusive adoption cleanup. Original attempt was stopped at v24 and
+  resumed at v26 after all five focused corrections were installed/read back.
+  Own runner checks passed 189 tests/2,798 assertions plus quality, not source
+  clearance. Cancelled/null-artifact LZ-64 remains outside this adoption boundary.
 - LZ-67 Models authority task `1baed348-eaa5-418c-b231-8866f930b63e` is running
   in plan `67f3790e-17a9-4cf3-97bf-c21eef98a3ca`, attempt
   `abcec5dc-7feb-4de1-a9dd-73da004cfb74`, worker
   `ses_226e542b12a047dd973a6c3be0bc479e`. OpenAI Luna Max route and distinct native
   worktree verified; no pending permissions/inbox at 1793639403029. Baseline
   `cac3918`; preserve later Root producer diagnostics during integration.
+- LZ-68 `29d7af6c-3d4b-4cef-8cee-13262901f476` Models editor is queued in plan
+  `27506b73-91ec-45ba-923d-55b844f2f09e` after integrated LZ-67. Actual candidate-owned
+  keyboard save/remove/reopen/conflict, bidirectional real tool readback and
+  narrow/wide captures are required; fixture success alone cannot close it.
+- LZ-69 `1aef650b-86d5-494c-a927-a21f90e7b2cf` handoff semantic-review module is
+  running in plan `8715d804-8543-4fa6-8031-7e9bbb6847c4`, independently of runner
+  scopes. It reuses H1/H2, not H3 tools/delivery or finalization. Local proposal
+  review for LZ-68/69 was interrupted without answers; no semantic pass or retry
+  claimed. Deterministic tests and independent source review remain necessary.
+
+Next runner boundaries after corrected LZ-63: R2 producer activation, then bounded
+durable detection → R3 dispositions/delivery → R4 same-worker requests → H3 tools.
+Resource runtime cleanup-continuation authority follows corrected LZ-65 and LZ-63,
+then preregistered native acquisition and V4 probes. Refresh LZ-57/58's obsolete
+LZ-51/52 walkthroughs before admission; do not replay integrated modules or LZ-50's
+successful submission trial.
 
 Root `ec2b48c` fixes the unrelated probe reopen test's timestamp-tie ordering
 assumption: both independent receipts must survive, UUID order is irrelevant.
