@@ -52,6 +52,7 @@ type NativeIdleRegistry = {
   observations: Map<string, HostBackgroundObservation>
   owners: Map<string, symbol>
   events: Map<string, { sequence?: number; observers: Set<symbol> }>
+  executions?: Map<string, { executionStartSequence: number; lastSequence: number }>
 }
 
 // OpenCode reevaluates local modules per location; these observations belong to the host process.
@@ -59,7 +60,7 @@ const nativeIdleRegistryKey = Symbol.for("opencode-lazers.native-idle.v1")
 const idleHost = globalThis as typeof globalThis & {
   [nativeIdleRegistryKey]?: NativeIdleRegistry
 }
-const idleRegistry = (idleHost[nativeIdleRegistryKey] ??= {
+const idleRegistry: NativeIdleRegistry = (idleHost[nativeIdleRegistryKey] ??= {
   observations: new Map(),
   owners: new Map(),
   events: new Map(),
@@ -67,6 +68,46 @@ const idleRegistry = (idleHost[nativeIdleRegistryKey] ??= {
 const idleBackground = idleRegistry.observations
 const idleBackgroundOwners = idleRegistry.owners
 const idleEventStates = idleRegistry.events
+const executionCursors = (idleRegistry.executions ??= new Map())
+
+const executionKey = (projectDirectory: string, sessionID: string) =>
+  `${projectDirectory}\0${sessionID}`
+
+/** An observed busy period survives local module replacement, unlike its idle report. */
+export function rememberNativeExecution(
+  projectDirectory: string,
+  sessionID: string,
+  type: string,
+  sequence: number,
+) {
+  const key = executionKey(projectDirectory, sessionID)
+  const current = executionCursors.get(key)
+  if (current && sequence < current.lastSequence) return
+  if (type === "session.execution.started") {
+    executionCursors.set(key, { executionStartSequence: sequence, lastSequence: sequence })
+  } else if (type.startsWith("session.execution.")) {
+    executionCursors.delete(key)
+  } else if (current) {
+    current.lastSequence = sequence
+  }
+}
+
+export function nativeExecutionCursor(projectDirectory: string, sessionID: string) {
+  const cursor = executionCursors.get(executionKey(projectDirectory, sessionID))
+  return cursor ? { ...cursor } : undefined
+}
+
+/** A real event-stream gap cannot supply continuity to a replacement listener. */
+export function forgetNativeExecution(
+  projectDirectory: string,
+  sessionID: string,
+  through?: number,
+) {
+  const key = executionKey(projectDirectory, sessionID)
+  const cursor = executionCursors.get(key)
+  if (cursor && (through === undefined || cursor.lastSequence <= through))
+    executionCursors.delete(key)
+}
 
 function idleEventState(sessionID: string, observer: symbol) {
   let state = idleEventStates.get(sessionID)

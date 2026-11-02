@@ -13,6 +13,9 @@ import {
   noteStaleNativeIdleBackgroundEvent,
   observeNativeIdleBackground,
   releaseNativeIdleObserver,
+  rememberNativeExecution,
+  nativeExecutionCursor,
+  forgetNativeExecution,
 } from "../runner/native.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
@@ -241,6 +244,7 @@ export function registerProgress(
   return Effect.gen(function* () {
     const observer = Symbol("native-idle-observer")
     let observing = true
+    const projectDirectory = recorder.store.repository.projectDirectory
     const sessionEventCursors = new Map<string, SessionEventCursor>()
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
@@ -320,7 +324,14 @@ export function registerProgress(
                 stale = true
                 return
               }
-              const cursor = sessionEventCursors.get(idle.sessionID)
+              let cursor = sessionEventCursors.get(idle.sessionID)
+              if (cursor?.executionStartSequence === undefined) {
+                const inherited = nativeExecutionCursor(projectDirectory, idle.sessionID)
+                if (inherited) {
+                  cursor = inherited
+                  sessionEventCursors.set(idle.sessionID, inherited)
+                }
+              }
               const inputID = latestInputID(messages)
               if (
                 !inputID ||
@@ -396,6 +407,7 @@ export function registerProgress(
                   ? undefined
                   : advanceNativeIdleSequence(sessionID, sequence, observer)
               if (sequence === undefined) {
+                forgetNativeExecution(projectDirectory, sessionID)
                 cursor.executionStartSequence = undefined
                 cursor.idle = undefined
                 markNativeIdleBackgroundUnknown(
@@ -409,6 +421,7 @@ export function registerProgress(
                 if (cursor.idle && sequence < cursor.idle.eventSequence)
                   noteStaleNativeIdleBackgroundEvent(sessionID, sequence, observer)
               } else {
+                rememberNativeExecution(projectDirectory, sessionID, type, sequence)
                 cursor.lastSequence = sequence
                 if (type === "session.execution.started") {
                   cursor.executionStartSequence = sequence
@@ -493,6 +506,8 @@ export function registerProgress(
       ).pipe(
         Effect.match({
           onFailure: () => {
+            for (const [id, cursor] of sessionEventCursors)
+              forgetNativeExecution(projectDirectory, id, cursor.lastSequence)
             invalidateNativeIdleObserver(observer, "Native event stream disconnected")
             sessionEventCursors.clear()
             for (const assignment of recorder.assignments())
@@ -503,6 +518,8 @@ export function registerProgress(
               )
           },
           onSuccess: () => {
+            for (const [id, cursor] of sessionEventCursors)
+              forgetNativeExecution(projectDirectory, id, cursor.lastSequence)
             invalidateNativeIdleObserver(observer, "Native event stream ended")
             sessionEventCursors.clear()
             for (const assignment of recorder.assignments())

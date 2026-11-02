@@ -443,6 +443,72 @@ test("independent listeners preserve each other while own loss and disposal inva
   }
 })
 
+test.each(["msg_initial", "msg_resumed"])(
+  "same-process listener replacement accepts only a fresh idle report for %s",
+  async (inputID) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const messages = [
+        { id: inputID, type: "user" },
+        { id: "msg_reply", type: "assistant", content: [{ type: "text", text: "Completed." }] },
+      ]
+      const old = makeContext(fixture, { liveEvents: true, messages })
+      const next = makeContext(fixture, { liveEvents: true, messages })
+      const native = nativeLivenessFixture({
+        sessionID: "ses-accepted",
+        directory: fixture.directory,
+      })
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(old.context, recorder, "project")
+            yield* Effect.promise(() =>
+              old.emitEvent(executionEvent("session.execution.started", "ses-accepted", 20)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(
+                async () =>
+                  (await native.host.session("ses-accepted"))?.background?.state === "unknown",
+              ),
+            )
+            yield* Effect.sleep(5)
+          }),
+        ),
+      )
+      expect((await native.host.session("ses-accepted"))?.background?.state).toBe("unknown")
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(next.context, recorder, "project")
+            // No new busy period or replayed start: replacement happens inside the existing execution.
+            yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+            expect(
+              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+            ).toMatchObject({
+              state: "observed",
+              inputID,
+              executionStartSequence: 20,
+            })
+            yield* Effect.promise(() =>
+              next.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 21)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => {
+                const background = (await native.host.session("ses-accepted"))?.background
+                return background?.state === "observed" && background.terminalSequence === 21
+              }),
+            )
+          }),
+        ),
+      )
+      expect(next.syntheticCalls()).toBe(0)
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
 test.each(["idle", "success-input-changed", "success-owned"])(
   "a suspended %s callback and old observer disposal preserve a newer same-session report",
   async (stage) => {
