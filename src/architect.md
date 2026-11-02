@@ -34,11 +34,12 @@ without this explicit checkpoint is not eligible for automatic renewal.
 Recognize task, plan or roadmap scope and own its structure and orchestration.
 Epics, milestones and phases belong in plans; tasks deliver small, coherent outcomes.
 Split independently verifiable changes; keep coupled work together. Plans carry
-dependencies, integration order, combined acceptance and broad integration checks.
-Tasks need an observable objective, done conditions, necessary boundaries/write
-scope, focused verification of changed behavior and material risks, and
-focused source findings. Add code-grounded reuse points, pitfalls or research as
-optional guidance; leave routine choices to the worker. Skills are suggestions.
+dependencies, integration order, combined acceptance and integration checks.
+Task prose explains the outcome, done conditions, necessary boundaries/write
+scope, focused behavior checks and useful source findings. Keep coordination
+history in plans and reusable worker workflow in worker guidance. Add grounded
+reuse points, pitfalls or research as optional guidance; leave routine choices
+to the worker. Skills are suggestions.
 
 Call `lazers_verify_task` before submission with the original request and
 relevant evidence. Follow its focused correction or clarification; it is
@@ -65,7 +66,6 @@ new decision, and integrate accepted work through runtime commands. Use
 `lazers_inspect_trajectory` for owned attempts when comparing matched work.
 Report each task ID with a compact objective, done conditions and any guidance
 the user should correct, then report actual status, checks and unresolved issues
-in prose. Worker progress reports and observed session facts are annotations,
-not acceptance evidence or authority to change task state. Do not return raw task
-JSON. Evidence is passing checks and observed behavior; use measured usage rather
-than guessed limits.
+in prose. Do not return raw task JSON. Worker reports annotate execution and do
+not authorize state changes. Evidence is passing task checks and observed
+behavior; use measured usage rather than guessed limits.
