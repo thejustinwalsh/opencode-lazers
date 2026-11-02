@@ -47,7 +47,9 @@ const View = Schema.Struct({
   selectedCheckID: Schema.NullOr(Schema.String),
   split: Schema.Number,
   visualScroll: Schema.Number,
+  visualScrollLeft: Schema.optionalKey(Schema.Number),
   detailScroll: Schema.Number,
+  detailScrollLeft: Schema.optionalKey(Schema.Number),
 })
 const initial: typeof View.Type = {
   scope: "session",
@@ -62,7 +64,9 @@ const initial: typeof View.Type = {
   selectedCheckID: null,
   split: 55,
   visualScroll: 0,
+  visualScrollLeft: 0,
   detailScroll: 0,
+  detailScrollLeft: 0,
 }
 const ProjectView = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
@@ -125,6 +129,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
     error: "",
   })
   const [split, setSplit] = createSignal(initial.split)
+  const [layoutReadyKey, setLayoutReadyKey] = createSignal("")
   const state = new RadarPanelState(setData)
   const visualRestore = new ScrollRestoration()
   const detailRestore = new ScrollRestoration()
@@ -172,7 +177,13 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
     const key = projectKey()
     if (!key) return initial
     const value = ctx.stores.radarView(props.session).value?.projects[key] ?? initialProject
-    return value[value.scope]
+    const view = value[value.scope]
+    return {
+      ...initial,
+      ...view,
+      visualScrollLeft: view.visualScrollLeft ?? 0,
+      detailScrollLeft: view.detailScrollLeft ?? 0,
+    }
   }
   const save = (change: Partial<typeof initial>) => {
     const key = projectKey()
@@ -191,8 +202,8 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
   onCleanup(() => {
     state.close()
     endDrag?.()
-    visualRestore.restore("", false, undefined, 0)
-    detailRestore.restore("", false, undefined, 0)
+    visualRestore.restore("", false, undefined, { top: 0, left: 0 })
+    detailRestore.restore("", false, undefined, { top: 0, left: 0 })
   })
 
   createKeyed(
@@ -397,19 +408,24 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
   }
 
   createEffect(() => {
+    if (prefs().view !== "map") setLayoutReadyKey("")
+  })
+
+  createEffect(() => {
     const value = visible()
     const view = prefs()
+    const mapReady = view.view !== "map" || layoutReadyKey() === expectedKey()
     visualRestore.restore(
       `${expectedKey()}:${view.view}`,
-      Boolean(value && (value.snapshot || value.radar)),
+      Boolean(value && (value.snapshot || value.radar) && mapReady),
       visual,
-      view.visualScroll,
+      { top: view.visualScroll, left: view.visualScrollLeft ?? 0 },
     )
     detailRestore.restore(
       selectionKey(),
       Boolean(value && (value.snapshot || value.radar)),
       detail,
-      view.detailScroll,
+      { top: view.detailScroll, left: view.detailScrollLeft ?? 0 },
     )
   })
   const planMissing = () =>
@@ -619,7 +635,11 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
         }}
         onScroll={(event) => {
           const key = `${expectedKey()}:${prefs().view}`
-          if (visualRestore.restored(key)) save({ visualScroll: event.currentTarget.scrollTop })
+          if (visualRestore.restored(key))
+            save({
+              visualScroll: event.currentTarget.scrollTop,
+              visualScrollLeft: event.currentTarget.scrollLeft,
+            })
         }}
       >
         <Show when={location.error}>
@@ -661,24 +681,41 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                   </span>
                   <span>
                     Runner {operational().freshness.runner} · inventory{" "}
-                    {operational().freshness.nativeInventory} · native events{" "}
-                    {operational().freshness.nativeEvents}
+                    {operational().freshness.nativeInventory} · events{" "}
+                    {operational().freshness.nativeEvents === "connected"
+                      ? "connected"
+                      : "gap / unavailable"}
                   </span>
-                  <Show
-                    when={
-                      operational().coverage.inventoryTruncated ||
-                      operational().coverage.workTruncated ||
-                      operational().coverage.progressTruncated ||
-                      operational().coverage.routeTruncated ||
-                      operational().coverage.toolTruncated ||
-                      operational().coverage.edgeTruncated
-                    }
-                  >
-                    <span>
-                      Some scoped records are bounded; inspect the related coverage in the
-                      accessible list.
-                    </span>
-                  </Show>
+                  <details class="lazers-radar-disclosure">
+                    <summary>Coverage and observation boundary</summary>
+                    <dl>
+                      <dt>Sessions</dt>
+                      <dd>
+                        {operational().coverage.managedSessionCount} managed of{" "}
+                        {operational().coverage.sessionCount} scoped · unmanaged included{" "}
+                        {operational().coverage.includeUnmanagedSessions ? "yes" : "no"}
+                      </dd>
+                      <dt>Truncation</dt>
+                      <dd>
+                        {[
+                          operational().coverage.inventoryTruncated ? "sessions" : "",
+                          operational().coverage.workTruncated ? "work" : "",
+                          operational().coverage.progressTruncated ? "progress" : "",
+                          operational().coverage.routeTruncated ? "routes" : "",
+                          operational().coverage.toolTruncated ? "tools" : "",
+                          operational().coverage.edgeTruncated ? "relationships" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(", ") || "No projection truncation reported"}
+                      </dd>
+                      <dt>Boundary</dt>
+                      <dd>
+                        {operational().boundary.repositoryVersion} repository ·{" "}
+                        {operational().boundary.sourceRevision} source ·{" "}
+                        {operational().boundary.nativeRevision} native
+                      </dd>
+                    </dl>
+                  </details>
                 </div>
                 <Show when={visible()?.snapshotError}>
                   <div class="lazers-radar-note" role="status">
@@ -697,6 +734,8 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                         visible()?.resynchronizing || !props.session.server.connected,
                       )}
                       selectedID={prefs().selectedMapID}
+                      currentSessionID={props.session.id}
+                      onLayoutReady={setLayoutReadyKey}
                       onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
                       layout={radarLayout}
                       monoFont={ctx.appearance.font("mono")}
@@ -1155,7 +1194,10 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
         }}
         onScroll={(event) => {
           if (detailRestore.restored(selectionKey()))
-            save({ detailScroll: event.currentTarget.scrollTop })
+            save({
+              detailScroll: event.currentTarget.scrollTop,
+              detailScrollLeft: event.currentTarget.scrollLeft,
+            })
         }}
       >
         <Show when={prefs().view === "map"}>

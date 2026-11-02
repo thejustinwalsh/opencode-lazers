@@ -1,7 +1,7 @@
 import type { RadarResponse, SnapshotResponse } from "../observability/contract.ts"
 
 export type RadarMapNodeKind = "component" | "session" | "route" | "plan" | "task" | "tool"
-export type RadarMapGroup = "runtime" | "work" | "sessions" | "routes" | "tools"
+export type RadarMapGroup = "runtime" | "work" | "sessions" | "routes" | "tools" | "overview"
 export type RadarMapEdgeKind =
   RadarResponse["edges"][number]["kind"] | "contains" | "selected-route" | "configured-route"
 
@@ -16,7 +16,19 @@ type RecordedEdge = RadarResponse["edges"][number]
 
 export type RadarMapNodeRecord =
   | { kind: "component"; value: Component }
-  | { kind: "session"; value: Session; routes: Route[]; attempts: Attempt[] }
+  | {
+      kind: "session"
+      value: Session
+      routes: Route[]
+      attempts: Attempt[]
+      tasks: Array<{
+        id: string
+        label: string
+        state: string
+        objective: string | null
+        reason: string | null
+      }>
+    }
   | { kind: "route"; value: Route[] }
   | { kind: "plan"; value: Plan; tasks: Task[] }
   | {
@@ -130,6 +142,10 @@ export function createRadarMapModel(
   }
   const sessionsByID = new Map(radar.sessions.map((session) => [session.sessionID, session]))
   const tasksByID = new Map(radar.tasks.map((task) => [task.id, task]))
+  const taskContexts = new Map<string, { objective: string; reason: string | null }>()
+  for (const plan of snapshot?.plans ?? [])
+    for (const task of plan.nodes)
+      taskContexts.set(task.taskID, { objective: task.objective, reason: task.reason })
   const routesByID = new Map(radar.routes.map((route) => [route.id, route]))
   const routesBySession = new Map<string, Route[]>()
   const attemptsByTask = new Map<string, Attempt[]>()
@@ -165,6 +181,22 @@ export function createRadarMapModel(
         session.configuredRouteIDs.includes(route.id),
     )
     routesBySession.set(session.sessionID, routes)
+    const attempts = attemptsBySession.get(session.sessionID) ?? []
+    const relatedTaskIDs = unique([
+      ...session.taskIDs,
+      ...attempts.map((attempt) => attempt.taskID),
+    ])
+    const tasks = relatedTaskIDs.map((taskID) => {
+      const task = tasksByID.get(taskID)
+      const context = taskContexts.get(taskID)
+      return {
+        id: taskID,
+        label: context?.objective ?? `Task ${shortID(taskID)}`,
+        state: task?.state ?? "unavailable",
+        objective: context?.objective ?? null,
+        reason: context?.reason ?? null,
+      }
+    })
     const state = session.state === "unknown" ? "State unavailable" : session.state
     const availability = session.availability === "available" ? "" : ` · ${session.availability}`
     addNode({
@@ -178,7 +210,8 @@ export function createRadarMapModel(
         kind: "session",
         value: session,
         routes,
-        attempts: attemptsBySession.get(session.sessionID) ?? [],
+        attempts,
+        tasks,
       },
       related: [],
     })
@@ -209,11 +242,6 @@ export function createRadarMapModel(
     })
   }
 
-  const snapshotTasks = new Map<string, { objective: string; reason: string | null }>()
-  for (const plan of snapshot?.plans ?? [])
-    for (const task of plan.nodes)
-      snapshotTasks.set(task.taskID, { objective: task.objective, reason: task.reason })
-
   for (const plan of radar.plans) {
     const tasks = radar.tasks.filter((task) => task.planID === plan.id)
     addNode({
@@ -229,7 +257,7 @@ export function createRadarMapModel(
   }
 
   for (const task of radar.tasks) {
-    const context = snapshotTasks.get(task.id)
+    const context = taskContexts.get(task.id)
     addNode({
       id: radarTaskNodeID(task.id),
       kind: "task",

@@ -288,6 +288,208 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
   }
 })
 
+test("a gap catch-up remains a quiet baseline until Radar covers the recovery sequence", async () => {
+  const { fixture, session, sessionRadar } = snapshots()
+  let state: RadarPanelState | undefined
+  try {
+    const radar = await sessionRadar
+    const queue = new EventQueue<ObservationChange>()
+    const base = radar.boundary.eventSequence
+    const gap = base + 3
+    const delayedRadar = deferred<void>()
+    const delayedCatchup = deferred<void>()
+    let radarCalls = 0
+    let snapshotCalls = 0
+    const sequenceFor = (index: number) =>
+      index === 0 ? base : index === 1 ? base + 1 : index === 2 ? gap : gap + 1
+    const waitForRead = async (index: number) => {
+      if (index === 1) await delayedRadar.promise
+      if (index === 2) await delayedCatchup.promise
+    }
+    const transport: RadarTransport = {
+      snapshot: async () => {
+        const index = snapshotCalls++
+        const eventSequence = sequenceFor(index)
+        await waitForRead(index)
+        return { ...session, boundary: { ...session.boundary, eventSequence } }
+      },
+      radar: async () => {
+        const index = radarCalls++
+        const eventSequence = sequenceFor(index)
+        await waitForRead(index)
+        return { ...radar, boundary: { ...radar.boundary, eventSequence } }
+      },
+      changes: (signal) => changesFrom(queue, signal),
+      online: () => true,
+    }
+    const pulses: string[] = []
+    const pulseTracker = new RadarPulseTracker()
+    state = new RadarPanelState(
+      (data) => {
+        if (!data.radar) return
+        const edge: RadarMapEdge = {
+          id: "outcome",
+          kind: "outcome",
+          from: "worker",
+          to: "runner",
+          status: "succeeded",
+          records: [],
+          evidence: [],
+          routeRecords: [],
+          related: [],
+          pulseEventIDs: [`event-${data.radar.boundary.eventSequence}`],
+        }
+        pulses.push(
+          ...pulseTracker.update([edge], data.resynchronizing, true).map((pulse) => pulse.eventID),
+        )
+      },
+      async () => {},
+    )
+    state.connect(
+      "session-view",
+      "project",
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+    )
+    await until(() => state!.data.radar?.boundary.eventSequence === base && !state!.data.stale)
+    expect(state.data.resynchronizing).toBe(false)
+
+    queue.push({
+      projectID: "project",
+      sequence: gap,
+      repositoryVersion: session.boundary.repositoryVersion,
+      sourceRevision: session.boundary.sourceRevision,
+      nativeRevision: session.boundary.nativeRevision,
+      cause: "gap",
+      resnapshotRequired: true,
+    })
+    await until(() => radarCalls === 2 && snapshotCalls === 2)
+    delayedRadar.resolve(undefined)
+    await until(
+      () =>
+        radarCalls >= 3 &&
+        snapshotCalls >= 3 &&
+        state!.data.radar?.boundary.eventSequence === base + 1 &&
+        state!.data.resynchronizing,
+    )
+    expect(pulses).toEqual([])
+
+    delayedCatchup.resolve(undefined)
+    await until(
+      () =>
+        state!.data.radar?.boundary.eventSequence === gap &&
+        !state!.data.stale &&
+        state!.data.resynchronizing,
+    )
+    expect(pulses).toEqual([])
+
+    queue.push({
+      projectID: "project",
+      sequence: gap + 1,
+      repositoryVersion: session.boundary.repositoryVersion,
+      sourceRevision: session.boundary.sourceRevision,
+      nativeRevision: session.boundary.nativeRevision,
+      cause: "runner",
+      resnapshotRequired: false,
+    })
+    await until(
+      () =>
+        state!.data.radar?.boundary.eventSequence === gap + 1 &&
+        !state!.data.stale &&
+        !state!.data.resynchronizing,
+    )
+    expect(pulses).toEqual([`event-${gap + 1}`])
+  } finally {
+    state?.close()
+    fixture.close()
+  }
+})
+
+test("lifecycle advancement revokes a previously ready quiet Radar baseline", async () => {
+  const { fixture, session, sessionRadar } = snapshots()
+  let state: RadarPanelState | undefined
+  try {
+    const radar = await sessionRadar
+    const queue = new EventQueue<ObservationChange>()
+    const base = radar.boundary.eventSequence
+    let sequence = base
+    let lifecycleAhead = false
+    let snapshotCalls = 0
+    const pulses: string[] = []
+    const tracker = new RadarPulseTracker()
+    const transport: RadarTransport = {
+      snapshot: async () => {
+        snapshotCalls++
+        return {
+          ...session,
+          boundary: { ...session.boundary, eventSequence: sequence + (lifecycleAhead ? 1 : 0) },
+        }
+      },
+      radar: async () => ({ ...radar, boundary: { ...radar.boundary, eventSequence: sequence } }),
+      changes: (signal) => changesFrom(queue, signal),
+      online: () => true,
+    }
+    state = new RadarPanelState(
+      (data) => {
+        if (!data.radar) return
+        const edge: RadarMapEdge = {
+          id: "outcome",
+          kind: "outcome",
+          from: "worker",
+          to: "runner",
+          status: "succeeded",
+          records: [],
+          evidence: [],
+          routeRecords: [],
+          related: [],
+          pulseEventIDs: [`event-${data.radar.boundary.eventSequence}`],
+        }
+        pulses.push(
+          ...tracker.update([edge], data.resynchronizing, true).map((pulse) => pulse.eventID),
+        )
+      },
+      async () => {},
+    )
+    state.connect(
+      "session-view",
+      "project",
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+    )
+    await until(() => Boolean(state?.data.radar) && !state!.data.stale)
+    const emit = (next: number, gap: boolean) => {
+      sequence = next
+      queue.push({
+        projectID: "project",
+        sequence,
+        repositoryVersion: session.boundary.repositoryVersion,
+        sourceRevision: session.boundary.sourceRevision,
+        nativeRevision: session.boundary.nativeRevision,
+        cause: gap ? "gap" : "runner",
+        resnapshotRequired: gap,
+      })
+    }
+    emit(base + 3, true)
+    await until(() => state!.data.radar?.boundary.eventSequence === base + 3 && !state!.data.stale)
+    expect(state.data.resynchronizing).toBe(true)
+    lifecycleAhead = true
+    state.refreshNow()
+    await until(() => snapshotCalls >= 3 && state!.data.stale && Boolean(state!.data.error))
+    lifecycleAhead = false
+    emit(base + 5, false)
+    await until(() => state!.data.radar?.boundary.eventSequence === base + 5 && !state!.data.stale)
+    expect(state.data.resynchronizing).toBe(true)
+    expect(pulses).toEqual([])
+    emit(base + 6, false)
+    await until(() => state!.data.radar?.boundary.eventSequence === base + 6 && !state!.data.stale)
+    expect(state.data.resynchronizing).toBe(false)
+    expect(pulses).toEqual([`event-${base + 6}`])
+  } finally {
+    state?.close()
+    fixture.close()
+  }
+})
+
 test("wrong-project and wrong-scope snapshot responses remain unavailable", async () => {
   const { fixture, session, project, sessionRadar, projectRadar } = snapshots()
   try {
@@ -323,19 +525,29 @@ test("wrong-project and wrong-scope snapshot responses remain unavailable", asyn
   }
 })
 
-test("operational and lifecycle snapshots do not publish mixed repository revisions", async () => {
+test("independently publishes changing Radar and lifecycle reads without claiming a coherent boundary", async () => {
   const { fixture, session, sessionRadar } = snapshots()
   try {
     const radar = await sessionRadar
     const queue = new EventQueue<ObservationChange>()
-    let calls = 0
+    let radarCalls = 0
+    let snapshotCalls = 0
+    let aligned = false
+    const alignedSequence = radar.boundary.eventSequence + 4
     const transport: RadarTransport = {
-      snapshot: async () => session,
+      snapshot: async () => {
+        snapshotCalls++
+        const eventSequence = aligned
+          ? alignedSequence
+          : session.boundary.eventSequence + snapshotCalls - 1
+        return { ...session, boundary: { ...session.boundary, eventSequence } }
+      },
       radar: async () => {
-        calls++
+        radarCalls++
+        const eventSequence = aligned ? alignedSequence : radar.boundary.eventSequence + radarCalls
         return {
           ...radar,
-          boundary: { ...radar.boundary, sourceRevision: radar.boundary.sourceRevision + 1 },
+          boundary: { ...radar.boundary, eventSequence },
         }
       },
       changes: (signal) => changesFrom(queue, signal),
@@ -351,11 +563,28 @@ test("operational and lifecycle snapshots do not publish mixed repository revisi
       { kind: "session", sessionID: "ses-failed" },
       transport,
     )
-    await until(() => calls === 3)
-    expect(state.data.radar).toBeUndefined()
-    expect(state.data.snapshot).toBeUndefined()
+    await until(
+      () =>
+        radarCalls === 3 &&
+        state.data.radar?.boundary.eventSequence === alignedSequence - 1 &&
+        state.data.snapshot?.boundary.eventSequence === alignedSequence - 2,
+    )
+    expect(snapshotCalls).toBe(3)
+    expect(state.data.radar?.boundary.eventSequence).toBe(alignedSequence - 1)
+    expect(state.data.snapshot?.boundary.eventSequence).toBe(alignedSequence - 2)
     expect(state.data.stale).toBe(true)
-    expect(state.data.error).toContain("changed while reading")
+    expect(state.data.resynchronizing).toBe(false)
+    expect(state.data.error).toContain("different read boundaries")
+
+    aligned = true
+    state.refreshNow()
+    await until(
+      () =>
+        state.data.radar?.boundary.eventSequence === alignedSequence &&
+        state.data.snapshot?.boundary.eventSequence === alignedSequence &&
+        !state.data.stale,
+    )
+    expect(state.data.error).toBe("")
     state.close()
   } finally {
     fixture.close()

@@ -27,6 +27,17 @@ const blank = (key = ""): RadarPanelData => ({
   error: "",
 })
 
+function sameBoundary(left: SnapshotResponse["boundary"], right: SnapshotResponse["boundary"]) {
+  return (
+    left.repositoryVersion === right.repositoryVersion &&
+    left.sourceRevision === right.sourceRevision &&
+    left.sourceFingerprint === right.sourceFingerprint &&
+    left.nativeRevision === right.nativeRevision &&
+    left.eventSequence === right.eventSequence &&
+    left.transitionSequence === right.transitionSequence
+  )
+}
+
 function delay(signal: AbortSignal) {
   return new Promise<void>((resolve) => {
     const done = () => {
@@ -50,6 +61,9 @@ export class RadarPanelState {
   private includeUnmanagedSessions = false
   private reconnecting = false
   private poll?: ReturnType<typeof setInterval>
+  /** Keep gap/reconnect catch-up quiet until Radar has crossed its recovery fence. */
+  private recoveryFence?: number
+  private recoveryBaselinePending = false
   private readonly snapshotRuns = new Map<number, { pending: boolean; retries: number }>()
 
   constructor(
@@ -148,44 +162,56 @@ export class RadarPanelState {
                 : "The lifecycle observation belongs to another scope."
               : ""
 
-        if (radar && snapshot && !radarError && !snapshotError) {
-          if (JSON.stringify(radar.boundary) !== JSON.stringify(snapshot.boundary)) {
-            this.sync.stale = true
-            if (run.retries < 3) run.pending = true
-            this.update({
-              loading: false,
-              stale: true,
-              resynchronizing: true,
-              error:
-                "Operational and lifecycle observations changed while reading; resynchronizing.",
-              snapshotError: "",
-            })
-            if (run.pending) continue
-            break
-          }
-        }
-
         let acceptedRadar = false
         let acceptedSnapshot = false
         if (radar && !radarError) {
           acceptedRadar = this.sync.acceptRadar(generation, radar)
-          if (!acceptedRadar && radar.boundary.eventSequence < (this.sync.eventSequence ?? 0))
-            run.pending = true
         }
         if (snapshot && !snapshotError) {
           acceptedSnapshot = this.sync.acceptSnapshot(generation, snapshot)
-          if (!acceptedSnapshot && snapshot.boundary.eventSequence < (this.sync.eventSequence ?? 0))
-            run.pending = true
         }
+
+        const displayedRadar = acceptedRadar ? radar : this.data.radar
+        const displayedSnapshot = acceptedSnapshot ? snapshot : this.data.snapshot
+        const boundariesDiffer = Boolean(
+          displayedRadar &&
+          displayedSnapshot &&
+          !sameBoundary(displayedRadar.boundary, displayedSnapshot.boundary),
+        )
+        const liveSequence = this.sync.eventSequence
+        if (this.recoveryFence !== undefined)
+          this.recoveryBaselinePending = Boolean(
+            displayedRadar &&
+            displayedSnapshot &&
+            !boundariesDiffer &&
+            displayedRadar.boundary.eventSequence >= this.recoveryFence &&
+            displayedRadar.boundary.eventSequence >=
+              (liveSequence ?? displayedRadar.boundary.eventSequence),
+          )
+        const behindLiveChanges = Boolean(
+          liveSequence !== undefined &&
+          ((displayedRadar && displayedRadar.boundary.eventSequence < liveSequence) ||
+            (displayedSnapshot && displayedSnapshot.boundary.eventSequence < liveSequence)),
+        )
+        const needsResynchronization = boundariesDiffer || behindLiveChanges
+        if (needsResynchronization && run.retries < 3) run.pending = true
+        if (run.retries >= 3) run.pending = false
+        const freshnessError = boundariesDiffer
+          ? "Operational and lifecycle observations have different read boundaries; refreshing."
+          : behindLiveChanges
+            ? "Observation reads lag behind live changes; refreshing."
+            : ""
+
         if (acceptedRadar || acceptedSnapshot) {
-          run.retries = 0
+          if (!needsResynchronization) run.retries = 0
+          this.sync.stale = !acceptedRadar || needsResynchronization
           this.update({
             ...(acceptedRadar ? { radar } : {}),
             ...(acceptedSnapshot ? { snapshot } : {}),
             loading: false,
-            stale: !acceptedRadar,
-            resynchronizing: !acceptedRadar,
-            error: radarError,
+            stale: !acceptedRadar || needsResynchronization,
+            resynchronizing: !acceptedRadar || this.recoveryFence !== undefined,
+            error: radarError || freshnessError,
             snapshotError,
           })
         } else {
@@ -194,7 +220,7 @@ export class RadarPanelState {
             loading: false,
             stale: true,
             resynchronizing: true,
-            error: radarError || "Operational observation is not current.",
+            error: radarError || freshnessError || "Operational observation is not current.",
             snapshotError,
           })
           if (!run.pending) break
@@ -238,9 +264,21 @@ export class RadarPanelState {
           const previous = this.sync.eventSequence
           const contiguous = this.sync.acceptChange(generation, projectID, change)
           if (this.sync.eventSequence === previous) continue
+          const releasedBaseline = contiguous && this.recoveryBaselinePending
+          if (!contiguous) {
+            this.recoveryFence = change.sequence
+            this.recoveryBaselinePending = false
+          } else if (releasedBaseline) {
+            this.recoveryFence = undefined
+            this.recoveryBaselinePending = false
+          }
+          const resynchronizing =
+            !contiguous ||
+            this.recoveryFence !== undefined ||
+            (this.data.resynchronizing && !releasedBaseline)
           this.update({
             stale: true,
-            resynchronizing: this.data.resynchronizing || !contiguous,
+            resynchronizing,
             error: contiguous ? "" : "Observation gap; refreshing the snapshot.",
           })
           void this.refresh(epoch, generation, transport, signal)
@@ -250,6 +288,8 @@ export class RadarPanelState {
       } catch (error) {
         if (!this.current(epoch, transport, signal)) return
         this.reconnecting = true
+        this.recoveryFence = 0
+        this.recoveryBaselinePending = false
         generation = this.sync.reconnect()
         this.update({
           loading: !this.data.radar,
@@ -271,6 +311,8 @@ export class RadarPanelState {
   close() {
     this.epoch++
     this.reconnecting = false
+    this.recoveryFence = undefined
+    this.recoveryBaselinePending = false
     this.controller.abort()
     if (this.poll) clearInterval(this.poll)
     this.poll = undefined
