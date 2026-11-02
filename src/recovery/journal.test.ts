@@ -579,6 +579,9 @@ test("advance rejects forged IDs, substituted facts, and invalid boundaries atom
     })
     rejectWithoutResult({ ...page, throughChangeID: page.facts[1]!.changeID - 1 })
     rejectWithoutResult({ ...page, fromChangeID: -1 })
+    const sparse = page.facts.slice()
+    delete sparse[0]
+    rejectWithoutResult({ ...page, facts: sparse })
 
     fixture.store.atomic((db) => {
       db.query("INSERT INTO recovery_result_probe(id) VALUES(1)").run()

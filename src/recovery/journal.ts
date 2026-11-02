@@ -462,7 +462,7 @@ export class RecoveryJournal {
     const expectedFacts = rows.map(factFromRow)
     if (
       page.facts.length !== expectedFacts.length ||
-      page.facts.some((fact, index) => !fact || !sameFact(expectedFacts[index]!, fact))
+      expectedFacts.some((fact, index) => !page.facts[index] || !sameFact(fact, page.facts[index]!))
     )
       throw new Error("Recovery journal page does not match the stored ordered facts")
 
