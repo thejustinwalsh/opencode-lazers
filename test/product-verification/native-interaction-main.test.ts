@@ -47,7 +47,7 @@ const rawSnapshot = {
   truncated: false,
 }
 
-function harness(snapshots: unknown[], onRead?: (count: number) => void) {
+function harness(snapshots: unknown[], onRead?: (count: number) => void, onActivate?: () => void) {
   const events: unknown[] = []
   const scripts: string[] = []
   let rendererPID = 30001
@@ -92,7 +92,10 @@ function harness(snapshots: unknown[], onRead?: (count: number) => void) {
     ctx,
     "/private/tmp/unused",
     () => 123,
-    () => events.push("activate"),
+    () => {
+      events.push("activate")
+      onActivate?.()
+    },
   )
   adapter.trackWindow(window)
   return {
@@ -121,6 +124,15 @@ describe("owned native Desktop adapter", () => {
     expect(
       await h.adapter.perform({ kind: "focus", window: { ...reference(h), generation: 999 } }),
     ).toMatchObject({ delivery: "not-delivered" })
+    expect(h.events).toEqual(["activate"])
+  })
+
+  test("does not report focus success for a renderer replaced during activation", async () => {
+    const h = harness([rawSnapshot], undefined, () => queueMicrotask(() => h.setRendererPID(30002)))
+    const result = await h.adapter.perform({ kind: "focus", window: reference(h) })
+    expect(result.delivery).toBe("not-delivered")
+    expect(h.scripts).toHaveLength(0)
+    expect(h.events).toEqual(["activate"])
   })
   test("categorizes startup failures without logging untrusted error details", () => {
     expect(

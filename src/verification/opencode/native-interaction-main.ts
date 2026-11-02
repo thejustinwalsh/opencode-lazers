@@ -483,9 +483,26 @@ export class NativeInteractionMainAdapter {
       window.focus()
       await new Promise<void>((resolve) => setImmediate(resolve))
       const focused = this.currentReference(window.id)
-      if (focused === undefined || !focused.focused || !window.isFocused())
+      if (
+        focused === undefined ||
+        !sameWindow(focused, operation.window) ||
+        !focused.focused ||
+        !window.isFocused()
+      )
         return { delivery: "not-delivered", message: "Owned Desktop window could not be focused" }
-      return { delivery: "delivered", snapshot: await this.readSnapshot(window, focused) }
+      const snapshot = await this.readSnapshot(window, focused)
+      const after = this.currentReference(window.id)
+      if (
+        after === undefined ||
+        !sameWindow(after, operation.window) ||
+        !after.focused ||
+        !window.isFocused()
+      )
+        return {
+          delivery: "not-delivered",
+          message: "Owned Desktop window changed during focus observation",
+        }
+      return { delivery: "delivered", snapshot }
     }
     if (operation.kind === "snapshot") {
       return { delivery: "delivered", snapshot: await this.readSnapshot(window, currentReference) }
