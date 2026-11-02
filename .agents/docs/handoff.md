@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 15:42 UTC checkpoint. Recheck native state.
+2026-11-02 16:25 UTC checkpoint. Recheck native state.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -38,10 +38,39 @@ Native Reload model restored Ready/apple/chat and Run locally returned
 `local GPU ready.` (19 input/4 output tokens). Same PID 7793, no restart.
 [Incident and checks](evidence/native-liveness/20261102-service-stall.md).
 Radar still has the existing oversized/stale presentation; LZ-62 owns its visual
-correction. LZ-56 owns relay work. All five workers are foreground active at
-1793635824198; the old retained-recovery table below is stale on active status.
+correction. LZ-56 owns relay work. Foreground inventory changed after two worker returns; the latest return section
+below supersedes older active/recovery statuses.
 Architect was told to preserve the new RunnerStore schema import/call when
 integrating LZ-63. Main is available again after this repair lands.
+
+## Latest native returns and blocker repair
+
+`9d294be` preserves observed busy-period identity across same-process progress
+listener replacement. Fresh idle/current input/ordered success are still required;
+old reports invalidate and stream gaps lose continuity. Both initial/resumed
+registered-hook cases fail on old source and pass now; full runner/progress/recovery
+217 tests/2,883 assertions plus fmt/lint/check pass. This does not reconstruct
+already-lost hook payloads or establish live post-repair completion.
+[Continuity report](evidence/native-liveness/20261102-reload-continuity.md).
+
+LZ-64 returned clean `ee6960f` (persona mapping core), source review clear and
+4 tests/52 assertions independently pass. Original worker
+`ses_4f4066c3848c4ba3bb14855fd66cac39`, attempt
+`76f764e5-e0b9-437e-bcd2-ae612e9b4afe`, is finished, not foreground-active.
+Its original plan `7fcc114a-9b7e-4689-8d10-2adae8943ac8` is held on lost idle
+observation, while sibling LZ-65's original worker
+`ses_534b5c181ba949b393631717d15cb97f` / attempt
+`a79ce707-a048-4324-83d4-cec0c2bcf8e3` continues resource implementation.
+
+LZ-56 returned clean `4535c6c`, but native review found three concrete blockers:
+disconnect capacity leak, premature short-deadline rejection, and resync blocking
+event consumption. Architect placed original plan into cancelling v25 to retain
+and correct the same work. Do not activate this uncorrected candidate. LZ-62 and
+LZ-63 are still foreground-active in their original sessions/trees; Radar now also
+owns the freshness-state correction and has built its candidate bundle. No native
+visual acceptance yet. Main is free after Root's repair; preserve both it and
+`fbfddf2`/`1d322c3` during integration. Do not replay implementations to close
+retained verification gaps.
 
 ## Live work
 
