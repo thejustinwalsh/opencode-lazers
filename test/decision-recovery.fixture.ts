@@ -165,6 +165,10 @@ const callbackLoss = () =>
   new Error(
     "failed to call OrtRun(). ERROR_CODE: 6, ERROR_MESSAGE: WebGPU device lost (1): backend reported loss",
   )
+const mapAsyncLoss = () =>
+  new Error(
+    "failed to call OrtRun(). ERROR_CODE: 1, ERROR_MESSAGE: /mnt/azure_nvme_temp/_work/1/s/onnxruntime/core/providers/webgpu/buffer_manager.cc:669 void onnxruntime::webgpu::BufferManager::Download(CommandRecordingState &, WGPUBuffer, void *, size_t) const map_async_result.status == wgpu::MapAsyncStatus::Success was false. Failed to download data from buffer. wgpu::MapAsyncStatus value: 4, message: Failed to execute 'mapAsync' on 'GPUBuffer': Device was lost before MapAsync completed.",
+  )
 const validLogits = (): Logits => ({
   logits: new TestTensor("float32", new Float32Array(128_000), [1, 128_000]),
 })
@@ -190,7 +194,21 @@ const { createInferenceRuntime } = await import("../src/webgpu/runtime.ts")
 
 assert.equal(isOrtWebGpuDeviceLoss(ortLoss()), true)
 assert.equal(isOrtWebGpuDeviceLoss(callbackLoss()), true)
+assert.equal(isOrtWebGpuDeviceLoss(mapAsyncLoss()), true)
 for (const error of [
+  new Error(
+    mapAsyncLoss().message.replace(
+      "Device was lost before MapAsync completed.",
+      "Buffer was already mapped.",
+    ),
+  ),
+  new Error(mapAsyncLoss().message.replace("providers/webgpu/", "providers/cpu/")),
+  new Error(
+    mapAsyncLoss().message.replace(
+      /^failed to call OrtRun\(\)\. ERROR_CODE: 1, ERROR_MESSAGE: /,
+      "",
+    ),
+  ),
   new Error(
     "failed to call OrtRun(). ERROR_CODE: 6, ERROR_MESSAGE: WebGPU device error(2): validation",
   ),
@@ -348,7 +366,7 @@ const runtimeSession = metrics.creates
 const runtimeDeviceIndex = devices.length
 const runtimeReleaseStart = metrics.releases
 runHandler = async (sessionID) => {
-  if (sessionID === runtimeSession) throw ortLoss()
+  if (sessionID === runtimeSession) throw mapAsyncLoss()
   return validLogits()
 }
 const runtime = solid.createRoot((dispose) => {
