@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 16:31 UTC checkpoint. Recheck native state.
+2026-11-02 16:49 UTC checkpoint. Recheck native state.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -55,26 +55,42 @@ pre-first-event stream-gap case failed before `42f1ec2` and passes now; final fo
 native/progress checks are 47 tests/204 assertions with quality checks passing.
 [Continuity report](evidence/native-liveness/20261102-reload-continuity.md).
 
-LZ-64 returned clean `ee6960f` (persona mapping core), merged natively as
-`0d82057` with postmerge checks passing. Source review clear and
-4 tests/52 assertions independently pass. Original worker
-`ses_4f4066c3848c4ba3bb14855fd66cac39`, attempt
-`76f764e5-e0b9-437e-bcd2-ae612e9b4afe`, is finished, not foreground-active.
-Its original plan `7fcc114a-9b7e-4689-8d10-2adae8943ac8` is held on lost idle
-observation, while sibling LZ-65's original worker
-`ses_534b5c181ba949b393631717d15cb97f` / attempt
-`a79ce707-a048-4324-83d4-cec0c2bcf8e3` continues resource implementation.
+`70179aa` fixes a second demonstrated blocker: compacted `session.context()`
+contains no original input, so cancellation and idle-hook lineage could never
+settle. Native adapter and hooks now use bounded filtered retained-message reads
+and host ordering cursors when compaction hides inputs. 213 runner/progress/native
+checks / 2,811 assertions plus fmt/lint/check/diff pass. Both original LZ-56 and
+LZ-62 plans actually settled cancellation in PID7793 (v27/v21) without restart or
+replacement. [Evidence and limits](evidence/native-liveness/20261102-compacted-input.md).
+Architect has been asked for independent review and same-worker scoped corrections.
 
-LZ-56 returned clean `4535c6c`, but native review found three concrete blockers:
-disconnect capacity leak, premature short-deadline rejection, and resync blocking
-event consumption. Architect placed original plan into cancelling v25 to retain
-and correct the same work. Do not activate this uncorrected candidate. LZ-62 and
-LZ-63 are still foreground-active in their original sessions/trees; Radar now also
-owns the freshness-state correction and returned `2eaceec` with a built candidate
-bundle. No native
-visual acceptance yet. Main is free after Root's repair; preserve both it and
-`fbfddf2`/`1d322c3` during integration. Do not replay implementations to close
-retained verification gaps.
+Current returns:
+
+- LZ-64 clean `ee6960f` mapping core was merged natively as `0d82057`.
+  Four tests/52 assertions independently pass. Runtime acceptance remains held
+  on historical idle observation. Do not replay implementation.
+- LZ-65 clean `4a9f0cd` resource lifecycle core has a reproduced source-review
+  blocker: reopening with root B can falsely certify cleanup of a resource under
+  root A and release its reservation. Correct in the same retained attempt with
+  a real two-root/reopened-SQLite regression before integration. Its paired plan
+  currently suffers alternating hold reasons/version churn; Architect coordinates
+  the runner follow-up. Do not replay sibling LZ-64.
+- LZ-56 `4535c6c` relay review found disconnect capacity leakage, early short
+  deadline rejection, and resync blocking consumption. Original plan cancellation
+  settled; Architect should resume the same worker only for those corrections.
+- LZ-62 `2eaceec` compact Radar review found catch-up pulse replay, hidden busy
+  workers/missing existing operational edges, and unstable keyboard focus.
+  Original cancellation settled. Same-worker corrections precede activation and
+  actual narrow Desktop screenshot/Tera 6.1 High acceptance. Old main screenshot
+  was reviewed by Tera and remains unusable; do not mistake it for the candidate.
+- LZ-63 remains foreground-active in its original session/tree. Dedicated adoption
+  and full runner tests passed in the worker; later edits continue, no final
+  commit yet. Preserve `70179aa`, `42f1ec2`, `9d294be`, `fbfddf2`, `1d322c3` on merge.
+
+Live panels: Tasks connected; Completed filter lists old tasks; Open trajectory
+opened historical LZ-59 checks/tokens/activity. Local model Ready, all six flags
+ON. Radar current/stale alternates under old projection code; oversized graph
+is not accepted. No service restart, profiler arming, or inference disabling.
 
 ## Live work
 
@@ -86,11 +102,12 @@ The three old foreground handles did not survive the restart. Canonical server
 registration was observed first; Desktop panels appeared after delayed loading.
 No inference settings changed or additional service restart was performed.
 
-| Work                                   | Current identity and boundary                                                                                                                                                                                                                                                                                                                                                                                                     |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`; UI persona. Retained edited worktree is in interrupted-attempt recovery, not foreground-active at this read. Compact-width test caught 1,436px output, was repaired, then 17 focused tests/124 assertions passed. No returned candidate, native visual acceptance or integration yet. |
-| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`; Systems persona. Original attempt/session resumed through native stop-and-resume and is foreground-active again; resumed typecheck passes and relay edits continue.                                                                                                                   |
-| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`; Systems persona. Original session/worktree is retained in restart recovery; no source edits were present before interruption. Missing zero-turn closure remains to implement; do not replay original stopped workers.                                                                 |
+| Work                                   | Retained identity                                                                                                                                                                                                                                                                                  |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`. Returned, cancelled for scoped corrections.                                                                                                            |
+| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`. Returned, cancelled for scoped corrections.                                                                                                            |
+| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`. Active, no final return.                                                                                                                               |
+| LZ-64/65 independent foundations       | Plan `7fcc114a-9b7e-4689-8d10-2adae8943ac8`; attempts `76f764e5-e0b9-437e-bcd2-ae612e9b4afe` / `a79ce707-a048-4324-83d4-cec0c2bcf8e3`; workers `ses_4f4066c3848c4ba3bb14855fd66cac39` / `ses_534b5c181ba949b393631717d15cb97f`. Both returned; mapping source merged, resource correction pending. |
 
 Before restart all three foreground workers were observed in distinct native worktrees
 under `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
