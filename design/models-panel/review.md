@@ -103,6 +103,13 @@ are different measures; do not combine them into an unexplained universal score.
 
 ## Implementation boundaries for Architect
 
+Root's returned-artifact reviews found two concrete defects:
+[LZ-77 actual API catalog rejection](../../.agents/docs/evidence/models-accounting/source-live-review-20261102.md)
+and [LZ-78 cross-attempt route ownership](../../.agents/docs/evidence/models-accounting/route-ownership-review-20261102.md).
+The first adapter run retained 470 native records and 152 coding benchmarks,
+but rejected the successful OpenRouter models response because of dynamic-price
+sentinels. Correct these before claiming the corresponding data paths complete.
+
 Reuse existing queued work and LZ-68's functional editor. Specify small increments
 for source observations/identity mapping; historical cohorts/accounting and task
 estimates; the comparison view; and live persona assignment resolution at dispatch.
