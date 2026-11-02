@@ -41,10 +41,11 @@ patching. This is real execution, not merely task submission. Architect removed
 only the satisfied source prerequisite from its schedule; retained backend cleanup
 still does not block the editor. Current native reviewers may also be active.
 
-Desktop became locked after actual Radar captures, before activating the newest
-Radar correction. Computer Use explicitly reported the lock. One async unlock
-request is pending; do not repeatedly ask. Keep native workers running. All model
-prompts/form answers stay Desktop-only.
+Desktop is accessible again after the unlock reply. The latest Radar/GPU GUI
+candidate is activated; native model prompts/form answers remain Desktop-only.
+LZ-70 producer worker returned `9f68dcf` from original attempt
+`ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c` / session
+`ses_f96b29058c6347e294d7e0889ad3e627`; review/integration remain for Architect.
 
 ## Inference repair and native observations
 
@@ -66,7 +67,8 @@ Root `4d5ce21` corrects the repeated-loss circuit's indefinite stop into
 a one-minute automatic cooldown retry. Its production-lifecycle regression first
 failed on the permanent stop and now passes, including an explicit request before
 cooldown. The final 106 WebGPU tests / 532 assertions and quality pass; this correction
-is committed but has not yet been activated or observed in Desktop.
+is committed and included in the activated candidate; repeated-loss cooldown
+remains unobserved natively.
 
 ## Radar visual gate
 
@@ -78,20 +80,28 @@ Root activated the source and captured actual wide/narrow Desktop images:
 
 Requested Tera 6.1 High agent `/root/terra_radar_native_review` rejected both:
 text summaries/connection lists hide the SVG below the fold; narrow controls clip.
-Root `fb0d54a` moves the SVG before a counted collapsed Details disclosure and
-constrains/reflows the header. 27 Radar tests / 212 assertions, quality and GUI
-build pass. It is committed but **not activated or visually accepted**. After
-unlock: activate the built GUI, capture narrow/wide, select a real edge/node and
-check the lower inspector; obtain Tera screenshot review. Do not infer render or
-pulse acceptance from tests. Preserve live event-only pulses and quiet recovery
-baseline behavior. Root reserved these Radar files with native Architect. The final built candidate also includes `4d5ce21`; build passes but activation is still pending.
+Root `fb0d54a`, `25297d6`, `a2af5c0` correct graph-first ordering, collapsed
+metadata, density and ELK text placement. Latest Main GUI was built and explicitly
+activated via Desktop Reload. Tera High now accepts observed narrow/wide layouts.
+Actual mouse/keyboard selection populates the matching lower inspector; scope
+menu works after resize; one natural refresh interval preserved upper scroll and
+selection. [Portable captures and limits](evidence/native-liveness/20261102-radar-native-review.md).
+Actual animated pulse and quiet recovery/resynchronization remain unproven.
+Do not mark the complete Radar task accepted merely from this visual pass.
+
+Root read Architect's concrete [H3 correction brief](evidence/native-liveness/handoff-review-correction-request-20261102.md)
+and reserved the reviewer/store plus focused regressions through Desktop. Correct
+exact-reservation late-result selection and handoff-wide three-round accounting
+across authorized actors; preserve per-operation identity/authorization. No
+replacement worker/task or duplicate merge. Original H3 runtime integration and
+cleanup remain held. Native Architect continues LZ-70 review and Models editor.
 
 ## Source landings and remaining runtime boundaries
 
 | Work                    | Current result                                                                                                                  | Still required                                                                                                                                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | LZ-56 relay             | Retained `e64c90d` fixes absolute-deadline race atop worker `b164643`; 11 relay tests/68 assertions and quality pass            | Coordinate server and Desktop halves together; actual nondefault-location inference/cold start; do not activate server half alone                                                              |
-| LZ-62 Radar             | Main `fe5cd61` plus `fb0d54a`                                                                                                   | New activation, narrow/wide interaction/pulse observations and Tera screenshot acceptance                                                                                                      |
+| LZ-62 Radar             | Main `fe5cd61` plus `fb0d54a`                                                                                                   | Narrow/wide visual review and selection pass; live pulse/recovery observations remain                                                                                                          |
 | LZ-63 adoption          | Native accepted worker `3178932`; Root `01a4006` removes random per-import identity/environment digest; source merged `10c389b` | Native preserved-work adoption and actual combined closure evidence; plan's missing human closure gate is not fabricated                                                                       |
 | LZ-64 mapping           | Source `ee6960f`, merged `0d82057`                                                                                              | Original attempt cancelled/null artifact; preserve history, no replay or forced acceptance                                                                                                     |
 | LZ-65 resources         | Wrong-root fix `44bc7ee` merged `8cc8d7d`; 18 resource/probe tests/222 assertions pass                                          | Original formal closure and resource lifecycle walkthrough; unnecessary old-baseline repair is cancelled v581, not deleted                                                                     |
