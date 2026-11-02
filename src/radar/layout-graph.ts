@@ -59,6 +59,9 @@ export function elkGraph(input: RadarLayoutInput): ElkCompoundNode {
         text: edge.label,
         width: edge.labelWidth,
         height: edge.labelHeight,
+        ...(input.direction === "DOWN"
+          ? { layoutOptions: { "elk.edgeLabels.inline": "true" } }
+          : {}),
       },
     ],
   }))

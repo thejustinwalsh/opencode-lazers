@@ -281,6 +281,25 @@ export function createRadarOverview(
     )
   })
 
+  // Keep a recorded flow visible at native text size in a narrow pane. Adjacent
+  // forward relationships fit the vertical lane; the counted list retains all
+  // other scoped relationships and their complete evidence.
+  const focalFlow =
+    edges.find((edge) => edge.kind === "prompt") ?? edges.find((edge) => edge.kind === "outcome")
+  const orderedIDs = [
+    ...new Set([
+      ...(focalFlow ? [focalFlow.from, focalFlow.to] : []),
+      ...nodes.map((node) => node.id),
+    ]),
+  ]
+  const orderedNodes = orderedIDs.map((id) => nodes.find((node) => node.id === id)!)
+  const graphEdges = orderedIDs.flatMap((from, index) => {
+    const to = orderedIDs[index + 1]
+    const matches = edges.filter((edge) => edge.from === from && edge.to === to)
+    const edge = matches.find((edge) => edge === focalFlow) ?? matches[0]
+    return edge ? [edge] : []
+  })
+
   const recordsFor = (id: RadarOverviewGroupID) => {
     if (id === "relationships") return model.edges.map((edge) => edgeEntry(edge, model))
     const values = model.nodes.filter((node) => {
@@ -315,10 +334,10 @@ export function createRadarOverview(
     group: "overview" as const,
   }))
   return {
-    nodes,
+    nodes: orderedNodes,
     workerSessions,
     activeWorkerSessions: workerSessions.filter(isActiveWorker),
-    graphEdges: [],
+    graphEdges,
     edges,
     groups,
     currentArchitectID: architect?.id ?? null,

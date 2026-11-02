@@ -13,6 +13,7 @@ import {
   radarOverviewConnectionIDs,
 } from "./map-overview.ts"
 import { RadarLayoutCoordinator } from "./layout-state.ts"
+import { RadarPulseTracker } from "./pulse.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 import { makeFixture } from "../../test/trajectory/fixture.ts"
 
@@ -130,15 +131,17 @@ test("35-session overview stays compact at 330/450px and discloses every scoped 
       Promise.resolve(reads.snapshot(scope, tracker)),
     ])
     const radar = with35Sessions(base)
+    const prompt = radar.edges.find((edge) => edge.kind === "prompt")!
+    radar.edges.push({ ...prompt, id: "parallel-outcome", kind: "outcome" })
     const model = createRadarMapModel(radar, snapshot)
     const overview = createRadarOverview(model, "ses-current-architect")
     const runtime = model.nodes.filter((node) => node.kind === "component")
     const sessionNodes = model.nodes.filter((node) => node.kind === "session")
     const expectedIDs = [
       "component:runner-runtime",
+      "session:ses-worker-01",
       "session:ses-current-architect",
       `task:${base.tasks[0]?.id}`,
-      "session:ses-worker-01",
       "session:ses-worker-02",
     ]
 
@@ -158,7 +161,13 @@ test("35-session overview stays compact at 330/450px and discloses every scoped 
         (edge) => expectedIDs.includes(edge.from) && expectedIDs.includes(edge.to),
       ),
     ).toBe(true)
-    expect(overview.graphEdges).toEqual([])
+    expect(overview.graphEdges.map((edge) => edge.kind)).toEqual(["prompt", "assignment"])
+    expect(overview.graphEdges.every((edge) => overview.edges.includes(edge))).toBe(true)
+    expect(
+      overview.graphEdges.every(
+        (edge) => expectedIDs.indexOf(edge.to) === expectedIDs.indexOf(edge.from) + 1,
+      ),
+    ).toBe(true)
     expect(overview.nodes.find((node) => node.id === "session:ses-current-architect")?.label).toBe(
       "Current Architect",
     )
@@ -238,7 +247,47 @@ test("35-session overview stays compact at 330/450px and discloses every scoped 
     for (const viewportWidth of [330, 450])
       expect(result.width).toBeLessThanOrEqual(viewportWidth - 20)
     expect(result.nodes.map((node) => node.id).sort()).toEqual([...expectedIDs].sort())
+    expect(result.edges.map((edge) => edge.id).sort()).toEqual(
+      overview.graphEdges.map((edge) => edge.id).sort(),
+    )
+    expect(
+      result.edges.every((edge) => edge.path.startsWith("M ") && edge.arrow.includes(" L ")),
+    ).toBe(true)
     expect(result.height).toBeLessThan(1000)
+
+    const renderedFlow = overview.graphEdges.find((edge) => edge.kind === "prompt")!
+    const pulseTracker = new RadarPulseTracker()
+    expect(pulseTracker.update(overview.graphEdges, false, true)).toEqual([])
+    const liveRadar: RadarResponse = {
+      ...radar,
+      edges: radar.edges.map((record) =>
+        record.id === renderedFlow.records[0]!.id
+          ? {
+              ...record,
+              live: true,
+              evidence: [
+                {
+                  source: "native-event",
+                  eventID: "fresh-prompt",
+                  eventType: "session.input.consumed",
+                  sessionID: "ses-worker-01",
+                  messageID: null,
+                  callID: null,
+                  at: 10_001,
+                },
+              ],
+            }
+          : record,
+      ),
+    }
+    const liveOverview = createRadarOverview(
+      createRadarMapModel(liveRadar),
+      "ses-current-architect",
+    )
+    expect(pulseTracker.update(liveOverview.graphEdges, false, true)).toEqual([
+      { edgeID: renderedFlow.id, eventID: "fresh-prompt" },
+    ])
+    expect(pulseTracker.update(liveOverview.graphEdges, false, true)).toEqual([])
 
     const noCurrentEvidence = createRadarOverview(model, "ses-not-in-this-observation")
     expect(noCurrentEvidence.currentArchitectID).toBeNull()

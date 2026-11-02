@@ -179,14 +179,15 @@ export class RadarPanelState {
           !sameBoundary(displayedRadar.boundary, displayedSnapshot.boundary),
         )
         const liveSequence = this.sync.eventSequence
-        if (
-          acceptedRadar &&
-          radar &&
-          this.recoveryFence !== undefined &&
-          radar.boundary.eventSequence >= this.recoveryFence &&
-          radar.boundary.eventSequence >= (liveSequence ?? radar.boundary.eventSequence)
-        )
-          this.recoveryBaselinePending = true
+        if (this.recoveryFence !== undefined)
+          this.recoveryBaselinePending = Boolean(
+            displayedRadar &&
+            displayedSnapshot &&
+            !boundariesDiffer &&
+            displayedRadar.boundary.eventSequence >= this.recoveryFence &&
+            displayedRadar.boundary.eventSequence >=
+              (liveSequence ?? displayedRadar.boundary.eventSequence),
+          )
         const behindLiveChanges = Boolean(
           liveSequence !== undefined &&
           ((displayedRadar && displayedRadar.boundary.eventSequence < liveSequence) ||
