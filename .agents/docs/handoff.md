@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 16:54 UTC checkpoint. Recheck native state.
+2026-11-02 17:10 UTC checkpoint. Recheck native state.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -72,28 +72,43 @@ installed and read back. Instruction consumption/completion is not yet proven.
 Models service/API task `1baed348-eaa5-418c-b231-8866f930b63e` was submitted;
 its scheduling/dispatch has not yet been observed.
 
-Current returns:
+Current returns and active work:
 
-- LZ-64 clean `ee6960f` mapping core was merged natively as `0d82057`.
-  Four tests/52 assertions independently pass. Runtime acceptance remains held
-  on historical idle observation. Do not replay implementation.
-- LZ-65 clean `4a9f0cd` resource lifecycle core has a reproduced source-review
-  blocker: reopening with root B can falsely certify cleanup of a resource under
-  root A and release its reservation. Correct in the same retained attempt with
-  a real two-root/reopened-SQLite regression before integration. Its paired plan
-  currently suffers alternating hold reasons/version churn; Architect coordinates
-  the runner follow-up. Do not replay sibling LZ-64.
-- LZ-56 `4535c6c` relay review found disconnect capacity leakage, early short
-  deadline rejection, and resync blocking consumption. Original plan cancellation
-  settled; the same worker is active again for those corrections.
-- LZ-62 `2eaceec` compact Radar review found catch-up pulse replay, hidden busy
-  workers/missing existing operational edges, and unstable keyboard focus.
-  Original cancellation settled; the same worker is active for corrections before activation and
-  actual narrow Desktop screenshot/Tera 6.1 High acceptance. Old main screenshot
-  was reviewed by Tera and remains unusable; do not mistake it for the candidate.
-- LZ-63 remains foreground-active in its original session/tree. Dedicated adoption
-  and full runner tests passed in the worker; later edits continue, no final
-  commit yet. Preserve `70179aa`, `42f1ec2`, `9d294be`, `fbfddf2`, `1d322c3` on merge.
+- LZ-64 clean `ee6960f` mapping core remains source-merged as `0d82057`;
+  4 tests/52 assertions independently passed. Its original worker stays stopped,
+  now cancelled by the paired plan recovery; no implementation replay.
+- LZ-65 `4a9f0cd` resource lifecycle returned with a wrong-root cleanup identity
+  defect. Architect cancelled the pair using fresh version v562, then resumed only
+  original LZ-65 at v565→567. Worker `ses_534b5c181ba949b393631717d15cb97f`
+  is active again for the guard and real two-root/reopened-SQLite regression.
+- LZ-56 returned corrected clean `b164643` atop `4535c6c`: 29 focused tests/185
+  assertions and 21 profiler tests/102 assertions pass. Real location-scoped
+  inference/cold-start and final source review remain open. Original worker is
+  no longer foreground-active; preserve its return, do not replay.
+- LZ-62 is active correcting `2eaceec` for gap/pulse recovery, active worker and
+  truthful typed-flow prominence, and stable keyboard focus. Native narrow
+  capture/Tera 6.1 High acceptance still pending. Old main GUI is not the candidate.
+- LZ-63 returned clean `56c2a94`, 197 runner tests/2,877 assertions and 14 dedicated
+  tests/187 assertions. Original worker finished. Plan remains blocked v20 on a
+  new observed idle/success mismatch; earlier continuity/cancellation repairs do
+  not establish this completion. Root `1a5b2a8` adds timestamped automatic producer
+  diagnostics, 61 tests/293 assertions plus quality checks passing. Investigate
+  the next real completion; no fabricated idle reports or worker replay.
+  Review the returned all-process-environment hash freshness gate before landing.
+  [Failure, diagnostics and review concern](evidence/native-liveness/20261102-idle-producer-trace.md).
+- LZ-67 Models authority task `1baed348-eaa5-418c-b231-8866f930b63e` is running
+  in plan `67f3790e-17a9-4cf3-97bf-c21eef98a3ca`, attempt
+  `abcec5dc-7feb-4de1-a9dd-73da004cfb74`, worker
+  `ses_226e542b12a047dd973a6c3be0bc479e`. OpenAI Luna Max route and distinct native
+  worktree verified; no pending permissions/inbox at 1793639403029. Baseline
+  `cac3918`; preserve later Root producer diagnostics during integration.
+
+Root `cac3918` adds one concise Architect sentence for readable status reasons.
+Subsequent native command reasons are readable; old reasons remain history.
+Architect wrote continuity revision 39 and dispatched Models while workers run.
+Native reviewer `ses_e62c33c74ffeet3CIJdFoIYS38` is active inspecting current state.
+Computer Use explicitly reported macOS locked; one unlock request is pending.
+Continue read-only diagnosis/review; model prompts remain Desktop-only.
 
 Live panels: Tasks connected; Completed filter lists old tasks; Open trajectory
 opened historical LZ-59 checks/tokens/activity. Local model Ready, all six flags
@@ -110,12 +125,12 @@ The three old foreground handles did not survive the restart. Canonical server
 registration was observed first; Desktop panels appeared after delayed loading.
 No inference settings changed or additional service restart was performed.
 
-| Work                                   | Retained identity                                                                                                                                                                                                                                                                                  |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`. Returned candidate retained; original worker resumed for scoped corrections.                                                                           |
-| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`. Returned candidate retained; original worker resumed for scoped corrections.                                                                           |
-| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`. Active, no final return.                                                                                                                               |
-| LZ-64/65 independent foundations       | Plan `7fcc114a-9b7e-4689-8d10-2adae8943ac8`; attempts `76f764e5-e0b9-437e-bcd2-ae612e9b4afe` / `a79ce707-a048-4324-83d4-cec0c2bcf8e3`; workers `ses_4f4066c3848c4ba3bb14855fd66cac39` / `ses_534b5c181ba949b393631717d15cb97f`. Both returned; mapping source merged, resource correction pending. |
+| Work                                   | Retained identity                                                                                                                                                                                                                                                                                              |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`. Returned candidate retained; original worker resumed for scoped corrections.                                                                                       |
+| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`. Returned candidate retained; original worker resumed for scoped corrections.                                                                                       |
+| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`. Active, no final return.                                                                                                                                           |
+| LZ-64/65 independent foundations       | Plan `7fcc114a-9b7e-4689-8d10-2adae8943ac8`; attempts `76f764e5-e0b9-437e-bcd2-ae612e9b4afe` / `a79ce707-a048-4324-83d4-cec0c2bcf8e3`; workers `ses_4f4066c3848c4ba3bb14855fd66cac39` / `ses_534b5c181ba949b393631717d15cb97f`. Mapping source merged/stopped; original resource worker active for correction. |
 
 Before restart all three foreground workers were observed in distinct native worktrees
 under `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
