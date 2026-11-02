@@ -3,6 +3,14 @@
 Attach only relevant lessons to a task. These are reusable code findings, not a
 mandatory task checklist. New lessons should come from observed work.
 
+## Worker tools and trajectory time
+
+Expose worker-facing tools to Code Mode (`codemode: true`). Registering progress
+reporting as standalone-only made it unavailable inside `execute`.
+
+Store trajectory times as Unix epoch milliseconds. Preserve native start/end
+times when available; collection time is not a missing execution endpoint.
+
 ## Native child workspace routing
 
 Pinned OpenCode 2.2.5 child creation inherits its parent's location even when
