@@ -52,6 +52,18 @@ function factInput(fixture: ReturnType<typeof makeFixture>, dedupeKey: string, a
   }
 }
 
+function preparePreActivationHistory(fixture: ReturnType<typeof makeFixture>) {
+  fixture.store.atomic((db) => {
+    db.exec(`
+      DROP TRIGGER IF EXISTS recovery_progress_inserted;
+      DROP TRIGGER IF EXISTS recovery_progress_modified;
+      DROP TABLE IF EXISTS recovery_progress_consumers;
+      DROP TABLE IF EXISTS recovery_progress_coverage;
+      DROP TABLE IF EXISTS recovery_progress_facts;
+    `)
+  })
+}
+
 test.each([1, 10])(
   "captured page advances its exact prefix after later appends (limit %i)",
   (limit) => {
@@ -227,11 +239,13 @@ test("journal captures inserts and in-place modifications, ignores replay, and s
 test("pre-journal rows are represented by an explicit starting boundary, not fabricated history", () => {
   const fixture = makeFixture()
   try {
+    preparePreActivationHistory(fixture)
     let legacySequence = 0
     fixture.store.atomic((db) => {
       insertProgress(db, factInput(fixture, "legacy-row"))
       legacySequence = db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
     })
+    new RunnerStore(fixture.repository)
     const journal = new RecoveryJournal(fixture.repository)
     const page = journal.page("consumer", 10)
     expect(journal.coverage()).toMatchObject({
@@ -266,6 +280,7 @@ test("late project initialization retains facts captured by another project's tr
   let reopenedRepository: TaskRepository | undefined
   try {
     const otherDirectory = `${fixture.directory}/other`
+    preparePreActivationHistory(fixture)
     const legacySequence = fixture.store.atomic((db) => {
       insertProgress(db, {
         ...factInput(fixture, "late-project-legacy"),
@@ -279,9 +294,9 @@ test("late project initialization retains facts captured by another project's tr
         .get(otherDirectory, "late-project-legacy")!.seq
     })
 
-    // This installation creates database-wide triggers but only records
-    // project-specific coverage for the fixture project.
-    new RecoveryJournal(fixture.repository)
+    // The pre-activation row above has no journal fact. Ordinary runner
+    // initialization installs database-wide triggers and project-local coverage.
+    new RunnerStore(fixture.repository)
     const capturedSequence = fixture.store.atomic((db) => {
       insertProgress(db, {
         ...factInput(fixture, "late-project-captured"),

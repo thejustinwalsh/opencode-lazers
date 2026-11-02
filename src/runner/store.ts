@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
+import { RecoveryJournal } from "../recovery/journal.ts"
 import { scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
@@ -550,6 +551,7 @@ export class RunnerStore {
       ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
       ensureObservationRevision(db)
     })
+    new RecoveryJournal(repository)
   }
   atomic<T>(run: (db: Database) => T): T {
     return this.repository.atomic(run)
