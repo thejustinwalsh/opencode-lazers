@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 04:34 UTC checkpoint (November 1 evening EST). Recheck native state.
+2026-11-02 15:42 UTC checkpoint. Recheck native state.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
 
@@ -31,17 +31,21 @@ an observation-based improvements plan. This is not completion.
 
 ## Live work
 
-Native service remains PID 40217 at `http://127.0.0.1:49374`. `session.active()`
+After the user-confirmed restart, native service is PID 7793 at
+`http://127.0.0.1:49374`. `session.active()`
 is authoritative foreground inventory. Observation timeout is not termination;
-poll the same handle. Main was clean at `dd4d0be` before this checkpoint.
+poll the same handle. Main includes runtime repair `1d322c3`; reviewed code and retained WIP survived.
+The three old foreground handles did not survive the restart. Canonical server
+registration was observed first; Desktop panels appeared after delayed loading.
+No inference settings changed or additional service restart was performed.
 
-| Work                                   | Current identity and boundary                                                                                                                                                                                                                                                                                                                         |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`; UI persona. Real edits underway. Compact-width test caught 1,436px output, was repaired, then 17 focused tests/124 assertions passed. No returned candidate, native visual acceptance or integration yet. |
-| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`; Systems persona. Real relay edits underway.                                                                                                                                                               |
-| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`; Systems persona. Missing zero-turn closure capability is being implemented; do not replay original stopped workers.                                                                                       |
+| Work                                   | Current identity and boundary                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-62 compact Radar                    | Plan `49201384-47b2-4ef6-a018-bd83a42d7c16`; attempt `99b10b5a-ddf3-4cc9-83bb-c9d2a4d7d460`; worker `ses_6871bdee1ee345c28a38e1daa742d4ef`; UI persona. Retained edited worktree is in interrupted-attempt recovery, not foreground-active at this read. Compact-width test caught 1,436px output, was repaired, then 17 focused tests/124 assertions passed. No returned candidate, native visual acceptance or integration yet. |
+| LZ-56 inference forwarding             | Plan `d1bc1882-be6e-42a2-9626-ab018c595227`; attempt `ad12b78c-f5ec-43e8-ad16-d46aefc39eb4`; worker `ses_25f4655386a4407f99a500949a5fa3b3`; Systems persona. Original attempt/session resumed through native stop-and-resume and is foreground-active again; resumed typecheck passes and relay edits continue.                                                                                                                   |
+| LZ-63 reviewed-descendant verification | Plan `04e0422b-09da-4885-97a4-d44eac9aaee0`; attempt `2aff6bd5-ba88-48bf-8bbb-5ad78405a192`; worker `ses_6b0df66807394d0793dc2732411aba9b`; Systems persona. Original session/worktree is retained in restart recovery; no source edits were present before interruption. Missing zero-turn closure remains to implement; do not replay original stopped workers.                                                                 |
 
-All three foreground workers were observed live in distinct native worktrees
+Before restart all three foreground workers were observed in distinct native worktrees
 under `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
 Plans can still show permission-block reasons after workers continue. Both
 session and location permission inventories for LZ-63 were empty at Unix ms 1793593961522. `advanceAttempt()` currently returns for busy work before clearing
@@ -51,10 +55,21 @@ issue after coordinating the current runner writer, not through repeated retries
 Root submitted a normal Desktop roadmap steering message: keep Radar first,
 advance independent Models/persona and recovery/verification work in parallel.
 Architect acknowledged and dispatched native research `ses_e6579218fffeHeLUWLWdjcxTs4`
-and `ses_e6579218fffd03z6Srne6KBkmx`. Do not duplicate their work.
+and `ses_e6579218fffd03z6Srne6KBkmx`. Inspect their retained returns before restarting research.
+The Architect has now submitted independent persona-mapping-core and V3 resource-lifecycle
+tasks; submission is not dispatch.
 
 ## Landed, with remaining proof
 
+- Root fixed the observed restart cancellation race in `1d322c3`: after a detailed
+  native read, `advanceAttempt` rechecks current plan state before applying stale
+  observations. Three interrupted/succeeded/missing-response cases failed before
+  the guard and pass after it. Full runner: 186 tests/2,726 assertions; formatter,
+  lint and typecheck passed. Native LZ-63 CANCEL_REQUESTED at 1793633431731 had been
+  overwritten by BLOCKED at 1793633433921. Continued native recovery is required;
+  source tests alone do not establish it. Pinned host module/supervisor source
+  confirms automatic local import-graph reload, so a broad location reload was
+  avoided while the resumed forwarding worker cooks.
 - Radar ELK packaging now works in real Desktop (`37abb66`). Tera 6.1 High rejected
   its initial 10,155×8,599/115-node presentation. LZ-62 addresses that review;
   original LZ-34 lineage/native gates remain open. Use actual narrow screenshots
