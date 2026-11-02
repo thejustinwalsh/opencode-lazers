@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02 17:38 UTC checkpoint. Recheck native state.
+2026-11-02 17:44 UTC checkpoint. Recheck native state.
 Later Root checkpoint: [native continuation](evidence/native-liveness/20261102-native-continuation.md) records the real LZ-65 completion chain. Relay correction `e64c90d` and Radar correction `486614b` are committed in their original retained worker trees. Deliver both returns to Architect through Desktop; its pending question recommends Root fixing these candidates, already authorized. Do not activate relay server/Desktop halves separately. Desktop still explicitly reports locked after the unlock reply; an async clarification is pending.
 Full goal: all four phases in [the roadmap](../../design/roadmap.md), followed by
 an observation-based improvements plan. This is not completion.
@@ -72,8 +72,14 @@ permissions/inbox. Together with LZ-63, three native implementation workers run
 in parallel. Architect resumed Radar from v21 to v23 and relay v27 to v29 using
 journaled same-attempt commands after durable correction instructions were
 installed and read back. Instruction consumption/completion is not yet proven.
-Models service/API task `1baed348-eaa5-418c-b231-8866f930b63e` has since dispatched;
-the current independent work is listed below.
+Models service/API task `1baed348-eaa5-418c-b231-8866f930b63e` returned `24f87e0`
+and reached native accepted v13. Root reviewed/fixed cancelled-request late writes
+in `b6237f1` and integrated as `ea188c2`. Postmerge 26 Models/context tests / 240
+assertions plus quality pass. Actual settings/catalog RPC reads returned in 10/14
+ms in PID7793, with 118 native models and the configured OpenAI Luna Max route.
+No routes changed. Editor LZ-68 and dispatch/pricing/metrics remain unfinished.
+[Models native readback](evidence/native-liveness/20261102-models-authority.md).
+The current independent work is listed below.
 
 Current returns and active work:
 
@@ -86,8 +92,9 @@ Current returns and active work:
   merged resource/probe checks pass 18 tests/222 assertions and quality. Formal
   runtime acceptance remains unresolved. The old-baseline probe ordering failure
   automatically created replacement attempt `5627d0c3-52df-47b3-a381-eba3fd582863`;
-  Architect requested cancellation at v579. Latest inspection still says cancelling,
-  not stopped. Preserve both trees; no replacement/replay was requested.
+  Architect requested cancellation at v579; native readback now shows cancelled
+  v581, replacement absent from foreground with permissions/inbox empty. Preserve
+  both trees and history; source integration does not establish resource deletion.
 - LZ-56 returned corrected clean `b164643` atop `4535c6c`: 29 focused tests/185
   assertions and 21 profiler tests/102 assertions pass. Real location-scoped
   inference/cold-start remain open. Re-review cleared capacity and event-stream
