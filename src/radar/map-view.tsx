@@ -893,7 +893,7 @@ export function RadarMapView(props: RadarMapViewProps) {
                         <text
                           class="lazers-radar-map-edge-label"
                           x={placed().labelX}
-                          y={placed().labelY - 4}
+                          y={placed().labelY + 4}
                           text-anchor="middle"
                         >
                           {edgeLabelText()}

@@ -160,8 +160,10 @@ function toEdge(edge: ElkExtendedEdge): RadarLayoutResult["edges"][number] | und
     id: edge.id,
     path,
     arrow: arrowPath(lastPoints),
-    labelX: label?.x ?? longest?.x ?? lastPoints[0]!.x,
-    labelY: label?.y ?? longest?.y ?? lastPoints[0]!.y,
+    labelX:
+      label?.x !== undefined ? label.x + (label.width ?? 0) / 2 : (longest?.x ?? lastPoints[0]!.x),
+    labelY:
+      label?.y !== undefined ? label.y + (label.height ?? 0) / 2 : (longest?.y ?? lastPoints[0]!.y),
   }
 }
 
