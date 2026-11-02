@@ -87,7 +87,12 @@ function harness(snapshots: unknown[]) {
     windows: { list: () => [window], focused: () => (focused ? window : undefined) },
     signal: new AbortController().signal,
   } as unknown as MainContext
-  const adapter = new NativeInteractionMainAdapter(ctx, "/private/tmp/unused", () => 123)
+  const adapter = new NativeInteractionMainAdapter(
+    ctx,
+    "/private/tmp/unused",
+    () => 123,
+    () => events.push("activate"),
+  )
   adapter.trackWindow(window)
   return {
     adapter,
@@ -111,7 +116,7 @@ describe("owned native Desktop adapter", () => {
     const result = await h.adapter.perform({ kind: "focus", window: reference(h) })
     expect(result.delivery).toBe("delivered")
     expect(result.snapshot?.window.focused).toBe(true)
-    expect(h.events).toEqual([])
+    expect(h.events).toEqual(["activate"])
     expect(
       await h.adapter.perform({ kind: "focus", window: { ...reference(h), generation: 999 } }),
     ).toMatchObject({ delivery: "not-delivered" })

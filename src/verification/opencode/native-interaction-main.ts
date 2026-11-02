@@ -1,6 +1,7 @@
 import type { MainContext } from "@opencode/plugin/gui/main"
 import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
+import { createRequire } from "node:module"
 import { join } from "node:path"
 import { nativeBindingFromManifest, verifyOwnedLaunch } from "./owned-launch.ts"
 import {
@@ -308,6 +309,12 @@ export class NativeInteractionMainAdapter {
     private readonly ctx: MainContext,
     private readonly root: string,
     private readonly now: () => number = Date.now,
+    private readonly activate: () => void = () => {
+      const electron = createRequire(join(root, "native-focus.cjs"))("electron") as {
+        app: { focus(options: { steal: boolean }): void }
+      }
+      electron.app.focus({ steal: true })
+    },
   ) {}
 
   async start(): Promise<void> {
@@ -472,7 +479,9 @@ export class NativeInteractionMainAdapter {
     if (currentReference === undefined)
       return { delivery: "not-delivered", message: "Native window reference is stale" }
     if (operation.kind === "focus") {
+      this.activate()
       window.focus()
+      await new Promise<void>((resolve) => setImmediate(resolve))
       const focused = this.currentReference(window.id)
       if (focused === undefined || !focused.focused || !window.isFocused())
         return { delivery: "not-delivered", message: "Owned Desktop window could not be focused" }
