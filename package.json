@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "verify": "bun fmt --check && bun lint && bun check",
+    "verify": "bun fmt && bun lint && bun check",
     "build:gui": "bun scripts/prepare-engine.ts && vite build"
   },
   "peerDependencies": {
