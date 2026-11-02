@@ -48,10 +48,25 @@ type NativeIdleBackgroundLineage = {
   executionStartSequence: number
   eventSequence: number
 }
-const idleBackground = new Map<string, HostBackgroundObservation>()
-const idleBackgroundOwners = new Map<string, symbol>()
+type NativeIdleRegistry = {
+  observations: Map<string, HostBackgroundObservation>
+  owners: Map<string, symbol>
+  events: Map<string, { sequence?: number; observers: Set<symbol> }>
+}
 
-const idleEventStates = new Map<string, { sequence?: number; observers: Set<symbol> }>()
+// OpenCode reevaluates local modules per location; these observations belong to the host process.
+const nativeIdleRegistryKey = Symbol.for("opencode-lazers.native-idle.v1")
+const idleHost = globalThis as typeof globalThis & {
+  [nativeIdleRegistryKey]?: NativeIdleRegistry
+}
+const idleRegistry = (idleHost[nativeIdleRegistryKey] ??= {
+  observations: new Map(),
+  owners: new Map(),
+  events: new Map(),
+})
+const idleBackground = idleRegistry.observations
+const idleBackgroundOwners = idleRegistry.owners
+const idleEventStates = idleRegistry.events
 
 function idleEventState(sessionID: string, observer: symbol) {
   let state = idleEventStates.get(sessionID)

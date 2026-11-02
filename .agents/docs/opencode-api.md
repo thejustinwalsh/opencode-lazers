@@ -149,6 +149,8 @@ The [event manifest][events] indexes event names and payloads, including executi
 
 Public `location.reload()` is server-wide across loaded locations, not scoped to the caller's worktree: the [pinned handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/server/src/handlers/location.ts) calls [`LocationServiceMap.reload`](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/location-service-map.ts#L20-L35), which invalidates all loaded refs and boots their replacements. Coordinate a quiet boundary before using it; source inclusion is not proof of effective worker registration.
 
+Local server-plugin module identity is not shared state: the pinned [local source loader](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/source.bun.ts) evicts its local import graph when preparing each location. Two loaders of the same canonical entry can retain different module-local objects. Use explicit process-shared or durable state when coordinating locations; one configured path alone does not establish sharing.
+
 ## Complete HTTP operation index
 
 The following is the **entire versioned OpenAPI operation inventory**, grouped for lookup. Names are **OpenAPI operation IDs**, not a claim that every method exists on plugin `ctx`. Follow each resource's source for paths, verbs, payloads, schemas, and errors. Client spelling differs in places: HTTP `fs.*` → `client.file.*`; `session.permission.*` → `client.permission.*`; `session.message.list` → `client.message.list`. Experimental client aliases do not change API maturity. [Generated client][client] · [all 363 schemas][schemas] · [raw specification][protocol].
