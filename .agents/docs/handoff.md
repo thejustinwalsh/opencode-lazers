@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 19:27 UTC. Recheck native state before acting.
+2026-11-02, approximately 19:32 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -50,7 +50,9 @@ Root actually clicked native Tasks → LZ-61 → Start. Task is running, attempt
 `ses_1f1d4570c48f412697ca0e56ccef3893`, isolated native tree and independently
 confirmed OpenAI Luna Max. Models repair is concurrently active. Coordinate
 LZ-61's progress/store/observability scopes, preserve both workers. Desktop is
-unlocked, accessible, on Radar. [Timestamped parallel/manual-Start proof and captures](evidence/native-liveness/20261102-parallel-workers.md).
+unlocked and accessible. Native Completed → Load more → LZ-20 → Open trajectory
+worked with actual historical attempt/check data. Tasks was restored to Project /
+Open with LZ-61 selected; both workers are still active and patching their own scopes. [Timestamped parallel/manual-Start proof and captures](evidence/native-liveness/20261102-parallel-workers.md).
 
 LZ-70 producer worker returned `9f68dcf`, original attempt
 `ba1dd1f0-1ea8-40e3-933a-01a9f6ca122c` / session

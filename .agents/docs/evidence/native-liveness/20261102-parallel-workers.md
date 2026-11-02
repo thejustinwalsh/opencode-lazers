@@ -72,3 +72,22 @@ needs qualification. The current speaker/mic pills are still on the left in the
 real capture; LZ-20's accepted objective covered persistence/auto-speech, not the
 separate requested right-side placement. Do not silently drop that earlier ask
 from final scope audit or claim a supported placement slot without checking it.
+
+## Completed filter and historical navigation
+
+Through native Desktop, Root selected Tasks → State: Completed → Load more.
+The second page exposed historical LZ-20. Selecting it and clicking Open trajectory
+opened the native Trajectory tab with LZ-20 / revision 1, one Luna Max attempt,
+157 tool calls and actual recorded task/plan verification checks. The selected
+focused check showed passed/exit 0 and recorded endpoints; unknown attempt end
+remained identified as unavailable in its accessible description. This proves
+this actual historical path, not every historical task or accurate legacy attempt
+durations. [Actual capture](parallel-native-20261102/historical-LZ20.png).
+
+Observed filter groups are Open, Completed, Failed/exhausted, Cancelled and All;
+this walkthrough exercised Completed and restored Open. Task details also confirm
+LZ-20 explicitly documents the unavailable right-composer API; placement is a known
+host limitation, not an unimplemented auto-speech behavior to silently duplicate.
+The Tasks view is restored to Project / Open with running LZ-61 selected. Both
+current worker handles were again active at 1793647897449, with real patching in
+their own Models and progress source scopes. No native question is pending here.

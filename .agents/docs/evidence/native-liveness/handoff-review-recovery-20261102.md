@@ -50,7 +50,11 @@ answers, resolved findings, alternate identity and invented usage without writin
 an outcome. Production review then derives the matching interruption, retains
 unknown usage, and preserves exact replay after a later genuinely reviewed round.
 The updated 39-test / 475-assertion compatibility run and fmt/lint/check/diff pass.
-Independent native re-review remains necessary.
+The same native reviewer `ses_e627a81dbffe6k9adTYtUzDisG` subsequently rechecked
+`fdea89e` and found no blocker within the correction scope. It confirmed identity-
+only recovery input, deterministic durable derivation, truthful unknown fields,
+actual exhaustion, immutable replay and preserved authorization. This is source
+clearance only; worker-facing tools and the live workflow remain unproven.
 
 Broader Main run before this final derivation change: 680 pass and two owned-launch
 boundary failures inside the restricted sandbox. The full owned-launch file then
