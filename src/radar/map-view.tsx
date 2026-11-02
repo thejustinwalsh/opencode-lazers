@@ -12,7 +12,7 @@ import type { RadarPulse } from "./pulse.ts"
 type RadarMapViewProps = {
   model: RadarMapModel
   scopeKey: string
-  stale: boolean
+  resynchronizing: boolean
   selectedID: string | null
   onSelect(id: string): void
   layout: RadarLayoutClient
@@ -708,7 +708,7 @@ export function RadarMapView(props: RadarMapViewProps) {
   const activePulses = (edgeID: string) => pulses().filter((pulse) => pulse.edgeID === edgeID)
 
   createEffect(() => {
-    const fresh = pulseTracker.update(model().edges, props.stale, !reducedMotion())
+    const fresh = pulseTracker.update(model().edges, props.resynchronizing, !reducedMotion())
     for (const pulse of fresh) {
       const key = `${pulse.edgeID}\u0000${pulse.eventID}`
       setPulses((current) => [...current, pulse])
@@ -723,7 +723,7 @@ export function RadarMapView(props: RadarMapViewProps) {
   })
 
   createEffect(() => {
-    if (!props.stale && !reducedMotion()) return
+    if (!props.resynchronizing && !reducedMotion()) return
     for (const timer of pulseTimers.values()) clearTimeout(timer)
     pulseTimers.clear()
     setPulses([])

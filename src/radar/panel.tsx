@@ -121,6 +121,7 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
     key: "",
     loading: true,
     stale: true,
+    resynchronizing: true,
     error: "",
   })
   const [split, setSplit] = createSignal(initial.split)
@@ -692,7 +693,9 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext }) {
                     <RadarMapView
                       model={model()}
                       scopeKey={expectedKey()}
-                      stale={stale()}
+                      resynchronizing={Boolean(
+                        visible()?.resynchronizing || !props.session.server.connected,
+                      )}
                       selectedID={prefs().selectedMapID}
                       onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
                       layout={radarLayout}

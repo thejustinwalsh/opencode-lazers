@@ -13,6 +13,8 @@ export type RadarPanelData = {
   snapshot?: SnapshotResponse
   loading: boolean
   stale: boolean
+  /** Gaps/reconnects need a quiet pulse baseline; ordinary refreshes do not. */
+  resynchronizing: boolean
   error: string
   snapshotError?: string
 }
@@ -21,6 +23,7 @@ const blank = (key = ""): RadarPanelData => ({
   key,
   loading: true,
   stale: true,
+  resynchronizing: true,
   error: "",
 })
 
@@ -104,6 +107,7 @@ export class RadarPanelState {
           this.update({
             loading: !this.data.radar,
             stale: true,
+            resynchronizing: true,
             error: this.data.radar
               ? "Server disconnected; showing the last observation."
               : "Server disconnected; observations are unavailable.",
@@ -150,6 +154,7 @@ export class RadarPanelState {
             this.update({
               loading: false,
               stale: true,
+              resynchronizing: true,
               error:
                 "Operational and lifecycle observations changed while reading; resynchronizing.",
               snapshotError: "",
@@ -178,6 +183,7 @@ export class RadarPanelState {
             ...(acceptedSnapshot ? { snapshot } : {}),
             loading: false,
             stale: !acceptedRadar,
+            resynchronizing: !acceptedRadar,
             error: radarError,
             snapshotError,
           })
@@ -186,6 +192,7 @@ export class RadarPanelState {
           this.update({
             loading: false,
             stale: true,
+            resynchronizing: true,
             error: radarError || "Operational observation is not current.",
             snapshotError,
           })
@@ -201,6 +208,7 @@ export class RadarPanelState {
         this.update({
           loading: false,
           stale: true,
+          resynchronizing: true,
           error: this.data.snapshot
             ? `Refresh failed; showing the last observation. ${String(error)}`
             : `Observation is unavailable. ${String(error)}`,
@@ -231,6 +239,7 @@ export class RadarPanelState {
           if (this.sync.eventSequence === previous) continue
           this.update({
             stale: true,
+            resynchronizing: this.data.resynchronizing || !contiguous,
             error: contiguous ? "" : "Observation gap; refreshing the snapshot.",
           })
           void this.refresh(epoch, generation, transport, signal)
@@ -243,6 +252,7 @@ export class RadarPanelState {
         this.update({
           loading: !this.data.radar,
           stale: true,
+          resynchronizing: true,
           error: transport.online()
             ? `Update stream disconnected; resynchronizing. ${String(error)}`
             : "Server disconnected; showing the last observation.",

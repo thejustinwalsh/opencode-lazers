@@ -9,6 +9,8 @@ import type {
 import { makeFixture } from "../../test/trajectory/fixture.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 import { RadarPanelState } from "./state.ts"
+import { RadarPulseTracker } from "./pulse.ts"
+import type { RadarMapEdge } from "./map-model.ts"
 import type { RadarTransport } from "./transport.ts"
 
 type QueueItem<T> = { value: T; done: false } | { value: undefined; done: true }
@@ -142,6 +144,8 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
     let streamCalls = 0
     let snapshotCalls = 0
     const updates: { stale: boolean; error: string }[] = []
+    const pulses: string[] = []
+    const pulseTracker = new RadarPulseTracker()
     let eventSequence = session.boundary.eventSequence
     const transport: RadarTransport = {
       snapshot: async () => {
@@ -162,7 +166,27 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
       online: () => true,
     }
     const state = new RadarPanelState(
-      (data) => updates.push({ stale: data.stale, error: data.error }),
+      (data) => {
+        updates.push({ stale: data.stale, error: data.error })
+        if (!data.radar) return
+        const edge: RadarMapEdge = {
+          id: "outcome",
+          kind: "outcome",
+          from: "worker",
+          to: "runner",
+          status: "succeeded",
+          records: [],
+          evidence: [],
+          routeRecords: [],
+          related: [],
+          pulseEventIDs: [`event-${data.radar.boundary.eventSequence}`],
+        }
+        pulses.push(
+          ...pulseTracker
+            .update([edge], data.resynchronizing ?? data.stale, true)
+            .map((pulse) => pulse.eventID),
+        )
+      },
       async () => {},
     )
     state.connect(
@@ -195,10 +219,12 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
     await until(() => state.data.snapshot?.boundary.eventSequence === next && !state.data.stale)
     expect(snapshotCalls).toBe(2)
     expect(updates.slice(beforeUpdate)).toContainEqual({ stale: true, error: "" })
+    expect(pulses).toEqual([`event-${next}`])
 
     emit(next)
     await new Promise((resolve) => setTimeout(resolve, 5))
     expect(snapshotCalls).toBe(2)
+    expect(pulses).toEqual([`event-${next}`])
 
     const gap = next + 2
     const beforeGap = updates.length
@@ -210,9 +236,18 @@ test("duplicates are ignored, event gaps invalidate, and a closed stream reconne
       error: "Observation gap; refreshing the snapshot.",
     })
 
+    expect(pulses).toEqual([`event-${next}`])
+    emit(gap + 1)
+    await until(() => state.data.snapshot?.boundary.eventSequence === gap + 1 && !state.data.stale)
+    expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`])
+
     queues[0]!.close()
-    await until(() => streamCalls >= 2 && snapshotCalls >= 4 && !state.data.stale)
-    expect(state.data.snapshot?.boundary.eventSequence).toBe(gap)
+    await until(() => streamCalls >= 2 && snapshotCalls >= 5 && !state.data.stale)
+    expect(state.data.snapshot?.boundary.eventSequence).toBe(gap + 1)
+    expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`])
+    emit(gap + 2)
+    await until(() => state.data.snapshot?.boundary.eventSequence === gap + 2 && !state.data.stale)
+    expect(pulses).toEqual([`event-${next}`, `event-${gap + 1}`, `event-${gap + 2}`])
     state.close()
   } finally {
     fixture.close()
