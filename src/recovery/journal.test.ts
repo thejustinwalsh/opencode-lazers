@@ -52,6 +52,48 @@ function factInput(fixture: ReturnType<typeof makeFixture>, dedupeKey: string, a
   }
 }
 
+test.each([1, 10])(
+  "captured page advances its exact prefix after later appends (limit %i)",
+  (limit) => {
+    const fixture = makeFixture()
+    try {
+      const journal = new RecoveryJournal(fixture.repository)
+      journal.coverage()
+      fixture.store.atomic((db) => insertProgress(db, factInput(fixture, "captured-first")))
+      const captured = journal.page("captured-prefix", limit)
+      expect(captured.facts).toHaveLength(1)
+      expect(captured.hasMore).toBe(false)
+      fixture.store.atomic((db) => insertProgress(db, factInput(fixture, "appended-later", 1235)))
+      journal.advance(captured)
+      const remaining = journal.page("captured-prefix", limit)
+      expect(remaining.facts).toHaveLength(1)
+      expect(remaining.fromChangeID).toBe(captured.throughChangeID)
+      expect(remaining.facts[0]!.changeID).toBeGreaterThan(captured.throughChangeID)
+      expect(() => journal.advance(captured)).toThrow("Stale recovery journal cursor")
+      journal.advance(remaining)
+      expect(journal.page("captured-prefix", limit).facts).toEqual([])
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
+test("an empty captured page cannot consume facts appended before advancement", () => {
+  const fixture = makeFixture()
+  try {
+    const journal = new RecoveryJournal(fixture.repository)
+    const empty = journal.page("empty-capture", 10)
+    expect(empty.facts).toEqual([])
+    fixture.store.atomic((db) => insertProgress(db, factInput(fixture, "after-empty-capture")))
+    journal.advance(empty)
+    const remaining = journal.page("empty-capture", 10)
+    expect(remaining.fromChangeID).toBe(empty.fromChangeID)
+    expect(remaining.facts).toHaveLength(1)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("journal captures inserts and in-place modifications, ignores replay, and survives reopen", () => {
   const fixture = makeFixture()
   let reopenedRepository: TaskRepository | undefined

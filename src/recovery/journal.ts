@@ -452,13 +452,13 @@ export class RecoveryJournal {
       throw new Error("Recovery journal page coverage does not match storage")
 
     const rows = db
-      .query<FactRow, [string, number, number]>(
+      .query<FactRow, [string, number, number, number]>(
         `SELECT change_id,project_directory,project_id,plan_id,task_id,attempt_id,session_id,
                 source_seq,source_at,change_kind,source_kind,source,previous_status,status,changed_fields
          FROM recovery_progress_facts
-         WHERE project_directory=? AND change_id>? ORDER BY change_id LIMIT ?`,
+         WHERE project_directory=? AND change_id>? AND change_id<=? ORDER BY change_id LIMIT ?`,
       )
-      .all(page.projectDirectory, page.fromChangeID, page.limit)
+      .all(page.projectDirectory, page.fromChangeID, page.throughChangeID, page.limit)
     const expectedFacts = rows.map(factFromRow)
     if (
       page.facts.length !== expectedFacts.length ||
@@ -470,16 +470,11 @@ export class RecoveryJournal {
     if (page.throughChangeID !== expectedThrough)
       throw new Error("Recovery journal page has an invalid advancement boundary")
 
-    const more = db
-      .query<{ found: number }, [string, number]>(
-        `SELECT 1 AS found FROM recovery_progress_facts
-         WHERE project_directory=? AND change_id>? LIMIT 1`,
-      )
-      .get(page.projectDirectory, expectedThrough)
     const expectedBytes = expectedFacts.length
       ? new TextEncoder().encode(JSON.stringify(expectedFacts)).byteLength
       : 0
-    if (page.hasMore !== (more !== null))
+    // Continuation describes the capture, not facts appended after that boundary.
+    if (typeof page.hasMore !== "boolean")
       throw new Error("Recovery journal page has an invalid continuation boundary")
     if (
       !page.metrics ||
