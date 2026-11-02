@@ -32,13 +32,35 @@ establish historical hook behavior in this installation. Existing LAZERS progres
 facts retain terminal/tool/step history; they did not retain the missing producer
 path. Source: https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/bus.ts
 
-## LZ-63 source review concern to resolve
+## LZ-63 source review findings before integration
 
-The returned `src/runner/artifacts.ts` now hashes every process environment value
-as verificationEnvironmentIdentity(), and runtime holds adoption when it changes.
-This is a broad freshness gate: unrelated credentials/settings can invalidate
-passed checks. Review it against the roadmap's runtime-owned relevant
-revision/generation policy and the user's rejection of evidence-fingerprint
-ceremony before integration. Git candidate identity and canonical operation
-idempotency are separate and remain valid. This concern is source-established;
-no native false-invalidation outcome has been demonstrated.
+Candidate `56c2a94` is not cleared by this review.
+
+1. **Native adoption cannot pass its activity guard.** `prepareAdoption()` calls
+   `host.session(latest.session_id)` without detailed messages, then requires
+   `pendingInput === false`, permission/form counts exactly zero, and current-turn
+   background lineage. The actual native adapter omits absent flags/counts and
+   omits `turn` on metadata reads. A normal idle native worker is therefore
+   rejected, unlike the explicit mock values in the tests. Normalize optional
+   absence consistently and obtain the detailed observation the guard needs;
+   cover the real adapter contract. Preserve uncertainty/busy/input protections.
+2. **Independent workers prevent adoption globally.** The same function rejects
+   when any project attempt is preparing/running/verifying, before checking scope.
+   Unrelated Models/Radar/resource work therefore prevents this operation.
+   Reuse the existing relevant reservation/conflict predicate rather than
+   stopping unrelated plans; test actual conflicting and independent work.
+3. **Whole-Main scope comparison needs qualification.** It compares every change
+   since the old artifact against this task scope. The intended use is a reviewed
+   descendant already containing other legitimate merged work. Verify the
+   existing reviewed-baseline accounting is preserved instead of rejecting
+   unrelated integrated changes or requiring a broad artificial scope amendment.
+4. **All-environment freshness hashing is too broad.** `verificationEnvironmentIdentity()`
+   hashes every process environment value; runtime holds adoption when it changes.
+   Unrelated credentials/settings can invalidate passed checks. Use the roadmap's
+   relevant runtime-owned revision/generation policy. Git candidate identity and
+   canonical operation idempotency remain valid and are separate.
+
+Findings 1/2/4 follow directly from the returned source and native adapter contract;
+no native adoption acceptance or false-invalidation experiment has been performed.
+The scope case needs an actual reviewed-descendant regression. Correct the same
+retained source; do not rerun the original stranded implementation workers.
