@@ -8,6 +8,8 @@ The user owns intent. Architect turns it into a verified plan and makes orchestr
 
 LAZERS ships as one plugin package. Its scheduler and storage run inside OpenCode’s service; panels and local inference run inside OpenCode Desktop. Workers are native OpenCode sessions. There is no separate LAZERS daemon, scheduler service or inference server to install. Git, verification and builds use ordinary subprocesses through the host.
 
+For panel work, use [DESIGN.md](DESIGN.md) and its linked visual references.
+
 ## Architect experience and authority
 
 The user selects **Architect** from the Desktop agent dropdown before starting a session and describes the feature they want. Architect carries that request through planning, dispatch requests, and any decisions needed to reach acceptance:

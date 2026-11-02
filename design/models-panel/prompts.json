@@ -1,0 +1,13 @@
+{
+  "tool": "built-in image_gen",
+  "status": "design concepts; illustrative data, not product evidence",
+  "rounds": [
+    {
+      "image": "models-focus-v1.png",
+      "prompt": "Use case: ui-mockup. Create a high fidelity UI design reference for the LAZERS Models side panel in OpenCode Desktop. Linear-inspired focus and restraint, native developer workbench. Render two views side by side: narrow panel 390 CSS px equivalent and wider panel 680 CSS px equivalent. Consistent host dark neutral theme, inherited compact sans typography, subtle hairline separators, nearly continuous surface. NO cards inside cards, no gradients, no bright green, no oversized form, no dashboard metrics. The screen's purpose is assigning model and effort to three personas quickly. Both panels have native closable tab with small hexagon icon and Models label, then compact Models heading with Project chevron control, quiet refresh icon. All three compact persona rows visible above horizontal resizable divider: UI — GPT-6 Luna · Max — Project; Systems — GPT-6 Luna · Max — Shared; Small task / refactoring — Unassigned. First row selected with quiet theme-relative surface. Model names secondary to persona names, source tiny secondary text. Below divider selected UI editor: small UI heading, row 'Model' with compact native searchable selection 'GPT-6 Luna', row 'Effort' with selection 'Max'. Small provider caption 'OpenAI' under model. Compact Save button and quiet 'Use shared default' action. Collapsed disclosure 'Assignment details' holds revisions, full project path, exact IDs and override chain; do NOT display those details initially. A small muted notice 'Saved routes · dispatch integration pending' preserves truthful status without a full-width yellow banner. Small 'Enter model IDs manually' link allows any native provider/model. Quiet 'Concept · illustrative assignments' footer; these are not live measurements. Width-adapted layout, never a right-hand inspector: persona list always ABOVE editor. In wider panel allow horizontal aligned persona rows and model/effort fields inline; in narrow panel stack fields with labels. Compact 32–36px rows, 12–16px panel padding, 4px rhythm, text dominant over controls, generous blank remainder instead of more filler. Render clean legible English. Outer composition just the panels on dark ground with small Narrow and Wide captions."
+    },
+    {
+      "image": "models-focus-v2.png"
+    }
+  ]
+}

@@ -1,0 +1,2904 @@
+{
+  "status": "read-only metadata research; no inference requests; not product ingestion",
+  "results": [
+    {
+      "url": "https://openrouter.ai/api/v1/models",
+      "retrievedAt": 1793653089422,
+      "status": 200,
+      "totalRecords": 451,
+      "fields": [
+        "id",
+        "canonical_slug",
+        "hugging_face_id",
+        "name",
+        "created",
+        "description",
+        "context_length",
+        "architecture",
+        "pricing",
+        "top_provider",
+        "per_request_limits",
+        "supported_parameters",
+        "default_parameters",
+        "supported_voices",
+        "knowledge_cutoff",
+        "expiration_date",
+        "links",
+        "endpoints",
+        "reasoning"
+      ],
+      "models": [
+        {
+          "id": "z-ai/glm-5.3-flashx-legal",
+          "name": "Z.ai: GLM 5.3 FlashX Legal",
+          "canonical_slug": "z-ai/glm-5.3-flashx-legal-20261102",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000037",
+            "completion": "0.00000125",
+            "input_cache_read": "0.000000075"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-terra-pro",
+          "name": "OpenAI: GPT-6.1 Terra Pro",
+          "canonical_slug": "openai/gpt-6.1-terra-pro-20261026",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.00000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000002",
+                "completion": "0.0000075",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-terra-pro:batch",
+          "name": "OpenAI: GPT-6.1 Terra Pro (batch)",
+          "canonical_slug": "openai/gpt-6.1-terra-pro-20261026",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.0000025",
+            "web_search": "0.01",
+            "input_cache_read": "0.000000025",
+            "input_cache_write": "0.000000625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000001",
+                "completion": "0.00000375",
+                "input_cache_read": "0.00000005",
+                "input_cache_write": "0.00000125"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-terra",
+          "name": "OpenAI: GPT-6.1 Terra",
+          "canonical_slug": "openai/gpt-6.1-terra-20261026",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.00000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000002",
+                "completion": "0.0000075",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-terra:batch",
+          "name": "OpenAI: GPT-6.1 Terra (batch)",
+          "canonical_slug": "openai/gpt-6.1-terra-20261026",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.0000025",
+            "web_search": "0.01",
+            "input_cache_read": "0.000000025",
+            "input_cache_write": "0.000000625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000001",
+                "completion": "0.00000375",
+                "input_cache_read": "0.00000005",
+                "input_cache_write": "0.00000125"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-sol-pro",
+          "name": "OpenAI: GPT-6.1 Sol Pro",
+          "canonical_slug": "openai/gpt-6.1-sol-pro-20260929",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.0000025",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000004",
+                "completion": "0.000015",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.000005"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-sol-pro:batch",
+          "name": "OpenAI: GPT-6.1 Sol Pro (batch)",
+          "canonical_slug": "openai/gpt-6.1-sol-pro-20260929",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.00000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000002",
+                "completion": "0.0000075",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-sol",
+          "name": "OpenAI: GPT-6.1 Sol",
+          "canonical_slug": "openai/gpt-6.1-sol-20260929",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.0000025",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000004",
+                "completion": "0.000015",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.000005"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6.1-sol:batch",
+          "name": "OpenAI: GPT-6.1 Sol (batch)",
+          "canonical_slug": "openai/gpt-6.1-sol-20260929",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.00000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000002",
+                "completion": "0.0000075",
+                "input_cache_read": "0.0000001",
+                "input_cache_write": "0.0000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-5.5",
+          "name": "Anthropic: Claude Sonnet 5.5",
+          "canonical_slug": "anthropic/claude-sonnet-5.5-20260928",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.0000025",
+            "input_cache_write_1h": "0.000004"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-5.5:batch",
+          "name": "Anthropic: Claude Sonnet 5.5 (batch)",
+          "canonical_slug": "anthropic/claude-sonnet-5.5-20260928",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.00000125",
+            "input_cache_write_1h": "0.000002"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.3-prime",
+          "name": "Z.ai: GLM 5.3 Prime",
+          "canonical_slug": "z-ai/glm-5.3-prime-20260921",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.0000028",
+            "completion": "0.0000088",
+            "input_cache_read": "0.00000056"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.8-max-prime",
+          "name": "Qwen: Qwen3.8 Max Prime",
+          "canonical_slug": "qwen/qwen3.8-max-prime-20260923",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000004",
+            "completion": "0.000012",
+            "input_cache_read": "0.0000005"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-luna-pro",
+          "name": "OpenAI: GPT-6 Luna Pro",
+          "canonical_slug": "openai/gpt-6-luna-pro-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000001",
+            "input_cache_write": "0.000000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.0000002",
+                "completion": "0.00000075",
+                "input_cache_read": "0.00000002",
+                "input_cache_write": "0.00000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-luna-pro:batch",
+          "name": "OpenAI: GPT-6 Luna Pro (batch)",
+          "canonical_slug": "openai/gpt-6-luna-pro-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.00000005",
+            "completion": "0.00000025",
+            "web_search": "0.01",
+            "input_cache_read": "0.000000005",
+            "input_cache_write": "0.0000000625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.0000001",
+                "completion": "0.000000375",
+                "input_cache_read": "0.00000001",
+                "input_cache_write": "0.000000125"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-luna",
+          "name": "OpenAI: GPT-6 Luna",
+          "canonical_slug": "openai/gpt-6-luna-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000001",
+            "input_cache_write": "0.000000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.0000002",
+                "completion": "0.00000075",
+                "input_cache_read": "0.00000002",
+                "input_cache_write": "0.00000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-luna:batch",
+          "name": "OpenAI: GPT-6 Luna (batch)",
+          "canonical_slug": "openai/gpt-6-luna-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.00000005",
+            "completion": "0.00000025",
+            "web_search": "0.01",
+            "input_cache_read": "0.000000005",
+            "input_cache_write": "0.0000000625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.0000001",
+                "completion": "0.000000375",
+                "input_cache_read": "0.00000001",
+                "input_cache_write": "0.000000125"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-sol-pro",
+          "name": "OpenAI: GPT-6 Sol Pro",
+          "canonical_slug": "openai/gpt-6-sol-pro-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.0000025",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000004",
+                "completion": "0.000015",
+                "input_cache_read": "0.0000004",
+                "input_cache_write": "0.000005"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-sol-pro:batch",
+          "name": "OpenAI: GPT-6 Sol Pro (batch)",
+          "canonical_slug": "openai/gpt-6-sol-pro-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.00000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000002",
+                "completion": "0.0000075",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-sol",
+          "name": "OpenAI: GPT-6 Sol",
+          "canonical_slug": "openai/gpt-6-sol-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.0000025",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000004",
+                "completion": "0.000015",
+                "input_cache_read": "0.0000004",
+                "input_cache_write": "0.000005"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-sol:batch",
+          "name": "OpenAI: GPT-6 Sol (batch)",
+          "canonical_slug": "openai/gpt-6-sol-20260922",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.00000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.000002",
+                "completion": "0.0000075",
+                "input_cache_read": "0.0000002",
+                "input_cache_write": "0.0000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.8-omni-flash",
+          "name": "Qwen: Qwen3.8 Omni Flash",
+          "canonical_slug": "qwen/qwen3.8-omni-flash-20260918",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.00000047",
+            "input_cache_read": "0.000000016"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.3-flashx",
+          "name": "Z.ai: GLM 5.3 FlashX",
+          "canonical_slug": "z-ai/glm-5.3-flashx-20260918",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000037",
+            "completion": "0.00000125",
+            "input_cache_read": "0.000000075"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-astra",
+          "name": "OpenAI: GPT-6 Astra",
+          "canonical_slug": "openai/gpt-6-astra-20260903",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.00001",
+            "completion": "0.00005",
+            "web_search": "0.01",
+            "input_cache_read": "0.000001",
+            "input_cache_write": "0.0000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.00002",
+                "completion": "0.000075",
+                "input_cache_read": "0.000002",
+                "input_cache_write": "0.000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-astra:batch",
+          "name": "OpenAI: GPT-6 Astra (batch)",
+          "canonical_slug": "openai/gpt-6-astra-20260903",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000005",
+            "completion": "0.000025",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000005",
+            "input_cache_write": "0.00000625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.00001",
+                "completion": "0.0000375",
+                "input_cache_read": "0.000001",
+                "input_cache_write": "0.0000125"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-astra-pro",
+          "name": "OpenAI: GPT-6 Astra Pro",
+          "canonical_slug": "openai/gpt-6-astra-pro-20260903",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.00001",
+            "completion": "0.00005",
+            "web_search": "0.01",
+            "input_cache_read": "0.000001",
+            "input_cache_write": "0.0000125",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.00002",
+                "completion": "0.000075",
+                "input_cache_read": "0.000002",
+                "input_cache_write": "0.000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "openai/gpt-6-astra-pro:batch",
+          "name": "OpenAI: GPT-6 Astra Pro (batch)",
+          "canonical_slug": "openai/gpt-6-astra-pro-20260903",
+          "context_length": 1050000,
+          "pricing": {
+            "prompt": "0.000005",
+            "completion": "0.000025",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000005",
+            "input_cache_write": "0.00000625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 272000,
+                "prompt": "0.00001",
+                "completion": "0.0000375",
+                "input_cache_read": "0.000001",
+                "input_cache_write": "0.0000125"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.8-max-0902",
+          "name": "Qwen: Qwen3.8 Max (0902)",
+          "canonical_slug": "qwen/qwen3.8-max-20260902",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.000006",
+            "input_cache_read": "0.00000025"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "~z-ai/glm-flash-latest",
+          "name": "Z.ai: GLM Flash Latest",
+          "canonical_slug": "~z-ai/glm-flash-latest",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000000285",
+            "completion": "0.0000000923",
+            "input_cache_read": "0.0000000285"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "parallel_tool_calls",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.8-flash",
+          "name": "Qwen: Qwen3.8 Flash",
+          "canonical_slug": "qwen/qwen3.8-flash-20260826",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.00000047",
+            "input_cache_read": "0.000000016"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.3-flash",
+          "name": "Z.ai: GLM 5.3 Flash",
+          "canonical_slug": "z-ai/glm-5.3-flash-20260826",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000000285",
+            "completion": "0.0000000923",
+            "input_cache_read": "0.0000000285"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "parallel_tool_calls",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.3-flash:batch",
+          "name": "Z.ai: GLM 5.3 Flash (batch)",
+          "canonical_slug": "z-ai/glm-5.3-flash-20260826",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000005",
+            "completion": "0.00000018",
+            "input_cache_read": "0.00000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "~z-ai/glm-latest",
+          "name": "Z.ai: GLM Latest",
+          "canonical_slug": "~z-ai/glm-latest",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000000699",
+            "completion": "0.0000014",
+            "input_cache_read": "0.0000000689"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "parallel_tool_calls",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.3",
+          "name": "Z.ai: GLM 5.3",
+          "canonical_slug": "z-ai/glm-5.3-20260816",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000008",
+            "completion": "0.0000036",
+            "input_cache_read": "0.000000076"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "parallel_tool_calls",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.3:batch",
+          "name": "Z.ai: GLM 5.3 (batch)",
+          "canonical_slug": "z-ai/glm-5.3-20260816",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000045",
+            "completion": "0.000002",
+            "input_cache_read": "0.0000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.8-27b",
+          "name": "Qwen: Qwen3.8 27B",
+          "canonical_slug": "qwen/qwen3.8-27b-20260814",
+          "context_length": 1024000,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.000001875",
+            "input_cache_read": "0.0000000375"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_a",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.8-2.4t-a95b",
+          "name": "Qwen: Qwen3.8 2.4T A95B",
+          "canonical_slug": "qwen/qwen3.8-2.4t-a95b-20260812",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.000006",
+            "input_cache_read": "0.00000025"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.7-flash",
+          "name": "Qwen: Qwen3.7 Flash",
+          "canonical_slug": "qwen/qwen3.7-flash-20260727",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000003",
+            "completion": "0.00000013",
+            "input_cache_read": "0.000000006",
+            "input_cache_write": "0.000000038",
+            "overrides": [
+              {
+                "min_prompt_tokens": 32000,
+                "prompt": "0.0000001",
+                "completion": "0.0000004",
+                "input_cache_read": "0.00000002",
+                "input_cache_write": "0.000000125"
+              },
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.0000002",
+                "completion": "0.0000008",
+                "input_cache_read": "0.00000004",
+                "input_cache_write": "0.00000025"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-5",
+          "name": "Anthropic: Claude Sonnet 5",
+          "canonical_slug": "anthropic/claude-sonnet-5-20260630",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.0000025",
+            "input_cache_write_1h": "0.000004"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-5:batch",
+          "name": "Anthropic: Claude Sonnet 5 (batch)",
+          "canonical_slug": "anthropic/claude-sonnet-5-20260630",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.000005",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.00000125",
+            "input_cache_write_1h": "0.000002"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.2",
+          "name": "Z.ai: GLM 5.2",
+          "canonical_slug": "z-ai/glm-5.2-20260616",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.000000006",
+            "completion": "0.0000068",
+            "input_cache_read": "0.000000005"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "parallel_tool_calls",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.7-plus",
+          "name": "Qwen: Qwen3.7 Plus",
+          "canonical_slug": "qwen/qwen3.7-plus-20260602",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000032",
+            "completion": "0.00000128",
+            "input_cache_read": "0.000000064",
+            "input_cache_write": "0.0000004",
+            "overrides": [
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.00000096",
+                "completion": "0.00000384",
+                "input_cache_read": "0.000000192",
+                "input_cache_write": "0.0000012"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.7-plus:batch",
+          "name": "Qwen: Qwen3.7 Plus (batch)",
+          "canonical_slug": "qwen/qwen3.7-plus-20260602",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000023",
+            "completion": "0.00000092"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.7-max",
+          "name": "Qwen: Qwen3.7 Max",
+          "canonical_slug": "qwen/qwen3.7-max-20260520",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000001475",
+            "completion": "0.000004425",
+            "input_cache_read": "0.000000295",
+            "input_cache_write": "0.00000184375"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "~anthropic/claude-sonnet-latest",
+          "name": "Anthropic: Claude Sonnet Latest",
+          "canonical_slug": "~anthropic/claude-sonnet-latest",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.0000025",
+            "input_cache_write_1h": "0.000004"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-plus-20260420",
+          "name": "Qwen: Qwen3.5 Plus 2026-04-20",
+          "canonical_slug": "qwen/qwen3.5-plus-20260420",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000018",
+            "input_cache_write": "0.000000375",
+            "overrides": [
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.000000375",
+                "completion": "0.00000225",
+                "input_cache_write": "0.00000046875"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.6-flash",
+          "name": "Qwen: Qwen3.6 Flash",
+          "canonical_slug": "qwen/qwen3.6-flash",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.0000001875",
+            "completion": "0.000001125",
+            "input_cache_write": "0.000000234375",
+            "overrides": [
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.00000075",
+                "completion": "0.000003",
+                "input_cache_write": "0.0000009375"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.6-35b-a3b",
+          "name": "Qwen: Qwen3.6 35B A3B",
+          "canonical_slug": "qwen/qwen3.6-35b-a3b-20260415",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000009",
+            "input_cache_read": "0.000000025"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.6-27b",
+          "name": "Qwen: Qwen3.6 27B",
+          "canonical_slug": "qwen/qwen3.6-27b-20260422",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000045",
+            "completion": "0.0000027"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5.1",
+          "name": "Z.ai: GLM 5.1",
+          "canonical_slug": "z-ai/glm-5.1-20260406",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.0000014",
+            "completion": "0.0000044",
+            "input_cache_read": "0.00000026"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.6-plus",
+          "name": "Qwen: Qwen3.6 Plus",
+          "canonical_slug": "qwen/qwen3.6-plus-04-02",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000000325",
+            "completion": "0.00000195",
+            "input_cache_write": "0.00000040625",
+            "overrides": [
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.0000013",
+                "completion": "0.0000039",
+                "input_cache_write": "0.000001625"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5v-turbo",
+          "name": "Z.ai: GLM 5V Turbo",
+          "canonical_slug": "z-ai/glm-5v-turbo-20260401",
+          "context_length": 202752,
+          "pricing": {
+            "prompt": "0.0000012",
+            "completion": "0.000004",
+            "input_cache_read": "0.00000024"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "response_format",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5-turbo",
+          "name": "Z.ai: GLM 5 Turbo",
+          "canonical_slug": "z-ai/glm-5-turbo-20260315",
+          "context_length": 202752,
+          "pricing": {
+            "prompt": "0.0000012",
+            "completion": "0.000004",
+            "input_cache_read": "0.00000024"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "response_format",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-9b",
+          "name": "Qwen: Qwen3.5-9B",
+          "canonical_slug": "qwen/qwen3.5-9b-20260310",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000017",
+            "completion": "0.00000025"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_completion_tokens",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-35b-a3b",
+          "name": "Qwen: Qwen3.5-35B-A3B",
+          "canonical_slug": "qwen/qwen3.5-35b-a3b-20260224",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000014",
+            "completion": "0.000001",
+            "input_cache_read": "0.00000005"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-27b",
+          "name": "Qwen: Qwen3.5-27B",
+          "canonical_slug": "qwen/qwen3.5-27b-20260224",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000026",
+            "completion": "0.0000026"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-122b-a10b",
+          "name": "Qwen: Qwen3.5-122B-A10B",
+          "canonical_slug": "qwen/qwen3.5-122b-a10b-20260224",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000026",
+            "completion": "0.00000208"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-flash-02-23",
+          "name": "Qwen: Qwen3.5-Flash",
+          "canonical_slug": "qwen/qwen3.5-flash-20260224",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000000065",
+            "completion": "0.00000026"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-4.6",
+          "name": "Anthropic: Claude Sonnet 4.6",
+          "canonical_slug": "anthropic/claude-4.6-sonnet-20260217",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000003",
+            "completion": "0.000015",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000003",
+            "input_cache_write": "0.00000375",
+            "input_cache_write_1h": "0.000006"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-4.6:batch",
+          "name": "Anthropic: Claude Sonnet 4.6 (batch)",
+          "canonical_slug": "anthropic/claude-4.6-sonnet-20260217",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.0000015",
+            "completion": "0.0000075",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000015",
+            "input_cache_write": "0.000001875",
+            "input_cache_write_1h": "0.000003"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_p",
+            "verbosity"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-plus-02-15",
+          "name": "Qwen: Qwen3.5 Plus 2026-02-15",
+          "canonical_slug": "qwen/qwen3.5-plus-20260216",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000026",
+            "completion": "0.00000156",
+            "overrides": [
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.000000325",
+                "completion": "0.00000195"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3.5-397b-a17b",
+          "name": "Qwen: Qwen3.5 397B A17B",
+          "canonical_slug": "qwen/qwen3.5-397b-a17b-20260216",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.0000036",
+            "input_cache_read": "0.0000003"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-5",
+          "name": "Z.ai: GLM 5",
+          "canonical_slug": "z-ai/glm-5-20260211",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.0000032",
+            "input_cache_read": "0.0000002"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-coder-next",
+          "name": "Qwen: Qwen3 Coder Next",
+          "canonical_slug": "qwen/qwen3-coder-next-2025-02-03",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000012",
+            "completion": "0.0000008",
+            "input_cache_read": "0.00000007"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.7-flash",
+          "name": "Z.ai: GLM 4.7 Flash",
+          "canonical_slug": "z-ai/glm-4.7-flash-20260119",
+          "context_length": 200000,
+          "pricing": {
+            "prompt": "0.0000000605",
+            "completion": "0.0000004"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.7",
+          "name": "Z.ai: GLM 4.7",
+          "canonical_slug": "z-ai/glm-4.7-20251222",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.0000022",
+            "input_cache_read": "0.00000011"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_a",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.6v",
+          "name": "Z.ai: GLM 4.6V",
+          "canonical_slug": "z-ai/glm-4.6-20251208",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000009",
+            "input_cache_read": "0.000000055"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-vl-8b-instruct",
+          "name": "Qwen: Qwen3 VL 8B Instruct",
+          "canonical_slug": "qwen/qwen3-vl-8b-instruct",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000025",
+            "completion": "0.00000075",
+            "input_cache_read": "0.00000012"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-vl-30b-a3b-thinking",
+          "name": "Qwen: Qwen3 VL 30B A3B Thinking",
+          "canonical_slug": "qwen/qwen3-vl-30b-a3b-thinking",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000029",
+            "completion": "0.000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "response_format",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-vl-30b-a3b-instruct",
+          "name": "Qwen: Qwen3 VL 30B A3B Instruct",
+          "canonical_slug": "qwen/qwen3-vl-30b-a3b-instruct",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000006"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.6",
+          "name": "Z.ai: GLM 4.6",
+          "canonical_slug": "z-ai/glm-4.6",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.000002",
+            "input_cache_read": "0.0000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-4.5",
+          "name": "Anthropic: Claude Sonnet 4.5",
+          "canonical_slug": "anthropic/claude-4.5-sonnet-20250929",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000003",
+            "completion": "0.000015",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000003",
+            "input_cache_write": "0.00000375",
+            "input_cache_write_1h": "0.000006",
+            "overrides": [
+              {
+                "min_prompt_tokens": 200000,
+                "prompt": "0.000006",
+                "completion": "0.0000225",
+                "input_cache_read": "0.0000006",
+                "input_cache_write": "0.0000075",
+                "input_cache_write_1h": "0.000012"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "anthropic/claude-sonnet-4.5:batch",
+          "name": "Anthropic: Claude Sonnet 4.5 (batch)",
+          "canonical_slug": "anthropic/claude-4.5-sonnet-20250929",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.0000015",
+            "completion": "0.0000075",
+            "web_search": "0.01",
+            "input_cache_read": "0.00000015",
+            "input_cache_write": "0.000001875",
+            "input_cache_write_1h": "0.000003",
+            "overrides": [
+              {
+                "min_prompt_tokens": 200000,
+                "prompt": "0.000003",
+                "completion": "0.00001125",
+                "input_cache_read": "0.0000003",
+                "input_cache_write": "0.00000375",
+                "input_cache_write_1h": "0.000006"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-vl-235b-a22b-instruct",
+          "name": "Qwen: Qwen3 VL 235B A22B Instruct",
+          "canonical_slug": "qwen/qwen3-vl-235b-a22b-instruct",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000021",
+            "completion": "0.0000019",
+            "input_cache_read": "0.0000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-coder-flash",
+          "name": "Qwen: Qwen3 Coder Flash",
+          "canonical_slug": "qwen/qwen3-coder-flash",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000000195",
+            "completion": "0.000000975",
+            "input_cache_read": "0.000000039",
+            "input_cache_write": "0.00000024375",
+            "overrides": [
+              {
+                "min_prompt_tokens": 32000,
+                "prompt": "0.000000325",
+                "completion": "0.000001625",
+                "input_cache_read": "0.000000065",
+                "input_cache_write": "0.00000040625"
+              },
+              {
+                "min_prompt_tokens": 128000,
+                "prompt": "0.00000052",
+                "completion": "0.0000026",
+                "input_cache_read": "0.000000104",
+                "input_cache_write": "0.00000065"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-next-80b-a3b-instruct",
+          "name": "Qwen: Qwen3 Next 80B A3B Instruct",
+          "canonical_slug": "qwen/qwen3-next-80b-a3b-instruct-2509",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000009",
+            "completion": "0.0000011"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.5v",
+          "name": "Z.ai: GLM 4.5V",
+          "canonical_slug": "z-ai/glm-4.5v",
+          "context_length": 65536,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.0000018",
+            "input_cache_read": "0.00000011"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-coder-30b-a3b-instruct",
+          "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
+          "canonical_slug": "qwen/qwen3-coder-30b-a3b-instruct",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000007",
+            "completion": "0.00000028"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "max_tokens",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-30b-a3b-instruct-2507",
+          "name": "Qwen: Qwen3 30B A3B Instruct 2507",
+          "canonical_slug": "qwen/qwen3-30b-a3b-instruct-2507",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000003",
+            "input_cache_read": "0.0000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.5",
+          "name": "Z.ai: GLM 4.5",
+          "canonical_slug": "z-ai/glm-4.5",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.0000022",
+            "input_cache_read": "0.00000011"
+          },
+          "supported_parameters": [
+            "include_reasoning",
+            "max_tokens",
+            "reasoning",
+            "response_format",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "z-ai/glm-4.5-air",
+          "name": "Z.ai: GLM 4.5 Air",
+          "canonical_slug": "z-ai/glm-4.5-air",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000013",
+            "completion": "0.00000085",
+            "input_cache_read": "0.000000025"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "seed",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-235b-a22b-thinking-2507",
+          "name": "Qwen: Qwen3 235B A22B Thinking 2507",
+          "canonical_slug": "qwen/qwen3-235b-a22b-thinking-2507",
+          "context_length": 128000,
+          "pricing": {
+            "prompt": "0.00000045",
+            "completion": "0.0000035"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-coder",
+          "name": "Qwen: Qwen3 Coder 480B A35B",
+          "canonical_slug": "qwen/qwen3-coder-480b-a35b-07-25",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.000001",
+            "input_cache_read": "0.0000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-235b-a22b-2507",
+          "name": "Qwen: Qwen3 235B A22B Instruct 2507",
+          "canonical_slug": "qwen/qwen3-235b-a22b-07-25",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000009",
+            "completion": "0.00000055"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-30b-a3b",
+          "name": "Qwen: Qwen3 30B A3B",
+          "canonical_slug": "qwen/qwen3-30b-a3b-04-28",
+          "context_length": 40960,
+          "pricing": {
+            "prompt": "0.00000012",
+            "completion": "0.0000005"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-14b",
+          "name": "Qwen: Qwen3 14B",
+          "canonical_slug": "qwen/qwen3-14b-04-28",
+          "context_length": 40960,
+          "pricing": {
+            "prompt": "0.00000012",
+            "completion": "0.00000024"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen3-32b",
+          "name": "Qwen: Qwen3 32B",
+          "canonical_slug": "qwen/qwen3-32b-04-28",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000008",
+            "completion": "0.00000028"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_a",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen2.5-vl-72b-instruct",
+          "name": "Qwen: Qwen2.5 VL 72B Instruct",
+          "canonical_slug": "qwen/qwen2.5-vl-72b-instruct",
+          "context_length": 128000,
+          "pricing": {
+            "prompt": "0.0000008",
+            "completion": "0.000001",
+            "input_cache_read": "0.0000004"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen-plus",
+          "name": "Qwen: Qwen-Plus",
+          "canonical_slug": "qwen/qwen-plus-2025-01-25",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000026",
+            "completion": "0.00000078",
+            "input_cache_read": "0.000000052",
+            "input_cache_write": "0.000000325",
+            "overrides": [
+              {
+                "min_prompt_tokens": 256000,
+                "prompt": "0.00000078",
+                "completion": "0.00000234",
+                "input_cache_read": "0.000000156",
+                "input_cache_write": "0.000000975"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen-2.5-coder-32b-instruct",
+          "name": "Qwen2.5 Coder 32B Instruct",
+          "canonical_slug": "qwen/qwen-2.5-coder-32b-instruct",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.00000066",
+            "completion": "0.000001"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "temperature",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen-2.5-7b-instruct",
+          "name": "Qwen: Qwen2.5 7B Instruct",
+          "canonical_slug": "qwen/qwen-2.5-7b-instruct",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000002"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        },
+        {
+          "id": "qwen/qwen-2.5-72b-instruct",
+          "name": "Qwen2.5 72B Instruct",
+          "canonical_slug": "qwen/qwen-2.5-72b-instruct",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.00000036",
+            "completion": "0.0000004"
+          },
+          "supported_parameters": [
+            "frequency_penalty",
+            "logit_bias",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_p"
+          ]
+        }
+      ]
+    },
+    {
+      "url": "https://openrouter.ai/api/v1/benchmarks",
+      "retrievedAt": 1793653089422,
+      "status": 401,
+      "totalRecords": 0,
+      "fields": [],
+      "error": {
+        "message": "No cookie auth credentials found",
+        "code": 401
+      }
+    }
+  ]
+}
