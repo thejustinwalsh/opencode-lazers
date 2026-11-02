@@ -10,6 +10,8 @@ import type { TrajectoryHost, TrajectorySession } from "./native.ts"
 import { privateTagOmission, privacyStats, safeError, safeText, safeValue } from "./privacy.ts"
 import type { PrivacyStats } from "./privacy.ts"
 import { projectProgressFact } from "../progress/projection.ts"
+import { projectTaskEffortBasis } from "./accounting.ts"
+import type { AccountingRoute } from "./accounting.ts"
 
 type TransitionRow = {
   id: number
@@ -124,6 +126,35 @@ function modelView(value: unknown, stats: PrivacyStats) {
 
 function modelKey(model: ReturnType<typeof modelView>) {
   return model ? `${model.providerID}/${model.id}/${model.variant ?? ""}` : ""
+}
+
+function accountingRoute(model: ReturnType<typeof modelView>): AccountingRoute | null {
+  return model
+    ? { providerID: model.providerID, modelID: model.id, variant: model.variant ?? null }
+    : null
+}
+
+function sessionStepRoutes(session: TrajectorySession | null, stats: PrivacyStats) {
+  if (!session?.messages) return []
+  return session.messages.slice(0, MAX_CONTEXT_MESSAGES).flatMap((raw) => {
+    const message = object(raw)
+    if (message?.type !== "assistant") return []
+    const model = accountingRoute(modelView(message.model, stats))
+    const id = typeof message.id === "string" ? safeText(message.id, stats, 200) : null
+    if (!model || !id) return []
+    return [
+      {
+        messageID: id,
+        route: model,
+        observedAt: dateMillis(object(message.time)?.created),
+      },
+    ]
+  })
+}
+
+function frozenPersona(policy: Record<string, unknown> | null) {
+  const value = policy?.persona
+  return value === "ui" || value === "systems" || value === "small-refactoring" ? value : null
 }
 
 function asNumber(value: unknown) {
@@ -893,6 +924,7 @@ export async function inspectTrajectory(
     }
   }
 
+  const projectedProgressFacts = visibleProgressRows.map(projectProgressFact)
   const rawEvents: Record<string, unknown>[] = []
   const allChecks: CheckView[] = []
   const checksByPlan = new Map<string, CheckView[]>()
@@ -914,7 +946,7 @@ export async function inspectTrajectory(
         rawEvents.push(...messageEvents(session.messages, attempt, session, stats))
     }
   }
-  rawEvents.push(...visibleProgressRows.map(projectProgressFact))
+  rawEvents.push(...projectedProgressFacts)
   rawEvents.sort((a, b) => {
     const left = typeof a.at === "number" ? a.at : Number.MAX_SAFE_INTEGER
     const right = typeof b.at === "number" ? b.at : Number.MAX_SAFE_INTEGER
@@ -966,6 +998,73 @@ export async function inspectTrajectory(
       allChecks,
     ),
   )
+  const truncatedContextSessionIDs = [
+    ...new Set(
+      allAttempts.flatMap(({ attempt }) => {
+        const session = sessions.get(attempt.id)
+        return session?.messages && session.messages.length > MAX_CONTEXT_MESSAGES
+          ? [safeText(attempt.session_id, stats, 128)]
+          : []
+      }),
+    ),
+  ]
+  const taskEffortBasis = projectTaskEffortBasis({
+    attempts: allAttempts.map(({ attempt, snapshot }) => {
+      const session = sessions.get(attempt.id) ?? null
+      const policy = parseObject(attempt.policy)
+      const attemptRoute = modelView(policy?.model, stats)
+      const planRoute = modelView(snapshot.input?.workerModel, stats)
+      const planPersona = snapshot.input?.nodes.find(
+        (node) => node.taskID === attempt.task_id,
+      )?.persona
+      return {
+        id: safeText(attempt.id, stats, 128),
+        sessionID: safeText(attempt.session_id, stats, 128),
+        state: safeText(attempt.state, stats, 80),
+        legacyTokenCount: numberOrNull(attempt.token_count),
+        recordedCostUSD: numberOrNull(attempt.cost),
+        planRoute: accountingRoute(planRoute),
+        planRouteStatus: snapshot.input
+          ? snapshot.input.workerModel
+            ? ("explicit" as const)
+            : ("inherited" as const)
+          : ("unavailable" as const),
+        frozenRoute: accountingRoute(
+          attemptRoute ?? modelView(parseObject(snapshot.row.model), stats),
+        ),
+        frozenRouteSource: attemptRoute
+          ? "runner_attempt.policy.model"
+          : snapshot.row.model
+            ? "runner_plans.model fallback; attempt policy model unavailable"
+            : null,
+        personaRequested: planPersona ?? null,
+        personaFrozen: frozenPersona(policy),
+        sessionStatus: statuses.get(attempt.id) ?? "missing",
+        contextStatus:
+          session?.messageStatus === "available"
+            ? "available"
+            : session?.messageStatus === "not-read"
+              ? "not-read"
+              : "unavailable",
+        currentRoute: accountingRoute(session ? modelView(session.model, stats) : null),
+        currentRouteObservedAt: session ? dateMillis(session.time.updated) : null,
+        sessionUsage: session?.tokens
+          ? {
+              input: session.tokens.input,
+              output: session.tokens.output,
+              reasoning: session.tokens.reasoning,
+              cacheRead: session.tokens.cache.read,
+              cacheWrite: session.tokens.cache.write,
+            }
+          : null,
+        sessionUsageObservedAt: session ? dateMillis(session.time.updated) : null,
+        stepRoutes: sessionStepRoutes(session, stats),
+      }
+    }),
+    progressFacts: projectedProgressFacts,
+    progressTruncated,
+    truncatedContextSessionIDs,
+  })
   const totals = { uncachedInput: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 }
   let knownSessions = 0
   const unknownUsageAttempts: string[] = []
@@ -1089,6 +1188,7 @@ export async function inspectTrajectory(
           ...attempt.legacyTokenCount,
         })),
       },
+      taskEffortBasis,
       toolCalls: {
         count: allAttempts.reduce((total, { attempt }) => total + attempt.tool_count, 0),
         source:
