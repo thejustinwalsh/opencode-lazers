@@ -56,9 +56,27 @@ const terminal = new Set([
 const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`
 const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
+const isCommitID = (value: unknown): value is string =>
+  typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message || String(error) : String(error)
 export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
+
+type PrerequisiteIntegrationRow = {
+  plan_id: string
+  project_directory: string
+  state: string
+  artifact: string | null
+  accepted_id: number | null
+  accepted_version: number | null
+  accepted_payload: string | null
+  integration_id: number | null
+  integration_version: number | null
+  integration_payload: string | null
+  invalidation_id: number | null
+}
 
 export type TaskRuntimeOptions = {
   architectIdleWindowMs?: number
@@ -2214,14 +2232,14 @@ export class TaskRuntime {
     let rawInput = JSON.parse(plan.body)
     let input = PlanInput.parse(rawInput)
     const prerequisites = input.afterPlans ?? []
-    if (prerequisites.some((id) => this.store.plan(id)?.state !== "integrated")) return
+    const prerequisiteBaseline = prerequisites.length
+      ? this.integratedPrerequisiteBaseline(prerequisites)
+      : undefined
+    if (prerequisites.length && !prerequisiteBaseline) return
     if (prerequisites.length && !this.store.attempts(plan.id).length) {
-      // A cross-plan prerequisite includes integration, so dependent workers see its code.
-      for (const id of prerequisites) {
-        const artifact = this.store.plan(id)!.artifact
-        if (artifact) git(this.directory, ["merge-base", "--is-ancestor", artifact, "HEAD"])
-      }
-      const baseCommit = git(this.directory, ["rev-parse", "HEAD"])
+      // Dependents inherit the selected checkout after every prerequisite's
+      // current combined integration proof is present in its Git history.
+      const baseCommit = prerequisiteBaseline!
       if (input.baseCommit !== baseCommit) {
         input = PlanInput.parse({ ...rawInput, baseCommit })
         this.store.revisePlan(plan, input, "DEPENDENCIES_INTEGRATED", { prerequisites, baseCommit })
@@ -2633,6 +2651,117 @@ export class TaskRuntime {
     return combineArtifacts(this.directory, input.baseCommit, artifacts as string[])
   }
 
+  private integratedPrerequisiteBaseline(
+    prerequisites: string[],
+    candidateBaseline?: string,
+  ): string | undefined {
+    if (!prerequisites.length || new Set(prerequisites).size !== prerequisites.length)
+      return undefined
+
+    const rows = this.store.atomic((db) => {
+      const result: PrerequisiteIntegrationRow[] = []
+      // Bound each query to one hundred plans while reading the latest acceptance
+      // and combined-integration transitions from one SQLite snapshot.
+      for (let offset = 0; offset < prerequisites.length; offset += 100) {
+        const batch = prerequisites.slice(offset, offset + 100)
+        const placeholders = batch.map(() => "?").join(",")
+        result.push(
+          ...db
+            .query<PrerequisiteIntegrationRow, string[]>(
+              `SELECT p.id AS plan_id,p.project_directory,p.state,p.artifact,
+                      accepted.id AS accepted_id,accepted.version AS accepted_version,
+                      accepted.payload AS accepted_payload,
+                      integration.id AS integration_id,integration.version AS integration_version,
+                      integration.payload AS integration_payload,
+                      -- Lifecycle labels can be stale; a cancellation invalidates
+                      -- older acceptance until a new acceptance/integration pair.
+                      (SELECT t.id FROM runner_transitions t
+                       WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='CANCEL_REQUESTED'
+                       ORDER BY t.id DESC LIMIT 1) AS invalidation_id
+               FROM runner_plans p
+               LEFT JOIN runner_transitions accepted
+                 ON accepted.id=(
+                   SELECT t.id FROM runner_transitions t
+                   WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='PLAN_ACCEPTED'
+                   ORDER BY t.id DESC LIMIT 1
+                 )
+               LEFT JOIN runner_transitions integration
+                 ON integration.id=(
+                   SELECT t.id FROM runner_transitions t
+                   WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='INTEGRATION_RECORDED'
+                   ORDER BY t.id DESC LIMIT 1
+                 )
+               WHERE p.project_directory=? AND p.id IN (${placeholders})
+               ORDER BY p.id`,
+            )
+            .all(this.directory, ...batch),
+        )
+      }
+      return result
+    })
+    if (rows.length !== prerequisites.length) return undefined
+
+    let baseline: string
+    try {
+      baseline = candidateBaseline ?? git(this.directory, ["rev-parse", "HEAD"])
+      if (git(this.directory, ["rev-parse", `${baseline}^{commit}`]) !== baseline) return undefined
+    } catch {
+      return undefined
+    }
+    if (!isCommitID(baseline)) return undefined
+
+    for (const row of rows) {
+      if (
+        !prerequisites.includes(row.plan_id) ||
+        row.project_directory !== this.directory ||
+        !["cleaning", "cleanup-blocked", "integrated"].includes(row.state) ||
+        !isCommitID(row.artifact) ||
+        !Number.isSafeInteger(row.accepted_id) ||
+        !Number.isSafeInteger(row.accepted_version) ||
+        !Number.isSafeInteger(row.integration_id) ||
+        !Number.isSafeInteger(row.integration_version) ||
+        row.accepted_id === null ||
+        row.accepted_version === null ||
+        row.integration_id === null ||
+        row.integration_version === null ||
+        row.accepted_id >= row.integration_id ||
+        row.integration_version < row.accepted_version ||
+        (row.invalidation_id !== null &&
+          (!Number.isSafeInteger(row.invalidation_id) || row.accepted_id <= row.invalidation_id))
+      )
+        return undefined
+
+      let accepted: unknown
+      let integration: unknown
+      try {
+        accepted = JSON.parse(row.accepted_payload ?? "") as unknown
+        integration = JSON.parse(row.integration_payload ?? "") as unknown
+      } catch {
+        return undefined
+      }
+      if (!isRecord(accepted) || !isRecord(integration)) return undefined
+      if (
+        accepted.artifact !== row.artifact ||
+        integration.artifact !== row.artifact ||
+        typeof integration.branch !== "string" ||
+        !integration.branch.trim() ||
+        typeof integration.reason !== "string" ||
+        !integration.reason.trim() ||
+        !isCommitID(integration.head)
+      )
+        return undefined
+
+      try {
+        git(this.directory, ["merge-base", "--is-ancestor", row.artifact, integration.head])
+        git(this.directory, ["merge-base", "--is-ancestor", integration.head, baseline])
+        git(this.directory, ["merge-base", "--is-ancestor", row.artifact, baseline])
+      } catch {
+        return undefined
+      }
+    }
+    return baseline
+  }
+
   private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
@@ -2803,6 +2932,57 @@ export class TaskRuntime {
     return true
   }
 
+  private promptAdmissionAllowed(planID: string, attempt: AttemptRow) {
+    const plan = this.store.plan(planID)
+    const currentAttempt = this.store
+      .attempts(planID)
+      .find((candidate) => candidate.id === attempt.id)
+    if (
+      plan?.state !== "running" ||
+      currentAttempt?.state !== "preparing" ||
+      !this.preparationAllowed(currentAttempt)
+    )
+      return false
+
+    const prerequisites = PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? []
+    if (!prerequisites.length) return true
+
+    try {
+      // The reservation base is immutable prerequisite proof. A later HEAD is
+      // acceptable only as scoped progress from a prompt already admitted to this attempt.
+      const baseline = currentAttempt.base_commit
+      const head = git(currentAttempt.workspace, ["rev-parse", "HEAD"])
+      if (!isCommitID(baseline) || !isCommitID(head)) return false
+      const retainedPrompt = this.store.effects(planID).some((effect) => {
+        if (
+          effect.attempt_id !== currentAttempt.id ||
+          effect.kind !== "prompt" ||
+          effect.state !== "completed"
+        )
+          return false
+        const payload = JSON.parse(effect.payload) as {
+          sessionID?: unknown
+          workspace?: unknown
+          messageID?: unknown
+        }
+        return (
+          payload.sessionID === currentAttempt.session_id &&
+          payload.workspace === currentAttempt.workspace &&
+          typeof payload.messageID === "string"
+        )
+      })
+      const changed = changedPaths(currentAttempt.workspace, baseline)
+      if ((head !== baseline || changed.length > 0) && !retainedPrompt) return false
+      git(currentAttempt.workspace, ["merge-base", "--is-ancestor", baseline, head])
+      if (git(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
+      if (scopeViolations(changed, this.store.effectiveWriteScope(currentAttempt.task_id)).length)
+        return false
+      return this.integratedPrerequisiteBaseline(prerequisites, baseline) === baseline
+    } catch {
+      return false
+    }
+  }
+
   private observeUsage(attempt: AttemptRow, session: HostSession, fence: number) {
     this.store.fenced(this.owner, fence, (db) =>
       db
@@ -2826,11 +3006,10 @@ export class TaskRuntime {
   }
 
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    if (!this.preparationAllowed(attempt)) return
+    if (!this.promptAdmissionAllowed(plan.id, attempt)) return
     const existing = this.store.effects(plan.id)
     if (!existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")) {
-      if (this.store.plan(plan.id)?.state !== "running") return
-      if (!this.preparationAllowed(attempt)) return
+      if (!this.promptAdmissionAllowed(plan.id, attempt)) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -2863,8 +3042,7 @@ export class TaskRuntime {
           JSON.parse(e.payload).messageID === attempt.message_id,
       )
     ) {
-      if (this.store.plan(plan.id)?.state !== "running") return
-      if (!this.preparationAllowed(attempt)) return
+      if (!this.promptAdmissionAllowed(plan.id, attempt)) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -4269,7 +4447,31 @@ export class TaskRuntime {
     }
   }
 
+  private abandonCleanupEffect(effect: EffectRow, fence: number) {
+    this.store.fenced(this.owner, fence, (db) => {
+      const plan = db
+        .query<{ state: string }, [string]>("SELECT state FROM runner_plans WHERE id=?")
+        .get(effect.plan_id)
+      if (plan?.state === "cleaning") return
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state='failed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+        )
+        .run(
+          JSON.stringify({ notSent: true, reason: "Cleanup was superseded before removal" }),
+          effect.id,
+        ).changes
+      if (changed)
+        this.store.record(effect.plan_id, null, "EFFECT_NOT_SENT", {
+          effectID: effect.id,
+          kind: effect.kind,
+          reason: "Cleanup was superseded before removal",
+        })
+    })
+  }
   private async cleanupWorktrees(plan: PlanRow, fence: number) {
+    const cleanupCurrent = () => this.store.plan(plan.id)?.state === "cleaning"
+    if (!cleanupCurrent()) return
     const owned = [
       ...new Set(
         this.store
@@ -4296,8 +4498,13 @@ export class TaskRuntime {
               entry.kind === "worktree-remove" && JSON.parse(entry.payload).workspace === workspace,
           ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
+      let removalStarted = false
       try {
         const listed = await this.host.worktrees()
+        if (!cleanupCurrent()) {
+          this.abandonCleanupEffect(effect, fence)
+          return
+        }
         if (listed.includes(workspace)) {
           const sourceEffect = this.store.effects(plan.id).find((entry) => {
             if (
@@ -4319,6 +4526,10 @@ export class TaskRuntime {
           if (!sourceEffect)
             throw new Error("Owned worktree has no completed creation receipt; preserve it")
           await this.assertWorktreeQuiescent(plan, sourceEffect, workspace)
+          if (!cleanupCurrent()) {
+            this.abandonCleanupEffect(effect, fence)
+            return
+          }
           if (git(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
           const head = git(workspace, ["rev-parse", "HEAD"])
@@ -4327,24 +4538,35 @@ export class TaskRuntime {
           } catch {
             throw new Error(`Owned worktree has unmerged commits; preserve ${workspace}`)
           }
+          removalStarted = true
           await this.host.removeWorktree(workspace)
         } else if (existsSync(workspace))
           throw new Error(
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )
         this.receipt(effect, { workspace, removed: true, native: true }, fence)
+        if (!cleanupCurrent()) return
       } catch (error) {
         const reason = errorText(error)
+        if (!cleanupCurrent() && !removalStarted) {
+          this.abandonCleanupEffect(effect, fence)
+          return
+        }
+        let blocked = false
         this.store.fenced(this.owner, fence, (db) => {
           db.query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?").run(
             JSON.stringify({ error: reason }),
             effect.id,
           )
-          db.query(
-            "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=?",
-          ).run(reason, plan.id)
-          this.store.record(plan.id, null, "CLEANUP_BLOCKED", { workspace, reason })
+          blocked =
+            db
+              .query(
+                "UPDATE runner_plans SET state='cleanup-blocked',reason=?,version=version+1 WHERE id=? AND state='cleaning'",
+              )
+              .run(reason, plan.id).changes === 1
+          if (blocked) this.store.record(plan.id, null, "CLEANUP_BLOCKED", { workspace, reason })
         })
+        if (!blocked) return
         this.outcome(
           plan.id,
           {
@@ -4358,15 +4580,21 @@ export class TaskRuntime {
         return
       }
     }
+    let integrated = false
     this.store.fenced(this.owner, fence, (db) => {
-      db.query(
-        "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=?",
-      ).run(plan.id)
-      this.store.record(plan.id, null, "WORKTREES_RECONCILED", {
-        directories: owned,
-        artifact: plan.artifact,
-      })
+      integrated =
+        db
+          .query(
+            "UPDATE runner_plans SET state='integrated',reason=NULL,version=version+1 WHERE id=? AND state='cleaning'",
+          )
+          .run(plan.id).changes === 1
+      if (integrated)
+        this.store.record(plan.id, null, "WORKTREES_RECONCILED", {
+          directories: owned,
+          artifact: plan.artifact,
+        })
     })
+    if (!integrated) return
     this.outcome(
       plan.id,
       { status: "integrated", artifact: plan.artifact, worktreesRemoved: owned },
