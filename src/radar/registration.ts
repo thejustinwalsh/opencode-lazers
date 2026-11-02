@@ -31,7 +31,7 @@ export function registerRadarPanel(
     id: "radar.open",
     title: "Open LAZERS Radar",
     section: "session",
-    slash: { name: "radar" },
+    slash: { name: "lz-radar" },
     run: open,
   })
   ctx.add(MenuItem, {
