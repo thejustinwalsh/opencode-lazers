@@ -1,9 +1,60 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { artifactExists, commitArtifact, git } from "./artifacts.ts"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import {
+  artifactExists,
+  commitArtifact,
+  git,
+  verificationEnvironmentIdentity,
+} from "./artifacts.ts"
+
+test("verification identity records stable runtime metadata without hashing unrelated credentials", () => {
+  const identity = verificationEnvironmentIdentity()
+  const previous = process.env.LAZERS_IDENTITY_SECRET_CANARY
+  const previousLanguage = process.env.LANG
+  process.env.LAZERS_IDENTITY_SECRET_CANARY = "must-not-be-persisted-or-hashed"
+  try {
+    expect(verificationEnvironmentIdentity()).toBe(identity)
+    expect(JSON.parse(identity)).toMatchObject({
+      bunRevision: Bun.revision,
+      platform: process.platform,
+    })
+    expect(identity).not.toContain("must-not-be-persisted-or-hashed")
+    process.env.LANG = `${previousLanguage ?? ""}.lazers-test`
+    expect(verificationEnvironmentIdentity()).not.toBe(identity)
+  } finally {
+    if (previous === undefined) delete process.env.LAZERS_IDENTITY_SECRET_CANARY
+    else process.env.LAZERS_IDENTITY_SECRET_CANARY = previous
+    if (previousLanguage === undefined) delete process.env.LANG
+    else process.env.LANG = previousLanguage
+  }
+})
+
+test("identical check modules retain the same environment identity across reload", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-check-reload-"))
+  try {
+    const source = readFileSync(new URL("./artifacts.ts", import.meta.url), "utf8")
+      .replace(
+        '"../identity.ts"',
+        JSON.stringify(fileURLToPath(new URL("../identity.ts", import.meta.url))),
+      )
+      .replace(
+        '"../task.ts"',
+        JSON.stringify(fileURLToPath(new URL("../task.ts", import.meta.url))),
+      )
+    const paths = [join(directory, "first.ts"), join(directory, "second.ts")]
+    for (const path of paths) writeFileSync(path, source)
+    const first = (await import(pathToFileURL(paths[0]!).href)) as typeof import("./artifacts.ts")
+    const second = (await import(pathToFileURL(paths[1]!).href)) as typeof import("./artifacts.ts")
+    expect(first.verificationEnvironmentIdentity()).toBe(second.verificationEnvironmentIdentity())
+    expect(first.verificationEnvironmentIdentity()).toBe(verificationEnvironmentIdentity())
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 function initRepository(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))

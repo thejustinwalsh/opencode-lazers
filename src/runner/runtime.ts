@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
@@ -6,11 +6,15 @@ import {
   artifactExists,
   ArtifactScopeViolation,
   artifactUnchanged,
+  changedPaths,
   combineArtifacts,
   commitArtifact,
   git,
+  reviewedScopeBase,
   runCheck,
+  scopeViolations,
   scopePatternsConflict,
+  verificationEnvironmentIdentity,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
@@ -21,12 +25,15 @@ import {
   PlanInput,
   WorkerPersona,
 } from "./schema.ts"
+import type { CommandInput as PlanCommand } from "./schema.ts"
 import type {
   PlanRow,
   NodeRow,
   AttemptRow,
   EffectRow,
   OutboxRow,
+  AdoptionRow,
+  AdoptionCheckRow,
   ArchitectRenewalRow,
 } from "./store.ts"
 import { appendOutboxReceipt, RunnerStore } from "./store.ts"
@@ -57,6 +64,24 @@ export type TaskRuntimeOptions = {
   architectIdleWindowMs?: number
   now?: () => number
   architectPromptHook?: boolean
+}
+
+type AdoptionSeed = {
+  taskID: string
+  taskRevision: number
+  attemptID: string
+  nodeState: string
+  attemptState: string
+  oldArtifact: string
+  descendantCommit: string
+  targetBranch: string
+  landingHead: string
+  reviewedBaseline: string
+  candidateTree: string
+  environmentIdentity: string
+  inputFingerprint: string
+  reason: string
+  combinedArtifact: string
 }
 
 export function architectIdleWindowMs(value: unknown): number {
@@ -95,6 +120,288 @@ export class TaskRuntime {
     return join(dirname(this.store.repository.path), "runner")
   }
 
+  private adoptionInputFingerprint(input: {
+    plan: PlanRow
+    originalPlanVersion: number
+    taskID: string
+    taskRevision: number
+    attemptID: string
+    nodeState: string
+    attemptState: string
+    oldArtifact: string
+    descendantCommit: string
+    targetBranch: string
+    landingHead: string
+    reviewedBaseline: string
+    candidateTree: string
+    combinedArtifact: string
+    reason: string
+    environmentIdentity: string
+  }) {
+    const task = this.store.repository.get(input.taskID)
+    if (!task) throw new Error("Adoption task is missing")
+    return fingerprint({
+      projectID: this.projectID,
+      planID: input.plan.id,
+      planRevision: input.plan.revision,
+      planVersion: input.originalPlanVersion,
+      planBody: input.plan.body,
+      owner: input.plan.owner,
+      taskID: input.taskID,
+      taskRevision: input.taskRevision,
+      taskProposal: task.proposal,
+      attemptID: input.attemptID,
+      nodeState: input.nodeState,
+      attemptState: input.attemptState,
+      oldArtifact: input.oldArtifact,
+      descendantCommit: input.descendantCommit,
+      targetBranch: input.targetBranch,
+      landingHead: input.landingHead,
+      reviewedBaseline: input.reviewedBaseline,
+      candidateTree: input.candidateTree,
+      combinedArtifact: input.combinedArtifact,
+      effectiveWriteScope: this.store.effectiveWriteScope(input.taskID),
+      reason: input.reason,
+      environmentIdentity: input.environmentIdentity,
+    })
+  }
+
+  private conflictingActiveAttempt(taskID: string): AttemptRow | undefined {
+    const scope = this.store.effectiveWriteScope(taskID)
+    return this.store
+      .plans()
+      .flatMap((candidate) => this.store.attempts(candidate.id))
+      .find(
+        (attempt) =>
+          ["preparing", "running", "verifying"].includes(attempt.state) &&
+          (attempt.workspace === this.directory ||
+            scopePatternsConflict(scope, this.store.effectiveWriteScope(attempt.task_id))),
+      )
+  }
+
+  private reviewedAdoptionBaseline(targetBranch: string, oldArtifact: string, candidate: string) {
+    const rows = this.store.atomic((db) =>
+      db
+        .query<{ event: string; payload: string }, [string]>(
+          `SELECT t.event,t.payload FROM runner_transitions t
+           JOIN runner_plans p ON p.id=t.plan_id
+           WHERE p.project_directory=? AND t.event IN ('INTEGRATION_RECORDED','TASK_INTEGRATION_RECORDED')
+           ORDER BY t.id`,
+        )
+        .all(this.directory),
+    )
+    const firstParent = git(this.directory, ["rev-list", "--first-parent", candidate])
+      .split(/\s+/)
+      .filter(Boolean)
+    const firstParentIndex = new Map(firstParent.map((commit, index) => [commit, index]))
+    let baseline = oldArtifact
+    let nearest = Number.POSITIVE_INFINITY
+    for (const row of rows) {
+      let payload: { artifact?: unknown; branch?: unknown; head?: unknown }
+      try {
+        payload = JSON.parse(row.payload) as typeof payload
+      } catch {
+        continue
+      }
+      if (
+        payload.branch !== targetBranch ||
+        typeof payload.artifact !== "string" ||
+        typeof payload.head !== "string" ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.artifact) ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.head) ||
+        payload.head === candidate
+      )
+        continue
+      const position = firstParentIndex.get(payload.head)
+      if (position === undefined || position >= nearest) continue
+      try {
+        git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, payload.head])
+        git(this.directory, ["merge-base", "--is-ancestor", payload.artifact, payload.head])
+      } catch {
+        continue
+      }
+      baseline = payload.head
+      nearest = position
+    }
+    return baseline
+  }
+
+  private adoptionWorkerIdle(attempt: AttemptRow, worker: HostSession): boolean {
+    return (
+      worker.busy === false &&
+      worker.pendingInput !== true &&
+      !worker.observationUnstable &&
+      (worker.pendingPermissions ?? 0) === 0 &&
+      (worker.pendingForms ?? 0) === 0 &&
+      Boolean(worker.outcome) &&
+      ["completed", "interrupted"].includes(worker.turn?.state ?? "unknown") &&
+      !this.backgroundBlockReason(worker, attempt, true)
+    )
+  }
+
+  private async prepareAdoption(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+  ): Promise<AdoptionSeed> {
+    if (
+      !command.taskID ||
+      !command.attemptID ||
+      !command.artifact ||
+      !command.descendantCommit ||
+      !command.targetBranch ||
+      !command.reason
+    )
+      throw new Error(
+        "Descendant adoption requires taskID, attemptID, exact old artifact, descendantCommit, targetBranch and reason",
+      )
+    if (
+      caller !== plan.owner ||
+      !this.validArchitect(ownerSession) ||
+      ownerSession.id !== plan.owner
+    )
+      throw new Error("Descendant adoption requires the current same-project Architect owner")
+    if (plan.state !== "blocked")
+      throw new Error("Descendant adoption is only available for a blocked, non-finalized plan")
+    if (this.store.activeAdoptions(plan.id).length)
+      throw new Error("A descendant adoption is already pending for this plan")
+    if (
+      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
+    )
+      throw new Error("Uncertain effects must be resolved before descendant adoption")
+
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+    const task = this.store.repository.get(command.taskID)
+    const attempts = this.store
+      .attempts(plan.id)
+      .filter((attempt) => attempt.task_id === command.taskID)
+    const latest = attempts.at(-1)
+    if (!node || !task || !latest || latest.id !== command.attemptID)
+      throw new Error("Descendant adoption must name the exact latest task attempt")
+    if (
+      task.revision !== 1 ||
+      task.revision !== input.nodes.find((entry) => entry.taskID === task.id)?.revision
+    )
+      throw new Error("Task revision changed since plan admission")
+    if (
+      !["ready", "failed", "accepted"].includes(node.state) ||
+      (node.state === "accepted" && latest.state !== "accepted") ||
+      (node.state !== "accepted" && latest.state !== "failed")
+    )
+      throw new Error("Adoption requires the latest failed attempt or its accepted task result")
+    if (
+      !latest.artifact ||
+      node.artifact !== latest.artifact ||
+      command.artifact !== latest.artifact
+    )
+      throw new Error("Old artifact does not match the exact latest attempt and task result")
+    if (
+      this.store
+        .nodes(plan.id)
+        .some(
+          (candidate) =>
+            candidate.task_id !== command.taskID &&
+            !["accepted", "incorporated"].includes(candidate.state),
+        )
+    )
+      throw new Error("All other plan tasks must be accepted before adopting a descendant")
+
+    if (this.conflictingActiveAttempt(command.taskID))
+      throw new Error("A conflicting worker prevents descendant adoption")
+    const scopes = this.store.effectiveWriteScope(command.taskID)
+    if (
+      this.store
+        .activeAdoptions()
+        .some((adoption) =>
+          scopePatternsConflict(scopes, this.store.effectiveWriteScope(adoption.task_id)),
+        )
+    )
+      throw new Error("An active descendant reservation conflicts with this task scope")
+
+    const worker = await this.host.session(latest.session_id, { messages: true })
+    if (
+      !worker ||
+      worker.id !== latest.session_id ||
+      worker.projectID !== this.projectID ||
+      worker.directory !== latest.workspace ||
+      worker.agent !== "lazers-implementor" ||
+      worker.archived ||
+      worker.metadata?.lazersAttemptID !== latest.id
+    )
+      throw new Error("Latest worker session is not the owned attempt")
+    if (!this.adoptionWorkerIdle(latest, worker))
+      throw new Error("Latest worker activity or control state is not conclusively idle")
+
+    const branch = git(this.directory, ["branch", "--show-current"])
+    const head = git(this.directory, ["rev-parse", "HEAD"])
+    if (branch !== command.targetBranch || command.descendantCommit !== head)
+      throw new Error("Reviewed descendant must be the exact current HEAD of targetBranch")
+    if (
+      git(this.directory, ["status", "--porcelain", "--untracked-files=all"]) ||
+      git(this.directory, ["ls-files", "-u", "-z"])
+    )
+      throw new Error("Dirty or unmerged candidate checkout cannot be adopted")
+    const oldArtifact = git(this.directory, ["rev-parse", `${command.artifact}^{commit}`])
+    const descendantCommit = git(this.directory, [
+      "rev-parse",
+      `${command.descendantCommit}^{commit}`,
+    ])
+    if (oldArtifact !== command.artifact || descendantCommit !== command.descendantCommit)
+      throw new Error("Adoption artifacts must be exact full commit identities")
+    if (oldArtifact === descendantCommit)
+      throw new Error("Reviewed candidate must be a strict descendant of the old artifact")
+    git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
+    const reviewedBaseline = this.reviewedAdoptionBaseline(branch, oldArtifact, descendantCommit)
+    const scopeBase = reviewedScopeBase(
+      this.directory,
+      oldArtifact,
+      descendantCommit,
+      reviewedBaseline,
+    )
+    const violations = scopeViolations(changedPaths(this.directory, scopeBase), scopes)
+    if (violations.length)
+      throw new Error(
+        `Descendant contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
+      )
+    const candidateTree = git(this.directory, ["rev-parse", `${descendantCommit}^{tree}`])
+    const branches = input.integrationOrder.map((taskID) => {
+      if (taskID === command.taskID) return descendantCommit
+      const other = this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
+      if (!other?.artifact || !["accepted", "incorporated"].includes(other.state))
+        throw new Error("Combined adoption requires every other task's accepted artifact")
+      return other.artifact
+    })
+    const combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+    const seed = {
+      taskID: task.id,
+      taskRevision: task.revision,
+      attemptID: latest.id,
+      nodeState: node.state,
+      attemptState: latest.state,
+      oldArtifact,
+      descendantCommit,
+      targetBranch: branch,
+      landingHead: head,
+      reviewedBaseline,
+      candidateTree,
+      combinedArtifact,
+      reason: command.reason,
+    }
+    const environmentIdentity = verificationEnvironmentIdentity()
+    return {
+      ...seed,
+      environmentIdentity,
+      inputFingerprint: this.adoptionInputFingerprint({
+        plan,
+        originalPlanVersion: plan.version,
+        ...seed,
+        environmentIdentity,
+      }),
+    }
+  }
+
   async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
@@ -116,7 +423,11 @@ export class TaskRuntime {
         : undefined
     const target = command.action === "reassign" ? command.targetSessionID : old.owner
     let ownerSession: HostSession | null | undefined
-    if (["run", "reassign", "reconcile", "resume", "retry"].includes(command.action)) {
+    if (
+      ["run", "reassign", "reconcile", "resume", "retry", "adopt-descendant"].includes(
+        command.action,
+      )
+    ) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
     }
@@ -124,6 +435,10 @@ export class TaskRuntime {
       ownerSession = await this.ensureArchitectOwner(old, ownerSession, false)
       continuedOwner = ownerSession.id
     }
+    const adoptionSeed =
+      command.action === "adopt-descendant"
+        ? await this.prepareAdoption(old, command, caller, ownerSession)
+        : undefined
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -134,6 +449,14 @@ export class TaskRuntime {
       // creation succeeds but this command fails, exact replay can recover it
       // without granting an old owner authority over a reassigned plan.
       if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
+      const activeAdoptions = this.store.activeAdoptions(plan.id)
+      if (
+        activeAdoptions.length &&
+        !["adopt-descendant", "human-evidence", "cancel", "audit"].includes(command.action)
+      )
+        throw new Error(
+          "A descendant adoption is pending; only its evidence or cancellation is allowed",
+        )
       if (command.action === "amend-scope") {
         if (!command.taskID || !command.scopeAdditions?.length || !command.reason)
           throw new Error("Scope amendment requires task, added paths and reason")
@@ -223,6 +546,44 @@ export class TaskRuntime {
           version: plan.version + 1,
           writeScope,
           instructionUpdates,
+        }
+      }
+      if (command.action === "adopt-descendant") {
+        if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
+          throw new Error("Descendant adoption requires the current same-project Architect owner")
+        if (ownerSession.id !== plan.owner || caller !== plan.owner)
+          throw new Error("Descendant adoption owner changed")
+        const adoptionID = crypto.randomUUID()
+        const adoption = this.store.createAdoption({
+          id: adoptionID,
+          planID: plan.id,
+          taskID: adoptionSeed.taskID,
+          writeScope: this.store.effectiveWriteScope(adoptionSeed.taskID),
+          requestID: command.requestID,
+          owner: plan.owner,
+          expectedVersion: plan.version,
+          taskRevision: adoptionSeed.taskRevision,
+          attemptID: adoptionSeed.attemptID,
+          nodeState: adoptionSeed.nodeState,
+          attemptState: adoptionSeed.attemptState,
+          oldArtifact: adoptionSeed.oldArtifact,
+          descendantCommit: adoptionSeed.descendantCommit,
+          targetBranch: adoptionSeed.targetBranch,
+          landingHead: adoptionSeed.landingHead,
+          reviewedBaseline: adoptionSeed.reviewedBaseline,
+          candidateTree: adoptionSeed.candidateTree,
+          inputFingerprint: adoptionSeed.inputFingerprint,
+          environmentIdentity: adoptionSeed.environmentIdentity,
+          reason: adoptionSeed.reason,
+          combinedArtifact: adoptionSeed.combinedArtifact,
+        })
+        return {
+          status: "descendant-adoption-requested",
+          adoptionID: adoption.id,
+          taskID: adoption.task_id,
+          artifact: adoption.descendant_commit,
+          combinedArtifact: adoption.combined_artifact,
+          version: plan.version + 1,
         }
       }
       if (command.action === "integrated") {
@@ -325,6 +686,7 @@ export class TaskRuntime {
       }
       if (command.action === "cancel") {
         if (terminal.has(plan.state)) throw new Error("Plan has ended")
+        this.store.cancelAdoptions(plan.id, "Cancellation requested")
         // Stop admission now. In-flight work remains running until interruption is proven.
         db.query(
           "UPDATE runner_plans SET state='cancelling',reason='Cancellation requested',version=version+1 WHERE id=?",
@@ -338,6 +700,41 @@ export class TaskRuntime {
       if (command.action === "human-evidence") {
         if (!command.assertionID || !command.artifact || !command.reason)
           throw new Error("Human evidence requires assertion, exact artifact and decision")
+        if (command.adoptionID) {
+          const adoption = this.store.adoption(command.adoptionID)
+          if (
+            !adoption ||
+            adoption.plan_id !== plan.id ||
+            adoption.owner !== caller ||
+            !["pending", "task-checks", "combined-checks", "waiting-human"].includes(adoption.state)
+          )
+            throw new Error("Human evidence must name a current pending descendant adoption")
+          const taskEvidence = command.taskID === adoption.task_id
+          if (command.taskID && !taskEvidence)
+            throw new Error("Adoption task evidence must name its exact task")
+          const assertions = taskEvidence
+            ? (this.store.repository.get(adoption.task_id)?.proposal.acceptance ?? [])
+            : PlanInput.parse(JSON.parse(plan.body)).acceptance
+          const artifact = taskEvidence ? adoption.descendant_commit : adoption.combined_artifact
+          const assertion = assertions.find((item) => item.id === command.assertionID)
+          if (command.artifact !== artifact || !assertion?.evidence.some((e) => e.kind === "human"))
+            throw new Error("Human evidence does not bind to the adoption assertion/artifact")
+          this.store.recordAdoptionEvidence({
+            id: crypto.randomUUID(),
+            adoptionID: adoption.id,
+            taskID: taskEvidence ? adoption.task_id : null,
+            phase: taskEvidence ? "task" : "combined",
+            assertionID: assertion.id,
+            artifact,
+            body: { decision: command.reason, caller },
+          })
+          this.store.record(plan.id, command.taskID ?? null, "DESCENDANT_ADOPTION_HUMAN_EVIDENCE", {
+            adoptionID: adoption.id,
+            assertionID: assertion.id,
+            artifact,
+          })
+          return { status: "recorded", version: this.store.plan(plan.id)!.version }
+        }
         const nodes = this.store.nodes(plan.id)
         let assertions: TaskProposal["acceptance"]
         let artifact: string | null
@@ -1541,19 +1938,33 @@ export class TaskRuntime {
       reviewableTasks: this.store
         .nodes(planID)
         .filter((node) => node.state === "accepted" && node.artifact)
-        .map((node) => ({
-          taskID: node.task_id,
-          artifact: node.artifact,
-          attemptID:
-            this.store
-              .attempts(planID)
-              .findLast(
-                (attempt) => attempt.task_id === node.task_id && attempt.state === "accepted",
-              )?.id ?? null,
-          evidence: this.store.repository
-            .get(node.task_id)!
-            .proposal.verification.map((check) => check.id),
-        })),
+        .map((node) => {
+          const attempt = this.store
+            .attempts(planID)
+            .findLast(
+              (candidate) =>
+                candidate.task_id === node.task_id &&
+                candidate.state === "accepted" &&
+                candidate.artifact === node.artifact,
+            )
+          const adoption = this.store
+            .adoptions(planID)
+            .find(
+              (candidate) =>
+                candidate.state === "accepted" &&
+                candidate.task_id === node.task_id &&
+                candidate.descendant_commit === node.artifact,
+            )
+          return {
+            taskID: node.task_id,
+            artifact: node.artifact,
+            attemptID: attempt?.id ?? null,
+            ...(adoption ? { adoptionID: adoption.id } : {}),
+            evidence: this.store.repository
+              .get(node.task_id)!
+              .proposal.verification.map((check) => check.id),
+          }
+        }),
     }
     const id = fingerprint(full)
     const nativeMessageID = messageID()
@@ -1634,8 +2045,13 @@ export class TaskRuntime {
         .run(JSON.stringify({ error: errorText(error) }), effect.id),
     )
     const plan = this.store.plan(effect.plan_id)!
-    if (plan.state !== "cancelling")
-      this.hold(plan, `Recovery uncertain for ${effect.kind} ${effect.id}: ${errorText(error)}`)
+    if (plan.state !== "cancelling") {
+      const reason = `Recovery uncertain for ${effect.kind} ${effect.id}: ${errorText(error)}`
+      const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
+      if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
+        this.holdAdoption(plan, payload.adoptionID, reason, "pending", fence)
+      else this.hold(plan, reason)
+    }
   }
 
   async tick() {
@@ -1726,6 +2142,11 @@ export class TaskRuntime {
     }
     if (plan.state === "cleaning") {
       await this.cleanupWorktrees(plan, fence)
+      return
+    }
+    const adoption = this.store.activeAdoptions(plan.id)[0]
+    if (adoption) {
+      await this.advanceAdoption(plan, adoption, fence)
       return
     }
     const owner = await this.host.session(plan.owner)
@@ -1824,6 +2245,12 @@ export class TaskRuntime {
       shared: attempt.workspace === this.directory,
       scopes: this.store.effectiveWriteScope(attempt.task_id),
     }))
+    occupied.push(
+      ...this.store.activeAdoptions().map((adoption) => ({
+        shared: false,
+        scopes: this.store.effectiveWriteScope(adoption.task_id),
+      })),
+    )
     const ready = nodes.filter(
       (node) =>
         ["queued", "ready"].includes(node.state) &&
@@ -2274,6 +2701,17 @@ export class TaskRuntime {
     }
     let attempt!: AttemptRow
     this.store.fenced(this.owner, fence, (db) => {
+      if (
+        this.store
+          .activeAdoptions()
+          .some((adoption) =>
+            scopePatternsConflict(
+              this.store.effectiveWriteScope(task.id),
+              this.store.effectiveWriteScope(adoption.task_id),
+            ),
+          )
+      )
+        throw new Error("A pending descendant adoption reserves this task's scope")
       if (node.state === "queued") this.store.move(plan.id, task.id, "READY")
       this.store.move(plan.id, task.id, "DISPATCH")
       db.query(
@@ -2322,6 +2760,16 @@ export class TaskRuntime {
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
   private preparationAllowed(attempt: AttemptRow) {
     const scope = this.store.effectiveWriteScope(attempt.task_id)
+    if (
+      this.store
+        .activeAdoptions()
+        .some(
+          (adoption) =>
+            attempt.workspace === this.directory ||
+            scopePatternsConflict(scope, this.store.effectiveWriteScope(adoption.task_id)),
+        )
+    )
+      return false
     for (const plan of this.store.plans()) {
       for (const other of this.store.attempts(plan.id)) {
         if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
@@ -2756,6 +3204,7 @@ export class TaskRuntime {
     workspace: string,
     assertions: TaskProposal["acceptance"],
     receipts: CheckReceipt[],
+    adoptionID?: string,
   ) {
     const missing: string[] = []
     for (const assertion of assertions)
@@ -2771,18 +3220,745 @@ export class TaskRuntime {
         if (evidence.kind === "artifact" && !artifactExists(workspace, evidence.reference))
           missing.push(`${assertion.id}:${evidence.reference}`)
         if (evidence.kind === "human") {
-          const found = this.store.atomic((db) =>
-            db
-              .query(
-                "SELECT id FROM runner_evidence WHERE plan_id=? AND task_id IS ? AND kind='human' AND assertion_id=? AND artifact=?",
+          const found = adoptionID
+            ? this.store.hasAdoptionEvidence(
+                adoptionID,
+                taskID === null ? "combined" : "task",
+                taskID,
+                assertion.id,
+                artifact,
               )
-              .get(planID, taskID, assertion.id, artifact),
-          )
+            : this.store.atomic((db) =>
+                db
+                  .query(
+                    "SELECT id FROM runner_evidence WHERE plan_id=? AND task_id IS ? AND kind='human' AND assertion_id=? AND artifact=?",
+                  )
+                  .get(planID, taskID, assertion.id, artifact),
+              )
           if (!found) missing.push(`${assertion.id}:human`)
         }
       }
     return missing
   }
+
+  private adoptionIsLive(adoptionID: string): boolean {
+    const adoption = this.store.adoption(adoptionID)
+    const plan = adoption ? this.store.plan(adoption.plan_id) : undefined
+    return Boolean(
+      adoption &&
+      plan?.state === "blocked" &&
+      ["pending", "task-checks", "combined-checks", "waiting-human"].includes(adoption.state),
+    )
+  }
+
+  private holdAdoption(
+    plan: PlanRow,
+    adoptionID: string,
+    reason: string,
+    state: "pending" | "waiting-human" | "held" = "held",
+    fence: number,
+  ) {
+    this.store.fenced(this.owner, fence, () => {
+      const current = this.store.adoption(adoptionID)
+      const currentPlan = this.store.plan(plan.id)
+      if (
+        !current ||
+        !currentPlan ||
+        currentPlan.state === "cancelling" ||
+        currentPlan.state === "cancelled" ||
+        !["pending", "task-checks", "combined-checks", "waiting-human"].includes(current.state)
+      )
+        return
+      if (
+        current.state === state &&
+        current.hold_reason === reason &&
+        currentPlan.reason === reason
+      )
+        return
+      if (
+        !this.store.setAdoptionState(current.id, state, reason, { owner: this.owner, value: fence })
+      )
+        return
+      const changed = this.store.atomic(
+        (db) =>
+          db
+            .query(
+              "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=? AND state='blocked' AND reason IS NOT ?",
+            )
+            .run(reason, plan.id, reason).changes,
+      )
+      this.store.record(
+        plan.id,
+        current.task_id,
+        state === "waiting-human"
+          ? "DESCENDANT_ADOPTION_WAITING_HUMAN"
+          : "DESCENDANT_ADOPTION_HELD",
+        { adoptionID, reason, state, planVersionChanged: changed === 1 },
+      )
+    })
+  }
+
+  private async validateAdoption(planID: string, adoption: AdoptionRow) {
+    const plan = this.store.plan(planID)
+    if (!plan || plan.state !== "blocked") throw new Error("Adoption plan is no longer blocked")
+    if (plan.owner !== adoption.owner) throw new Error("Descendant adoption owner changed")
+    const owner = await this.host.session(plan.owner)
+    if (!this.validArchitect(owner) || owner.id !== adoption.owner)
+      throw new Error("Descendant adoption owner is missing, stale, or foreign")
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const task = this.store.repository.get(adoption.task_id)
+    const node = this.store
+      .nodes(plan.id)
+      .find((candidate) => candidate.task_id === adoption.task_id)
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.task_id === adoption.task_id)
+      .at(-1)
+    if (
+      !task ||
+      !node ||
+      !attempt ||
+      task.revision !== adoption.task_revision ||
+      node.state !== adoption.node_state ||
+      node.artifact !== adoption.old_artifact ||
+      attempt.id !== adoption.attempt_id ||
+      attempt.state !== adoption.attempt_state ||
+      attempt.artifact !== adoption.old_artifact
+    )
+      throw new Error("Task revision, latest attempt, or old artifact changed during adoption")
+    if (
+      this.store
+        .nodes(plan.id)
+        .some(
+          (candidate) =>
+            candidate.task_id !== adoption.task_id &&
+            !["accepted", "incorporated"].includes(candidate.state),
+        )
+    )
+      throw new Error("Combined adoption inputs are no longer fully accepted")
+    if (this.conflictingActiveAttempt(adoption.task_id))
+      throw new Error("A conflicting worker prevents descendant adoption")
+    if (
+      this.store
+        .effects(plan.id)
+        .some(
+          (effect) =>
+            !effect.kind.startsWith("adoption-") &&
+            ["intended", "uncertain"].includes(effect.state),
+        )
+    )
+      throw new Error("An uncertain prior effect prevents descendant adoption")
+    const competing = this.store.activeAdoptions().filter((item) => item.id !== adoption.id)
+    if (
+      competing.some((item) =>
+        scopePatternsConflict(
+          this.store.effectiveWriteScope(adoption.task_id),
+          this.store.effectiveWriteScope(item.task_id),
+        ),
+      )
+    )
+      throw new Error("A conflicting descendant reservation became active")
+    const worker = await this.host.session(attempt.session_id, { messages: true })
+    if (
+      !worker ||
+      worker.id !== attempt.session_id ||
+      worker.projectID !== this.projectID ||
+      worker.directory !== attempt.workspace ||
+      worker.agent !== "lazers-implementor" ||
+      worker.archived ||
+      worker.metadata?.lazersAttemptID !== attempt.id ||
+      !this.adoptionWorkerIdle(attempt, worker)
+    )
+      throw new Error("Latest worker activity or control state is not conclusively idle")
+    const branch = git(this.directory, ["branch", "--show-current"])
+    const head = git(this.directory, ["rev-parse", "HEAD"])
+    if (branch !== adoption.target_branch || head !== adoption.landing_head)
+      throw new Error("Reviewed landing branch or HEAD changed during adoption")
+    if (
+      git(this.directory, ["status", "--porcelain", "--untracked-files=all"]) ||
+      git(this.directory, ["ls-files", "-u", "-z"])
+    )
+      throw new Error("Dirty or unmerged candidate checkout cannot publish adoption")
+    const candidate = git(this.directory, ["rev-parse", `${adoption.descendant_commit}^{commit}`])
+    const oldArtifact = git(this.directory, ["rev-parse", `${adoption.old_artifact}^{commit}`])
+    if (
+      candidate !== adoption.descendant_commit ||
+      oldArtifact !== adoption.old_artifact ||
+      git(this.directory, ["rev-parse", `${candidate}^{tree}`]) !== adoption.candidate_tree ||
+      git(this.directory, ["write-tree"]) !== adoption.candidate_tree
+    )
+      throw new Error("Candidate or index no longer matches the reviewed adoption inputs")
+    git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, candidate])
+    const reviewedBaseline = this.reviewedAdoptionBaseline(
+      adoption.target_branch,
+      oldArtifact,
+      candidate,
+    )
+    if (reviewedBaseline !== adoption.reviewed_baseline)
+      throw new Error("Reviewed adoption baseline changed during adoption")
+    const scopeBase = reviewedScopeBase(this.directory, oldArtifact, candidate, reviewedBaseline)
+    const violations = scopeViolations(
+      changedPaths(this.directory, scopeBase),
+      this.store.effectiveWriteScope(adoption.task_id),
+    )
+    if (violations.length)
+      throw new Error(
+        `Candidate contains out-of-scope changes: ${violations.slice(0, 20).join(", ")}`,
+      )
+    const branches = input.integrationOrder.map((taskID) => {
+      if (taskID === adoption.task_id) return candidate
+      const other = this.store.nodes(plan.id).find((item) => item.task_id === taskID)
+      if (!other?.artifact || !["accepted", "incorporated"].includes(other.state))
+        throw new Error("Combined adoption requires every other accepted artifact")
+      return other.artifact
+    })
+    const combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+    if (combinedArtifact !== adoption.combined_artifact)
+      throw new Error("Combined artifact inputs changed during adoption")
+    const environmentIdentity = verificationEnvironmentIdentity()
+    if (environmentIdentity !== adoption.environment_identity)
+      throw new Error("Check environment changed during adoption")
+    const currentFingerprint = this.adoptionInputFingerprint({
+      plan,
+      originalPlanVersion: adoption.plan_version,
+      taskID: task.id,
+      taskRevision: task.revision,
+      attemptID: attempt.id,
+      nodeState: node.state,
+      attemptState: attempt.state,
+      oldArtifact: adoption.old_artifact,
+      descendantCommit: candidate,
+      targetBranch: branch,
+      landingHead: head,
+      reviewedBaseline,
+      candidateTree: adoption.candidate_tree,
+      combinedArtifact,
+      reason: adoption.reason,
+      environmentIdentity,
+    })
+    if (currentFingerprint !== adoption.input_fingerprint)
+      throw new Error(
+        "Adoption input vector changed; this operation's evidence is no longer reusable",
+      )
+    return { plan, input, task, node, attempt }
+  }
+
+  private async ensureAdoptionWorkspace(
+    plan: PlanRow,
+    adoption: AdoptionRow,
+    phase: "task" | "combined",
+    base: string,
+    fence: number,
+  ): Promise<string | undefined> {
+    const kind = phase === "task" ? "adoption-task-worktree" : "adoption-combined-worktree"
+    const workspaceField = phase === "task" ? adoption.task_workspace : adoption.combined_workspace
+    const existing = this.store.effects(plan.id).find((effect) => {
+      if (effect.kind !== kind) return false
+      try {
+        return JSON.parse(effect.payload).adoptionID === adoption.id
+      } catch {
+        return false
+      }
+    })
+    if (existing) {
+      if (existing.state !== "completed") {
+        await this.reconcileEffect(existing, fence)
+        return undefined
+      }
+      const workspace = workspaceField ?? JSON.parse(existing.receipt!).workspace
+      if (
+        !existsSync(workspace) ||
+        git(workspace, ["rev-parse", "HEAD"]) !== base ||
+        git(workspace, ["status", "--porcelain", "--untracked-files=all"]) ||
+        git(workspace, ["ls-files", "-u", "-z"])
+      )
+        throw new Error(`Owned adoption worktree changed; preserve ${workspace}`)
+      return workspace
+    }
+    if (!this.adoptionIsLive(adoption.id)) return undefined
+    const workspace = join(
+      realpathSync(dirname(this.dataDirectory)),
+      "runner",
+      "worktrees",
+      `adoption-${adoption.id}-${phase}`,
+    )
+    const effect = this.effect(
+      plan.id,
+      phase === "task" ? adoption.task_id : null,
+      null,
+      kind,
+      { adoptionID: adoption.id, workspace, base },
+      fence,
+    )
+    if (!this.adoptionIsLive(adoption.id)) {
+      this.store.fenced(this.owner, fence, (db) =>
+        db
+          .query(
+            "UPDATE runner_effects SET state='failed',receipt=? WHERE id=? AND state='intended'",
+          )
+          .run(
+            JSON.stringify({
+              notSent: true,
+              reason: "Adoption was cancelled before worktree creation",
+            }),
+            effect.id,
+          ),
+      )
+      return undefined
+    }
+    try {
+      const actual = await this.host.worktree({ directory: workspace, base })
+      if (
+        actual === this.directory ||
+        git(actual, ["rev-parse", "HEAD"]) !== base ||
+        git(actual, ["status", "--porcelain", "--untracked-files=all"]) ||
+        git(actual, ["ls-files", "-u", "-z"])
+      )
+        throw new Error("Adoption worktree is not a clean exact-candidate checkout")
+      this.receipt(effect, { workspace: actual, base }, fence)
+      this.store.setAdoptionWorkspace(adoption.id, phase, actual, {
+        owner: this.owner,
+        value: fence,
+      })
+      return this.adoptionIsLive(adoption.id) ? actual : undefined
+    } catch (error) {
+      this.store.fenced(this.owner, fence, (db) =>
+        db
+          .query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?")
+          .run(JSON.stringify({ error: errorText(error) }), effect.id),
+      )
+      this.holdAdoption(
+        plan,
+        adoption.id,
+        `Recovery uncertain for ${kind} ${effect.id}: ${errorText(error)}`,
+        "pending",
+        fence,
+      )
+      return undefined
+    }
+  }
+
+  private adoptionCheckReceiptMatches(
+    receipt: CheckReceipt,
+    row: AdoptionCheckRow,
+    check: TaskProposal["verification"][number],
+  ): boolean {
+    return (
+      receipt.id === check.id &&
+      receipt.command === check.command &&
+      receipt.cwd === row.workspace &&
+      receipt.artifact === row.artifact &&
+      receipt.inputIdentity === row.artifact &&
+      receipt.environmentIdentity === row.environment_identity
+    )
+  }
+
+  private async runAdoptionChecks(
+    plan: PlanRow,
+    adoption: AdoptionRow,
+    phase: "task" | "combined",
+    checks: TaskProposal["verification"],
+    workspace: string,
+    artifact: string,
+    fence: number,
+  ): Promise<CheckReceipt[] | undefined> {
+    const receipts: CheckReceipt[] = []
+    for (const check of checks) {
+      if (!this.adoptionIsLive(adoption.id)) return undefined
+      const environmentIdentity = verificationEnvironmentIdentity()
+      const inputFingerprint = fingerprint({
+        adoptionID: adoption.id,
+        adoptionInputFingerprint: adoption.input_fingerprint,
+        phase,
+        check,
+        workspace,
+        artifact,
+        environmentIdentity,
+      })
+      const receiptPath = join(
+        this.dataDirectory,
+        "receipts",
+        "adoptions",
+        adoption.id,
+        `${phase}-${check.id}.json`,
+      )
+      const row = this.store
+        .adoptionChecks(adoption.id, phase)
+        .find((item) => item.check_id === check.id)
+      if (row) {
+        if (
+          row.input_fingerprint !== inputFingerprint ||
+          row.environment_identity !== environmentIdentity ||
+          row.workspace !== workspace ||
+          row.artifact !== artifact ||
+          fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
+          row.receipt_path !== receiptPath
+        ) {
+          this.holdAdoption(
+            plan,
+            adoption.id,
+            `Adoption verification inputs changed for ${phase}:${check.id}`,
+            "held",
+            fence,
+          )
+          return undefined
+        }
+        let previous: CheckReceipt | undefined
+        try {
+          if (row.state === "completed" && row.receipt)
+            previous = JSON.parse(row.receipt) as CheckReceipt
+          else if (existsSync(row.receipt_path))
+            previous = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
+        } catch {
+          previous = undefined
+        }
+        if (previous && this.adoptionCheckReceiptMatches(previous, row, check)) {
+          if (row.state !== "completed") {
+            this.store.completeAdoptionCheck(adoption.id, phase, check.id, previous, {
+              owner: this.owner,
+              value: fence,
+            })
+          }
+          receipts.push(previous)
+          if (!this.adoptionIsLive(adoption.id)) return undefined
+          continue
+        }
+        if (row.state !== "completed")
+          this.store.markAdoptionCheckUncertain(
+            adoption.id,
+            phase,
+            check.id,
+            "No conclusive operation-bound check receipt; check was not repeated",
+            { owner: this.owner, value: fence },
+          )
+        this.holdAdoption(
+          plan,
+          adoption.id,
+          `Uncertain adoption check ${phase}:${check.id}; evidence was not replayed`,
+          "pending",
+          fence,
+        )
+        return undefined
+      }
+      const candidateClean =
+        existsSync(workspace) &&
+        git(workspace, ["rev-parse", "HEAD"]) === artifact &&
+        !git(workspace, ["status", "--porcelain", "--untracked-files=all"]) &&
+        !git(workspace, ["ls-files", "-u", "-z"])
+      if (!candidateClean) {
+        this.holdAdoption(
+          plan,
+          adoption.id,
+          `Adoption verification workspace is dirty or not the exact ${phase} artifact`,
+          "held",
+          fence,
+        )
+        return undefined
+      }
+      this.store.beginAdoptionCheck({
+        adoptionID: adoption.id,
+        phase,
+        checkID: check.id,
+        check,
+        workspace,
+        artifact,
+        inputFingerprint,
+        environmentIdentity,
+        receiptPath,
+        fence: { owner: this.owner, value: fence },
+      })
+      if (!this.adoptionIsLive(adoption.id)) return undefined
+      try {
+        const receipt = await runCheck(workspace, artifact, check, receiptPath)
+        this.store.completeAdoptionCheck(adoption.id, phase, check.id, receipt, {
+          owner: this.owner,
+          value: fence,
+        })
+        receipts.push(receipt)
+        if (
+          verificationEnvironmentIdentity() !== environmentIdentity ||
+          !this.adoptionIsLive(adoption.id)
+        )
+          return undefined
+      } catch (error) {
+        this.store.markAdoptionCheckUncertain(adoption.id, phase, check.id, errorText(error), {
+          owner: this.owner,
+          value: fence,
+        })
+        this.holdAdoption(
+          plan,
+          adoption.id,
+          `Uncertain adoption check ${phase}:${check.id}: ${errorText(error)}`,
+          "pending",
+          fence,
+        )
+        return undefined
+      }
+    }
+    return receipts
+  }
+
+  private async advanceAdoption(plan: PlanRow, initial: AdoptionRow, fence: number) {
+    let adoption = this.store.adoption(initial.id)
+    if (!adoption || !this.adoptionIsLive(adoption.id)) return
+    let context: Awaited<ReturnType<TaskRuntime["validateAdoption"]>>
+    try {
+      context = await this.validateAdoption(plan.id, adoption)
+    } catch (error) {
+      this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
+      return
+    }
+    if (!this.adoptionIsLive(adoption.id)) return
+    const taskWorkspace = await this.ensureAdoptionWorkspace(
+      plan,
+      adoption,
+      "task",
+      adoption.descendant_commit,
+      fence,
+    )
+    if (!taskWorkspace || !this.adoptionIsLive(adoption.id)) return
+    this.store.setAdoptionState(adoption.id, "task-checks", null, {
+      owner: this.owner,
+      value: fence,
+    })
+    adoption = this.store.adoption(adoption.id)!
+    const taskReceipts = await this.runAdoptionChecks(
+      plan,
+      adoption,
+      "task",
+      context.task.proposal.verification,
+      taskWorkspace,
+      adoption.descendant_commit,
+      fence,
+    )
+    if (!taskReceipts || !this.adoptionIsLive(adoption.id)) return
+    if (
+      taskReceipts.some(
+        (receipt) =>
+          receipt.exitCode !== 0 ||
+          receipt.timedOut ||
+          !receipt.unchanged ||
+          receipt.inputIdentity !== adoption!.descendant_commit ||
+          receipt.environmentIdentity !== verificationEnvironmentIdentity(),
+      )
+    ) {
+      this.holdAdoption(
+        plan,
+        adoption.id,
+        "Fresh task verification failed or changed its inputs",
+        "held",
+        fence,
+      )
+      return
+    }
+    try {
+      context = await this.validateAdoption(plan.id, adoption)
+    } catch (error) {
+      this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
+      return
+    }
+    const combinedWorkspace = await this.ensureAdoptionWorkspace(
+      plan,
+      adoption,
+      "combined",
+      adoption.combined_artifact,
+      fence,
+    )
+    if (!combinedWorkspace || !this.adoptionIsLive(adoption.id)) return
+    this.store.setAdoptionState(adoption.id, "combined-checks", null, {
+      owner: this.owner,
+      value: fence,
+    })
+    adoption = this.store.adoption(adoption.id)!
+    const combinedReceipts = await this.runAdoptionChecks(
+      plan,
+      adoption,
+      "combined",
+      context.input.verification,
+      combinedWorkspace,
+      adoption.combined_artifact,
+      fence,
+    )
+    if (!combinedReceipts || !this.adoptionIsLive(adoption.id)) return
+    if (
+      combinedReceipts.some(
+        (receipt) =>
+          receipt.exitCode !== 0 ||
+          receipt.timedOut ||
+          !receipt.unchanged ||
+          receipt.inputIdentity !== adoption!.combined_artifact ||
+          receipt.environmentIdentity !== verificationEnvironmentIdentity(),
+      )
+    ) {
+      this.holdAdoption(
+        plan,
+        adoption.id,
+        "Fresh combined artifact verification failed or changed its inputs",
+        "held",
+        fence,
+      )
+      return
+    }
+    try {
+      context = await this.validateAdoption(plan.id, adoption)
+    } catch (error) {
+      this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
+      return
+    }
+    const taskMissing = this.missingEvidence(
+      plan.id,
+      adoption.task_id,
+      adoption.descendant_commit,
+      taskWorkspace,
+      context.task.proposal.acceptance,
+      taskReceipts,
+      adoption.id,
+    )
+    const combinedMissing = this.missingEvidence(
+      plan.id,
+      null,
+      adoption.combined_artifact,
+      combinedWorkspace,
+      context.input.acceptance,
+      combinedReceipts,
+      adoption.id,
+    )
+    const missing = [
+      ...taskMissing.map((item) => `task:${item}`),
+      ...combinedMissing.map((item) => `combined:${item}`),
+    ]
+    if (missing.length) {
+      const humanOnly = [...taskMissing, ...combinedMissing].every((item) =>
+        item.endsWith(":human"),
+      )
+      this.holdAdoption(
+        plan,
+        adoption.id,
+        `Required adoption evidence missing: ${missing.join(", ")}`,
+        humanOnly ? "waiting-human" : "held",
+        fence,
+      )
+      return
+    }
+    if (
+      !artifactUnchanged(taskWorkspace, adoption.descendant_commit) ||
+      !artifactUnchanged(combinedWorkspace, adoption.combined_artifact)
+    ) {
+      this.holdAdoption(
+        plan,
+        adoption.id,
+        "Adoption artifact changed after fresh verification",
+        "held",
+        fence,
+      )
+      return
+    }
+    try {
+      context = await this.validateAdoption(plan.id, adoption)
+    } catch (error) {
+      this.holdAdoption(plan, adoption.id, errorText(error), "held", fence)
+      return
+    }
+    this.store.fenced(this.owner, fence, (db) => {
+      const current = this.store.adoption(adoption!.id)
+      const currentPlan = this.store.plan(plan.id)
+      const currentNode = this.store
+        .nodes(plan.id)
+        .find((node) => node.task_id === adoption!.task_id)
+      if (
+        !current ||
+        !currentPlan ||
+        currentPlan.state !== "blocked" ||
+        !["pending", "task-checks", "combined-checks", "waiting-human"].includes(current.state) ||
+        !currentNode ||
+        currentNode.state !== adoption!.node_state ||
+        currentNode.artifact !== adoption!.old_artifact
+      )
+        return
+      if (
+        git(this.directory, ["branch", "--show-current"]) !== adoption!.target_branch ||
+        git(this.directory, ["rev-parse", "HEAD"]) !== adoption!.landing_head ||
+        git(this.directory, ["status", "--porcelain", "--untracked-files=all"]) ||
+        verificationEnvironmentIdentity() !== adoption!.environment_identity
+      )
+        return
+      const activeWorker = this.conflictingActiveAttempt(adoption!.task_id)
+      if (activeWorker) {
+        const reason = "A conflicting worker prevents descendant adoption publication"
+        const held = db
+          .query(
+            `UPDATE runner_adoptions SET state='held',hold_reason=?,updated_at=?
+             WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+          )
+          .run(reason, Date.now(), adoption!.id).changes
+        if (!held) return
+        db.query(
+          "UPDATE runner_plans SET state='blocked',reason=?,version=version+1 WHERE id=? AND state='blocked'",
+        ).run(reason, plan.id)
+        this.store.record(plan.id, adoption!.task_id, "DESCENDANT_ADOPTION_HELD", {
+          adoptionID: adoption!.id,
+          reason,
+          activeAttemptID: activeWorker.id,
+        })
+        return
+      }
+      if (currentNode.state === "accepted") {
+        db.query(
+          "UPDATE runner_nodes SET artifact=?,version=version+1 WHERE plan_id=? AND task_id=? AND state='accepted' AND artifact=?",
+        ).run(adoption!.descendant_commit, plan.id, adoption!.task_id, adoption!.old_artifact)
+      } else {
+        db.query(
+          "UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=? AND state=? AND artifact=?",
+        ).run(
+          adoption!.descendant_commit,
+          plan.id,
+          adoption!.task_id,
+          adoption!.node_state,
+          adoption!.old_artifact,
+        )
+        this.store.move(plan.id, adoption!.task_id, "ADOPT_ACCEPT")
+      }
+      this.store.record(plan.id, adoption!.task_id, "DESCENDANT_ADOPTED", {
+        adoptionID: adoption!.id,
+        attemptID: adoption!.attempt_id,
+        oldArtifact: adoption!.old_artifact,
+        descendantCommit: adoption!.descendant_commit,
+        targetBranch: adoption!.target_branch,
+        landingHead: adoption!.landing_head,
+        reason: adoption!.reason,
+        taskChecks: taskReceipts,
+        combinedChecks: combinedReceipts,
+      })
+      const changed = db
+        .query(
+          `UPDATE runner_adoptions SET state='accepted',hold_reason=NULL,updated_at=?
+           WHERE id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+        )
+        .run(Date.now(), adoption!.id).changes
+      if (!changed) return
+      db.query(
+        "UPDATE runner_plans SET state='accepted',reason=NULL,artifact=?,version=version+1 WHERE id=? AND state='blocked'",
+      ).run(adoption!.combined_artifact, plan.id)
+      this.store.record(plan.id, null, "PLAN_ACCEPTED", {
+        artifact: adoption!.combined_artifact,
+        checks: combinedReceipts,
+        adoptionID: adoption!.id,
+        taskArtifact: adoption!.descendant_commit,
+      })
+      this.outcome(
+        plan.id,
+        {
+          status: "accepted",
+          artifact: adoption!.combined_artifact,
+          evidence: combinedReceipts,
+          taskIDs: context.input.integrationOrder,
+          adoptionID: adoption!.id,
+        },
+        true,
+      )
+    })
+  }
+
   private failAttempt(plan: PlanRow, attempt: AttemptRow, reason: string) {
     const task = this.store.repository.get(attempt.task_id)!
     const node = this.store.nodes(plan.id).find((n) => n.task_id === task.id)!
@@ -2955,6 +4131,144 @@ export class TaskRuntime {
       )
     })
   }
+  private assertAdoptionWorkspaceQuiescent(plan: PlanRow, effect: EffectRow, workspace: string) {
+    const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
+    if (typeof payload.adoptionID !== "string")
+      throw new Error("Adoption worktree ownership is missing; preserve the workspace")
+    const adoption = this.store.adoption(payload.adoptionID)
+    const phase = effect.kind === "adoption-task-worktree" ? "task" : "combined"
+    const expectedWorkspace =
+      phase === "task" ? adoption?.task_workspace : adoption?.combined_workspace
+    if (
+      !adoption ||
+      adoption.plan_id !== plan.id ||
+      adoption.state !== "accepted" ||
+      expectedWorkspace !== workspace
+    )
+      throw new Error("Adoption worktree is not owned by an accepted adoption; preserve it")
+    const task = this.store.repository.get(adoption.task_id)
+    const checks =
+      phase === "task"
+        ? task?.proposal.verification
+        : PlanInput.parse(JSON.parse(plan.body)).verification
+    if (!checks) throw new Error("Adoption check procedure is missing; preserve the workspace")
+    const rows = this.store.adoptionChecks(adoption.id, phase)
+    if (rows.length !== checks.length)
+      throw new Error("Adoption worktree has no complete receipt for every check; preserve it")
+    const artifact = phase === "task" ? adoption.descendant_commit : adoption.combined_artifact
+    for (const check of checks) {
+      const row = rows.find((item) => item.check_id === check.id)
+      let receipt: CheckReceipt | undefined
+      try {
+        if (row?.receipt) receipt = JSON.parse(row.receipt) as CheckReceipt
+      } catch {
+        receipt = undefined
+      }
+      if (
+        !row ||
+        row.state !== "completed" ||
+        row.workspace !== workspace ||
+        row.artifact !== artifact ||
+        row.environment_identity !== adoption.environment_identity ||
+        fingerprint(JSON.parse(row.check_json)) !== fingerprint(check) ||
+        !receipt ||
+        !this.adoptionCheckReceiptMatches(receipt, row, check) ||
+        receipt.exitCode !== 0 ||
+        receipt.timedOut ||
+        !receipt.unchanged
+      )
+        throw new Error(
+          "Adoption worktree check activity is not conclusively complete; preserve it",
+        )
+    }
+  }
+
+  private assertGraphWorkspaceQuiescent(plan: PlanRow, workspace: string) {
+    if (!plan.artifact) throw new Error("Combined artifact is missing; preserve the workspace")
+    const checks = PlanInput.parse(JSON.parse(plan.body)).verification
+    const effects = this.store.effects(plan.id)
+    for (const check of checks) {
+      const matches = effects.filter((effect) => {
+        if (effect.kind !== `graph-verify:${check.id}`) return false
+        try {
+          const payload = JSON.parse(effect.payload) as { workspace?: unknown; artifact?: unknown }
+          return payload.workspace === workspace && payload.artifact === plan.artifact
+        } catch {
+          return false
+        }
+      })
+      const effect = matches.at(-1)
+      let receipt: CheckReceipt | undefined
+      let payload: { check?: unknown } | undefined
+      try {
+        if (effect) {
+          payload = JSON.parse(effect.payload) as typeof payload
+          const body = JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }
+          receipt = body.check
+        }
+      } catch {
+        receipt = undefined
+      }
+      if (
+        !effect ||
+        effect.state !== "completed" ||
+        fingerprint(payload?.check) !== fingerprint(check) ||
+        !receipt ||
+        receipt.id !== check.id ||
+        receipt.command !== check.command ||
+        receipt.cwd !== workspace ||
+        receipt.artifact !== plan.artifact ||
+        receipt.inputIdentity !== plan.artifact ||
+        receipt.exitCode !== 0 ||
+        receipt.timedOut ||
+        !receipt.unchanged
+      )
+        throw new Error(
+          "Combined worktree check activity is not conclusively complete; preserve it",
+        )
+    }
+  }
+
+  private async assertWorktreeQuiescent(plan: PlanRow, effect: EffectRow, workspace: string) {
+    if (effect.kind.startsWith("adoption-")) {
+      if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
+        throw new Error("Adoption worktree unexpectedly has an attempt owner; preserve it")
+      this.assertAdoptionWorkspaceQuiescent(plan, effect, workspace)
+      return
+    }
+    if (effect.kind === "graph-worktree") {
+      if (this.store.attempts(plan.id).some((attempt) => attempt.workspace === workspace))
+        throw new Error("Combined worktree unexpectedly has an attempt owner; preserve it")
+      this.assertGraphWorkspaceQuiescent(plan, workspace)
+      return
+    }
+    const attempts = this.store
+      .attempts(plan.id)
+      .filter((attempt) => attempt.workspace === workspace)
+    if (!attempts.length)
+      throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
+    for (const attempt of attempts) {
+      const session = await this.host.session(attempt.session_id, { messages: true })
+      if (
+        !session ||
+        session.id !== attempt.session_id ||
+        session.projectID !== this.projectID ||
+        session.directory !== workspace ||
+        session.agent !== "lazers-implementor" ||
+        session.metadata?.lazersAttemptID !== attempt.id ||
+        session.busy !== false ||
+        session.pendingInput === true ||
+        session.observationUnstable ||
+        (session.pendingPermissions ?? 0) !== 0 ||
+        (session.pendingForms ?? 0) !== 0 ||
+        !session.outcome ||
+        !["completed", "interrupted"].includes(session.turn?.state ?? "unknown") ||
+        this.backgroundBlockReason(session, attempt, true)
+      )
+        throw new Error("Owned worktree worker activity is not conclusively idle; preserve it")
+    }
+  }
+
   private async cleanupWorktrees(plan: PlanRow, fence: number) {
     const owned = [
       ...new Set(
@@ -2962,7 +4276,12 @@ export class TaskRuntime {
           .effects(plan.id)
           .filter(
             (effect) =>
-              ["worktree", "graph-worktree"].includes(effect.kind) && effect.state === "completed",
+              [
+                "worktree",
+                "graph-worktree",
+                "adoption-task-worktree",
+                "adoption-combined-worktree",
+              ].includes(effect.kind) && effect.state === "completed",
           )
           .map((effect) => JSON.parse(effect.receipt!).workspace as string),
       ),
@@ -2978,15 +4297,28 @@ export class TaskRuntime {
           ) ?? this.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
       try {
-        const active = await Promise.all(
-          this.store
-            .attempts(plan.id)
-            .filter((attempt) => attempt.workspace === workspace)
-            .map((attempt) => this.host.session(attempt.session_id)),
-        )
-        if (active.some((session) => session?.busy)) throw new Error("Worker is still active")
         const listed = await this.host.worktrees()
         if (listed.includes(workspace)) {
+          const sourceEffect = this.store.effects(plan.id).find((entry) => {
+            if (
+              ![
+                "worktree",
+                "graph-worktree",
+                "adoption-task-worktree",
+                "adoption-combined-worktree",
+              ].includes(entry.kind) ||
+              entry.state !== "completed"
+            )
+              return false
+            try {
+              return JSON.parse(entry.receipt ?? "{}").workspace === workspace
+            } catch {
+              return false
+            }
+          })
+          if (!sourceEffect)
+            throw new Error("Owned worktree has no completed creation receipt; preserve it")
+          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace)
           if (git(workspace, ["status", "--porcelain"]))
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
           const head = git(workspace, ["rev-parse", "HEAD"])
@@ -3133,7 +4465,14 @@ export class TaskRuntime {
           })
           return
         }
-      } else if (effect.kind === "worktree" || effect.kind === "graph-worktree") {
+      } else if (
+        [
+          "worktree",
+          "graph-worktree",
+          "adoption-task-worktree",
+          "adoption-combined-worktree",
+        ].includes(effect.kind)
+      ) {
         const startupRecoveryReason = (() => {
           if (effect.kind !== "worktree" || effect.state !== "uncertain" || !effect.receipt)
             return undefined
@@ -3157,6 +4496,11 @@ export class TaskRuntime {
             (directory) =>
               existsSync(directory) && git(directory, ["rev-parse", "HEAD"]) === payload.base,
           )
+          .filter(
+            (directory) =>
+              !effect.kind.startsWith("adoption-") ||
+              !git(directory, ["status", "--porcelain", "--untracked-files=all"]),
+          )
         if (candidates.length === 1) {
           const workspace = candidates[0]!
           if (effect.attempt_id)
@@ -3166,6 +4510,13 @@ export class TaskRuntime {
                 .run(workspace, effect.attempt_id!),
             )
           this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
+          if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
+            this.store.setAdoptionWorkspace(
+              payload.adoptionID,
+              effect.kind === "adoption-task-worktree" ? "task" : "combined",
+              workspace,
+              { owner: this.owner, value: fence },
+            )
           if (startupRecoveryReason && effect.attempt_id) {
             const plan = this.store.plan(effect.plan_id)
             const attempt = plan

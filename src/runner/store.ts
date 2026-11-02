@@ -60,6 +60,58 @@ export type EffectRow = {
   receipt: string | null
   fence: number
 }
+export type AdoptionRow = {
+  id: string
+  plan_id: string
+  task_id: string
+  request_id: string
+  owner: string
+  plan_version: number
+  task_revision: number
+  attempt_id: string
+  node_state: string
+  attempt_state: string
+  old_artifact: string
+  descendant_commit: string
+  target_branch: string
+  landing_head: string
+  reviewed_baseline: string
+  candidate_tree: string
+  input_fingerprint: string
+  environment_identity: string
+  reason: string
+  combined_artifact: string
+  task_workspace: string | null
+  combined_workspace: string | null
+  state: string
+  hold_reason: string | null
+  created_at: number
+  updated_at: number
+}
+export type AdoptionCheckRow = {
+  adoption_id: string
+  phase: "task" | "combined"
+  check_id: string
+  check_json: string
+  workspace: string
+  artifact: string
+  input_fingerprint: string
+  environment_identity: string
+  receipt_path: string
+  state: string
+  receipt: string | null
+  created_at: number
+}
+export type AdoptionEvidenceRow = {
+  id: string
+  adoption_id: string
+  task_id: string | null
+  phase: "task" | "combined" | "legacy"
+  assertion_id: string
+  artifact: string
+  body: string
+  created_at: number
+}
 export type ContinuationRow = {
   plan_id: string
   session_id: string
@@ -257,6 +309,35 @@ export class RunnerStore {
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT, attempt_id TEXT REFERENCES runner_attempts(id),
         kind TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT, fence INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS runner_adoptions (
+        id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+        task_id TEXT NOT NULL, request_id TEXT NOT NULL, owner TEXT NOT NULL,
+        plan_version INTEGER NOT NULL, task_revision INTEGER NOT NULL, attempt_id TEXT NOT NULL,
+        node_state TEXT NOT NULL, attempt_state TEXT NOT NULL,
+        old_artifact TEXT NOT NULL, descendant_commit TEXT NOT NULL, target_branch TEXT NOT NULL,
+        landing_head TEXT NOT NULL, reviewed_baseline TEXT NOT NULL DEFAULT '',
+        candidate_tree TEXT NOT NULL, input_fingerprint TEXT NOT NULL,
+        environment_identity TEXT NOT NULL,
+        reason TEXT NOT NULL, combined_artifact TEXT NOT NULL, task_workspace TEXT,
+        combined_workspace TEXT, state TEXT NOT NULL, hold_reason TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runner_adoptions_active
+        ON runner_adoptions(plan_id,state,created_at);
+      CREATE TABLE IF NOT EXISTS runner_adoption_checks (
+        adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id), phase TEXT NOT NULL,
+        check_id TEXT NOT NULL, check_json TEXT NOT NULL, workspace TEXT NOT NULL,
+        artifact TEXT NOT NULL, input_fingerprint TEXT NOT NULL, environment_identity TEXT NOT NULL,
+        receipt_path TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT, created_at INTEGER NOT NULL,
+        PRIMARY KEY(adoption_id,phase,check_id)
+      );
+      CREATE TABLE IF NOT EXISTS runner_adoption_evidence (
+        id TEXT PRIMARY KEY, adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id), task_id TEXT,
+        phase TEXT NOT NULL DEFAULT 'legacy', assertion_id TEXT NOT NULL,
+        artifact TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runner_adoption_evidence_lookup
+        ON runner_adoption_evidence(adoption_id,assertion_id,artifact);
       CREATE TABLE IF NOT EXISTS runner_evidence (
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT, attempt_id TEXT REFERENCES runner_attempts(id),
         assertion_id TEXT, kind TEXT NOT NULL, artifact TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
@@ -368,6 +449,32 @@ export class RunnerStore {
         db.exec(
           "ALTER TABLE runner_progress_reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1",
         )
+      const adoptionColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_adoptions)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!adoptionColumns.has("reviewed_baseline"))
+        db.exec(
+          "ALTER TABLE runner_adoptions ADD COLUMN reviewed_baseline TEXT NOT NULL DEFAULT ''",
+        )
+      const adoptionEvidenceColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_adoption_evidence)")
+          .all()
+          .map((column) => column.name),
+      )
+      if (!adoptionEvidenceColumns.has("task_id"))
+        db.exec("ALTER TABLE runner_adoption_evidence ADD COLUMN task_id TEXT")
+      if (!adoptionEvidenceColumns.has("phase"))
+        db.exec(
+          "ALTER TABLE runner_adoption_evidence ADD COLUMN phase TEXT NOT NULL DEFAULT 'legacy'",
+        )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS runner_adoption_evidence_phase_lookup
+         ON runner_adoption_evidence(adoption_id,phase,task_id,assertion_id,artifact)`,
+      )
       // One native Architect successor may own multiple plans. Older databases
       // made the session ID unique, accidentally forcing one successor per plan.
       const continuationIndexes = db
@@ -2037,10 +2144,16 @@ export class RunnerStore {
         .get(this.repository.projectDirectory, taskID),
     )
     if (!node) return undefined
+    const adoption = this.activeAdoptionForTask(node.plan_id, taskID)
     const waitingOn = this.atomic((db) =>
       db
         .query<{ prerequisite: string }, [string, string]>(
-          "SELECT d.prerequisite FROM runner_dependencies d JOIN runner_nodes n ON n.plan_id=d.plan_id AND n.task_id=d.prerequisite WHERE d.plan_id=? AND d.successor=? AND n.state!='accepted'",
+          `SELECT d.prerequisite FROM runner_dependencies d
+           JOIN runner_nodes n ON n.plan_id=d.plan_id AND n.task_id=d.prerequisite
+           WHERE d.plan_id=? AND d.successor=? AND (n.state!='accepted' OR EXISTS(
+             SELECT 1 FROM runner_adoptions a WHERE a.plan_id=n.plan_id AND a.task_id=n.task_id
+               AND a.state IN ('pending','task-checks','combined-checks','waiting-human')
+           ))`,
         )
         .all(node.plan_id, taskID)
         .map((r) => r.prerequisite),
@@ -2049,11 +2162,15 @@ export class RunnerStore {
       planID: node.plan_id,
       taskID,
       state:
-        node.plan_state === "blocked" && ["queued", "ready"].includes(node.state)
+        adoption || (node.plan_state === "blocked" && ["queued", "ready"].includes(node.state))
           ? "blocked"
           : node.state,
       version: node.version,
-      reason: node.reason ?? (node.plan_state === "blocked" ? node.plan_reason : null),
+      reason:
+        adoption?.hold_reason ??
+        (adoption ? `Descendant adoption ${adoption.id} is pending` : null) ??
+        node.reason ??
+        (node.plan_state === "blocked" ? node.plan_reason : null),
       waitingOn,
     }
   }
@@ -2350,6 +2467,409 @@ export class RunnerStore {
         .all(planID),
     )
   }
+  adoption(id: string): AdoptionRow | undefined {
+    return this.atomic(
+      (db) =>
+        db
+          .query<AdoptionRow, [string, string]>(
+            `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE a.id=? AND p.project_directory=?`,
+          )
+          .get(id, this.repository.projectDirectory) ?? undefined,
+    )
+  }
+  adoptions(planID: string): AdoptionRow[] {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    return this.atomic((db) =>
+      db
+        .query<AdoptionRow, [string]>(
+          "SELECT * FROM runner_adoptions WHERE plan_id=? ORDER BY created_at,id",
+        )
+        .all(planID),
+    )
+  }
+  activeAdoptions(planID?: string): AdoptionRow[] {
+    return this.atomic((db) =>
+      planID
+        ? db
+            .query<AdoptionRow, [string, string]>(
+              `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+               WHERE p.project_directory=? AND a.plan_id=?
+                 AND a.state IN ('pending','task-checks','combined-checks','waiting-human')
+               ORDER BY a.created_at,a.id`,
+            )
+            .all(this.repository.projectDirectory, planID)
+        : db
+            .query<AdoptionRow, [string]>(
+              `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+               WHERE p.project_directory=?
+                 AND a.state IN ('pending','task-checks','combined-checks','waiting-human')
+               ORDER BY a.created_at,a.id`,
+            )
+            .all(this.repository.projectDirectory),
+    )
+  }
+  activeAdoptionForTask(planID: string, taskID: string): AdoptionRow | undefined {
+    return this.atomic(
+      (db) =>
+        db
+          .query<AdoptionRow, [string, string]>(
+            `SELECT * FROM runner_adoptions WHERE plan_id=? AND task_id=?
+           AND state IN ('pending','task-checks','combined-checks','waiting-human')
+           ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(planID, taskID) ?? undefined,
+    )
+  }
+  createAdoption(input: {
+    id: string
+    planID: string
+    taskID: string
+    writeScope: string[]
+    requestID: string
+    owner: string
+    expectedVersion: number
+    taskRevision: number
+    attemptID: string
+    nodeState: string
+    attemptState: string
+    oldArtifact: string
+    descendantCommit: string
+    targetBranch: string
+    landingHead: string
+    reviewedBaseline: string
+    candidateTree: string
+    inputFingerprint: string
+    environmentIdentity: string
+    reason: string
+    combinedArtifact: string
+  }): AdoptionRow {
+    return this.atomic((db) => {
+      if (this.activeAdoptions(input.planID).length)
+        throw new Error("A descendant adoption is already pending for this plan")
+      const activeAttempts = db
+        .query<{ id: string; task_id: string; workspace: string }, [string]>(
+          `SELECT a.id,a.task_id,a.workspace FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')`,
+        )
+        .all(this.repository.projectDirectory)
+      if (
+        activeAttempts.some(
+          (attempt) =>
+            attempt.workspace === this.repository.projectDirectory ||
+            scopePatternsConflict(input.writeScope, this.effectiveWriteScope(attempt.task_id)),
+        )
+      )
+        throw new Error("A conflicting worker prevents descendant adoption")
+      if (
+        this.activeAdoptions().some((adoption) =>
+          scopePatternsConflict(input.writeScope, this.effectiveWriteScope(adoption.task_id)),
+        )
+      )
+        throw new Error("An active descendant reservation conflicts with this task scope")
+      const now = Date.now()
+      const changed = db
+        .query(
+          `UPDATE runner_plans SET version=version+1 WHERE id=? AND project_directory=?
+           AND owner=? AND version=? AND state='blocked'`,
+        )
+        .run(
+          input.planID,
+          this.repository.projectDirectory,
+          input.owner,
+          input.expectedVersion,
+        ).changes
+      if (changed !== 1) throw new Error("Stale plan version or plan is no longer blocked")
+      db.query(
+        `INSERT INTO runner_adoptions(
+          id,plan_id,task_id,request_id,owner,plan_version,task_revision,attempt_id,node_state,attempt_state,
+          old_artifact,descendant_commit,target_branch,landing_head,reviewed_baseline,candidate_tree,
+          input_fingerprint,environment_identity,reason,combined_artifact,task_workspace,combined_workspace,
+          state,hold_reason,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'pending',NULL,?,?)`,
+      ).run(
+        input.id,
+        input.planID,
+        input.taskID,
+        input.requestID,
+        input.owner,
+        input.expectedVersion,
+        input.taskRevision,
+        input.attemptID,
+        input.nodeState,
+        input.attemptState,
+        input.oldArtifact,
+        input.descendantCommit,
+        input.targetBranch,
+        input.landingHead,
+        input.reviewedBaseline,
+        input.candidateTree,
+        input.inputFingerprint,
+        input.environmentIdentity,
+        input.reason,
+        input.combinedArtifact,
+        now,
+        now,
+      )
+      this.record(input.planID, input.taskID, "DESCENDANT_ADOPTION_REQUESTED", {
+        adoptionID: input.id,
+        attemptID: input.attemptID,
+        oldArtifact: input.oldArtifact,
+        descendantCommit: input.descendantCommit,
+        targetBranch: input.targetBranch,
+        landingHead: input.landingHead,
+        reviewedBaseline: input.reviewedBaseline,
+        reason: input.reason,
+      })
+      this.repository.changed()
+      return db
+        .query<AdoptionRow, [string]>("SELECT * FROM runner_adoptions WHERE id=?")
+        .get(input.id)!
+    })
+  }
+  setAdoptionState(
+    id: string,
+    state: string,
+    holdReason: string | null,
+    fence?: { owner: string; value: number },
+  ) {
+    return this.atomic((db) => {
+      if (fence) {
+        const lease = db
+          .query<{ owner: string; fence: number }, [string]>(
+            "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+          )
+          .get(this.repository.projectDirectory)
+        if (lease?.owner !== fence.owner || lease.fence !== fence.value)
+          throw new Error("Stale scheduler fence")
+      }
+      const changed = db
+        .query(
+          `UPDATE runner_adoptions SET state=?,hold_reason=?,updated_at=? WHERE id=?
+           AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+        )
+        .run(state, holdReason, Date.now(), id).changes
+      if (changed) this.repository.changed()
+      return changed === 1
+    })
+  }
+  setAdoptionWorkspace(
+    id: string,
+    phase: "task" | "combined",
+    workspace: string,
+    fence: { owner: string; value: number },
+  ) {
+    return this.atomic((db) => {
+      const lease = db
+        .query<{ owner: string; fence: number }, [string]>(
+          "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory)
+      if (lease?.owner !== fence.owner || lease.fence !== fence.value)
+        throw new Error("Stale scheduler fence")
+      const column = phase === "task" ? "task_workspace" : "combined_workspace"
+      db.query(`UPDATE runner_adoptions SET ${column}=?,updated_at=? WHERE id=?`).run(
+        workspace,
+        Date.now(),
+        id,
+      )
+      this.repository.changed()
+    })
+  }
+  adoptionChecks(adoptionID: string, phase?: "task" | "combined"): AdoptionCheckRow[] {
+    return this.atomic((db) =>
+      phase
+        ? db
+            .query<AdoptionCheckRow, [string, string]>(
+              "SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? ORDER BY created_at,check_id",
+            )
+            .all(adoptionID, phase)
+        : db
+            .query<AdoptionCheckRow, [string]>(
+              "SELECT * FROM runner_adoption_checks WHERE adoption_id=? ORDER BY created_at,phase,check_id",
+            )
+            .all(adoptionID),
+    )
+  }
+  beginAdoptionCheck(input: {
+    adoptionID: string
+    phase: "task" | "combined"
+    checkID: string
+    check: unknown
+    workspace: string
+    artifact: string
+    inputFingerprint: string
+    environmentIdentity: string
+    receiptPath: string
+    fence: { owner: string; value: number }
+  }): AdoptionCheckRow {
+    return this.atomic((db) => {
+      const lease = db
+        .query<{ owner: string; fence: number }, [string]>(
+          "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory)
+      if (lease?.owner !== input.fence.owner || lease.fence !== input.fence.value)
+        throw new Error("Stale scheduler fence")
+      const existing = db
+        .query<AdoptionCheckRow, [string, string, string]>(
+          "SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?",
+        )
+        .get(input.adoptionID, input.phase, input.checkID)
+      if (existing) return existing
+      const now = Date.now()
+      db.query(
+        `INSERT INTO runner_adoption_checks(
+          adoption_id,phase,check_id,check_json,workspace,artifact,input_fingerprint,
+          environment_identity,receipt_path,state,receipt,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,'intended',NULL,?)`,
+      ).run(
+        input.adoptionID,
+        input.phase,
+        input.checkID,
+        JSON.stringify(input.check),
+        input.workspace,
+        input.artifact,
+        input.inputFingerprint,
+        input.environmentIdentity,
+        input.receiptPath,
+        now,
+      )
+      this.repository.changed()
+      return db
+        .query<AdoptionCheckRow, [string, string, string]>(
+          "SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?",
+        )
+        .get(input.adoptionID, input.phase, input.checkID)!
+    })
+  }
+  completeAdoptionCheck(
+    adoptionID: string,
+    phase: string,
+    checkID: string,
+    receipt: unknown,
+    fence: { owner: string; value: number },
+  ) {
+    return this.atomic((db) => {
+      const lease = db
+        .query<{ owner: string; fence: number }, [string]>(
+          "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory)
+      if (lease?.owner !== fence.owner || lease.fence !== fence.value)
+        throw new Error("Stale scheduler fence")
+      const changed = db
+        .query(
+          `UPDATE runner_adoption_checks SET state='completed',receipt=?
+           WHERE adoption_id=? AND phase=? AND check_id=? AND state IN ('intended','uncertain')`,
+        )
+        .run(JSON.stringify(receipt), adoptionID, phase, checkID).changes
+      if (changed) this.repository.changed()
+      return changed === 1
+    })
+  }
+  markAdoptionCheckUncertain(
+    adoptionID: string,
+    phase: string,
+    checkID: string,
+    reason: string,
+    fence: { owner: string; value: number },
+  ) {
+    return this.atomic((db) => {
+      const lease = db
+        .query<{ owner: string; fence: number }, [string]>(
+          "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory)
+      if (lease?.owner !== fence.owner || lease.fence !== fence.value)
+        throw new Error("Stale scheduler fence")
+      const changed = db
+        .query(
+          `UPDATE runner_adoption_checks SET state='uncertain',receipt=?
+           WHERE adoption_id=? AND phase=? AND check_id=? AND state='intended'`,
+        )
+        .run(JSON.stringify({ error: reason }), adoptionID, phase, checkID).changes
+      if (changed) this.repository.changed()
+      return changed === 1
+    })
+  }
+  recordAdoptionEvidence(input: {
+    id: string
+    adoptionID: string
+    taskID: string | null
+    phase: "task" | "combined"
+    assertionID: string
+    artifact: string
+    body: unknown
+  }): AdoptionEvidenceRow {
+    return this.atomic((db) => {
+      const row: AdoptionEvidenceRow = {
+        id: input.id,
+        adoption_id: input.adoptionID,
+        task_id: input.taskID,
+        phase: input.phase,
+        assertion_id: input.assertionID,
+        artifact: input.artifact,
+        body: JSON.stringify(input.body),
+        created_at: Date.now(),
+      }
+      db.query(
+        `INSERT INTO runner_adoption_evidence(
+           id,adoption_id,task_id,phase,assertion_id,artifact,body,created_at
+         ) VALUES(?,?,?,?,?,?,?,?)`,
+      ).run(
+        row.id,
+        row.adoption_id,
+        row.task_id,
+        row.phase,
+        row.assertion_id,
+        row.artifact,
+        row.body,
+        row.created_at,
+      )
+      this.repository.changed()
+      return row
+    })
+  }
+  adoptionEvidence(adoptionID: string): AdoptionEvidenceRow[] {
+    return this.atomic((db) =>
+      db
+        .query<AdoptionEvidenceRow, [string]>(
+          "SELECT * FROM runner_adoption_evidence WHERE adoption_id=? ORDER BY created_at,id",
+        )
+        .all(adoptionID),
+    )
+  }
+  hasAdoptionEvidence(
+    adoptionID: string,
+    phase: "task" | "combined",
+    taskID: string | null,
+    assertionID: string,
+    artifact: string,
+  ): boolean {
+    return this.atomic((db) =>
+      Boolean(
+        db
+          .query(
+            `SELECT 1 FROM runner_adoption_evidence
+             WHERE adoption_id=? AND phase=? AND task_id IS ? AND assertion_id=? AND artifact=? LIMIT 1`,
+          )
+          .get(adoptionID, phase, taskID, assertionID, artifact),
+      ),
+    )
+  }
+  cancelAdoptions(planID: string, reason: string) {
+    return this.atomic((db) => {
+      const changed = db
+        .query(
+          `UPDATE runner_adoptions SET state='cancelled',hold_reason=?,updated_at=?
+           WHERE plan_id=? AND state IN ('pending','task-checks','combined-checks','waiting-human')`,
+        )
+        .run(reason, Date.now(), planID).changes
+      if (changed) this.repository.changed()
+      return changed
+    })
+  }
   detail(planID: string) {
     const plan = this.plan(planID)
     if (!plan) throw new Error("Plan not found")
@@ -2358,6 +2878,23 @@ export class RunnerStore {
       nodes: this.nodes(planID),
       attempts: this.attempts(planID),
       effects: this.effects(planID),
+      adoptions: this.adoptions(planID),
+      adoptionChecks: this.atomic((db) =>
+        db
+          .query(
+            `SELECT c.* FROM runner_adoption_checks c JOIN runner_adoptions a ON a.id=c.adoption_id
+             WHERE a.plan_id=? ORDER BY c.created_at,c.phase,c.check_id`,
+          )
+          .all(planID),
+      ),
+      adoptionEvidence: this.atomic((db) =>
+        db
+          .query(
+            `SELECT e.* FROM runner_adoption_evidence e JOIN runner_adoptions a ON a.id=e.adoption_id
+             WHERE a.plan_id=? ORDER BY e.created_at,e.id`,
+          )
+          .all(planID),
+      ),
       evidence: db
         .query("SELECT * FROM runner_evidence WHERE plan_id=? ORDER BY created_at")
         .all(planID),

@@ -11,7 +11,13 @@ export const taskMachine = createMachine({
       on: { READY: "ready", BLOCK: "blocked", CANCEL: "cancelled", INCORPORATE: "incorporated" },
     },
     ready: {
-      on: { DISPATCH: "running", BLOCK: "blocked", CANCEL: "cancelled", EXHAUST: "exhausted" },
+      on: {
+        DISPATCH: "running",
+        BLOCK: "blocked",
+        CANCEL: "cancelled",
+        EXHAUST: "exhausted",
+        ADOPT_ACCEPT: "accepted",
+      },
     },
     running: {
       on: {
@@ -35,7 +41,7 @@ export const taskMachine = createMachine({
     },
     blocked: { on: { RECONCILE: "queued", CANCEL: "cancelled", RETRY: "ready" } },
     accepted: { type: "final" },
-    failed: { on: { RESUME: "running", RETRY: "ready" } },
+    failed: { on: { RESUME: "running", RETRY: "ready", ADOPT_ACCEPT: "accepted" } },
     cancelled: { on: { RESUME: "running", RETRY: "ready" } },
     exhausted: { on: { RESUME: "running", RETRY: "ready" } },
     incorporated: { type: "final" },

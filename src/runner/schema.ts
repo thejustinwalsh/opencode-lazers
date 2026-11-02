@@ -174,6 +174,7 @@ export const CommandInput = z.strictObject({
     "integrated",
     "schedule",
     "amend-scope",
+    "adopt-descendant",
   ]),
   reason: z
     .string()
@@ -190,9 +191,15 @@ export const CommandInput = z.strictObject({
     .optional(),
   targetSessionID: z.string().min(1).max(200).optional(),
   taskID: z.uuid().optional(),
+  attemptID: z.uuid().optional(),
   scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
   assertionID: z.string().max(64).optional(),
   artifact: z.string().max(128).optional(),
+  descendantCommit: z
+    .string()
+    .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+    .optional(),
+  adoptionID: z.uuid().optional(),
   targetBranch: z.string().min(1).max(200).optional(),
 })
 export type CommandInput = z.infer<typeof CommandInput>

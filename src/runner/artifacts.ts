@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { canonical } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
 
 export function git(
@@ -180,6 +181,23 @@ function mergedScopeTree(directory: string, base: string, incorporated: string):
   return tree
 }
 
+/** Select the same reviewed comparison baseline used when an isolated artifact is verified. */
+export function reviewedScopeBase(
+  directory: string,
+  base: string,
+  head: string,
+  reviewedHead?: string,
+): string {
+  let scopeBase = base
+  if (reviewedHead) {
+    const common = singleMergeBase(directory, head, reviewedHead)
+    const baseRelation = singleMergeBase(directory, base, common)
+    if (baseRelation === base) scopeBase = common
+    else if (baseRelation !== common) scopeBase = mergedScopeTree(directory, base, common)
+  }
+  return scopeBase
+}
+
 /** Only a private runtime-created worktree may be snapshotted. Never stages origin. */
 export function commitArtifact(
   directory: string,
@@ -190,13 +208,7 @@ export function commitArtifact(
 ): { commit: string; paths: string[]; identity: string; scopeBase: string } {
   const head = git(directory, ["rev-parse", "HEAD"])
   git(directory, ["merge-base", "--is-ancestor", base, head])
-  let scopeBase = base
-  if (snapshot && reviewedHead) {
-    const common = singleMergeBase(directory, head, reviewedHead)
-    const baseRelation = singleMergeBase(directory, base, common)
-    if (baseRelation === base) scopeBase = common
-    else if (baseRelation !== common) scopeBase = mergedScopeTree(directory, base, common)
-  }
+  const scopeBase = reviewedScopeBase(directory, base, head, snapshot ? reviewedHead : undefined)
   const paths = changedPaths(directory, scopeBase)
   const violations = scopeViolations(paths, scope)
   if (violations.length) throw new ArtifactScopeViolation(violations)
@@ -307,6 +319,26 @@ export type CheckReceipt = {
   stderr: string
   unchanged: boolean
 }
+
+const identityEnvironmentKeys = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "CI"] as const
+const verificationEnvironment = () =>
+  Object.fromEntries(
+    identityEnvironmentKeys.flatMap((key) =>
+      process.env[key] === undefined ? [] : [[key, process.env[key]]],
+    ),
+  )
+
+/** Stable, readable check-runtime metadata; module replacement is not an environment change. */
+export function verificationEnvironmentIdentity(): string {
+  return canonical({
+    bunRevision: Bun.revision,
+    bunVersion: Bun.version,
+    executable: process.execPath,
+    platform: process.platform,
+    architecture: process.arch,
+    environment: verificationEnvironment(),
+  })
+}
 async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768) {
   const reader = stream.getReader()
   let bytes = 0
@@ -328,10 +360,7 @@ export async function runCheck(
 ): Promise<CheckReceipt> {
   const inputIdentity = artifact
   // Record runtime metadata without persisting environment credentials.
-  const environmentIdentity = JSON.stringify({
-    bun: Bun.revision,
-    platform: process.platform,
-  })
+  const environmentIdentity = verificationEnvironmentIdentity()
   const startedAt = Date.now()
   let timedOut = false
   const child = Bun.spawn(["/bin/sh", "-c", check.command], {
