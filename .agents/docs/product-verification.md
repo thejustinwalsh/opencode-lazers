@@ -38,7 +38,8 @@ The first worker qualification is recorded in
   to this trial's exact bundle ID, then reads it back. Any other change blocks
   teardown and retains the owned root for review.
 - Never manually delete the owned root, registration, or lock; do not kill a
-  process by name. `cleanup` checks PID, start time, command, registration and
+  process by name. The owned root also retains private `desktop-process.log` stdout/stderr for startup or shutdown exceptions; inspect locally and retain only redacted diagnostic excerpts before cleanup.
+- `cleanup` checks PID, start time, command, registration and
   authenticated service identity before stopping it. A timeout or ambiguous
   identity keeps the root and reservation so cleanup can be retried safely.
 - Do not arm profiling, change the canonical profile/GUI, follow protocol links,
@@ -148,6 +149,8 @@ or copy it to another profile:
 bun src/verification/opencode/cli.ts native-status --root "$ROOT"
 bun src/verification/opencode/cli.ts native --root "$ROOT" --kind snapshot
 ```
+
+After switching to an authentication browser, use `native --root "$ROOT" --kind focus --window WINDOW_ID` to activate the exact owned app/window, then use its fresh snapshot. A failed focus does not mean application activation had no effect; inspect current state before proceeding.
 
 `native-status` reports only the owned adapter state and bounded window
 references. Select the visible, focused window shown by the result. A snapshot

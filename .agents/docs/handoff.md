@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 19:32 UTC. Recheck native state before acting.
+2026-11-02, approximately 20:24 UTC. Recheck native state before acting.
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.
@@ -8,7 +8,8 @@ from observations. This checkpoint is not completion.
 ## Operate
 
 - Drive model prompts, interviews and form answers through OpenCode Desktop
-  Computer Use. Read-only SDK/SQLite/logs and supported maintenance are allowed.
+  Computer Use. The human explicitly authorizes the owned native bridge for the isolated
+  Desktop trial, including prompt entry. Read-only SDK/SQLite/logs and supported maintenance are allowed.
   Root can fix proven blockers and review/integrate; native Architect specifies,
   decomposes, reviews and orchestrates. Scheduler owns execution and dispatch.
 - Main Architect `ses_e68a9ed37ffeVqzPWRXN5SB7Uw`, Build LAZERS roadmap,
@@ -27,6 +28,37 @@ from observations. This checkpoint is not completion.
   arm a profiler or restart the service by assumption.
 
 ## Current live state and immediate continuation
+
+Checkpoint update (supersedes older task states below): LZ-68 original Models source
+`d0e0045` independently clear, native UI/tool gate still open. Same stopped tree
+now additionally contains Root driver fixes; original artifact/attempt preserved.
+Architect amended the existing scope through plan command v29. User-authorized
+owned native bridge replaces unavailable CUA process selection only in that trial.
+
+Owned trials LP3NFn, 7cmXMg and gIG0Vk are cleaned through supported cleanup;
+no owned trial currently runs. Main PID7793 never restarted. 7cmXMg exposed
+broker focus rejection misclassified as ambiguous: Root explicitly audited the
+unchanged service/adapter and absent never-enqueued request, resolved using the
+supported helper with recorded driver assistance, then cleaned without replay.
+67ae256 adds negative receipts and owned focus; 8a50a02 adds macOS application
+activation; 6f7b679 adds final dispatch ownership check, idempotent same-request
+resolution and private Desktop stdout/stderr retention; 600ef12 binds focus to
+original renderer throughout asynchronous observation. Latest 47-test lifecycle
+run before final focus extension:252assertions; subsequent18interactiontests86assertions;
+quality clear. Independent native review of the latest corrections is pending.
+The user reported a JS error in an isolated instance; exception text was not
+retained by old stdio-ignore launch. Startup netlog warning alone is not its cause.
+
+LZ-61 b9b7ad2 and LZ-71 d891ea1 passed native verification but independent source
+review found replay non-convergence and prerequisite dispatch races, respectively;
+neither source integrated. Native Architect dispatched linked small corrections:
+LZ-74 (plan a9c4ade6-3df4-4164-9672-afefe3099f2e, worker
+ses_59097d8889e2491e9b3d311e20a90d9e, original Luna Max route) and LZ-75
+(plan e7308bed-1fe9-4c8a-b688-122abe42e1a3, worker
+ses_19fd0710d651419091bf1891f2d97045). Both native workers active at20:23UTC.
+LZ-74's displayed permission wait was stale: authoritative permissions/inbox empty.
+LZ-73 assignment projection returned accepted; independent review/integration pending.
+LZ-72 cleanup diagnostics stays queued behind corrected runtime prerequisite.
 
 Service PID 7793 remains live; no background restart. Native Architect is running
 and consumed Root repair/activation updates through Desktop. Its old Root-fixes

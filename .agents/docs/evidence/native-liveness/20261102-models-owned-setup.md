@@ -38,8 +38,35 @@ lookup timed out after 903.0949 seconds. That was driver/tool overhead, not proo
 of an OpenCode freeze or worker failure. Native work continued during that wait:
 LZ-61 returned b9b7ad2 and LZ-71 was dispatched. Root asked the human for a specific
 exception to use the owned native Desktop interaction bridge, which performs
-actual window input rather than model API prompting. That answer is pending.
+actual window input rather than model API prompting. The human explicitly approved it, including prompt entry.
 
 Still unproven: keyboard save/remove, reopen, stale conflict, registered Architect
 tool↔panel readback, narrow/wide visual review, and feature behavior. Neither
 this setup nor its cleanup counts as an implementer verification walkthrough.
+
+Follow-up trials and driver assistance (20:24UTC):
+
+- 7cmXMg, same d0e0045 candidate, service83536/59848/Desktop83543. Actual
+  snapshot and picker/provider clicks worked. Observing Chrome removed focus;
+  broker rejected click d9a7f855-1a8d-48ba-9ab5-9c3d08988df6 before request
+  insertion, while CLI marked enqueue failure ambiguous. Same service/adapter
+  still returned unknown for that never-inserted request. Root manually audited
+  source/runtime negative delivery and used supported recovery helper once;
+  this was driver assistance, not automatic recovery. No replay or model call.
+- gIG0Vk, candidate94604d6 adds timestamp/bridge corrections, service87365/60600,
+  Desktop87372. Actual unfocused click returned actionable preflight error;
+  explicit focus returned not-delivered rather than ambiguous. macOS application
+  activation was missing. No sign-in or model call; setup is not feature proof.
+- Both cleaned by supported identity-checked cleanup. Desktop exit initially
+  timed out/changed process observation; subsequent fresh observation and retry
+  cleaned normally. No manual kill/removal, MainPID7793 preserved.
+- User saw a JavaScript error in the second/third isolated instance. Existing
+  host logs retained no exception: crash.log only reporter-start, renderer.log
+  onboarding/autofocus, main.log a startup netlog insufficient-resources warning.
+  That warning is not enough to attribute the reported dialog. Old launcher
+  discarded stdout/stderr. 6f7b679 captures future owned-process output in a
+  private0600 log inside the disposable root; do not publish raw logs.
+- Current Root corrections:67ae256,8a50a02,6f7b679,600ef12. Independent native
+  reviewer found the post-DOM ownership race and repeat-resolution defect;
+  fixes preserve actual transport ambiguity and never replay input. Final
+  native macOS activation observation and Models feature scenario remain open.
