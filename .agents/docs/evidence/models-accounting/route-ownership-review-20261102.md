@@ -41,3 +41,19 @@ latency benchmark; do not generalize it into a measured production regression.
 
 Full artifact review is unfinished. Tests claimed by the worker do not resolve
 this reproduced ownership defect.
+
+## Prepared focused correction
+
+[Correction artifact](accounting-route-correction.json) contains an exact unified
+diff against `05d2355` in its JSON `patch` field. It preserves the retained
+attempt ID on route observations and compares a shared-session step only with
+its unique known owner. Ambiguous context/current-session observations remain
+visible without generating historical attempt comparisons. Single-attempt
+behavior and session-deduplicated usage are retained.
+
+Two added regressions failed on the returned source and pass with the correction.
+Compatibility:21 accounting/read/store tests,181 assertions; strict typecheck and
+lint of both changed files; formatting clear with pinned Bun1.4.4-canary.1. The
+existing pagination/read-only/reopen/privacy tests passed. No runtime task/DB state
+or returned worker artifact was changed. Native application and review still need
+the Architect; Desktop was locked during preparation.
