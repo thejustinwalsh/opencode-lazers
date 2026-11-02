@@ -1,10 +1,11 @@
 import type { MainContext } from "@opencode/plugin/gui/main"
 import { Worker } from "node:worker_threads"
-import { join } from "node:path"
 import ELK from "elkjs/lib/elk-api.js"
 import { RadarLayout } from "./layout-ipc.ts"
 import type { RadarLayoutInput, RadarLayoutResult } from "./layout-ipc.ts"
 import { elkGraph, radarLayoutResult } from "./layout-graph.ts"
+
+declare const __LAZERS_RADAR_WORKER_SOURCE__: string
 
 type MainWorker = {
   postMessage(message: { id?: number }): void
@@ -56,11 +57,11 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
-export function createRadarLayoutService(workerPath: string) {
+export function createRadarLayoutService(workerSource: string, options?: { eval: boolean }) {
   return {
     async layout(input: RadarLayoutInput, signal: AbortSignal): Promise<RadarLayoutResult> {
       signal.throwIfAborted()
-      const worker = new Worker(workerPath)
+      const worker = new Worker(workerSource, options)
       try {
         const factory = (() => workerAdapter(worker)) as unknown as () => globalThis.Worker
         const api = new ELK({ workerFactory: factory })
@@ -76,8 +77,7 @@ export function createRadarLayoutService(workerPath: string) {
 }
 
 export function setupRadarLayoutMain(ctx: MainContext) {
-  const workerPath = join(__dirname, "radar-layout-worker.cjs")
-  const service = createRadarLayoutService(workerPath)
+  const service = createRadarLayoutService(__LAZERS_RADAR_WORKER_SOURCE__, { eval: true })
   const provider = ctx.provide(RadarLayout, {
     layout: (input, caller) => service.layout(input, caller.signal),
   })
