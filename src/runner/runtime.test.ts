@@ -1604,6 +1604,91 @@ async function runPlan(
     "owner",
   )
 }
+async function acceptPlan(
+  f: ReturnType<typeof fixture>,
+  planID: ReturnType<typeof crypto.randomUUID>,
+) {
+  await runPlan(f, planID, `run-${planID}`)
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(planID)[0]!
+  f.completeWorker(attempt.session_id)
+  await drive(f.runtime, 6)
+  const plan = f.store.plan(planID)!
+  expect(plan.state).toBe("accepted")
+  return { plan, attempt }
+}
+function includeArtifact(f: ReturnType<typeof fixture>, artifact: string) {
+  const head = git(f.root, ["rev-parse", "HEAD"])
+  try {
+    git(f.root, ["merge-base", "--is-ancestor", artifact, head])
+    return
+  } catch {
+    // The accepted artifact is not present in the selected branch yet.
+  }
+  try {
+    git(f.root, ["merge-base", "--is-ancestor", head, artifact])
+    git(f.root, ["merge", "--ff-only", artifact])
+    return
+  } catch {
+    // Independent task branches need a reviewed merge commit.
+  }
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "merge",
+    "--no-edit",
+    "--no-ff",
+    artifact,
+  ])
+}
+async function recordPlanIntegration(
+  f: ReturnType<typeof fixture>,
+  planID: ReturnType<typeof crypto.randomUUID>,
+  options: { recordTaskLanding?: boolean } = {},
+) {
+  const accepted = f.store.plan(planID)!
+  if (options.recordTaskLanding) {
+    const node = f.store.nodes(planID)[0]!
+    await f.runtime.command(
+      {
+        requestID: `task-land-${planID}`,
+        planID,
+        expectedVersion: accepted.version,
+        action: "integrated",
+        taskID: node.task_id,
+        artifact: node.artifact!,
+        targetBranch: "main",
+        reason: "Record task-level landing before combined plan integration",
+      },
+      "owner",
+    )
+  }
+  const plan = f.store.plan(planID)!
+  await f.runtime.command(
+    {
+      requestID: `plan-land-${planID}`,
+      planID,
+      expectedVersion: plan.version,
+      action: "integrated",
+      artifact: plan.artifact!,
+      targetBranch: "main",
+      reason: "Record reviewed combined source integration",
+    },
+    "owner",
+  )
+}
+async function acceptAndIntegratePlan(
+  f: ReturnType<typeof fixture>,
+  planID: ReturnType<typeof crypto.randomUUID>,
+  options: { recordTaskLanding?: boolean } = {},
+) {
+  const accepted = await acceptPlan(f, planID)
+  includeArtifact(f, accepted.plan.artifact!)
+  await recordPlanIntegration(f, planID, options)
+  return accepted
+}
 async function cancelUnstartedPlan(f: ReturnType<typeof fixture>, planID = f.receipt.planID) {
   await runPlan(f, planID, `run-${planID}`)
   const plan = f.store.plan(planID)!
@@ -4310,6 +4395,298 @@ test("priority orders conflicting plans without rejecting their overlapping scop
   expect(updated).toMatchObject({ status: "scheduled" })
   expect(f.store.attempts(later.planID)).toHaveLength(1)
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+})
+
+test("afterPlans dispatches from combined integration while prerequisite cleanup is still pending", async () => {
+  for (const expectedParentState of ["cleaning", "cleanup-blocked"] as const) {
+    const f = fixture({
+      independent: true,
+      delayed: true,
+      commit: true,
+      taskFiles: [{ name: "a", path: "a.txt" }],
+    })
+    const parentID = f.receipt.planID
+    const childTask = f.createTask("b", "b.txt")
+    const child = f.store.submit(
+      {
+        ...f.inputFor([childTask], { requestID: `dependent-${expectedParentState}` }),
+        afterPlans: [parentID],
+        priority: expectedParentState === "cleaning" ? 10 : -10,
+      },
+      "owner",
+    )
+    await runPlan(f, child.planID, `run-child-${expectedParentState}`)
+    const accepted = await acceptPlan(f, parentID)
+    const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")
+    writeFileSync(sentinel, "still owned")
+    includeArtifact(f, accepted.plan.artifact!)
+    await recordPlanIntegration(f, parentID, { recordTaskLanding: true })
+    expect(f.store.plan(parentID)!.state).toBe("cleaning")
+
+    const observations: { parentState: string; workspace: string; source: string }[] = []
+    const originalPrompt = f.host.prompt
+    f.host.prompt = async (input) => {
+      const parent = f.store.plan(parentID)!
+      expect(existsSync(accepted.attempt.workspace)).toBe(true)
+      expect(readFileSync(sentinel, "utf8")).toBe("still owned")
+      expect(input.directory).not.toBe(accepted.attempt.workspace)
+      expect(readFileSync(join(input.directory, "a.txt"), "utf8")).toBe("a")
+      observations.push({
+        parentState: parent.state,
+        workspace: input.directory,
+        source: git(input.directory, ["rev-parse", "HEAD"]),
+      })
+      await originalPrompt(input)
+    }
+
+    await f.runtime.tick()
+    expect(observations).toHaveLength(1)
+    expect(observations[0]!.parentState).toBe(expectedParentState)
+    expect(observations[0]!.source).toBe(accepted.plan.artifact!)
+    expect(f.store.plan(parentID)!.state).toBe("cleanup-blocked")
+    const childAttempt = f.store.attempts(child.planID)[0]!
+    expect(childAttempt.workspace).toBe(observations[0]!.workspace)
+    expect(childAttempt.workspace).not.toBe(accepted.attempt.workspace)
+    expect(childAttempt.base_commit).toBe(accepted.plan.artifact!)
+  }
+})
+
+test("afterPlans rejects task-only, missing, malformed, mismatched and foreign integration evidence", async () => {
+  for (const invalidation of [
+    "missing",
+    "task-only",
+    "malformed",
+    "artifact-mismatch",
+    "foreign-prerequisite",
+  ] as const) {
+    const f = fixture({
+      independent: true,
+      delayed: true,
+      commit: true,
+      taskFiles: [{ name: "a", path: "a.txt" }],
+    })
+    const parentID = f.receipt.planID
+    const childTask = f.createTask("b", "b.txt")
+    const child = f.store.submit(
+      {
+        ...f.inputFor([childTask], { requestID: `invalid-${invalidation}` }),
+        afterPlans: [parentID],
+        priority: 10,
+      },
+      "owner",
+    )
+    await runPlan(f, child.planID, `run-invalid-${invalidation}`)
+    const accepted = await acceptPlan(f, parentID)
+    includeArtifact(f, accepted.plan.artifact!)
+
+    if (invalidation === "task-only") {
+      const node = f.store.nodes(parentID)[0]!
+      await f.runtime.command(
+        {
+          requestID: `task-only-${parentID}`,
+          planID: parentID,
+          expectedVersion: f.store.plan(parentID)!.version,
+          action: "integrated",
+          taskID: node.task_id,
+          artifact: node.artifact!,
+          targetBranch: "main",
+          reason: "Record task landing without combined plan integration",
+        },
+        "owner",
+      )
+    } else await recordPlanIntegration(f, parentID)
+
+    f.store.atomic((db) => {
+      if (invalidation === "missing")
+        db.query(
+          "DELETE FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event='INTEGRATION_RECORDED'",
+        ).run(parentID)
+      if (invalidation === "malformed" || invalidation === "artifact-mismatch") {
+        const receipt = db
+          .query<{ id: number; payload: string }, [string]>(
+            "SELECT id,payload FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event='INTEGRATION_RECORDED' ORDER BY id DESC LIMIT 1",
+          )
+          .get(parentID)
+        if (receipt && invalidation === "malformed")
+          db.query("UPDATE runner_transitions SET payload=? WHERE id=?").run("{broken", receipt.id)
+        else if (receipt) {
+          const payload = JSON.parse(receipt.payload) as Record<string, unknown>
+          payload.artifact = f.base
+          db.query("UPDATE runner_transitions SET payload=? WHERE id=?").run(
+            JSON.stringify(payload),
+            receipt.id,
+          )
+        }
+      }
+      if (invalidation === "foreign-prerequisite") {
+        const body = JSON.parse(f.store.plan(child.planID)!.body) as Record<string, unknown>
+        body.afterPlans = [crypto.randomUUID()]
+        db.query("UPDATE runner_plans SET body=? WHERE id=?").run(
+          JSON.stringify(body),
+          child.planID,
+        )
+      }
+      // A lifecycle label cannot stand in for a combined integration receipt.
+      db.query("UPDATE runner_plans SET state='integrated' WHERE id=?").run(parentID)
+    })
+    const promptsBefore = f.events.filter((event) => event.startsWith("prompt:")).length
+    await f.runtime.tick()
+    expect(f.store.attempts(child.planID)).toHaveLength(0)
+    expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptsBefore)
+  }
+})
+
+test("afterPlans requires both the integrated artifact and its recorded integration head in selected HEAD", async () => {
+  for (const missingSource of ["integration-head", "artifact"] as const) {
+    const f = fixture({
+      independent: true,
+      delayed: true,
+      commit: true,
+      taskFiles: [{ name: "a", path: "a.txt" }],
+    })
+    const parentID = f.receipt.planID
+    const childTask = f.createTask("b", "b.txt")
+    const child = f.store.submit(
+      {
+        ...f.inputFor([childTask], { requestID: `missing-${missingSource}` }),
+        afterPlans: [parentID],
+        priority: 10,
+      },
+      "owner",
+    )
+    await runPlan(f, child.planID, `run-missing-${missingSource}`)
+    const accepted = await acceptPlan(f, parentID)
+    includeArtifact(f, accepted.plan.artifact!)
+    if (missingSource === "integration-head") {
+      writeFileSync(join(f.root, "after-integration.txt"), "later baseline\n")
+      git(f.root, ["add", "after-integration.txt"])
+      git(f.root, [
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "later selected baseline",
+      ])
+    }
+    await recordPlanIntegration(f, parentID)
+    git(f.root, [
+      "reset",
+      "--hard",
+      missingSource === "artifact" ? f.base : accepted.plan.artifact!,
+    ])
+    f.store.atomic((db) =>
+      db.query("UPDATE runner_plans SET state='integrated' WHERE id=?").run(parentID),
+    )
+
+    await expect(f.runtime.tick()).resolves.toBeUndefined()
+    expect(f.store.attempts(child.planID)).toHaveLength(0)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  }
+})
+
+test("every afterPlans prerequisite needs fresh integration after cancellation and re-acceptance", async () => {
+  const f = fixture({ independent: true, delayed: true, commit: true, startOnly: true })
+  const parentA = f.store.submit(f.inputFor([f.tasks[0]!], { requestID: "parent-a" }), "owner")
+  const parentB = f.store.submit(f.inputFor([f.tasks[1]!], { requestID: "parent-b" }), "owner")
+  const childTask = f.createTask("c", "c.txt")
+  const child = f.store.submit(
+    {
+      ...f.inputFor([childTask], { requestID: "all-prerequisites" }),
+      afterPlans: [parentA.planID, parentB.planID],
+      priority: 10,
+    },
+    "owner",
+  )
+  await runPlan(f, child.planID, "run-all-prerequisites")
+  await acceptAndIntegratePlan(f, parentA.planID)
+  await acceptAndIntegratePlan(f, parentB.planID)
+
+  const beforeCancel = f.store.plan(parentB.planID)!
+  await f.runtime.command(
+    {
+      requestID: "cancel-integrated-parent",
+      planID: parentB.planID,
+      expectedVersion: beforeCancel.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(parentB.planID)!.state).toBe("cancelled")
+  expect(f.store.attempts(child.planID)).toHaveLength(0)
+
+  const cancelled = f.store.plan(parentB.planID)!
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='integrated',version=version+1 WHERE id=?").run(
+      parentB.planID,
+    )
+    f.store.record(parentB.planID, null, "PLAN_ACCEPTED", {
+      artifact: cancelled.artifact,
+      checks: [],
+    })
+  })
+  await f.runtime.tick()
+  expect(f.store.attempts(child.planID)).toHaveLength(0)
+
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='accepted' WHERE id=?").run(parentB.planID),
+  )
+  const reopened = f.store.plan(parentB.planID)!
+  await f.runtime.command(
+    {
+      requestID: "fresh-integrated-parent",
+      planID: parentB.planID,
+      expectedVersion: reopened.version,
+      action: "integrated",
+      artifact: reopened.artifact!,
+      targetBranch: "main",
+      reason: "Freshly review the same accepted combined source",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const childAttempt = f.store.attempts(child.planID)[0]!
+  expect(childAttempt).toBeDefined()
+  expect(readFileSync(join(childAttempt.workspace, "a.txt"), "utf8")).toBe("a")
+  expect(readFileSync(join(childAttempt.workspace, "b.txt"), "utf8")).toBe("b")
+})
+
+test("valid afterPlans integration does not bypass shared-checkout admission", async () => {
+  const f = fixture({
+    shared: true,
+    independent: true,
+    delayed: true,
+    commit: true,
+    startOnly: true,
+    taskFiles: [
+      { name: "a", path: "a.txt" },
+      { name: "b", path: "b.txt" },
+      { name: "c", path: "c.txt" },
+    ],
+  })
+  const prerequisite = f.store.submit(
+    f.inputFor([f.tasks[0]!], { requestID: "shared-parent" }),
+    "owner",
+  )
+  const blocker = f.store.submit(
+    f.inputFor([f.tasks[1]!], { requestID: "shared-blocker" }),
+    "owner",
+  )
+  const dependent = f.store.submit(
+    {
+      ...f.inputFor([f.tasks[2]!], { requestID: "shared-dependent" }),
+      afterPlans: [prerequisite.planID],
+    },
+    "owner",
+  )
+  await acceptAndIntegratePlan(f, prerequisite.planID)
+  await runPlan(f, blocker.planID, "run-shared-blocker")
+  await runPlan(f, dependent.planID, "run-shared-dependent")
+  await f.runtime.tick()
+  expect(f.store.attempts(blocker.planID)).toHaveLength(1)
+  expect(f.store.attempts(dependent.planID)).toHaveLength(0)
 })
 
 test("cross-plan dependencies wait for integration and dispatch from the integrated source", async () => {
