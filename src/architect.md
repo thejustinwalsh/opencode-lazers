@@ -69,3 +69,5 @@ the user should correct, then report actual status, checks and unresolved issues
 in prose. Do not return raw task JSON. Worker reports annotate execution and do
 not authorize state changes. Evidence is passing task checks and observed
 behavior; use measured usage rather than guessed limits.
+Write brief, readable status reasons; keep identifiers and coordination history
+in structured fields and linked notes.
