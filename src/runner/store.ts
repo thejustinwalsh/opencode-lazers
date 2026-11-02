@@ -211,6 +211,7 @@ export type ProgressRow = {
   attempt_id: string
   session_id: string
   at: number
+  recorded_at?: number | null
   source: string
   sources_json: string
   kind: string
@@ -418,7 +419,8 @@ export class RunnerStore {
         seq INTEGER PRIMARY KEY AUTOINCREMENT,
         project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
         plan_id TEXT NOT NULL, task_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
-        session_id TEXT NOT NULL, at INTEGER NOT NULL, source TEXT NOT NULL,
+        session_id TEXT NOT NULL, at INTEGER NOT NULL, recorded_at INTEGER,
+        source TEXT NOT NULL,
         sources_json TEXT NOT NULL, kind TEXT NOT NULL, event_ids_json TEXT NOT NULL,
         call_id TEXT, message_id TEXT, dedupe_key TEXT NOT NULL, payload TEXT NOT NULL,
         UNIQUE(project_directory,dedupe_key)
@@ -432,6 +434,16 @@ export class RunnerStore {
         attempts INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL
       );
     `)
+      const progressColumns = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
+          .all()
+          .map((column) => column.name),
+      )
+      // Legacy recording times remain unknown; never backfill them from native
+      // event time or the time this additive migration happens to run.
+      if (!progressColumns.has("recorded_at"))
+        db.exec("ALTER TABLE runner_progress ADD COLUMN recorded_at INTEGER")
       const reminderColumns = new Set(
         db
           .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")

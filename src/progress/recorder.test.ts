@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { DateTime } from "effect"
 import { TaskRepository } from "../storage.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { Tool } from "@opencode/schema/tool"
@@ -6,6 +7,76 @@ import { makeFixture, firstAttemptID, secondAttemptID } from "../../test/traject
 import { ProgressRecorder } from "./recorder.ts"
 
 const workerSession = "ses-failed"
+type RetainedToolState = "running" | "completed"
+type StoredToolPayload = {
+  status?: unknown
+  execution?: {
+    status?: unknown
+    source?: unknown
+    sourceType?: unknown
+    phase?: unknown
+    conflict?: unknown
+    evidence?: { status: string }[]
+  }
+  timing?: { endpoints?: Record<string, unknown> }
+}
+
+function permutations<T extends string>(values: T[]): T[][] {
+  if (!values.length) return [[]]
+  const unique = [...new Set(values)]
+  return unique.flatMap((value) => {
+    let removed = false
+    const rest = values.filter((candidate) => {
+      if (!removed && candidate === value) {
+        removed = true
+        return false
+      }
+      return true
+    })
+    return permutations(rest).map((suffix) => [value, ...suffix])
+  })
+}
+
+function retainedToolMessage(
+  messageID: string,
+  callID: string,
+  stateStatus: RetainedToolState,
+  executed: boolean,
+) {
+  const completed = stateStatus === "completed"
+  return {
+    id: messageID,
+    type: "assistant",
+    time: { created: 100 },
+    content: [
+      {
+        type: "tool",
+        id: callID,
+        name: "Bash",
+        executed,
+        time: { created: 90, ran: 200, ...(completed ? { completed: 300 } : {}) },
+        state: {
+          status: stateStatus,
+          input: { command: "private" },
+          ...(completed ? { content: [{ type: "text", text: "done" }] } : {}),
+        },
+      },
+    ],
+  }
+}
+
+function stableToolRow(row: ReturnType<RunnerStore["progressFacts"]>[number]) {
+  return {
+    seq: row.seq,
+    at: row.at,
+    recorded_at: row.recorded_at,
+    call_id: row.call_id,
+    message_id: row.message_id,
+    sources_json: row.sources_json,
+    event_ids_json: row.event_ids_json,
+    payload: row.payload,
+  }
+}
 
 function toolEvent(type: string, id: string, data: Record<string, unknown>, created: number) {
   return {
@@ -98,7 +169,7 @@ test("hook, native tool events, and retained recovery coalesce into one durable 
     ])
 
     const rows = fixture.store.progressFacts([firstAttemptID])
-    expect(rows).toHaveLength(2) // the coalesced call and the explicit recovery coverage gap
+    expect(rows).toHaveLength(3) // tool, native assistant start and the recovery coverage gap
     const callRow = rows.find((row) => row.call_id === toolID)!
     expect(callRow).toMatchObject({
       project_id: "project",
@@ -475,6 +546,7 @@ test("failed tools, failed steps, retries, shell results and interrupted turns r
       "provider-retry",
       "execution-outcome",
       "shell",
+      "step",
       "execution-outcome",
       "gap",
     ])
@@ -513,6 +585,594 @@ test("failed tools, failed steps, retries, shell results and interrupted turns r
   }
 })
 
+test("native timing endpoints converge across hook, live, and retained recovery replay", () => {
+  const numericFixture = makeFixture()
+  const decodedFixture = makeFixture()
+  let reopened: TaskRepository | undefined
+  const originalNow = Date.now
+  const point = (value: number, decoded: boolean) => (decoded ? DateTime.makeUnsafe(value) : value)
+  const hook = {
+    tool: "Bash",
+    sessionID: workerSession,
+    agent: "lazers-implementor",
+    messageID: "msg-timing",
+    callID: "call-timing",
+    status: "completed" as const,
+    result: { content: [{ type: "text" as const, text: "done" }] },
+  }
+  const nativeEvents = (decoded: boolean) => {
+    const event = (id: string, type: string, created: number, data: Record<string, unknown>) => ({
+      id,
+      type,
+      created,
+      data: { sessionID: workerSession, ...data },
+    })
+    return [
+      event("evt-step-start", "session.step.started", 900, {
+        assistantMessageID: "msg-timing",
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: "test-model" },
+        started: point(900, decoded),
+      }),
+      event("evt-tool-input", "session.tool.input.started", 1_000, {
+        assistantMessageID: "msg-timing",
+        id: "call-timing",
+        name: "Bash",
+      }),
+      event("evt-tool-called", "session.tool.called", 1_100, {
+        assistantMessageID: "msg-timing",
+        id: "call-timing",
+        input: { command: "private" },
+        executed: true,
+      }),
+      event("evt-step-streamed", "session.step.streamed", 1_300, {
+        assistantMessageID: "msg-timing",
+      }),
+      event("evt-tool-result", "session.tool.success", 1_200, {
+        assistantMessageID: "msg-timing",
+        id: "call-timing",
+        content: [{ type: "text", text: "done" }],
+        executed: true,
+      }),
+      event("evt-step-end", "session.step.ended", 1_400, {
+        assistantMessageID: "msg-timing",
+      }),
+      event("evt-retry", "session.retry.scheduled", 1_500, {
+        assistantMessageID: "msg-timing",
+        attempt: 2,
+        at: point(1_500, decoded),
+        error: { type: "ProviderError", message: "retry" },
+      }),
+      event("evt-shell-start", "session.shell.started", 1_600, {
+        shell: {
+          id: "sh-timing",
+          command: "bun test",
+          status: "running",
+          time: { started: point(1_600, decoded) },
+        },
+      }),
+      event("evt-shell-end", "session.shell.ended", 1_700, {
+        shell: {
+          id: "sh-timing",
+          command: "bun test",
+          status: "exited",
+          time: { started: point(1_600, decoded), completed: point(1_700, decoded) },
+        },
+        output: { output: "ok", truncated: false },
+      }),
+      event("evt-not-executed", "session.tool.called", 1_800, {
+        assistantMessageID: "msg-timing",
+        id: "call-not-executed",
+        executed: false,
+      }),
+    ]
+  }
+  const retainedMessages = (decoded: boolean) => [
+    {
+      id: "msg-timing",
+      type: "assistant",
+      time: {
+        created: point(890, decoded),
+        streamed: point(1_290, decoded),
+        completed: point(1_390, decoded),
+      },
+      content: [
+        {
+          type: "tool",
+          id: "call-timing",
+          name: "Bash",
+          executed: true,
+          time: {
+            created: point(990, decoded),
+            ran: point(1_090, decoded),
+            completed: point(1_190, decoded),
+          },
+          state: {
+            status: "completed",
+            input: { command: "private" },
+            content: [{ type: "text", text: "done" }],
+          },
+        },
+        {
+          type: "tool",
+          id: "call-ran-only",
+          name: "Bash",
+          time: { ran: point(1_250, decoded) },
+          state: { status: "running", input: {} },
+        },
+      ],
+      retry: {
+        attempt: 2,
+        at: point(1_490, decoded),
+        error: { type: "ProviderError", message: "retry" },
+      },
+    },
+    {
+      id: "shell-message",
+      type: "shell",
+      time: { created: point(1_590, decoded), completed: point(1_690, decoded) },
+      shellID: "sh-timing",
+      command: "bun test",
+      status: "exited",
+      output: { output: "ok", truncated: false },
+    },
+  ]
+  const run = (
+    fixture: ReturnType<typeof makeFixture>,
+    decoded: boolean,
+    recoveryFirst: boolean,
+  ) => {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    if (recoveryFirst) {
+      recorder.recordToolHook(hook)
+      recorder.reconcileMessages(workerSession, retainedMessages(decoded))
+      for (const event of nativeEvents(decoded)) recorder.recordNativeEvent(event)
+    } else {
+      for (const event of nativeEvents(decoded)) recorder.recordNativeEvent(event)
+      recorder.reconcileMessages(workerSession, retainedMessages(decoded))
+      recorder.recordToolHook(hook)
+    }
+    recorder.recordVerification(firstAttemptID, "timing-check", {
+      id: "timing-check",
+      artifact: "a".repeat(40),
+      inputIdentity: "a".repeat(40),
+      exitCode: 0,
+      timedOut: false,
+      unchanged: true,
+      startedAt: point(1_900, decoded),
+      endedAt: point(2_000, decoded),
+    })
+    return recorder
+  }
+
+  try {
+    run(numericFixture, false, true)
+    run(decodedFixture, true, false)
+    const rows = (fixture: ReturnType<typeof makeFixture>) =>
+      fixture.store.progressFacts([firstAttemptID])
+    const byKind = (fixture: ReturnType<typeof makeFixture>, kind: string, id?: string) => {
+      const row = rows(fixture).find(
+        (value) => value.kind === kind && (!id || value.call_id === id),
+      )!
+      return { row, payload: JSON.parse(row.payload) as Record<string, unknown> }
+    }
+    const timingFor = (fixture: ReturnType<typeof makeFixture>, kind: string, id?: string) =>
+      byKind(fixture, kind, id).payload.timing
+
+    for (const kind of ["tool", "step", "provider-retry", "shell", "verification"]) {
+      const numericTiming = timingFor(
+        numericFixture,
+        kind,
+        kind === "tool" ? "call-timing" : undefined,
+      )
+      const decodedTiming = timingFor(
+        decodedFixture,
+        kind,
+        kind === "tool" ? "call-timing" : undefined,
+      )
+      expect(numericTiming).toEqual(decodedTiming)
+    }
+    expect(timingFor(numericFixture, "tool", "call-timing")).toMatchObject({
+      unit: "unix-epoch-ms",
+      endpoints: {
+        inputAt: { at: 1_000, source: "native-event", sourceType: "session.tool.input.started" },
+        calledAt: { at: 1_100, source: "native-event", sourceType: "session.tool.called" },
+        completedAt: { at: 1_200, source: "native-event", sourceType: "session.tool.success" },
+      },
+    })
+    const toolPayload = byKind(numericFixture, "tool", "call-timing").payload
+    expect(toolPayload).toMatchObject({
+      status: "succeeded",
+      callStatus: "called",
+      execution: { status: "executed", source: "native-event" },
+    })
+    const notExecuted = byKind(numericFixture, "tool", "call-not-executed").payload
+    expect(notExecuted).toMatchObject({
+      status: "not-executed",
+      callStatus: "called",
+      execution: { status: "not-executed", source: "native-event" },
+    })
+    const ranOnly = byKind(numericFixture, "tool", "call-ran-only").payload
+    expect(ranOnly).toMatchObject({
+      status: "running",
+      callStatus: "called",
+      timing: {
+        endpoints: { calledAt: { at: 1_250, source: "recovery" } },
+      },
+    })
+    expect(ranOnly).not.toHaveProperty("execution")
+    const stepPayload = byKind(numericFixture, "step").payload
+    expect(stepPayload).toMatchObject({
+      status: "ended",
+      timing: {
+        endpoints: {
+          startedAt: { at: 900, source: "native-event" },
+          streamedAt: { at: 1_300, source: "native-event" },
+          completedAt: { at: 1_400, source: "native-event" },
+        },
+      },
+    })
+    expect(stepPayload).not.toHaveProperty("usage")
+    expect(stepPayload).not.toHaveProperty("measurementBasis")
+    expect(timingFor(numericFixture, "provider-retry")).toMatchObject({
+      endpoints: { scheduledAt: { at: 1_500, source: "native-event" } },
+    })
+    expect(timingFor(numericFixture, "shell")).toMatchObject({
+      endpoints: {
+        startedAt: { at: 1_600, source: "native-event" },
+        completedAt: { at: 1_700, source: "native-event" },
+      },
+    })
+    expect(timingFor(numericFixture, "verification")).toMatchObject({
+      endpoints: {
+        startedAt: { at: 1_900, source: "runtime" },
+        completedAt: { at: 2_000, source: "runtime" },
+      },
+    })
+    expect(rows(numericFixture).every((row) => Number.isSafeInteger(row.recorded_at))).toBe(true)
+
+    const beforeReplay = rows(numericFixture).map((row) => [
+      row.seq,
+      row.at,
+      row.recorded_at,
+      row.payload,
+      row.event_ids_json,
+    ])
+    const dbPath = numericFixture.repository.path
+    const projectDirectory = numericFixture.repository.projectDirectory
+    numericFixture.repository.close()
+    reopened = new TaskRepository(dbPath, projectDirectory)
+    const reopenedStore = new RunnerStore(reopened)
+    const reopenedRecorder = new ProgressRecorder(reopenedStore, "project")
+    for (const event of nativeEvents(false)) reopenedRecorder.recordNativeEvent(event)
+    reopenedRecorder.recordToolHook(hook)
+    reopenedRecorder.reconcileMessages(workerSession, retainedMessages(false))
+    const afterReplay = reopenedStore
+      .progressFacts([firstAttemptID])
+      .map((row) => [row.seq, row.at, row.recorded_at, row.payload, row.event_ids_json])
+    expect(afterReplay).toEqual(beforeReplay)
+
+    const beforeStaleRecovery = reopenedStore.progressFacts([firstAttemptID])
+    const knownToolTiming = JSON.parse(
+      beforeStaleRecovery.find((row) => row.call_id === "call-timing")!.payload,
+    ).timing
+    const knownStepTiming = JSON.parse(
+      beforeStaleRecovery.find((row) => row.kind === "step")!.payload,
+    ).timing
+    const staleMessages = [
+      {
+        id: "msg-timing",
+        type: "assistant",
+        time: { created: 800 },
+        content: [
+          {
+            type: "tool",
+            id: "call-timing",
+            name: "Bash",
+            time: { created: 800 },
+            state: { status: "running", input: {} },
+          },
+        ],
+      },
+    ]
+    reopenedRecorder.reconcileMessages(workerSession, staleMessages)
+    const staleTool = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === "call-timing")!
+    const staleStep = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((row) => row.kind === "step")!
+    expect(JSON.parse(staleTool.payload)).toMatchObject({
+      status: "succeeded",
+      timing: knownToolTiming,
+    })
+    expect(JSON.parse(staleStep.payload)).toMatchObject({
+      status: "ended",
+      timing: knownStepTiming,
+    })
+    const staleReplaySnapshot = reopenedStore
+      .progressFacts([firstAttemptID])
+      .map((row) => [row.seq, row.at, row.recorded_at, row.payload, row.event_ids_json])
+    reopenedRecorder.reconcileMessages(workerSession, staleMessages)
+    expect(
+      reopenedStore
+        .progressFacts([firstAttemptID])
+        .map((row) => [row.seq, row.at, row.recorded_at, row.payload, row.event_ids_json]),
+    ).toEqual(staleReplaySnapshot)
+
+    const priorRecordedAt = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === "call-timing")!.recorded_at!
+    const priorAt = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === "call-timing")!.at
+    const originalCalledEvent = nativeEvents(false).find((event) => event.id === "evt-tool-called")!
+    Date.now = () => 0
+    try {
+      reopenedRecorder.recordNativeEvent({
+        ...originalCalledEvent,
+        id: "evt-tool-called-replay",
+      })
+    } finally {
+      Date.now = originalNow
+    }
+    const afterRollback = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === "call-timing")!
+    expect(afterRollback.recorded_at).toBeGreaterThanOrEqual(priorRecordedAt)
+    expect(afterRollback.at).toBe(priorAt)
+    expect(rows(decodedFixture).map((row) => row.kind)).toContain("verification")
+  } finally {
+    Date.now = originalNow
+    reopened?.close()
+    numericFixture.close()
+    decodedFixture.close()
+  }
+})
+
+test("retained terminal execution wins over stale snapshots in every replay order", () => {
+  const fixture = makeFixture()
+  let reopened: TaskRepository | undefined
+  const originalNow = Date.now
+  let clock = 10_000
+  const sequences = permutations([
+    "running",
+    "completed",
+    "completed",
+    "running",
+    "running",
+  ] as RetainedToolState[])
+  const stableByCallID = new Map<string, ReturnType<typeof stableToolRow>>()
+  try {
+    Date.now = () => clock++
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-terminal-${index}`
+      const messageID = `retained-terminal-message-${index}`
+      let terminal: ReturnType<typeof stableToolRow> | undefined
+      for (const state of sequence) {
+        recorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, state, state === "completed"),
+        ])
+        const rows = fixture.store.progressFacts([firstAttemptID])
+        const matchingRows = rows.filter((row) => row.call_id === callID)
+        expect(matchingRows).toHaveLength(1)
+        const row = matchingRows[0]!
+        if (!terminal && state === "completed") {
+          const payload = JSON.parse(row.payload) as StoredToolPayload
+          expect(payload.execution).toMatchObject({
+            status: "executed",
+            source: "recovery",
+            phase: 2,
+          })
+          expect(payload.status).toBe("succeeded")
+          expect(payload.timing?.endpoints?.completedAt).toMatchObject({
+            at: 300,
+            source: "recovery",
+          })
+          terminal = stableToolRow(row)
+        } else if (terminal) {
+          expect(stableToolRow(row)).toEqual(terminal)
+        }
+      }
+      expect(terminal).toBeDefined()
+      stableByCallID.set(callID, terminal!)
+    }
+
+    const dbPath = fixture.repository.path
+    const projectDirectory = fixture.repository.projectDirectory
+    fixture.repository.close()
+    reopened = new TaskRepository(dbPath, projectDirectory)
+    const reopenedStore = new RunnerStore(reopened)
+    const reopenedRecorder = new ProgressRecorder(reopenedStore, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-terminal-${index}`
+      const messageID = `retained-terminal-message-${index}`
+      for (const state of sequence)
+        reopenedRecorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, state, state === "completed"),
+        ])
+      const row = reopenedStore
+        .progressFacts([firstAttemptID])
+        .find((item) => item.call_id === callID)!
+      expect(stableToolRow(row)).toEqual(stableByCallID.get(callID)!)
+    }
+  } finally {
+    Date.now = originalNow
+    reopened?.close()
+    fixture.close()
+  }
+})
+
+test("equally authoritative retained execution conflicts survive permutations and reopen", () => {
+  const fixture = makeFixture()
+  let reopened: TaskRepository | undefined
+  const originalNow = Date.now
+  let clock = 20_000
+  const sequences = permutations(["not-executed", "executed", "executed", "not-executed"])
+  const stableByCallID = new Map<string, ReturnType<typeof stableToolRow>>()
+  try {
+    Date.now = () => clock++
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-conflict-${index}`
+      const messageID = `retained-conflict-message-${index}`
+      const seen = new Set<string>()
+      let conflict: ReturnType<typeof stableToolRow> | undefined
+      for (const executedValue of sequence) {
+        seen.add(executedValue)
+        recorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, "running", executedValue === "executed"),
+        ])
+        const rows = fixture.store.progressFacts([firstAttemptID])
+        const row = rows.find((item) => item.call_id === callID)!
+        if (seen.size === 2 && !conflict) {
+          const payload = JSON.parse(row.payload) as StoredToolPayload
+          expect(payload.execution).toMatchObject({
+            status: "unknown",
+            source: "recovery",
+            sourceType: "retained-assistant-tool.executed",
+            phase: 1,
+            conflict: true,
+          })
+          const evidence = payload.execution?.evidence ?? []
+          expect(evidence.map((item) => item.status).sort()).toEqual(["executed", "not-executed"])
+          conflict = stableToolRow(row)
+        } else if (conflict) {
+          expect(stableToolRow(row)).toEqual(conflict)
+        }
+      }
+      expect(conflict).toBeDefined()
+      stableByCallID.set(callID, conflict!)
+    }
+
+    const legacyCallID = "retained-legacy-conflict"
+    const legacyMessageID = "retained-legacy-conflict-message"
+    for (const executed of [false, true])
+      recorder.reconcileMessages(workerSession, [
+        retainedToolMessage(legacyMessageID, legacyCallID, "running", executed),
+      ])
+    const conflictedRow = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === legacyCallID)!
+    const conflictedPayload = JSON.parse(conflictedRow.payload) as Record<string, unknown>
+    const legacyPayload = {
+      ...conflictedPayload,
+      execution: {
+        status: "unknown",
+        source: "recovery",
+        sourceType: "retained-assistant-tool.executed",
+        meaning: "Execution state is conflicting in equally authoritative native observations",
+      },
+    }
+    fixture.store.atomic((db) =>
+      db
+        .query("UPDATE runner_progress SET payload=? WHERE seq=?")
+        .run(JSON.stringify(legacyPayload), conflictedRow.seq),
+    )
+    const legacyBeforeReplay = stableToolRow(
+      fixture.store.progressFacts([firstAttemptID]).find((row) => row.call_id === legacyCallID)!,
+    )
+    for (const executed of [false, true, true, false])
+      recorder.reconcileMessages(workerSession, [
+        retainedToolMessage(legacyMessageID, legacyCallID, "running", executed),
+      ])
+    const legacyAfterReplay = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.call_id === legacyCallID)!
+    expect(stableToolRow(legacyAfterReplay)).toEqual(legacyBeforeReplay)
+    expect(JSON.parse(legacyAfterReplay.payload).execution).toMatchObject({
+      status: "unknown",
+      meaning: "Execution state is conflicting in equally authoritative native observations",
+    })
+    stableByCallID.set(legacyCallID, legacyBeforeReplay)
+
+    const dbPath = fixture.repository.path
+    const projectDirectory = fixture.repository.projectDirectory
+    fixture.repository.close()
+    reopened = new TaskRepository(dbPath, projectDirectory)
+    const reopenedStore = new RunnerStore(reopened)
+    const reopenedRecorder = new ProgressRecorder(reopenedStore, "project")
+    for (const [index, sequence] of sequences.entries()) {
+      const callID = `retained-conflict-${index}`
+      const messageID = `retained-conflict-message-${index}`
+      for (const executedValue of sequence)
+        reopenedRecorder.reconcileMessages(workerSession, [
+          retainedToolMessage(messageID, callID, "running", executedValue === "executed"),
+        ])
+      const row = reopenedStore
+        .progressFacts([firstAttemptID])
+        .find((item) => item.call_id === callID)!
+      expect(stableToolRow(row)).toEqual(stableByCallID.get(callID)!)
+    }
+    for (const executed of [false, true])
+      reopenedRecorder.reconcileMessages(workerSession, [
+        retainedToolMessage(legacyMessageID, legacyCallID, "running", executed),
+      ])
+    const legacyReopenedRow = reopenedStore
+      .progressFacts([firstAttemptID])
+      .find((item) => item.call_id === legacyCallID)!
+    expect(stableToolRow(legacyReopenedRow)).toEqual(stableByCallID.get(legacyCallID)!)
+  } finally {
+    Date.now = originalNow
+    reopened?.close()
+    fixture.close()
+  }
+})
+
+test("recorded-at migration preserves legacy progress identity and leaves legacy time unknown", () => {
+  const fixture = makeFixture()
+  try {
+    const legacy = fixture.store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_progress
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+          sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        fixture.directory,
+        "project",
+        fixture.attempts[0]!.plan_id,
+        fixture.task.id,
+        firstAttemptID,
+        workerSession,
+        1234,
+        "recovery",
+        '["recovery"]',
+        "commentary",
+        "[]",
+        null,
+        "msg-legacy-progress",
+        "legacy-progress-row",
+        '{"text":"legacy"}',
+      )
+      const row = db
+        .query<{ seq: number }, [string]>("SELECT seq FROM runner_progress WHERE dedupe_key=?")
+        .get("legacy-progress-row")!
+      db.exec("ALTER TABLE runner_progress DROP COLUMN recorded_at")
+      return row.seq
+    })
+
+    new RunnerStore(fixture.repository)
+    const migrated = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((row) => row.seq === legacy)!
+    expect(migrated).toMatchObject({ seq: legacy, at: 1234, recorded_at: null })
+    new RunnerStore(fixture.repository)
+    const columns = fixture.store.atomic((db) =>
+      db.query<{ name: string }, []>("PRAGMA table_info(runner_progress)").all(),
+    )
+    expect(columns.filter((column) => column.name === "recorded_at")).toHaveLength(1)
+    expect(
+      fixture.store
+        .progressFacts([firstAttemptID])
+        .filter((row) => row.dedupe_key === "legacy-progress-row"),
+    ).toHaveLength(1)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("startup reconciliation resolves a claimed reminder by exact synthetic identity or keeps admission unknown", () => {
   const fixture = makeFixture()
   try {
@@ -543,6 +1203,19 @@ test("startup reconciliation resolves a claimed reminder by exact synthetic iden
       .find((row) => row.kind === "reminder")!
     expect(JSON.parse(admitted.payload).delivery).toBe("admitted")
     expect(JSON.parse(admitted.sources_json)).toContain("recovery")
+    const admittedRecordedAt = admitted.recorded_at
+    restarted.reconcileMessages("ses-accepted", [
+      {
+        id: claim.messageID,
+        type: "synthetic",
+        text: "Provide the remaining handoff.",
+        metadata: claim.ownership,
+      },
+    ])
+    const replayedAdmission = fixture.store
+      .progressFacts([secondAttemptID])
+      .find((row) => row.kind === "reminder")!
+    expect(replayedAdmission.recorded_at).toBe(admittedRecordedAt)
     expect(restarted.finishReminder(claim, "unknown")).toBe(false)
 
     const secondClaim = restarted.claimReminder(

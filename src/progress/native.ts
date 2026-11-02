@@ -39,6 +39,7 @@ const NATIVE_EVENT_TYPES = [
   "session.inbox.cancelled",
   "session.synthetic",
   "session.step.started",
+  "session.step.streamed",
   "session.step.ended",
   "session.step.failed",
   "session.text.ended",

@@ -3,6 +3,8 @@ import { inspectTrajectory } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
+import { projectProgressFact } from "../progress/projection.ts"
+import { openReadOnlyTrajectoryStore } from "./store.ts"
 
 function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
@@ -75,6 +77,16 @@ test("trajectory presents commentary separately from automatic worker facts with
       tool: null,
       status: "succeeded",
       result: "check completed",
+      recordedAt: expect.any(Number),
+      execution: { status: "executed", source: "native-event" },
+      timing: {
+        unit: "unix-epoch-ms",
+        endpoints: {
+          inputAt: { at: null, source: null },
+          calledAt: { at: null, source: null },
+          completedAt: { at: 4000, source: "native-event" },
+        },
+      },
     })
     expect(report.coverage.workerProgress).toMatchObject({
       commentary: 1,
@@ -83,6 +95,142 @@ test("trajectory presents commentary separately from automatic worker facts with
       facts: expect.any(Number),
     })
     expect(fixture.store.execution(taskID)).toEqual(executionBefore)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("native-context timing keeps unknown endpoints null instead of using parent creation time", async () => {
+  const fixture = makeFixture()
+  try {
+    const session = fixture.sessions.get("ses-failed")!
+    session.messages = [
+      ...(session.messages ?? []),
+      {
+        id: "msg-timing-context",
+        type: "assistant",
+        time: { created: 10_000, streamed: 10_500 },
+        content: [
+          {
+            type: "tool",
+            id: "call-no-run-time",
+            name: "Bash",
+            executed: false,
+            time: { created: 10_100, completed: 10_300 },
+            state: { status: "error", input: {}, error: { message: "not executed" } },
+          },
+          {
+            type: "tool",
+            id: "call-ran-only",
+            name: "Bash",
+            time: { ran: 10_250 },
+            state: { status: "running", input: {} },
+          },
+        ],
+      } as never,
+    ]
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 50 }),
+      cursorSecret,
+    )
+    const tool = report.trajectory.events.find(
+      (event) => event.id === "msg-timing-context:tool:call-no-run-time",
+    )!
+    expect(tool.at).toBeNull()
+    expect(tool).toMatchObject({
+      execution: { status: "not-executed", source: "native-context" },
+      timing: {
+        unit: "unix-epoch-ms",
+        endpoints: {
+          inputAt: { at: 10_100, source: "native-context" },
+          calledAt: { at: null, source: null },
+          completedAt: { at: 10_300, source: "native-context" },
+        },
+      },
+    })
+    const ranOnlyTool = report.trajectory.events.find(
+      (event) => event.id === "msg-timing-context:tool:call-ran-only",
+    )!
+    expect(ranOnlyTool).toMatchObject({
+      at: 10_250,
+      execution: { status: "unknown", source: null },
+      timing: {
+        endpoints: {
+          calledAt: { at: 10_250, source: "native-context" },
+          completedAt: { at: null, source: null },
+        },
+      },
+    })
+    const step = report.trajectory.events.find(
+      (event) => event.id === "msg-timing-context:assistant-step",
+    )!
+    expect(step).toMatchObject({
+      status: "streamed",
+      timing: {
+        endpoints: {
+          startedAt: { at: 10_000 },
+          streamedAt: { at: 10_500 },
+          completedAt: { at: null, source: null },
+        },
+      },
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("read-only trajectory access tolerates a pre-recorded_at progress table without migration", () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_progress
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+          sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        fixture.directory,
+        "project",
+        fixture.attempts[0]!.plan_id,
+        taskID,
+        firstAttemptID,
+        "ses-failed",
+        4321,
+        "recovery",
+        '["recovery"]',
+        "commentary",
+        "[]",
+        null,
+        "msg-legacy-readonly",
+        "legacy-readonly-row",
+        '{"text":"legacy note"}',
+      )
+      db.exec("ALTER TABLE runner_progress DROP COLUMN recorded_at")
+    })
+
+    const connection = openReadOnlyTrajectoryStore(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    try {
+      const rows = connection.store.progressFacts([firstAttemptID])
+      expect(rows).toHaveLength(1)
+      expect(projectProgressFact(rows[0]!)).toMatchObject({
+        sequence: rows[0]!.seq,
+        at: 4321,
+        recordedAt: null,
+        text: "legacy note",
+      })
+    } finally {
+      connection.close()
+    }
+    const columns = fixture.store.atomic((db) =>
+      db.query<{ name: string }, []>("PRAGMA table_info(runner_progress)").all(),
+    )
+    expect(columns.some((column) => column.name === "recorded_at")).toBe(false)
   } finally {
     fixture.close()
   }

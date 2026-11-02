@@ -3,6 +3,7 @@ import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { publicProgressError, visibleProgressText } from "./privacy.ts"
 
 type JsonObject = Record<string, unknown>
+const EPOCH_MILLIS = "unix-epoch-ms" as const
 
 function object(value: unknown): JsonObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -12,6 +13,10 @@ function object(value: unknown): JsonObject | undefined {
 
 function number(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function epochMillis(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null
 }
 
 function string(value: unknown): string | null {
@@ -26,6 +31,95 @@ function list(value: string): string[] {
       : []
   } catch {
     return []
+  }
+}
+
+const TIMING_ENDPOINT_MEANINGS: Record<string, readonly [string, string][]> = {
+  tool: [
+    ["inputAt", "Tool input-started boundary"],
+    ["calledAt", "Tool call boundary; not proof that the tool executed"],
+    ["completedAt", "Tool result terminal boundary"],
+  ],
+  step: [
+    ["startedAt", "Assistant request dispatch/start boundary"],
+    ["streamedAt", "Provider response-body end before tool settlement"],
+    ["completedAt", "Assistant step terminal boundary after tool settlement"],
+  ],
+  "provider-retry": [["scheduledAt", "Provider retry scheduled boundary"]],
+  shell: [
+    ["createdAt", "Retained shell message creation; not process start"],
+    ["startedAt", "Shell process start boundary"],
+    ["completedAt", "Shell process completion boundary"],
+  ],
+  verification: [
+    ["startedAt", "LAZERS verification command start time"],
+    ["completedAt", "LAZERS verification command completion time"],
+  ],
+}
+
+function projectedTiming(kind: string, value: unknown, stats: ReturnType<typeof privacyStats>) {
+  const allowlist = TIMING_ENDPOINT_MEANINGS[kind]
+  if (!allowlist) return undefined
+  const timing = object(value)
+  const endpoints = object(timing?.endpoints) ?? {}
+  const sources = new Set(["native-event", "recovery", "runtime"])
+  return {
+    unit: EPOCH_MILLIS,
+    endpoints: Object.fromEntries(
+      allowlist.map(([key, meaning]) => {
+        const endpoint = object(endpoints[key])
+        const at = epochMillis(endpoint?.at)
+        const source = typeof endpoint?.source === "string" ? endpoint.source : null
+        const valid = at !== null && source !== null && sources.has(source)
+        return [
+          key,
+          {
+            at: valid ? at : null,
+            source: valid ? source : null,
+            sourceType:
+              valid && typeof endpoint?.sourceType === "string"
+                ? safeText(endpoint.sourceType, stats, 120)
+                : null,
+            meaning,
+          },
+        ]
+      }),
+    ),
+  }
+}
+
+function projectedProvenance(value: unknown, stats: ReturnType<typeof privacyStats>) {
+  const provenance = object(value)
+  if (!provenance) return null
+  const source = string(provenance.source)
+  return {
+    source:
+      source === "native-event" ||
+      source === "recovery" ||
+      source === "runtime" ||
+      source === "tool-hook"
+        ? source
+        : null,
+    sourceType:
+      typeof provenance.sourceType === "string"
+        ? safeText(provenance.sourceType, stats, 120)
+        : null,
+  }
+}
+
+function projectedExecution(value: unknown, stats: ReturnType<typeof privacyStats>) {
+  const execution = object(value)
+  if (!execution) return null
+  const status = string(execution.status)
+  if (status !== "executed" && status !== "not-executed" && status !== "unknown") return null
+  const source = string(execution.source)
+  return {
+    status,
+    source:
+      source === "native-event" || source === "recovery" || source === "runtime" ? source : null,
+    sourceType:
+      typeof execution.sourceType === "string" ? safeText(execution.sourceType, stats, 120) : null,
+    meaning: typeof execution.meaning === "string" ? safeText(execution.meaning, stats, 240) : null,
   }
 }
 
@@ -65,7 +159,7 @@ function projectedObservations(value: unknown, stats: ReturnType<typeof privacyS
             ? safeText(observation.eventID, stats, 200)
             : null,
         eventType: safeText(observation.eventType, stats, 120),
-        at: number(observation.at),
+        at: epochMillis(observation.at),
         status: string(observation.status),
         messageID:
           typeof observation.messageID === "string"
@@ -77,7 +171,12 @@ function projectedObservations(value: unknown, stats: ReturnType<typeof privacyS
           typeof observation.agent === "string" ? safeText(observation.agent, stats, 200) : null,
         tool: typeof observation.tool === "string" ? safeText(observation.tool, stats, 160) : null,
         route: projectedRoute(observation.route, stats),
-        startedAt: number(observation.startedAt),
+        startedAt: epochMillis(observation.startedAt),
+        unit: observation.unit === "unix-epoch-ms" ? "unix-epoch-ms" : null,
+        meaning:
+          typeof observation.meaning === "string"
+            ? safeText(observation.meaning, stats, 240)
+            : null,
       },
     ]
   })
@@ -87,10 +186,18 @@ function projectedObservations(value: unknown, stats: ReturnType<typeof privacyS
 export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
   const stats = privacyStats()
   const value = payload(row)
+  const recordedAt = epochMillis(row.recorded_at)
   const view: Record<string, unknown> = {
     id: `progress:${row.seq}`,
     sequence: row.seq,
     at: row.at,
+    recordedAt,
+    recording: {
+      recordedAt,
+      unit: EPOCH_MILLIS,
+      source: "runner-progress-store",
+      meaning: "Local persistence/change time; not a native execution endpoint",
+    },
     projectID: safeText(row.project_id, stats, 128),
     planID: safeText(row.plan_id, stats, 128),
     taskID: safeText(row.task_id, stats, 128),
@@ -113,6 +220,10 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     case "tool":
       view.tool = typeof value.tool === "string" ? safeText(value.tool, stats, 160) : null
       view.status = string(value.status)
+      view.callStatus = value.callStatus === "called" ? "called" : null
+      view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
+      view.execution = projectedExecution(value.execution, stats)
+      view.timing = projectedTiming(row.kind, value.timing, stats)
       if (typeof value.content === "string") view.result = visibleProgressText(value.content, stats)
       // Legacy arbitrary structured output is not exported either.
       if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
@@ -124,6 +235,8 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     case "step": {
       const usage = object(value.usage)
       view.status = string(value.status)
+      view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
+      view.timing = projectedTiming(row.kind, value.timing, stats)
       view.finish = string(value.finish)
       view.measurementBasis = string(value.measurementBasis)
       view.agent = typeof value.agent === "string" ? safeText(value.agent, stats, 200) : null
@@ -160,6 +273,7 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     }
     case "provider-retry":
       view.attempt = number(value.attempt)
+      view.timing = projectedTiming(row.kind, value.timing, stats)
       if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
       break
     case "execution-outcome":
@@ -181,12 +295,16 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       view.exit = number(value.exit)
       if (typeof value.output === "string") view.output = safeText(value.output, stats)
       view.truncated = value.truncated === true
+      view.timing = projectedTiming(row.kind, value.timing, stats)
       break
     case "verification":
       view.checkID =
         typeof value.checkID === "string" ? safeText(value.checkID, stats, 120) : "unknown"
       view.result = string(value.result)
       view.exitCode = number(value.exitCode)
+      view.startedAt = epochMillis(value.startedAt)
+      view.endedAt = epochMillis(value.endedAt)
+      view.timing = projectedTiming(row.kind, value.timing, stats)
       view.timedOut = typeof value.timedOut === "boolean" ? value.timedOut : null
       view.unchanged = typeof value.unchanged === "boolean" ? value.unchanged : null
       if (typeof value.artifact === "string") view.artifact = safeText(value.artifact, stats, 128)
@@ -205,7 +323,7 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     case "reminder":
       view.text = typeof value.text === "string" ? safeText(value.text, stats, 500) : ""
       view.delivery = string(value.delivery)
-      view.observedAt = number(value.reconciledAt)
+      view.observedAt = epochMillis(value.reconciledAt)
       view.nativeEventID =
         typeof value.nativeEventID === "string" ? safeText(value.nativeEventID, stats, 200) : null
       break

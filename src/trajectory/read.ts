@@ -62,12 +62,41 @@ function numberOrNull(value: unknown): number | null {
 }
 
 function dateMillis(value: unknown): number | null {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null
-  if (value === null || value === undefined) return null
-  try {
-    return DateTime.toEpochMillis(value as DateTime.DateTime)
-  } catch {
-    return null
+  let millis: number
+  if (typeof value === "number" && Number.isFinite(value)) millis = value
+  else {
+    if (value === null || value === undefined) return null
+    try {
+      millis = DateTime.toEpochMillis(value as DateTime.DateTime)
+    } catch {
+      return null
+    }
+  }
+  const integer = Math.trunc(millis)
+  return Number.isSafeInteger(integer) ? integer : null
+}
+
+const EPOCH_MILLIS = "unix-epoch-ms" as const
+
+function contextTiming(
+  endpoints: Record<string, { value: unknown; sourceType: string; meaning: string }>,
+) {
+  return {
+    unit: EPOCH_MILLIS,
+    endpoints: Object.fromEntries(
+      Object.entries(endpoints).map(([key, endpoint]) => {
+        const at = dateMillis(endpoint.value)
+        return [
+          key,
+          {
+            at,
+            source: at === null ? null : "native-context",
+            sourceType: at === null ? null : endpoint.sourceType,
+            meaning: endpoint.meaning,
+          },
+        ]
+      }),
+    ),
   }
 }
 
@@ -222,6 +251,40 @@ function messageEvents(
     if (message.type === "assistant") {
       const model = modelView(message.model, stats)
       const parts = Array.isArray(message.content) ? message.content : []
+      const messageTime = object(message.time)
+      const streamedAt = dateMillis(messageTime?.streamed)
+      const completedAt = dateMillis(messageTime?.completed)
+      const stepStatus = message.error
+        ? "failed"
+        : completedAt !== null
+          ? "ended"
+          : streamedAt !== null
+            ? "streamed"
+            : createdAt !== null
+              ? "started"
+              : "unknown"
+      add({
+        ...base(`${messageID}:assistant-step`, createdAt, "assistant-step"),
+        model,
+        status: stepStatus,
+        timing: contextTiming({
+          startedAt: {
+            value: messageTime?.created,
+            sourceType: "session-message.assistant.time.created",
+            meaning: "Retained assistant message start time",
+          },
+          streamedAt: {
+            value: messageTime?.streamed,
+            sourceType: "session-message.assistant.time.streamed",
+            meaning: "Provider response-body end before tool settlement",
+          },
+          completedAt: {
+            value: messageTime?.completed,
+            sourceType: "session-message.assistant.time.completed",
+            meaning: "Assistant completion after tool settlement",
+          },
+        }),
+      })
       for (const [partIndex, rawPart] of parts.entries()) {
         const part = object(rawPart)
         if (!part || typeof part.type !== "string") {
@@ -254,8 +317,9 @@ function messageEvents(
         const inputView =
           typeof input === "string" ? safeText(input, stats) : safeValue(input, stats)
         const toolTime = object(part.time)
-        const ranAt = dateMillis(toolTime?.ran) ?? createdAt
+        const ranAt = dateMillis(toolTime?.ran)
         const completedAt = dateMillis(toolTime?.completed)
+        const executed = typeof part.executed === "boolean" ? part.executed : null
         const content =
           status === "completed" || status === "error"
             ? safeToolContent(toolState?.content, stats)
@@ -272,23 +336,51 @@ function messageEvents(
           status: ["streaming", "running", "completed", "error"].includes(status)
             ? status
             : "unsupported",
+          callStatus: ranAt !== null || executed !== null ? "called" : null,
           input: inputView,
           result: content,
           ...(error ? { error } : {}),
           completedAt,
+          execution: {
+            status: executed === null ? "unknown" : executed ? "executed" : "not-executed",
+            source: executed === null ? null : "native-context",
+            sourceType: executed === null ? null : "session-message.assistant.tool.executed",
+            meaning:
+              "Retained explicit executed flag; called/ran time alone is not execution proof",
+          },
+          timing: contextTiming({
+            inputAt: {
+              value: toolTime?.created,
+              sourceType: "session-message.assistant.tool.time.created",
+              meaning: "Retained assistant tool input creation boundary",
+            },
+            calledAt: {
+              value: toolTime?.ran,
+              sourceType: "session-message.assistant.tool.time.ran",
+              meaning: "Retained assistant tool call boundary; not proof that the tool executed",
+            },
+            completedAt: {
+              value: toolTime?.completed,
+              sourceType: "session-message.assistant.tool.time.completed",
+              meaning: "Retained assistant tool result terminal boundary",
+            },
+          }),
         })
       }
       if (message.retry) {
         const retry = object(message.retry)
         if (retry) {
           add({
-            ...base(
-              `${messageID}:provider-retry`,
-              dateMillis(retry.at) ?? createdAt,
-              "provider-retry",
-            ),
+            ...base(`${messageID}:provider-retry`, dateMillis(retry.at), "provider-retry"),
             attempt: asNumber(retry.attempt),
             error: safeErrorView(retry.error, stats),
+            timing: contextTiming({
+              scheduledAt: {
+                value: retry.at,
+                sourceType: "session-message.assistant.retry.at",
+                meaning: "Retained provider retry scheduled time",
+              },
+            }),
           })
         }
       }
@@ -302,6 +394,7 @@ function messageEvents(
     }
     if (message.type === "shell") {
       const output = object(message.output)
+      const shellTime = object(message.time)
       add({
         ...base(messageID, createdAt, "shell"),
         command: typeof message.command === "string" ? safeText(message.command, stats) : "",
@@ -310,7 +403,24 @@ function messageEvents(
         exit: asNumber(message.exit),
         output: typeof output?.output === "string" ? safeText(output.output, stats) : "",
         outputTruncated: output?.truncated === true,
-        completedAt: dateMillis(object(message.time)?.completed),
+        completedAt: dateMillis(shellTime?.completed),
+        timing: contextTiming({
+          createdAt: {
+            value: shellTime?.created,
+            sourceType: "session-message.shell.time.created",
+            meaning: "Retained shell message creation; not process start",
+          },
+          startedAt: {
+            value: undefined,
+            sourceType: "session-message.shell.process.started",
+            meaning: "Process start is not available in the retained shell message",
+          },
+          completedAt: {
+            value: shellTime?.completed,
+            sourceType: "session-message.shell.time.completed",
+            meaning: "Retained shell completion time",
+          },
+        }),
       })
       if (output?.truncated === true) stats.truncated++
       continue

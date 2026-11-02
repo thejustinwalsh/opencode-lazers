@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
-import { SnapshotOutput } from "./contract.ts"
+import { RadarOutput, SnapshotOutput } from "./contract.ts"
 import {
   makeFixture,
   taskID,
@@ -142,6 +142,60 @@ test("session snapshots expose actual machine topology and recorded transitions 
       transitions: db.query("SELECT id FROM runner_transitions ORDER BY id").all(),
     }))
     expect(after).toEqual(before)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Radar reads legacy progress rows without recorded_at and performs no schema migration", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) => {
+      db.query(
+        `INSERT INTO runner_progress
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+          sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        fixture.directory,
+        "project",
+        fixture.attempts[0]!.plan_id,
+        taskID,
+        firstAttemptID,
+        "ses-failed",
+        4321,
+        "recovery",
+        '["recovery"]',
+        "tool",
+        "[]",
+        "legacy-call",
+        "msg-legacy-radar",
+        "legacy-radar-row",
+        '{"tool":"Bash","status":"unknown","observations":[]}',
+      )
+      db.exec("ALTER TABLE runner_progress DROP COLUMN recorded_at")
+    })
+    const secret = new Uint8Array(32).fill(17)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const reads = radarReads(
+      fixture,
+      radarHost([
+        radarSession("ses-owner"),
+        radarSession("ses-failed", { parentID: "ses-owner", directory: fixture.directory }),
+      ]),
+      secret,
+    )
+    const result = await reads.radar(
+      { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
+      tracker,
+      new AbortController().signal,
+    )
+    expect(RadarOutput.safeParse(result).success).toBe(true)
+    const columns = fixture.store.atomic((db) =>
+      db.query<{ name: string }, []>("PRAGMA table_info(runner_progress)").all(),
+    )
+    expect(columns.some((column) => column.name === "recorded_at")).toBe(false)
   } finally {
     fixture.close()
   }
