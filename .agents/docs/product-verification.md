@@ -47,6 +47,13 @@ The first worker qualification is recorded in
 
 ## Preconditions and setup
 
+The launcher starts the installed OpenCode developer tool through its supported
+lifecycle. This is outside the Portless project-server rule, including for an
+isolated candidate profile; an unavailable Portless skill does not block this
+native host. Project-owned development/preview/verification servers still need
+Portless. Do not add Portless as a plugin dependency or change OpenCode's service
+endpoint to satisfy a rule intended for project servers.
+
 1. Confirm the native-control permission and use a throwaway, no-secret fixture.
    If native Desktop interaction is unavailable, record the limitation and do
    not launch the app. Confirm the driving service and URL handler without
