@@ -189,7 +189,7 @@ export function registerProgress(
         input: z.toJSONSchema(ProgressInput, { io: "input" }),
         output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
         options: {
-          codemode: false,
+          codemode: true,
           permission: "lazers_report_progress",
         },
         execute: (input, call) =>

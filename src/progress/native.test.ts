@@ -148,7 +148,7 @@ test("registered report tool, hook, native events, and recovery share one record
           yield* registerProgress(ctx.context, recorder, "project")
           const report = ctx.tools.get("lazers_report_progress")!
           expect(report.options).toMatchObject({
-            codemode: false,
+            codemode: true,
             permission: "lazers_report_progress",
           })
           const result = yield* report.execute(
