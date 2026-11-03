@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import captured from "../../test/models-identity/fixtures/captured-20261103.json" with { type: "json" }
 import capturedAnthropicAliases from "../../test/models-identity/fixtures/captured-anthropic-aliases-20261103.json" with { type: "json" }
+import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -18,6 +19,14 @@ if (nativeFixture.source !== "native-catalog" || catalogFixture.source !== "open
 const nativeSnapshot = nativeFixture
 const catalogSnapshot = catalogFixture
 const capturedProject = captured.projectDirectory
+const goNativeFixture = ModelEvidenceSnapshotSchema.parse(capturedGo.native.snapshot)
+const goCatalogFixture = ModelEvidenceSnapshotSchema.parse(capturedGo.openrouter.snapshot)
+
+if (goNativeFixture.source !== "native-catalog" || goCatalogFixture.source !== "openrouter-models")
+  throw new Error("Captured OpenCode Go model group fixture has an unexpected source")
+
+const goNativeSnapshot = goNativeFixture
+const goCatalogSnapshot = goCatalogFixture
 
 function directory() {
   return mkdtempSync(join(tmpdir(), "lazers-model-groups-"))
@@ -455,6 +464,193 @@ test("captured direct Anthropic Haiku and Sonnet punctuation aliases retain cite
       })
     }
     expect(groups.context.snapshots["openrouter-models"]).toBe(catalog.snapshotID)
+  } finally {
+    stores.reader.close()
+    stores.writer.close()
+    rmSync(stores.root, { recursive: true, force: true })
+  }
+})
+
+test("OpenCode Go and OpenRouter routes share products without merging measurements or efforts", () => {
+  const projectDirectory = `/portable-project/${crypto.randomUUID()}`
+  const native = ModelEvidenceSnapshotSchema.parse({
+    ...goNativeSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    retrievedAt: "2026-11-03T22:30:00.000Z",
+  }) as Extract<ModelEvidenceSnapshot, { source: "native-catalog" }>
+  const catalog = ModelEvidenceSnapshotSchema.parse({
+    ...goCatalogSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    retrievedAt: "2026-11-03T22:31:00.000Z",
+  }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+  const stores = createStores(projectDirectory, {
+    native,
+    catalog,
+    nativeRecordIndexes: capturedGo.native.originalRecordIndices,
+    catalogRecordIndexes: capturedGo.openrouter.originalRecordIndices,
+  })
+  try {
+    const groups = readModelGroups(stores.reader, { limit: 100 })
+    expect(groups).toMatchObject({
+      totalGroups: 2,
+      context: {
+        snapshots: {
+          "native-catalog": native.snapshotID,
+          "openrouter-models": catalog.snapshotID,
+        },
+      },
+    })
+    expect(
+      groups.groups.map(
+        ({ groupID, productID, configurationCount, nativeRecordCount, catalogRecordCount }) => [
+          groupID,
+          productID,
+          configurationCount,
+          nativeRecordCount,
+          catalogRecordCount,
+        ],
+      ),
+    ).toEqual([
+      ["moonshotai/kimi-k3.1-pro", "moonshotai/kimi-k3.1-pro", 7, 2, 1],
+      ["qwen/qwen3.8-flash", "qwen/qwen3.8-flash", 7, 2, 1],
+    ])
+    expect(
+      groups.sources.find(({ source }) => source === "openrouter-models")?.snapshot,
+    ).toMatchObject({
+      snapshotID: catalog.snapshotID,
+      generation: 1,
+      retrievedAt: catalog.retrievedAt,
+    })
+
+    for (const [
+      groupID,
+      goModelID,
+      openrouterModelID,
+      goEfforts,
+      openrouterEfforts,
+      nativeIndexes,
+      catalogIndex,
+      contextTokens,
+    ] of [
+      [
+        "moonshotai/kimi-k3.1-pro",
+        "kimi-k3.1-pro",
+        "moonshotai/kimi-k3.1-pro",
+        ["high", "low", "max"],
+        ["high", "low", "max", "none"],
+        [10, 11],
+        7,
+        1048576,
+      ],
+      [
+        "qwen/qwen3.8-flash",
+        "qwen3.8-flash",
+        "qwen/qwen3.8-flash",
+        ["low", "medium", "none", "xhigh"],
+        ["high", "max", "none"],
+        [119, 120],
+        97,
+        1000000,
+      ],
+    ] as const) {
+      const group = groups.groups.find((candidate) => candidate.groupID === groupID)!
+      const page = readModelConfigurations(stores.reader, {
+        groupID,
+        context: groups.context,
+        limit: 100,
+      })
+      expect(page.totalConfigurations).toBe(7)
+      expect(new Set(page.configurations.map(({ configurationID }) => configurationID)).size).toBe(
+        7,
+      )
+      const goConfigurations = page.configurations.filter(
+        ({ route }) => route.providerID === "opencode-go",
+      )
+      const openrouterConfigurations = page.configurations.filter(
+        ({ route }) => route.providerID === "openrouter",
+      )
+      expect(goConfigurations.map(({ route }) => [route.modelID, route.variant]).sort()).toEqual(
+        goEfforts.map((effort) => [goModelID, effort]).sort(),
+      )
+      expect(
+        openrouterConfigurations.map(({ route }) => [route.modelID, route.variant]).sort(),
+      ).toEqual(openrouterEfforts.map((effort) => [openrouterModelID, effort]).sort())
+      expect(
+        goConfigurations.every(
+          ({ configurationID }) =>
+            !openrouterConfigurations.some(
+              (candidate) => candidate.configurationID === configurationID,
+            ),
+        ),
+      ).toBe(true)
+      expect(
+        [...group.nativeEvidence.records]
+          .map(({ recordIndex }) => recordIndex)
+          .sort((left, right) => left - right),
+      ).toEqual([...nativeIndexes].sort((left, right) => left - right))
+      expect(group.nativeEvidence.recordCount).toBe(2)
+      expect(group.catalogEvidence.records.map(({ recordIndex }) => recordIndex)).toEqual([
+        catalogIndex,
+      ])
+      expect(group.catalogEvidence.recordCount).toBe(1)
+
+      for (const configuration of page.configurations) {
+        const expectedNativeRecordIndex =
+          configuration.route.providerID === "opencode-go" ? nativeIndexes[0] : nativeIndexes[1]
+        expect(configuration).toMatchObject({
+          groupID,
+          candidateID: configuration.configurationID,
+          native: {
+            contextTokens,
+            prices: null,
+            evidence: {
+              recordCount: 1,
+              records: [expect.objectContaining({ recordIndex: expectedNativeRecordIndex })],
+            },
+          },
+          externalCatalog: {
+            model: {
+              id: groupID,
+              contextLength: contextTokens,
+              canonicalSlug: expect.stringMatching(/-(?:20261023|20260826)$/),
+              prices: { unit: "USD per token" },
+            },
+            evidence: {
+              recordCount: 1,
+              records: [
+                expect.objectContaining({
+                  snapshotID: catalog.snapshotID,
+                  recordIndex: catalogIndex,
+                  recordID: groupID,
+                }),
+              ],
+            },
+          },
+          benchmarkCorrespondence: { status: "unresolved", basis: null },
+          effortApplicability: { status: "unknown" },
+        })
+        expect(configuration.identity.evidence.catalog).toEqual([
+          expect.objectContaining({
+            snapshotID: catalog.snapshotID,
+            recordIndex: catalogIndex,
+            recordID: groupID,
+          }),
+        ])
+        for (const citation of configuration.identity.rules.flatMap((rule) => rule.citations ?? []))
+          if (citation.snapshotID !== null) expect(citation.snapshotID).toBe(catalog.snapshotID)
+      }
+
+      const goConfigByEffort = new Map(
+        goConfigurations.map((configuration) => [configuration.route.variant, configuration]),
+      )
+      for (const routed of openrouterConfigurations) {
+        const direct = goConfigByEffort.get(routed.route.variant)
+        if (direct) expect(direct.configurationID).not.toBe(routed.configurationID)
+      }
+      expect(group.groupID).not.toBe(page.configurations[0]?.externalCatalog.model?.canonicalSlug)
+    }
   } finally {
     stores.reader.close()
     stores.writer.close()
