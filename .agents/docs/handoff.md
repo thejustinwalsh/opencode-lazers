@@ -53,8 +53,12 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
   in its original worktree. Old service54033 disappeared around15:26:49; Desktop
   auto-started47672 at15:27:16. Root issued only View→Reload, no service stop or
   location reload. Cause is not proved. Reconciliation reports worker interrupted
-  and unknown native idle background observation in this new host. Main is
-  investigating supported same-worker recovery; do not replay or fabricate idle.
+  and unknown native idle background observation in this new host. Main used
+  supported cancel/resume: cancellation settled with work retained and no uncertain
+  runner effects, then resumed the SAME attempt/session/tree/route/usage. At Unix
+  ms1793738194458 the original worker is active and toolCount advanced34. The old
+  background uncertainty remains recorded, not fabricated idle. A proportional
+  restart-recovery fix remains under Main's investigation.
 - Root has completed the renderer lane and explicitly RELEASED the temporary
   local-inference hold through Desktop. Main can task/execute again. All six
   switches remain on; after the earlier reload an error recovered automatically,
