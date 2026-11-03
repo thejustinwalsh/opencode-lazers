@@ -1,6 +1,47 @@
 # LAZERS current handoff
 
-2026-11-02, approximately 21:32 UTC. Recheck native state before acting.
+2026-11-03, approximately 00:33 UTC. Recheck native state before acting.
+
+## Latest checkpoint — takes precedence over the older snapshot below
+
+- User chose the exact attached Models comparison mockup. It is saved as
+  `design/models-panel/models-approved.png` (original `models-compare-v1.png`).
+  It supersedes v2 as the visual target. DESIGN.md and the Models review now
+  point to it. Keep OpenCode theme/fonts, comparison-first composition,
+  narrow chart-over-table / wide chart-beside-table, horizontal lower inspector,
+  collapsed evidence and secondary assignments. The image's numbers/curve are
+  illustrative; use real compatible observations. Do not resume the rejected UI.
+- Main source remains at 011e5e4 before this design checkpoint. Native Architect
+  merged corrected prerequisite runtime as 6d620de. Its scoped background
+  verification sh_19e3394d5001bvkiZpq3rDZoGi exited 0; this is not a full-repo or
+  live activation claim. All six previous native workers returned artifacts:
+  LZ77 8ebdce9, LZ78 05d2355, LZ79 7aabc47 (merged), LZ80 6ea1091,
+  LZ81 ad45e8a, LZ82 0e13a75. Native visual/activation gates remain open.
+- Root prepared tested corrections against exact returned artifacts, without
+  modifying their trees or task DB:
+  `.agents/docs/evidence/models-accounting/openrouter-source-correction.json`
+  and `accounting-route-correction.json`. Decode each `patch` field and apply
+  through native review/correction flows. LZ77 handles actual -1 dynamic prices
+  as unknown, preserves real zero prices and raw UTC price overrides. Corrected
+  real reprobe succeeded: 470 native / 415 OpenRouter models / 152 benchmarks;
+  source/store tests 11 with 65 assertions. Registered RPC/UI proof still open.
+  LZ78 retains progress attempt ownership and avoids fabricated historical
+  mismatch comparisons for ambiguous shared sessions; 21 tests / 181 assertions.
+  Review notes link from design/models-panel/review.md. Neither correction has
+  yet been relayed to Architect or integrated into its returned artifact.
+- Main service PID7793 and Architect ses_e68a9ed37ffeVqzPWRXN5SB7Uw are preserved.
+  Read-only API at Unix ms1793663570577 confirmed Main waiting on the Namespace
+  cutover interview. Choose Quiet-boundary cutover (Recommended), then relay the
+  two tested corrections and the approved mockup through Desktop. No legacy
+  aliases needed. Current workers returned, but verify actual quiet boundary
+  before activation. Preserve the full roadmap and native acceptance gates.
+- User answered Unlocked, but a fresh Computer Use call still explicitly reported
+  macOS locked. A new concise unlock question is pending. Do not infer Desktop
+  input succeeded. Later worker conclusion read timed out; do not treat that
+  alone as service failure or restart by assumption.
+
+## Earlier snapshot (historical states below need reconciliation)
+
 Full objective: complete the four phases in [roadmap](../../design/roadmap.md)
 through native Architect dogfood, verify the product, then propose improvements
 from observations. This checkpoint is not completion.

@@ -85,6 +85,14 @@ measurement scope; unknown cost remains unknown. Never expose private reasoning.
 
 ## Models
 
+Approved visual reference: [models-approved](design/models-panel/models-approved.png).
+Use its narrow/wide composition: Compare first, compact filters, chart and
+candidate rows above a horizontal split, selected-model estimate and trajectories
+below, collapsed evidence, and a small assignment action. Assignments is secondary.
+In narrow panels the chart sits above the table; wide panels place them beside
+each other. Inherit OpenCode theme and fonts. Example values and the drawn curve
+are illustrative; derive actual points and the frontier from compatible records.
+
 Help choose a capable model that completes the intended work efficiently, using
 our research, live catalogs/prices/benchmarks and historical task outcomes. The
 primary view is **comparison for a task class/persona**, not a config editor.

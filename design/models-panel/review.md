@@ -1,5 +1,20 @@
 # Models visual refinement
 
+## Approved implementation reference
+
+The user selected [models-approved.png](models-approved.png), the exact attached
+image originally saved as `models-compare-v1.png`. This supersedes v2 as the
+visual target. Preserve its focused narrow/wide hierarchy: comparison and filters,
+chart plus candidate rows, horizontal split, selected-model estimate and trajectory
+link, collapsed evidence and a compact assignment action. Assignments remains
+secondary. Use native OpenCode fonts and reactive theme tokens.
+
+Retain the data and accessibility findings from Tera's reviews: real comparable
+cohorts, honest missing data, sourced cost estimates, an accessible table and a
+non-color selected-point cue. The illustrative curve and numeric examples are
+not implementation data. Review actual connected narrow/wide screenshots against
+this approved image; do not redesign the composition from the older editor.
+
 ## Product purpose
 
 The user explicitly rejected and cancelled the old Models editor UI task and
@@ -81,7 +96,8 @@ All numeric examples in this image are illustrative, not historical observations
 The next round corrects the extrapolated smooth frontier, inconsistent evidence
 shapes/values, incomplete text alternative and missing unknown-history case.
 
-Tera reviewed `models-compare-v2.png` and considers it ready to guide implementation.
+Tera reviewed `models-compare-v2.png`; the user subsequently chose v1's composition
+as the implementation reference above.
 The selected plot point also needs a non-color selection cue. Actual code must
 define comparable cohorts/quality eligibility, derive estimate ranges/confidence
 from data, preserve unknown routes and expose source freshness/coverage. Raster
@@ -110,7 +126,8 @@ The first adapter run retained 470 native records and 152 coding benchmarks,
 but rejected the successful OpenRouter models response because of dynamic-price
 sentinels. Correct these before claiming the corresponding data paths complete.
 
-Reuse existing queued work and LZ-68's functional editor. Specify small increments
+Reuse existing queued work and useful LZ-68 backend behavior, replacing its rejected
+editor composition. Specify small increments
 for source observations/identity mapping; historical cohorts/accounting and task
 estimates; the comparison view; and live persona assignment resolution at dispatch.
 These are boundaries to decompose, not four prewritten epic-sized tasks. Keep
