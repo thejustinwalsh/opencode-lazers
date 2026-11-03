@@ -92,13 +92,17 @@ export class ModelComparisonPanelState {
   private taskController = new AbortController()
   private generation = 0
   private comparisonRequest = 0
+  private comparisonRevision = 0
   private taskRequest = 0
   private settingsRequest = 0
+  private selectionRevision = 0
   private transport?: ModelComparisonTransport
   private projectID = ""
   private projectDirectory = ""
   private sourceRefreshPromise?: Promise<void>
   private comparisonPromise?: Promise<void>
+  private taskListPromise?: Promise<void>
+  private refreshPromise?: Promise<void>
   private comparisonNeedsRefresh = false
 
   constructor(
@@ -126,11 +130,12 @@ export class ModelComparisonPanelState {
     this.projectDirectory = projectDirectory
     this.data = blank(key, projectID, projectDirectory, preferences)
     const generation = this.generation
+    const selectionRevision = this.selectionRevision
 
     // Invoke the cached bounded projection before starting the independent refresh.
     void this.refreshComparison(generation)
     void this.loadTasks(generation, preferences.selectedTaskID ?? undefined)
-    void this.loadSettings(generation, preferences.selectedTaskID ?? undefined)
+    void this.loadSettings(generation, preferences.selectedTaskID ?? undefined, selectionRevision)
     void this.refreshSources(generation)
   }
 
@@ -159,6 +164,7 @@ export class ModelComparisonPanelState {
         )
           ? this.data.selectedCandidateID
           : (this.data.selectedCandidateID ?? candidates[0]?.candidateID ?? null)
+        this.comparisonRevision++
         this.update({
           comparison: output,
           candidates,
@@ -174,7 +180,7 @@ export class ModelComparisonPanelState {
             selectedCandidateID,
           })
       } catch (error) {
-        if (generation === this.generation && !signal.aborted)
+        if (generation === this.generation && request === this.comparisonRequest && !signal.aborted)
           this.update({
             comparisonLoading: false,
             comparisonError: error instanceof Error ? error.message : String(error),
@@ -197,15 +203,26 @@ export class ModelComparisonPanelState {
   async moreCandidates() {
     const cursor = this.data.comparison?.nextCursor
     if (!cursor || this.data.comparisonLoading) return
+    const generation = this.generation
+    const signal = this.controller.signal
+    const comparisonRevision = this.comparisonRevision
     const before = this.data.candidates.length
     const output = this.data.comparison
-    await this.refreshComparison(this.generation, cursor)
+    await this.refreshComparison(generation, cursor)
+    // The awaited page may belong to a connection that was replaced or hidden.
+    // In particular, never let this rollback publish the old connection's cache.
+    if (
+      generation !== this.generation ||
+      signal.aborted ||
+      this.comparisonRevision !== comparisonRevision + 1
+    )
+      return
+    const current = this.data.comparison
     if (
       output &&
-      this.data.comparison &&
+      current &&
       output.sources.some(
-        (source, index) =>
-          source.selectedSnapshotID !== this.data.comparison?.sources[index]?.selectedSnapshotID,
+        (source, index) => source.selectedSnapshotID !== current.sources[index]?.selectedSnapshotID,
       )
     ) {
       this.update({
@@ -220,11 +237,23 @@ export class ModelComparisonPanelState {
 
   async refresh() {
     if (!this.transport || this.controller.signal.aborted) return
-    await Promise.all([
-      this.refreshComparison(),
-      this.loadTasks(this.generation, this.data.selectedTaskID ?? undefined),
-      this.refreshSources(this.generation),
-    ])
+    if (this.refreshPromise) return this.refreshPromise
+
+    const generation = this.generation
+    const selectedTaskID = this.data.selectedTaskID
+    const selectionRevision = this.selectionRevision
+    const operation = Promise.all([
+      this.loadTasks(generation, selectedTaskID ?? undefined),
+      this.refreshSources(generation),
+      selectedTaskID
+        ? this.loadSelectedTask(generation, selectedTaskID, selectionRevision)
+        : Promise.resolve(),
+      this.loadSettings(generation, selectedTaskID ?? undefined, selectionRevision),
+    ]).then(() => undefined)
+    this.refreshPromise = operation
+    await operation
+    if (generation === this.generation && this.refreshPromise === operation)
+      this.refreshPromise = undefined
   }
 
   async refreshSources(generation = this.generation): Promise<void> {
@@ -267,6 +296,7 @@ export class ModelComparisonPanelState {
   selectTask(taskID: string | null) {
     if (taskID === this.data.selectedTaskID) return
     if (taskID && !this.data.tasks.some((task) => task.taskID === taskID)) return
+    const selectionRevision = ++this.selectionRevision
     this.taskController.abort()
     this.taskController = new AbortController()
     this.taskRequest++
@@ -288,37 +318,53 @@ export class ModelComparisonPanelState {
       selectedCandidateID: this.data.selectedCandidateID,
     })
     const generation = this.generation
-    void this.loadSettings(generation, taskID ?? undefined)
-    if (taskID) void this.loadSelectedTask(generation, taskID)
+    void this.loadSettings(generation, taskID ?? undefined, selectionRevision)
+    if (taskID) void this.loadSelectedTask(generation, taskID, selectionRevision)
   }
 
   private async loadTasks(generation: number, preferredTaskID?: string) {
+    if (this.taskListPromise) return this.taskListPromise
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
     const signal = this.controller.signal
-    try {
-      const page = await transport.queryTasks(signal)
-      if (generation !== this.generation || signal.aborted) return
-      if (page.projectDirectory !== this.projectDirectory)
-        throw new Error("Task list belongs to another project")
-      this.update({ tasks: page.tasks, tasksLoading: false, tasksError: "" })
-      const current = preferredTaskID ?? this.data.selectedTaskID
-      const selected = current ?? page.tasks[0]?.taskID ?? null
-      if (selected !== this.data.selectedTaskID) this.selectTask(selected)
-      else if (selected && !this.data.task && !this.taskController.signal.aborted)
-        await this.loadSelectedTask(generation, selected)
-      else if (!selected && this.data.selectedTaskID !== null) this.selectTask(null)
-    } catch (error) {
-      if (generation === this.generation && !signal.aborted)
-        this.update({
-          tasksLoading: false,
-          tasksError: error instanceof Error ? error.message : String(error),
-          stale: true,
-        })
-    }
+    const selectionRevision = this.selectionRevision
+    this.update({ tasksLoading: true, tasksError: "" })
+    const operation = (async () => {
+      try {
+        const page = await transport.queryTasks(signal)
+        if (generation !== this.generation || signal.aborted) return
+        if (page.projectDirectory !== this.projectDirectory)
+          throw new Error("Task list belongs to another project")
+        this.update({ tasks: page.tasks, tasksLoading: false, tasksError: "" })
+        const current =
+          selectionRevision === this.selectionRevision
+            ? (preferredTaskID ?? this.data.selectedTaskID)
+            : this.data.selectedTaskID
+        const selected = current ?? page.tasks[0]?.taskID ?? null
+        if (selected !== this.data.selectedTaskID) this.selectTask(selected)
+        else if (selected && !this.data.task && !this.taskController.signal.aborted)
+          await this.loadSelectedTask(generation, selected, this.selectionRevision)
+        else if (!selected && this.data.selectedTaskID !== null) this.selectTask(null)
+      } catch (error) {
+        if (generation === this.generation && !signal.aborted)
+          this.update({
+            tasksLoading: false,
+            tasksError: error instanceof Error ? error.message : String(error),
+            stale: true,
+          })
+      }
+    })()
+    this.taskListPromise = operation
+    await operation
+    if (generation === this.generation && this.taskListPromise === operation)
+      this.taskListPromise = undefined
   }
 
-  private async loadSelectedTask(generation: number, taskID: string) {
+  private async loadSelectedTask(
+    generation: number,
+    taskID: string,
+    selectionRevision = this.selectionRevision,
+  ) {
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
     this.taskController.abort()
@@ -326,16 +372,16 @@ export class ModelComparisonPanelState {
     const taskRequest = ++this.taskRequest
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
     this.update({ taskLoading: true, taskError: "", effortLoading: true, effortError: "" })
-    const detailRead = transport.getTask(taskID, signal)
-    const effortRead = transport.trajectoryStatus(taskID, signal)
+    const detailRead = Promise.resolve().then(() => transport.getTask(taskID, signal))
+    const effortRead = Promise.resolve().then(() => transport.trajectoryStatus(taskID, signal))
     const [detailResult, effortResult] = await Promise.allSettled([detailRead, effortRead])
-    if (
-      generation !== this.generation ||
-      taskRequest !== this.taskRequest ||
-      signal.aborted ||
-      this.data.selectedTaskID !== taskID
-    )
-      return
+    const isCurrent = () =>
+      generation === this.generation &&
+      taskRequest === this.taskRequest &&
+      selectionRevision === this.selectionRevision &&
+      !signal.aborted &&
+      this.data.selectedTaskID === taskID
+    if (!isCurrent()) return
 
     if (detailResult.status === "fulfilled") {
       const detail = detailResult.value
@@ -345,20 +391,23 @@ export class ModelComparisonPanelState {
         else this.update({ task: detail, taskError: "" })
       } else {
         this.update({ task: undefined, taskError: "The selected task is no longer available." })
-        if (!this.data.tasks.some((task) => task.taskID === taskID))
+        if (!this.data.tasks.some((task) => task.taskID === taskID)) {
           this.selectTask(this.data.tasks[0]?.taskID ?? null)
+          return
+        }
       }
     } else {
       this.update({
-        task: undefined,
         taskError:
           detailResult.reason instanceof Error
             ? detailResult.reason.message
             : String(detailResult.reason),
       })
     }
+    if (!isCurrent()) return
     this.update({ taskLoading: false })
 
+    if (!isCurrent()) return
     if (effortResult.status === "fulfilled") {
       const response = effortResult.value
       const report =
@@ -389,24 +438,35 @@ export class ModelComparisonPanelState {
       }
     } else {
       this.update({
-        effortBasis: undefined,
         effortError:
           effortResult.reason instanceof Error
             ? effortResult.reason.message
             : String(effortResult.reason),
       })
     }
+    if (!isCurrent()) return
     this.update({ effortLoading: false })
   }
 
-  private async loadSettings(generation: number, taskID?: string) {
+  private async loadSettings(
+    generation: number,
+    taskID?: string,
+    selectionRevision = this.selectionRevision,
+  ) {
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
     const request = ++this.settingsRequest
     const signal = this.controller.signal
+    this.update({ settingsLoading: true, settingsError: "" })
     try {
       const settings = await transport.settings(taskID, signal)
-      if (generation !== this.generation || request !== this.settingsRequest || signal.aborted)
+      if (
+        generation !== this.generation ||
+        request !== this.settingsRequest ||
+        selectionRevision !== this.selectionRevision ||
+        taskID !== (this.data.selectedTaskID ?? undefined) ||
+        signal.aborted
+      )
         return
       if (
         settings.projectDirectory !== this.projectDirectory ||
@@ -415,7 +475,13 @@ export class ModelComparisonPanelState {
         throw new Error("Saved model settings belong to another project or task")
       this.update({ settings, settingsLoading: false, settingsError: "" })
     } catch (error) {
-      if (generation === this.generation && request === this.settingsRequest && !signal.aborted)
+      if (
+        generation === this.generation &&
+        request === this.settingsRequest &&
+        selectionRevision === this.selectionRevision &&
+        taskID === (this.data.selectedTaskID ?? undefined) &&
+        !signal.aborted
+      )
         this.update({
           settingsLoading: false,
           settingsError: error instanceof Error ? error.message : String(error),
@@ -428,6 +494,7 @@ export class ModelComparisonPanelState {
     this.comparisonRequest++
     this.taskRequest++
     this.settingsRequest++
+    this.selectionRevision++
     this.controller.abort()
     this.taskController.abort()
     this.transport = undefined
@@ -435,6 +502,8 @@ export class ModelComparisonPanelState {
     this.projectDirectory = ""
     this.sourceRefreshPromise = undefined
     this.comparisonPromise = undefined
+    this.taskListPromise = undefined
+    this.refreshPromise = undefined
     this.comparisonNeedsRefresh = false
   }
 }
