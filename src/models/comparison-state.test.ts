@@ -677,12 +677,218 @@ test("pending refresh for A cannot reselect A or replace B's detail, effort, or 
   }
 })
 
+async function pendingBSelectionSurvivesTaskListRefresh(firstSettled: "detail" | "effort") {
+  const pendingTasks = deferred<TaskPage>()
+  const refreshDetailA = deferred<TaskDetail>()
+  const refreshEffortA = deferred<TrajectoryResponse>()
+  const pendingDetailB = deferred<TaskDetail>()
+  const pendingEffortB = deferred<TrajectoryResponse>()
+  let detailBSettled = false
+  let effortBSettled = false
+  const detailBResult = pendingDetailB.promise.then((result) => {
+    detailBSettled = true
+    return result
+  })
+  const effortBResult = pendingEffortB.promise.then((result) => {
+    effortBSettled = true
+    return result
+  })
+  let queryCount = 0
+  let detailACount = 0
+  let effortACount = 0
+  let detailBCount = 0
+  let effortBCount = 0
+  const bSignals: AbortSignal[] = []
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      comparison: async () => comparison(["cached"]),
+      queryTasks: async () => {
+        queryCount++
+        return queryCount === 1 ? tasks([idA, idB]) : pendingTasks.promise
+      },
+      getTask: async (taskID, signal) => {
+        if (taskID === idA) {
+          detailACount++
+          return detailACount === 1 ? detail(idA, "project-a", "A cached") : refreshDetailA.promise
+        }
+        detailBCount++
+        bSignals.push(signal)
+        if (detailBCount === 1) return detailBResult
+        throw new Error("replacement B detail failed")
+      },
+      trajectoryStatus: async (taskID, signal) => {
+        if (taskID === idA) {
+          effortACount++
+          return effortACount === 1 ? trajectory(idA, 111) : refreshEffortA.promise
+        }
+        effortBCount++
+        bSignals.push(signal)
+        if (effortBCount === 1) return effortBResult
+        throw new Error("replacement B effort failed")
+      },
+      settings: async (taskID) => settings(taskID),
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+
+  try {
+    await until(
+      () =>
+        state.data.task !== undefined &&
+        state.data.effortBasis !== undefined &&
+        !state.data.tasksLoading,
+    )
+    const refresh = state.refresh()
+    await until(() => detailACount === 2 && effortACount === 2)
+
+    state.selectTask(idB)
+    await until(() => detailBCount === 1 && effortBCount === 1)
+    expect(bSignals).toHaveLength(2)
+    expect(bSignals[0]).toBe(bSignals[1])
+
+    if (firstSettled === "detail") {
+      pendingDetailB.resolve(detail(idB, "project-a", "B detail"))
+      await until(() => detailBSettled)
+    } else {
+      pendingEffortB.resolve(trajectory(idB, 222))
+      await until(() => effortBSettled)
+    }
+
+    pendingTasks.resolve(tasks([idA, idB]))
+    await until(() => !state.data.tasksLoading)
+    expect(detailBCount).toBe(1)
+    expect(effortBCount).toBe(1)
+    expect(bSignals[0]?.aborted).toBe(false)
+    expect(bSignals[1]?.aborted).toBe(false)
+
+    if (firstSettled === "detail") pendingEffortB.resolve(trajectory(idB, 222))
+    else pendingDetailB.resolve(detail(idB, "project-a", "B detail"))
+    await until(
+      () =>
+        state.data.task?.task.proposal.objective === "B detail" &&
+        state.data.effortBasis?.usage.categories.uncachedInput.value === 222 &&
+        !state.data.taskLoading &&
+        !state.data.effortLoading,
+    )
+
+    expect(state.data.taskError).toBe("")
+    expect(state.data.effortError).toBe("")
+    expect(state.data.selectedTaskID).toBe(idB)
+    expect(bSignals[0]?.aborted).toBe(false)
+    expect(bSignals[1]?.aborted).toBe(false)
+
+    refreshDetailA.resolve(detail(idA, "project-a", "Stale A detail"))
+    refreshEffortA.resolve(trajectory(idA, 999))
+    await refresh
+    expect(state.data.task?.task.proposal.objective).toBe("B detail")
+    expect(state.data.effortBasis?.usage.categories.uncachedInput.value).toBe(222)
+  } finally {
+    state.close()
+  }
+}
+
+test("pending B detail survives completion of A's refreshed task list", async () => {
+  await pendingBSelectionSurvivesTaskListRefresh("detail")
+})
+
+test("pending B effort survives completion of A's refreshed task list", async () => {
+  await pendingBSelectionSurvivesTaskListRefresh("effort")
+})
+
+test("reconnecting does not reuse or publish obsolete selected-task reads", async () => {
+  const oldDetail = deferred<TaskDetail>()
+  const oldEffort = deferred<TrajectoryResponse>()
+  let oldDetailCount = 0
+  let oldEffortCount = 0
+  const oldSignals: AbortSignal[] = []
+  const newSignals: AbortSignal[] = []
+  const changes: unknown[] = []
+  const state = new ModelComparisonPanelState((data) => changes.push(data))
+  state.connect(
+    "session-a",
+    "project-a",
+    "/repo",
+    transport({
+      comparison: async () => comparison(["old"]),
+      queryTasks: async () => tasks([idA]),
+      getTask: async (_taskID, signal) => {
+        oldDetailCount++
+        oldSignals.push(signal)
+        return oldDetail.promise
+      },
+      trajectoryStatus: async (_taskID, signal) => {
+        oldEffortCount++
+        oldSignals.push(signal)
+        return oldEffort.promise
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  await until(() => oldDetailCount === 1 && oldEffortCount === 1)
+
+  state.connect(
+    "session-b",
+    "project-a",
+    "/repo",
+    transport({
+      comparison: async () => comparison(["new"]),
+      queryTasks: async () => tasks([idA]),
+      getTask: async (_taskID, signal) => {
+        newSignals.push(signal)
+        return detail(idA, "project-a", "New session detail")
+      },
+      trajectoryStatus: async (_taskID, signal) => {
+        newSignals.push(signal)
+        return trajectory(idA, 222)
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+
+  try {
+    await until(
+      () =>
+        state.data.key === "session-b" &&
+        state.data.task?.task.proposal.objective === "New session detail" &&
+        state.data.effortBasis?.usage.categories.uncachedInput.value === 222 &&
+        !state.data.tasksLoading &&
+        !state.data.taskLoading &&
+        !state.data.effortLoading &&
+        !state.data.settingsLoading,
+    )
+    expect(oldSignals).toHaveLength(2)
+    expect(oldSignals[0]?.aborted).toBe(true)
+    expect(oldSignals[1]?.aborted).toBe(true)
+    expect(newSignals).toHaveLength(2)
+    expect(newSignals[0]).toBe(newSignals[1])
+    expect(newSignals[0]?.aborted).toBe(false)
+
+    await tick()
+    const changesAfterNewResult = changes.length
+    oldDetail.resolve(detail(idA, "project-a", "Stale session detail"))
+    oldEffort.resolve(trajectory(idA, 999))
+    await tick()
+
+    expect(changes).toHaveLength(changesAfterNewResult)
+    expect(state.data.key).toBe("session-b")
+    expect(state.data.task?.task.proposal.objective).toBe("New session detail")
+    expect(state.data.effortBasis?.usage.categories.uncachedInput.value).toBe(222)
+  } finally {
+    state.close()
+  }
+})
+
 test("failed refreshes retain cached values and report each unavailable read", async () => {
   let queryCount = 0
   let detailCount = 0
   let effortCount = 0
   let settingsCount = 0
   let sourceCount = 0
+  let retryFailures = false
   const state = new ModelComparisonPanelState(() => {})
   state.connect(
     "project-a",
@@ -692,28 +898,32 @@ test("failed refreshes retain cached values and report each unavailable read", a
       comparison: async () => comparison(["cached-model"]),
       refreshSources: async () => {
         sourceCount++
-        if (sourceCount > 1) throw new Error("source refresh failed")
+        if (sourceCount === 2 && !retryFailures) throw new Error("source refresh failed")
         return evidence()
       },
       queryTasks: async () => {
         queryCount++
-        if (queryCount > 1) throw new Error("task list failed")
+        if (queryCount === 2 && !retryFailures) throw new Error("task list failed")
         return tasks([idA])
       },
       getTask: async (taskID) => {
         detailCount++
-        if (detailCount > 1) throw new Error("task detail failed")
-        return detail(taskID, "project-a", "Cached task detail")
+        if (detailCount === 2 && !retryFailures) throw new Error("task detail failed")
+        return detail(
+          taskID,
+          "project-a",
+          detailCount === 1 ? "Cached task detail" : "Recovered task detail",
+        )
       },
       trajectoryStatus: async (taskID) => {
         effortCount++
-        if (effortCount > 1) throw new Error("task effort failed")
-        return trajectory(taskID, 55)
+        if (effortCount === 2 && !retryFailures) throw new Error("task effort failed")
+        return trajectory(taskID, effortCount === 1 ? 55 : 77)
       },
       settings: async (taskID) => {
         settingsCount++
-        if (settingsCount > 1) throw new Error("settings failed")
-        return settings(taskID, 5)
+        if (settingsCount === 2 && !retryFailures) throw new Error("settings failed")
+        return settings(taskID, settingsCount === 1 ? 5 : 6)
       },
     }),
     { selectedTaskID: idA, selectedCandidateID: null },
@@ -744,6 +954,17 @@ test("failed refreshes retain cached values and report each unavailable read", a
     expect(state.data.tasksLoading).toBe(false)
     expect(state.data.settingsLoading).toBe(false)
     expect(state.data.stale).toBe(true)
+
+    retryFailures = true
+    await state.refresh()
+    expect(state.data.task?.task.proposal.objective).toBe("Recovered task detail")
+    expect(state.data.effortBasis?.usage.categories.uncachedInput.value).toBe(77)
+    expect(state.data.settings?.personas[0]?.layers.task?.route?.id).toBe("route-6")
+    expect(state.data.tasksError).toBe("")
+    expect(state.data.taskError).toBe("")
+    expect(state.data.effortError).toBe("")
+    expect(state.data.settingsError).toBe("")
+    expect(state.data.sourceRefresh).toBe("succeeded")
   } finally {
     state.close()
   }

@@ -15,6 +15,18 @@ export type ModelComparisonTransport = {
   online(): boolean
 }
 
+type PendingSelectedTaskLoad = {
+  generation: number
+  projectID: string
+  projectDirectory: string
+  transport: ModelComparisonTransport
+  taskID: string
+  selectionRevision: number
+  signal: AbortSignal
+  settled: boolean
+  promise: Promise<void>
+}
+
 export type ModelTask = Extract<TaskDetail, { status: "found" }> | undefined
 export type ModelCandidate = ModelComparisonOutput["candidates"][number]
 
@@ -94,6 +106,7 @@ export class ModelComparisonPanelState {
   private comparisonRequest = 0
   private comparisonRevision = 0
   private taskRequest = 0
+  private selectedTaskLoad?: PendingSelectedTaskLoad
   private settingsRequest = 0
   private selectionRevision = 0
   private transport?: ModelComparisonTransport
@@ -299,6 +312,7 @@ export class ModelComparisonPanelState {
     const selectionRevision = ++this.selectionRevision
     this.taskController.abort()
     this.taskController = new AbortController()
+    this.selectedTaskLoad = undefined
     this.taskRequest++
     this.settingsRequest++
     this.update({
@@ -360,27 +374,82 @@ export class ModelComparisonPanelState {
       this.taskListPromise = undefined
   }
 
-  private async loadSelectedTask(
+  private loadSelectedTask(
     generation: number,
     taskID: string,
     selectionRevision = this.selectionRevision,
-  ) {
+  ): Promise<void> {
     const transport = this.transport
-    if (!transport || this.controller.signal.aborted) return
+    if (
+      !transport ||
+      this.controller.signal.aborted ||
+      generation !== this.generation ||
+      selectionRevision !== this.selectionRevision ||
+      this.data.selectedTaskID !== taskID
+    )
+      return Promise.resolve()
+
+    const pending = this.selectedTaskLoad
+    if (
+      pending &&
+      !pending.settled &&
+      !pending.signal.aborted &&
+      pending.generation === generation &&
+      pending.projectID === this.projectID &&
+      pending.projectDirectory === this.projectDirectory &&
+      pending.transport === transport &&
+      pending.taskID === taskID &&
+      pending.selectionRevision === selectionRevision
+    )
+      return pending.promise
+
     this.taskController.abort()
     this.taskController = new AbortController()
     const taskRequest = ++this.taskRequest
     const signal = AbortSignal.any([this.controller.signal, this.taskController.signal])
-    this.update({ taskLoading: true, taskError: "", effortLoading: true, effortError: "" })
-    const detailRead = Promise.resolve().then(() => transport.getTask(taskID, signal))
-    const effortRead = Promise.resolve().then(() => transport.trajectoryStatus(taskID, signal))
-    const [detailResult, effortResult] = await Promise.allSettled([detailRead, effortRead])
+    const load: PendingSelectedTaskLoad = {
+      generation,
+      projectID: this.projectID,
+      projectDirectory: this.projectDirectory,
+      transport,
+      taskID,
+      selectionRevision,
+      signal,
+      settled: false,
+      promise: Promise.resolve(),
+    }
+    const operation = Promise.resolve()
+      .then(() => this.readSelectedTask(generation, taskID, taskRequest, load))
+      .finally(() => {
+        load.settled = true
+        if (this.selectedTaskLoad === load) this.selectedTaskLoad = undefined
+      })
+    load.promise = operation
+    this.selectedTaskLoad = load
+    return operation
+  }
+
+  private async readSelectedTask(
+    generation: number,
+    taskID: string,
+    taskRequest: number,
+    load: PendingSelectedTaskLoad,
+  ) {
+    const { transport, signal, selectionRevision } = load
     const isCurrent = () =>
       generation === this.generation &&
       taskRequest === this.taskRequest &&
       selectionRevision === this.selectionRevision &&
       !signal.aborted &&
       this.data.selectedTaskID === taskID
+    if (!isCurrent()) return
+    this.update({ taskLoading: true, taskError: "", effortLoading: true, effortError: "" })
+    if (!isCurrent()) return
+    const detailRead = Promise.resolve().then(() => transport.getTask(taskID, signal))
+    const effortRead = Promise.resolve().then(() => transport.trajectoryStatus(taskID, signal))
+    const [detailResult, effortResult] = await Promise.allSettled([detailRead, effortRead])
+    load.settled = true
+    if (this.selectedTaskLoad === load) this.selectedTaskLoad = undefined
     if (!isCurrent()) return
 
     if (detailResult.status === "fulfilled") {
@@ -493,6 +562,7 @@ export class ModelComparisonPanelState {
     this.generation++
     this.comparisonRequest++
     this.taskRequest++
+    this.selectedTaskLoad = undefined
     this.settingsRequest++
     this.selectionRevision++
     this.controller.abort()
