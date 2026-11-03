@@ -61,3 +61,22 @@ establish theme/font changes, grouped-route selectors or full Models acceptance.
 One data-display follow-up remains: the menu correctly calls LZ93 accepted while
 the inspector says submitted, because it renders specification status instead
 of the existing execution state. Correct this in the subsequent UI wiring.
+
+
+## Draft identity check against saved live snapshots
+
+At Unix ms1793739349979 Root read LZ97's draft projection against the real
+read-only project source database:513 groups (351 exact,67 metadata-only,
+40 supported-but-absent,55 unsupported). Fable5 had10 configurations and
+Luna12, each grouping direct and OpenRouter routes with external metadata
+present on the direct configurations. This is a source-data probe, not a
+registered native RPC or final UI acceptance.
+
+Direct Sonnet/Haiku remain split from their dotted OpenRouter IDs in that draft.
+Primary sources checked2026-11-03: [Anthropic's model table](https://platform.claude.com/docs/en/models/overview)
+identifies `claude-sonnet-5-5` and `claude-haiku-5-5`; the respective
+[Sonnet](https://openrouter.ai/anthropic/claude-sonnet-5.5/providers) and
+[Haiku](https://openrouter.ai/anthropic/claude-haiku-5.5/providers) pages identify
+the dotted catalog products. These support explicit documented aliases, not
+global punctuation normalization, suffix stripping or pooling measurements.
+Main received the finding for the same native workflow before final acceptance.

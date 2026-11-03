@@ -40,6 +40,20 @@ Pinned OpenCode2.2.5 source at9bbb8ce:
 - The installed SDK service manager can terminate a host after repeated failed
   health checks. No retained log proves that path caused these interruptions.
 
+## Confirmed redundant reconstruction path
+
+`src/progress/native.ts:reconcileSessions` runs at each registration and walks
+`ProgressRecorder.assignments()` across the entire canonical project, including
+terminal attempts. It reads every assigned native session and retained context.
+The project currently has97 attempts and about54 location setups after restart;
+this code repeats project-wide reconstruction per location rather than owning
+it once or limiting it to the relevant location. The observed SQL progress table
+has22,549 rows, while its AUTOINCREMENT sequence is10,797,138.
+`appendIn` first uses INSERT OR IGNORE even for an existing dedupe key, explaining
+why the sequence is not an event count. Neither the sequence nor the sample
+establishes the crash cause. Main received this as a separate efficiency repair,
+with hooks, recovery coverage and durable history to preserve.
+
 ## Follow-up
 
 Review startup/location ownership and retained-resource cleanup with native

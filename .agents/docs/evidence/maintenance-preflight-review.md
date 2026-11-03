@@ -48,3 +48,23 @@ landing at plan version 37. This does not activate live routing.
 
 Combined integration and cleanup remain unclaimed while LZ-95 is withheld.
 Do not remove either retained worktree or repeat an unchanged cleanup hold.
+
+
+## LZ98 focused repair review
+
+Source `055ab04de034f0aa3000c4fccac9841b68032e0e` addresses the four LZ95
+findings in the three scoped files. Root reviewed the contract/evaluator and
+regressions, then independently ran `bun test test/maintenance-preflight.test.ts`
+at Unix ms1793739586928:11 passed,106 assertions, including the spawned CLI.
+No additional source blocker was found in this repair. Worker formatter, lint,
+typecheck and whitespace checks also passed; native Architect review/integration
+remains authoritative and was still pending at this checkpoint.
+
+The evaluator now accepts actual runner effect identities and full production
+receipt environment identities. The existing effect-ID derivation binds the
+runner operation; it does not hash repository files for evidence. Newer same-kind
+effects remain in latest-effect ordering even when their payload is malformed,
+and Git observations bracket both manifest and receipt reads. Read-only behavior,
+missing child containment and `executionPermitted:false` remain explicit.
+This review does not resolve LZ72's missing original child receipt or authorize
+replaying an uncertain check.
