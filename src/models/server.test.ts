@@ -96,6 +96,7 @@ function modelContext(options: {
   }
   const permissionCalls = options.permissionCalls ?? []
   const sourceAccessCalls = options.sourceAccessCalls ?? { active: 0, resolve: 0 }
+  const modelListCalls = { count: 0 }
   const server: ModelRPC = {
     settings: () => Effect.die(new Error("RPC not registered")),
     configure: () => Effect.die(new Error("RPC not registered")),
@@ -131,10 +132,12 @@ function modelContext(options: {
     },
     location: { project: { id: projectID, canonical: projectDirectory } },
     model: {
-      list: () =>
-        options.catalogFailure?.()
+      list: () => {
+        modelListCalls.count += 1
+        return options.catalogFailure?.()
           ? Effect.fail(new Error("native catalog unavailable"))
-          : Effect.succeed({ data: [] }),
+          : Effect.succeed({ data: [] })
+      },
     },
     integration: {
       connection: {
@@ -159,6 +162,7 @@ function modelContext(options: {
     },
     permissionCalls,
     sourceAccessCalls,
+    modelListCalls,
   }
 }
 
@@ -678,7 +682,20 @@ test("Models comparison is an authorized read-only projection with honest missin
   const repository = new TaskRepository(path, projectDirectory)
   const permissionCalls: unknown[] = []
   const sourceAccessCalls = { active: 0, resolve: 0 }
-  const harness = await register(repository, { permissionCalls, sourceAccessCalls })
+  let fetchCalls = 0
+  let readStoreOpens = 0
+  const harness = await register(repository, {
+    permissionCalls,
+    sourceAccessCalls,
+    fetcher: async () => {
+      fetchCalls += 1
+      return new Response(JSON.stringify({ data: [] }))
+    },
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      readStoreOpens += 1
+      return new ModelEvidenceReadStore(databasePath, directory)
+    },
+  })
   repository.close()
   const methods = harness.methods()
   try {
@@ -716,6 +733,9 @@ test("Models comparison is an authorized read-only projection with honest missin
       ]),
     )
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(fetchCalls).toBe(0)
+    expect(readStoreOpens).toBe(1)
+    expect(harness.modelListCalls.count).toBe(0)
     expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
     expect(permissionCalls).toEqual([
@@ -735,9 +755,14 @@ test("Models comparison denial, foreign or archived sessions and cancellation av
   const repository = new TaskRepository(path, projectDirectory)
   let denied = false
   const sourceAccessCalls = { active: 0, resolve: 0 }
+  let readStoreOpens = 0
   const harness = await register(repository, {
     denied: () => denied,
     sourceAccessCalls,
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      readStoreOpens += 1
+      return new ModelEvidenceReadStore(databasePath, directory)
+    },
   })
   repository.close()
   const methods = harness.methods()
@@ -756,6 +781,7 @@ test("Models comparison denial, foreign or archived sessions and cancellation av
       message: "native permission denied",
     })
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(readStoreOpens).toBe(0)
     expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
   } finally {
@@ -763,24 +789,92 @@ test("Models comparison denial, foreign or archived sessions and cancellation av
   }
 })
 
-test("Models comparison cancellation after permission but before source access does not open evidence storage", async () => {
+test("Models comparison rechecks session archival after awaited permission before opening evidence storage", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let grant!: () => void
+  let readStoreOpens = 0
+  const harness = await register(repository, {
+    permissionWait: () =>
+      Effect.callback<void>((resume) => {
+        grant = () => resume(Effect.void)
+        enter()
+      }),
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      readStoreOpens += 1
+      return new ModelEvidenceReadStore(databasePath, directory)
+    },
+  })
+  repository.close()
+  try {
+    const pending = Effect.runPromiseExit(harness.methods().comparison({ sessionID: "ses-native" }))
+    await entered
+    harness.setActor({
+      id: "ses-native",
+      projectID,
+      agent: "desktop-settings-user",
+      time: { archived: 30 },
+    })
+    grant()
+    const exit = await pending
+    expect(exit._tag).toBe("Failure")
+    expect(readStoreOpens).toBe(0)
+    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
+    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+  } finally {
+    grant?.()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("cancelled Models comparison cannot open evidence storage after a late permission grant", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
   const controller = new AbortController()
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let grant!: () => void
+  let interrupted = false
+  let readStoreOpens = 0
   const harness = await register(repository, {
-    permissionWait: () => Effect.sync(() => controller.abort()),
+    permissionWait: () =>
+      Effect.callback<void>((resume) => {
+        grant = () => resume(Effect.void)
+        enter()
+        return Effect.sync(() => {
+          interrupted = true
+        })
+      }),
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      readStoreOpens += 1
+      return new ModelEvidenceReadStore(databasePath, directory)
+    },
   })
   repository.close()
+  const pending = Effect.runPromiseExit(harness.methods().comparison({ sessionID: "ses-native" }), {
+    signal: controller.signal,
+  })
   try {
-    const exit = await Effect.runPromiseExit(
-      harness.methods().comparison({ sessionID: "ses-native" }),
-      { signal: controller.signal },
-    )
+    await entered
+    controller.abort()
+    const exit = await pending
+    grant()
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(exit._tag).toBe("Failure")
+    expect(interrupted).toBe(true)
+    expect(readStoreOpens).toBe(0)
     expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
   } finally {
+    grant?.()
     rmSync(root, { recursive: true, force: true })
   }
 })

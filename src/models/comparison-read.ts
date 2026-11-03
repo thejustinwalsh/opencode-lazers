@@ -150,6 +150,14 @@ function makeNativeView(
   const variants = records.some((record) => record.variants === null)
     ? null
     : [...new Set(records.flatMap((record) => record.variants ?? []))].sort(compareText)
+  const variantCoverage =
+    variants === null
+      ? { status: "unknown" as const, totalVariants: null, omittedVariants: null }
+      : {
+          status: variants.length > 100 ? ("truncated" as const) : ("complete" as const),
+          totalVariants: variants.length,
+          omittedVariants: Math.max(0, variants.length - 100),
+        }
   const identitySignatures = records.map((record) =>
     stableJSON({
       name: record.name,
@@ -178,7 +186,8 @@ function makeNativeView(
       type: sameValue(records.map((record) => record.type)) ?? null,
       contextTokens: sameValue(records.map((record) => record.contextTokens)) ?? null,
       capabilities,
-      availableVariants: variants,
+      availableVariants: variants?.slice(0, 100) ?? null,
+      variantCoverage,
       prices: prices === undefined ? null : prices,
       ambiguousIdentity,
       evidence,
@@ -294,7 +303,6 @@ function candidatesFor(
     for (const variant of candidateVariants) {
       const native = nativeEvidence(nativeSnapshot, group, variant)
       const view = makeNativeView(group, variant, native.evidence)
-      const effortMatches = benchmark !== null && variant !== null && benchmark.effort === variant
       const effortReferences = [
         ...native.supporting.map(({ recordIndex }) =>
           reference(nativeSnapshot, recordIndex, group.modelID),
@@ -311,7 +319,7 @@ function candidatesFor(
         externalBenchmark: benchmark,
         externalBenchmarkEvidence: boundedEvidence(benchmarkReferences),
         effortApplicability: {
-          status: effortMatches ? "exact" : "unknown",
+          status: "unknown",
           evidence: boundedEvidence(effortReferences),
         },
       })

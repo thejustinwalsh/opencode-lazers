@@ -48,36 +48,44 @@ async function authorize(
   resources: string[],
   signal: AbortSignal,
 ) {
-  const session = await Effect.runPromise(
-    ctx.session
-      .get({ sessionID: Session.ID.make(sessionID) })
-      .pipe(
-        Effect.catch((error) =>
-          isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
+  const readEligibleSession = async () => {
+    const session = await Effect.runPromise(
+      ctx.session
+        .get({ sessionID: Session.ID.make(sessionID) })
+        .pipe(
+          Effect.catch((error) =>
+            isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
+          ),
         ),
-      ),
-    { signal },
-  )
-  if (
-    !session ||
-    String(session.id) !== sessionID ||
-    session.projectID !== projectID ||
-    session.time.archived !== undefined ||
-    !session.agent
-  )
-    throw new Error("Models scope is unavailable")
+      { signal },
+    )
+    if (
+      !session ||
+      String(session.id) !== sessionID ||
+      session.projectID !== projectID ||
+      session.time.archived !== undefined ||
+      !session.agent
+    )
+      throw new Error("Models scope is unavailable")
+    return { session, agent: session.agent }
+  }
 
-  const agent = Agent.ID.make(session.agent)
+  const eligible = await readEligibleSession()
+
+  const agent = Agent.ID.make(eligible.agent)
   await Effect.runPromise(
     ctx.permission.assert({
-      sessionID: Session.ID.make(session.id),
+      sessionID: Session.ID.make(eligible.session.id),
       agent,
       action,
       resources,
     }),
     { signal },
   )
-  return session
+  signal.throwIfAborted()
+  const currentSession = await readEligibleSession()
+  if (currentSession.agent !== eligible.agent) throw new Error("Models scope is unavailable")
+  return currentSession.session
 }
 
 /** Desktop RPC and Code Mode tools share the same project-scoped SQLite mappings. */
