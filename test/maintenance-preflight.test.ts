@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
 import {
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -12,6 +13,8 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { fingerprint } from "../src/identity.ts"
+import { verificationEnvironmentIdentity } from "../src/runner/artifacts.ts"
 import type { ProcessObservation } from "../src/verification/opencode/owned-launch.ts"
 import type {
   MaintenanceInspection,
@@ -28,11 +31,41 @@ const artifact = "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55"
 const planID = "11111111-1111-4111-8111-111111111111"
 const taskID = "22222222-2222-4222-8222-222222222222"
 const attemptID = "33333333-3333-4333-8333-333333333333"
-const effectID = "44444444-4444-4444-8444-444444444444"
 const projectDirectory = "/project/lazers"
 const workspace = "/runner/worktrees/lz72-attempt"
 const receiptPath = `/runtime/receipts/${attemptID}/runner-${artifact}.json`
 const command = "touch /tmp/maintenance-check-must-not-run"
+const effectKind = "verify:runner"
+const effectPayload = {
+  check: { id: "runner", command, timeoutMs: 120_000 },
+  workspace,
+  artifact,
+  identity: artifact,
+  receiptPath,
+}
+const productionPathForLongIdentity = [
+  process.env.PATH ?? "",
+  ...Array.from({ length: 64 }, (_, index) => `/runner/toolchain/bin-${index}`),
+]
+  .filter(Boolean)
+  .join(":")
+const effectID = fingerprint({
+  planID,
+  taskID,
+  attemptID,
+  kind: effectKind,
+  payload: effectPayload,
+})
+const productionEnvironmentIdentity = (() => {
+  const originalPath = process.env.PATH
+  try {
+    process.env.PATH = productionPathForLongIdentity
+    return verificationEnvironmentIdentity()
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
+  }
+})()
 
 type Fixture = { request: MaintenanceRequest; inspection: MaintenanceInspection }
 
@@ -51,7 +84,7 @@ function fixture(): Fixture {
     attemptSessionID: "worker-session",
     attemptMessageID: "assigned-message",
     effectID,
-    effectKind: "verify:runner",
+    effectKind,
     effectState: "uncertain",
     artifact,
     workspace,
@@ -59,13 +92,6 @@ function fixture(): Fixture {
     command,
     timeoutMs: 120_000,
     inputIdentity: artifact,
-    receiptPath,
-  }
-  const payload = {
-    check: { id: "runner", command, timeoutMs: 120_000 },
-    workspace,
-    artifact,
-    identity: artifact,
     receiptPath,
   }
   const manifest: ManifestEntry[] = [
@@ -117,9 +143,9 @@ function fixture(): Fixture {
           planID,
           taskID,
           attemptID,
-          kind: "verify:runner",
+          kind: effectKind,
           state: "uncertain",
-          payload: JSON.stringify(payload),
+          payload: JSON.stringify(effectPayload),
           receipt: null,
         },
       ],
@@ -157,7 +183,7 @@ function receiptSnapshot(overrides: Record<string, unknown> = {}) {
     cwd: workspace,
     artifact,
     inputIdentity: artifact,
-    environmentIdentity: "bun/linux/test",
+    environmentIdentity: productionEnvironmentIdentity,
     startedAt: 100,
     endedAt: 200,
     exitCode: 0,
@@ -167,6 +193,18 @@ function receiptSnapshot(overrides: Record<string, unknown> = {}) {
     unchanged: true,
     ...overrides,
   }
+}
+
+function bindRunnerEffect(value: Fixture) {
+  const effect = value.inspection.effects[0]!
+  effect.id = fingerprint({
+    planID: effect.planID,
+    taskID: effect.taskID,
+    attemptID: effect.attemptID,
+    kind: effect.kind,
+    payload: JSON.parse(effect.payload) as unknown,
+  })
+  value.request.binding.effectID = effect.id
 }
 
 test("the production evaluator preserves exact handoff bindings and never authorizes recovery", async () => {
@@ -206,6 +244,76 @@ test("the production evaluator preserves exact handoff bindings and never author
       "fresh-runtime-owned-check-receipt",
     ]),
   )
+})
+
+test("production effect and environment identities are preserved and foreign bindings fail closed", async () => {
+  expect(effectID).toMatch(/^[a-f0-9]{64}$/)
+  expect(productionEnvironmentIdentity.length).toBeGreaterThan(256)
+
+  const valid = fixture()
+  const receipt = receiptSnapshot()
+  valid.inspection.receipt = { status: "present", receipt }
+  const accepted = await evaluateMaintenancePreflight(
+    valid.request,
+    valid.inspection,
+    readers({ receipt: () => ({ kind: "present", receipt }) }),
+  )
+  expect(accepted.suppliedSnapshot.bindingMatched).toBe(true)
+  expect(accepted.handoff.binding).toEqual(valid.request.binding)
+  expect(accepted.receipt.status).toBe("matches")
+  expect(codes(accepted)).not.toContain("invalid-request")
+  expect(codes(accepted)).not.toContain("invalid-inspection")
+
+  const wrong = fixture()
+  wrong.request.binding.effectID = fingerprint("another runner effect")
+  const wrongResult = await evaluateMaintenancePreflight(wrong.request, wrong.inspection, readers())
+  expect(codes(wrongResult)).toContain("latest-effect-mismatch")
+  expect(wrongResult.executionPermitted).toBe(false)
+
+  const malformed = fixture()
+  malformed.request.binding.effectID = "not-a-sha256-fingerprint"
+  const malformedResult = await evaluateMaintenancePreflight(
+    malformed.request,
+    malformed.inspection,
+    readers(),
+  )
+  expect(codes(malformedResult)).toEqual(["invalid-request"])
+  expect(malformedResult.handoff.binding).toBeNull()
+
+  const foreignPair = fixture()
+  const foreignPayload = { ...effectPayload, workspace: "/foreign/workspace" }
+  const foreignID = fingerprint({
+    planID,
+    taskID,
+    attemptID,
+    kind: effectKind,
+    payload: foreignPayload,
+  })
+  foreignPair.request.binding.effectID = foreignID
+  foreignPair.inspection.effects[0]!.id = foreignID
+  const foreignResult = await evaluateMaintenancePreflight(
+    foreignPair.request,
+    foreignPair.inspection,
+    readers(),
+  )
+  expect(codes(foreignResult)).toContain("effect-payload-mismatch")
+  expect(foreignResult.suppliedSnapshot.bindingMatched).toBe(false)
+  expect(foreignResult.executionPermitted).toBe(false)
+
+  const mismatchedReceipt = fixture()
+  const snapshotReceipt = receiptSnapshot({
+    environmentIdentity: `${productionEnvironmentIdentity} `,
+  })
+  const actualReceipt = receiptSnapshot()
+  mismatchedReceipt.inspection.receipt = { status: "present", receipt: snapshotReceipt }
+  const receiptResult = await evaluateMaintenancePreflight(
+    mismatchedReceipt.request,
+    mismatchedReceipt.inspection,
+    readers({ receipt: () => ({ kind: "present", receipt: actualReceipt }) }),
+  )
+  expect(codes(receiptResult)).toContain("receipt-snapshot-changed")
+  expect(receiptResult.receipt.status).toBe("mismatch")
+  expect(receiptResult.executionPermitted).toBe(false)
 })
 
 test("the evaluator is deterministic and calls only injected read-only evidence readers", async () => {
@@ -361,6 +469,58 @@ test("dirty, wrong, changed, unmerged and snapshot-mismatched candidates fail cl
   }
 })
 
+test("candidate samples bracket manifest and receipt reads, including failed reads", async () => {
+  const cases = [
+    { name: "manifest", fail: false },
+    { name: "manifest", fail: true },
+    { name: "receipt", fail: false },
+    { name: "receipt", fail: true },
+  ] as const
+
+  for (const example of cases) {
+    const value = fixture()
+    const events: string[] = []
+    let currentHead = artifact
+    const mutation: MaintenanceReaders = {
+      git: () => {
+        events.push("git")
+        return {
+          kind: "observed",
+          root: workspace,
+          head: currentHead,
+          clean: true,
+          unmerged: false,
+        }
+      },
+      manifest: () => {
+        events.push("manifest")
+        if (example.name === "manifest") {
+          currentHead = "c".repeat(40)
+          if (example.fail) throw new Error("manifest read failed after mutation")
+        }
+        return { kind: "observed", entries: value.inspection.candidate.manifest }
+      },
+      receipt: () => {
+        events.push("receipt")
+        if (example.name === "receipt") {
+          currentHead = "c".repeat(40)
+          if (example.fail) throw new Error("receipt read failed after mutation")
+        }
+        return { kind: "missing" }
+      },
+      process: () => ({ kind: "authoritatively-absent" }),
+    }
+
+    const result = await evaluateMaintenancePreflight(value.request, value.inspection, mutation)
+    expect(events).toEqual(["git", "manifest", "receipt", "git"])
+    expect(codes(result)).toContain("candidate-changed-during-inspection")
+    expect(result.candidate.status).toBe(
+      example.name === "manifest" && example.fail ? "unavailable" : "mismatch",
+    )
+    expect(result.executionPermitted).toBe(false)
+  }
+})
+
 test("unavailable readers and stale or contradictory durable snapshots have stable blockers", async () => {
   const unavailable = fixture()
   const missingReaders = await evaluateMaintenancePreflight(
@@ -502,7 +662,7 @@ test("latest-attempt/effect and effect payload bindings are exact", async () => 
   latestEffect.inspection.effects.push({
     ...latestEffect.inspection.effects[0]!,
     ordinal: 2,
-    id: "66666666-6666-4666-8666-666666666666",
+    id: fingerprint("foreign latest effect"),
   })
   const effectResult = await evaluateMaintenancePreflight(
     latestEffect.request,
@@ -510,6 +670,30 @@ test("latest-attempt/effect and effect payload bindings are exact", async () => 
     readers(),
   )
   expect(codes(effectResult)).toContain("latest-effect-mismatch")
+
+  const malformedNewerEffect = fixture()
+  const originalEffect = malformedNewerEffect.inspection.effects[0]!
+  const malformedPayload = {}
+  malformedNewerEffect.inspection.effects.push({
+    ...originalEffect,
+    ordinal: 2,
+    id: fingerprint({
+      planID: originalEffect.planID,
+      taskID: originalEffect.taskID,
+      attemptID: originalEffect.attemptID,
+      kind: originalEffect.kind,
+      payload: malformedPayload,
+    }),
+    payload: JSON.stringify(malformedPayload),
+  })
+  const malformedNewerResult = await evaluateMaintenancePreflight(
+    malformedNewerEffect.request,
+    malformedNewerEffect.inspection,
+    readers(),
+  )
+  expect(codes(malformedNewerResult)).toContain("latest-effect-mismatch")
+  expect(codes(malformedNewerResult)).toContain("effect-payload-mismatch")
+  expect(malformedNewerResult.suppliedSnapshot.bindingMatched).toBe(false)
 
   const payloadMismatch = fixture()
   const mismatchEffect = payloadMismatch.inspection.effects[0]!
@@ -705,7 +889,7 @@ function createE6Fixture(root: string): string {
   return worktree
 }
 
-test("spawned offline CLI reports the clean e6 candidate and missing evidence without side effects", () => {
+test("spawned offline CLI accepts production bindings and leaves candidate and receipts unchanged", () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-maintenance-preflight-"))
   try {
     const candidate = createE6Fixture(root)
@@ -733,6 +917,7 @@ test("spawned offline CLI reports the clean e6 candidate and missing evidence wi
     payload.receiptPath = fixtureData.request.binding.receiptPath
     payload.check.command = checkCommand
     effect.payload = JSON.stringify(payload)
+    bindRunnerEffect(fixtureData)
     fixtureData.inspection.project.directory = projectPath
     fixtureData.inspection.plan.projectDirectory = projectPath
     fixtureData.inspection.attempts[0]!.workspace = workspacePath
@@ -742,10 +927,15 @@ test("spawned offline CLI reports the clean e6 candidate and missing evidence wi
     const requestFile = join(root, "request.json")
     const inspectionFile = join(root, "inspection.json")
     const receiptFile = fixtureData.request.binding.receiptPath
+    const actualReceipt = receiptSnapshot({ command: checkCommand, cwd: workspacePath })
+    fixtureData.inspection.receipt = { status: "present", receipt: actualReceipt }
+    mkdirSync(dirname(receiptFile), { recursive: true, mode: 0o700 })
     writeFileSync(requestFile, JSON.stringify(fixtureData.request), { mode: 0o600 })
     writeFileSync(inspectionFile, JSON.stringify(fixtureData.inspection), { mode: 0o600 })
+    writeFileSync(receiptFile, JSON.stringify(actualReceipt), { mode: 0o600 })
 
     const beforeCandidate = byteManifest(candidate)
+    const beforeReceipt = readFileSync(receiptFile).toString("base64")
     const beforeInputs = [
       readFileSync(requestFile).toString("base64"),
       readFileSync(inspectionFile).toString("base64"),
@@ -771,7 +961,12 @@ test("spawned offline CLI reports the clean e6 candidate and missing evidence wi
         cwd: realpathSync(resolve(new URL("../", import.meta.url).pathname)),
         encoding: "utf8",
         timeout: 60_000,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+        env: {
+          ...process.env,
+          PATH: productionPathForLongIdentity,
+          GIT_OPTIONAL_LOCKS: "0",
+          GIT_TERMINAL_PROMPT: "0",
+        },
       },
     )
     expect(cli.error).toBeUndefined()
@@ -786,14 +981,14 @@ test("spawned offline CLI reports the clean e6 candidate and missing evidence wi
       executionPermitted: false,
       suppliedSnapshot: { bindingMatched: true, claimsIgnored: true },
       candidate: { source: "revalidated", status: "matches", head: artifact, clean: true },
-      receipt: { source: "revalidated", status: "missing" },
+      receipt: { source: "revalidated", status: "matches" },
     })
+    expect(result.handoff.binding).toEqual(fixtureData.request.binding)
+    expect(result.handoff.binding?.effectID).toBe(fixtureData.inspection.effects[0]!.id)
+    expect(actualReceipt.environmentIdentity).toBe(productionEnvironmentIdentity)
+    expect(actualReceipt.environmentIdentity.length).toBeGreaterThan(256)
     expect(codes(result)).toEqual(
-      expect.arrayContaining([
-        "runner-receipt-missing",
-        "original-child-identity-missing",
-        "old-check-containment-unproven",
-      ]),
+      expect.arrayContaining(["original-child-identity-missing", "old-check-containment-unproven"]),
     )
     expect(result.handoff.nextSteps.map((step) => step.id)).toEqual([
       "exclusive-window",
@@ -802,6 +997,7 @@ test("spawned offline CLI reports the clean e6 candidate and missing evidence wi
       "fresh-runtime-check",
     ])
     expect(byteManifest(candidate)).toEqual(beforeCandidate)
+    expect(readFileSync(receiptFile).toString("base64")).toBe(beforeReceipt)
     expect([
       readFileSync(requestFile).toString("base64"),
       readFileSync(inspectionFile).toString("base64"),
@@ -815,7 +1011,6 @@ test("spawned offline CLI reports the clean e6 candidate and missing evidence wi
         effects: fixtureData.inspection.effects,
       }),
     ).toBe(beforeRows)
-    expect(() => readFileSync(receiptFile)).toThrow()
     expect(() => readFileSync(marker)).toThrow()
   } finally {
     rmSync(root, { recursive: true, force: true })

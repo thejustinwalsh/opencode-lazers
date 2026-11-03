@@ -2,7 +2,7 @@ import {
   classifyOwnedProcessObservation,
   type ProcessObservation,
 } from "../opencode/owned-launch.ts"
-import { canonical } from "../../identity.ts"
+import { canonical, fingerprint } from "../../identity.ts"
 import {
   CheckReceiptSchema,
   MaintenanceInspectionSchema,
@@ -236,23 +236,9 @@ function validateSnapshots(
     reasons.add("attempt-binding-mismatch")
 
   const matchingEffects = inspection.effects
-    .filter((effect) => {
-      if (effect.attemptID !== binding.attemptID || effect.kind !== binding.effectKind) return false
-      try {
-        const payload: unknown = JSON.parse(effect.payload)
-        return (
-          typeof payload === "object" &&
-          payload !== null &&
-          "check" in payload &&
-          typeof payload.check === "object" &&
-          payload.check !== null &&
-          "id" in payload.check &&
-          payload.check.id === binding.checkID
-        )
-      } catch {
-        return true
-      }
-    })
+    .filter(
+      (effect) => effect.attemptID === binding.attemptID && effect.kind === binding.effectKind,
+    )
     .sort((left, right) => right.ordinal - left.ordinal)
   const latestEffect = matchingEffects[0]
   const duplicateOrdinals =
@@ -273,6 +259,17 @@ function validateSnapshots(
   if (latestEffect) {
     try {
       const payload: unknown = JSON.parse(latestEffect.payload)
+      if (
+        latestEffect.id !==
+        fingerprint({
+          planID: latestEffect.planID,
+          taskID: latestEffect.taskID,
+          attemptID: latestEffect.attemptID,
+          kind: latestEffect.kind,
+          payload,
+        })
+      )
+        reasons.add("effect-payload-mismatch")
       const check =
         typeof payload === "object" && payload !== null && "check" in payload
           ? payload.check
@@ -369,16 +366,25 @@ export async function evaluateMaintenancePreflight(
   let after: GitWorkspaceObservation
   try {
     before = await readers.git(request.binding.workspace, request.binding.artifact)
-    after = await readers.git(request.binding.workspace, request.binding.artifact)
   } catch {
     before = { kind: "unavailable" }
-    after = before
   }
   let manifest: ManifestObservation
   try {
     manifest = await readers.manifest(request.binding.workspace, request.binding.artifact)
   } catch {
     manifest = { kind: "unavailable" }
+  }
+  let receiptObservation: ReceiptObservation
+  try {
+    receiptObservation = await readers.receipt(request.binding.receiptPath)
+  } catch {
+    receiptObservation = { kind: "unavailable" }
+  }
+  try {
+    after = await readers.git(request.binding.workspace, request.binding.artifact)
+  } catch {
+    after = { kind: "unavailable" }
   }
 
   if (before.kind === "unavailable" || after.kind === "unavailable") {
@@ -412,12 +418,6 @@ export async function evaluateMaintenancePreflight(
     }
   }
 
-  let receiptObservation: ReceiptObservation
-  try {
-    receiptObservation = await readers.receipt(request.binding.receiptPath)
-  } catch {
-    receiptObservation = { kind: "unavailable" }
-  }
   if (receiptObservation.kind === "unavailable") {
     result.receipt.status = "unavailable"
     add("receipt-reader-unavailable")

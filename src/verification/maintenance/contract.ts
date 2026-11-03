@@ -4,6 +4,7 @@ import { z } from "zod"
 const identifier = z.string().min(1).max(256).regex(/\S/)
 const path = z.string().min(1).max(4_096).refine(isAbsolute, "Expected an absolute path")
 const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const positiveInteger = z.number().int().positive().safe()
 
 export const MaintenanceProcessIdentitySchema = z.strictObject({
@@ -28,7 +29,7 @@ export const MaintenanceBindingSchema = z
     attemptNumber: positiveInteger,
     attemptSessionID: identifier,
     attemptMessageID: identifier,
-    effectID: z.uuid(),
+    effectID: sha256,
     effectKind: z.literal("verify:runner"),
     effectState: z.literal("uncertain"),
     artifact: commit,
@@ -110,7 +111,7 @@ const AttemptSnapshotSchema = z.strictObject({
 
 const EffectSnapshotSchema = z.strictObject({
   ordinal: positiveInteger,
-  id: z.uuid(),
+  id: sha256,
   planID: z.uuid(),
   taskID: z.uuid().nullable(),
   attemptID: z.uuid().nullable(),
@@ -167,7 +168,7 @@ export const CheckReceiptSchema = z.strictObject({
   cwd: path,
   artifact: commit,
   inputIdentity: identifier,
-  environmentIdentity: identifier,
+  environmentIdentity: z.string().min(1).regex(/\S/),
   startedAt: z.number().int().nonnegative(),
   endedAt: z.number().int().nonnegative(),
   exitCode: z.number().int().nullable(),
