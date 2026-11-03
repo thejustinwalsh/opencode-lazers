@@ -7,8 +7,16 @@ hooks, generated instructions, current guidance and tests now use `lz-*`. No
 aliases or dual-name permission layer. Native agent/package/storage identities
 and historical records are retained. Typecheck277 files, lint286 files and GUI
 build pass. Full suite730 pass /2 sandbox process/manifest failures; all30 tests
-in the affected owned-launch file pass with normal visibility. Restart and
-Desktop canonical-tool smoke are next. The last active worker preserved clean
+in the affected owned-launch file pass with normal visibility. Native restart and Desktop canonical-tool smoke PASSED. Service now PID54033.
+Architect resumed via real Desktop prompt, observed Sol6.1High. Native message
+msg_1a22524cd001NZ9uhjKyf0Uetj discovered tools["lz-query-tasks"], with no old-name
+alias in discovery; msg_1a2258f9e001nJ7ejE2zahOHEZ actually called it through Code
+Mode and returned LZ83. lz-worker-catalog completed with471 options and configured
+openai/gpt-6-luna#max. Manual Desktop /lz-radar, /lz-trajectory and /lz-tasks each
+opened the corresponding tab and cleared the composer. LFM3 appeared Available;
+no inference switches changed. Native Main now uses new names and is reconciling
+LZ72's verify:runner uncertainty from shutdown, with existing LZ57/58 repair tasks
+available. Do not create another rename/migration task or restore legacy aliases. The last active worker preserved clean
 committed LZ72 artifact e6a58ea in its existing worktree. Resume the same work,
 reconcile native receipts and continue the full roadmap after activation.
 
