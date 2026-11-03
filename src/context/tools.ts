@@ -92,18 +92,18 @@ const EvidenceOutput = z.strictObject({
 export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
   return ctx.tool.transform((editor) => {
     editor.add({
-      name: "lazers_project_index",
+      name: "lz-project-index",
       description:
         "Read the Architect-selected workspace snapshot for this owned implementor, or this workspace's snapshot when no owned publication is available. Returns up to 100 currently permitted matching file paths and structural metrics. With paths specified, totalFiles counts authorized matches before the 100-file response limit; without paths, it counts all currently permitted files. The response identifies the source workspace and is as-of-refresh, not a live view of the worker tree.",
       input: IndexInput,
       output: IndexOutput,
-      options: { codemode: true, pinned: true, permission: "lazers_project_index" },
+      options: { codemode: true, pinned: true, permission: "lz-project-index" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_project_index",
+            action: "lz-project-index",
             resources: ["*"],
           })
           .pipe(
@@ -122,18 +122,18 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
           ),
     })
     editor.add({
-      name: "lazers_project_refresh",
+      name: "lz-project-refresh",
       description:
         "Architect only: explicitly collect and atomically publish a fresh bounded Repomix workspace snapshot. Read/index tools never build or refresh implicitly.",
       input: RefreshInput,
       output: RefreshOutput,
-      options: { codemode: true, pinned: true, permission: "lazers_project_refresh" },
+      options: { codemode: true, pinned: true, permission: "lz-project-refresh" },
       execute: (_input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_project_refresh",
+            action: "lz-project-refresh",
             resources: ["*"],
           })
           .pipe(
@@ -168,18 +168,18 @@ export function registerContextTools(ctx: Plugin.Context, index: ProjectIndex) {
           ),
     })
     editor.add({
-      name: "lazers_project_read",
+      name: "lz-project-read",
       description:
         "Read selected source, Repomix outline, or file structure from the Architect-selected publication for this owned implementor, or this workspace's snapshot when none is available. The response identifies the source workspace and is as-of-refresh, not a live view of the worker tree. Filter paths/search and lines; selections never recollect or repack the workspace.",
       input: EvidenceInput,
       output: EvidenceOutput,
-      options: { codemode: true, pinned: true, permission: "lazers_project_read" },
+      options: { codemode: true, pinned: true, permission: "lz-project-read" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_project_read",
+            action: "lz-project-read",
             resources: ["*"],
           })
           .pipe(

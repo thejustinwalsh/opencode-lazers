@@ -60,19 +60,19 @@ test("agent tools enforce permissions before RPC and apply bounded defaults", as
     progress: () => Effect.void,
   }
   const answer = await Effect.runPromise(
-    tools.get("lazers_local_ask")!.execute({ prompt: "q" }, context),
+    tools.get("lz-local-ask")!.execute({ prompt: "q" }, context),
   )
   expect(JSON.parse(String(answer.content)).text).toBe("local answer")
   expect(calls[0]).toEqual({ prompt: "q", timeoutMs: 60_000, maxTokens: 256 })
   const decision = await Effect.runPromise(
     tools
-      .get("lazers_local_decide")!
+      .get("lz-local-decide")!
       .execute({ question: "q", context: "evidence", decision: { kind: "boolean" } }, context),
   )
   expect(JSON.parse(String(decision.content))).toEqual({ ok: true, kind: "boolean", value: true })
   denied = true
   await expect(
-    Effect.runPromise(tools.get("lazers_local_ask")!.execute({ prompt: "denied" }, context)),
+    Effect.runPromise(tools.get("lz-local-ask")!.execute({ prompt: "denied" }, context)),
   ).rejects.toThrow("Permission denied")
   expect(calls).toHaveLength(2)
 })

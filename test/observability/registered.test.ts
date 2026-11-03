@@ -224,7 +224,7 @@ test("registered observation RPC resolves scope through native sessions and enfo
     )
     expect(review).toMatchObject({ scope, report: { focusedAttemptID: firstAttemptID } })
     expect(permissionCalls.at(-1)).toMatchObject({
-      action: "lazers_inspect_trajectory",
+      action: "lz-inspect-trajectory",
       resources: ["*"],
     })
   } finally {

@@ -224,15 +224,15 @@ export function registerLocalInference(
       if (!editor.get("architect") || !features.enabled) return
       editor.update("architect", (agent) => {
         const actions = [
-          ...(allowed("questions") ? ["lazers_local_ask"] : []),
-          ...(allowed("decisions") ? ["lazers_local_decide", "lazers_local_system_one"] : []),
-          ...(allowed("review") ? ["lazers_verify_task"] : []),
+          ...(allowed("questions") ? ["lz-local-ask"] : []),
+          ...(allowed("decisions") ? ["lz-local-decide", "lz-local-system-one"] : []),
+          ...(allowed("review") ? ["lz-verify-task"] : []),
         ]
         for (const action of actions)
           agent.permissions.push({ action, resource: "*", effect: "allow" })
         if (!allowed("review")) return
         agent.system +=
-          "\n\nFor Architect self-review before lazers_submit_task, call lazers_verify_task with the proposal JSON, original user request, and relevant evidence (recorded clarifications, repository facts, concrete test procedures). This one tool owns structural validation, fixed System One questions and advisory progression. Follow its next instruction, address one concern or ask a native clarification for a material missing decision. Reuse reviewID for revised drafts; keep request unchanged and add answers to evidence. At most three rounds total: resolved concerns advance, equal-or-better focused scores advance with concerns, and exhaustion continues with concerns. Completion permits ordinary submission, never execution or acceptance. Errors are explicit limitations, not passes. Never invent user answers. If local review is disabled, continue the ordinary Architect workflow without it."
+          "\n\nFor Architect self-review before lz-submit-task, call lz-verify-task with the proposal JSON, original user request, and relevant evidence (recorded clarifications, repository facts, concrete test procedures). This one tool owns structural validation, fixed System One questions and advisory progression. Follow its next instruction, address one concern or ask a native clarification for a material missing decision. Reuse reviewID for revised drafts; keep request unchanged and add answers to evidence. At most three rounds total: resolved concerns advance, equal-or-better focused scores advance with concerns, and exhaustion continues with concerns. Completion permits ordinary submission, never execution or acceptance. Errors are explicit limitations, not passes. Never invent user answers. If local review is disabled, continue the ordinary Architect workflow without it."
         agent.system += "\n\n" + REVIEW_COMMUNICATION
       })
     })

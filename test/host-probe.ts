@@ -36,7 +36,7 @@ export default Plugin.define({
                 "glob",
                 "grep",
                 "question",
-                "lazers_submit_task",
+                "lz-submit-task",
                 "edit",
                 "shell",
                 "subagent",
@@ -57,7 +57,7 @@ export default Plugin.define({
                 agentPresent: Boolean(architect),
                 mode: architect?.mode ?? "missing",
                 description: architect?.description ?? "missing",
-                tools: tools.map((tool) => tool.id).filter((name) => name.startsWith("lazers_")),
+                tools: tools.map((tool) => tool.id).filter((name) => name.startsWith("lz-")),
                 permissions,
               }
             }),

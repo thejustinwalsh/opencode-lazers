@@ -122,7 +122,7 @@ export function registerModelsServer(
               ctx,
               request.sessionID,
               projectID,
-              "lazers_get_model_settings",
+              "lz-get-model-settings",
               [request.taskID ?? projectDirectory],
               signal,
             )
@@ -142,7 +142,7 @@ export function registerModelsServer(
               ctx,
               request.sessionID,
               projectID,
-              "lazers_configure_models",
+              "lz-configure-models",
               [resource],
               signal,
             )
@@ -167,7 +167,7 @@ export function registerModelsServer(
               ctx,
               request.sessionID,
               projectID,
-              "lazers_models_catalog",
+              "lz-models-catalog",
               [projectDirectory],
               signal,
             )
@@ -184,7 +184,7 @@ export function registerModelsServer(
               ctx,
               request.sessionID,
               projectID,
-              "lazers_read_model_evidence",
+              "lz-read-model-evidence",
               [projectDirectory],
               signal,
             )
@@ -209,7 +209,7 @@ export function registerModelsServer(
               ctx,
               request.sessionID,
               projectID,
-              "lazers_refresh_model_evidence",
+              "lz-refresh-model-evidence",
               [projectDirectory],
               signal,
             )

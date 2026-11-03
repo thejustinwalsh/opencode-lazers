@@ -84,8 +84,8 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
   } as unknown as Pick<Plugin.Context, "permission" | "tool">
   await Effect.runPromise(Effect.scoped(registerModelTools(toolContext, repository)))
 
-  const settings = tools.get("lazers_get_model_settings")!
-  const configure = tools.get("lazers_configure_models")!
+  const settings = tools.get("lz-get-model-settings")!
+  const configure = tools.get("lz-configure-models")!
   expect(settings.options).toMatchObject({ codemode: true, pinned: true })
   expect(configure.options).toMatchObject({ codemode: true, pinned: true })
 
@@ -155,10 +155,10 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
     current: { revision: 1, route: input.route },
   })
   expect(actions).toEqual([
-    "lazers_configure_models",
-    "lazers_configure_models",
-    "lazers_configure_models",
-    "lazers_get_model_settings",
-    "lazers_configure_models",
+    "lz-configure-models",
+    "lz-configure-models",
+    "lz-configure-models",
+    "lz-get-model-settings",
+    "lz-configure-models",
   ])
 })

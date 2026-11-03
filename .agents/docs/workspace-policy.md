@@ -31,7 +31,7 @@ never remove unrelated worktrees. Reconcile leftovers at startup and after merge
 Current boundary: native creation/location routing, shared-by-default serial
 selection, and explicit retry into a fresh child are implemented. Combined serial
 verification reuses the final accepted worker's checkout. After review/merge,
-`lazers_plan_command` action `integrated` records the accepted artifact, current
+`lz-plan-command` action `integrated` records the accepted artifact, current
 target branch and review reason. The runtime checks Git ancestry and requests
 native, non-forced removal of only the plan's recorded worktrees. Each worktree's
 HEAD must be an ancestor of the integration checkout's HEAD; this preserves clean

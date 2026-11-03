@@ -58,12 +58,12 @@ async function setup(options: { deny?: boolean; host?: TrajectoryHost } = {}) {
 test("registered trajectory tool is permission-first, structured, and pages exact stable events", async () => {
   const fixture = await setup()
   try {
-    const tool = fixture.tools.get("lazers_inspect_trajectory")!
+    const tool = fixture.tools.get("lz-inspect-trajectory")!
     expect(tool.options?.codemode).toBe(true)
     expect(tool.options?.pinned).toBe(true)
-    expect(tool.options?.permission).toBe("lazers_inspect_trajectory")
+    expect(tool.options?.permission).toBe("lz-inspect-trajectory")
     const firstResult = await Effect.runPromise(tool.execute({ taskID, limit: 2 }, context))
-    expect(fixture.permissionOrder).toEqual(["lazers_inspect_trajectory"])
+    expect(fixture.permissionOrder).toEqual(["lz-inspect-trajectory"])
     const first = firstResult.output as {
       trajectory: { events: Array<Record<string, unknown>>; nextCursor: string | null }
     }
@@ -105,15 +105,12 @@ test("permission denial precedes input validation, database reopen, and native s
   fixture.repository.close()
   renameSync(fixture.repository.path, `${fixture.repository.path}.unavailable`)
   try {
-    const tool = fixture.tools.get("lazers_inspect_trajectory")!
+    const tool = fixture.tools.get("lz-inspect-trajectory")!
     for (const input of [{ invalid: true }, { taskID }])
       await expect(Effect.runPromise(tool.execute(input, context))).rejects.toThrow(
         "Permission denied",
       )
-    expect(fixture.permissionOrder).toEqual([
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
-    ])
+    expect(fixture.permissionOrder).toEqual(["lz-inspect-trajectory", "lz-inspect-trajectory"])
     expect(sessionReads).toBe(0)
   } finally {
     fixture.close()
@@ -123,7 +120,7 @@ test("permission denial precedes input validation, database reopen, and native s
 test("Architect, implementor, and another permitted agent can read owned reports", async () => {
   const fixture = await setup()
   try {
-    const tool = fixture.tools.get("lazers_inspect_trajectory")!
+    const tool = fixture.tools.get("lz-inspect-trajectory")!
     const callers = [
       { agent: Agent.ID.make("architect"), input: { taskID } },
       { agent: Agent.ID.make("lazers-implementor"), input: { attemptID: firstAttemptID } },
@@ -148,9 +145,9 @@ test("Architect, implementor, and another permitted agent can read owned reports
       }
     }
     expect(fixture.permissionOrder).toEqual([
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
+      "lz-inspect-trajectory",
+      "lz-inspect-trajectory",
+      "lz-inspect-trajectory",
     ])
   } finally {
     fixture.close()
@@ -173,7 +170,7 @@ test("retained callback survives setup connection disposal without changing dura
   try {
     fixture.repository.close()
     const result = await Effect.runPromise(
-      fixture.tools.get("lazers_inspect_trajectory")!.execute({ taskID }, context),
+      fixture.tools.get("lz-inspect-trajectory")!.execute({ taskID }, context),
     )
     expect(JSON.parse(String(result.content)).task.id).toBe(taskID)
     const reopened = new TaskRepository(

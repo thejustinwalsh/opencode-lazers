@@ -188,7 +188,7 @@ test("registered report tool, hook, native events, and recovery share one record
             {
               type: "tool",
               id: callID,
-              name: "lazers_report_progress",
+              name: "lz-report-progress",
               state: {
                 status: "completed",
                 input: { message: "private model input field" },
@@ -204,10 +204,10 @@ test("registered report tool, hook, native events, and recovery share one record
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
-          const report = ctx.tools.get("lazers_report_progress")!
+          const report = ctx.tools.get("lz-report-progress")!
           expect(report.options).toMatchObject({
             codemode: true,
-            permission: "lazers_report_progress",
+            permission: "lz-report-progress",
           })
           const result = yield* report.execute(
             { message: "Implemented and verified; committed changes are ready." },
@@ -215,7 +215,7 @@ test("registered report tool, hook, native events, and recovery share one record
           )
           expect(result.output).toMatchObject({ sequence: expect.any(Number) })
           yield* ctx.after()!({
-            tool: "lazers_report_progress",
+            tool: "lz-report-progress",
             sessionID: "ses-accepted",
             agent: "lazers-implementor",
             messageID: "msg_worker_call",
@@ -237,7 +237,7 @@ test("registered report tool, hook, native events, and recovery share one record
           {
             type: "tool",
             id: callID,
-            name: "lazers_report_progress",
+            name: "lz-report-progress",
             state: {
               status: "completed",
               input: { message: "private model input field" },
@@ -285,7 +285,7 @@ test("native permission denial and forged or foreign reports perform no writes",
     const recorder = new ProgressRecorder(fixture.store, "project")
     const denied = makeContext(fixture, { denied: true })
     await Effect.runPromise(Effect.scoped(registerProgress(denied.context, recorder, "project")))
-    const tool = denied.tools.get("lazers_report_progress")!
+    const tool = denied.tools.get("lz-report-progress")!
     await expect(
       Effect.runPromise(
         tool.execute({ message: "permission denied" }, callContext("ses-accepted", "denied-call")),
@@ -295,7 +295,7 @@ test("native permission denial and forged or foreign reports perform no writes",
 
     const allowed = makeContext(fixture)
     await Effect.runPromise(Effect.scoped(registerProgress(allowed.context, recorder, "project")))
-    const allowedTool = allowed.tools.get("lazers_report_progress")!
+    const allowedTool = allowed.tools.get("lz-report-progress")!
     await expect(
       Effect.runPromise(
         allowedTool.execute(

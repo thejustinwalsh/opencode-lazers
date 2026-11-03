@@ -82,7 +82,7 @@ Architect currently investigates the repository and uses current-web research th
 
 ### Worker route and persona choice
 
-Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. Catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lazers_worker_catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
+Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. Catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lz-worker-catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
 
 Set model-only defaults under `agents.lazers-implementor.model` in `opencode.json(c)`, leaving `system` unset so the packaged role remains active. A Markdown agent's body replaces its system prompt; an empty model-only file clears the role.
 
@@ -120,7 +120,7 @@ Persistent memory retrieval is bounded and relevant. Durable decisions retain pr
 
 The [Repomix strategy](.agents/docs/repomix-strategy.md) applies this contract mechanically: reuse a workspace-sensitive index, filter relevant implementations/interfaces/tests/rules, bound the packet, and deliver it at dispatch. Full source, compressed outlines and structure-only entries serve different needs; workers retain their normal tools and can request more evidence. Architect establishes repository facts before asking avoidable questions. Indexing and focused retrieval should reduce repeated exploration, rather than add a research ceremony.
 
-The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lazers_project_refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
+The context tools use one persisted snapshot per worktree. Architect explicitly refreshes it with `lz-project-refresh`; path/search/outline/full reads only project that snapshot and re-check each reader's native file permissions. Responses identify the snapshot and say freshness is as-of-refresh, not live. An absent snapshot is reported rather than built implicitly. See [spike 017](.agents/docs/spikes/017-reusable-workspace-index.md).
 
 ### 6 Measurement and learning
 
@@ -138,7 +138,7 @@ The transcript's API examples, model prices, and performance targets are researc
 
 ## Read-only worker trajectory
 
-Any caller allowed by native permission can call `lazers_inspect_trajectory`
+Any caller allowed by native permission can call `lz-inspect-trajectory`
 with one project-owned `taskID` or `attemptID`. The tool checks permission before
 input validation or project/session access. It then combines LAZERS attempt/check
 records with the native `session.get` and `session.context` APIs, and opens its
@@ -177,7 +177,7 @@ evidence](.agents/docs/evidence/012-worker-inspection/native-report.json).
 ## Durable worker progress
 
 Each worker attempt has one ordered SQLite progress log shared by the
-`lazers_report_progress` tool, native tool/session events, retained-session
+`lz-report-progress` tool, native tool/session events, retained-session
 recovery, and runtime verification/artifact observations. The tool accepts only
 concise commentary; identity is resolved from the assigned native worker
 session. Commentary is visibly distinct from automatic facts and is never
@@ -200,7 +200,7 @@ verification evidence.
 
 An optional parallel [WebGPU experiment](.agents/docs/webgpu-api.md) adds a Desktop model cache, queued local questions and typed decisions, and native agent tools in this same package. Settings → LAZERS covers the whole plugin and provides a local-inference master switch plus independent capability switches; `options.webgpu: true` seeds the initial master preference. The core task workflow works with local inference off. This experiment is independent of the main Architect dogfooding sequence. Build its Desktop entry with `bun run build:gui`. The API document records the native voice integration gap in OpenCode 2.2.5; the experiment does not replace the built-in voice controls.
 
-The optional [task-hardening tool](.agents/docs/task-hardening.md), `lazers_verify_task`, checks task JSON and returns one targeted correction at a time. Architect uses it before ordinary submission when local task review is enabled. It reviews task structure and intent; it does not approve implementation or acceptance.
+The optional [task-hardening tool](.agents/docs/task-hardening.md), `lz-verify-task`, checks task JSON and returns one targeted correction at a time. Architect uses it before ordinary submission when local task review is enabled. It reviews task structure and intent; it does not approve implementation or acceptance.
 
 ```text
 src/index.ts                         Effect server plugin adapter
@@ -237,11 +237,11 @@ LAZERS is one reusable package. The development installation selects the reposit
 
 The server uses OpenCode's Effect-native SDK. `@opencode/plugin` and `effect` are pinned peer/dev dependencies because OpenCode supplies them at runtime. Tasks use Bun's native SQLite adapter in a plugin-owned database, separate from OpenCode's private tables. The default file is `${XDG_DATA_HOME:-~/.local/share}/opencode/plugins/lazers/tasks.sqlite`; a plugin `dataDirectory` option can supply an absolute override. Canonical project directories partition tasks and share them across that project's worktrees; each task records its original worktree and session. The native task tools validate input and explicitly check their permission actions. A successful submission records `submitted`; it does not admit or start execution. Task specifications remain immutable, while durable dispositions can mark superseded, rejected, duplicate or reviewed fulfillment. Actual usage and attempt history are retained.
 
-Idle Architect renewal uses `architectIdleWindowMs` (a positive integer in milliseconds; default **30 minutes**); busy or recent sessions are reused. OpenCode 2.2.5 has no atomic inbox-admission/archive fence, so renewal uses durable retain-and-reconcile instead: it journals original native input IDs and dispositions from the inbox plus paginated message history, transfers source responsibility with plan ownership, archives through the public client route with readback, and keeps the predecessor available as a reconciliation source. Pending inputs remain on the predecessor; the current owner receives reference-only `resume:false` updates, never executable copies or replays. Unknown cancellation/delivery outcomes remain explicit, and no audit of foreign input cancelled before first observation is claimed. The Architect records decisions and unresolved questions with `lazers_record_architect_continuity`; a labelled successor preserves the predecessor link and selected model/effort without transcript replay or automatic summarization. Existing workers continue unchanged. Exact native dogfood remains required before this lifecycle is accepted.
+Idle Architect renewal uses `architectIdleWindowMs` (a positive integer in milliseconds; default **30 minutes**); busy or recent sessions are reused. OpenCode 2.2.5 has no atomic inbox-admission/archive fence, so renewal uses durable retain-and-reconcile instead: it journals original native input IDs and dispositions from the inbox plus paginated message history, transfers source responsibility with plan ownership, archives through the public client route with readback, and keeps the predecessor available as a reconciliation source. Pending inputs remain on the predecessor; the current owner receives reference-only `resume:false` updates, never executable copies or replays. Unknown cancellation/delivery outcomes remain explicit, and no audit of foreign input cancelled before first observation is claimed. The Architect records decisions and unresolved questions with `lz-record-architect-continuity`; a labelled successor preserves the predecessor link and selected model/effort without transcript replay or automatic summarization. Existing workers continue unchanged. Exact native dogfood remains required before this lifecycle is accepted.
 
 ### Retry-safe direct task submission
 
-Choose a caller-owned `idempotencyKey` **before the first** `lazers_submit_task`
+Choose a caller-owned `idempotencyKey` **before the first** `lz-submit-task`
 call. It is a required top-level transport field alongside proposal fields, not
 part of the stored proposal or `TaskSpec`. Use 1–200 characters (runtime length is
 measured in UTF-16 code units), containing non-whitespace text. Keys are compared
@@ -276,7 +276,7 @@ it does not execute it.
 ### Desktop tryout
 
 1. Open this folder in OpenCode Desktop and start a new session. It should select **architect**; existing sessions keep their previous agent and need manual selection. Use your connected **Sign in with ChatGPT** subscription and select the model/reasoning setting in Desktop. The project deliberately does not pin a model or switch an existing session's provider.
-2. Give Architect a clear real request. Expect inspection and focused questions where needed, followed by a scoped task with acceptance evidence. For direct `lazers_submit_task`, choose an idempotencyKey before the first call. Retry the exact key and content after a lost response, including after restart; expect the original durable task UUID, not another task.
+2. Give Architect a clear real request. Expect inspection and focused questions where needed, followed by a scoped task with acceptance evidence. For direct `lz-submit-task`, choose an idempotencyKey before the first call. Retry the exact key and content after a lost response, including after restart; expect the original durable task UUID, not another task.
 3. Ask “Retrieve task <UUID>.” Restart Desktop/the connected host, reopen the repository, and retrieve that UUID again. Expect the same stored specification, without a new submission.
 4. Try a materially ambiguous request, such as “Add task export for our external system,” without naming the system or interface. Expect focused questions before submission. Architect retains normal OpenCode tools, including Code Mode, research, shell, editing and Git, under host/user/project permissions. It reviews and integrates completed work; runtime owns task dispatch and state transitions.
 

@@ -11,21 +11,21 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
   return ctx.tool.transform((editor) => {
     for (const definition of [
       {
-        name: "lazers_submit_plan",
+        name: "lz-submit-plan",
         description:
-          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Does not run until lazers_plan_command action run. Stable requestID is mandatory for safe retries.",
+          "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Does not run until lz-plan-command action run. Stable requestID is mandatory for safe retries.",
         schema: PlanInput,
         run: (input: unknown, sessionID: string) => runtime.store.submit(input, sessionID),
       },
       {
-        name: "lazers_plan_command",
+        name: "lz-plan-command",
         description:
           "Schedule priority/afterPlans and an unstarted plan baseline with reason; amend-scope adds authorized scopeAdditions for taskID with reason without rewriting its specification; request execution, cancel, audit, reconcile, reassign, retry or resume stopped work, or record assertion/artifact-bound human evidence (omit taskID for combined-plan acceptance). adopt-descendant verifies a reviewed commit currently at targetBranch HEAD against the exact failed/accepted attempt artifact, with taskID, attemptID, artifact, descendantCommit and reason; fresh task and combined checks run without a worker turn. Adoption human evidence supplies adoptionID and exact task or combined artifact. Retry can requeue a cancelled zero-attempt task in an admitted plan without starting it; dependencies and scopes still gate dispatch. Requires current expectedVersion and stable requestID. Resume/retry use taskID/reason; workspaceMode shared selects this checkout. After review/merge, integrated with taskID records that accepted task's source landing without plan finalization or cleanup; omit taskID to record the accepted combined artifact and request native non-forced cleanup. No force-accept; history remains.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
       },
       {
-        name: "lazers_inspect_plan",
+        name: "lz-inspect-plan",
         description:
           "Compact by default: inspect all project plans or one plan with IDs, authored title/objective, state/version/reason, model, schedule, node states/waiting reasons, attempt/effect/outcome counts and concise check exit status. It omits policies, transcripts and check output. Set full=true only for progressive troubleshooting; it returns the existing full plan detail, or all plan source and audit when planID is omitted.",
         schema: InspectPlanInput,
@@ -34,7 +34,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         },
       },
       {
-        name: "lazers_record_architect_continuity",
+        name: "lz-record-architect-continuity",
         description:
           "Replace the active Architect owner session's durable continuity checkpoint with exact, still-relevant decisions and unresolved questions from the conversation (maximum 12 KB). This is authored structured state, not a transcript summary. Call after material decisions or changes to open questions; use empty arrays to explicitly record that none remain.",
         schema: ArchitectContinuityInput,
@@ -42,7 +42,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
           runtime.recordArchitectContinuity(sessionID, input),
       },
       {
-        name: "lazers_worker_catalog",
+        name: "lz-worker-catalog",
         description:
           "Read the live native OpenCode model catalog, current implementor selection, listed prices, variants and capability metadata to advise the user. Informational only: does not infer a ranking, validate or change a route, or launch model inference.",
         schema: z.strictObject({}),
@@ -69,9 +69,9 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
                     if (
                       call.agent !== "architect" &&
                       [
-                        "lazers_submit_plan",
-                        "lazers_plan_command",
-                        "lazers_record_architect_continuity",
+                        "lz-submit-plan",
+                        "lz-plan-command",
+                        "lz-record-architect-continuity",
                       ].includes(definition.name)
                     )
                       throw new Error("Plan orchestration is restricted to Architect")

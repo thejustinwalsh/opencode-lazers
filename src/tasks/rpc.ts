@@ -25,7 +25,7 @@ export function registerTaskReads(
               ctx.permission.assert({
                 sessionID: Session.ID.make(actor.id),
                 agent: Agent.ID.make(actor.agent),
-                action: "lazers_start_task",
+                action: "lz-start-task",
                 resources: [input.taskID],
               }),
             )

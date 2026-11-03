@@ -216,12 +216,12 @@ test("an owned implementor reuses its Architect publication across reopened real
   let workerTools = await register(f.workerIndex, f.worker)
   const manifest = await Effect.runPromise(
     workerTools.tools
-      .get("lazers_project_index")!
+      .get("lz-project-index")!
       .execute({ paths: ["README.md"] }, callContext("ses_worker", "lazers-implementor")),
   )
   const read = await Effect.runPromise(
     workerTools.tools
-      .get("lazers_project_read")!
+      .get("lz-project-read")!
       .execute(
         { paths: ["README.md"], level: "full" },
         callContext("ses_worker", "lazers-implementor"),
@@ -260,7 +260,7 @@ test("an owned implementor reuses its Architect publication across reopened real
   workerTools = await register(reopened, f.worker)
   const afterReopen = await Effect.runPromise(
     workerTools.tools
-      .get("lazers_project_read")!
+      .get("lz-project-read")!
       .execute(
         { paths: ["README.md"], level: "full" },
         callContext("ses_worker", "lazers-implementor"),
@@ -285,11 +285,11 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
   await f.sourceIndex.refresh({ sessionID: "ses_architect", agent: "architect" })
   const before = f.sessionReads.length
   const beforePermissions = f.permissionReads.length
-  const deniedTools = await register(f.workerIndex, f.worker, "lazers_project_read")
+  const deniedTools = await register(f.workerIndex, f.worker, "lz-project-read")
   await expect(
     Effect.runPromise(
       deniedTools.tools
-        .get("lazers_project_read")!
+        .get("lz-project-read")!
         .execute(
           { paths: ["README.md"], level: "full" },
           callContext("ses_worker", "lazers-implementor"),
@@ -304,12 +304,12 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
   const tools = await register(f.workerIndex, f.worker)
   const manifest = await Effect.runPromise(
     tools.tools
-      .get("lazers_project_index")!
+      .get("lz-project-index")!
       .execute({ paths: ["README.md"] }, callContext("ses_worker", "lazers-implementor")),
   )
   const read = await Effect.runPromise(
     tools.tools
-      .get("lazers_project_read")!
+      .get("lz-project-read")!
       .execute(
         { paths: ["README.md"], level: "full" },
         callContext("ses_worker", "lazers-implementor"),
@@ -325,7 +325,7 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
     (
       await Effect.runPromise(
         tools.tools
-          .get("lazers_project_read")!
+          .get("lz-project-read")!
           .execute(
             { paths: ["README.md"], level: "full" },
             callContext("ses_worker", "lazers-implementor"),
@@ -338,7 +338,7 @@ test("tool denial precedes native lookup, and denied or revoked source permissio
     (
       await Effect.runPromise(
         tools.tools
-          .get("lazers_project_read")!
+          .get("lz-project-read")!
           .execute(
             { paths: ["README.md"], level: "full" },
             callContext("ses_worker", "lazers-implementor"),
@@ -354,8 +354,8 @@ test("focused native reads check only cached matches against the worker and publ
     writeFileSync(join(f.source, `unrelated-${number}.txt`), `unrelated ${number}`)
   await f.sourceIndex.refresh({ sessionID: "ses_architect", agent: "architect" })
   const tools = await register(f.workerIndex, f.worker)
-  const index = tools.tools.get("lazers_project_index")!
-  const read = tools.tools.get("lazers_project_read")!
+  const index = tools.tools.get("lz-project-index")!
+  const read = tools.tools.get("lz-project-read")!
 
   f.permissionReads.length = 0
   const manifest = await Effect.runPromise(

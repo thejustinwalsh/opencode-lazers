@@ -4,9 +4,9 @@ Implemented for the optional WebGPU experiment, OpenCode 2.2.5, 2026-10-31. This
 
 ## Intent and boundary
 
-Give the primary agent a cheap opportunity to improve a task before submission. One native tool, `lazers_verify_task`, owns structural validation, the fixed question collection, review history, and progression. The agent supplies structured task state, receives one focused concern, revises the task or obtains a clarification, and calls the same tool again. It does not choose a model or write the review questions.
+Give the primary agent a cheap opportunity to improve a task before submission. One native tool, `lz-verify-task`, owns structural validation, the fixed question collection, review history, and progression. The agent supplies structured task state, receives one focused concern, revises the task or obtains a clarification, and calls the same tool again. It does not choose a model or write the review questions.
 
-The reviewer is advisory. The main agent remains responsible for the specification and user intent. Ordinary `lazers_submit_task` performs its existing strict structural validation and persistence. Its API is unchanged; this increment guides Architect to verify before submission, rather than adding an opaque semantic veto to task persistence. Direct submission clients are not forcibly intercepted. Review completion never authorizes execution or establishes acceptance.
+The reviewer is advisory. The main agent remains responsible for the specification and user intent. Ordinary `lz-submit-task` performs its existing strict structural validation and persistence. Its API is unchanged; this increment guides Architect to verify before submission, rather than adding an opaque semantic veto to task persistence. Direct submission clients are not forcibly intercepted. Review completion never authorizes execution or establishes acceptance.
 
 Coverage is task-local: judge acceptance against the task objective and its
 boundaries, not every outcome in the parent roadmap. Cancellation/performance
@@ -54,13 +54,15 @@ Independent questions share a request; a dependent later stage needs updated sta
 ## Tool contract
 
 ```ts
-lazers_verify_task({
-  task: taskProposalJSON,
-  request: originalUserRequest,
-  evidence: [recordedClarification, relevantTestProcedure],
-  // Omit initially; reuse the returned ID on revisions:
-  reviewID,
-})
+lz -
+  verify -
+  task({
+    task: taskProposalJSON,
+    request: originalUserRequest,
+    evidence: [recordedClarification, relevantTestProcedure],
+    // Omit initially; reuse the returned ID on revisions:
+    reviewID,
+  })
 ```
 
 Results:
@@ -73,7 +75,7 @@ Results:
 - `busy`: a call for this review is active; wait for it to finish.
 - `stale`: this completed review belongs to another draft; verify the new draft separately.
 
-Nothing is submitted by the verifier. The original task-submission tool remains the persistence boundary. Native permission `lazers_verify_task` is asserted before review-state access or inference. Architect receives that permission and review guidance only when the local-inference master, System One decisions, and Task review switches are on. Disabling review removes its tool/guidance and cancels its local inference while ordinary submission and the core task workflow remain available. See [feature controls](webgpu-api.md#feature-controls).
+Nothing is submitted by the verifier. The original task-submission tool remains the persistence boundary. Native permission `lz-verify-task` is asserted before review-state access or inference. Architect receives that permission and review guidance only when the local-inference master, System One decisions, and Task review switches are on. Disabling review removes its tool/guidance and cancels its local inference while ordinary submission and the core task workflow remain available. See [feature controls](webgpu-api.md#feature-controls).
 
 ## User communication
 

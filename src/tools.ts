@@ -60,17 +60,17 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
   }
   return ctx.tool.transform((editor) => {
     editor.add({
-      name: "lazers_submit_task",
+      name: "lz-submit-task",
       description:
         "Validate and persist a task; does not execute. Required idempotencyKey: 1–200 characters, non-whitespace, compared exactly within the canonical repo across sessions/restarts. Retry the same key/content to recover the original ID. Changed content conflicts; new logical work needs a new key. Object key order is ignored; array order and values matter. Invalid input returns field errors without saving.",
       input: z.toJSONSchema(TaskSubmissionSchema, { io: "input" }),
-      options: { codemode: false, permission: "lazers_submit_task" },
+      options: { codemode: false, permission: "lz-submit-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
             sessionID: context.sessionID,
             agent: context.agent,
-            action: "lazers_submit_task",
+            action: "lz-submit-task",
             resources: ["*"],
           })
           .pipe(
@@ -113,17 +113,17 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           ),
     })
     editor.add({
-      name: "lazers_dispose_task",
+      name: "lz-dispose-task",
       description:
         "Architect-only durable disposition for an old task: record reviewed fulfillment, supersession, rejection or duplication with a reason, evidence and project-local related task IDs. The immutable task remains readable. This does not accept worker execution, override active work, or force a plan state.",
       input: z.toJSONSchema(TaskDispositionInput, { io: "input" }),
-      options: { codemode: false, permission: "lazers_dispose_task" },
+      options: { codemode: false, permission: "lz-dispose-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
             sessionID: context.sessionID,
             agent: context.agent,
-            action: "lazers_dispose_task",
+            action: "lz-dispose-task",
             resources: ["*"],
           })
           .pipe(
@@ -152,18 +152,18 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           ),
     })
     editor.add({
-      name: "lazers_get_task",
+      name: "lz-get-task",
       description:
-        "Retrieve a LAZERS task by its project-local LZ reference or legacy UUID as structured task and execution data. Implementors should use lazers_get_task_instructions for readable instructions.",
+        "Retrieve a LAZERS task by its project-local LZ reference or legacy UUID as structured task and execution data. Implementors should use lz-get-task-instructions for readable instructions.",
       input: GetInput,
       output: GetOutput,
-      options: { codemode: true, pinned: true, permission: "lazers_get_task" },
+      options: { codemode: true, pinned: true, permission: "lz-get-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
             sessionID: context.sessionID,
             agent: context.agent,
-            action: "lazers_get_task",
+            action: "lz-get-task",
             resources: ["*"],
           })
           .pipe(
@@ -177,22 +177,22 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           ),
     })
     editor.add({
-      name: "lazers_get_task_instructions",
+      name: "lz-get-task-instructions",
       description:
-        "Retrieve readable implementation instructions by project-local LZ reference or legacy UUID, including the goal, acceptance, boundaries, advisory guidance, verification and sources. Use lazers_get_task when structured task and execution fields are needed.",
+        "Retrieve readable implementation instructions by project-local LZ reference or legacy UUID, including the goal, acceptance, boundaries, advisory guidance, verification and sources. Use lz-get-task when structured task and execution fields are needed.",
       input: GetInput,
       output: GetInstructionsOutput,
       options: {
         codemode: true,
         pinned: true,
-        permission: "lazers_get_task_instructions",
+        permission: "lz-get-task-instructions",
       },
       execute: (input, context) =>
         ctx.permission
           .assert({
             sessionID: context.sessionID,
             agent: context.agent,
-            action: "lazers_get_task_instructions",
+            action: "lz-get-task-instructions",
             resources: ["*"],
           })
           .pipe(
@@ -209,17 +209,17 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           ),
     })
     editor.add({
-      name: "lazers_list_tasks",
+      name: "lz-list-tasks",
       description:
-        "List recent open submitted tasks in this repository, including each stable project-local LZ reference and UUID. Retired records stay available through lazers_get_task or lazers_query_tasks with includeRetired; use the latter for the full specification list.",
+        "List recent open submitted tasks in this repository, including each stable project-local LZ reference and UUID. Retired records stay available through lz-get-task or lz-query-tasks with includeRetired; use the latter for the full specification list.",
       input: listInput,
-      options: { codemode: false, permission: "lazers_list_tasks" },
+      options: { codemode: false, permission: "lz-list-tasks" },
       execute: (input, context) =>
         ctx.permission
           .assert({
             sessionID: context.sessionID,
             agent: context.agent,
-            action: "lazers_list_tasks",
+            action: "lz-list-tasks",
             resources: ["*"],
           })
           .pipe(
@@ -234,18 +234,18 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
           ),
     })
     editor.add({
-      name: "lazers_query_tasks",
+      name: "lz-query-tasks",
       description:
         "Search this project's persisted open tasks across sessions, including older records. Literal text, LZ reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
       input: QueryInput,
       output: QueryOutput,
-      options: { codemode: true, pinned: true, permission: "lazers_query_tasks" },
+      options: { codemode: true, pinned: true, permission: "lz-query-tasks" },
       execute: (input, context) =>
         ctx.permission
           .assert({
             sessionID: context.sessionID,
             agent: context.agent,
-            action: "lazers_query_tasks",
+            action: "lz-query-tasks",
             resources: ["*"],
           })
           .pipe(

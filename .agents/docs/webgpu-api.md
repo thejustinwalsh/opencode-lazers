@@ -200,15 +200,15 @@ Limits: 1–16 questions; 2–20 choice options; 2–10 score levels; 8,000 seri
 
 ## Agent tools and prompt evaluation
 
-`lazers_local_ask`, `lazers_local_decide`, and **`lazers_local_system_one`** are native tools with explicit permission checks before RPC. The opted-in Architect receives these three read-only actions and guidance about atomic questions and unresolved evidence. Disabled experiments leave Architect unchanged.
+`lz-local-ask`, `lz-local-decide`, and **`lz-local-system-one`** are native tools with explicit permission checks before RPC. The opted-in Architect receives these three read-only actions and guidance about atomic questions and unresolved evidence. Disabled experiments leave Architect unchanged.
 
 Following the [official TypeSafe skill](https://github.com/typesafe-ai/skills/blob/main/skills/typesafe-ai/SKILL.md) and [Liquid decision-model skill](https://docs.liquid.ai/.well-known/skills/decision-model/skill.md): provide the original request, explicit answers, and relevant evidence; ask narrow observable judgments separately; keep actions, arithmetic, permissions, and acceptance in code. Bundle independent questions over shared state. A vague proposal alone cannot establish user intent.
 
-Probe complete, incomplete, contradictory, and negative cases. Retain exact requests and individual probabilities, not only an aggregate score. Uncertain results and missing evidence require clarification. A successful tiny live trial establishes integration feasibility, not model quality or reliable automated admission. The current experiment does not automatically gate `lazers_submit_task` or register a native host decision provider.
+Probe complete, incomplete, contradictory, and negative cases. Retain exact requests and individual probabilities, not only an aggregate score. Uncertain results and missing evidence require clarification. A successful tiny live trial establishes integration feasibility, not model quality or reliable automated admission. The current experiment does not automatically gate `lz-submit-task` or register a native host decision provider.
 
 ## Advisory pre-submission hardening
 
-`lazers_verify_task({task, request, evidence?, reviewID?})` combines structural validation and the fixed local System One question set. It selects one concern for correction/clarification, preserves review history, and caps a review at three rounds total. Equal-or-better revised scores advance under the user's advisory policy; exhaustion continues with concerns recorded. See the [complete contract and state machine](task-hardening.md). Ordinary submission retains its structural checks and persistence boundary. The [next parallel phase](parallel-task-review-evaluation.md) measures whether this improves task quality.
+`lz-verify-task({task, request, evidence?, reviewID?})` combines structural validation and the fixed local System One question set. It selects one concern for correction/clarification, preserves review history, and caps a review at three rounds total. Equal-or-better revised scores advance under the user's advisory policy; exhaustion continues with concerns recorded. See the [complete contract and state machine](task-hardening.md). Ordinary submission retains its structural checks and persistence boundary. The [next parallel phase](parallel-task-review-evaluation.md) measures whether this improves task quality.
 
 ## Speech and native composer dictation
 

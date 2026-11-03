@@ -96,15 +96,15 @@ if (import.meta.main) {
       })
       process.disconnect!()
     }
-    const receipt = await call("lazers_submit_task", options.input)
+    const receipt = await call("lz-submit-task", options.input)
     if (!options.discard) {
       console.log(
         JSON.stringify(
           options.inspect
             ? {
                 receipt,
-                get: await call("lazers_get_task", { taskID: receipt.taskID }),
-                list: await call("lazers_list_tasks", { limit: 100 }),
+                get: await call("lz-get-task", { taskID: receipt.taskID }),
+                list: await call("lz-list-tasks", { limit: 100 }),
               }
             : receipt,
         ),

@@ -49,7 +49,7 @@ and revisions; include research results only when they affect the task, with an
 optional link to deeper material. Generic repository-discovery and skill-loading
 advice lives in the shared implementor instructions, not repeated in each task.
 
-Architect self-review through `lazers_verify_task` stays. It checks both missing
+Architect self-review through `lz-verify-task` stays. It checks both missing
 behavior and unsupported or repeated obligations. It preserves necessary
 requirements while removing needless instructions; it is not implementation
 approval.

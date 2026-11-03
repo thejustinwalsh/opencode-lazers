@@ -68,7 +68,7 @@ test("the native review tool checks permission before reading review state and r
     String((await Effect.runPromise(tool!.execute(input, context))).content),
   )
   expect(result.status).toBe("unavailable")
-  expect(result.next.tool).toBe("lazers_verify_task")
+  expect(result.next.tool).toBe("lz-verify-task")
   expect(result.round).toBe(1)
   expect(reads).toBe(1)
 })

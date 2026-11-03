@@ -84,8 +84,8 @@ test("authorized callers read native catalog advice; only orchestration requires
   } as unknown as TaskRuntime
   await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
 
-  const catalog = tools.get("lazers_worker_catalog")!
-  expect(catalog.options).toMatchObject({ codemode: false, permission: "lazers_worker_catalog" })
+  const catalog = tools.get("lz-worker-catalog")!
+  expect(catalog.options).toMatchObject({ codemode: false, permission: "lz-worker-catalog" })
   const result = await Effect.runPromise(catalog.execute({}, callContext("architect")))
   const advice = JSON.parse(String(result.content))
   expect(advice.options[0]).toMatchObject({
@@ -96,19 +96,19 @@ test("authorized callers read native catalog advice; only orchestration requires
     pricesUSDPerMillionTokens: null,
   })
   expect(advice.advisoryOnly).toBe(true)
-  expect(permissionChecks).toEqual(["lazers_worker_catalog"])
+  expect(permissionChecks).toEqual(["lz-worker-catalog"])
   expect(catalogCalls).toBe(1)
 
   const worker = await Effect.runPromise(catalog.execute({}, callContext("lazers-implementor")))
   const workerAdvice = JSON.parse(String(worker.content))
   expect(workerAdvice.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/)
   expect({ ...workerAdvice, observedAt: advice.observedAt }).toEqual(advice)
-  expect(permissionChecks).toEqual(["lazers_worker_catalog", "lazers_worker_catalog"])
+  expect(permissionChecks).toEqual(["lz-worker-catalog", "lz-worker-catalog"])
   expect(catalogCalls).toBe(2)
-  const continuity = tools.get("lazers_record_architect_continuity")!
+  const continuity = tools.get("lz-record-architect-continuity")!
   expect(continuity.options).toMatchObject({
     codemode: false,
-    permission: "lazers_record_architect_continuity",
+    permission: "lz-record-architect-continuity",
   })
   const checkpoint = {
     decisions: ["Keep the accepted direction."],
@@ -130,7 +130,7 @@ test("authorized callers read native catalog advice; only orchestration requires
   ).rejects.toThrow("permission denied")
   expect(continuityCalls).toHaveLength(1)
   denied = false
-  for (const name of ["lazers_submit_plan", "lazers_plan_command"])
+  for (const name of ["lz-submit-plan", "lz-plan-command"])
     await expect(
       Effect.runPromise(tools.get(name)!.execute({}, callContext("lazers-implementor"))),
     ).rejects.toThrow("Plan orchestration is restricted to Architect")

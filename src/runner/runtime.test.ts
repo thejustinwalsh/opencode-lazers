@@ -248,7 +248,7 @@ function fixture(
     },
     prompt: async (input) => {
       events.push(`prompt:${input.id}`)
-      expect(input.text).toContain("lazers_get_task_instructions")
+      expect(input.text).toContain("lz-get-task-instructions")
       expect(input.text).not.toContain('"specification"')
       expect(input.text).not.toContain("SECRET_SKILL_BODY_CANARY")
       expect("skills" in input).toBe(false)
@@ -1824,7 +1824,7 @@ test("real Git worktrees execute a dependency graph, verify combined content and
   expect(JSON.parse(workers[0]!.policy).packet).toEqual({
     recipe: "task-tool/1",
     taskID: workers[0]!.task_id,
-    tool: "lazers_get_task_instructions",
+    tool: "lz-get-task-instructions",
   })
   await drive(f.runtime)
   expect(f.events.filter((e) => e.startsWith("create:"))).toHaveLength(2)
@@ -6029,7 +6029,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
     (notice) =>
       notice.sessionID === successor.id && notice.text.includes("Architect continuity handoff"),
   )!
-  expect(wake.text).toContain("lazers_inspect_plan")
+  expect(wake.text).toContain("lz-inspect-plan")
   expect(wake.text).toContain("Keep the existing approved implementation direction.")
   expect(wake.text).toContain("Confirm whether the follow-up needs additional scope.")
   expect(wake.text).not.toContain("SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY")

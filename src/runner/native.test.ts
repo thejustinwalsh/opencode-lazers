@@ -267,8 +267,8 @@ test("scope instructions require matching readback rather than trusting a succes
 })
 
 test("worker guidance teaches focused LAZERS discovery and optional progressive skill use", () => {
-  expect(workerInstructions).toContain("lazers_project_index")
-  expect(workerInstructions).toContain("lazers_project_read")
+  expect(workerInstructions).toContain("lz-project-index")
+  expect(workerInstructions).toContain("lz-project-read")
   expect(workerInstructions).toContain("optional\nnative skill")
   expect(workerInstructions).toContain("unavailable suggestion does not block")
   expect(workerInstructions).toContain("Do not launch subagents")

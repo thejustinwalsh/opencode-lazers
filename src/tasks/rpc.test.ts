@@ -220,7 +220,7 @@ test("Start RPC checks actor ownership and native permission before entering run
     expect(checks[0]).toMatchObject({
       sessionID: "ses_actor",
       agent: "architect",
-      action: "lazers_start_task",
+      action: "lz-start-task",
       resources: [taskID],
     })
 

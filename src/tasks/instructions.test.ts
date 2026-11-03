@@ -70,7 +70,7 @@ test("task instructions preserve goal, acceptance, boundaries, guidance, verific
   expect(instructions).not.toContain("Risk:")
   expect(instructions).not.toContain("Policy:")
   expect(instructions).not.toContain("Obsolete boilerplate")
-  expect(instructions).not.toContain("lazers_project_index")
+  expect(instructions).not.toContain("lz-project-index")
   expect(instructions.indexOf("## Done when")).toBeLessThan(instructions.indexOf("## Constraints"))
   expect(instructions).not.toContain('"proposal"')
 })

@@ -77,23 +77,23 @@ async function setup(deniedAction?: string) {
 
 test("read tools report an absent index without building, and an explicit Architect refresh publishes it", async () => {
   const f = await setup()
-  const read = f.tools.get("lazers_project_read")!
+  const read = f.tools.get("lz-project-read")!
   await expect(
     Effect.runPromise(read.execute({ paths: ["src"] }, callContext("lazers-implementor"))),
   ).rejects.toThrow("Architect must refresh")
-  expect(f.assertions).toEqual(["lazers_project_read"])
+  expect(f.assertions).toEqual(["lz-project-read"])
 
-  const refresh = f.tools.get("lazers_project_refresh")!
+  const refresh = f.tools.get("lz-project-refresh")!
   expect(refresh.options).toMatchObject({ codemode: true, pinned: true })
   const built = await Effect.runPromise(refresh.execute({}, callContext("architect")))
-  expect(f.assertions.at(-1)).toBe("lazers_project_refresh")
+  expect(f.assertions.at(-1)).toBe("lz-project-refresh")
   expect(built.output).toMatchObject({
     snapshotID: expect.any(String),
     freshness: "as-of-refresh",
     workspace: f.index.root,
     totalFiles: 1,
   })
-  const indexTool = f.tools.get("lazers_project_index")!
+  const indexTool = f.tools.get("lz-project-index")!
   expect(indexTool.output).toBeDefined()
   expect(indexTool.description).toContain(
     "totalFiles counts authorized matches before the 100-file response limit",
@@ -103,39 +103,39 @@ test("read tools report an absent index without building, and an explicit Archit
 
 test("native permission and Architect role both gate refresh; reads remain available to permitted implementors", async () => {
   const f = await setup()
-  const refresh = f.tools.get("lazers_project_refresh")!
+  const refresh = f.tools.get("lz-project-refresh")!
   await expect(
     Effect.runPromise(refresh.execute({}, callContext("lazers-implementor"))),
   ).rejects.toThrow("Only Architect")
-  expect(f.assertions).toEqual(["lazers_project_refresh"])
+  expect(f.assertions).toEqual(["lz-project-refresh"])
 
   await Effect.runPromise(refresh.execute({}, callContext("architect")))
-  const read = f.tools.get("lazers_project_index")!
+  const read = f.tools.get("lz-project-index")!
   const output = await Effect.runPromise(
     read.execute({ paths: [] }, callContext("lazers-implementor")),
   )
   expect(output.output).toMatchObject({ freshness: "as-of-refresh" })
   const source = await Effect.runPromise(
     f.tools
-      .get("lazers_project_read")!
+      .get("lz-project-read")!
       .execute({ paths: ["README.md"], level: "full" }, callContext("lazers-implementor")),
   )
   expect(source.output.sources[0]!.text).toBe("cached project source")
   expect(f.assertions).toEqual([
-    "lazers_project_refresh",
-    "lazers_project_refresh",
-    "lazers_project_index",
-    "lazers_project_read",
+    "lz-project-refresh",
+    "lz-project-refresh",
+    "lz-project-index",
+    "lz-project-read",
   ])
 })
 
 test("native permission denial prevents Architect refresh from creating a snapshot", async () => {
-  const f = await setup("lazers_project_refresh")
-  const refresh = f.tools.get("lazers_project_refresh")!
+  const f = await setup("lz-project-refresh")
+  const refresh = f.tools.get("lz-project-refresh")!
   await expect(Effect.runPromise(refresh.execute({}, callContext("architect")))).rejects.toThrow(
     "Permission denied",
   )
-  expect(f.assertions).toEqual(["lazers_project_refresh"])
+  expect(f.assertions).toEqual(["lz-project-refresh"])
   await expect(f.index.manifest({ sessionID: "architect", agent: "architect" })).rejects.toThrow(
     "Architect must refresh",
   )
@@ -174,7 +174,7 @@ test("cancelling an index tool interrupts its native permission wait and stops t
   })
   const controller = new AbortController()
   const pending = Effect.runPromiseExit(
-    f.tools.get("lazers_project_index")!.execute({}, callContext("lazers-implementor")),
+    f.tools.get("lz-project-index")!.execute({}, callContext("lazers-implementor")),
     { signal: controller.signal },
   )
   try {

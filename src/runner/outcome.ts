@@ -36,7 +36,7 @@ export function outcomeText(serialized: string) {
         ...(unresolvedQuestions.length
           ? ["Unresolved questions:", ...unresolvedQuestions.map((item) => `- ${item}`)]
           : ["Unresolved questions: none."]),
-        "No prior transcript was replayed. Fetch current durable state with lazers_inspect_plan for these IDs and review the current outcomes before deciding.",
+        "No prior transcript was replayed. Fetch current durable state with lz-inspect-plan for these IDs and review the current outcomes before deciding.",
         "Existing workers continue unchanged; do not restart them.",
       ].join("\n")
     }

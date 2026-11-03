@@ -22,7 +22,7 @@ export function registerTrajectoryTools(
   const cursorSecret = crypto.getRandomValues(new Uint8Array(32))
   return ctx.tool.transform((editor) => {
     editor.add({
-      name: "lazers_inspect_trajectory",
+      name: "lz-inspect-trajectory",
       description:
         "Read a redacted, project-owned worker task/attempt trajectory and total effort, including failed retries. Provide exactly one taskID or attemptID; continue with the returned cursor and unchanged limit. Only visible safe content is included; context coverage, compaction, missing usage and unknown cost are explicit.",
       input: z.toJSONSchema(InspectTrajectoryInput, { io: "input" }),
@@ -30,14 +30,14 @@ export function registerTrajectoryTools(
       options: {
         codemode: true,
         pinned: true,
-        permission: "lazers_inspect_trajectory",
+        permission: "lz-inspect-trajectory",
       },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_inspect_trajectory",
+            action: "lz-inspect-trajectory",
             resources: ["*"],
           })
           .pipe(

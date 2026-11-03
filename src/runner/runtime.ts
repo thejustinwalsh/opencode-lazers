@@ -2814,7 +2814,7 @@ export class TaskRuntime {
       packet: {
         recipe: "task-tool/1",
         taskID: task.id,
-        tool: "lazers_get_task_instructions",
+        tool: "lz-get-task-instructions",
       },
       budget: null,
       repairAttempt: this.store.atomic(
@@ -3064,14 +3064,14 @@ export class TaskRuntime {
           sessionID: attempt.session_id,
           id: attempt.message_id,
           directory: attempt.workspace,
-          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lazers_get_task_instructions before editing. Use lazers_get_task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
+          text: `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch readable revision 1 instructions with lz-get-task-instructions before editing. Use lz-get-task only when structured task data is needed. Follow the implementor role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
         })
         this.receipt(
           effect,
           {
             messageID: attempt.message_id,
             taskID: attempt.task_id,
-            instructions: "readable; lazers_get_task_instructions",
+            instructions: "readable; lz-get-task-instructions",
           },
           fence,
         )

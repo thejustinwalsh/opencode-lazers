@@ -282,21 +282,21 @@ export function registerProgress(
     )
     yield* ctx.tool.transform((editor) =>
       editor.add({
-        name: "lazers_report_progress",
+        name: "lz-report-progress",
         description:
           "Record a concise progress note or handoff for this assigned worker attempt. Commentary is an annotation only: it cannot verify, accept, schedule, or change task state. Identity is resolved from the current native worker session.",
         input: z.toJSONSchema(ProgressInput, { io: "input" }),
         output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
         options: {
           codemode: true,
-          permission: "lazers_report_progress",
+          permission: "lz-report-progress",
         },
         execute: (input, call) =>
           ctx.permission
             .assert({
               sessionID: call.sessionID,
               agent: call.agent,
-              action: "lazers_report_progress",
+              action: "lz-report-progress",
               resources: ["*"],
             })
             .pipe(

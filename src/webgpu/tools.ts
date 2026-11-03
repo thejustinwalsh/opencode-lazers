@@ -47,18 +47,18 @@ export function registerInferenceTools(
   return ctx.tool.transform((editor) => {
     if (allowed("decisions"))
       editor.add({
-        name: "lazers_local_system_one",
+        name: "lz-local-system-one",
         description:
           "Evaluate named noul (yes probability), choice (categories with descriptions), or score (ordered rubric) questions over shared text/JSON state using genuine local d1-Omni-2B on WebGPU. Autoloads; up to 16 questions, 20 choices, 8,000 serialized characters, default 60-second inclusive deadline. Returns System One answers/probabilities and measured zero-output-token usage, or an explicit error. Advisory; never grants permission or accepts a task. Ask concrete observable questions; use clarification for missing evidence or uncertain results.",
         input: SystemOneRequest,
-        options: { codemode: false, permission: "lazers_local_system_one" },
+        options: { codemode: false, permission: "lz-local-system-one" },
         execute: (input, context) =>
           guard("decisions", () =>
             ctx.permission
               .assert({
                 sessionID: context.sessionID,
                 agent: context.agent,
-                action: "lazers_local_system_one",
+                action: "lz-local-system-one",
                 resources: ["*"],
               })
               .pipe(
@@ -74,18 +74,18 @@ export function registerInferenceTools(
       })
     if (allowed("questions"))
       editor.add({
-        name: "lazers_local_ask",
+        name: "lz-local-ask",
         description:
           "Ask the optional local WebGPU model a general question. Autoloads. Bounded FIFO queue; default 60-second total deadline including loading and waiting. Returns measured text/usage or an explicit error.",
         input: ask,
-        options: { codemode: false, permission: "lazers_local_ask" },
+        options: { codemode: false, permission: "lz-local-ask" },
         execute: (input, context) =>
           guard("questions", () =>
             ctx.permission
               .assert({
                 sessionID: context.sessionID,
                 agent: context.agent,
-                action: "lazers_local_ask",
+                action: "lz-local-ask",
                 resources: ["*"],
               })
               .pipe(
@@ -101,18 +101,18 @@ export function registerInferenceTools(
       })
     if (allowed("decisions"))
       editor.add({
-        name: "lazers_local_decide",
+        name: "lz-local-decide",
         description:
           "Ask the optional local WebGPU model for an advisory typed boolean, exact choice, or bounded numeric score using supplied context. Output is validated; malformed or unavailable results remain unresolved. Does not authorize actions or accept tasks.",
         input: decide,
-        options: { codemode: false, permission: "lazers_local_decide" },
+        options: { codemode: false, permission: "lz-local-decide" },
         execute: (input, context) =>
           guard("decisions", () =>
             ctx.permission
               .assert({
                 sessionID: context.sessionID,
                 agent: context.agent,
-                action: "lazers_local_decide",
+                action: "lz-local-decide",
                 resources: ["*"],
               })
               .pipe(

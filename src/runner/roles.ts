@@ -7,9 +7,7 @@ import type { RunnerStore } from "./store.ts"
 
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
-  ["lazers_research", "lazers_submit_plan", "lazers_plan_command", "lazers_submit_task"].includes(
-    tool,
-  )
+  ["lz-research", "lz-submit-plan", "lz-plan-command", "lz-submit-task"].includes(tool)
 
 export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
   return Effect.gen(function* () {
@@ -23,10 +21,10 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
         // Add denials only. Normal host/user/project coding permissions remain authoritative.
         agent.permissions = [
           { action: "subagent", resource: "*", effect: "deny" },
-          { action: "lazers_research", resource: "*", effect: "deny" },
-          { action: "lazers_submit_plan", resource: "*", effect: "deny" },
-          { action: "lazers_plan_command", resource: "*", effect: "deny" },
-          { action: "lazers_submit_task", resource: "*", effect: "deny" },
+          { action: "lz-research", resource: "*", effect: "deny" },
+          { action: "lz-submit-plan", resource: "*", effect: "deny" },
+          { action: "lz-plan-command", resource: "*", effect: "deny" },
+          { action: "lz-submit-task", resource: "*", effect: "deny" },
         ]
         // Preserve the model/effort selected in native OpenCode configuration.
         delete agent.steps

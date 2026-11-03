@@ -244,7 +244,7 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
   try {
     const toolWrite = await Effect.runPromise(
       harness.tools
-        .get("lazers_configure_models")!
+        .get("lz-configure-models")!
         .execute(
           { target: { scope: "shared" }, persona: "systems", expectedRevision: 0, route: shared },
           toolContext(),
@@ -291,7 +291,7 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
     ).toMatchObject({ status: "updated", mapping: { revision: 1, route: task } })
 
     const toolRead = await Effect.runPromise(
-      harness.tools.get("lazers_get_model_settings")!.execute({ taskID }, toolContext()),
+      harness.tools.get("lz-get-model-settings")!.execute({ taskID }, toolContext()),
     )
     const toolSystemSettings = (
       toolRead.output as {
@@ -319,7 +319,7 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
       ),
     ).toMatchObject({ status: "updated", mapping: { revision: 2, route: null } })
     const inherited = await Effect.runPromise(
-      harness.tools.get("lazers_get_model_settings")!.execute({ taskID }, toolContext()),
+      harness.tools.get("lz-get-model-settings")!.execute({ taskID }, toolContext()),
     )
     const inheritedSystemSettings = (
       inherited.output as {
@@ -337,7 +337,7 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
 
     const conflict = await Effect.runPromise(
       harness.tools
-        .get("lazers_configure_models")!
+        .get("lz-configure-models")!
         .execute(
           { target: { scope: "project" }, persona: "systems", expectedRevision: 0, route: project },
           toolContext(),
@@ -606,9 +606,9 @@ test("Models evidence RPC reads cached state without credentials and refreshes o
     })
     expect(sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
     expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
-      "lazers_read_model_evidence",
-      "lazers_refresh_model_evidence",
-      "lazers_read_model_evidence",
+      "lz-read-model-evidence",
+      "lz-refresh-model-evidence",
+      "lz-read-model-evidence",
     ])
   } finally {
     rmSync(root, { recursive: true, force: true })

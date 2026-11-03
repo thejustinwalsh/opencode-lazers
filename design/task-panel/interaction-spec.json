@@ -234,7 +234,7 @@
   },
   "architectQueries": {
     "decision": "Enable confined Code Mode for task investigation; the previous blanket execute restriction is not the intended final authority boundary.",
-    "current": "lazers_list_tasks and lazers_get_task already exist as direct tools. List is limited to the newest 100 summaries and is not a complete overlap-search API. All three task tools currently set codemode:false, and Architect currently denies execute.",
+    "current": "lz-list-tasks and lz-get-task already exist as direct tools. List is limited to the newest 100 summaries and is not a complete overlap-search API. All three task tools currently set codemode:false, and Architect currently denies execute.",
     "proposal": "Expose typed, bounded query/get operations in Code Mode, with structured output and project-scoped permissions. Architect can query the current project across sessions for overlap while its default panel stays session-scoped. GUI and agent share the read service, without a shadow task store.",
     "queryFields": [
       "Text/ID",

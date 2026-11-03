@@ -930,8 +930,7 @@ export class ProgressRecorder {
   }
 
   recordToolHook(call: ToolCall): number | undefined {
-    if (call.tool === "lazers_report_progress" || call.agent !== "lazers-implementor")
-      return undefined
+    if (call.tool === "lz-report-progress" || call.agent !== "lazers-implementor") return undefined
     const stats = privacyStats()
     const payload: Record<string, unknown> = {
       tool: safeText(call.tool, stats, 160),

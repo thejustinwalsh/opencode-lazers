@@ -163,11 +163,11 @@ test("history cache hits remain permission-first and continuation data stays sco
       ),
     ).rejects.toThrow("Observation scope is unavailable")
     expect(permissionCalls).toEqual([
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
-      "lazers_inspect_trajectory",
+      "lz-inspect-trajectory",
+      "lz-inspect-trajectory",
+      "lz-inspect-trajectory",
+      "lz-inspect-trajectory",
+      "lz-inspect-trajectory",
     ])
   } finally {
     fixture.close()

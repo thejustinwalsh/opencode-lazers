@@ -91,7 +91,7 @@ export class TaskReviewer {
         })),
         next: {
           action: "revise",
-          tool: "lazers_verify_task",
+          tool: "lz-verify-task",
           instruction:
             "Fix these structural errors and call this tool again. Nothing was submitted.",
         },
@@ -118,7 +118,7 @@ export class TaskReviewer {
         return {
           status: "invalid",
           error:
-            "The review checklist changed. Call lazers_verify_task with the same task, original request and evidence, omitting reviewID to start the current checklist.",
+            "The review checklist changed. Call lz-verify-task with the same task, original request and evidence, omitting reviewID to start the current checklist.",
         }
       if (saved && saved.request !== state.request)
         return {
@@ -159,7 +159,7 @@ export class TaskReviewer {
           reviewedFingerprint: replay.result.fingerprint,
           next: {
             action: "verify",
-            tool: "lazers_verify_task",
+            tool: "lz-verify-task",
             instruction:
               "This completed review belongs to another draft. Verify the changed task under a new review ID before submission.",
           },
@@ -190,7 +190,7 @@ export class TaskReviewer {
           usage: { input_tokens: 0, output_tokens: 0 },
           next: {
             action: "submit",
-            tool: "lazers_submit_task",
+            tool: "lz-submit-task",
             instruction:
               "Continue under the advisory limit policy and retain the interrupted-review concern. No semantic pass was established.",
           },
@@ -309,21 +309,21 @@ export class TaskReviewer {
         next: progression.done
           ? {
               action: "submit",
-              tool: "lazers_submit_task",
+              tool: "lz-submit-task",
               instruction:
-                "Advisory hardening is complete. Submit the structurally valid task through lazers_submit_task; retain unresolved concerns. This result does not authorize work or certify correctness.",
+                "Advisory hardening is complete. Submit the structurally valid task through lz-submit-task; retain unresolved concerns. This result does not authorize work or certify correctness.",
             }
           : errors.length
             ? {
                 action: "retry",
-                tool: "lazers_verify_task",
+                tool: "lz-verify-task",
                 instruction:
                   "Inference failed, so no semantic pass was established. Retry this review ID within the remaining round budget, or report the limitation.",
               }
             : {
                 action: "revise_or_clarify",
-                tool: "lazers_verify_task",
-                instruction: `Address only the focused concern: ${focus!.guidance} Then call lazers_verify_task with the revised task/evidence and this reviewID. Use the native question tool for a material missing user decision.`,
+                tool: "lz-verify-task",
+                instruction: `Address only the focused concern: ${focus!.guidance} Then call lz-verify-task with the revised task/evidence and this reviewID. Use the native question tool for a material missing user decision.`,
               },
       }
       record.focus = focus?.id ?? null

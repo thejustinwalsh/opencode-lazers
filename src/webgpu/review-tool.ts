@@ -19,12 +19,12 @@ export function registerTaskReviewTool(
   return ctx.tool.transform((editor) => {
     if (!enabled()) return
     editor.add({
-      name: "lazers_verify_task",
+      name: "lz-verify-task",
       description:
         "Before submitting, verify task JSON with structural checks and fixed local System One questions about behavior coverage, measurable performance, weak verification, conflicts, assumptions, and scope. Supply the original user request and relevant evidence. No model or question selection needed. Returns one focused correction/clarification and the next tool to call. Reuse reviewID with revised task/evidence; at most three rounds total. Advisory: equal-or-better focused scores advance, and the limit continues with concerns. Does not persist a submitted task or execute work. " +
         REVIEW_COMMUNICATION,
       input: TaskReviewInput,
-      options: { codemode: false, permission: "lazers_verify_task" },
+      options: { codemode: false, permission: "lz-verify-task" },
       execute: (input, context) =>
         Effect.suspend(() =>
           enabled()
@@ -32,7 +32,7 @@ export function registerTaskReviewTool(
                 .assert({
                   sessionID: context.sessionID,
                   agent: context.agent,
-                  action: "lazers_verify_task",
+                  action: "lz-verify-task",
                   resources: ["*"],
                 })
                 .pipe(

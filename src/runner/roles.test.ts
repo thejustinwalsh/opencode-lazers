@@ -47,7 +47,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   expect(agent.model).toEqual(model)
   expect(agent).toHaveProperty("system", workerInstructions.trim())
   expect(agent.permissions).not.toContainEqual({
-    action: "lazers_worker_catalog",
+    action: "lz-worker-catalog",
     resource: "*",
     effect: "deny",
   })
@@ -58,14 +58,14 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
       edit: {},
       bash: {},
       "subagent.list": {},
-      lazers_worker_catalog: {},
-      lazers_plan_command: {},
+      "lz-worker-catalog": {},
+      "lz-plan-command": {},
     },
   }
   await Effect.runPromise(contextHook!(context as never))
   expect(delegationTool("subagent.list")).toBe(true)
-  expect(delegationTool("lazers_worker_catalog")).toBe(false)
-  expect(Object.keys(context.tools)).toEqual(["read", "edit", "bash", "lazers_worker_catalog"])
+  expect(delegationTool("lz-worker-catalog")).toBe(false)
+  expect(Object.keys(context.tools)).toEqual(["read", "edit", "bash", "lz-worker-catalog"])
   await Effect.runPromise(
     executeHook!({
       sessionID: "worker",
@@ -77,7 +77,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
     executeHook!({
       sessionID: "worker",
       agent: Agent.ID.make("lazers-implementor"),
-      tool: "lazers_worker_catalog",
+      tool: "lz-worker-catalog",
     } as never),
   )
   await expect(

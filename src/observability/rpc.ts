@@ -55,7 +55,7 @@ async function authorize(
   scope: { sessionID: string },
   projectID: string,
   projectDirectory: string,
-  action: "read" | "lazers_inspect_trajectory",
+  action: "read" | "lz-inspect-trajectory",
 ) {
   const session = await Effect.runPromise(
     ctx.session
@@ -126,7 +126,7 @@ export function registerObservability(
               input.scope,
               projectID,
               reads.store.repository.projectDirectory,
-              "lazers_inspect_trajectory",
+              "lz-inspect-trajectory",
             )
             return reads.trajectory(input, tracker)
           },
@@ -140,7 +140,7 @@ export function registerObservability(
               input.scope,
               projectID,
               reads.store.repository.projectDirectory,
-              "lazers_inspect_trajectory",
+              "lz-inspect-trajectory",
             )
             return reads.trajectoryHistory(input, tracker)
           },
@@ -165,7 +165,7 @@ export function registerObservability(
               input.scope,
               projectID,
               reads.store.repository.projectDirectory,
-              "lazers_inspect_trajectory",
+              "lz-inspect-trajectory",
             )
             return reads.trajectoryStatus(input, tracker)
           },

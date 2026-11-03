@@ -125,13 +125,13 @@ test("saved switches enforce public RPC, cancel only disabled work, and remove n
             requested: false,
           })
           await Effect.runPromise(publicApi.configure({ enabled: true }, {} as never))
-          expect(tools.has("lazers_verify_task")).toBe(true)
+          expect(tools.has("lz-verify-task")).toBe(true)
           expect(architect.system).toContain(
-            "For Architect self-review before lazers_submit_task, call lazers_verify_task",
+            "For Architect self-review before lz-submit-task, call lz-verify-task",
           )
           expect(architect.system).toContain("This one tool owns structural validation")
           expect(architect.system).toContain("fixed System One questions")
-          const oldReview = tools.get("lazers_verify_task")!
+          const oldReview = tools.get("lz-verify-task")!
           await Effect.runPromise(worker.attach({ owner: "renderer" }, {} as never))
           const first = Effect.runPromise(publicApi.ask(request, {} as never))
           await Promise.resolve()

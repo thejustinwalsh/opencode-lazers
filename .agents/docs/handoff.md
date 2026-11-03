@@ -1,5 +1,17 @@
 # LAZERS current handoff
 
+2026-11-03 offline rename: user explicitly authorized taking OpenCode offline
+and applying the direct rename. Desktop was quit and service7793 stopped through
+`opencode service stop`; status confirmed stopped. Public tools, permissions,
+hooks, generated instructions, current guidance and tests now use `lz-*`. No
+aliases or dual-name permission layer. Native agent/package/storage identities
+and historical records are retained. Typecheck277 files, lint286 files and GUI
+build pass. Full suite730 pass /2 sandbox process/manifest failures; all30 tests
+in the affected owned-launch file pass with normal visibility. Restart and
+Desktop canonical-tool smoke are next. The last active worker preserved clean
+committed LZ72 artifact e6a58ea in its existing worktree. Resume the same work,
+reconcile native receipts and continue the full roadmap after activation.
+
 2026-11-03, approximately 15:05 UTC. Recheck native state before acting.
 
 ## Latest checkpoint — takes precedence over the older snapshot below
@@ -101,7 +113,7 @@ from observations. This checkpoint is not completion.
   and Code Mode, no worker subagents. Do not introduce provider vetoes or budgets.
 - Evidence is passing meaningful tests and actual product behavior. No source,
   file or documentation hashing/freshness ceremony. Preserve schemas,
-  `lazers_verify_task` Architect self-review and useful System One hardening.
+  `lz-verify-task` Architect self-review and useful System One hardening.
 - Cleanup cannot invalidate legitimate work or cause implementation replay.
   Reserve uncertain/dirty resources; clean only owned, idle, clean, merged native
   worktrees. No direct task/runner database writes or fabricated acceptance.
@@ -359,7 +371,7 @@ Do not replace the roadmap with the current fixes.
 - R2–R6: real progress producers; deterministic struggle notification; cook,
   follow-up or check-in dispositions; steer same worker; reassess; request durable
   handoff/reconcile and retain useful work/failure history.
-- Worker `lazers_verify_handoff` / `lazers_submit_handoff`: authorized requests,
+- Worker `lz-verify-handoff` / `lz-submit-handoff`: authorized requests,
   stopped-worker reporting, shared three-round forward progress, drafts/history/
   concerns in DB, Architect disposition and subsequent use of correction. Handoff
   review/submission is not task completion.

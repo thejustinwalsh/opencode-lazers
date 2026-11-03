@@ -27,18 +27,18 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
 
   return ctx.tool.transform((editor) => {
     editor.add({
-      name: "lazers_get_model_settings",
+      name: "lz-get-model-settings",
       description:
         "Read the exact saved shared, project and optional task model routes for each worker persona, including revisions, inheritance resolution and provenance. Saved routes are not filtered or substituted using the live catalog.",
       input: ModelSettingsInputSchema,
       output: ModelSettingsOutputSchema,
-      options: { codemode: true, pinned: true, permission: "lazers_get_model_settings" },
+      options: { codemode: true, pinned: true, permission: "lz-get-model-settings" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_get_model_settings",
+            action: "lz-get-model-settings",
             resources: ["*"],
           })
           .pipe(
@@ -60,18 +60,18 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
     })
 
     editor.add({
-      name: "lazers_configure_models",
+      name: "lz-configure-models",
       description:
         "Architect-only exact route update for a shared, project or existing project-task persona mapping. Supply the current expectedRevision; stale writes return a conflict with the current record and are never retried automatically. Use route null to remove an override and reveal inheritance.",
       input: ModelMappingUpdateSchema,
       output: ModelMappingWriteOutputSchema,
-      options: { codemode: true, pinned: true, permission: "lazers_configure_models" },
+      options: { codemode: true, pinned: true, permission: "lz-configure-models" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lazers_configure_models",
+            action: "lz-configure-models",
             resources: ["*"],
           })
           .pipe(

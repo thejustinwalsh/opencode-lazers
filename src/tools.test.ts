@@ -113,12 +113,12 @@ async function setup(deny = false) {
 test("registered tools submit, retrieve, and list the same durable task", async () => {
   const { tools, repository, assertions } = await setup()
   const submit = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+    tools.get("lz-submit-task")!.execute(keyedProposal(), context),
   )
   const submitted = JSON.parse(String(submit.content))
   // OpenCode rejects undeclared structured output after tool execution. In the
   // submit path that would discard a receipt after the database commit.
-  expect(tools.get("lazers_submit_task")!.output).toBeUndefined()
+  expect(tools.get("lz-submit-task")!.output).toBeUndefined()
   expect(submit).not.toHaveProperty("output")
   expect(submitted.status).toBe("submitted")
   expect(submitted).toMatchObject({
@@ -135,39 +135,32 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   })
   expect(submitted.note).toContain("does not start execution")
   const get = await Effect.runPromise(
-    tools.get("lazers_get_task")!.execute({ taskID: submitted.taskID }, context),
+    tools.get("lz-get-task")!.execute({ taskID: submitted.taskID }, context),
   )
   expect(JSON.parse(String(get.content)).task.provenance.sessionID).toBe("session")
   const byReference = await Effect.runPromise(
-    tools.get("lazers_get_task")!.execute({ taskID: submitted.reference }, context),
+    tools.get("lz-get-task")!.execute({ taskID: submitted.reference }, context),
   )
   expect(JSON.parse(String(byReference.content))).toMatchObject({
     status: "found",
     reference: submitted.reference,
     task: { id: submitted.taskID },
   })
-  const list = await Effect.runPromise(
-    tools.get("lazers_list_tasks")!.execute({ limit: 5 }, context),
-  )
+  const list = await Effect.runPromise(tools.get("lz-list-tasks")!.execute({ limit: 5 }, context))
   expect(JSON.parse(String(list.content)).tasks[0].taskID).toBe(submitted.taskID)
   expect(JSON.parse(String(list.content)).tasks[0].reference).toBe(submitted.reference)
-  expect(tools.get("lazers_list_tasks")!.output).toBeUndefined()
+  expect(tools.get("lz-list-tasks")!.output).toBeUndefined()
   expect(list).not.toHaveProperty("output")
-  expect(tools.get("lazers_get_task")!.output).toBeDefined()
+  expect(tools.get("lz-get-task")!.output).toBeDefined()
   expect(get.output).toEqual(JSON.parse(String(get.content)))
   expect(repository.list()).toHaveLength(1)
-  expect(assertions).toEqual([
-    "lazers_submit_task",
-    "lazers_get_task",
-    "lazers_get_task",
-    "lazers_list_tasks",
-  ])
+  expect(assertions).toEqual(["lz-submit-task", "lz-get-task", "lz-get-task", "lz-list-tasks"])
 })
 
 test("a replayed submission receipt reports current queued state without claiming execution", async () => {
   const { tools, repository } = await setup()
   const input = keyedProposal()
-  const first = await Effect.runPromise(tools.get("lazers_submit_task")!.execute(input, context))
+  const first = await Effect.runPromise(tools.get("lz-submit-task")!.execute(input, context))
   const receipt = JSON.parse(String(first.content))
   const task = repository.get(receipt.taskID)!
   new RunnerStore(repository).submit(
@@ -183,7 +176,7 @@ test("a replayed submission receipt reports current queued state without claimin
     },
     "architect",
   )
-  const replay = await Effect.runPromise(tools.get("lazers_submit_task")!.execute(input, context))
+  const replay = await Effect.runPromise(tools.get("lz-submit-task")!.execute(input, context))
   expect(JSON.parse(String(replay.content))).toMatchObject({
     taskID: receipt.taskID,
     reference: receipt.reference,
@@ -195,7 +188,7 @@ test("a replayed submission receipt reports current queued state without claimin
 test("Architect can durably retire a legacy task and replay the same disposition", async () => {
   const { tools, repository, assertions } = await setup()
   const submit = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+    tools.get("lz-submit-task")!.execute(keyedProposal(), context),
   )
   const { taskID } = JSON.parse(String(submit.content))
   const input = {
@@ -206,7 +199,7 @@ test("Architect can durably retire a legacy task and replay the same disposition
     evidence: [{ kind: "verification", reference: "bun test" }],
     relatedTaskIDs: [],
   }
-  const dispose = tools.get("lazers_dispose_task")!
+  const dispose = tools.get("lz-dispose-task")!
   const recorded = JSON.parse(
     String(
       await Effect.runPromise(dispose.execute(input, context)).then((result) => result.content),
@@ -224,12 +217,12 @@ test("Architect can durably retire a legacy task and replay the same disposition
     JSON.parse(
       String(
         await Effect.runPromise(
-          tools.get("lazers_query_tasks")!.execute({ includeRetired: true }, context),
+          tools.get("lz-query-tasks")!.execute({ includeRetired: true }, context),
         ).then((result) => result.content),
       ),
     ).tasks[0].disposition.disposition,
   ).toBe("superseded")
-  expect(assertions).toContain("lazers_dispose_task")
+  expect(assertions).toContain("lz-dispose-task")
 })
 
 test("task disposition is Architect-only even when native permission allows the tool", async () => {
@@ -237,7 +230,7 @@ test("task disposition is Architect-only even when native permission allows the 
   const implementor = { ...context, agent: Agent.ID.make("lazers-implementor") }
   await expect(
     Effect.runPromise(
-      tools.get("lazers_dispose_task")!.execute(
+      tools.get("lz-dispose-task")!.execute(
         {
           taskID: crypto.randomUUID(),
           requestID: "implementor-dispose",
@@ -254,7 +247,7 @@ test("task disposition is Architect-only even when native permission allows the 
 test("permission denial prevents task writes", async () => {
   const { tools, repository } = await setup(true)
   await expect(
-    Effect.runPromise(tools.get("lazers_submit_task")!.execute(keyedProposal(), context)),
+    Effect.runPromise(tools.get("lz-submit-task")!.execute(keyedProposal(), context)),
   ).rejects.toThrow("Permission denied")
   expect(repository.list()).toEqual([])
 })
@@ -265,15 +258,15 @@ test("retained tool callbacks survive disposal of the registration connection", 
   const projectDirectory = repository.projectDirectory
   repository.close()
   const submit = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+    tools.get("lz-submit-task")!.execute(keyedProposal(), context),
   )
   const receipt = JSON.parse(String(submit.content))
   expect(receipt.status).toBe("submitted")
   for (const [name, input] of [
-    ["lazers_get_task", { taskID: receipt.taskID }],
-    ["lazers_get_task_instructions", { taskID: receipt.taskID }],
-    ["lazers_list_tasks", { limit: 5 }],
-    ["lazers_query_tasks", {}],
+    ["lz-get-task", { taskID: receipt.taskID }],
+    ["lz-get-task-instructions", { taskID: receipt.taskID }],
+    ["lz-list-tasks", { limit: 5 }],
+    ["lz-query-tasks", {}],
   ] as const) {
     const read = await Effect.runPromise(tools.get(name)!.execute(input, context))
     expect(String(read.content)).toContain(receipt.taskID)
@@ -290,7 +283,7 @@ test("retained tool callbacks survive disposal of the registration connection", 
 test("tool execution returns validation guidance without persisting an invalid task", async () => {
   const { tools, repository } = await setup()
   const result = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute({ objective: "Incomplete" }, context),
+    tools.get("lz-submit-task")!.execute({ objective: "Incomplete" }, context),
   )
   const output = JSON.parse(String(result.content))
   expect(output.status).toBe("invalid")
@@ -300,20 +293,20 @@ test("tool execution returns validation guidance without persisting an invalid t
 
 test("task reads expose structured Code Mode outputs and require their own permissions", async () => {
   const { tools, assertions } = await setup()
-  await Effect.runPromise(tools.get("lazers_submit_task")!.execute(keyedProposal(), context))
-  const query = tools.get("lazers_query_tasks")!
+  await Effect.runPromise(tools.get("lz-submit-task")!.execute(keyedProposal(), context))
+  const query = tools.get("lz-query-tasks")!
   const output = await Effect.runPromise(query.execute({ search: "" }, context))
   expect(query.options?.codemode).toBe(true)
   expect(query.output).toBeDefined()
   expect(output.output).toEqual(JSON.parse(String(output.content)))
-  expect(tools.get("lazers_submit_task")!.options?.codemode).toBe(false)
-  expect(assertions.at(-1)).toBe("lazers_query_tasks")
+  expect(tools.get("lz-submit-task")!.options?.codemode).toBe(false)
+  expect(assertions.at(-1)).toBe("lz-query-tasks")
   const denied = await setup(true)
   for (const [name, input] of [
-    ["lazers_query_tasks", {}],
-    ["lazers_get_task", { taskID: crypto.randomUUID() }],
-    ["lazers_get_task_instructions", { taskID: crypto.randomUUID() }],
-    ["lazers_list_tasks", { limit: 2 }],
+    ["lz-query-tasks", {}],
+    ["lz-get-task", { taskID: crypto.randomUUID() }],
+    ["lz-get-task-instructions", { taskID: crypto.randomUUID() }],
+    ["lz-list-tasks", { limit: 2 }],
   ] as const) {
     await expect(
       Effect.runPromise(denied.tools.get(name)!.execute(input, context)),
@@ -328,14 +321,12 @@ test("registered Code Mode implementor fetch yields readable instructions before
     guidance:
       "Reuse `TaskRepository` in src/storage.ts. Keep advice separate from required outcomes.",
   }
-  const receipt = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute(proposal, context),
-  )
+  const receipt = await Effect.runPromise(tools.get("lz-submit-task")!.execute(proposal, context))
   const { taskID } = JSON.parse(String(receipt.content))
-  const instructionsTool = tools.get("lazers_get_task_instructions")!
+  const instructionsTool = tools.get("lz-get-task-instructions")!
   const result = await Effect.runPromise(
     tools
-      .get("lazers_get_task_instructions")!
+      .get("lz-get-task-instructions")!
       .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
   )
   expect(instructionsTool.options).toMatchObject({ codemode: true, pinned: true })
@@ -362,7 +353,7 @@ test("registered Code Mode implementor fetch yields readable instructions before
 
   const structured = await Effect.runPromise(
     tools
-      .get("lazers_get_task")!
+      .get("lz-get-task")!
       .execute({ taskID }, { ...context, agent: Agent.ID.make("lazers-implementor") }),
   )
   const structuredValue = resultValue(structured)
@@ -374,10 +365,10 @@ test("registered Code Mode implementor fetch yields readable instructions before
 test("readable task fetch handles missing and unavailable revisions", async () => {
   const { tools } = await setup()
   const receipt = await Effect.runPromise(
-    tools.get("lazers_submit_task")!.execute(keyedProposal(), context),
+    tools.get("lz-submit-task")!.execute(keyedProposal(), context),
   )
   const { taskID } = JSON.parse(String(receipt.content))
-  const instructions = tools.get("lazers_get_task_instructions")!
+  const instructions = tools.get("lz-get-task-instructions")!
 
   const missing = await Effect.runPromise(
     instructions.execute({ taskID: crypto.randomUUID() }, context),
@@ -392,7 +383,7 @@ test("readable task fetch handles missing and unavailable revisions", async () =
 test("native schema/runtime require keys, validate before database access, and leave rejected keys reusable", async () => {
   const { repository } = await setup()
   const { tools, call } = await nativeTools(repository, { workspace: "/no-git-access" })
-  const schema = tools.get("lazers_submit_task")!.input as {
+  const schema = tools.get("lz-submit-task")!.input as {
     required: string[]
     properties: { idempotencyKey: { minLength: number; maxLength: number; pattern: string } }
   }
@@ -406,11 +397,11 @@ test("native schema/runtime require keys, validate before database access, and l
   const exec = spyOn(Database.prototype, "exec")
   try {
     for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)]) {
-      const result = await call("lazers_submit_task", { ...validProposal(), idempotencyKey })
+      const result = await call("lz-submit-task", { ...validProposal(), idempotencyKey })
       expect(result.status).toBe("invalid")
       expect(result.errors[0].path).toBe("idempotencyKey")
     }
-    const result = await call("lazers_submit_task", { ...keyedProposal(), verification: [] })
+    const result = await call("lz-submit-task", { ...keyedProposal(), verification: [] })
     expect(result.status).toBe("invalid")
     expect(result.errors[0].path).toBe("acceptance.0.evidence.0.verificationID")
     expect(query).not.toHaveBeenCalled()
@@ -420,7 +411,7 @@ test("native schema/runtime require keys, validate before database access, and l
     exec.mockRestore()
   }
   const allowed = await nativeTools(repository)
-  expect((await allowed.call("lazers_submit_task", keyedProposal())).status).toBe("submitted")
+  expect((await allowed.call("lz-submit-task", keyedProposal())).status).toBe("submitted")
   expect(repository.list()).toHaveLength(1)
 })
 
@@ -428,20 +419,20 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
   const { repository } = await setup()
   let deny = false
   const { tools, call, assertions } = await nativeTools(repository, { denied: () => deny })
-  const receipt = await call("lazers_submit_task", keyedProposal())
+  const receipt = await call("lz-submit-task", keyedProposal())
   const original = repository.get(receipt.taskID)
   deny = true
   const query = spyOn(Database.prototype, "query")
   const exec = spyOn(Database.prototype, "exec")
   const calls = [
-    ["lazers_submit_task", { ...keyedProposal(), idempotencyKey: "new-denied-key" }],
-    ["lazers_submit_task", keyedProposal()],
-    ["lazers_submit_task", { ...keyedProposal(), objective: "Changed content" }],
-    ["lazers_submit_task", validProposal()],
-    ["lazers_get_task", { taskID: receipt.taskID }],
-    ["lazers_get_task_instructions", { taskID: receipt.taskID }],
-    ["lazers_list_tasks", { limit: 20 }],
-    ["lazers_query_tasks", {}],
+    ["lz-submit-task", { ...keyedProposal(), idempotencyKey: "new-denied-key" }],
+    ["lz-submit-task", keyedProposal()],
+    ["lz-submit-task", { ...keyedProposal(), objective: "Changed content" }],
+    ["lz-submit-task", validProposal()],
+    ["lz-get-task", { taskID: receipt.taskID }],
+    ["lz-get-task-instructions", { taskID: receipt.taskID }],
+    ["lz-list-tasks", { limit: 20 }],
+    ["lz-query-tasks", {}],
   ] as const
   try {
     for (const [name, input] of calls) {
@@ -455,29 +446,26 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
     query.mockRestore()
     exec.mockRestore()
   }
-  expect(assertions).toEqual(["lazers_submit_task", ...calls.map(([name]) => name)])
+  expect(assertions).toEqual(["lz-submit-task", ...calls.map(([name]) => name)])
   expect(repository.list()).toEqual([original!])
   deny = false
-  expect(await call("lazers_submit_task", keyedProposal())).toEqual(receipt)
+  expect(await call("lz-submit-task", keyedProposal())).toEqual(receipt)
   expect(
-    (await call("lazers_submit_task", { ...keyedProposal(), idempotencyKey: "new-denied-key" }))
-      .status,
+    (await call("lz-submit-task", { ...keyedProposal(), idempotencyKey: "new-denied-key" })).status,
   ).toBe("submitted")
 })
 
 test("native retries and conflicts skip inaccessible Git; canonical project scope crosses worktrees but not repositories", async () => {
   const { repository } = await setup()
   const first = await nativeTools(repository)
-  const receipt = await first.call("lazers_submit_task", keyedProposal())
+  const receipt = await first.call("lz-submit-task", keyedProposal())
   const original = repository.get(receipt.taskID)
   const retry = await nativeTools(repository, {
     workspace: "/unavailable-worktree",
     session: "other-session",
   })
-  expect(await retry.call("lazers_submit_task", keyedProposal())).toEqual(receipt)
-  expect(
-    await retry.call("lazers_submit_task", { ...keyedProposal(), objective: "Changed" }),
-  ).toEqual({
+  expect(await retry.call("lz-submit-task", keyedProposal())).toEqual(receipt)
+  expect(await retry.call("lz-submit-task", { ...keyedProposal(), objective: "Changed" })).toEqual({
     status: "conflict",
     message: "idempotencyKey already identifies different validated content",
   })
@@ -486,24 +474,24 @@ test("native retries and conflicts skip inaccessible Git; canonical project scop
   try {
     // Use an accessible Git worktree, but an independent host canonical identity.
     const isolated = await nativeTools(other, { workspace: process.cwd() })
-    expect(await isolated.call("lazers_get_task", { taskID: receipt.taskID })).toEqual({
+    expect(await isolated.call("lz-get-task", { taskID: receipt.taskID })).toEqual({
       status: "not_found",
     })
     const isolatedInstructions = await Effect.runPromise(
       isolated.tools
-        .get("lazers_get_task_instructions")!
+        .get("lz-get-task-instructions")!
         .execute({ taskID: receipt.taskID }, isolated.context),
     )
     expect(resultValue(isolatedInstructions)).toBe("Task not_found.")
-    expect((await isolated.call("lazers_list_tasks", { limit: 20 })).tasks).toEqual([])
-    const independent = await isolated.call("lazers_submit_task", {
+    expect((await isolated.call("lz-list-tasks", { limit: 20 })).tasks).toEqual([])
+    const independent = await isolated.call("lz-submit-task", {
       ...keyedProposal(),
       objective: "Other repository",
     })
     expect(independent.status).toBe("submitted")
     expect(independent.taskID).not.toBe(receipt.taskID)
-    expect((await isolated.call("lazers_list_tasks", { limit: 20 })).tasks).toHaveLength(1)
-    expect(await first.call("lazers_get_task", { taskID: independent.taskID })).toEqual({
+    expect((await isolated.call("lz-list-tasks", { limit: 20 })).tasks).toHaveLength(1)
+    expect(await first.call("lz-get-task", { taskID: independent.taskID })).toEqual({
       status: "not_found",
     })
   } finally {
