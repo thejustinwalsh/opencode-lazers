@@ -29,6 +29,10 @@ Preserve a complete keyboard-accessible table alternative. Render actual valid
 observations even for one sample; the concept's smooth curve is not a function
 to fit or extrapolate.
 
+Read reactive chart inputs before a nonreactive mount guard so later data-only
+changes stay subscribed. Verify updated SVG geometry and selection, not only
+the parallel textual controls. Keep model labels literal in HTML tooltips.
+
 Current comparisons revalue recorded usage using the current shared pricing
 lookup, with OpenRouter as the market index. Retain retrieval time and source
 semantics. Historical price snapshots are audit records, not the valuation basis
