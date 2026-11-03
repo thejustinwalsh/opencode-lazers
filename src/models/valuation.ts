@@ -144,29 +144,104 @@ function publicRoute(route: AccountingRoute) {
   }
 }
 
-function sessionRouteAllocation(attempts: AccountingAttempt[]) {
+function progressRoute(value: unknown): AccountingRoute | null {
+  const data = object(value)
+  if (!data) return null
+  const providerID = typeof data.providerID === "string" ? data.providerID : null
+  const modelID =
+    typeof data.modelID === "string" ? data.modelID : typeof data.id === "string" ? data.id : null
+  if (!providerID || !modelID) return null
+  const rawVariant = data.variant
+  const variant = typeof rawVariant === "string" ? rawVariant : null
+  const invalidVariant =
+    rawVariant !== undefined && rawVariant !== null && typeof rawVariant !== "string"
+  const identityLost = [providerID, modelID, variant].some(
+    (part) => part?.endsWith("…[truncated]") || part?.includes("[REDACTED]"),
+  )
+  const route: AccountingRoute = { providerID, modelID, variant }
+  if (Object.hasOwn(data, "identity")) {
+    const rawIdentity = object(data.identity)
+    const identityProviderID =
+      typeof rawIdentity?.providerID === "string" ? rawIdentity.providerID : null
+    const identityModelID = typeof rawIdentity?.modelID === "string" ? rawIdentity.modelID : null
+    const identityVariant = rawIdentity?.variant
+    return {
+      ...route,
+      identity:
+        !identityProviderID ||
+        !identityModelID ||
+        (identityVariant !== null && typeof identityVariant !== "string")
+          ? null
+          : {
+              providerID: identityProviderID,
+              modelID: identityModelID,
+              variant: identityVariant,
+            },
+    }
+  }
+  if (invalidVariant || identityLost) return { ...route, identity: null }
+  return { ...route, identity: { providerID, modelID, variant } }
+}
+
+function retainedProgressRoutes(progressFacts: readonly unknown[], sessionID: string) {
+  const routes: Array<AccountingRoute | null> = []
+  for (const raw of progressFacts) {
+    const fact = object(raw)
+    const kind = typeof fact?.kind === "string" ? fact.kind : ""
+    const normalizedKind = kind.startsWith("worker-") ? kind.slice("worker-".length) : kind
+    if (fact?.sessionID !== sessionID || normalizedKind !== "step") continue
+
+    const payload = object(fact.payload)
+    const routeEvidence = (source: Record<string, unknown>) => {
+      const observations = Array.isArray(source.observations) ? source.observations : []
+      const routedObservations = observations.flatMap((rawObservation) => {
+        const observation = object(rawObservation)
+        return observation && Object.hasOwn(observation, "route")
+          ? [progressRoute(observation.route)]
+          : []
+      })
+      if (routedObservations.length) return routedObservations
+      return Object.hasOwn(source, "route") ? [progressRoute(source.route)] : null
+    }
+    const retainedRoutes = routeEvidence(fact) ?? (payload ? routeEvidence(payload) : null)
+    if (retainedRoutes) routes.push(...retainedRoutes)
+  }
+  return routes
+}
+
+function sessionRouteAllocation(
+  sessionID: string,
+  attempts: AccountingAttempt[],
+  progressFacts: readonly unknown[],
+) {
   const exact = new Map<
     string,
     { identity: NonNullable<ReturnType<typeof sourceRouteIdentity>>; route: AccountingRoute }
   >()
   let unavailableIdentityCount = 0
   let observedCount = 0
+  const routes: Array<AccountingRoute | null> = []
   for (const attempt of attempts) {
-    const routes = [
+    routes.push(
       ...(attempt.sessionStatus === "available" && attempt.currentRoute
         ? [attempt.currentRoute]
         : []),
       ...attempt.stepRoutes.map((step) => step.route),
-    ]
-    for (const route of routes) {
-      observedCount++
-      const identity = sourceRouteIdentity(route)
-      if (!identity) {
-        unavailableIdentityCount++
-        continue
-      }
-      exact.set(routeKey(identity), { identity, route })
+    )
+  }
+  routes.push(...retainedProgressRoutes(progressFacts, sessionID))
+  for (const route of routes) {
+    observedCount++
+    if (!route) {
+      unavailableIdentityCount++
+      continue
     }
+    const identity = sourceRouteIdentity(route)
+    if (!identity) {
+      unavailableIdentityCount++
+      continue
+    }
+    exact.set(routeKey(identity), { identity, route })
   }
   if (unavailableIdentityCount)
     return {
@@ -756,11 +831,12 @@ function sessionMarketValue(input: {
 function marketEquivalentCost(input: {
   usage: TaskValuation["usage"]
   attempts: AccountingAttempt[]
+  progressFacts: readonly unknown[]
   currentIndex: CurrentPriceIndex
 }) {
   const sessions = input.usage.sessions.map((session) => {
     const attempts = input.attempts.filter((attempt) => attempt.sessionID === session.sessionID)
-    const allocation = sessionRouteAllocation(attempts)
+    const allocation = sessionRouteAllocation(session.sessionID, attempts, input.progressFacts)
     const candidates = allocation.identity
       ? input.currentIndex.pins.filter((pin) => pinMatches(pin, allocation.identity!))
       : []
@@ -861,6 +937,7 @@ export function projectTaskValuation(input: ProjectTaskValuationInput): TaskValu
     marketEquivalentCost: marketEquivalentCost({
       usage,
       attempts: input.attempts,
+      progressFacts: input.progressFacts,
       currentIndex,
     }),
     architectReviewIntegrationOverheadUSD: {

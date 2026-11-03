@@ -87,6 +87,31 @@ function stepCost(input: { id: string; messageID: string; at: number; costUSD: n
   }
 }
 
+function progressStep(route: unknown, id = "progress-step") {
+  return {
+    id,
+    sequence: 1,
+    sessionID: "session-a",
+    attemptID: "attempt-a",
+    messageID: "step-one",
+    kind: "worker-step",
+    at: 1_100,
+    recordedAt: 1_101,
+    measurementBasis: "additive-step-measurement",
+    usage: { input: 1, output: 1 },
+    route,
+    observations: [
+      {
+        source: "native-event",
+        eventType: "session.step.started",
+        at: 1_100,
+        messageID: "step-one",
+        route,
+      },
+    ],
+  }
+}
+
 function project(
   attempts: AccountingAttempt[] = [attempt()],
   progressFacts: unknown[] = [],
@@ -319,6 +344,86 @@ test("mixed, unavailable, or identity-lost observed routes do not inherit the as
   const noRoute = project([attempt({ currentRoute: null, stepRoutes: [] })])
   expect(noRoute.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe("unavailable")
   expect(noRoute.marketEquivalentCost.sessions[0]?.categories.uncachedInput.status).toBe("unknown")
+})
+
+test("retained progress routes participate in exact session allocation without multiplying usage", () => {
+  const routeB: AccountingRoute = {
+    providerID: "openai",
+    modelID: "other-model",
+    variant: null,
+  }
+  const index: CurrentPriceIndex = structuredClone(nativeMillionTokenIndex)
+  index.pins.push({
+    ...structuredClone(index.pins[0]!),
+    route: routeB,
+    productID: "other-model",
+    configurationID: "other-model-default",
+    rates: {
+      unit: "USD per million tokens",
+      uncachedInput: 3,
+      completion: 20,
+      cacheRead: 0.1,
+      cacheWrite: 1,
+    },
+  })
+
+  const mixed = project([attempt()], [progressStep(routeB)], index)
+  expect(mixed.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe(
+    "mixed-observed-routes",
+  )
+  expect(mixed.marketEquivalentCost.sessions[0]?.pinCandidates).toEqual([])
+  expect(mixed.marketEquivalentCost.sessions[0]?.categories.uncachedInput).toMatchObject({
+    tokens: 60,
+    valueUSD: null,
+    status: "unknown",
+  })
+  expect(mixed.marketEquivalentCost.valueUSD).toBeNull()
+  expect(mixed.marketEquivalentCost.sessions[0]?.valueUSD).toBeNull()
+
+  const progressOnly = project(
+    [attempt({ currentRoute: null, stepRoutes: [] })],
+    [progressStep(routeB)],
+    index,
+  )
+  expect(progressOnly.marketEquivalentCost.sessions[0]?.routeAllocation).toMatchObject({
+    status: "single-observed-route",
+    route: routeB,
+  })
+  expect(progressOnly.marketEquivalentCost.sessions[0]?.pinCandidates).toHaveLength(1)
+  expect(progressOnly.marketEquivalentCost.sessions[0]?.pinCandidates[0]?.route).toEqual(routeB)
+  expect(progressOnly.marketEquivalentCost.valueUSD).toBe(0.000593)
+
+  const duplicateA = project(
+    [
+      attempt({
+        stepRoutes: [{ messageID: "step-one", route, observedAt: 1_100 }],
+      }),
+    ],
+    [progressStep(route)],
+  )
+  expect(duplicateA.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe(
+    "single-observed-route",
+  )
+  expect(duplicateA.usage.sessions[0]?.categories.uncachedInput.value).toBe(60)
+  expect(duplicateA.marketEquivalentCost.valueUSD).toBe(0.000346)
+})
+
+test("retained progress with unknown route identities stays unallocated", () => {
+  const unknownRoutes: unknown[] = [
+    null,
+    { providerID: "openrouter" },
+    { providerID: "openrouter", modelID: "vendor/model…[truncated]", variant: null },
+    { providerID: "openrouter", modelID: "vendor/model", variant: null, identity: null },
+  ]
+
+  for (const [index, progressRoute] of unknownRoutes.entries()) {
+    const result = project([attempt()], [progressStep(progressRoute, `unknown-${index}`)])
+    expect(result.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe(
+      "identity-unavailable",
+    )
+    expect(result.marketEquivalentCost.sessions[0]?.pinCandidates).toEqual([])
+    expect(result.marketEquivalentCost.valueUSD).toBeNull()
+  }
 })
 
 test("ambiguous current pins are not resolved by source preference or record order", () => {
