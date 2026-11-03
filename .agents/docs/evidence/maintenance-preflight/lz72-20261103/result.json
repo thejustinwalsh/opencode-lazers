@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "status": "preflight",
+  "requestID": "lz72-offline-preflight-20261103",
+  "coordinationRequired": true,
+  "containment": "unproven",
+  "executionPermitted": false,
+  "suppliedSnapshot": {
+    "snapshotID": "lz72-readonly-1793739951028",
+    "bindingMatched": true,
+    "claimsIgnored": false
+  },
+  "candidate": {
+    "source": "revalidated",
+    "status": "matches",
+    "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+    "head": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55",
+    "clean": true
+  },
+  "receipt": { "source": "revalidated", "status": "missing" },
+  "originalChild": { "source": "not-supplied", "status": "not-observed" },
+  "handoff": {
+    "binding": {
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "ownerID": "ses_e68a9ed37ffeVqzPWRXN5SB7Uw",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "planVersion": 9,
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "taskRevision": 1,
+      "nodeVersion": 4,
+      "attemptID": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "attemptNumber": 1,
+      "attemptSessionID": "ses_136dd90605a14fc0a6e7ce9e0edc1413",
+      "attemptMessageID": "msg_2482ab4a9d504b28891ca8ef9db40f53",
+      "effectID": "cd7cb493807b9dbcc552f552586351cbdb78d420baee04da31440ac86c36a8f8",
+      "effectKind": "verify:runner",
+      "effectState": "uncertain",
+      "artifact": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55",
+      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "checkID": "runner",
+      "command": "bun test src/runner test/runner",
+      "timeoutMs": 180000,
+      "inputIdentity": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55",
+      "receiptPath": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/receipts/ed96f0b9-102b-4c64-aa8b-708a62d49fe7/runner-e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55.json"
+    },
+    "nextSteps": [
+      {
+        "id": "exclusive-window",
+        "action": "Obtain a separately authorized runtime-owned exclusive maintenance window that prevents new dispatch and verification for this resource."
+      },
+      {
+        "id": "contain-old-check",
+        "action": "Within that window, establish positive runtime-owned containment of the old check and its descendants; supplied snapshots, PID match or absence, elapsed time, worker idle, and service stop are insufficient."
+      },
+      {
+        "id": "revalidate-bindings",
+        "action": "While the same window is held, re-read the project, owner, plan version, task revision/node version, latest attempt, uncertain effect, artifact, workspace, and receipt; stop if any binding changed."
+      },
+      {
+        "id": "fresh-runtime-check",
+        "action": "Only after containment and revalidation, separately authorize a fresh check through the runtime's ordinary verification and acceptance gates and retain its new receipt."
+      }
+    ]
+  },
+  "blockers": [
+    {
+      "code": "old-check-containment-unproven",
+      "missingEvidence": "exclusive-window-runtime-owned-containment-proof"
+    },
+    {
+      "code": "original-child-identity-missing",
+      "missingEvidence": "original-check-process-identity"
+    },
+    { "code": "runner-receipt-missing", "missingEvidence": "runner-check-receipt" }
+  ],
+  "missingEvidence": [
+    "exclusive-window-runtime-owned-containment-proof",
+    "fresh-runtime-owned-check-receipt",
+    "original-check-process-identity",
+    "runner-check-receipt"
+  ]
+}

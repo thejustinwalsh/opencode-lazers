@@ -1,0 +1,3883 @@
+{
+  "schemaVersion": 1,
+  "snapshotID": "lz72-readonly-1793739951028",
+  "capturedAt": 1793739951028,
+  "project": {
+    "id": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+  },
+  "plan": {
+    "id": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "ownerID": "ses_e68a9ed37ffeVqzPWRXN5SB7Uw",
+    "version": 9
+  },
+  "task": {
+    "id": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+    "revision": 1,
+    "nodeVersion": 4,
+    "state": "verifying",
+    "artifact": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55"
+  },
+  "attempts": [
+    {
+      "id": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "number": 1,
+      "sessionID": "ses_136dd90605a14fc0a6e7ce9e0edc1413",
+      "messageID": "msg_2482ab4a9d504b28891ca8ef9db40f53",
+      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "artifact": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55",
+      "state": "verifying"
+    }
+  ],
+  "effects": [
+    {
+      "ordinal": 760,
+      "id": "967e07c9565628c810bb60cb7a9bd9eaaa0871c4a6ec9c354b2257f8baba0998",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "attemptID": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "kind": "worktree",
+      "state": "completed",
+      "payload": "{\"workspace\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7\",\"base\":\"bb08983c5de3c5281371331bcc73c5356c7e897c\"}",
+      "receipt": "{\"workspace\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7\",\"base\":\"bb08983c5de3c5281371331bcc73c5356c7e897c\"}"
+    },
+    {
+      "ordinal": 761,
+      "id": "53f577373d00e2d0ca5251995e4924affe5d6931caebb4622eab5fb0d6b8d803",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "attemptID": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "kind": "session",
+      "state": "completed",
+      "payload": "{\"sessionID\":\"ses_136dd90605a14fc0a6e7ce9e0edc1413\"}",
+      "receipt": "{\"sessionID\":\"ses_136dd90605a14fc0a6e7ce9e0edc1413\"}"
+    },
+    {
+      "ordinal": 762,
+      "id": "d42d7b0f002373cf46882f30e9b38917f77fdd1d0a60610106b2b0de1f622f06",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "attemptID": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "kind": "prompt",
+      "state": "completed",
+      "payload": "{\"sessionID\":\"ses_136dd90605a14fc0a6e7ce9e0edc1413\",\"messageID\":\"msg_2482ab4a9d504b28891ca8ef9db40f53\",\"workspace\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7\"}",
+      "receipt": "{\"messageID\":\"msg_2482ab4a9d504b28891ca8ef9db40f53\",\"taskID\":\"7473e8a5-74cc-4222-aeea-a8a01de1f9be\",\"instructions\":\"readable; lazers_get_task_instructions\"}"
+    },
+    {
+      "ordinal": 763,
+      "id": "81261a20d0960f03fdd01763069d6f6ddd697ee3d7cb72064987b46c94b72de4",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "attemptID": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "kind": "verify:runtime",
+      "state": "completed",
+      "payload": "{\"check\":{\"id\":\"runtime\",\"command\":\"bun test src/runner/runtime.test.ts\",\"timeoutMs\":180000},\"workspace\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7\",\"artifact\":\"e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55\",\"identity\":\"e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55\",\"receiptPath\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/receipts/ed96f0b9-102b-4c64-aa8b-708a62d49fe7/runtime-e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55.json\"}",
+      "receipt": "{\"check\":{\"id\":\"runtime\",\"command\":\"bun test src/runner/runtime.test.ts\",\"cwd\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7\",\"artifact\":\"e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55\",\"inputIdentity\":\"e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55\",\"environmentIdentity\":\"{\\\"architecture\\\":\\\"arm64\\\",\\\"bunRevision\\\":\\\"38afee6c84fcf48c0edb2466aa4b27d287a59c30\\\",\\\"bunVersion\\\":\\\"1.4.4\\\",\\\"environment\\\":{\\\"HOME\\\":\\\"/Users/tjw\\\",\\\"LANG\\\":\\\"C.UTF-8\\\",\\\"PATH\\\":\\\"/Users/tjw/.local/bin:/Users/tjw/.vite-plus/bin:/Users/tjw/.grok/bin:/Users/tjw/.opencode/bin:/Users/tjw/.bun/bin:/usr/local/opt/python/libexec/bin:/Users/tjw/Developer/godot/bin:/Users/tjw/.antigravity/antigravity/bin:/Users/tjw/.rbenv/shims:/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin:/Users/tjw/.nvm/versions/node/v24.18.0/bin:/Users/tjw/.docker/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/tjw/.local/bin:/Users/tjw/.grok/bin:/Users/tjw/.opencode/bin:/Users/tjw/.bun/bin:/usr/local/opt/python/libexec/bin:/Users/tjw/Developer/godot/bin:/Users/tjw/.antigravity/antigravity/bin:/Users/tjw/.rbenv/shims:/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin:/Users/tjw/.nvm/versions/node/v24.18.0/bin:/Users/tjw/.docker/bin:/opt/homebrew/sbin:/Users/tjw/.cargo/bin:/Users/tjw/.orbstack/bin:/Users/tjw/go/bin:/opt/homebrew/opt/go/libexec/bin:/Users/tjw/Library/Android/sdk/emulator:/Users/tjw/Library/Android/sdk/platform-tools:/Applications/Postgres.app/Contents/Versions/latest/bin:/Users/tjw/.maestro/bin:/Users/tjw/.lmstudio/bin:/Users/tjw/.local/bin:/Users/tjw/.orbstack/bin:/Users/tjw/go/bin:/opt/homebrew/opt/go/libexec/bin:/usr/local/bin:/Users/tjw/Library/Android/sdk/emulator:/Users/tjw/Library/Android/sdk/platform-tools:/Applications/Postgres.app/Contents/Versions/latest/bin:/Users/tjw/.rbenv/shims:/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin:/Users/tjw/.nvm/versions/node/v24.18.0/bin:/Users/tjw/.docker/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/tjw/.vite-plus/bin:/Users/tjw/.local/bin:/Users/tjw/.grok/bin:/Users/tjw/.opencode/bin:/Users/tjw/.bun/bin:/usr/local/opt/python/libexec/bin:/Users/tjw/Developer/godot/bin:/Users/tjw/.antigravity/antigravity/bin:/Users/tjw/.rbenv/shims:/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin:/Users/tjw/.nvm/versions/node/v24.18.0/bin:/Users/tjw/.docker/bin:/opt/homebrew/sbin:/Users/tjw/.cargo/bin:/Users/tjw/.orbstack/bin:/Users/tjw/go/bin:/opt/homebrew/opt/go/libexec/bin:/Users/tjw/Library/Android/sdk/emulator:/Users/tjw/Library/Android/sdk/platform-tools:/Applications/Postgres.app/Contents/Versions/latest/bin:/Users/tjw/.maestro/bin:/Users/tjw/.lmstudio/bin:/Users/tjw/.local/bin:/Users/tjw/.orbstack/bin:/Users/tjw/go/bin:/opt/homebrew/opt/go/libexec/bin:/usr/local/bin:/Users/tjw/Library/Android/sdk/emulator:/Users/tjw/Library/Android/sdk/platform-tools:/Users/tjw/.maestro/bin:/Users/tjw/.lmstudio/bin\\\",\\\"TMPDIR\\\":\\\"/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/\\\"},\\\"executable\\\":\\\"/Users/tjw/Library/Application Support/ai.opencode.desktop/cli/2.2.5-arm64/opencode-cli\\\",\\\"platform\\\":\\\"darwin\\\"}\",\"startedAt\":1793721134246,\"endedAt\":1793721186282,\"exitCode\":0,\"timedOut\":false,\"stdout\":\"bun test v1.4.4-canary.1 (da867c60b)\\n\",\"stderr\":\"\\nsrc/runner/runtime.test.ts:\\n(pass) active scope amendments durably update the same worker after it fetched old instructions and survive reopen [309.70ms]\\n(pass) failed and lost scope-update replies recover keyed delivery without workers, repairs or wait churn [199.55ms]\\n(pass) cancellation suppresses a pending scope instruction rather than waking a stopped worker [98.39ms]\\n(pass) task integration records a reviewed landing without finalizing the plan or disturbing active dependencies [316.02ms]\\n(pass) scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it [329.89ms]\\n(pass) scope amendments preserve the specification and recover dependency edits in the same attempt [255.87ms]\\n(pass) scope amendment rejects active overlap and reserves amended scope before later dispatch [227.11ms]\\n(pass) scope amendment requires this plan's unfinished task and explicit additive authorization [63.78ms]\\n(pass) inspector Start admits one real runtime plan and returns record-backed task state [247.47ms]\\n(pass) Start recovers a lost native continuation-create response after restart [233.36ms]\\n(pass) run authorizes and validates the original command before creating a continuation [117.64ms]\\n(pass) continued run retains original caller/version replay identity across concurrent calls and restart [68.49ms]\\n(pass) Start admits an existing queued plan, keeps its selected worker route and respects dependencies [115.80ms]\\n(pass) continued run recovers a crash before its receipt without changing caller identity [68.99ms]\\n(pass) a concurrent reassignment cannot be overwritten by continuation completion [61.79ms]\\n(pass) Start cannot adopt a stale continuation after an explicit owner round trip [131.57ms]\\n(pass) a lost continuation-create response is reconciled by stable native session ID [237.62ms]\\n(pass) a missing task owner gets a same-project continuation without foreign parent context [240.84ms]\\n(pass) Start admits the configured route independently of the Architect model [179.45ms]\\n(pass) Go and configured routes reach native execution unchanged alongside independent personas [700.07ms]\\n(pass) a native route failure stays visible and is never retried with a substitute [76.96ms]\\n(pass) Start rejects stale, foreign and ended work without changing runtime state [70.30ms]\\n(pass) host-admitted current outcomes follow an archived owner unless transcript consumption is proved [367.58ms]\\n(pass) an uncertain current outcome follows an adopted owner across reopen without losing admission evidence [191.95ms]\\n(pass) real Git worktrees execute a dependency graph, verify combined content and retain origin [440.58ms]\\n(pass) independent isolated Git branches overlap and combined verification includes every artifact [494.02ms]\\n(pass) dependencies wait for accepted inputs and wildcard ancestor scopes serialize [868.72ms]\\n(pass) independent plans overlap while a second reconciler cannot duplicate dispatch [671.99ms]\\n(pass) single-task acceptance coalesces its task handoff while another plan worker stays active [473.20ms]\\n(pass) a late older retry cannot replace a newer queued plan outcome [258.59ms]\\n(pass) an actionable partial-task outcome wakes review while its sibling worker remains active [248.47ms]\\n(pass) a newer partial result carries all prior reviewable artifacts while a third worker remains active [399.82ms]\\n(pass) legacy partial notices for distinct tasks cannot silently replace one another [63.26ms]\\n(pass) failed cancellation keeps the newer outcome pending and retries after the queue race clears [443.04ms]\\n(pass) an unavailable native inbox cannot be reported as successful supersession [449.75ms]\\n(pass) a cancellation that races with transcript consumption is recorded as consumed, not suppressed [440.22ms]\\n(pass) a successful native cancel response is rechecked before recording supersession [449.31ms]\\n(pass) completed shared plan verifies its exact artifact without touching an advanced shared checkout [313.30ms]\\n(pass) shared resume waits for another plan's worker and cancellation retains final usage [441.52ms]\\n(pass) reconciliation retains legacy advanced-checkout receipts and verifies the exact artifact afresh [298.56ms]\\n(pass) explicit reconcile retries conclusive combined checks after environment repair without erasing evidence [294.46ms]\\n(pass) uncertain prompt cannot prevent cancellation of an admitted sibling [121.20ms]\\n(pass) two conflicting shared resumes use current prompt identities and cannot deadlock [628.64ms]\\n(pass) combined worktree completion cannot overwrite a concurrent cancellation [432.69ms]\\n(pass) one failed branch blocks combined acceptance without losing sibling verification or usage [348.34ms]\\n(pass) conflicting accepted branches hold integration and preserve both real Git artifacts [404.78ms]\\n(pass) lost worktree creation response resumes its own blocked startup after reconciliation [898.69ms]\\n(pass) a different block reason keeps a reconciled worktree startup blocked [103.81ms]\\n(pass) cancelling overlapping workers waits for every native session and preserves usage [125.60ms]\\n(pass) reviewed combined merge removes only owned Git worktrees and preserves foreign work [820.30ms]\\n(pass) repairing one parallel branch retains its failed check and usage while its sibling is accepted [591.20ms]\\n(pass) missing and permission-denied skill suggestions never block admission or dispatch [1324.58ms]\\n(pass) repair handoffs do not copy legacy skill bodies into a new attempt [228.38ms]\\n(pass) verification failure and scope violations cannot unblock a successor [854.86ms]\\n(pass) an unchanged evidence wait keeps its version and notification stable until evidence arrives [796.54ms]\\n(pass) a resumed worker verifies its new commit without reusing older receipts or spending a repair [854.41ms]\\n(pass) plan evidence binds to the accepted combination and remains separate from task evidence [693.53ms]\\n(pass) lost host response reconciles a real accepted prompt without creating another worker [98.27ms]\\n(pass) lost prompt response after a committed worker turn reconciles through verification [996.36ms]\\n(pass) leases fence stale owners; expiration does not replay an uncertain effect [60.41ms]\\n(pass) schema rejects cycles, foreign dependency IDs and duplicate nodes before persistence [59.43ms]\\n(pass) historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage [437.80ms]\\n(pass) runtime retains the actual directory returned by the host worktree strategy [434.52ms]\\n(pass) an explicitly cancelled worker can continue through its owner without replacing its worktree [96.56ms]\\n(pass) a cancelled afterPlans child resumes its retained committed attempt [1070.48ms]\\n(pass) retry requeues a cancelled unstarted successor in the admitted graph and waits for dependencies and scope [641.74ms]\\n(pass) requeued unstarted work can be cancelled again before normal dispatch [72.91ms]\\n(pass) unstarted recovery rejects unauthorized, stale, missing, archived and foreign owners without writes [339.45ms]\\n(pass) unstarted recovery rechecks the plan version after owner lookup races with reassignment [69.82ms]\\n(pass) unstarted recovery rejects invalid node/plan states and unreconciled effects [227.18ms]\\n(pass) serial shared children commit in the current checkout without creating worktrees [396.69ms]\\n(pass) explicit retry starts a fresh native child and retains the old attempt and usage [138.64ms]\\n(pass) a shared node's first attempt starts at reviewed HEAD, not an older accepted predecessor [421.39ms]\\n(pass) an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes [545.42ms]\\n(pass) retry without a newly selected baseline continues from the failed artifact and retains history [504.84ms]\\n(pass) native cleanup follows verified integration, preserves dirty work, and retries explicitly [641.20ms]\\n(pass) cleanup retries require detailed worker inactivity and never rerun product checks [741.38ms]\\n(pass) cleanup audit reports the first sampled worker blocker without exposing observed identity details [314.75ms]\\n(pass) cleanup audit is neutral, receipt-safe, and later requests sample fresh observations [310.94ms]\\n(pass) cleanup audit publication rejects a concurrent plan-version change [338.21ms]\\n(pass) a successful cleanup diagnostic cannot bypass changed worker lineage [333.92ms]\\n(pass) explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance [389.80ms]\\n(pass) cleanup preserves clean worktrees with commits outside the reviewed integration [610.49ms]\\n(pass) cleanup preserves a dirty owned worktree even after its accepted commit was merged [534.50ms]\\n(pass) priority orders conflicting plans without rejecting their overlapping scopes [100.78ms]\\n(pass) afterPlans dispatches from combined integration while prerequisite cleanup is still pending [1459.63ms]\\n(pass) afterPlans rejects a legacy cleanup snapshot after durable prerequisite cancellation [453.88ms]\\n(pass) afterPlans cleanup cannot publish over cancellation or reuse the historical integration proof [452.70ms]\\n(pass) afterPlans invalidation during child worktree creation keeps the owned workspace and suppresses prompt admission [773.23ms]\\n(pass) cancelling a child during session creation prevents prompt intent and preserves owned resources [693.32ms]\\n(pass) afterPlans invalidation during retained preparation reconciliation blocks the later prompt [849.23ms]\\n(pass) afterPlans dispatches after genuine combined-check recovery while preserving failed receipts [987.80ms]\\n(pass) afterPlans rejects task-only, missing, malformed, mismatched and foreign integration evidence [2576.19ms]\\n(pass) afterPlans requires both the integrated artifact and its recorded integration head in selected HEAD [1949.37ms]\\n(pass) every afterPlans prerequisite needs genuine fresh acceptance and integration after cancellation [2140.40ms]\\n(pass) valid afterPlans integration does not bypass shared-checkout admission [380.36ms]\\n(pass) cross-plan dependencies wait for integration and dispatch from the integrated source [1163.46ms]\\n(pass) schedule updates are versioned, retry-safe and reject dependency cycles or foreign plans [81.75ms]\\n(pass) runtime shutdown joins an in-flight native operation before storage may close [111.75ms]\\n(pass) heartbeat avoids context and rechecks a stopped worker after detailed accounting [323.38ms]\\n(pass) cancellation wins over a stale interrupted detailed worker observation [110.94ms]\\n(pass) cancellation wins over a stale succeeded detailed worker observation [109.77ms]\\n(pass) cancellation wins over a stale missing detailed worker observation [117.80ms]\\n(pass) terminal verification waits for active foreground, exact input completion, and background settlement [326.03ms]\\n(pass) worker-location permissions and forms block terminal work and surface actionable diagnostics [277.48ms]\\n(pass) a durably admitted same-attempt handoff reminder can finish with fresh matching evidence [276.11ms]\\n(pass) reminder completion rejects unconfirmed lineage [100.28ms]\\n(pass) reminder completion rejects foreign lineage [98.73ms]\\n(pass) reminder completion rejects stale-assignment lineage [98.39ms]\\n(pass) reminder completion rejects pre-reminder-report lineage [97.89ms]\\n(pass) terminal verification rejects a fresh idle report from a different native input [99.89ms]\\n(pass) explicit cancellation after process replacement resumes the same dirty attempt exactly once [291.49ms]\\n(pass) cancellation does not settle when foreground activity reappears during its detail read [99.94ms]\\n(pass) the registered scheduler reuses recent/busy Architects and renews at the default threshold [102.66ms]\\n(pass) idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed [399.30ms]\\n(pass) renewal requires an explicit checkpoint and retains queued native inputs by ID [199.58ms]\\n(pass) one successor receives every live plan owned by the same Architect [140.21ms]\\n(pass) input during a deferred native create prevents transfer and predecessor archival [100.87ms]\\n(pass) a continuity edit during successor creation blocks stale ownership transfer [100.34ms]\\n(pass) native queued synthetic input is retained and referenced across creation, transfer, and archive [312.46ms]\\n(pass) late input on an archived predecessor is reconciled to the current owner without waking or replay [109.10ms]\\n(pass) predecessor reconciliation persists native message pagination across scheduler ticks [103.42ms]\\n(pass) large predecessor histories produce bounded reference-only notification batches [109.13ms]\\n(pass) a previously seen pending input that disappears without history stays unknown, never cancelled or replayed [108.41ms]\\n(pass) generated renewal notifications are authenticated and do not form A-to-B-to-C input loops [114.28ms]\\n(pass) a retired Architect predecessor cannot reclaim a transferred plan through reassign [105.31ms]\\n(pass) input racing native archival remains on the retained source and is referenced to the new owner [107.18ms]\\n(pass) input on the reserved successor is preserved there without reversing predecessor transfer [104.35ms]\\n(pass) an outcome admitted during archival is blocked then retargeted to the renewed owner [103.74ms]\\n(pass) native archive failure remains visible and retries without restoring predecessor authority [102.87ms]\\n(pass) a reopened scheduler recovers a durable transfer before archival without changing workers [110.48ms]\\n(pass) a reopened two-scheduler runtime archives only after durable transfer and reconciles queued input [105.23ms]\\n(pass) cancellation interrupts workers while a transferred renewal still has failed archival recovery [105.27ms]\\n(pass) a continuity checkpoint cannot outlive a later observed user input [104.77ms]\\n(pass) renewal finishes all preparation pages before transferring a checkpoint [100.88ms]\\n(pass) late and mutable assistant tool results are durably referenced by safe revision [104.51ms]\\n(pass) concurrent plan admission joins the fixed successor and survives two-scheduler reopen [125.45ms]\\n(pass) shared-database renewal recovery is invisible to a different canonical project [131.12ms]\\n\\n 138 pass\\n 0 fail\\n 2883 expect() calls\\nRan 138 tests across 1 file. [52.02s]\\n\",\"unchanged\":true}}"
+    },
+    {
+      "ordinal": 764,
+      "id": "cd7cb493807b9dbcc552f552586351cbdb78d420baee04da31440ac86c36a8f8",
+      "planID": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "taskID": "7473e8a5-74cc-4222-aeea-a8a01de1f9be",
+      "attemptID": "ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+      "kind": "verify:runner",
+      "state": "uncertain",
+      "payload": "{\"check\":{\"id\":\"runner\",\"command\":\"bun test src/runner test/runner\",\"timeoutMs\":180000},\"workspace\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7\",\"artifact\":\"e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55\",\"identity\":\"e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55\",\"receiptPath\":\"/Users/tjw/.local/share/opencode/plugins/lazers/runner/receipts/ed96f0b9-102b-4c64-aa8b-708a62d49fe7/runner-e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55.json\"}",
+      "receipt": "{\"error\":\"No conclusive host/artifact receipt; effect was not repeated\"}"
+    }
+  ],
+  "candidate": {
+    "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ed96f0b9-102b-4c64-aa8b-708a62d49fe7",
+    "head": "e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55",
+    "clean": true,
+    "unmerged": false,
+    "manifest": [
+      {
+        "path": ".agents/docs/architect-validation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6d04bc3c60b6a8be84bb2e37a4d24069bdaa954e"
+      },
+      {
+        "path": ".agents/docs/completed-task-audit.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d00d94bb46fbe6d55a1c9106af058ffe01c02149"
+      },
+      {
+        "path": ".agents/docs/evidence/006-baseline-task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9dcb3ee15fc84bb05671e793fc2fa58c24aeebba"
+      },
+      {
+        "path": ".agents/docs/evidence/006-baseline-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "015dd17f62b0fa174cc0c165e826d3420806114c"
+      },
+      {
+        "path": ".agents/docs/evidence/006-evaluation-method.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5fcc263fe94a84296c04fa2974fc34268e0f19f9"
+      },
+      {
+        "path": ".agents/docs/evidence/006-luna-low-task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f1d837130228924cd8fdfec4a34c51c88657a4f7"
+      },
+      {
+        "path": ".agents/docs/evidence/006-luna-low-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "02b0b90e303a05a9898601eec7c1a19513fae37b"
+      },
+      {
+        "path": ".agents/docs/evidence/006-luna-max-task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1e9bb5ee90647e8cf43853ce2e5931afe9cb827b"
+      },
+      {
+        "path": ".agents/docs/evidence/006-luna-max-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7d19f96e15d25bd45fbd1ea2ac0c045d4527bfa3"
+      },
+      {
+        "path": ".agents/docs/evidence/006-restart-retrieval-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d8edfad2fc9e898d8a9a81e3eefdc2d7e045325a"
+      },
+      {
+        "path": ".agents/docs/evidence/006-sol-high-task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c67b6352370f62a292ec7448979f4cd010a8220d"
+      },
+      {
+        "path": ".agents/docs/evidence/006-sol-high-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e7937d2225bab2be6de6336f547a6a822fb42021"
+      },
+      {
+        "path": ".agents/docs/evidence/008-task-panel/first-pass-inventory.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ce86fbdb2eb06a03399bbf7d4cd43bdc3d67998a"
+      },
+      {
+        "path": ".agents/docs/evidence/008-task-panel/task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d7b973edbac73d9673b9e28e9387eef8448abc9c"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/adapter-repair.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a2385624b1576df344baf547da92d610b2e01d2b"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/after-first-repair-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fdb242cf897954fe189f463964d242be87e7dc49"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/before-repair-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ad58e2db803910bb710577e8a4c315a98822651c"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/finalized-proposal.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e539f7f807d9a938123d03cf205aa45123d8f13e"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/success-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cff88791a33afbbfce1d85826bc6a5593734396c"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d02f72709954c5b405ec710ec1ae5e5a712af410"
+      },
+      {
+        "path": ".agents/docs/evidence/009-runner-dogfood/trial.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cfe019d9b04189fa0f49ee6ca24eee42859c2f92"
+      },
+      {
+        "path": ".agents/docs/evidence/010-repomix/context-probe.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3c65f71d79af85101decda7a0d9c0a6b6783c5bf"
+      },
+      {
+        "path": ".agents/docs/evidence/010-repomix/context-probe.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0e657f8c14fd53433d047124668fa5fc02926505"
+      },
+      {
+        "path": ".agents/docs/evidence/010-repomix/docs-coverage.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cb53c150668f19da0489dd212bb106e0726f3993"
+      },
+      {
+        "path": ".agents/docs/evidence/010-repomix/implementor-supplement.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e2f56a882bcd11412c338872ed008b885d32b1cf"
+      },
+      {
+        "path": ".agents/docs/evidence/010-repomix/native-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "16ee5111d1ad84be78afe371f6ca60dd1a0cec8b"
+      },
+      {
+        "path": ".agents/docs/evidence/010-repomix/task.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6f1b542e986ba6f56a9b06523886fb239a67910b"
+      },
+      {
+        "path": ".agents/docs/evidence/011-runner-execution/equivalent-cost.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b200110b49a1aef2c7a747516ab63c8b96523a6f"
+      },
+      {
+        "path": ".agents/docs/evidence/011-runner-execution/worker-visible.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4c2bd230708c28c896b649c73db22c7375b5be07"
+      },
+      {
+        "path": ".agents/docs/evidence/012-worker-inspection/native-report-current.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "99a0e1d8bb7cb133d4a006dbb17bae09846d7cf0"
+      },
+      {
+        "path": ".agents/docs/evidence/012-worker-inspection/native-report.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6871b002a79cecd7d35cfd966e220380ea7a50fa"
+      },
+      {
+        "path": ".agents/docs/evidence/013-readable-task-fetch/native-smoke.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "85e70381898a59e6b6bec1ce910d0174852725ed"
+      },
+      {
+        "path": ".agents/docs/evidence/014-progressive-worker-guidance/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2b9f955b96f6935300719a73845788aeb3b1611d"
+      },
+      {
+        "path": ".agents/docs/evidence/018-durable-progress/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1201e4dc33d69c2743cc69d77c5a92e030917f1d"
+      },
+      {
+        "path": ".agents/docs/evidence/018-durable-progress/recorder-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a532bf156648d46872f9546a845054b7c69097f9"
+      },
+      {
+        "path": ".agents/docs/evidence/019-desktop-inference-isolation/source-read.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "12d8cc581277bd65eef53f655388b1a23c5a9a79"
+      },
+      {
+        "path": ".agents/docs/evidence/019-desktop-inference-isolation/triage.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e47c6e495a780fa8417ca2d23f12a4ae9dd9dd2d"
+      },
+      {
+        "path": ".agents/docs/evidence/020-explicit-retry-baseline/tuning-observation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c41bcf45d8beef71411d08f3de12f7e8b31d4225"
+      },
+      {
+        "path": ".agents/docs/evidence/020-explicit-retry-baseline/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "443d551096290f887f555042563934f83d004f7c"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/browser.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "efcf0b034e2d16ffd9e656f8095e907b18abcc1a"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/manual-start.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f81da46b76ae96d0e5bec9d2a8806dfbcc304938"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/narrow-search-after.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "09a022c6fa5c25c4959fb7f3781910ebb6b2df86"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/narrow-search-before.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1532185f0d2b2c0a158c003dbaa3d8f7136d533d"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e14467f757d5386fa75529511a86fdae5b278eee"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/repair.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "34163604f579822b3ab5bd76517846fd3662ac1a"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/restored-inspector.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5932f4c87489d707a9ac651a2ccbaa89be12ab01"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/source-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0790770968b73788894c403faa02ad598e33850f"
+      },
+      {
+        "path": ".agents/docs/evidence/021-tasks-start-continuation/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bf72ccb263b66619c7df27be530fe401d777580b"
+      },
+      {
+        "path": ".agents/docs/evidence/022-native-parallel-dispatch/combined-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "731423efeb9021f2ee23f1292a2790027d3cd0ec"
+      },
+      {
+        "path": ".agents/docs/evidence/022-native-parallel-dispatch/first-product-wave.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fcd315981624c3aabb306c1b631e0f839650cf2c"
+      },
+      {
+        "path": ".agents/docs/evidence/022-native-parallel-dispatch/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a91a20a0c6d6661d5e6ca45ea2b2cb84f1e49c98"
+      },
+      {
+        "path": ".agents/docs/evidence/022-native-parallel-dispatch/review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0e3af42d3a6fb048ec1490ccbf6e8138134829ac"
+      },
+      {
+        "path": ".agents/docs/evidence/023-scoped-observation-projections/driver-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1f63d67bb635c8d0492689d069c46b94b5f137e1"
+      },
+      {
+        "path": ".agents/docs/evidence/023-scoped-observation-projections/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c252a07a806822746a4fd675a7c164f0bfb7ee55"
+      },
+      {
+        "path": ".agents/docs/evidence/024-final-prose-speech/auto-real-final-trace.log",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cd477a44b535e873071c1dff31e6231053bfdfb7"
+      },
+      {
+        "path": ".agents/docs/evidence/024-final-prose-speech/auto-real-final.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0260fac59fff0131585b7aaa28951142fdd1f3f0"
+      },
+      {
+        "path": ".agents/docs/evidence/024-final-prose-speech/driver-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fdc3e619f2a9cc2fe729f75469ea89c36c79690b"
+      },
+      {
+        "path": ".agents/docs/evidence/024-final-prose-speech/replay-repair.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4e42c5bbbec6814a00cc33a9c06f7dea57090e01"
+      },
+      {
+        "path": ".agents/docs/evidence/025-radar-panel/flow-inspector-after.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "998299bcb586e2357269e2eace3879f23892d72b"
+      },
+      {
+        "path": ".agents/docs/evidence/025-radar-panel/flow-inspector-after.txt",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "924a9e97c09268f64643ddf0b2eee9eeaf261337"
+      },
+      {
+        "path": ".agents/docs/evidence/025-radar-panel/flow-inspector-before.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "60751080d71692d93570075362ad18c05dfce166"
+      },
+      {
+        "path": ".agents/docs/evidence/025-radar-panel/incoming-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2fe0d1e86d822ad26de40babddac3a736ff995e5"
+      },
+      {
+        "path": ".agents/docs/evidence/025-radar-panel/live-flow-inspector.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6d9ff3356d7267321387f7f47bc447607c00efca"
+      },
+      {
+        "path": ".agents/docs/evidence/026-trajectory-panel/driver-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2aeef505a5a1775742fc11db94b88df79f7a7403"
+      },
+      {
+        "path": ".agents/docs/evidence/026-trajectory-panel/incoming-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cd66dcbd2d7612e68ab0a475af8d513f02e282f7"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/native-root-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "daa5f1b276305a638ae62948554e2cfa197e37c6"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2c41d9c04a613e62fd4df92682ab0c97e4aaf19b"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/radar-flow.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0ae150facfffac17ec0d4fea72b8981d8cc32ec5"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/radar-light.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b0ad6dc547d56d089d04da93d1b13d53bab59d78"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/radar-narrow.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1ad992ef30baccb11e3fd1571d33989f4c9aa2df"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/radar-timeline.ax.txt",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3deae00426bac57f51d89cd31111a7d72a552bc3"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/radar-timeline.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "685b38dabbbb728db9c87181635ace22d167f7e3"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/trajectory-light.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4fd4c082330fe86f9ea01795c68588694f4c7596"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/trajectory-narrow.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "11939b13fc2a51949af0251cc93ca3ca9edc1a0e"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/trajectory.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a362475f4146aa01f9409b375b3d7b72aab13544"
+      },
+      {
+        "path": ".agents/docs/evidence/027-observation-panels/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b7532cb6ce7d7a7673d1d5d677a0192b97de2ca8"
+      },
+      {
+        "path": ".agents/docs/evidence/028-tasks-native-affordances/native-menu.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4938213b9611b9bc1bce577e7e3f65523e2b1d35"
+      },
+      {
+        "path": ".agents/docs/evidence/028-tasks-native-affordances/native-tab.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1e32e3ebca074a3307ae7f2a495c9124def08726"
+      },
+      {
+        "path": ".agents/docs/evidence/028-tasks-native-affordances/review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ea1b25dcfa356986fd0a88361d63a81f54ad59b4"
+      },
+      {
+        "path": ".agents/docs/evidence/028-tasks-native-affordances/terra-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "69d56082f14e81891990addee750d06f886d8f7c"
+      },
+      {
+        "path": ".agents/docs/evidence/029-task-references-links/native-link-open.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "18894ff670e24e30099384433500fd178e90b508"
+      },
+      {
+        "path": ".agents/docs/evidence/029-task-references-links/native-link-open.txt",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6993c65ed8d91b7383a2ac9c400a5c854b620c44"
+      },
+      {
+        "path": ".agents/docs/evidence/029-task-references-links/native-root-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4aaa69705c33c6c400139df7a3eb4873eedcad76"
+      },
+      {
+        "path": ".agents/docs/evidence/029-task-references-links/source-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f6f89738937354964e4016d91f4657ef55c602d4"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-full-450.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "05a20daf60e3aa455528260c9f75f758c516bf94"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-reopen-450.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "564942e63ad825e04d21f19cb489b0a8854d7ad1"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-repaired-330.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ad414b3ed8f43fe88d181e31772a2ae6bb8b563c"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-repaired-450.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5eeb84b241ede5d24d5bdeebe8e544d49e81b646"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-repaired-detail-450.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d2bf5cd9b151e12476f6413499f08827cda88f06"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-repaired-disclosures-330.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bef9f457a19f88a6b7d3e651310e0db85ebbbcc1"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/grouped-search-450.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f3fcf1461e974d3ae8a33a632a72bb8a68fde23b"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/integration-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5d47b680f30c4fe6c6d33c9c66dc0fd2027a652e"
+      },
+      {
+        "path": ".agents/docs/evidence/030-grouped-tasks-list/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9806479fb0032989745b230d007df925016f21fe"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/driver-review-cleanup.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "31c16e67d9fe01b3ef2a9cada8601ee3dc210302"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/live-state-latest.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4b6806a9b3b3272feb70ec0c4acc7e2832d25f1f"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/live-state.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "da2690c8242c29c00fbb4637ea8024b4a9d8492b"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/live-update.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "91407ae515f14c7de27fb4c13a721876e30aefe4"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/matrix.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fe1f6162dfedaff96544f94fc9bbe26e0f71329b"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/native-workers.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "223a68dc585039fe01e0969da9e72211d1d838d8"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/obsolete-wait-recovery.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1f22796ec214220d4316fc9a1ff82a041f85d1d3"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/open-filter.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7217c027db1e7b826c34df3db1f99789c0751863"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/open-project-cancelled-filter.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5cbcc1d159ceec85d8a09ad08a1aa12f3f8d292b"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/open-session-cancelled-filter.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "251778e46a7f07303f0bd6582b206e5f451686cd"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/package-dry-run.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1e56c4e1aa7c21529f28160021f5255cae702298"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/schedule.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b436bbb44864b99d853b9c661803be3227664508"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/stable-evidence-waits.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eb5229297481e9554ca929411bc55367c50bb4bc"
+      },
+      {
+        "path": ".agents/docs/evidence/033-completed-task-audit/wake-churn.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5e2e6beca117380f7d0bd1bd8bf598385b85440c"
+      },
+      {
+        "path": ".agents/docs/evidence/034-renderer-trace/native-decision.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4911e9742962e8e7291fdd7635b5dd1499194e8d"
+      },
+      {
+        "path": ".agents/docs/evidence/034-renderer-trace/native-network-baseline.txt",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b4e2660f7bb443a3ec4a963579cbf1b166a99d16"
+      },
+      {
+        "path": ".agents/docs/evidence/034-renderer-trace/native-trace.log",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "be8b6225b328844f2794d44862f35452f92dcf90"
+      },
+      {
+        "path": ".agents/docs/evidence/034-renderer-trace/renderer.sample.txt",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1ef0306dc3326979a1bfd4db18d87770d284c2aa"
+      },
+      {
+        "path": ".agents/docs/evidence/034-renderer-trace/report.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "69704ea8d3d88495d819c3611ee1d86db21ec703"
+      },
+      {
+        "path": ".agents/docs/evidence/034-renderer-trace/review-incident-follow-up.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c552962cd535768ab6717206e5dd4fa0ec992b97"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/incoming-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "87bb371698551bb26881cd033b3b82eb3133e69f"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cf105fdd834e1f1038ac1ff40df264aac4e04e8c"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/obsolete-wait-recovery.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1f22796ec214220d4316fc9a1ff82a041f85d1d3"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/real-b50-after-root.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4b2cf404889e5aeb4140e716eada9ec0afef46f2"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/real-b50-after.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f711a1ab920c834f76866a491fe67260c6b5ca71"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/real-b50-before.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2a11304749c3144077c4c46fe11641465b749e16"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/real-b50-comparison-root.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cfb3e7823f90424ad171043d7797305be1f44a3a"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/real-b50-runtime-proof.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4ed85848bf26e74c15394e21cfa22dfbeb45c894"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/recovered-attempts.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5f1e4ea493a642deb6b28449ae063ad6ab0a7309"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/root-native-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4e5a2efe3f7312a791cd5b95ec06856bf517ac63"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/scope-initial-activation.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a529b9b6e17b3ba3aa88e5b3288566c12768d558"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/scope-instruction-activation.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a39b3a2bf58f258f39c8740933df83321246bead"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/scope-native-entry.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "06e8a0bfcb93af7a118a55d2eee43bd64773c7bd"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/scope-recovery.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "da4ea6a86bf493d1bb66db297ac62fa41ab5e60d"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/scope-worker-preservation-updates.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "422cd12bdfaf5405f4806bee734f76a7371f4e9a"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/startup-recovery-activation.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ad742c40aa2f597c074ee0d086b477176cb8435c"
+      },
+      {
+        "path": ".agents/docs/evidence/035-outcome-inbox/wake-activation.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "14d2d33b8e32416b3b3e1a631fc5cf24bac2d6b2"
+      },
+      {
+        "path": ".agents/docs/evidence/036-production-audit/checks.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2145f79c7ba983e017b1df4b2f2d8710f9cc3d4c"
+      },
+      {
+        "path": ".agents/docs/evidence/036-production-audit/dependencies.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d8400524fd28a5239858861ee0bfbca9a83b1855"
+      },
+      {
+        "path": ".agents/docs/evidence/036-production-audit/tests.log",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "555a6c3ebe139cfe2772c68d6f5cff0ebed9e00b"
+      },
+      {
+        "path": ".agents/docs/evidence/036-production-audit/trajectory-redaction-repro.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f7859a8c74a5084ae59b4ceee706f9bf40d4a80b"
+      },
+      {
+        "path": ".agents/docs/evidence/036-production-audit/trajectory-redaction.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "80581f5e377a3df0877df89b4dcf3ecec390a4ac"
+      },
+      {
+        "path": ".agents/docs/evidence/036-production-audit/verify.log",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "27db357ef62320d6bc8efe84b1dd3a68e58058bf"
+      },
+      {
+        "path": ".agents/docs/evidence/037-roadmap-planning/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bc6d4b56429d9822c65292c89d9049dcd25f92a5"
+      },
+      {
+        "path": ".agents/docs/evidence/038-resumed-verification/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "57437265dcf5afa3b0ce36b4196ab05e746e7cf5"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/compaction-20261102.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cbac82d294c3f2bc3c5a000498abd91283e30257"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/implementation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fe9b13965c04818e6616363f124ad823514809cf"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/queued-input-repro.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "18541b32b0f406e144b75cd22fe094d48b88f5aa"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/reconciliation-plan.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "53f448abcdc6d4abb67172d740798f804ff8f356"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/retained-source-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5feb17eac5e500b28defe041414f7695084f89a3"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "540a28744129cdab8310a400bc6f701c9657e9bc"
+      },
+      {
+        "path": ".agents/docs/evidence/architect-context-lifecycle/upstream-gap.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7c06f43347fa6c1cc768da48c5df94a29910e09b"
+      },
+      {
+        "path": ".agents/docs/evidence/decision-recovery/loss/ort-signature.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e4e3ebdc5f70b571244e96267da68e84957acd64"
+      },
+      {
+        "path": ".agents/docs/evidence/decision-recovery/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ae360441810f7e9f8f2a637f5d34d0e2445d2512"
+      },
+      {
+        "path": ".agents/docs/evidence/decision-recovery/ownership/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "530b5be0809aef4e38b1854a4db85027880e5362"
+      },
+      {
+        "path": ".agents/docs/evidence/delivery-reconciliation/2026-11-02.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "71dd3f064ad85dedc2ef4e591032619ffe8c2632"
+      },
+      {
+        "path": ".agents/docs/evidence/directory-artifact/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7f54576eb9492f57b12ccbaa2f9654202e0e0669"
+      },
+      {
+        "path": ".agents/docs/evidence/failed-retained-resume/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "60bb202d1280272b92fd3f0509593d98a8b453e7"
+      },
+      {
+        "path": ".agents/docs/evidence/full-instance-qualification/native-observation.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9d9b270bf82be78f217ef16bda869dafddd7a0ef"
+      },
+      {
+        "path": ".agents/docs/evidence/full-instance-qualification/worker-trial.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0f61ad30220c440dc85315d0f1bcd994b8e41f5d"
+      },
+      {
+        "path": ".agents/docs/evidence/isolated-context-reuse/native-trace.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fd77065600b81b50e556eef9f09090e8b02aa4e3"
+      },
+      {
+        "path": ".agents/docs/evidence/isolated-context-reuse/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "63344cea41cde82b3187d74aa39402f2fd821b3d"
+      },
+      {
+        "path": ".agents/docs/evidence/merged-artifact-baseline/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "61af61777b56f19e4867d48f79c728e4cc916ce4"
+      },
+      {
+        "path": ".agents/docs/evidence/models-accounting/accounting-route-correction.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b270da1da1922e9cd817798d619284290cdca8a2"
+      },
+      {
+        "path": ".agents/docs/evidence/models-accounting/openrouter-source-correction.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bdd60397c0d2d69ba42a7641d9e25db66098a4ab"
+      },
+      {
+        "path": ".agents/docs/evidence/models-accounting/route-ownership-review-20261102.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9eef8a2ffa128dc65ff25e9be9722071cc22ca1a"
+      },
+      {
+        "path": ".agents/docs/evidence/models-accounting/source-live-review-20261102.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3b662444fe6eeeb52d2e6be2ca4b4c0d84fb5c77"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/2026-11-02.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b2872a9145ab3d2c7ffd13b882bd11f30b4fc74a"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-adoption-reload-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "90e832783fd165e2ec7a0825f99d62b2cd449027"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-compacted-input.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "46984e6d72e103f95410d6dc5592ccf4581a2b1c"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-idle-producer-trace.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "001dc69d805c4532b09219fc5b3079aac221ba3f"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-index-cancellation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "98e336f02cf54a1f535dccd1a6bd3872e714483b"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-inference-reconnect.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "87484702d037f8cfd74762d24893f71e9377b7ee"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-models-authority.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "491ae0fc2483a719fedca06d728c27b12a3ad671"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-models-owned-setup.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4ab647d65240e4b3760b628d0ce5e4bc5350a589"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-native-continuation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "007a9a1c46659ac3f049468ad68299cc55cae764"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-parallel-workers.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eb89bc0d4674f9f5ece52c167489a996acc2bf7c"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-radar-native-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2f82a207ccce5999c2b7df8699c651bc95f90240"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-reload-continuity.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "70ba48d1cfe7097648971a207aa16f0dca8930dc"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261102-service-stall.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "28a5ff107b761a5a12c79c379b5d67a97097d4f6"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/20261103-native-hold.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c9cbfafecf56e90a3e4997856dabb21ddfbea49b"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/canonical-rollout.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "926a7d1a81369909de6fc42f5debde9dfa151bda"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/development-source-rollout-20261102.jsonl",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "40bd0008e39e0c33e08f196965237cf340f7da54"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/handoff-review-correction-request-20261102.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4c6483a1751f0151c321bdeae598d1698313dd4a"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/handoff-review-recovery-20261102.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5da85735a57e6893ad7cc0f476a80f0c40783eb0"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/local-loader-isolation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a9a93b2da72e0d0909486e9608219540144803b4"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/parallel-native-20261102/historical-LZ20.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7ac45d567c61ddfe41c4e8cf6aaeedadfbc496f9"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/parallel-native-20261102/radar-two-workers.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "037eb80d8c093da051b6cf7aee831430ed423a44"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/parallel-native-20261102/tasks-running.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a2395f97f9c76329db06b04220ed8e331f127225"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/radar-native-20261102/narrow.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e81adaf5d951c8b76899d94be8ec4d9662018ccd"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/radar-native-20261102/scroll-after.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "18558e1b6a44da8af7575d74976e017e5ab03811"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/radar-native-20261102/scroll-before.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f0fbb7832531329ecaf3ee88e04205e540a9d39b"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/radar-native-20261102/wide-selected.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1d6a8e3cd9a2fc8146a1622bfc9a223384347e07"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/radar-worker-qualification-20261102.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7434270572f13f072b1a2f8624b019189c3840bb"
+      },
+      {
+        "path": ".agents/docs/evidence/native-liveness/retained-adoption-preflight-20261102.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ba005246058282b6aefdc5324e2c227c03f9cfaf"
+      },
+      {
+        "path": ".agents/docs/evidence/operational-radar-view/checks.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b5106031af1558a595d0934c3d1f6759ef418c11"
+      },
+      {
+        "path": ".agents/docs/evidence/operational-radar-view/compact-overview.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "689c665b6dcb52599a876f19c2d4d77704c5a9b6"
+      },
+      {
+        "path": ".agents/docs/evidence/operational-radar-view/desktop-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "11bad3e9ae2f94e168abea0f64c42dbd25113b86"
+      },
+      {
+        "path": ".agents/docs/evidence/operational-radar-view/native-terra-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ba213b986e3b8566cbc64dcd17acbe4fa7d47f2e"
+      },
+      {
+        "path": ".agents/docs/evidence/operational-radar-view/root-correction-request.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "82237835829a02d5e8e4214bce1e7f6fd48e44fa"
+      },
+      {
+        "path": ".agents/docs/evidence/operational-radar/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eb7e2466aec9f0974bd3131938192fab59df1595"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-armed-capture/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9dbccb0524ca295d9e1d0bfa0e5842a60eb335c7"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-freeze-20261101T1540/automatic-capture.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0647156950081d9ad13186ccd4ca615c334e58ac"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-freeze-20261101T1540/dialog.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ee4b4da4840a8c06817637561ad177a1bedd794b"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-freeze-20261101T1540/recovery-findings.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "40a294040d080779c67918de16bd5f24c7539152"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-freeze-20261101T1540/renderer.sample.txt",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "07de9f2ee9d2f9fa432cb8ed3787e28dc5854584"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-freeze-20261101T1540/report.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "30f03d4be50678d94f08f3b5ab2dfe9fe7e0dd21"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-freeze-20261101T1540/sample-analysis.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d9a006bf8b516d9eb57b69d1cef05da662bacc40"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-profiler-start-stall/report.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e26c6675645e22c02f9be30c220c63801d662cf1"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-trace-clocks/investigation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e4a27bf6522e4b619d6218417a56041f422be786"
+      },
+      {
+        "path": ".agents/docs/evidence/renderer-trace-clocks/verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "aaf1ddc1ee6bfb47ed2b4b177cb0756e47c56016"
+      },
+      {
+        "path": ".agents/docs/evidence/service-reconnection/2026-11-02.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1abc2a3c3a699ccb043e83e6dd8567eec8963a31"
+      },
+      {
+        "path": ".agents/docs/evidence/service-reconnection/continuation-intents.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5403378ade794a9d0849fc812fd71c4b095a4439"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/expiry-instruction-delivery.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "05978ad1597ca68521ff447527c4c98ce9bd19ad"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/expiry-repair-brief.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f47de6ca37f1f7926b9ba3d3d646e36e50492654"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/expiry-research.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8520487f1977e0393a7208039139809d2e47109d"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/native-checklist.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "09dbba12ad0f259d402c0372aed8c43d4898e0fd"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/native-observations.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "305af5c99605b0d5a60f45922e79a1976f349418"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/report.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "400ea1319a98d99befbde9e2043f5035e5090f15"
+      },
+      {
+        "path": ".agents/docs/evidence/stable-live-trajectory/selected-live-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0864b3399dc1b9ef6602dcf1ffd61f726a6a5c08"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/cancelled-corrected.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0d6d6b6c15473384b9692a4165c2fb2679c8cfd3"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/cancelled-narrow.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fee2f13fa85187c022b286b2d26b7b048912fa2c"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/completed-corrected.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "694b08f279e1b21c9edfef5714ae32037457b3e4"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/lz31-native.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ee991af8df012e85d3588a820386875b0613a816"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/lz9-native.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ecc587893e5b3dfc404c943a16dff74865c06b89"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/native.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "af7d20af25738680c09d7d657d3a26743ed9b1e4"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/terra-follow-up.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5bc61b54d23d8437273f19e272ccdc0681eb46e4"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/terra-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7f0534a561b4633921a9fea9a0fe65fc0bee1aba"
+      },
+      {
+        "path": ".agents/docs/evidence/task-history-navigation/worker-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bd9a4d46f379e88b0b9cb33ba8dc72466a24cc58"
+      },
+      {
+        "path": ".agents/docs/evidence/trajectory-privacy/native-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cbf6dee3f80b04a16b3fc892e11a61d0689f83c3"
+      },
+      {
+        "path": ".agents/docs/evidence/trajectory-timing/README.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4d944645d352df396ce91bcbfe27529e473a8b9a"
+      },
+      {
+        "path": ".agents/docs/evidence/worker-role-precedence/propagation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0bbf4c130353946a6ae4962049d9d62a6eddd7c0"
+      },
+      {
+        "path": ".agents/docs/evidence/worker-role-precedence/report.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0d281d13502179c3c40ada667b9874b374638899"
+      },
+      {
+        "path": ".agents/docs/handoff.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a288c4bd8115edeb0c29d4c93681c1246f5e2aac"
+      },
+      {
+        "path": ".agents/docs/implementation-notes.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9878622c85ecb9cd78835bf81f378a66345c5913"
+      },
+      {
+        "path": ".agents/docs/implementor-profiles.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "dc90e7f900dd6514c22a136c073cd6af0571c107"
+      },
+      {
+        "path": ".agents/docs/local-decisions.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3d462065ad728b5abc0e17ab3c86b8c9e39794b4"
+      },
+      {
+        "path": ".agents/docs/opencode-api.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4cecc5bfdc1c7508fb8509986916e7453a65a378"
+      },
+      {
+        "path": ".agents/docs/parallel-task-review-evaluation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1169dec2deea8191874d4ca9c2ee9b9a44c7c86b"
+      },
+      {
+        "path": ".agents/docs/phase-review-plan.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5e457ee81114606254abbd788c11225864350768"
+      },
+      {
+        "path": ".agents/docs/product-verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2e5f507df9e37a5062307742fdd7b206f5b465d1"
+      },
+      {
+        "path": ".agents/docs/production-audit-and-next-phases.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7a487d84910f79b86e6f8139cfca3aecfd332841"
+      },
+      {
+        "path": ".agents/docs/repomix-research.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "341d14ccb843163d4644cc9b50425528f2c63288"
+      },
+      {
+        "path": ".agents/docs/repomix-strategy.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "91bace9ebe7db95f2c949a9340c09042b9b3611e"
+      },
+      {
+        "path": ".agents/docs/research/implementors/model-value.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "34d52f28a6a950192f41d5cf6c6533abe0d0ffa4"
+      },
+      {
+        "path": ".agents/docs/research/implementors/small-refactoring.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c1b55cd7729aa0047950e8738c5a237341be58b5"
+      },
+      {
+        "path": ".agents/docs/research/implementors/systems.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6305de537183ddd9e03682f55353251889e53e8e"
+      },
+      {
+        "path": ".agents/docs/research/implementors/ui.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e9222bdcefd2635927fd8ab8e18c923a2b1e63fb"
+      },
+      {
+        "path": ".agents/docs/research/phase-planning/models.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "49d4e13730ab4ab2a733d7078aafc9a7e8f95fba"
+      },
+      {
+        "path": ".agents/docs/research/phase-planning/radar.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "020c0a68788e69c74ef534c5c92ac5dceb45b0e9"
+      },
+      {
+        "path": ".agents/docs/roadmap-execution.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7ca94a7d118d240b35a6e629f19073676349a952"
+      },
+      {
+        "path": ".agents/docs/sources/agent-harness-solutions.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2171f2ca9b2dec3e82f20438dc2f09edd07ddae3"
+      },
+      {
+        "path": ".agents/docs/sources/jevspresso-notes.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "65d1f6c238453bcdaf2ba9a479cabb79e96fe412"
+      },
+      {
+        "path": ".agents/docs/sources/original-design-brief.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "68541b4731df5097e599bc8b48b8137456cd0b69"
+      },
+      {
+        "path": ".agents/docs/spikes/001-effect-host.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f1a08e49e4d69476b86da5aafb68a145fcbeab02"
+      },
+      {
+        "path": ".agents/docs/spikes/002-task-contract.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "22793e11fc7521a26c13c057c5f33f7e7d05451e"
+      },
+      {
+        "path": ".agents/docs/spikes/003-durable-submission.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "af7c39cdb4457e7d555f4bd372fe4a8985ed08b6"
+      },
+      {
+        "path": ".agents/docs/spikes/004-desktop-architect.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e2ecc7766b29d7251060cf1938da49121301a252"
+      },
+      {
+        "path": ".agents/docs/spikes/005-architect-validation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "92f4778f5ed59d878de18bdd2434c6969c148396"
+      },
+      {
+        "path": ".agents/docs/spikes/006-architect-interview.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "851b5194995959fc66d581c488c769a02a0f47c8"
+      },
+      {
+        "path": ".agents/docs/spikes/007-retry-safe-submission.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9f367fbaee987d7512b8ac6a4c6302ee428d9307"
+      },
+      {
+        "path": ".agents/docs/spikes/008-focused-tasks-panel.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b365f9a8d561cd811aea01aa5d9a52813a234927"
+      },
+      {
+        "path": ".agents/docs/spikes/009-runner-specification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bcb0eb897b2618d880d60da6acef52e0e8f36809"
+      },
+      {
+        "path": ".agents/docs/spikes/011-runner-execution.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "50295044916f1b72a1d5872ced649e8828f44582"
+      },
+      {
+        "path": ".agents/docs/spikes/012-worker-inspection.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a3ebbf7be5ee06cfacc6698ed925707877d03c48"
+      },
+      {
+        "path": ".agents/docs/spikes/013-readable-task-fetch.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b210d94ef5954bdfac5304a5300338b15cd56efa"
+      },
+      {
+        "path": ".agents/docs/spikes/014-progressive-worker-guidance.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0391c472a0fbf407c329cf9fe6e78d69b6a420bc"
+      },
+      {
+        "path": ".agents/docs/spikes/015-trajectory-read-access.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f78a28ba4de536882aac55c00f987b56eef42eaf"
+      },
+      {
+        "path": ".agents/docs/spikes/016-native-worker-selection.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "37337bf6ffef66fccdc496d90ef05421985d2159"
+      },
+      {
+        "path": ".agents/docs/spikes/017-reusable-workspace-index.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4e5ab3ee00a077288e60337a50630cf9dc7d4440"
+      },
+      {
+        "path": ".agents/docs/spikes/018-durable-progress.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "599c2aa444a4e445637dc24eaa2098cc0c98516f"
+      },
+      {
+        "path": ".agents/docs/spikes/020-explicit-retry-baseline.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9bfc5f17e00819a108b688cb7aa1fd43c7c613f8"
+      },
+      {
+        "path": ".agents/docs/spikes/021-tasks-start-continuation.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b264a9e37503bb9f0d2b84ba23e79c5c95377cd4"
+      },
+      {
+        "path": ".agents/docs/spikes/022-native-parallel-dispatch.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8d97567e8207df4beed5049f3d46158f51ca804b"
+      },
+      {
+        "path": ".agents/docs/spikes/023-scoped-observation-projections.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8531c8aae226848c84f1a5cb2eb0f340800d09fa"
+      },
+      {
+        "path": ".agents/docs/spikes/024-final-prose-speech.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "35c48959f212976a1990c6ff37c55f6a6fd9ec26"
+      },
+      {
+        "path": ".agents/docs/spikes/025-radar-panel.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6a907538991b6e81dcaaaaa937654d8da64d4f18"
+      },
+      {
+        "path": ".agents/docs/spikes/026-trajectory-panel.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "81b6815dcc7e636a9b0281a103954d0f2a485ae6"
+      },
+      {
+        "path": ".agents/docs/spikes/027-observation-panels-dogfood.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "22846d85239687ba3aff59162e563be842c41c30"
+      },
+      {
+        "path": ".agents/docs/spikes/028-tasks-native-affordances.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4ab3b5369574cfdaf14fee799c384b5dcfffd856"
+      },
+      {
+        "path": ".agents/docs/spikes/029-task-references-links.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b9c0f93158731ebe5d96217130e23003933c183e"
+      },
+      {
+        "path": ".agents/docs/spikes/030-grouped-tasks-list.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e20c1fd6a677c28dc460979171a11e0748620a58"
+      },
+      {
+        "path": ".agents/docs/spikes/031-authored-plan-title.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "510860460b3444f94cad6c81c055631a8f99e787"
+      },
+      {
+        "path": ".agents/docs/spikes/035-outcome-inbox-coalescing.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d2fba5730b14ac6a1847b891c1e8f77e7454fdbc"
+      },
+      {
+        "path": ".agents/docs/spikes/architect-context-lifecycle.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2ac75ebde109c6323bba6aee3ab56315b8fd22db"
+      },
+      {
+        "path": ".agents/docs/spikes/isolated-worker-context-reuse.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4ec82e0d3cb8795010beedd0f219d992b70243d5"
+      },
+      {
+        "path": ".agents/docs/spikes/parallel-webgpu.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "33faa16387d4c8d5abbf92fb649cd1e93ea665d9"
+      },
+      {
+        "path": ".agents/docs/task-authoring.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "706abe7c10b9bcf102dbe8863d60d8c34f854f77"
+      },
+      {
+        "path": ".agents/docs/task-hardening.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "445fc36ddb668dc49a9fb45e06894c51163997d7"
+      },
+      {
+        "path": ".agents/docs/webgpu-adversarial-review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "829208cb9e59dea03ddee8d6b5384a5e97b729e5"
+      },
+      {
+        "path": ".agents/docs/webgpu-api.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5c5519a4c48a0cb41dbb740da0e474a82eab2fce"
+      },
+      {
+        "path": ".agents/docs/workspace-policy.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c0c07b8f862877b827b68d476bcdf723e69f80b1"
+      },
+      {
+        "path": ".agents/evidence/task-hardening/adversarial-2026-10-31.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f034f32ba4cb1e7e88a6f5b518a6bb827539b908"
+      },
+      {
+        "path": ".agents/evidence/task-hardening/feature-switches-2026-10-31.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c366393d2217b29295ba9ab521c48ce62872e50a"
+      },
+      {
+        "path": ".agents/evidence/task-hardening/live-2026-10-31.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6a187de03d57ce6741a10d3f4025a3a950efa23e"
+      },
+      {
+        "path": ".agents/evidence/task-hardening/presentation-2026-10-31.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "87d334fa827bdec9bdb1938b0487754df49f06ab"
+      },
+      {
+        "path": ".agents/evidence/task-hardening/sentence-speech-2026-10-31.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2e5498a246881495d2716c46d86ddb5ec418d94d"
+      },
+      {
+        "path": ".editorconfig",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8c52ff9378d3af25a3cbe171ea37c8c3d56d5203"
+      },
+      {
+        "path": ".gitignore",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3b596219eb2ae150f875772e332bb296fd951969"
+      },
+      {
+        "path": "AGENTS.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6b77d00a4028ebba58f34d5a9673aed96624de1f"
+      },
+      {
+        "path": "DESIGN.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "99e0ed55bc52e65b99d1ec7a64e0c2e89f760480"
+      },
+      {
+        "path": "README.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "05ddf9ec0a2cb9bfa2ba59f9143f6b3e4f2af550"
+      },
+      {
+        "path": "bun.lock",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7f34bc1ce2a0afbac63e6a1682c5cb66574a62ea"
+      },
+      {
+        "path": "bunfig.toml",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5e97995e8a1e84443aaac3695a64eb24bdc6d88a"
+      },
+      {
+        "path": "design/live-product-verification.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "14946fe85e862836111e9cdbb5221ec2747012d7"
+      },
+      {
+        "path": "design/models-panel/benchmark-sources-read-20261102.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d5258f3315f6c66116e1eed6b30e91d36c48c50c"
+      },
+      {
+        "path": "design/models-panel/benchmarks-read-20261102.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "45861752d52d1db76382e7204c41f51f074abfc5"
+      },
+      {
+        "path": "design/models-panel/compare-prompts.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8ce31a661dfac21088a3b202bb77431c92349c56"
+      },
+      {
+        "path": "design/models-panel/implementation-plan.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "661f1b4aea49d3f57878d0c69cd8dd214afa02fa"
+      },
+      {
+        "path": "design/models-panel/market-read-20261102.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ce089e15a7e7e80dd5d4d731cbb9cbfe3ccb9c75"
+      },
+      {
+        "path": "design/models-panel/models-approved.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b6fe0efa80fc62478da7154fc934ab74afee4d9b"
+      },
+      {
+        "path": "design/models-panel/models-compare-v1.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b6fe0efa80fc62478da7154fc934ab74afee4d9b"
+      },
+      {
+        "path": "design/models-panel/models-compare-v2.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2e371581290c68ad6bc7477abb1b954fde610994"
+      },
+      {
+        "path": "design/models-panel/models-focus-v1.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5a939cf1ea0d556b227e7c9619fcd97d5e8615ff"
+      },
+      {
+        "path": "design/models-panel/models-focus-v2.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "aade5bb161af10ad26501998efed73c90b3f4411"
+      },
+      {
+        "path": "design/models-panel/prompts.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a04359ec50037602646ca864fe0b27594467b75a"
+      },
+      {
+        "path": "design/models-panel/review.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1d5fe0e5fffbf22f189562e81398657845324791"
+      },
+      {
+        "path": "design/proactive-worker-recovery.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "996c5a41725532567419b2d87c8d6223566f7496"
+      },
+      {
+        "path": "design/recovery-handoff-contract.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "88163596e606256d7acbc7110c75ada9f71c9968"
+      },
+      {
+        "path": "design/roadmap.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3529389122f5e0a967b19aab36e8e6931e04b25f"
+      },
+      {
+        "path": "design/system-panel/implementation-plan.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5b677f3fee9dd2f56b3c5862a12d7899b26ae90d"
+      },
+      {
+        "path": "design/system-panel/interaction-spec.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "92e586e76dd17ece726c757d7234e91e07ddd552"
+      },
+      {
+        "path": "design/system-panel/prompts-v1.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "486488d9b0e46d1c95fd6633a05e8a7442f2b5b5"
+      },
+      {
+        "path": "design/system-panel/prompts-v2.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e29a9d177563285661b66d3ae83459547be32552"
+      },
+      {
+        "path": "design/system-panel/system-flow-v1.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4f5ce81f0a4088985f1e89f98d1b161a671429f2"
+      },
+      {
+        "path": "design/system-panel/system-timeline-v1.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f93a0412113054d8fb47c09739d0832862deea47"
+      },
+      {
+        "path": "design/system-panel/system-timeline-v2-wide.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0197eedce269dc6d7e630041ac962126724b454d"
+      },
+      {
+        "path": "design/system-panel/system-timeline-v3-narrow.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e77a7957ba652dc377cbb58cbf602bc879340df4"
+      },
+      {
+        "path": "design/task-panel/current-panel.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4ce1eadf45beb4a10e917bc8a3b7a53cf1e9c2db"
+      },
+      {
+        "path": "design/task-panel/execution-list.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fac6aa5a15761e361e04400cbfc0cf0e7df5bf38"
+      },
+      {
+        "path": "design/task-panel/full-specification.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d7692a58b1d96bce23992012584743b20cbb011e"
+      },
+      {
+        "path": "design/task-panel/interaction-spec.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f4b2bfa089127d07b99a06e0f96a50c7d966a9ce"
+      },
+      {
+        "path": "design/task-panel/panel-after-review.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bdb75c94296c5ddfcdc2cca17f6fb233dea23698"
+      },
+      {
+        "path": "design/task-panel/prompts-v2.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "901ba06754ed804e9d6af067ca7901108715820d"
+      },
+      {
+        "path": "design/task-panel/prompts.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ca2bef55fc792ca014a1b77eecfaf92db1e64528"
+      },
+      {
+        "path": "design/task-panel/runner-submitted.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "428b90995af9eee030ca75df83981b40f94d13e4"
+      },
+      {
+        "path": "design/task-panel/tasks-dark.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8107fa33caaff8645228f9e6c345a497af789c29"
+      },
+      {
+        "path": "design/task-panel/tasks-focus-v2.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9fbbafc18dc5194814dd2551595db76aa8376f7d"
+      },
+      {
+        "path": "design/task-panel/tasks-light.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6d0b0d33247f3b0bd349f5572a01e32e629c04bd"
+      },
+      {
+        "path": "design/task-panel/visual-contract.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bea39fccb5d45e8adf865498a0abeafa65976ab5"
+      },
+      {
+        "path": "design/trajectory-panel/design.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "238716c7b22d05438fd1b39ff602e3c2bc23de7d"
+      },
+      {
+        "path": "design/trajectory-panel/recorded-task-data.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a22e87ba0f5b32f74b9fb82e405e55bd096b2981"
+      },
+      {
+        "path": "design/trajectory-panel/trajectory-review-v2.png",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b913f9b5d6f39e0c9d265cb6cd0f0bf7f6c92375"
+      },
+      {
+        "path": "opencode.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "23025ec05397af657969ef1288da93638d4f6e90"
+      },
+      {
+        "path": "package.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "835ba620fc909a48536f32bad929b888bdc74cff"
+      },
+      {
+        "path": "scripts/build-radar-layout.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "16ef23804d7021ea68faddf050cd305f66d6cd0a"
+      },
+      {
+        "path": "scripts/prepare-engine.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "78204560fa8ea0e207e91b72f4dd448b90cb5028"
+      },
+      {
+        "path": "src/architect.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fad5bf0327bf36f89b19a0de40cf50aeaa5457e8"
+      },
+      {
+        "path": "src/architect.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f7100e88160db574b6374d15c75c0dd578a3602b"
+      },
+      {
+        "path": "src/architect.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "457e2697a5505575c77b2e5fc1dd819ec33af804"
+      },
+      {
+        "path": "src/assets.d.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eb3e3b92d663efa9ff0c4b1ff21f15a33e7b67ab"
+      },
+      {
+        "path": "src/context/index.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1d54c8e707144ba68c4e21a22951776b8ce69edf"
+      },
+      {
+        "path": "src/context/index.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7f6ffa152d19c3e9d27e7e57ca20dd3e56dc7cac"
+      },
+      {
+        "path": "src/context/processor.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2851d5f2ffe537a5fc8de0ffbec1b37e63d1a8ac"
+      },
+      {
+        "path": "src/context/tools.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "10f352713e282c8317dc3f3e059cc62d2fc0eef8"
+      },
+      {
+        "path": "src/context/tools.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "754c3c6f29cbe577cf4554e99f971d795d6ec72d"
+      },
+      {
+        "path": "src/gui.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5c3d1298024da5dda2e9a13f178b2f7026b633fd"
+      },
+      {
+        "path": "src/identity.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f1ee39869c0a14a5ffa9ceadfcf4a88ed26a53df"
+      },
+      {
+        "path": "src/implementor.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9516a7c2d8b00ebaeacb70a1470c58c586314971"
+      },
+      {
+        "path": "src/index.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4dacc86175d9a8a0fdf426c1312e6e75892a47b7"
+      },
+      {
+        "path": "src/models/contract.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "253d35e44cb05b87a1603c1e4bd9a44142756c1f"
+      },
+      {
+        "path": "src/models/mapping-resolver.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8795f55463a565e576c3683a9f0f9f3129748efc"
+      },
+      {
+        "path": "src/models/mapping-schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d8295a4fd1c2b12a113743eefa3144b4c5d8add7"
+      },
+      {
+        "path": "src/models/mapping-store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f180e3df2a30726d5889d8f892402b622219c56b"
+      },
+      {
+        "path": "src/models/mapping.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "76eaab4553dfcf4edba9cca3b1f12979c462d314"
+      },
+      {
+        "path": "src/models/server.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1e4c731da3b0d18789cbfbc1f5cfa7fb87bfba08"
+      },
+      {
+        "path": "src/models/server.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a6d00359612239cd2af728b3235ace5115430fb9"
+      },
+      {
+        "path": "src/models/service.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "94f58b77e06483e127342101e8c85d6797f6072d"
+      },
+      {
+        "path": "src/models/service.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e6a5801ba4fe08cc7b1e266245739b7209a0eda1"
+      },
+      {
+        "path": "src/models/source-refresh.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1e8bb2e5a3458598068a75a0e5c549401ea03292"
+      },
+      {
+        "path": "src/models/source-refresh.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8cad20c4ef81b07c4dc963499d12dfdfc1829b8c"
+      },
+      {
+        "path": "src/models/source-schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e8ddc6f5c1cb37bf8a2c4bf443d5e78ecebb80ae"
+      },
+      {
+        "path": "src/models/source-store.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "34f5610659e15420f41939c12cb3c6ce0ff07014"
+      },
+      {
+        "path": "src/models/source-store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2237034daab84b35b6038fd6363afc659c4f4f4e"
+      },
+      {
+        "path": "src/models/tools.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bb7655a6dcfbe857e82ad41a39719370a75c2405"
+      },
+      {
+        "path": "src/models/tools.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "844a7b37d7b9a6c26467b8d7614c393865a68594"
+      },
+      {
+        "path": "src/observability/associations.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "19dcd00ffc35a2cc0c7f0c48aac133714efdaefd"
+      },
+      {
+        "path": "src/observability/changes.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "08ec0425126e76717ddf840c2ff80bf352ca9cd1"
+      },
+      {
+        "path": "src/observability/changes.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3a99991fed5d8934c7e0edfcae7fce82e85d278d"
+      },
+      {
+        "path": "src/observability/contract.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bc04e99dc2407173edae9a6e7476321074863c50"
+      },
+      {
+        "path": "src/observability/native.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ecdf01c96c433ce32823a0a50ca9e4965c232888"
+      },
+      {
+        "path": "src/observability/read.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3e00b43e752947b0f7960a5099a3a96e788cf1e6"
+      },
+      {
+        "path": "src/observability/read.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f09a472ae0151c1506c85cee5df122309fb49cb6"
+      },
+      {
+        "path": "src/observability/rpc.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d61b9f533c6b86d755978473f9ef355b297947b6"
+      },
+      {
+        "path": "src/observability/rpc.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3f025e8ca138eefcd9b0403dfe0115241bce84ef"
+      },
+      {
+        "path": "src/observability/source-revision.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6d2c3745ba8e411db1dc1b784fccb9f85ac87fba"
+      },
+      {
+        "path": "src/observability/source-revision.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f29de449a03f85b9973e52ddedd36eb44b507e5f"
+      },
+      {
+        "path": "src/observability/state.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a040bf5718b8238d584a86404b23055465b03b34"
+      },
+      {
+        "path": "src/observability/state.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6eb22f00cfb6f9e4cd38fd3b1e4b3e8684766937"
+      },
+      {
+        "path": "src/observability/task-reads.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6c661af67bc465cb99dd9324da707d7776da475d"
+      },
+      {
+        "path": "src/observability/task-reads.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "23f44da815e21cdfe91f288b4436da8b0c6d3a1e"
+      },
+      {
+        "path": "src/personas/index.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d42d44e668b67f23f8bea890849e6455b55d92f9"
+      },
+      {
+        "path": "src/personas/small-refactoring.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7096e7f847614d825a0a812c59981a8324153206"
+      },
+      {
+        "path": "src/personas/systems.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6c02bdae2985e36f3abe9c6d13237be48b9124d5"
+      },
+      {
+        "path": "src/personas/ui.md",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "83feb71e0463b0ff44fedddfa5c09f236fb0082b"
+      },
+      {
+        "path": "src/progress/integration-review.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0cb8840d5a0874c860bb5891a5535848c0c9cc10"
+      },
+      {
+        "path": "src/progress/native.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f2c59e86d4d3ea4ee60d4b9047d6d92047995018"
+      },
+      {
+        "path": "src/progress/native.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3f1d31e2c842539ac3cffae229812a5db7882960"
+      },
+      {
+        "path": "src/progress/privacy.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4c0d68402550b238d4aee39b47493fe222993cc6"
+      },
+      {
+        "path": "src/progress/projection.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1eb21f753939d3c66106457106050247b3bce1a6"
+      },
+      {
+        "path": "src/progress/recorder.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2c55f62c16ec81694ddfb7c53d8a790cd16cf79e"
+      },
+      {
+        "path": "src/progress/recorder.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a0e588b3b344d3fb387723cc990e6d4125df907a"
+      },
+      {
+        "path": "src/progress/schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3a4f60b7933b0c832cf9fba201265bbe02d0da4d"
+      },
+      {
+        "path": "src/radar/elk-worker.cjs",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "39f1507aaef551673737a1f50c14b8ecdfe47fb8"
+      },
+      {
+        "path": "src/radar/layout-graph.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0b7c62486c9ef01034470884edb6a9d528cca161"
+      },
+      {
+        "path": "src/radar/layout-ipc.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4da94a9d000637fa7685eb15f43c86af4b73f36a"
+      },
+      {
+        "path": "src/radar/layout-main.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3419b43aa61a77371fe0ddcbceeee3050997b2db"
+      },
+      {
+        "path": "src/radar/layout-state.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "388c43b6c78ad74ddcbacc022e61eca82783e393"
+      },
+      {
+        "path": "src/radar/layout.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "15f0424b88827ed1b6a12dc922d3088e77835699"
+      },
+      {
+        "path": "src/radar/layout.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b1ad4643103ce10fde3967b2a81ebb46d78580b1"
+      },
+      {
+        "path": "src/radar/map-layout.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "01ecc2d59ef07f0c79e58934e37e36ea06e37c85"
+      },
+      {
+        "path": "src/radar/map-model.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5ac4508d75306599b1a94d1b4aaec282f639eb66"
+      },
+      {
+        "path": "src/radar/map-overview.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "60e9deb6b92282d5f289a516e19e34017918e66d"
+      },
+      {
+        "path": "src/radar/map-overview.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3786fccd8807b66082759f423a5d40f5fee41986"
+      },
+      {
+        "path": "src/radar/map-view.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "808075a6e2f5b3bb994b010e2e2bdec6814cb6ed"
+      },
+      {
+        "path": "src/radar/packaging.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2d46e5fd4246c4f0fb157a7ff5f20b7fde295c83"
+      },
+      {
+        "path": "src/radar/panel.css",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "902bc04d2af4538de2bfb528aa05cd09693e75aa"
+      },
+      {
+        "path": "src/radar/panel.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "043b3318eb0ed5de120f65114a03e4df5f3342c4"
+      },
+      {
+        "path": "src/radar/presentation.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6df455f1419a81ec6a6384f749aee333e69d7739"
+      },
+      {
+        "path": "src/radar/presentation.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0f695005a140ce88b237be4852b2ccb9474710bd"
+      },
+      {
+        "path": "src/radar/project.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fac4487ea3eabf0d1f62b0c50af6388fc34b1c97"
+      },
+      {
+        "path": "src/radar/projection.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d04bb6de22c71f3e8af79d31436c320b27b69189"
+      },
+      {
+        "path": "src/radar/projection.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "307223d693781a94e3b7fccc5333c75bad796456"
+      },
+      {
+        "path": "src/radar/pulse.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4f99ab78699442983d77ac45a1b8bc42c72e305b"
+      },
+      {
+        "path": "src/radar/registration.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6d553f8e085d5ff94653c2eb20fc300ea4e235ff"
+      },
+      {
+        "path": "src/radar/state.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "55ba50e1e74833931c1c86467816f9a202afb40e"
+      },
+      {
+        "path": "src/radar/state.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d2b2b8d3ebaaacfb7fab1358a7fd003bd7703d7c"
+      },
+      {
+        "path": "src/radar/statechart.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c2c1609c0e4225b531b1d6d662d67d9f41bc32ff"
+      },
+      {
+        "path": "src/radar/timeline.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b46adc1a9fc14a649ae113d2ac74b4d79166acee"
+      },
+      {
+        "path": "src/radar/timeline.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1acf3ab5e2a2a18802d3121fbd7db47450bd5eb0"
+      },
+      {
+        "path": "src/radar/transport.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "746a2b18e19c9501c05f5b0765c79b69ee8c2d34"
+      },
+      {
+        "path": "src/radar/transport.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c52ce4ac32305f0b6d5f0b9fd84dc39f3b65db17"
+      },
+      {
+        "path": "src/recovery/handoff/checks.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e72db488e2cf3d7287a22e3907d5409830c23735"
+      },
+      {
+        "path": "src/recovery/handoff/index.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3fc303e6c7a609369fb5dad7e6a3ee6a6915e173"
+      },
+      {
+        "path": "src/recovery/handoff/review-state.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "34dc87badeeebef702320a3a292201433293c128"
+      },
+      {
+        "path": "src/recovery/handoff/review.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6dc080ffe7cb21ceab468e34aed124331d80ec45"
+      },
+      {
+        "path": "src/recovery/handoff/review.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "40cdee784fbcc3e2c7b06b1bb1402b0ab206603b"
+      },
+      {
+        "path": "src/recovery/handoff/schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bb8e35a9c9c03aeb02f578f0b0e5edce8e1fc75e"
+      },
+      {
+        "path": "src/recovery/handoff/store.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "429da508ce928802c60dd2a1a4577239ac8c7968"
+      },
+      {
+        "path": "src/recovery/handoff/store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1a771ecf77794c2653e2fb05b4bd19a7be40f086"
+      },
+      {
+        "path": "src/recovery/journal.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1ea9105784c8fa1d20466be4813e24fd0aab946d"
+      },
+      {
+        "path": "src/recovery/journal.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4bbe3fd0e4d8a3126a1f38e607defa038c801b94"
+      },
+      {
+        "path": "src/recovery/producer.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e36c0798ae7acd9aedfd14dbef1137fd0054f3c0"
+      },
+      {
+        "path": "src/review/progression.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0136835360fb1fdeaa3594026a818c91b41f165b"
+      },
+      {
+        "path": "src/review/progression.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "23de5226f5666e3d84fcd287bc96ed9244c9f92e"
+      },
+      {
+        "path": "src/runner/adopted-descendant.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cd4a8411cfc60835af6f12b334c1f1ab30bb0099"
+      },
+      {
+        "path": "src/runner/artifact-evidence.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f73f007c524892b685fa6e77a3acc02e1e30dac4"
+      },
+      {
+        "path": "src/runner/artifacts.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fcda897a7d0d38247fbf65f41055172ae762637a"
+      },
+      {
+        "path": "src/runner/artifacts.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b9ba1f0a362ea07b6deb456846d87915902efe44"
+      },
+      {
+        "path": "src/runner/catalog.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "dfd50d5865209224ec5ba9ae17d039c4bef185df"
+      },
+      {
+        "path": "src/runner/catalog.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d7a0df3c60baacfa60f9602cd7f9d5c63d79aca8"
+      },
+      {
+        "path": "src/runner/failed-resume.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d34cfaa804b5a4be4e4992a5888acfa48f5dcd50"
+      },
+      {
+        "path": "src/runner/host.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9af0b49ab4ca1f8bce817951f586907729859891"
+      },
+      {
+        "path": "src/runner/inbox.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "274b63822f6f0506f50095c5cb72cc974286459b"
+      },
+      {
+        "path": "src/runner/inspection.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eeac17f21eb122fda9df86fa1ff4f84583bda170"
+      },
+      {
+        "path": "src/runner/inspection.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c8889b992f9ee5bbcb0937ba7a33adaab93a3669"
+      },
+      {
+        "path": "src/runner/machine.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0b556ae5b9323c8d80df1e3aafdceeb845a83561"
+      },
+      {
+        "path": "src/runner/machine.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4bdb0033747de822ed11cd996249742ca21c8442"
+      },
+      {
+        "path": "src/runner/native-input.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "27b032332dac9624539678e9e4c4bfb5a73a74f3"
+      },
+      {
+        "path": "src/runner/native-registry.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "77c708a061ffef104c7793fb17347945e6652d86"
+      },
+      {
+        "path": "src/runner/native.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ed19035cfbe8bdeaf86dc19822b09811eef0b8c9"
+      },
+      {
+        "path": "src/runner/native.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "309b5ba6bde88bc628addbabc5a03bd21bbf0f08"
+      },
+      {
+        "path": "src/runner/outcome.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1f99a0c58e0ddbc38680582ed5944f035a493656"
+      },
+      {
+        "path": "src/runner/outcome.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "714e01d5366d8fdb9e09696f631968f51777ca88"
+      },
+      {
+        "path": "src/runner/roles.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5c1aefb558c75fa535940f50559e2a34d8bcb447"
+      },
+      {
+        "path": "src/runner/roles.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "863533122a642b05c011883059765c5c383d4db3"
+      },
+      {
+        "path": "src/runner/runtime.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9c94016b9983f3ded78071abc61c50cffbeea1ed"
+      },
+      {
+        "path": "src/runner/runtime.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a5bd940c4b1357689b2989092e072b6b4e55b681"
+      },
+      {
+        "path": "src/runner/schema.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "64dd41374d3eb2e51926dfed19849cdf0fe17b37"
+      },
+      {
+        "path": "src/runner/schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b412395ca37938d737dd6e78c9fd54e3ca9031b2"
+      },
+      {
+        "path": "src/runner/store.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "38c1aae3e1f09fecc8c41f7d4fefd523fea58273"
+      },
+      {
+        "path": "src/runner/store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c4b651327547aa0c347b10ab930403e4082ef968"
+      },
+      {
+        "path": "src/runner/tools.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f683db3aa42a7d49380c40766bf9f0fade94e7de"
+      },
+      {
+        "path": "src/runner/tools.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f2303917ebf2def58107ae822a1dd6d08cbbc23c"
+      },
+      {
+        "path": "src/storage.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eab1ef773ee659c7e363cc9f7d8dd20533a6a9de"
+      },
+      {
+        "path": "src/storage.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ab71bd9672933bd1fddd103b8f97984460fb7b39"
+      },
+      {
+        "path": "src/submission.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "56a81bd108361add058cb1ea6ca65e6bbe84e208"
+      },
+      {
+        "path": "src/submission.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "aa35ff3c5c8f9de3c770ec684b1e349d951ba47d"
+      },
+      {
+        "path": "src/task-disposition.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bcc0d53106b09493e5a4037e952c45a336a28e6d"
+      },
+      {
+        "path": "src/task.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2914fd5a47b1990954399f9faf95a67a0fd05153"
+      },
+      {
+        "path": "src/task.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bce17f09cfc9de57b723e7a09b265bd698c419e7"
+      },
+      {
+        "path": "src/tasks/assets.d.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "32cb376ce7b6e2ab8edd2f4f9c04ee79864e2afc"
+      },
+      {
+        "path": "src/tasks/contract.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "55ee1a8502a026e6ee6b0f0d9322ba571e3fc12b"
+      },
+      {
+        "path": "src/tasks/execution-list-view.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "702e9bdb22c107d273f874b4e0e61ea690d58ac1"
+      },
+      {
+        "path": "src/tasks/execution-list.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "60311e052f0827e18fcb6e7f961612ff69215f72"
+      },
+      {
+        "path": "src/tasks/execution-list.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c37278112f19f058bafa719f4653ef31452620e4"
+      },
+      {
+        "path": "src/tasks/instructions.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "523f7c451033192c35ea2c4fa4d344886b94314f"
+      },
+      {
+        "path": "src/tasks/instructions.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3cf1485b34f95790f224dbad5003064533a614a4"
+      },
+      {
+        "path": "src/tasks/keyed.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a14e887decfc74551d2d3364fe94ba63d9868fb3"
+      },
+      {
+        "path": "src/tasks/links.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "22f850501dfbcd004fcbeb8da708718b9b9882d5"
+      },
+      {
+        "path": "src/tasks/panel-layout.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8cb10d6df651be854baf98bf21618db994248103"
+      },
+      {
+        "path": "src/tasks/panel-layout.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f1cce76c9b9ae60ad7da9fcb0daf8d08a1d8124f"
+      },
+      {
+        "path": "src/tasks/panel-state.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "71f857bdc313b9b676492be80a5e3b160e7d9db2"
+      },
+      {
+        "path": "src/tasks/panel-state.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "88b3a661f59b8f3be055ffb1cf3a0ccfd7d2bbcd"
+      },
+      {
+        "path": "src/tasks/panel-view.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c35eabf8090284df44a3102274bc183e8c5f9dcf"
+      },
+      {
+        "path": "src/tasks/panel-view.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "251edae8716def422332352f52f4ef291f2e9239"
+      },
+      {
+        "path": "src/tasks/panel.css",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "77cd1e3cabc9af0e62e789b6387a84eccd46ec00"
+      },
+      {
+        "path": "src/tasks/panel.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d76419cd7735e020b753b1595bfbd5c30831d000"
+      },
+      {
+        "path": "src/tasks/presentation.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5f1cffe9d16d0f6ec2a382b60178726616402093"
+      },
+      {
+        "path": "src/tasks/read.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "48c395265c841c79c703201ee5cac91f7d28b8ed"
+      },
+      {
+        "path": "src/tasks/read.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f72fc7da2bb1f772695f51a380ad1d8ab63159cc"
+      },
+      {
+        "path": "src/tasks/rpc.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a9320fef26c3abc482b7b63160a1e3ee8d25fa3d"
+      },
+      {
+        "path": "src/tasks/rpc.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a0a64e084e819994e9e92e48d4bedaed07645c0f"
+      },
+      {
+        "path": "src/tasks/state-filter.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a2b6a7f6e4f8cb5efc7f7ed3c633d4c42ccda335"
+      },
+      {
+        "path": "src/tools.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "30429a066a919c89673c0ef4fd8b8688e29b4aac"
+      },
+      {
+        "path": "src/tools.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c820b37a98f98d3d93c2b1b81357a02d608ec21d"
+      },
+      {
+        "path": "src/trajectory-panel/panel-layout.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b4d83ec1ffe60f25e57a1c2763df3db11925d36a"
+      },
+      {
+        "path": "src/trajectory-panel/panel-state.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9c88acdf80f1b83502b5671506ba814ed795baf5"
+      },
+      {
+        "path": "src/trajectory-panel/panel.css",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c288d1d4333e6244cba876c064e3737cfd434945"
+      },
+      {
+        "path": "src/trajectory-panel/panel.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f83342952272052da3fb850356271e01e90f075e"
+      },
+      {
+        "path": "src/trajectory-panel/projection.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "03d2cc7c2f03301c4031cb7dd68cda2904022370"
+      },
+      {
+        "path": "src/trajectory-panel/registration.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "475718d83e4cd9886730fe33175fdf5154536d77"
+      },
+      {
+        "path": "src/trajectory/accounting.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9a62b854293e5ce629abbb1ffa901b4aa61c8f73"
+      },
+      {
+        "path": "src/trajectory/accounting.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3eafc3f700e3572aefc1d88dba30eaabbb17227d"
+      },
+      {
+        "path": "src/trajectory/history.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8d8892a9f6430128dd79ef83d38c4bf04615a77d"
+      },
+      {
+        "path": "src/trajectory/history.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7b46758df5450c6ced13c0c99b946a32f8f85b83"
+      },
+      {
+        "path": "src/trajectory/native.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "18ab6257ab1cb61ee22dee34ee9a61ce3f5dd39a"
+      },
+      {
+        "path": "src/trajectory/native.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c5401ab73344584ca55260612efa791864361983"
+      },
+      {
+        "path": "src/trajectory/privacy.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "be69578e50b1ca3d5e4b9ef8b5f322db2ef4985e"
+      },
+      {
+        "path": "src/trajectory/privacy.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "30fa68761ba5b652339f4b1baf17af70b67a8f96"
+      },
+      {
+        "path": "src/trajectory/read.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c99761ce21750cc03fdb36dce8d6cf2530c8437d"
+      },
+      {
+        "path": "src/trajectory/read.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bfd4b7dc2b9afd7c3d29ba166904c04e44933a2d"
+      },
+      {
+        "path": "src/trajectory/schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d04a856e2465aeb909ac3979d36a21762d24d0e6"
+      },
+      {
+        "path": "src/trajectory/store.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5f3dd88cf590e17843911ec0eb1fdc73209a26b2"
+      },
+      {
+        "path": "src/trajectory/store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4a1767a4993b46e121b2cd6d00f53accb9b9a6f8"
+      },
+      {
+        "path": "src/trajectory/tools.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "02f6e1cfd17046eb68169c59f1beb50ceb08df43"
+      },
+      {
+        "path": "src/verification/opencode/cli.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d6e431367cc3353626fbc6bee20e1433f224f723"
+      },
+      {
+        "path": "src/verification/opencode/native-interaction-cli.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6850c2dfffbcdc837577ebff26208a1e92e0c08d"
+      },
+      {
+        "path": "src/verification/opencode/native-interaction-contract.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2b8ea5a354bf4ebbb5501ba56272119408263797"
+      },
+      {
+        "path": "src/verification/opencode/native-interaction-main.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bfb699320ab313c83f170838e08e69cbf90eabbe"
+      },
+      {
+        "path": "src/verification/opencode/native-interaction-server.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "239961f960b9dc63af46b5de790a012e67a201f7"
+      },
+      {
+        "path": "src/verification/opencode/owned-launch.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9247c8db46869ab26637be99232220a10c53c3ae"
+      },
+      {
+        "path": "src/verification/probe/index.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fb14a5d4a0850c5a8839b2889796eede34f00e43"
+      },
+      {
+        "path": "src/verification/probe/schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e94f2ab40e4ceb8deebd1c6e6c3609951823a678"
+      },
+      {
+        "path": "src/verification/probe/store.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a7c8f2af984528950adbbff2cfe0a5887a790978"
+      },
+      {
+        "path": "src/verification/probe/store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e23b075cd8de392fcdeafc9c12963698c3bfcdcd"
+      },
+      {
+        "path": "src/verification/resources/fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9b822f4b61eb148ace8d175ec02b1279c62ae205"
+      },
+      {
+        "path": "src/verification/resources/index.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1e3a26d765ff3e01cbc7e2da0f141739ab655893"
+      },
+      {
+        "path": "src/verification/resources/lifecycle.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d291eaa415f66c39d5cca0a79d85e8bd6d8900ad"
+      },
+      {
+        "path": "src/verification/resources/lifecycle.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "010b825bcbec8afbb991589332e4e8aba4fc01b3"
+      },
+      {
+        "path": "src/verification/resources/schema.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5e0c66fd9de04c3f27b4f319562ea9a7c328f9ff"
+      },
+      {
+        "path": "src/verification/resources/store.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "bee4a139e5201d3fd2d8fde00125ed6686ef3f45"
+      },
+      {
+        "path": "src/verification/resources/store.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "64dc248096e1b6247a660e201135874a3b1669ac"
+      },
+      {
+        "path": "src/webgpu/assets.d.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ac1b0e7f3c6bfae1e22e19988a9a01677172daf2"
+      },
+      {
+        "path": "src/webgpu/audio.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "da01e944ec119e536e6fb2846082424c2c0fc95e"
+      },
+      {
+        "path": "src/webgpu/audio.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d731e05611f0efa516dedf928d95a4bcd31db094"
+      },
+      {
+        "path": "src/webgpu/broker.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "150168fed952ace2cd4e31338556abb34a712ae9"
+      },
+      {
+        "path": "src/webgpu/broker.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "dd7c131daa694e21248120edb62205480c1bca0b"
+      },
+      {
+        "path": "src/webgpu/cache.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b871bc229008a6883988a210f1c8138dd82384bd"
+      },
+      {
+        "path": "src/webgpu/cache.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "7b70e63323566d3bc42f0fb1a7e1f59e5e318b22"
+      },
+      {
+        "path": "src/webgpu/capture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3c360443f90369f01b09d7ac9828b3afaf756d6c"
+      },
+      {
+        "path": "src/webgpu/contract.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ab708d5d3ea330aa16d8aa651295ccc2c4a2bb52"
+      },
+      {
+        "path": "src/webgpu/decision-loss.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6e9b070220e238657671571a949bee55e3944fe9"
+      },
+      {
+        "path": "src/webgpu/decision-runtime.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6bbdf3a32b746a06052ab4f5c8ab1bd125c1e579"
+      },
+      {
+        "path": "src/webgpu/decision-runtime.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "92d760d65a98fc5a2f6e6a3dc4ec6e00f74f3e1f"
+      },
+      {
+        "path": "src/webgpu/decisions.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a000436f24e1dcedffbda248d743a12cc0888543"
+      },
+      {
+        "path": "src/webgpu/decisions.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "77124c6c106b220227d98cd40a91c6f0ab3690f8"
+      },
+      {
+        "path": "src/webgpu/dictation.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "92f1c50f0cd89167a4113aea93a6abde7f07bdcf"
+      },
+      {
+        "path": "src/webgpu/engine.d.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "195d86d4f4ab80bf4c3b52587b41d4636634d751"
+      },
+      {
+        "path": "src/webgpu/feature-server.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1bd011d15958044b593375b9bc9f1e2b845ce4b7"
+      },
+      {
+        "path": "src/webgpu/features.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3b587070b9fcdd72abd0a78d90ca1802d2592ab4"
+      },
+      {
+        "path": "src/webgpu/features.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "92f426df7ed54d5b27383d149d234c441f765bc1"
+      },
+      {
+        "path": "src/webgpu/files-fetch.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "507836df4d56180831132d735051bf9b754bb069"
+      },
+      {
+        "path": "src/webgpu/files-fetch.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d37666efbdf0a735bc5ba2ea8fab59e2b21d740c"
+      },
+      {
+        "path": "src/webgpu/indicator.test.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cac0e5d81e68f0a861f2114d7001edcfcd0829fb"
+      },
+      {
+        "path": "src/webgpu/indicator.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "07959d4157c590d5e9e3fcecdd275a78cc7a87cf"
+      },
+      {
+        "path": "src/webgpu/inference-trace.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c24a3409dc8f03f45e392543b976e00cd993012e"
+      },
+      {
+        "path": "src/webgpu/inference-trace.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e0554ff525c70e8d18cb58ceb0fa250864b4a60b"
+      },
+      {
+        "path": "src/webgpu/ipc.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ceef7bf325823874d1684e8264c276376bb617be"
+      },
+      {
+        "path": "src/webgpu/lease.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "15aaa15c5f2dd5ee93026325f46ff160797a0208"
+      },
+      {
+        "path": "src/webgpu/lease.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "5d83def9ac3a41674ebdcd04fd80c824d4dcf291"
+      },
+      {
+        "path": "src/webgpu/lifecycle.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "97f99f133ad2fc7e2e11c780aae9acae0bb8f42e"
+      },
+      {
+        "path": "src/webgpu/lifecycle.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f6aad331ab4099d8ae4f125fffb0458fb9fc2a67"
+      },
+      {
+        "path": "src/webgpu/main-trace.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e1802cab455affa1e8b2c979f4402b84d950e843"
+      },
+      {
+        "path": "src/webgpu/main.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1153139a61248b38bba1cb357426205ac8439fa9"
+      },
+      {
+        "path": "src/webgpu/manifest.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "70594bc1f0a14d0894bba57ddb95143ab586748e"
+      },
+      {
+        "path": "src/webgpu/read-aloud.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b3007f664c907b805b08cf6a447d688668b49cdd"
+      },
+      {
+        "path": "src/webgpu/renderer-armed-capture.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "988edf81f1b523c71daf6ea69c4b489fdd5d0532"
+      },
+      {
+        "path": "src/webgpu/renderer-armed-capture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "84ea77da5fe6023f20d8f1c2b981579bbfa994e5"
+      },
+      {
+        "path": "src/webgpu/renderer-debug.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6ae8c84c0f1e17d2eac85410f566d97ed2e6a65c"
+      },
+      {
+        "path": "src/webgpu/renderer-debug.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d0466f902419d5e10806336a0579697114b01db6"
+      },
+      {
+        "path": "src/webgpu/resources.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "27fd80000ec848046dea39527f22bb714e08ed2d"
+      },
+      {
+        "path": "src/webgpu/resources.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a54663d12b1ea4b18d985b4112c1c668e45d0c6b"
+      },
+      {
+        "path": "src/webgpu/review-questions.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "fcdf6f7c16087f842201178ec7a2c7cf5b68baf2"
+      },
+      {
+        "path": "src/webgpu/review-tool.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "dba0125da7489c326cb035c3f3cceab0da8f8a78"
+      },
+      {
+        "path": "src/webgpu/review-tool.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "379ac109c8b39a63fe11eeed9b7cd8e3fcd5dd30"
+      },
+      {
+        "path": "src/webgpu/rpc.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1a3e4ad4d0a0f5166f4037f20b31bfd7896322ec"
+      },
+      {
+        "path": "src/webgpu/runtime-trace.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f3d3246fb341c80005fae8dd5993e921f8ae6819"
+      },
+      {
+        "path": "src/webgpu/runtime-trace.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6048f528d5442891351823caf80e0ddb311f32e2"
+      },
+      {
+        "path": "src/webgpu/runtime.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2a31a9ef561c4f162b35f3c4b3af8763e216681a"
+      },
+      {
+        "path": "src/webgpu/runtime.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "4a6d8b9ee6e83d421d2d15f87de015d9e012a2b8"
+      },
+      {
+        "path": "src/webgpu/server.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a957b79363d5cc3e308ffe1ac96751a5ae0b72dd"
+      },
+      {
+        "path": "src/webgpu/speech-events.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a011f6584b566d385d50ceca265daa6cdc48fc46"
+      },
+      {
+        "path": "src/webgpu/speech-events.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "75efa338f23e7bae1e44f982309e123b64260081"
+      },
+      {
+        "path": "src/webgpu/speech-playback.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cc6625b61ee8dd89668ec97494977e0f0ab118ac"
+      },
+      {
+        "path": "src/webgpu/speech-playback.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "0a975b4848805ec8c82bd2208c5cdbe1d7e6754c"
+      },
+      {
+        "path": "src/webgpu/speech.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "879e219e6171ac20355ad45e78dca915f7c72ff1"
+      },
+      {
+        "path": "src/webgpu/speech.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b1e7767add8dce7fad009ec74f446e40fad5e1f1"
+      },
+      {
+        "path": "src/webgpu/system-one.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "1fea3503218584acbae61a7ceca8ad1d7e2eae5d"
+      },
+      {
+        "path": "src/webgpu/task-review.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3442fbae6769a6cfdba57995d93618699b34078b"
+      },
+      {
+        "path": "src/webgpu/task-review.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "526adebcf63427530a6ab6682297ce345cf2b7a5"
+      },
+      {
+        "path": "src/webgpu/tools.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c0fce2c5043bbb5176464766c35bf0eefacdc1c2"
+      },
+      {
+        "path": "src/webgpu/tools.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "72d00ff0fdb708fee0fece34b685cd149ad49d81"
+      },
+      {
+        "path": "test/context/isolated-reuse.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "a8d4461747e0da59b42d92a52385d735f6731dd9"
+      },
+      {
+        "path": "test/decision-recovery.fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "eb8e445c71906738b8f4b82dbaa76f7cff70015d"
+      },
+      {
+        "path": "test/decision-runtime.fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "04d4379ede1f14e26671b785a0caa4fb79b58dc8"
+      },
+      {
+        "path": "test/host-probe.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "3e67e2ec9be7b5ad15d49524abefb6aa85572db9"
+      },
+      {
+        "path": "test/observability/native.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "801dc3cd39a76b2f0f7c7caca4fadbe05f843641"
+      },
+      {
+        "path": "test/observability/registered.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "93f1de806c827b80db6cbaea105d3e4ae3c656fa"
+      },
+      {
+        "path": "test/observability/state.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "6824873c59870b190855191d675dbcca94c5c8af"
+      },
+      {
+        "path": "test/observation-panels/root.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "d282b8313a2cd2b7f64be2312c1aac2340e8bf67"
+      },
+      {
+        "path": "test/product-verification/native-interaction-main.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "b3987083da0decff046ccee2c30f9f1854b5944d"
+      },
+      {
+        "path": "test/product-verification/native-interaction.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ce66ae3b21e4f7530ee1e5c2ba0671146b9253ed"
+      },
+      {
+        "path": "test/product-verification/owned-launch.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "14586c3a2e2c28bbf5cf3876e1d3d625854f9874"
+      },
+      {
+        "path": "test/proposal.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e45fe3a2b3d63d9737e05ded4771a90318f51f24"
+      },
+      {
+        "path": "test/radar/map.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "19212687208b4d8314734b38d6e7c232de3c0ea2"
+      },
+      {
+        "path": "test/radar/operational.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "457d0807a7af8838552f45503f870231c93688a9"
+      },
+      {
+        "path": "test/radar/panel.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "29ac7fc186b3f0167c11073c20ba6bf6228796ca"
+      },
+      {
+        "path": "test/retry-process.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "38015a0485f5176ee104f46a31062bd7e5074f0b"
+      },
+      {
+        "path": "test/runner-native-liveness/fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9595a33d59adcc1a56db40602955940349be0415"
+      },
+      {
+        "path": "test/runner/crash-fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "470357c685ae7f50166227f526401efdd4719dfa"
+      },
+      {
+        "path": "test/runner/outcome-delivery.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "af19e5082f1a693be48869ae501212950b16368e"
+      },
+      {
+        "path": "test/runner/recovery.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "9bc9f9120b49a0667c04b4e90e31b5bdca3e057a"
+      },
+      {
+        "path": "test/speech/read-aloud.test.tsx",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "2969ec327e3434977926ffc9a12279366a4f8e76"
+      },
+      {
+        "path": "test/task-links/handler.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "972c71e7c6cc6dd0335a75c576aa14d6818a0594"
+      },
+      {
+        "path": "test/task-panel/fixtures/keyed-identity.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "e07d5516a668735396d3e8caed34a65801dfe66a"
+      },
+      {
+        "path": "test/task-panel/keyed-identity.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "8c79adb955156b75aac4f6807402d14cbd600346"
+      },
+      {
+        "path": "test/task-panel/menu-tab.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c17302e3aae401f9477d41d27efcae10f8af8ffd"
+      },
+      {
+        "path": "test/trajectory-panel/native-report.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "cccd37f50e604c4b2374296466a1774ed5bdbe86"
+      },
+      {
+        "path": "test/trajectory-panel/panel-state.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "00f9f1426348f53253d3bc086dadd0fa45e436b1"
+      },
+      {
+        "path": "test/trajectory-panel/projection.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "94f242bf3fcaab8e5f190b518d948afa5645704c"
+      },
+      {
+        "path": "test/trajectory-panel/registration.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "c055c635a03a0d1063e18846e734e5ce50376716"
+      },
+      {
+        "path": "test/trajectory/fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "606228bb1567a226e1ed03fe0c74b997c8323ce7"
+      },
+      {
+        "path": "test/trajectory/registered.test.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "ce1a0aa8c93e5835b3d8baa7b6bff5ba62f91f1f"
+      },
+      {
+        "path": "test/webgpu-runtime.fixture.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "632446df2536b5179b06b77ad33ff392141a98cc"
+      },
+      {
+        "path": "tsconfig.json",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "699f202f3479c6716c37e53c7e0578f35453ab49"
+      },
+      {
+        "path": "vite.config.ts",
+        "mode": "100644",
+        "type": "blob",
+        "objectID": "f473269571ec63fb25f6c648312e07551de82273"
+      }
+    ]
+  },
+  "receipt": {
+    "status": "missing"
+  }
+}
