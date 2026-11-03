@@ -7,17 +7,23 @@ import { TaskRepository } from "../storage.ts"
 import {
   ModelCatalogOutputSchema,
   ModelConfigureRPCInputSchema,
+  ModelEvidenceRPCInputSchema,
   ModelMappingWriteOutputSchema,
+  ModelSourceRefreshRPCInputSchema,
   ModelSettingsOutputSchema,
   ModelSettingsRPCInputSchema,
   ModelCatalogRPCInputSchema,
   Models,
 } from "./contract.ts"
+import { ModelEvidenceOutputSchema } from "./source-schema.ts"
+import { ModelEvidenceRefresher } from "./source-refresh.ts"
+import type { ModelEvidenceFetcher } from "./source-refresh.ts"
+import { ModelEvidenceStore } from "./source-store.ts"
 import { ModelSettingsService } from "./service.ts"
 
 type ModelsContext = Pick<
   Plugin.Context,
-  "agent" | "location" | "model" | "permission" | "rpc" | "session"
+  "agent" | "integration" | "location" | "model" | "permission" | "rpc" | "session"
 >
 
 function isSessionNotFound(error: unknown): boolean {
@@ -70,7 +76,11 @@ async function authorize(
 }
 
 /** Desktop RPC and Code Mode tools share the same project-scoped SQLite mappings. */
-export function registerModelsServer(ctx: ModelsContext, repository: TaskRepository) {
+export function registerModelsServer(
+  ctx: ModelsContext,
+  repository: TaskRepository,
+  fetcher?: ModelEvidenceFetcher,
+) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
   const projectID = ctx.location.project.id
@@ -80,6 +90,24 @@ export function registerModelsServer(ctx: ModelsContext, repository: TaskReposit
       return run(new ModelSettingsService(connection))
     } finally {
       connection.close()
+    }
+  }
+  const withEvidenceStore = <T>(run: (store: ModelEvidenceStore) => T): T => {
+    const store = new ModelEvidenceStore(path, projectDirectory)
+    try {
+      return run(store)
+    } finally {
+      store.close()
+    }
+  }
+  const withEvidenceStoreAsync = async <T>(
+    run: (store: ModelEvidenceStore) => Promise<T>,
+  ): Promise<T> => {
+    const store = new ModelEvidenceStore(path, projectDirectory)
+    try {
+      return await run(store)
+    } finally {
+      store.close()
     }
   }
   const failure = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
@@ -145,6 +173,52 @@ export function registerModelsServer(ctx: ModelsContext, repository: TaskReposit
             )
             signal.throwIfAborted()
             return ModelCatalogOutputSchema.parse(await nativeWorkerOptions(ctx))
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      sourceEvidence: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelEvidenceRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lazers_read_model_evidence",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            return ModelEvidenceOutputSchema.parse(
+              withEvidenceStore((store) =>
+                store.read({
+                  snapshotID: request.snapshotID,
+                  cursor: request.cursor,
+                  limit: request.limit,
+                }),
+              ),
+            )
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      refreshSources: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelSourceRefreshRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lazers_refresh_model_evidence",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            return ModelEvidenceOutputSchema.parse(
+              await withEvidenceStoreAsync((store) =>
+                new ModelEvidenceRefresher(ctx, store, fetcher).refresh(signal),
+              ),
+            )
           },
           catch: failure,
         }).pipe(Effect.orDie),
