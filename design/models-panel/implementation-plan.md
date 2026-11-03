@@ -7,7 +7,7 @@ Use [models-approved.png](models-approved.png) for composition and [DESIGN.md](.
 - Keep a continuous native surface with a compact Models header, project scope, refresh, Compare/Assignments tabs, and wrapping persona, explicit task-class and cohort/time controls. Show the accounting basis near the comparison. Use actual available filter values; distinguish loading, empty, partial, stale and failed reads.
 - Above a horizontal, resizable divider, put the token-versus-comparable-cost chart above candidate rows at 330–450 CSS px; at wide widths put chart and table side by side. Rows remain a complete keyboard-accessible alternative to the chart, including unplottable candidates and unknown values. Align selection between row and point with a non-color cue, and retain accepted/terminal counts and coverage. Use tabular numerals and readable host-sized text.
 - Below the divider, the selected route inspector leads with model/provider/effort and the selected task's projected market-equivalent range when supported. Show its cohort size, coverage and uncertainty; otherwise show unavailable. Link contributing trajectories, keep evidence, source dates and assumptions collapsed, and offer a compact assignment action. The panes scroll independently and preserve selection, split and scroll across refresh. Keep the routing-not-active warning visible for assignment until dispatch integration actually exists.
-- Use mean tokens and comparable cost per completed logical task, with acceptance quality beside each candidate. A frontier applies only to comparable, quality-eligible observations; connect only actual nondominated eligible points without extrapolation. Distinguish observed LAZERS results, external evidence and projections; do not turn missing metrics into zero or an automatic rank. Separate dated market-equivalent prices from actual charges and allowances.
+- Use attributable cohort tokens and current market-equivalent cost divided by accepted logical tasks, including the cohort's failed work and retries in the numerator. Show acceptance counts and measurement coverage beside each exact configuration. There is no arbitrary acceptance-rate or sample-size threshold. Zero-acceptance configurations stay visible without a successful-task efficiency coordinate. A frontier connects only actual nondominated points with compatible, supported accounting bases; do not extrapolate or substitute benchmark scores for our outcomes. Keep actual reported costs and subscription accounting separate.
 
 ## Existing building blocks
 
@@ -33,6 +33,32 @@ Current comparisons revalue recorded usage using the current shared pricing
 lookup, with OpenRouter as the market index. Retain retrieval time and source
 semantics. Historical price snapshots are audit records, not the valuation basis
 for today's graph. Actual charges remain separate from market-equivalent cost.
+
+Refreshing the common price index must revalue the same historical usage and
+task estimates without changing that usage. Preserve the source's exact quote
+or average semantics; catalog quotes are not an observed endpoint average.
+The first estimate range is empirical observed spread from its stated cohort,
+not predictive confidence. One observation is one value with `n = 1`, not an
+invented interval.
+
+## Task-type cohorts
+
+The Architect assigns one primary task kind from a versioned controlled catalog
+as part of task definition. Classify by objective and acceptance boundary, not
+persona, files touched or eventual outcome. Historical immutable tasks need
+explicit authored classification annotations; missing classification remains
+visible, never silently inferred.
+
+The proposed `task-kind/v1` catalog is `bug-repair`, `feature-implementation`,
+`refactoring`, `testing`, `documentation` and `maintenance`. This is a compact,
+benchmark-informed repository taxonomy, not a universal industry standard.
+[SWE-Lancer](https://arxiv.org/html/2502.12115v3#A1.SS1) distinguishes bug fixes,
+features/enhancements and maintenance/QA/testing/reliability;
+[SWE-PolyBench](https://github.com/amazon-science/SWE-PolyBench#datasets) explicitly
+includes refactoring. Testing is a primary-deliverable specialization;
+documentation is a local extension. Keep build, CI, dependencies and tooling
+inside maintenance initially. A feature or repair that includes tests retains
+its feature or repair kind.
 
 Checked 2026-11-03 against official [modular import guidance](https://echarts.apache.org/handbook/en/basics/import/)
 and [SVG renderer guidance](https://echarts.apache.org/handbook/en/best-practices/canvas-vs-svg/).
