@@ -9,6 +9,17 @@ import {
   TaskSpecSchema,
 } from "./task.ts"
 import type { TaskSpec } from "./task.ts"
+import {
+  TaskClassificationAnnotationInput,
+  TaskClassificationAnnotationRecord,
+  TaskClassificationAnnotationReceipt,
+} from "./task-classification.ts"
+import type {
+  TaskClassificationAnnotationRecord as TaskClassificationAnnotationRecordType,
+  TaskClassificationAnnotationReceipt as TaskClassificationAnnotationReceiptType,
+  TaskClassificationSnapshot,
+} from "./task-classification.ts"
+import { taskClassificationFor } from "./tasks/classification.ts"
 import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
 import type { TaskQueryState } from "./tasks/state-filter.ts"
 import { canonical, fingerprint } from "./identity.ts"
@@ -56,7 +67,7 @@ export class TaskRepository {
       const version = () =>
         db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
       const initial = version()
-      if (initial > 5) throw new Error(`Unsupported LAZERS database version ${initial}`)
+      if (initial > 6) throw new Error(`Unsupported LAZERS database version ${initial}`)
       // SQLite can fail a concurrent first WAL transition immediately despite
       // busy_timeout. Retry only connection configuration, never a task write.
       const deadline = Date.now() + 5_000
@@ -76,7 +87,7 @@ export class TaskRepository {
       }
       db.transaction(() => {
         const current = version()
-        if (current > 5) throw new Error(`Unsupported LAZERS database version ${current}`)
+        if (current > 6) throw new Error(`Unsupported LAZERS database version ${current}`)
         db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
@@ -162,6 +173,31 @@ export class TaskRepository {
           }
           db.exec("PRAGMA user_version=5")
         }
+        if (current < 6)
+          db.exec(`
+            CREATE TABLE task_classifications (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_directory TEXT NOT NULL,
+              task_id TEXT NOT NULL REFERENCES tasks(id),
+              request_id TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              revision INTEGER NOT NULL CHECK(revision > 0),
+              classification TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              agent TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(project_directory, request_id),
+              UNIQUE(project_directory, task_id, revision)
+            );
+            CREATE INDEX task_classifications_history
+              ON task_classifications(project_directory, task_id, revision);
+            CREATE TRIGGER task_classifications_no_update BEFORE UPDATE ON task_classifications
+            BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
+            CREATE TRIGGER task_classifications_no_delete BEFORE DELETE ON task_classifications
+            BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
+            PRAGMA user_version=6;
+          `)
       }).immediate()
       return db
     } catch (error) {
@@ -211,6 +247,18 @@ export class TaskRepository {
           revision: task.revision,
         }
       }
+      // Missing classification remains admissible only when it is the exact
+      // content of an already-reserved legacy request. Never create a default.
+      if (!validated.classification)
+        return {
+          status: "invalid" as const,
+          errors: [
+            {
+              path: "classification",
+              message: "Choose one explicit task-kind/v1 primaryKind for a new task",
+            },
+          ],
+        }
       const task = TaskSpecSchema.parse(create())
       if (canonical(task.proposal) !== content)
         throw new Error("Task proposal does not match validated submission")
@@ -403,11 +451,15 @@ export class TaskRepository {
       return {
         version,
         count,
-        rows: rows.map((row) => ({
-          position: row.position,
-          task: TaskSpecSchema.parse(JSON.parse(row.body)),
-          reference: TaskReferenceSchema.parse(row.reference),
-        })),
+        rows: rows.map((row) => {
+          const task = TaskSpecSchema.parse(JSON.parse(row.body))
+          return {
+            position: row.position,
+            task,
+            reference: TaskReferenceSchema.parse(row.reference),
+            classification: taskClassificationFor(this.db, this.projectDirectory, task).current,
+          }
+        }),
       }
     })()
   }
@@ -435,6 +487,103 @@ export class TaskRepository {
       )
       .all(this.projectDirectory, limit)
       .map((row) => TaskSpecSchema.parse(JSON.parse(row.body)))
+  }
+
+  /** Effective metadata is read independently from the immutable task body. */
+  taskClassification(taskID: string): TaskClassificationSnapshot | undefined {
+    return this.db
+      .transaction(() => {
+        const db = this.db
+        const row = db
+          .query<{ body: string }, [string, string]>(
+            "SELECT body FROM tasks WHERE project_directory=? AND id=?",
+          )
+          .get(this.projectDirectory, taskID)
+        if (!row) return undefined
+        const task = TaskSpecSchema.parse(JSON.parse(row.body))
+        return taskClassificationFor(db, this.projectDirectory, task)
+      })
+      .deferred()
+  }
+
+  recordTaskClassification(
+    input: unknown,
+    actor: { sessionID: string; agent: string },
+  ): TaskClassificationAnnotationReceiptType {
+    const parsed = TaskClassificationAnnotationInput.parse(input)
+    let changed = false
+    const receipt = this.atomic((db) => {
+      const payload = canonical({
+        taskID: parsed.taskID,
+        expectedRevision: parsed.expectedRevision,
+        classification: parsed.classification,
+        reason: parsed.reason,
+      })
+      const existing = db
+        .query<ClassificationRow, [string, string]>(
+          "SELECT * FROM task_classifications WHERE project_directory=? AND request_id=?",
+        )
+        .get(this.projectDirectory, parsed.requestID)
+      if (existing) {
+        if (existing.payload !== payload)
+          return TaskClassificationAnnotationReceipt.parse({
+            status: "conflict",
+            taskID: parsed.taskID,
+            message: "requestID already identifies different classification content",
+          })
+        return TaskClassificationAnnotationReceipt.parse({
+          status: "replayed",
+          annotation: classificationRecord(existing),
+        })
+      }
+
+      const taskRow = db
+        .query<{ body: string }, [string, string]>(
+          "SELECT body FROM tasks WHERE project_directory=? AND id=?",
+        )
+        .get(this.projectDirectory, parsed.taskID)
+      if (!taskRow) throw new Error("Task not found in this project")
+      const task = TaskSpecSchema.parse(JSON.parse(taskRow.body))
+      const current = taskClassificationFor(db, this.projectDirectory, task).current
+      if (parsed.expectedRevision !== current.revision)
+        return TaskClassificationAnnotationReceipt.parse({
+          status: "conflict",
+          taskID: parsed.taskID,
+          expectedRevision: parsed.expectedRevision,
+          currentRevision: current.revision,
+          message: "Task classification revision changed; read current history before correcting",
+        })
+
+      db.query(
+        `INSERT INTO task_classifications
+         (project_directory,task_id,request_id,payload,revision,classification,reason,session_id,agent,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        this.projectDirectory,
+        parsed.taskID,
+        parsed.requestID,
+        payload,
+        current.revision + 1,
+        JSON.stringify(parsed.classification),
+        parsed.reason,
+        actor.sessionID,
+        actor.agent,
+        new Date().toISOString(),
+      )
+      this.changed()
+      changed = true
+      const inserted = db
+        .query<ClassificationRow, [string, string]>(
+          "SELECT * FROM task_classifications WHERE project_directory=? AND request_id=?",
+        )
+        .get(this.projectDirectory, parsed.requestID)!
+      return TaskClassificationAnnotationReceipt.parse({
+        status: "recorded",
+        annotation: classificationRecord(inserted),
+      })
+    })
+    if (changed) this.notify()
+    return receipt
   }
 
   /** Return the latest durable disposition without changing the immutable task. */
@@ -594,6 +743,20 @@ export type DispositionReceipt =
     }
   | { status: "conflict"; taskID: string; message: string }
 
+type ClassificationRow = {
+  id: number
+  project_directory: string
+  task_id: string
+  request_id: string
+  payload: string
+  revision: number
+  classification: string
+  reason: string
+  session_id: string
+  agent: string
+  created_at: string
+}
+
 function hasTable(db: Database, name: string): boolean {
   return Boolean(
     db
@@ -613,6 +776,20 @@ function dispositionRecord(row: DispositionRow): TaskDispositionRecordType {
     reason: row.reason,
     evidence: JSON.parse(row.evidence),
     relatedTaskIDs: JSON.parse(row.related_task_ids),
+    sessionID: row.session_id,
+    agent: row.agent,
+    createdAt: row.created_at,
+  })
+}
+
+function classificationRecord(row: ClassificationRow): TaskClassificationAnnotationRecordType {
+  return TaskClassificationAnnotationRecord.parse({
+    id: row.id,
+    taskID: row.task_id,
+    requestID: row.request_id,
+    revision: row.revision,
+    classification: JSON.parse(row.classification),
+    reason: row.reason,
     sessionID: row.session_id,
     agent: row.agent,
     createdAt: row.created_at,

@@ -44,6 +44,18 @@ history in plans and reusable worker workflow in worker guidance. Add grounded
 reuse points, pitfalls or research as optional guidance; leave routine choices
 to the worker. Skills are suggestions.
 
+For each new task, assign exactly one explicit `classification`:
+`{ taxonomy: "task-kind/v1", primaryKind: "..." }`. Select the primary kind
+from the objective and acceptance boundary, not persona, files touched or
+eventual outcome. Use `testing` only when tests are the primary deliverable; a
+feature or repair that adds tests keeps its feature or repair kind. See the task
+authoring guide for the six kinds and criteria. Historical tasks without a kind
+stay unclassified; review them and use `lz-classify-task` with the exact current
+classification revision, a stable requestID and reason to append an annotation.
+Corrections append a new revision and never rewrite the immutable specification.
+On a stale revision, reread task history and make a new explicit request rather
+than retrying with changed content under the old requestID.
+
 Call `lz-verify-task` before submission with the original request and
 relevant evidence. Follow its focused correction or clarification; it is
 Architect self-review and does not execute or accept work.

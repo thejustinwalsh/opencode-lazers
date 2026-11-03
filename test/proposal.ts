@@ -7,6 +7,7 @@ export function keyedProposal(idempotencyKey = "test-submission") {
 export function validProposal(): TaskProposal & { limits: NonNullable<TaskProposal["limits"]> } {
   return {
     objective: "Keep submitted tasks after the plugin restarts",
+    classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
     exclusions: ["Do not dispatch workers"],
     constraints: ["Use plugin-owned SQLite storage"],
     assumptions: [],

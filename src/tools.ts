@@ -15,6 +15,7 @@ import {
 import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
+import { TaskClassificationAnnotationInput } from "./task-classification.ts"
 
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
@@ -135,6 +136,49 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
                   const parsed = TaskDispositionInput.parse(input)
                   const receipt = withRepository((connection) =>
                     connection.recordDisposition(parsed, {
+                      sessionID: context.sessionID,
+                      agent: String(context.agent),
+                    }),
+                  )
+                  return { content: JSON.stringify(receipt) }
+                },
+                catch: (error) =>
+                  error instanceof Tool.Error
+                    ? error
+                    : new Tool.Error({
+                        message: error instanceof Error ? error.message : String(error),
+                      }),
+              }),
+            ),
+          ),
+    })
+    editor.add({
+      name: "lz-classify-task",
+      description:
+        "Architect-only append-only task-kind/v1 classification or correction. Supply one primaryKind, a requestID, the exact expected classification revision and a reason. Read lz-get-task first; stale corrections conflict and must not be automatically retried.",
+      input: z.toJSONSchema(TaskClassificationAnnotationInput, { io: "input" }),
+      options: { codemode: false, permission: "lz-classify-task" },
+      execute: (input, context) =>
+        ctx.permission
+          .assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            action: "lz-classify-task",
+            resources: ["*"],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  // Check caller authority before opening a project database or
+                  // parsing data that could disclose project-local task state.
+                  if (context.agent !== "architect")
+                    throw new Tool.Error({
+                      message: "Task classification is restricted to Architect",
+                    })
+                  const parsed = TaskClassificationAnnotationInput.parse(input)
+                  const receipt = withRepository((connection) =>
+                    connection.recordTaskClassification(parsed, {
                       sessionID: context.sessionID,
                       agent: String(context.agent),
                     }),

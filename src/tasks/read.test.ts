@@ -168,6 +168,72 @@ test("unplanned detail is encodable by the native JSON RPC boundary", () => {
   expect(Object.hasOwn(detail, "execution")).toBe(false)
 })
 
+test("get, query, history and exact classification revisions agree and mutations stale cursors", () => {
+  const { open } = fixture()
+  const repository = open()
+  const task = insert(repository, "Classification revision fixture")
+  insert(repository, "Second classification fixture")
+  const reads = new TaskReads(repository)
+  const firstPage = reads.query({ limit: 1 })
+  expect(firstPage.nextCursor).toBeTruthy()
+  expect(firstPage.tasks[0]?.classification).toMatchObject({
+    revision: 1,
+    classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+    provenance: { kind: "embedded", sessionID: "session-a" },
+  })
+
+  let committedView: unknown
+  const unsubscribe = repository.subscribe(() => {
+    committedView = repository.taskClassification(task.id)?.current
+  })
+  const correction = repository.recordTaskClassification(
+    {
+      taskID: task.id,
+      requestID: "read-classification-correction",
+      expectedRevision: 1,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "documentation" },
+      reason: "The primary acceptance outcome is documentation.",
+    },
+    { sessionID: "architect-session", agent: "architect" },
+  )
+  expect(correction.status).toBe("recorded")
+  expect(committedView).toMatchObject({
+    revision: 2,
+    classification: correction.status === "recorded" ? correction.annotation.classification : null,
+  })
+  expect(() => reads.query({ limit: 1, cursor: firstPage.nextCursor! })).toThrow("changed")
+
+  const detail = reads.get({ taskID: task.id, classificationRevision: 1 })
+  expect(detail).toMatchObject({
+    status: "found",
+    task: { id: task.id, revision: 1 },
+    classification: {
+      revision: 2,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "documentation" },
+    },
+    classificationHistory: [
+      {
+        revision: 1,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+      },
+      { revision: 2, classification: { taxonomy: "task-kind/v1", primaryKind: "documentation" } },
+    ],
+    classificationAtRevision: {
+      revision: 1,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+    },
+  })
+  expect(reads.get({ taskID: task.id, classificationRevision: 2 })).toMatchObject({
+    status: "found",
+    classificationAtRevision: detail.status === "found" ? detail.classification : null,
+  })
+  expect(reads.get({ taskID: task.id, classificationRevision: 99 })).toMatchObject({
+    status: "found",
+    classificationAtRevision: null,
+  })
+  unsubscribe()
+})
+
 test("retired tasks disappear from open queries but direct detail preserves disposition", () => {
   const { open } = fixture()
   const repository = open()

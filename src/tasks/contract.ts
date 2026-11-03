@@ -3,6 +3,7 @@ import { z } from "zod"
 import { TaskReferenceSchema, TaskSpecSchema } from "../task.ts"
 import { TaskState } from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
+import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskStateFilter } from "./state-filter.ts"
 
 export const QueryInput = z.strictObject({
@@ -19,6 +20,7 @@ export type TaskQuery = z.input<typeof QueryInput>
 export const GetInput = z.strictObject({
   taskID: z.union([z.uuid(), TaskReferenceSchema]),
   revision: z.int().positive().optional(),
+  classificationRevision: z.int().nonnegative().optional(),
   sessionID: z.string().min(1).max(200).optional(),
 })
 export const GetInstructionsOutput = z.string()
@@ -30,6 +32,7 @@ export const TaskSummary = z.strictObject({
   status: z.union([z.literal("submitted"), TaskState]),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
+  classification: TaskClassificationRevision,
   title: z.string().max(120),
   objective: z.string().max(400),
   createdAt: z.iso.datetime(),
@@ -74,6 +77,9 @@ export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
     task: TaskSpecSchema,
+    classification: TaskClassificationRevision,
+    classificationHistory: z.array(TaskClassificationRevision),
+    classificationAtRevision: TaskClassificationRevision.nullable().optional(),
     reference: TaskReferenceSchema,
     disposition: TaskDispositionRecord.optional(),
     execution: Execution.optional(),

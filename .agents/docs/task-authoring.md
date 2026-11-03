@@ -22,6 +22,30 @@ skill progressively, subject to OpenCode's normal permission check; an absent or
 denied suggestion does not block a task. An empty applicable list is sufficient.
 Do not fill fields with boilerplate.
 
+Every new task must carry one explicit primary classification:
+
+```json
+{ "taxonomy": "task-kind/v1", "primaryKind": "feature-implementation" }
+```
+
+Choose by the task's objective and acceptance boundary. Use `bug-repair` when
+correcting an existing defect; `feature-implementation` for a new capability or
+enhancement; `refactoring` when restructuring is the deliverable and behavior is
+preserved; `testing` when tests or test infrastructure are the primary outcome;
+`documentation` when documentation is the primary outcome; and `maintenance` for
+build, CI, dependency, tooling or similar upkeep. A feature or repair does not
+become `testing` merely because it adds tests. Persona, touched files and eventual
+execution outcome do not determine the kind. The task-kind/v1 catalog requires
+exactly one `primaryKind`; do not infer a default.
+
+Historical tasks without a stored classification remain visibly unclassified at
+revision 0. After reviewing one, use Architect-only `lz-classify-task` with its
+current classification revision, a stable requestID and a reason to append an
+explicit annotation; this leaves the task specification unchanged. Corrections
+use the latest classification revision and append another annotation. Exact
+request replay is safe; a stale revision conflicts and requires rereading before
+submitting a new request. Never silently backfill or infer historical kinds.
+
 Artifact evidence references are workspace-relative paths and may name either a
 file or a directory. A directory establishes presence only when it contains at
 least one readable regular file, at any depth; empty and empty-subdirectory-only

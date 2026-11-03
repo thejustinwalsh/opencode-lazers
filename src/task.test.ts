@@ -80,6 +80,42 @@ describe("task proposals", () => {
     ).toBe("Reuse src/storage.ts.")
   })
 
+  test("round-trips one explicit versioned primary task kind and rejects ambiguous taxonomy", () => {
+    const kinds = [
+      "bug-repair",
+      "feature-implementation",
+      "refactoring",
+      "testing",
+      "documentation",
+      "maintenance",
+    ] as const
+    for (const primaryKind of kinds) {
+      const classification = { taxonomy: "task-kind/v1" as const, primaryKind }
+      expect(
+        TaskSubmissionSchema.parse({
+          ...validProposal(),
+          idempotencyKey: `kind-${primaryKind}`,
+          classification,
+        }).classification,
+      ).toEqual(classification)
+    }
+    for (const classification of [
+      { taxonomy: "task-kind/v2", primaryKind: "feature-implementation" },
+      { taxonomy: "task-kind/v1", primaryKind: "unknown-kind" },
+      { taxonomy: "task-kind/v1", primaryKind: ["bug-repair", "testing"] },
+      { taxonomy: "task-kind/v1", persona: "systems" },
+      { persona: "systems" },
+    ]) {
+      expect(
+        TaskSubmissionSchema.safeParse({
+          ...validProposal(),
+          idempotencyKey: "invalid-kind",
+          classification,
+        }).success,
+      ).toBe(false)
+    }
+  })
+
   test("preserves a workspace-relative directory artifact reference verbatim", () => {
     const reference = ".agents/docs/evidence/037-artifact-evidence/"
     const proposal = TaskProposalSchema.parse({
@@ -224,4 +260,26 @@ test("submitted envelopes distinguish unborn provenance from a missing revision"
       provenance: { ...task.provenance, startingRevision: null },
     }).success,
   ).toBe(false)
+})
+
+test("legacy task bodies remain readable without creating a default classification", () => {
+  const { classification: _classification, ...legacyProposal } = validProposal()
+  const task = {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: new Date().toISOString(),
+    provenance: {
+      projectID: "local",
+      projectDirectory: "/repo",
+      workspaceDirectory: "/repo",
+      sessionID: "session",
+      startingRevision: { kind: "unborn" },
+    },
+    proposal: legacyProposal,
+  }
+  const decoded = TaskSpecSchema.parse(task)
+  expect(decoded.proposal.classification).toBeUndefined()
+  expect(JSON.stringify(decoded)).not.toContain("classification")
 })

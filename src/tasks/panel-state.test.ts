@@ -25,6 +25,11 @@ const page = (project: string, id = crypto.randomUUID(), snapshot = 1): TaskPage
       revision: 1,
       status: "submitted",
       reason: null,
+      classification: {
+        revision: 1,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+        provenance: { kind: "embedded", sessionID: "session", createdAt: new Date().toISOString() },
+      },
       title: id,
       objective: id,
       sessionID: "session",
