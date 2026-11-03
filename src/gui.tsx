@@ -19,6 +19,7 @@ import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
 import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
+import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
 import { LocalInference } from "./webgpu/rpc.ts"
@@ -32,6 +33,7 @@ const formatBytes = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(2)} GB
 export default Plugin.define({
   stores: {
     ...taskStores,
+    ...modelsStores,
     ...trajectoryStores,
     ...radarStores,
     voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
@@ -97,6 +99,7 @@ export default Plugin.define({
       ctx.layout.open(`${ctx.id}:trajectory`, session, { tab: "select" })
     }
     setupTaskPanel(ctx, openTaskTrajectory)
+    setupModelsPanel(ctx, openTaskTrajectory)
     setupTrajectoryPanel(ctx)
     setupRadarPanel(ctx)
     const Ui = ctx.ui
