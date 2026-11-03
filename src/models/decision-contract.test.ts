@@ -11,6 +11,7 @@ import {
   decisionRead,
   decisionRow,
   decisionRows,
+  zeroAcceptedNumericGraphPoint,
   singleEstimate,
 } from "../../test/models-decision/fixtures/decision.ts"
 import {
@@ -21,6 +22,8 @@ import {
   ModelDecisionInspectInputSchema,
   ModelDecisionInspectOutputSchema,
   ModelDecisionOverviewOutputSchema,
+  ModelDecisionGraphPointSchema,
+  ModelDecisionRowSchema,
   ModelDecisionRowsOutputSchema,
   ModelsDecision,
 } from "./decision-contract.ts"
@@ -186,6 +189,88 @@ test("zero accepted, one observation, partial, unknown, stale and backend-not-re
       }),
     ),
   ).toMatchObject({ availability: "backend-not-ready", freshness: "unknown" })
+})
+
+test("zero accepted tasks have no numeric graph coordinates or row efficiencies", () => {
+  const partialFlags = [false, true]
+  const tokenCoordinates = [0, 12_345]
+  const priceCoordinates = [0, 0.123456]
+
+  for (const partial of partialFlags) {
+    for (const tokensPerAcceptedTask of tokenCoordinates) {
+      for (const currentMarketUSDPerAcceptedTask of priceCoordinates) {
+        const point = {
+          ...zeroAcceptedNumericGraphPoint,
+          partial,
+          tokensPerAcceptedTask,
+          currentMarketUSDPerAcceptedTask,
+        }
+        expect(ModelDecisionGraphPointSchema.safeParse(point).success).toBe(false)
+        expect(
+          ModelDecisionOverviewOutputSchema.safeParse({
+            ...decisionOverview(),
+            graph: {
+              ...decisionOverview().graph,
+              points: [point],
+            },
+          }).success,
+        ).toBe(false)
+      }
+    }
+  }
+
+  expect(
+    ModelDecisionGraphPointSchema.parse({ ...zeroAcceptedNumericGraphPoint, acceptedTaskCount: 1 }),
+  ).toMatchObject({
+    acceptedTaskCount: 1,
+    tokensPerAcceptedTask: 0,
+    currentMarketUSDPerAcceptedTask: 0,
+  })
+
+  const zeroAcceptedRow = decisionRow({
+    status: "zero-accepted",
+    tokensPerAcceptedTask: null,
+    currentMarketUSDPerAcceptedTask: null,
+    observationCount: 4,
+  })
+  expect(ModelDecisionRowSchema.parse(zeroAcceptedRow).cohort.acceptedTaskCount).toBe(0)
+  expect(
+    ModelDecisionRowsOutputSchema.parse({ ...decisionRows(), rows: [zeroAcceptedRow] }).rows,
+  ).toHaveLength(1)
+
+  const zeroAcceptedInspect = {
+    ...decisionInspect(),
+    ...zeroAcceptedRow,
+    estimate: {
+      status: "zero-accepted" as const,
+      basis: "no-successful-task-efficiency" as const,
+      observationCount: 4,
+      range: { tokens: null, currentMarketUSD: null },
+      confidenceInterval: null,
+    },
+  }
+  expect(ModelDecisionInspectOutputSchema.parse(zeroAcceptedInspect).status).toBe("found")
+
+  for (const [tokensPerAcceptedTask, currentMarketUSDPerAcceptedTask] of [
+    [0, 0],
+    [0, 0.12],
+    [12_345, 0],
+  ]) {
+    const numericEfficiency = {
+      status: "partial" as const,
+      tokensPerAcceptedTask,
+      currentMarketUSDPerAcceptedTask,
+      observationCount: 4,
+      missing: ["attribution" as const],
+    }
+    const invalidRow = { ...zeroAcceptedRow, efficiency: numericEfficiency }
+    const invalidInspect = { ...zeroAcceptedInspect, efficiency: numericEfficiency }
+    expect(ModelDecisionRowSchema.safeParse(invalidRow).success).toBe(false)
+    expect(
+      ModelDecisionRowsOutputSchema.safeParse({ ...decisionRows(), rows: [invalidRow] }).success,
+    ).toBe(false)
+    expect(ModelDecisionInspectOutputSchema.safeParse(invalidInspect).success).toBe(false)
+  }
 })
 
 test("the reader is injectable and inspection binds snapshot, exact configuration and contributor paging", async () => {

@@ -226,6 +226,22 @@ export const ModelDecisionEfficiencySchema = z.discriminatedUnion("status", [
 ])
 export type ModelDecisionEfficiency = z.infer<typeof ModelDecisionEfficiencySchema>
 
+function refineZeroAcceptedEfficiency(
+  acceptedTaskCount: number,
+  efficiency: ModelDecisionEfficiency,
+  context: z.RefinementCtx,
+) {
+  if (acceptedTaskCount !== 0) return
+  for (const field of ["tokensPerAcceptedTask", "currentMarketUSDPerAcceptedTask"] as const) {
+    if (efficiency[field] !== null)
+      context.addIssue({
+        code: "custom",
+        path: ["efficiency", field],
+        message: "A cohort with no accepted tasks has no accepted-task efficiency coordinates",
+      })
+  }
+}
+
 export const ModelDecisionConfigurationSchema = z.strictObject({
   configurationID: OpaqueID,
   groupID: OpaqueID,
@@ -235,25 +251,34 @@ export const ModelDecisionConfigurationSchema = z.strictObject({
 })
 export type ModelDecisionConfiguration = z.infer<typeof ModelDecisionConfigurationSchema>
 
-export const ModelDecisionRowSchema = z.strictObject({
-  configuration: ModelDecisionConfigurationSchema,
-  cohort: ModelDecisionCohortCountsSchema,
-  efficiency: ModelDecisionEfficiencySchema,
-  nativeReportedCost: ModelDecisionNativeCostSchema,
-})
+export const ModelDecisionRowSchema = z
+  .strictObject({
+    configuration: ModelDecisionConfigurationSchema,
+    cohort: ModelDecisionCohortCountsSchema,
+    efficiency: ModelDecisionEfficiencySchema,
+    nativeReportedCost: ModelDecisionNativeCostSchema,
+  })
+  .superRefine((row, context) => {
+    refineZeroAcceptedEfficiency(row.cohort.acceptedTaskCount, row.efficiency, context)
+  })
 export type ModelDecisionRow = z.infer<typeof ModelDecisionRowSchema>
 
 /** Coordinates are already authoritative; consumers must not infer or rank them. */
-export const ModelDecisionGraphPointSchema = z.strictObject({
-  configurationID: OpaqueID,
-  groupID: OpaqueID,
-  label: z.string().min(1).max(512),
-  tokensPerAcceptedTask: Nonnegative,
-  currentMarketUSDPerAcceptedTask: Nonnegative,
-  observationCount: z.int().positive(),
-  acceptedTaskCount: Count,
-  partial: z.boolean(),
-})
+export const ModelDecisionGraphPointSchema = z
+  .strictObject({
+    configurationID: OpaqueID,
+    groupID: OpaqueID,
+    label: z.string().min(1).max(512),
+    tokensPerAcceptedTask: Nonnegative,
+    currentMarketUSDPerAcceptedTask: Nonnegative,
+    observationCount: z.int().positive(),
+    acceptedTaskCount: Count,
+    partial: z.boolean(),
+  })
+  .refine((point) => point.acceptedTaskCount > 0, {
+    path: ["acceptedTaskCount"],
+    message: "A graph point requires at least one accepted task",
+  })
 export type ModelDecisionGraphPoint = z.infer<typeof ModelDecisionGraphPointSchema>
 
 export const ModelDecisionGraphSchema = z.strictObject({
@@ -375,24 +400,33 @@ export const ModelDecisionContributorPageSchema = z.strictObject({
 })
 export type ModelDecisionContributorPage = z.infer<typeof ModelDecisionContributorPageSchema>
 
-export const ModelDecisionInspectOutputSchema = z.discriminatedUnion("status", [
-  z.strictObject({
-    status: z.literal("found"),
-    context: ModelDecisionContextSchema,
-    configuration: ModelDecisionConfigurationSchema,
-    cohort: ModelDecisionCohortCountsSchema,
-    efficiency: ModelDecisionEfficiencySchema,
-    nativeReportedCost: ModelDecisionNativeCostSchema,
-    selectedTaskID: z.uuid().nullable(),
-    estimate: ModelDecisionEstimateSchema,
-    contributorPage: ModelDecisionContributorPageSchema,
-  }),
-  z.strictObject({
-    status: z.literal("not-found"),
-    context: ModelDecisionContextSchema,
-    configurationID: OpaqueID,
-  }),
-])
+export const ModelDecisionInspectOutputSchema = z
+  .discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("found"),
+      context: ModelDecisionContextSchema,
+      configuration: ModelDecisionConfigurationSchema,
+      cohort: ModelDecisionCohortCountsSchema,
+      efficiency: ModelDecisionEfficiencySchema,
+      nativeReportedCost: ModelDecisionNativeCostSchema,
+      selectedTaskID: z.uuid().nullable(),
+      estimate: ModelDecisionEstimateSchema,
+      contributorPage: ModelDecisionContributorPageSchema,
+    }),
+    z.strictObject({
+      status: z.literal("not-found"),
+      context: ModelDecisionContextSchema,
+      configurationID: OpaqueID,
+    }),
+  ])
+  .superRefine((inspection, context) => {
+    if (inspection.status === "found")
+      refineZeroAcceptedEfficiency(
+        inspection.cohort.acceptedTaskCount,
+        inspection.efficiency,
+        context,
+      )
+  })
 export type ModelDecisionInspect = z.infer<typeof ModelDecisionInspectOutputSchema>
 
 export interface ModelDecisionReadOptions {

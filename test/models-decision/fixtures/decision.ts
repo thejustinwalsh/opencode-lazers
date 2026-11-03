@@ -98,6 +98,17 @@ export const graphPoints: ModelDecisionGraphPoint[] = [
   },
 ]
 
+export const zeroAcceptedNumericGraphPoint: ModelDecisionGraphPoint = {
+  configurationID: CONFIG_ZERO,
+  groupID: "group:sonnet",
+  label: "Sonnet · no accepted tasks",
+  tokensPerAcceptedTask: 0,
+  currentMarketUSDPerAcceptedTask: 0,
+  observationCount: 4,
+  acceptedTaskCount: 0,
+  partial: false,
+}
+
 export function decisionRow(
   efficiency: ModelDecisionRow["efficiency"],
   configurationID = CONFIG_ONE,

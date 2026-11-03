@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test"
 import { Window } from "happy-dom"
 import { build } from "vite"
 import solid from "vite-plugin-solid"
+import type { EChartsType } from "echarts/core"
 import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type {
@@ -27,6 +28,7 @@ const dom = new Window({ url: "https://models-chart.localhost" })
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>()
 const sizes = new WeakMap<object, { width: number; height: number }>()
 const cleanups: Array<() => void> = []
+let defaultSize = { width: 640, height: 360 }
 let browser: DOMEntry
 
 class TestResizeObserver {
@@ -100,6 +102,96 @@ async function until(predicate: () => boolean) {
   expect(predicate()).toBe(true)
 }
 
+function renderedMarker(host: HTMLElement, chart: EChartsType, point: ComparisonChartPoint) {
+  const pixel = chart.convertToPixel({ seriesId: "observations" }, [
+    point.tokensPerAcceptedTask,
+    point.currentMarketUSDPerAcceptedTask,
+  ]) as number[]
+  return Array.from(host.querySelectorAll("svg path[transform]")).find((path) => {
+    const values = path
+      .getAttribute("transform")
+      ?.match(/^matrix\(([^)]+)\)$/)?.[1]
+      ?.split(",")
+      .map(Number)
+    return (
+      values?.length === 6 &&
+      Math.abs(values[4]! - pixel[0]!) < 0.001 &&
+      Math.abs(values[5]! - pixel[1]!) < 0.001
+    )
+  })
+}
+
+function requiredMarkerTransform(
+  host: HTMLElement,
+  chart: EChartsType,
+  point: ComparisonChartPoint,
+) {
+  const marker = renderedMarker(host, chart, point)
+  expect(marker).toBeDefined()
+  return marker!.getAttribute("transform")!
+}
+
+function markerScale(transform: string) {
+  return Number(/^matrix\(([^,]+)/.exec(transform)?.[1])
+}
+
+function renderedFrontierEndpoints(host: HTMLElement) {
+  const path = Array.from(host.querySelectorAll("svg path[stroke-dasharray]")).find((candidate) =>
+    candidate.getAttribute("d")?.startsWith("M"),
+  )
+  const commands = Array.from(
+    path?.getAttribute("d")?.matchAll(/([ML])\s*([+-]?[\d.]+)\s+([+-]?[\d.]+)/g) ?? [],
+  )
+  if (commands.length < 2) return undefined
+  const first = commands[0]!
+  const last = commands.at(-1)!
+  return [
+    [Number(first[2]), Number(first[3])],
+    [Number(last[2]), Number(last[3])],
+  ]
+}
+
+function frontierMatches(
+  host: HTMLElement,
+  chart: EChartsType,
+  frontierPoints: readonly ComparisonChartPoint[],
+) {
+  const actual = renderedFrontierEndpoints(host)
+  if (!actual || frontierPoints.length < 2) return false
+  const expected = [frontierPoints[0]!, frontierPoints.at(-1)!].map(
+    (point) =>
+      chart.convertToPixel({ seriesId: "observations" }, [
+        point.tokensPerAcceptedTask,
+        point.currentMarketUSDPerAcceptedTask,
+      ]) as number[],
+  )
+  return actual.every(
+    (endpoint, index) =>
+      Math.abs(endpoint[0]! - expected[index]![0]!) < 0.001 &&
+      Math.abs(endpoint[1]! - expected[index]![1]!) < 0.001,
+  )
+}
+
+function expectFrontierEndpoints(
+  host: HTMLElement,
+  chart: EChartsType,
+  frontierPoints: readonly ComparisonChartPoint[],
+) {
+  const actual = renderedFrontierEndpoints(host)
+  expect(actual).toBeDefined()
+  const expected = [frontierPoints[0]!, frontierPoints.at(-1)!].map(
+    (point) =>
+      chart.convertToPixel({ seriesId: "observations" }, [
+        point.tokensPerAcceptedTask,
+        point.currentMarketUSDPerAcceptedTask,
+      ]) as number[],
+  )
+  for (const index of [0, 1]) {
+    expect(actual![index]![0]).toBeCloseTo(expected[index]![0]!, 3)
+    expect(actual![index]![1]).toBeCloseTo(expected[index]![1]!, 3)
+  }
+}
+
 beforeAll(async () => {
   const names = [
     "window",
@@ -150,13 +242,13 @@ beforeAll(async () => {
     Object.defineProperty(prototype, property, {
       configurable: true,
       get(this: HTMLElement) {
-        const current = sizes.get(this) ?? { width: 640, height: 360 }
+        const current = sizes.get(this) ?? defaultSize
         return property === "clientWidth" ? current.width : current.height
       },
     })
   }
   prototype.getBoundingClientRect = function (this: HTMLElement) {
-    const current = sizes.get(this) ?? { width: 640, height: 360 }
+    const current = sizes.get(this) ?? defaultSize
     return {
       x: 0,
       y: 0,
@@ -208,7 +300,12 @@ afterAll(async () => {
   await rm(outputDirectory, { recursive: true, force: true })
 })
 
-test("real Solid SVG rendering retains exact accessible selection IDs across data updates", async () => {
+test("real Solid SVG rendering separately updates marker coordinates, frontier and accessible selection", async () => {
+  const previousDefaultSize = defaultSize
+  defaultSize = { width: 480, height: 320 }
+  cleanups.push(() => {
+    defaultSize = previousDefaultSize
+  })
   const container = dom.document.createElement("main")
   dom.document.body.append(container)
   const selections: string[] = []
@@ -236,59 +333,83 @@ test("real Solid SVG rendering retains exact accessible selection IDs across dat
   )
   cleanups.push(dispose)
   await until(() => container.querySelector("[xmlns='http://www.w3.org/2000/svg']") !== null)
+  const chartHost = container.querySelector("[role='img']") as unknown as HTMLElement
+  const chart = browser.getComparisonChartInstance(chartHost)!
   const originalSVG = container.querySelector("[xmlns='http://www.w3.org/2000/svg']")
   expect(originalSVG).not.toBeNull()
-  expect(container.querySelectorAll("[d]").length).toBeGreaterThan(0)
-  const chartHost = container.querySelector("[role='img']")!
-  const chart = browser.getComparisonChartInstance(chartHost as unknown as HTMLElement)!
-  const selectedMarker = () =>
-    Array.from(container.querySelectorAll("[d]")).find((path) =>
-      path.getAttribute("transform")?.startsWith("matrix(7,"),
-    )
-  const originalMarker = selectedMarker()
-  expect(originalMarker).toBeDefined()
+  expect(originalSVG?.getAttribute("width")).toBe("480")
+  expect(originalSVG?.getAttribute("height")).toBe("320")
+  expect(chartHost.getAttribute("role")).toBe("img")
+  expect(chartHost.getAttribute("aria-label")).toContain("12,345.5 tokens per accepted task")
+  const descriptionID = chartHost.getAttribute("aria-describedby")
+  const description = container.querySelector(`[id="${descriptionID}"]`)
+  expect(description?.textContent).toContain("12,345.5 tokens per accepted task")
+  expect(chartHost.getAttribute("style")).toContain("overflow: hidden")
+
+  const buttonFor = (configurationID: string) =>
+    container.querySelector(
+      `button[data-configuration-id="${configurationID}"]`,
+    ) as unknown as HTMLButtonElement | null
   const exact = points[0]!.configurationID
-  const button = container.querySelector(`button[data-configuration-id="${exact}"]`)
-  expect(button?.getAttribute("aria-pressed")).toBe("true")
-  expect(button?.getAttribute("aria-label")).toContain("12,345.5 tokens per accepted task")
-  expect(button?.getAttribute("aria-label")).toContain("$0.123456 current market USD")
-  button?.dispatchEvent(new dom.MouseEvent("click", { bubbles: true }))
+  expect(buttonFor(exact)?.getAttribute("aria-pressed")).toBe("true")
+  expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
+    "12,345.5 tokens per accepted task",
+  )
+  expect(buttonFor(exact)?.getAttribute("aria-label")).toContain("$0.123456 current market USD")
+  buttonFor(exact)?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
   expect(selections).toEqual([exact])
 
+  const originalQwen = points[1]!
+  const originalQwenTransform = requiredMarkerTransform(chartHost, chart, originalQwen)
+  const originalSelectedTransform = requiredMarkerTransform(chartHost, chart, points[0]!)
+  expect(markerScale(originalQwenTransform)).toBe(5)
+  expect(markerScale(originalSelectedTransform)).toBe(7)
+  expectFrontierEndpoints(chartHost, chart, [points[0]!, originalQwen])
+
   const changedQwen = { ...points[1]!, tokensPerAcceptedTask: 26_000 }
-  setData({
-    points: [points[0]!, changedQwen, points[2]!],
-    frontierConfigurationIDs: [changedQwen.configurationID, points[2]!.configurationID],
-    selectedConfigurationID: changedQwen.configurationID,
-  })
+  const changedPoints = [points[0]!, changedQwen, points[2]!]
+  setData({ ...data(), points: changedPoints })
   await until(() => {
-    const option = chart.getOption() as unknown as RenderedOption
-    const scatter = option.series?.find((series) => series.id === "observations")
-    const frontier = option.series?.find((series) => series.id === "authoritative-frontier")
-    const qwen = scatter?.data?.find(
-      (datum) => !Array.isArray(datum) && datum.configurationID === changedQwen.configurationID,
-    )
+    const marker = renderedMarker(chartHost, chart, changedQwen)
+    return marker !== undefined && marker.getAttribute("transform") !== originalQwenTransform
+  })
+  const changedQwenTransform = requiredMarkerTransform(chartHost, chart, changedQwen)
+  expect(changedQwenTransform).not.toBe(originalQwenTransform)
+  expect(markerScale(changedQwenTransform)).toBe(5)
+  expect(requiredMarkerTransform(chartHost, chart, points[0]!)).toBe(originalSelectedTransform)
+  expectFrontierEndpoints(chartHost, chart, [points[0]!, changedQwen])
+
+  const frontierBefore = renderedFrontierEndpoints(chartHost)
+  setData({
+    ...data(),
+    frontierConfigurationIDs: [changedQwen.configurationID, points[2]!.configurationID],
+  })
+  await until(() => frontierMatches(chartHost, chart, [changedQwen, points[2]!]))
+  const frontierAfter = renderedFrontierEndpoints(chartHost)
+  expect(frontierAfter).not.toEqual(frontierBefore)
+  expectFrontierEndpoints(chartHost, chart, [changedQwen, points[2]!])
+
+  const originalThirdTransform = requiredMarkerTransform(chartHost, chart, points[2]!)
+  expect(markerScale(originalSelectedTransform)).toBe(7)
+  expect(markerScale(originalThirdTransform)).toBe(5)
+  setData({ ...data(), selectedConfigurationID: points[2]!.configurationID })
+  await until(() => {
+    const selected = renderedMarker(chartHost, chart, points[2]!)
+    const deselected = renderedMarker(chartHost, chart, points[0]!)
     return (
-      !Array.isArray(qwen) &&
-      qwen?.value?.[0] === 26_000 &&
-      qwen.symbolSize === 14 &&
-      frontier?.data?.length === 2
+      markerScale(selected?.getAttribute("transform") ?? "") === 7 &&
+      markerScale(deselected?.getAttribute("transform") ?? "") === 5
     )
   })
-  const changed = chart.getOption() as unknown as RenderedOption
-  const scatter = changed.series?.find((series) => series.id === "observations")
-  expect(scatter?.data?.map((datum) => !Array.isArray(datum) && datum.symbolSize)).toEqual([
-    10, 14, 10,
-  ])
-  expect(changed.series?.find((series) => series.id === "authoritative-frontier")?.data).toEqual([
-    [26_000, 0.09],
-    [40_000, 0.48],
-  ])
-  expect(chart.convertToPixel({ seriesId: "observations" }, [26_000, 0.09])).toEqual(
-    expect.arrayContaining([expect.any(Number), expect.any(Number)]),
-  )
-  expect(selectedMarker()).toBeDefined()
-  expect(selectedMarker()?.outerHTML).not.toBe(originalMarker?.outerHTML)
+  const deselectedTransform = requiredMarkerTransform(chartHost, chart, points[0]!)
+  const selectedTransform = requiredMarkerTransform(chartHost, chart, points[2]!)
+  expect(deselectedTransform).not.toBe(originalSelectedTransform)
+  expect(selectedTransform).not.toBe(originalThirdTransform)
+  expect(markerScale(deselectedTransform)).toBe(5)
+  expect(markerScale(selectedTransform)).toBe(7)
+  expect(buttonFor(points[0]!.configurationID)?.getAttribute("aria-pressed")).toBe("false")
+  expect(buttonFor(points[2]!.configurationID)?.getAttribute("aria-pressed")).toBe("true")
+
   expect(container.querySelector("[xmlns='http://www.w3.org/2000/svg']")).toBe(originalSVG)
   expect(container.querySelectorAll("[xmlns='http://www.w3.org/2000/svg']")).toHaveLength(1)
   expect(container.textContent).toContain("Qwen")
@@ -360,14 +481,29 @@ test("actual tooltip renders markup-like model labels as literal text without in
   const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, () => {})
   try {
     adapter.update({ points: [{ ...points[0]!, label }], frontierConfigurationIDs: [] }, theme)
-    adapter.chart.dispatchAction({ type: "showTip", seriesId: "observations", dataIndex: 0 })
-    await until(() => host.textContent?.includes(label) === true)
-    expect(host.textContent).toContain(label)
-    expect(host.querySelector("img")).toBeNull()
-    expect(host.querySelector("script")).toBeNull()
-    expect(host.querySelector("[onerror]")).toBeNull()
-    expect(host.innerHTML).toContain("&lt;img src=x onerror=")
-    expect(host.innerHTML).toContain("A&amp;B")
+    adapter.chart.dispatchAction({ type: "showTip", seriesIndex: 0, dataIndex: 0 })
+    const visibleTooltip = () =>
+      Array.from(host.children).find((child) => {
+        if (child.tagName !== "DIV") return false
+        const style = dom.getComputedStyle(child)
+        return (
+          style.position === "absolute" &&
+          style.display === "block" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0" &&
+          child.textContent?.includes(label) === true
+        )
+      })
+    await until(() => visibleTooltip() !== undefined)
+    const tooltip = visibleTooltip()
+    expect(tooltip).toBeDefined()
+    expect(dom.getComputedStyle(tooltip!).display).toBe("block")
+    expect(tooltip!.textContent).toContain(label)
+    expect(tooltip!.querySelector("img")).toBeNull()
+    expect(tooltip!.querySelector("script")).toBeNull()
+    expect(tooltip!.querySelector("[onerror]")).toBeNull()
+    expect(tooltip!.innerHTML).toContain("&lt;img src=x onerror=")
+    expect(tooltip!.innerHTML).toContain("A&amp;B")
   } finally {
     adapter.dispose()
   }
