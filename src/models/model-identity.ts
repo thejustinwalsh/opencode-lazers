@@ -1,0 +1,372 @@
+import { z } from "zod"
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
+import type { ModelEvidenceSnapshot } from "./source-schema.ts"
+
+export const MODEL_IDENTITY_RULE_VERSION = 1
+
+export const ModelIdentityEvidenceReferenceSchema = z.strictObject({
+  source: z.enum(["native-catalog", "openrouter-models"]),
+  snapshotID: z.uuid(),
+  generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  recordIndex: z.number().int().nonnegative().max(1_999),
+  recordID: z.string().min(1).max(512),
+})
+export type ModelIdentityEvidenceReference = z.infer<typeof ModelIdentityEvidenceReferenceSchema>
+
+export const ModelIdentityRuleCitationSchema = z.strictObject({
+  url: z.url().max(2_048),
+  retrievedOn: z.iso.date(),
+  excerpt: z.string().min(1).max(512),
+  snapshotID: z.uuid().nullable(),
+  retrievedAt: z.iso.datetime().nullable(),
+  recordID: z.string().max(512).nullable(),
+})
+
+export const ModelIdentityRuleSchema = z.strictObject({
+  id: z.string().min(1).max(128),
+  version: z.literal(MODEL_IDENTITY_RULE_VERSION),
+  citations: z.array(ModelIdentityRuleCitationSchema).max(4).optional(),
+})
+
+export const ModelIdentityResolutionSchema = z.strictObject({
+  status: z.enum([
+    "exact",
+    "ambiguous",
+    "unsupported",
+    "supported-but-absent",
+    "source-unavailable",
+  ]),
+  productID: z.string().min(1).max(512).nullable(),
+  rules: z.array(ModelIdentityRuleSchema).max(10),
+  basis: z
+    .enum([
+      "exact-published-catalog-id",
+      "owner-qualified-catalog-id",
+      "provider-owner-qualification",
+      "verified-source-backed-route-alias",
+    ])
+    .nullable(),
+  catalogSourceState: z.enum(["available", "none", "missing-table", "missing-snapshot"]),
+  evidence: z.strictObject({
+    native: z.array(ModelIdentityEvidenceReferenceSchema).max(100),
+    catalog: z.array(ModelIdentityEvidenceReferenceSchema).max(100),
+    nativeRecordCount: z.number().int().nonnegative().max(4_000),
+    catalogRecordCount: z.number().int().nonnegative().max(4_000),
+    nativeTruncated: z.boolean(),
+    catalogTruncated: z.boolean(),
+  }),
+})
+export type ModelIdentityResolution = z.infer<typeof ModelIdentityResolutionSchema>
+
+type RouteRule = {
+  id: string
+  catalogModelID: string
+  productID: string
+  basis:
+    | "exact-published-catalog-id"
+    | "owner-qualified-catalog-id"
+    | "provider-owner-qualification"
+    | "verified-source-backed-route-alias"
+  citations?: z.infer<typeof ModelIdentityRuleCitationSchema>[]
+}
+
+/** These execution provider IDs are verified source owners even while the catalog is unavailable. */
+const SUPPORTED_OWNER_NAMESPACES = new Set(["anthropic", "openai"])
+
+const VERIFIED_ROUTE_ALIASES: Array<RouteRule & { providerID: string; modelID: string }> = [
+  {
+    id: "anthropic-haiku-5-5-to-openrouter-haiku-5-5-v1",
+    providerID: "anthropic",
+    modelID: "claude-haiku-5-5",
+    catalogModelID: "anthropic/claude-haiku-5.5",
+    productID: "anthropic/claude-haiku-5.5",
+    basis: "verified-source-backed-route-alias",
+    citations: [
+      {
+        url: "https://platform.claude.com/docs/en/models/overview",
+        retrievedOn: "2026-11-03",
+        excerpt:
+          "| Feature | Claude Fable 5.1 | Claude Opus 5.5 | Claude Sonnet 5.5 | Claude Haiku 5.5 |\n| :--- | :--- | :--- | :--- | :--- |\n| Claude API ID | `claude-fable-5-1` | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-5-5` |",
+        snapshotID: null,
+        retrievedAt: null,
+        recordID: null,
+      },
+      {
+        url: "https://openrouter.ai/api/v1/models",
+        retrievedOn: "2026-11-03",
+        excerpt: '"id": "anthropic/claude-haiku-5.5"',
+        snapshotID: "1687a6df-7108-48ab-8579-549af69abc91",
+        retrievedAt: "2026-11-03T19:44:37.529Z",
+        recordID: "anthropic/claude-haiku-5.5",
+      },
+    ],
+  },
+  {
+    id: "anthropic-sonnet-5-5-to-openrouter-sonnet-5-5-v1",
+    providerID: "anthropic",
+    modelID: "claude-sonnet-5-5",
+    catalogModelID: "anthropic/claude-sonnet-5.5",
+    productID: "anthropic/claude-sonnet-5.5",
+    basis: "verified-source-backed-route-alias",
+    citations: [
+      {
+        url: "https://platform.claude.com/docs/en/models/overview",
+        retrievedOn: "2026-11-03",
+        excerpt:
+          "| Feature | Claude Fable 5.1 | Claude Opus 5.5 | Claude Sonnet 5.5 | Claude Haiku 5.5 |\n| :--- | :--- | :--- | :--- | :--- |\n| Claude API ID | `claude-fable-5-1` | `claude-opus-5-5` | `claude-sonnet-5-5` | `claude-haiku-5-5` |",
+        snapshotID: null,
+        retrievedAt: null,
+        recordID: null,
+      },
+      {
+        url: "https://openrouter.ai/api/v1/models",
+        retrievedOn: "2026-11-03",
+        excerpt: '"id": "anthropic/claude-sonnet-5.5"',
+        snapshotID: "1687a6df-7108-48ab-8579-549af69abc91",
+        retrievedAt: "2026-11-03T19:44:37.529Z",
+        recordID: "anthropic/claude-sonnet-5.5",
+      },
+    ],
+  },
+]
+
+type OpenRouterModelRecord = Extract<
+  ModelEvidenceSnapshot,
+  { source: "openrouter-models" }
+>["records"][number]
+type CatalogSnapshot = Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+
+type Route = { providerID: string; modelID: string }
+type RecordEntry<T> = { record: T; recordIndex: number }
+
+function originalRecordIndex(source: ModelEvidenceComparisonSourceRead, index: number): number {
+  const recordIndexes = (
+    source as ModelEvidenceComparisonSourceRead & {
+      recordIndexes?: readonly number[]
+    }
+  ).recordIndexes
+  return recordIndexes?.[index] ?? index
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function segment(value: string): string {
+  return `${value.length}:${value}`
+}
+
+export function modelConfigurationID(
+  providerID: string,
+  modelID: string,
+  variant: string | null,
+): string {
+  return [segment(providerID), segment(modelID), variant === null ? "-" : segment(variant)].join(
+    "|",
+  )
+}
+
+export function unsupportedModelGroupID(route: Route): string {
+  return `route:${segment(route.providerID)}:${segment(route.modelID)}`
+}
+
+function boundedReferences(references: ModelIdentityEvidenceReference[]) {
+  const unique = new Map(
+    references.map((reference) => [
+      `${reference.source}:${reference.snapshotID}:${reference.recordIndex}`,
+      reference,
+    ]),
+  )
+  const records = [...unique.values()]
+  return {
+    records: records.slice(0, 100),
+    recordCount: records.length,
+    truncated: records.length > 100,
+  }
+}
+
+export function modelIdentityReference(
+  source: "native-catalog" | "openrouter-models",
+  snapshot: Extract<ModelEvidenceSnapshot, { source: "native-catalog" | "openrouter-models" }>,
+  recordIndex: number,
+  recordID: string,
+): ModelIdentityEvidenceReference {
+  return {
+    source,
+    snapshotID: snapshot.snapshotID,
+    generation: snapshot.generation,
+    recordIndex,
+    recordID,
+  }
+}
+
+function ownerNamespace(modelID: string): string | null {
+  const separator = modelID.indexOf("/")
+  if (separator <= 0 || separator === modelID.length - 1) return null
+  return modelID.slice(0, separator)
+}
+
+function sourceSupportsOwner(providerID: string, catalogSnapshot: CatalogSnapshot | null): boolean {
+  if (SUPPORTED_OWNER_NAMESPACES.has(providerID)) return true
+  return Boolean(
+    catalogSnapshot?.records.some((record) => ownerNamespace(record.id) === providerID),
+  )
+}
+
+function routeRules(route: Route, catalogSnapshot: CatalogSnapshot | null): RouteRule[] {
+  const verifiedAliases = VERIFIED_ROUTE_ALIASES.filter(
+    (rule) => rule.providerID === route.providerID && rule.modelID === route.modelID,
+  )
+  if (verifiedAliases.length) return verifiedAliases
+
+  const qualifiedOwner = ownerNamespace(route.modelID)
+  if (qualifiedOwner) {
+    const ownerIsKnown =
+      SUPPORTED_OWNER_NAMESPACES.has(qualifiedOwner) ||
+      Boolean(
+        catalogSnapshot?.records.some((record) => ownerNamespace(record.id) === qualifiedOwner),
+      )
+    if (ownerIsKnown || !catalogSnapshot)
+      return [
+        {
+          id: "owner-qualified-catalog-id-v1",
+          catalogModelID: route.modelID,
+          productID: route.modelID,
+          basis: "owner-qualified-catalog-id",
+        },
+      ]
+    return []
+  }
+
+  if (catalogSnapshot?.records.some((record) => record.id === route.modelID))
+    return [
+      {
+        id: "exact-published-catalog-id-v1",
+        catalogModelID: route.modelID,
+        productID: route.modelID,
+        basis: "exact-published-catalog-id",
+      },
+    ]
+
+  if (!sourceSupportsOwner(route.providerID, catalogSnapshot)) return []
+  const catalogModelID = `${route.providerID}/${route.modelID}`
+  return [
+    {
+      id: "provider-owner-qualified-local-id-v1",
+      catalogModelID,
+      productID: catalogModelID,
+      basis: "provider-owner-qualification",
+    },
+  ]
+}
+
+export type ModelIdentityResolutionResult = {
+  resolution: ModelIdentityResolution
+  catalogMatches: Array<RecordEntry<OpenRouterModelRecord>>
+}
+
+/** Resolve only exact, versioned route rules and exact published catalog IDs. */
+export function resolveModelIdentity(input: {
+  route: Route
+  nativeEvidence: ModelIdentityEvidenceReference[]
+  catalogSource: ModelEvidenceComparisonSourceRead
+}): ModelIdentityResolutionResult {
+  const catalogSnapshot =
+    input.catalogSource.snapshot?.source === "openrouter-models"
+      ? input.catalogSource.snapshot
+      : null
+  const catalogState = input.catalogSource.snapshotState
+  const native = boundedReferences(input.nativeEvidence)
+  const rules = routeRules(input.route, catalogSnapshot)
+
+  if (!rules.length) {
+    const status = catalogSnapshot ? "unsupported" : "source-unavailable"
+    return {
+      resolution: {
+        status,
+        productID: null,
+        rules: [],
+        basis: null,
+        catalogSourceState: catalogState,
+        evidence: {
+          native: native.records,
+          catalog: [],
+          nativeRecordCount: native.recordCount,
+          catalogRecordCount: 0,
+          nativeTruncated: native.truncated,
+          catalogTruncated: false,
+        },
+      },
+      catalogMatches: [],
+    }
+  }
+
+  const uniqueProductIDs = [...new Set(rules.map((rule) => rule.productID))].sort(compareText)
+  const productID = uniqueProductIDs.length === 1 ? uniqueProductIDs[0]! : null
+  const publicRules = rules
+    .map(({ id, citations }) => ({
+      id,
+      version: MODEL_IDENTITY_RULE_VERSION as 1,
+      ...(citations ? { citations } : {}),
+    }))
+    .sort((left, right) => compareText(left.id, right.id))
+  const basis = rules.length === 1 ? rules[0]!.basis : null
+
+  if (!catalogSnapshot) {
+    return {
+      resolution: {
+        status: "source-unavailable",
+        productID,
+        rules: publicRules,
+        basis,
+        catalogSourceState: catalogState,
+        evidence: {
+          native: native.records,
+          catalog: [],
+          nativeRecordCount: native.recordCount,
+          catalogRecordCount: 0,
+          nativeTruncated: native.truncated,
+          catalogTruncated: false,
+        },
+      },
+      catalogMatches: [],
+    }
+  }
+
+  const catalogMatches = catalogSnapshot.records
+    .map((record, index) => ({
+      record,
+      recordIndex: originalRecordIndex(input.catalogSource, index),
+    }))
+    .filter(({ record }) => rules.some((rule) => rule.catalogModelID === record.id))
+  const catalogReferences = boundedReferences(
+    catalogMatches.map(({ record, recordIndex }) =>
+      modelIdentityReference("openrouter-models", catalogSnapshot, recordIndex, record.id),
+    ),
+  )
+  const status: ModelIdentityResolution["status"] =
+    rules.length > 1 || catalogMatches.length > 1
+      ? "ambiguous"
+      : catalogMatches.length === 1
+        ? "exact"
+        : "supported-but-absent"
+
+  return {
+    resolution: {
+      status,
+      productID,
+      rules: publicRules,
+      basis,
+      catalogSourceState: catalogState,
+      evidence: {
+        native: native.records,
+        catalog: catalogReferences.records,
+        nativeRecordCount: native.recordCount,
+        catalogRecordCount: catalogReferences.recordCount,
+        nativeTruncated: native.truncated,
+        catalogTruncated: catalogReferences.truncated,
+      },
+    },
+    catalogMatches,
+  }
+}

@@ -43,7 +43,15 @@ const EvidenceReferencesSchema = z.strictObject({
 
 const CorrespondenceSchema = z.strictObject({
   status: z.enum(["exact", "unresolved", "ambiguous"]),
-  basis: z.literal("direct-openrouter-route-and-exact-catalog-id").nullable(),
+  basis: z
+    .enum([
+      "direct-openrouter-route-and-exact-catalog-id",
+      "exact-published-catalog-id",
+      "owner-qualified-catalog-id",
+      "provider-owner-qualification",
+      "verified-source-backed-route-alias",
+    ])
+    .nullable(),
   evidence: EvidenceReferencesSchema,
 })
 

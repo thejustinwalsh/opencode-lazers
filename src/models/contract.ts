@@ -8,6 +8,12 @@ import {
   ModelMappingUpdateSchema,
 } from "./mapping-schema.ts"
 import { ModelEvidenceOutputSchema, ModelEvidenceReadInputSchema } from "./source-schema.ts"
+import {
+  ModelConfigurationsOutputSchema,
+  ModelConfigurationsReadInputSchema,
+  ModelGroupsOutputSchema,
+  ModelGroupsReadInputSchema,
+} from "./model-group-schema.ts"
 
 const SessionID = z.string().min(1).max(200)
 
@@ -35,6 +41,14 @@ export const ModelSourceRefreshRPCInputSchema = z.strictObject({ sessionID: Sess
 export const ModelComparisonRPCInputSchema = z.strictObject({
   sessionID: SessionID,
   ...ModelComparisonReadInputSchema.shape,
+})
+export const ModelGroupsRPCInputSchema = z.strictObject({
+  sessionID: SessionID,
+  ...ModelGroupsReadInputSchema.shape,
+})
+export const ModelConfigurationsRPCInputSchema = z.strictObject({
+  sessionID: SessionID,
+  ...ModelConfigurationsReadInputSchema.shape,
 })
 
 export const ModelPersonaSettingsSchema = z.strictObject({
@@ -119,5 +133,10 @@ export const Models = Rpc.define({
     sourceEvidence: { input: ModelEvidenceRPCInputSchema, output: ModelEvidenceOutputSchema },
     refreshSources: { input: ModelSourceRefreshRPCInputSchema, output: ModelEvidenceOutputSchema },
     comparison: { input: ModelComparisonRPCInputSchema, output: ModelComparisonOutputSchema },
+    modelGroups: { input: ModelGroupsRPCInputSchema, output: ModelGroupsOutputSchema },
+    modelConfigurations: {
+      input: ModelConfigurationsRPCInputSchema,
+      output: ModelConfigurationsOutputSchema,
+    },
   },
 })

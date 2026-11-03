@@ -211,7 +211,7 @@ test("comparison preserves exact route identity, dated evidence, original prices
       ({ identity }) => identity.providerID === "openrouter" && identity.variant === "high",
     )!
     expect(exact).toMatchObject({
-      correspondence: { status: "exact", basis: "direct-openrouter-route-and-exact-catalog-id" },
+      correspondence: { status: "exact", basis: "owner-qualified-catalog-id" },
       externalModel: {
         id: "vendor/model",
         canonicalSlug: "vendor/model-20261102",
@@ -284,7 +284,10 @@ test("comparison preserves exact route identity, dated evidence, original prices
     const otherProvider = output.candidates.find(
       ({ identity }) => identity.providerID === "openai",
     )!
-    expect(otherProvider.correspondence.status).toBe("unresolved")
+    expect(otherProvider.correspondence).toMatchObject({
+      status: "exact",
+      basis: "owner-qualified-catalog-id",
+    })
     const ambiguous = output.candidates.find(
       ({ identity }) => identity.modelID === "vendor/ambiguous",
     )!

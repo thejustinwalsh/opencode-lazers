@@ -15,12 +15,16 @@ import {
   ModelSettingsRPCInputSchema,
   ModelCatalogRPCInputSchema,
   Models,
+  ModelConfigurationsRPCInputSchema,
+  ModelGroupsRPCInputSchema,
 } from "./contract.ts"
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
+import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
 import { ModelEvidenceRefresher } from "./source-refresh.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { readModelComparison } from "./comparison-read.ts"
+import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelSettingsService } from "./service.ts"
 
@@ -28,7 +32,10 @@ type ModelsContext = Pick<
   Plugin.Context,
   "agent" | "integration" | "location" | "model" | "permission" | "rpc" | "session"
 >
-type EvidenceReadStore = Pick<ModelEvidenceReadStore, "close" | "readComparisonSources">
+type EvidenceReadStore = Pick<
+  ModelEvidenceReadStore,
+  "close" | "projectDirectory" | "readComparisonSources"
+>
 type EvidenceReadStoreFactory = (path: string, projectDirectory: string) => EvidenceReadStore
 
 function isSessionNotFound(error: unknown): boolean {
@@ -246,6 +253,62 @@ export function registerModelsServer(
             )
             signal.throwIfAborted()
             const output = ModelComparisonOutputSchema.parse(result)
+            signal.throwIfAborted()
+            return output
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      modelGroups: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelGroupsRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-groups",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const result = withEvidenceReadStore((store) =>
+              readModelGroups(store, {
+                cursor: request.cursor,
+                filters: request.filters,
+                limit: request.limit,
+              }),
+            )
+            signal.throwIfAborted()
+            const output = ModelGroupsOutputSchema.parse(result)
+            signal.throwIfAborted()
+            return output
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      modelConfigurations: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelConfigurationsRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-configurations",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const result = withEvidenceReadStore((store) =>
+              readModelConfigurations(store, {
+                groupID: request.groupID,
+                context: request.context,
+                cursor: request.cursor,
+                filters: request.filters,
+                limit: request.limit,
+              }),
+            )
+            signal.throwIfAborted()
+            const output = ModelConfigurationsOutputSchema.parse(result)
             signal.throwIfAborted()
             return output
           },
