@@ -1,0 +1,194 @@
+{
+  "subset": "Four native route records and two OpenRouter product records captured from the selected generation 29 snapshots on 2026-11-03. Native source record positions and OpenRouter source record positions are retained; Go-native prices are deliberately omitted so the Go subscription is not treated as OpenRouter market pricing.",
+  "native": {
+    "originalRecordIndices": [10, 11, 119, 120],
+    "snapshot": {
+      "snapshotID": "f09525b7-69e4-4e75-a2fd-0f9989ad810e",
+      "projectDirectory": "/portable-fixtures/opencode-go-model-identity",
+      "generation": 29,
+      "retrievedAt": "2026-11-03T22:07:50.778Z",
+      "asOf": null,
+      "version": null,
+      "citation": "OpenCode native model catalog",
+      "upstreamSourceURL": null,
+      "sourceURL": "https://opencode.ai/v2/docs/models/",
+      "query": "OpenCode model.list for the current project location",
+      "source": "native-catalog",
+      "records": [
+        {
+          "kind": "native-model",
+          "providerID": "opencode-go",
+          "id": "kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1048576,
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image", "video"],
+            "output": ["text"]
+          },
+          "variants": ["low", "high", "max"],
+          "prices": null
+        },
+        {
+          "kind": "native-model",
+          "providerID": "openrouter",
+          "id": "moonshotai/kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1048576,
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image", "video"],
+            "output": ["text"]
+          },
+          "variants": ["none", "low", "high", "max"],
+          "prices": null
+        },
+        {
+          "kind": "native-model",
+          "providerID": "opencode-go",
+          "id": "qwen3.8-flash",
+          "name": "Qwen3.8 Flash",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1000000,
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image", "video"],
+            "output": ["text"]
+          },
+          "variants": ["none", "low", "medium", "xhigh"],
+          "prices": null
+        },
+        {
+          "kind": "native-model",
+          "providerID": "openrouter",
+          "id": "qwen/qwen3.8-flash",
+          "name": "Qwen3.8 Flash",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1000000,
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image", "video"],
+            "output": ["text"]
+          },
+          "variants": ["none", "high", "max"],
+          "prices": null
+        }
+      ]
+    }
+  },
+  "openrouter": {
+    "originalRecordIndices": [7, 97],
+    "snapshot": {
+      "snapshotID": "f7cdbcb8-8173-44ad-9c41-95bed29a7b8e",
+      "projectDirectory": "/portable-fixtures/opencode-go-model-identity",
+      "generation": 29,
+      "retrievedAt": "2026-11-03T22:07:51.457Z",
+      "asOf": null,
+      "version": null,
+      "citation": null,
+      "upstreamSourceURL": null,
+      "sourceURL": "https://openrouter.ai/api/v1/models",
+      "query": "GET https://openrouter.ai/api/v1/models",
+      "source": "openrouter-models",
+      "records": [
+        {
+          "kind": "openrouter-model",
+          "id": "moonshotai/kimi-k3.1-pro",
+          "canonicalSlug": "moonshotai/kimi-k3.1-pro-20261023",
+          "name": "MoonshotAI: Kimi K3.1 Pro",
+          "contextLength": 1048576,
+          "architecture": {
+            "modality": "text+image+video->text",
+            "inputModalities": ["text", "image", "video"],
+            "outputModalities": ["text"],
+            "tokenizer": "Other",
+            "instructType": null
+          },
+          "supportedParameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_logprobs",
+            "top_p"
+          ],
+          "prices": {
+            "unit": "USD per token",
+            "tiers": [
+              {
+                "minPromptTokens": null,
+                "utcStart": null,
+                "utcEnd": null,
+                "prompt": "0.000002",
+                "completion": "0.00001",
+                "inputCacheRead": "0.0000002",
+                "inputCacheWrite": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "openrouter-model",
+          "id": "qwen/qwen3.8-flash",
+          "canonicalSlug": "qwen/qwen3.8-flash-20260826",
+          "name": "Qwen: Qwen3.8 Flash",
+          "contextLength": 1000000,
+          "architecture": {
+            "modality": "text+image+video->text",
+            "inputModalities": ["text", "image", "video"],
+            "outputModalities": ["text"],
+            "tokenizer": "Qwen",
+            "instructType": null
+          },
+          "supportedParameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ],
+          "prices": {
+            "unit": "USD per token",
+            "tiers": [
+              {
+                "minPromptTokens": null,
+                "utcStart": null,
+                "utcEnd": null,
+                "prompt": "0.00000015",
+                "completion": "0.00000047",
+                "inputCacheRead": "0.000000016",
+                "inputCacheWrite": null
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

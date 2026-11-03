@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import captured from "../../test/models-identity/fixtures/captured-20261103.json" with { type: "json" }
+import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
 import { ModelEvidenceSnapshotSchema, type ModelEvidenceSnapshot } from "./source-schema.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { modelIdentityReference, resolveModelIdentity } from "./model-identity.ts"
@@ -12,6 +13,20 @@ if (nativeParsed.source !== "native-catalog" || catalogParsed.source !== "openro
 
 const nativeSnapshot = nativeParsed as Extract<ModelEvidenceSnapshot, { source: "native-catalog" }>
 const catalogSnapshot = catalogParsed as Extract<
+  ModelEvidenceSnapshot,
+  { source: "openrouter-models" }
+>
+const goNativeParsed = ModelEvidenceSnapshotSchema.parse(capturedGo.native.snapshot)
+const goCatalogParsed = ModelEvidenceSnapshotSchema.parse(capturedGo.openrouter.snapshot)
+
+if (goNativeParsed.source !== "native-catalog" || goCatalogParsed.source !== "openrouter-models")
+  throw new Error("Captured OpenCode Go identity fixture has an unexpected source")
+
+const goNativeSnapshot = goNativeParsed as Extract<
+  ModelEvidenceSnapshot,
+  { source: "native-catalog" }
+>
+const goCatalogSnapshot = goCatalogParsed as Extract<
   ModelEvidenceSnapshot,
   { source: "openrouter-models" }
 >
@@ -263,4 +278,196 @@ test("route-alias citations bind catalog provenance to the selected snapshot", (
       recordID: null,
     }),
   ])
+})
+
+test("exact OpenCode Go routes use source-backed OpenRouter identities and selected snapshots", () => {
+  const projectDirectory = `/portable-project/${crypto.randomUUID()}`
+  const selectedNative = ModelEvidenceSnapshotSchema.parse({
+    ...goNativeSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: 12,
+    retrievedAt: "2026-11-03T22:30:00.000Z",
+  }) as Extract<ModelEvidenceSnapshot, { source: "native-catalog" }>
+  const selectedCatalog = ModelEvidenceSnapshotSchema.parse({
+    ...goCatalogSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: 12,
+    retrievedAt: "2026-11-03T22:31:00.000Z",
+  }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+  const selectedCatalogSource = {
+    ...sourceRead(selectedCatalog),
+    recordIndexes: capturedGo.openrouter.originalRecordIndices,
+  }
+  const expected = [
+    {
+      nativeIndex: 0,
+      productID: "moonshotai/kimi-k3.1-pro",
+      ruleID: "opencode-go-kimi-k3-1-pro-to-openrouter-kimi-k3-1-pro-v1",
+      nativeRecordIndex: 10,
+      catalogRecordIndex: 7,
+      nativeModelID: "kimi-k3.1-pro",
+      guideURL: "https://openrouter.ai/moonshotai/kimi-k3.1-pro/llms.txt",
+      guideExcerpt: '- model: string (required) — "moonshotai/kimi-k3.1-pro"',
+    },
+    {
+      nativeIndex: 2,
+      productID: "qwen/qwen3.8-flash",
+      ruleID: "opencode-go-qwen3-8-flash-to-openrouter-qwen3-8-flash-v1",
+      nativeRecordIndex: 119,
+      catalogRecordIndex: 97,
+      nativeModelID: "qwen3.8-flash",
+      guideURL: "https://openrouter.ai/qwen/qwen3.8-flash/llms.txt",
+      guideExcerpt: '- model: string (required) — "qwen/qwen3.8-flash"',
+    },
+  ] as const
+
+  for (const item of expected) {
+    const nativeRecord = selectedNative.records[item.nativeIndex]!
+    const { resolution } = resolveModelIdentity({
+      route: { providerID: nativeRecord.providerID, modelID: nativeRecord.id },
+      nativeEvidence: [
+        modelIdentityReference(
+          "native-catalog",
+          selectedNative,
+          item.nativeRecordIndex,
+          item.nativeModelID,
+        ),
+      ],
+      catalogSource: selectedCatalogSource,
+    })
+    expect(resolution).toMatchObject({
+      status: "exact",
+      productID: item.productID,
+      basis: "verified-source-backed-route-alias",
+      catalogSourceState: "available",
+      rules: [{ id: item.ruleID, version: 1 }],
+      evidence: {
+        native: [
+          expect.objectContaining({
+            snapshotID: selectedNative.snapshotID,
+            recordIndex: item.nativeRecordIndex,
+            recordID: item.nativeModelID,
+          }),
+        ],
+        catalog: [
+          expect.objectContaining({
+            snapshotID: selectedCatalog.snapshotID,
+            generation: selectedCatalog.generation,
+            recordIndex: item.catalogRecordIndex,
+            recordID: item.productID,
+          }),
+        ],
+      },
+    })
+    const citations = resolution.rules[0]?.citations ?? []
+    const goCitation = citations.find(
+      (citation) => citation.url === "https://opencode.ai/v2/docs/console/go/",
+    )!
+    expect(goCitation.excerpt).toContain(item.nativeModelID)
+    expect(goCitation.excerpt).toContain("opencode-go/<model-id>")
+    expect(citations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          url: "https://opencode.ai/v2/docs/console/go/",
+          retrievedOn: "2026-11-03",
+          excerpt: expect.stringContaining(item.nativeModelID),
+          snapshotID: null,
+          retrievedAt: null,
+          recordID: null,
+        }),
+        expect.objectContaining({
+          url: item.guideURL,
+          retrievedOn: "2026-11-03",
+          excerpt: item.guideExcerpt,
+          snapshotID: null,
+          retrievedAt: null,
+          recordID: null,
+        }),
+        expect.objectContaining({
+          url: "https://openrouter.ai/api/v1/models",
+          retrievedOn: "2026-11-03",
+          snapshotID: selectedCatalog.snapshotID,
+          retrievedAt: selectedCatalog.retrievedAt,
+          recordID: item.productID,
+        }),
+      ]),
+    )
+    expect(
+      citations.every(
+        (citation) =>
+          citation.snapshotID === null || citation.snapshotID === selectedCatalog.snapshotID,
+      ),
+    ).toBe(true)
+    expect(citations.map((citation) => citation.snapshotID)).not.toContain(
+      goCatalogSnapshot.snapshotID,
+    )
+
+    const duplicateCatalog = ModelEvidenceSnapshotSchema.parse({
+      ...selectedCatalog,
+      records: [
+        ...selectedCatalog.records,
+        selectedCatalog.records[item.nativeIndex === 0 ? 0 : 1]!,
+      ],
+    }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+    expect(
+      resolveModelIdentity({
+        route: { providerID: nativeRecord.providerID, modelID: nativeRecord.id },
+        nativeEvidence: [],
+        catalogSource: sourceRead(duplicateCatalog),
+      }).resolution,
+    ).toMatchObject({
+      status: "ambiguous",
+      productID: item.productID,
+      evidence: { catalogRecordCount: 2 },
+    })
+
+    const absentCatalog = ModelEvidenceSnapshotSchema.parse({
+      ...selectedCatalog,
+      records: selectedCatalog.records.filter((record) => record.id !== item.productID),
+    }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+    expect(
+      resolveModelIdentity({
+        route: { providerID: nativeRecord.providerID, modelID: nativeRecord.id },
+        nativeEvidence: [],
+        catalogSource: sourceRead(absentCatalog),
+      }).resolution,
+    ).toMatchObject({
+      status: "supported-but-absent",
+      productID: item.productID,
+      evidence: { catalogRecordCount: 0 },
+    })
+
+    expect(
+      resolveModelIdentity({
+        route: { providerID: nativeRecord.providerID, modelID: nativeRecord.id },
+        nativeEvidence: [],
+        catalogSource: sourceRead(null, "missing-table"),
+      }).resolution,
+    ).toMatchObject({
+      status: "source-unavailable",
+      productID: item.productID,
+      catalogSourceState: "missing-table",
+    })
+  }
+
+  for (const modelID of [
+    "kimi-k3.1-pro-preview",
+    "kimi-k3.1-pro:fast",
+    "kimi-k3.1-pro-batch",
+    "kimi-k3.1-pro-20261023",
+    "qwen3.8-flash-preview",
+    "qwen3.8-flash:fast",
+    "qwen3.8-flash-batch",
+    "qwen3.8-flash-20260826",
+  ]) {
+    expect(
+      resolveModelIdentity({
+        route: { providerID: "opencode-go", modelID },
+        nativeEvidence: [],
+        catalogSource: sourceRead(selectedCatalog),
+      }).resolution,
+    ).toMatchObject({ status: "unsupported", productID: null, rules: [] })
+  }
 })

@@ -75,6 +75,60 @@ const SUPPORTED_OWNER_NAMESPACES = new Set(["anthropic", "openai"])
 
 const VERIFIED_ROUTE_ALIASES: Array<RouteRule & { providerID: string; modelID: string }> = [
   {
+    id: "opencode-go-kimi-k3-1-pro-to-openrouter-kimi-k3-1-pro-v1",
+    providerID: "opencode-go",
+    modelID: "kimi-k3.1-pro",
+    catalogModelID: "moonshotai/kimi-k3.1-pro",
+    productID: "moonshotai/kimi-k3.1-pro",
+    basis: "verified-source-backed-route-alias",
+    citations: [
+      {
+        url: "https://opencode.ai/v2/docs/console/go/",
+        retrievedOn: "2026-11-03",
+        excerpt:
+          "| Kimi K3.1 Pro | kimi-k3.1-pro | `https://opencode.ai/inference/go/openai/v1/chat/completions` | `@ai-sdk/openai-compatible` |\nTo use Go in OpenCode, connect with `/connect` and set the [model](/models) using the format `opencode-go/<model-id>`:",
+        snapshotID: null,
+        retrievedAt: null,
+        recordID: null,
+      },
+      {
+        url: "https://openrouter.ai/moonshotai/kimi-k3.1-pro/llms.txt",
+        retrievedOn: "2026-11-03",
+        excerpt: '- model: string (required) — "moonshotai/kimi-k3.1-pro"',
+        snapshotID: null,
+        retrievedAt: null,
+        recordID: null,
+      },
+    ],
+  },
+  {
+    id: "opencode-go-qwen3-8-flash-to-openrouter-qwen3-8-flash-v1",
+    providerID: "opencode-go",
+    modelID: "qwen3.8-flash",
+    catalogModelID: "qwen/qwen3.8-flash",
+    productID: "qwen/qwen3.8-flash",
+    basis: "verified-source-backed-route-alias",
+    citations: [
+      {
+        url: "https://opencode.ai/v2/docs/console/go/",
+        retrievedOn: "2026-11-03",
+        excerpt:
+          "| Qwen3.8 Flash | qwen3.8-flash | `https://opencode.ai/inference/go/anthropic/v1/messages` | `@ai-sdk/anthropic` |\nTo use Go in OpenCode, connect with `/connect` and set the [model](/models) using the format `opencode-go/<model-id>`:",
+        snapshotID: null,
+        retrievedAt: null,
+        recordID: null,
+      },
+      {
+        url: "https://openrouter.ai/qwen/qwen3.8-flash/llms.txt",
+        retrievedOn: "2026-11-03",
+        excerpt: '- model: string (required) — "qwen/qwen3.8-flash"',
+        snapshotID: null,
+        retrievedAt: null,
+        recordID: null,
+      },
+    ],
+  },
+  {
     id: "anthropic-haiku-5-5-to-openrouter-haiku-5-5-v1",
     providerID: "anthropic",
     modelID: "claude-haiku-5-5",
