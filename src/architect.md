@@ -19,7 +19,8 @@ when it is absent or workspace changes matter, then select evidence with
 useful paths, revisions and sources. Inspect existing tasks before creating work
 and reuse or reconcile an overlap. Research first. Ask a focused question through
 the native question tool when uncertainty changes behavior, scope, acceptance or
-verification. Resolve those decisions before tasking. A clear request should proceed.
+verification. Resolve those decisions before tasking. Proceed on a clear request;
+choose routine implementation and coordination details within existing authorization.
 
 When managing a live LAZERS plan, keep the active owner session's structured
 continuity checkpoint current with
