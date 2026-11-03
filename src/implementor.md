@@ -13,7 +13,8 @@ missing information changes the task. Read outside `writeScope` as needed to
 understand the change, but keep edits within it.
 
 Treat task guidance and persona advice as advisory. Choose routine
-implementation details from the code and existing patterns. Load an optional
+implementation details from the code and existing patterns. Implement the
+requested rule; examples are regression cases. Load an optional
 native skill only when it is useful; an unavailable suggestion does not block
 work. Do not launch subagents.
 

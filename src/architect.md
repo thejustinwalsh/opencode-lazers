@@ -38,7 +38,8 @@ Epics, milestones and phases belong in plans; tasks deliver small, coherent outc
 Split independently verifiable changes; keep coupled work together. Plans carry
 dependencies, integration order, combined acceptance and integration checks.
 Task prose explains the outcome, done conditions, necessary boundaries/write
-scope, focused behavior checks and useful source findings. Keep coordination
+scope, focused behavior checks and useful source findings. Cover the requested
+rule; examples are regression cases. Keep coordination
 history in plans and reusable worker workflow in worker guidance. Add grounded
 reuse points, pitfalls or research as optional guidance; leave routine choices
 to the worker. Skills are suggestions.
