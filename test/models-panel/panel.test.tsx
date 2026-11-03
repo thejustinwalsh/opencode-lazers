@@ -99,9 +99,13 @@ test("candidate row exposes sourced route and separate external benchmark with k
   )
   expect(html).toContain('aria-pressed="true"')
   expect(html).toContain('tabindex="0"')
-  expect(html).toContain('aria-label="openai / gpt-6 · high. Native catalog 1 records.')
-  expect(html).toContain("OpenRouter GPT-6")
-  expect(html).toContain("Coding index 71.4")
+  expect(html).toContain(
+    'aria-label="openai / gpt-6 · high. Effort high. Available in the native catalog."',
+  )
+  expect(html).toContain("Effort high")
+  expect(html).toContain("Available")
+  expect(html).not.toContain("OpenRouter GPT-6")
+  expect(html).not.toContain("Coding index")
   expect(html).not.toContain("$0.18")
 })
 

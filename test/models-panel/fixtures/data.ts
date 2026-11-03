@@ -69,7 +69,13 @@ export function comparison(projectID: string, revision: number, cursor?: string)
         refresh: null,
         snapshot: null,
       })),
-      candidates: [candidate("openai", "gpt-6-pro", "GPT-6 Pro page two")],
+      candidates: [
+        candidate("openai", "gpt-6-pro", "GPT-6 Pro page two", null, {
+          status: "unknown",
+          totalVariants: null,
+          omittedVariants: null,
+        }),
+      ],
       totalCandidates: 3,
       nextCursor: null,
     })
@@ -233,7 +239,20 @@ export function settings(projectDirectory: string, taskID: string | undefined, r
 }
 
 export function trajectory(projectID: string, taskID: string, tokens: number) {
-  const category = { value: tokens, unit: "tokens", status: "observed", valueScope: "task" }
+  const observedAt = Date.UTC(2026, 10, 3)
+  const category = {
+    value: tokens,
+    unit: "tokens",
+    status: "observed",
+    valueScope: "task",
+    sources: ["native-session-usage"],
+    sourceTypes: ["cumulative-snapshot"],
+    observationTimeBases: ["worker-session"],
+    observedAtRange: { earliest: observedAt, latest: observedAt },
+    observationCount: 1,
+    missingObservations: 0,
+  }
+  const partialCategory = { ...category, status: "partial", missingObservations: 1 }
   const effort = TaskEffortBasisSchema.parse({
     schemaVersion: 1,
     basis: "panel integration fixture",
@@ -241,37 +260,76 @@ export function trajectory(projectID: string, taskID: string, tokens: number) {
     usage: {
       unit: "tokens",
       categories: {
-        uncachedInput: category,
+        uncachedInput: partialCategory,
         output: category,
         reasoning: category,
         cacheRead: category,
         cacheWrite: category,
       },
       coverage: {
-        totalUniqueSessions: 1,
-        nativeCumulativeSnapshots: 0,
+        totalUniqueSessions: 2,
+        nativeCumulativeSnapshots: 1,
         retainedCumulativeSnapshots: 0,
         additiveStepSubtotals: 1,
-        missingSessions: [],
-        unavailableSessions: [],
-        progressTruncated: false,
+        missingSessions: ["ses-route-missing"],
+        unavailableSessions: ["ses-route-unavailable"],
+        progressTruncated: true,
       },
     },
     routes: {
-      assignments: [],
-      assessments: [],
-      usageAttribution: "observed fixture",
+      assignments: [
+        {
+          attemptID: "attempt-route-1",
+          state: "accepted",
+          planSelection: {
+            route: { providerID: "openai", modelID: "gpt-6", variant: null },
+            status: "explicit",
+            frozenComparison: "exact",
+            source: "task-plan",
+            meaning: "selected route recorded at plan time",
+          },
+          frozenAttemptRoute: {
+            route: null,
+            status: "unavailable",
+            source: null,
+            selectionSource: "not retained",
+          },
+          persona: {
+            requested: "ui",
+            requestedStatus: "requested",
+            frozen: "ui",
+            frozenStatus: "recorded",
+            comparison: "match",
+          },
+        },
+      ],
+      assessments: [
+        {
+          attemptID: "attempt-route-1",
+          sessionID: "ses-route-1",
+          requestedRoute: { providerID: "openai", modelID: "gpt-6", variant: null },
+          requestedRouteSource: "task-plan",
+          observedRoute: null,
+          scope: "session",
+          source: "session-context",
+          sourceType: "worker-session",
+          observedAt,
+          status: "unavailable",
+          frozenRouteStatus: "unavailable",
+        },
+      ],
+      usageAttribution: "Session-deduplicated usage includes partial evidence.",
       mixedRoutes: false,
       coverage: {
-        totalUniqueSessions: 1,
-        observedSessionRouteCount: 0,
-        sessionsWithoutCurrentRoute: [],
+        totalUniqueSessions: 2,
+        observedSessionRouteCount: 1,
+        sessionsWithoutCurrentRoute: ["ses-route-missing"],
         observedStepRouteCount: 0,
-        stepContextsByStatus: { available: 0, notRead: 0, unavailable: 0 },
-        progressTruncated: false,
-        truncatedContextSessionIDs: [],
-        missingSessionIDs: [],
-        unavailableSessionIDs: [],
+        stepContextsByStatus: { available: 0, notRead: 1, unavailable: 1 },
+        progressTruncated: true,
+        truncatedContextSessionIDs: ["ses-route-1"],
+        missingSessionIDs: ["ses-route-missing"],
+        unavailableSessionIDs: ["ses-route-unavailable"],
       },
     },
     cost: {

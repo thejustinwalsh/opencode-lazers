@@ -32,10 +32,11 @@ type ButtonProps = {
   busy?: boolean
   icon?: string
   "aria-label"?: string
+  title?: string
   onClick?: (event: MouseEvent) => void
 }
 
-function button(props: ButtonProps) {
+function button(props: ButtonProps, menuTrigger = false) {
   const element = document.createElement("button")
   element.type = "button"
   element.addEventListener("click", (event) => props.onClick?.(event))
@@ -43,8 +44,13 @@ function button(props: ButtonProps) {
     element.disabled = Boolean(props.disabled)
     if (props.busy) element.setAttribute("aria-busy", "true")
     else element.removeAttribute("aria-busy")
-    if (props["aria-label"]) element.setAttribute("aria-label", props["aria-label"]!)
+    const label = props["aria-label"] ?? (menuTrigger ? props.label : undefined)
+    if (label) element.setAttribute("aria-label", label)
     else element.removeAttribute("aria-label")
+    if (props.title) element.title = props.title
+    else element.removeAttribute("title")
+    if (menuTrigger) element.setAttribute("aria-haspopup", "menu")
+    else element.removeAttribute("aria-haspopup")
     element.textContent = String(props.label ?? props.children ?? "")
   })
   return element
@@ -53,7 +59,7 @@ function button(props: ButtonProps) {
 export function createTestUI() {
   return {
     Button: button,
-    Menu: button,
+    Menu: (props: ButtonProps) => button(props, true),
     Icon: (props: { name: string }) => {
       const element = document.createElement("span")
       element.textContent = props.name
