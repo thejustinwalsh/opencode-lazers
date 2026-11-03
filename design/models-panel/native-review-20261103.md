@@ -30,3 +30,13 @@ Associate source-backed model identities across execution providers, including
 verified aliases where necessary. Preserve real release/fast/batch differences
 and ambiguity; distinguish an unsupported association from upstream absence.
 Corrected direct Anthropic/OpenAI rows require live validation before acceptance.
+
+A further native metadata read at Unix ms `1793736540560` confirms that
+`Model.Info` exposes `modelID` separately from the catalog `id`; our snapshot
+currently drops it. Direct Sonnet/Haiku5.5 still use hyphenated IDs while
+OpenRouter uses dotted versions, so this field alone does not resolve them.
+Native `openai/gpt-6-luna-fast` has underlying `modelID: gpt-6-luna`: underlying
+identity alone must not erase intentional Fast configurations/products. Any
+remaining alias gap must be reported as unsupported association rather than
+upstream absence. Retaining this field is useful source-harvest work, not proof
+that all provider aliases are solved.
