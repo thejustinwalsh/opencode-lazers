@@ -1689,6 +1689,33 @@ async function acceptAndIntegratePlan(
   await recordPlanIntegration(f, planID, options)
   return accepted
 }
+async function cleanupBlockedFixture() {
+  const f = fixture({ commit: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await drive(f.runtime)
+  const plan = f.store.plan(f.receipt!.planID)!
+  expect(plan.state).toBe("accepted")
+  const attempt = f.store.attempts(plan.id)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  const artifact = plan.artifact!
+  git(f.root, ["merge", "--ff-only", artifact])
+  worker.busy = true
+  await f.runtime.command(
+    {
+      requestID: "prepare-cleanup-diagnostics",
+      planID: plan.id,
+      expectedVersion: plan.version,
+      action: "integrated",
+      artifact,
+      targetBranch: "main",
+      reason: "Prepare a blocked worker cleanup for diagnostics",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(plan.id)?.state).toBe("cleanup-blocked")
+  return { f, planID: plan.id, attempt, worker, artifact, workspace: attempt.workspace }
+}
 async function prepareAfterPlanDependency(
   f: ReturnType<typeof fixture>,
   requestID: string,
@@ -4406,6 +4433,433 @@ test("cleanup retries require detailed worker inactivity and never rerun product
   expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
     workerAdmissionsBefore,
   )
+})
+
+test("cleanup audit reports the first sampled worker blocker without exposing observed identity details", async () => {
+  const { f, planID, attempt, worker } = await cleanupBlockedFixture()
+  const valid = structuredClone(worker)
+  valid.busy = false
+  const sessionCalls: { id: string; options?: { messages?: boolean } }[] = []
+  const originalSession = f.host.session
+  f.host.session = async (id, options) => {
+    sessionCalls.push({ id, options })
+    return originalSession(id, options)
+  }
+  type Diagnostic = {
+    binding: {
+      projectID: string
+      planID: string
+      attemptID: string
+      sessionID: string
+      workspace: string
+      assignedMessageID: string
+    }
+    firstBlocker: { stage: string; code: string } | null
+    planVersion: number
+    sampledAt: number
+    stages: Array<{ stage: string; status: string; code?: string }>
+  }
+  const auditedWorker = (result: unknown) => {
+    const diagnostics = (result as { cleanupDiagnostics?: { workers?: Diagnostic[] } })
+      .cleanupDiagnostics
+    expect(diagnostics?.workers).toHaveLength(1)
+    return diagnostics!.workers![0]!
+  }
+  const audit = (requestID: string) =>
+    f.runtime.command(
+      {
+        requestID,
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "audit",
+      },
+      "observer",
+    )
+  const sample = async (
+    requestID: string,
+    change?: (session: HostSession) => void,
+  ): Promise<Diagnostic> => {
+    const session = structuredClone(valid)
+    change?.(session)
+    f.sessions.set(attempt.session_id, session)
+    return auditedWorker(await audit(requestID))
+  }
+  const cases: Array<{
+    name: string
+    stage: string
+    code: string
+    change?: (session: HostSession) => void
+    absent?: boolean
+    unavailable?: boolean
+  }> = [
+    { name: "read failure", stage: "session-read", code: "read-unavailable", unavailable: true },
+    { name: "absent session", stage: "session-read", code: "session-absent", absent: true },
+    {
+      name: "session identity",
+      stage: "session-id",
+      code: "session-id-mismatch",
+      change: (session) => (session.id = "foreign-session-detail"),
+    },
+    {
+      name: "project identity",
+      stage: "project-id",
+      code: "project-id-mismatch",
+      change: (session) => (session.projectID = "foreign-project-detail"),
+    },
+    {
+      name: "directory identity",
+      stage: "directory",
+      code: "directory-mismatch",
+      change: (session) => (session.directory = "/foreign/workspace-detail"),
+    },
+    {
+      name: "agent identity",
+      stage: "agent",
+      code: "agent-mismatch",
+      change: (session) => (session.agent = "foreign-agent-detail"),
+    },
+    {
+      name: "attempt identity",
+      stage: "attempt-id",
+      code: "attempt-id-mismatch",
+      change: (session) =>
+        (session.metadata = { ...session.metadata, lazersAttemptID: "foreign-attempt-detail" }),
+    },
+    {
+      name: "foreground activity",
+      stage: "foreground",
+      code: "foreground-busy",
+      change: (session) => (session.busy = true),
+    },
+    {
+      name: "pending input",
+      stage: "pending-input",
+      code: "pending-input",
+      change: (session) => (session.pendingInput = true),
+    },
+    {
+      name: "unstable observation",
+      stage: "observation-stability",
+      code: "observation-unstable",
+      change: (session) => (session.observationUnstable = true),
+    },
+    {
+      name: "pending permission",
+      stage: "pending-permissions",
+      code: "pending-permissions",
+      change: (session) => (session.pendingPermissions = 1),
+    },
+    {
+      name: "pending form",
+      stage: "pending-forms",
+      code: "pending-forms",
+      change: (session) => (session.pendingForms = 1),
+    },
+    {
+      name: "missing outcome",
+      stage: "outcome",
+      code: "outcome-absent",
+      change: (session) => {
+        delete session.outcome
+      },
+    },
+    {
+      name: "missing turn",
+      stage: "turn",
+      code: "turn-absent",
+      change: (session) => {
+        delete session.turn
+      },
+    },
+    {
+      name: "pending turn",
+      stage: "turn",
+      code: "turn-pending",
+      change: (session) => {
+        session.turn = { inputID: attempt.message_id, state: "pending" }
+      },
+    },
+    {
+      name: "unknown turn",
+      stage: "turn",
+      code: "turn-unknown",
+      change: (session) => {
+        session.turn = { inputID: attempt.message_id, state: "unknown" }
+      },
+    },
+    {
+      name: "missing background observation",
+      stage: "background",
+      code: "background-absent",
+      change: (session) => {
+        delete session.background
+      },
+    },
+    {
+      name: "unknown background observation",
+      stage: "background",
+      code: "background-unknown",
+      change: (session) => {
+        session.background = {
+          state: "unknown",
+          source: "experimental.idle",
+          reason: "credential=private-background-detail",
+        }
+      },
+    },
+    {
+      name: "assigned input mismatch",
+      stage: "assigned-input",
+      code: "assigned-input-mismatch",
+      change: (session) => {
+        if (session.background?.state === "observed")
+          session.background.inputID = "foreign-input-detail"
+      },
+    },
+    {
+      name: "turn input mismatch",
+      stage: "turn-input",
+      code: "turn-input-mismatch",
+      change: (session) => {
+        if (session.turn) session.turn.inputID = "foreign-turn-input-detail"
+      },
+    },
+    {
+      name: "positive background count",
+      stage: "background-count",
+      code: "positive-background-count",
+      change: (session) => {
+        if (session.background?.state === "observed") session.background.count = 1
+      },
+    },
+  ]
+
+  for (const [index, item] of cases.entries()) {
+    if (item.absent) f.sessions.delete(attempt.session_id)
+    else {
+      const session = structuredClone(valid)
+      item.change?.(session)
+      f.sessions.set(attempt.session_id, session)
+    }
+    const read = f.host.session
+    if (item.unavailable) {
+      f.host.session = async () => {
+        throw new Error("Authorization: Bearer private-secret")
+      }
+    }
+    const diagnostic = auditedWorker(
+      await audit(`cleanup-audit-stage-${index}-${item.name.replaceAll(" ", "-")}`),
+    )
+    f.host.session = read
+    expect(diagnostic.firstBlocker).toEqual({ stage: item.stage, code: item.code })
+    const blockedIndex = diagnostic.stages.findIndex((stage) => stage.stage === item.stage)
+    expect(diagnostic.stages[blockedIndex]).toMatchObject({ status: "blocked", code: item.code })
+    expect(
+      diagnostic.stages.slice(0, blockedIndex).every((stage) => stage.status === "passed"),
+    ).toBe(true)
+    expect(
+      diagnostic.stages.slice(blockedIndex + 1).every((stage) => stage.status === "not-evaluated"),
+    ).toBe(true)
+    expect(diagnostic.binding).toEqual({
+      projectID: "project",
+      planID,
+      attemptID: attempt.id,
+      sessionID: attempt.session_id,
+      workspace: attempt.workspace,
+      assignedMessageID: attempt.message_id,
+    })
+    expect(diagnostic.planVersion).toBe(f.store.plan(planID)!.version)
+    expect(diagnostic.sampledAt).toBeGreaterThan(0)
+    const serialized = JSON.stringify(diagnostic)
+    expect(serialized).not.toContain("foreign-session-detail")
+    expect(serialized).not.toContain("foreign-project-detail")
+    expect(serialized).not.toContain("foreign/workspace-detail")
+    expect(serialized).not.toContain("foreign-agent-detail")
+    expect(serialized).not.toContain("foreign-attempt-detail")
+    expect(serialized).not.toContain("private-secret")
+    expect(serialized).not.toContain("private-background-detail")
+    if (item.absent) f.sessions.set(attempt.session_id, structuredClone(valid))
+  }
+
+  for (const state of ["completed", "interrupted"] as const) {
+    const diagnostic = await sample(`cleanup-audit-zero-${state}`, (session) => {
+      session.outcome = state === "completed" ? "succeeded" : "interrupted"
+      session.turn = { inputID: attempt.message_id, state }
+      if (session.background?.state === "observed") session.background.count = 0
+    })
+    expect(diagnostic.firstBlocker).toBeNull()
+    expect(diagnostic.stages.every((stage) => stage.status === "passed")).toBe(true)
+  }
+  expect(
+    sessionCalls.every((call) => call.id === attempt.session_id && call.options?.messages === true),
+  ).toBe(true)
+})
+
+test("cleanup audit is neutral, receipt-safe, and later requests sample fresh observations", async () => {
+  const { f, planID, attempt, worker } = await cleanupBlockedFixture()
+  const planBefore = f.store.plan(planID)!
+  const detailBefore = f.store.detail(planID)
+  const notificationsBefore = f.notifications.length
+  const eventsBefore = [...f.events]
+  const sessionCalls: { id: string; options?: { messages?: boolean } }[] = []
+  let worktreeReads = 0
+  let removals = 0
+  const originalSession = f.host.session
+  const originalWorktrees = f.host.worktrees
+  const originalRemove = f.host.removeWorktree
+  f.host.session = async (id, options) => {
+    sessionCalls.push({ id, options })
+    return originalSession(id, options)
+  }
+  f.host.worktrees = async () => {
+    worktreeReads++
+    return originalWorktrees()
+  }
+  f.host.removeWorktree = async (workspace) => {
+    removals++
+    return originalRemove(workspace)
+  }
+  const input = {
+    requestID: "cleanup-audit-replay",
+    planID,
+    expectedVersion: planBefore.version,
+    action: "audit" as const,
+  }
+  const first = await f.runtime.command(input, "observer")
+  const firstDiagnostic = (
+    first as {
+      cleanupDiagnostics: { diagnosticOnly: true; workers: Array<{ firstBlocker: unknown }> }
+    }
+  ).cleanupDiagnostics
+  expect(firstDiagnostic.diagnosticOnly).toBe(true)
+  expect(firstDiagnostic.workers[0]?.firstBlocker).toEqual({
+    stage: "foreground",
+    code: "foreground-busy",
+  })
+  const detailAfter = f.store.detail(planID)
+  expect(detailAfter.plan).toEqual(detailBefore.plan)
+  expect(detailAfter.nodes).toEqual(detailBefore.nodes)
+  expect(detailAfter.attempts).toEqual(detailBefore.attempts)
+  expect(detailAfter.effects).toEqual(detailBefore.effects)
+  expect(detailAfter.adoptions).toEqual(detailBefore.adoptions)
+  expect(detailAfter.adoptionChecks).toEqual(detailBefore.adoptionChecks)
+  expect(detailAfter.adoptionEvidence).toEqual(detailBefore.adoptionEvidence)
+  expect(detailAfter.evidence).toEqual(detailBefore.evidence)
+  expect(detailAfter.activity).toEqual(detailBefore.activity)
+  expect(detailAfter.delivery).toEqual(detailBefore.delivery)
+  expect(f.store.plan(planID)).toEqual(planBefore)
+  expect(f.notifications).toHaveLength(notificationsBefore)
+  expect(f.events).toEqual(eventsBefore)
+  expect(sessionCalls).toEqual([{ id: attempt.session_id, options: { messages: true } }])
+  expect(worktreeReads).toBe(0)
+  expect(removals).toBe(0)
+
+  const idle = structuredClone(worker)
+  idle.busy = false
+  f.sessions.set(attempt.session_id, idle)
+  expect(await f.runtime.command(input, "observer")).toEqual(first)
+  expect(sessionCalls).toHaveLength(1)
+  const fresh = await f.runtime.command({ ...input, requestID: "cleanup-audit-fresh" }, "observer")
+  expect(
+    (fresh as { cleanupDiagnostics: { workers: Array<{ firstBlocker: unknown }> } })
+      .cleanupDiagnostics.workers[0]?.firstBlocker,
+  ).toBeNull()
+  expect(sessionCalls).toHaveLength(2)
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("cleanup-blocked")
+  expect(worktreeReads).toBe(0)
+  expect(removals).toBe(0)
+  expect(f.notifications).toHaveLength(notificationsBefore)
+})
+
+test("cleanup audit publication rejects a concurrent plan-version change", async () => {
+  const { f, planID, attempt, artifact } = await cleanupBlockedFixture()
+  const version = f.store.plan(planID)!.version
+  let started!: () => void
+  let release!: () => void
+  const sampleStarted = new Promise<void>((resolve) => (started = resolve))
+  const sampleGate = new Promise<void>((resolve) => (release = resolve))
+  const originalSession = f.host.session
+  f.host.session = async (id, options) => {
+    started()
+    await sampleGate
+    return originalSession(id, options)
+  }
+  const auditInput = {
+    requestID: "cleanup-audit-stale",
+    planID,
+    expectedVersion: version,
+    action: "audit" as const,
+  }
+  const pendingAudit = f.runtime.command(auditInput, "owner")
+  await sampleStarted
+  await f.runtime.command(
+    {
+      requestID: "cleanup-audit-race-integrate",
+      planID,
+      expectedVersion: version,
+      action: "integrated",
+      artifact,
+      targetBranch: "main",
+      reason: "Advance the cleanup plan while diagnostics are being sampled",
+    },
+    "owner",
+  )
+  release()
+  await expect(pendingAudit).rejects.toThrow(`Stale plan version; current ${version + 1}`)
+  expect(f.store.plan(planID)?.state).toBe("cleaning")
+  expect(
+    f.store.priorCommand("cleanup-audit-stale", { command: auditInput, caller: "owner" }),
+  ).toBeUndefined()
+  expect(f.store.effects(planID).some((effect) => effect.kind === "worktree-remove")).toBe(true)
+  expect(f.store.attempts(planID).some((item) => item.id === attempt.id)).toBe(true)
+})
+
+test("a successful cleanup diagnostic cannot bypass changed worker lineage", async () => {
+  const { f, planID, attempt, worker, artifact, workspace } = await cleanupBlockedFixture()
+  const idle = structuredClone(worker)
+  idle.busy = false
+  f.sessions.set(attempt.session_id, idle)
+  const version = f.store.plan(planID)!.version
+  const diagnostic = await f.runtime.command(
+    {
+      requestID: "cleanup-audit-clear-before-lineage-change",
+      planID,
+      expectedVersion: version,
+      action: "audit",
+    },
+    "observer",
+  )
+  expect(
+    (diagnostic as { cleanupDiagnostics: { workers: Array<{ firstBlocker: unknown }> } })
+      .cleanupDiagnostics.workers[0]?.firstBlocker,
+  ).toBeNull()
+  const changed = structuredClone(idle)
+  if (changed.turn) changed.turn.inputID = "different-after-diagnostic"
+  f.sessions.set(attempt.session_id, changed)
+  let removals = 0
+  const originalRemove = f.host.removeWorktree
+  f.host.removeWorktree = async (directory) => {
+    removals++
+    return originalRemove(directory)
+  }
+  await f.runtime.command(
+    {
+      requestID: "cleanup-retry-after-lineage-change",
+      planID,
+      expectedVersion: version,
+      action: "integrated",
+      artifact,
+      targetBranch: "main",
+      reason: "Retry cleanup using a fresh native observation",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("cleanup-blocked")
+  expect(f.store.plan(planID)?.reason).toContain("worker activity is not conclusively idle")
+  expect(existsSync(workspace)).toBe(true)
+  expect(removals).toBe(0)
 })
 
 test("explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance", async () => {

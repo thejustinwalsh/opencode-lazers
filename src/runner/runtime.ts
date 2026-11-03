@@ -102,6 +102,61 @@ type AdoptionSeed = {
   combinedArtifact: string
 }
 
+const cleanupObservationStages = [
+  "session-read",
+  "session-id",
+  "project-id",
+  "directory",
+  "agent",
+  "attempt-id",
+  "foreground",
+  "pending-input",
+  "observation-stability",
+  "pending-permissions",
+  "pending-forms",
+  "outcome",
+  "turn",
+  "background",
+  "assigned-input",
+  "turn-input",
+  "background-count",
+] as const
+type CleanupObservationStage = (typeof cleanupObservationStages)[number]
+type CleanupObservationCheck = {
+  stage: CleanupObservationStage
+  status: "passed" | "blocked" | "not-evaluated"
+  code?: string
+}
+type CleanupSessionObservation =
+  | { kind: "unavailable"; error: unknown }
+  | { kind: "absent" }
+  | { kind: "observed"; session: HostSession }
+type CleanupWorkerClassification = {
+  binding: {
+    projectID: string
+    planID: string
+    attemptID: string
+    sessionID: string
+    workspace: string
+    assignedMessageID: string
+  }
+  firstBlocker: { stage: CleanupObservationStage; code: string } | null
+  stages: CleanupObservationCheck[]
+}
+type CleanupAuditDiagnostics = {
+  diagnosticOnly: true
+  planID: string
+  planVersion: number
+  sampledAt: number
+  workspace: string
+  workers: Array<
+    CleanupWorkerClassification & {
+      planVersion: number
+      sampledAt: number
+    }
+  >
+}
+
 export function architectIdleWindowMs(value: unknown): number {
   if (value === undefined) return DEFAULT_ARCHITECT_IDLE_WINDOW_MS
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
@@ -457,6 +512,10 @@ export class TaskRuntime {
       command.action === "adopt-descendant"
         ? await this.prepareAdoption(old, command, caller, ownerSession)
         : undefined
+    // Native cleanup observations are sampled outside the command transaction,
+    // then published only if the recorded plan version is still current.
+    const cleanupDiagnostics =
+      command.action === "audit" ? await this.cleanupAuditDiagnostics(old) : undefined
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -676,7 +735,12 @@ export class TaskRuntime {
         return { status: "scheduled", version: this.store.plan(plan.id)!.version }
       }
       if (command.action === "audit")
-        return { status: "audited", ...this.store.audit(), version: plan.version }
+        return {
+          status: "audited",
+          ...this.store.audit(),
+          version: plan.version,
+          ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
+        }
       if (command.action === "reassign") {
         if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
           throw new Error("Reassignment needs an unarchived same-project owner")
@@ -2502,6 +2566,143 @@ export class TaskRuntime {
       attempt.message_id,
       inputID,
     )
+  }
+
+  private async observeCleanupSession(attempt: AttemptRow): Promise<CleanupSessionObservation> {
+    try {
+      const session = await this.host.session(attempt.session_id, { messages: true })
+      return session ? { kind: "observed", session } : { kind: "absent" }
+    } catch (error) {
+      return { kind: "unavailable", error }
+    }
+  }
+
+  private classifyCleanupWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    observation: CleanupSessionObservation,
+  ): CleanupWorkerClassification {
+    const binding = {
+      projectID: this.projectID,
+      planID: plan.id,
+      attemptID: attempt.id,
+      sessionID: attempt.session_id,
+      workspace: attempt.workspace,
+      assignedMessageID: attempt.message_id,
+    }
+    const stages: CleanupObservationCheck[] = []
+    const fail = (stage: CleanupObservationStage, code: string) => {
+      stages.push({ stage, status: "blocked", code })
+      const index = cleanupObservationStages.indexOf(stage)
+      for (const later of cleanupObservationStages.slice(index + 1))
+        stages.push({ stage: later, status: "not-evaluated" })
+      return { binding, firstBlocker: { stage, code }, stages }
+    }
+    const pass = (stage: CleanupObservationStage) => stages.push({ stage, status: "passed" })
+
+    if (observation.kind === "unavailable") return fail("session-read", "read-unavailable")
+    if (observation.kind === "absent") return fail("session-read", "session-absent")
+    pass("session-read")
+
+    const session = observation.session
+    if (session.id !== attempt.session_id) return fail("session-id", "session-id-mismatch")
+    pass("session-id")
+    if (session.projectID !== this.projectID) return fail("project-id", "project-id-mismatch")
+    pass("project-id")
+    if (session.directory !== attempt.workspace) return fail("directory", "directory-mismatch")
+    pass("directory")
+    if (session.agent !== "lazers-implementor") return fail("agent", "agent-mismatch")
+    pass("agent")
+    if (session.metadata?.lazersAttemptID !== attempt.id)
+      return fail("attempt-id", "attempt-id-mismatch")
+    pass("attempt-id")
+    if (session.busy !== false) return fail("foreground", "foreground-busy")
+    pass("foreground")
+    if (session.pendingInput === true) return fail("pending-input", "pending-input")
+    pass("pending-input")
+    if (session.observationUnstable) return fail("observation-stability", "observation-unstable")
+    pass("observation-stability")
+    if ((session.pendingPermissions ?? 0) !== 0)
+      return fail("pending-permissions", "pending-permissions")
+    pass("pending-permissions")
+    if ((session.pendingForms ?? 0) !== 0) return fail("pending-forms", "pending-forms")
+    pass("pending-forms")
+    if (!session.outcome) return fail("outcome", "outcome-absent")
+    pass("outcome")
+    if (!session.turn) return fail("turn", "turn-absent")
+    if (session.turn.state === "pending") return fail("turn", "turn-pending")
+    if (session.turn.state !== "completed" && session.turn.state !== "interrupted")
+      return fail("turn", "turn-unknown")
+    pass("turn")
+    if (!session.background) return fail("background", "background-absent")
+    if (session.background.state === "unknown") return fail("background", "background-unknown")
+    pass("background")
+    if (!this.matchesWorkerInput(attempt, session.background.inputID))
+      return fail("assigned-input", "assigned-input-mismatch")
+    pass("assigned-input")
+    if (session.turn.inputID !== session.background.inputID)
+      return fail("turn-input", "turn-input-mismatch")
+    pass("turn-input")
+    if (session.background.count > 0) return fail("background-count", "positive-background-count")
+    pass("background-count")
+    return { binding, firstBlocker: null, stages }
+  }
+
+  private async cleanupAuditDiagnostics(
+    plan: PlanRow,
+  ): Promise<CleanupAuditDiagnostics | undefined> {
+    if (plan.state !== "cleanup-blocked") return undefined
+    const effects = this.store.effects(plan.id)
+    let workspace: string | undefined
+    for (const effect of [...effects].reverse()) {
+      if (effect.kind !== "worktree-remove" || effect.state !== "uncertain") continue
+      try {
+        const payload = JSON.parse(effect.payload) as { workspace?: unknown }
+        if (typeof payload.workspace === "string") {
+          workspace = payload.workspace
+          break
+        }
+      } catch {
+        // Malformed cleanup receipts cannot establish a worker binding.
+      }
+    }
+    if (!workspace) return undefined
+    const source = effects.find((effect) => {
+      if (effect.kind !== "worktree" || effect.state !== "completed") return false
+      try {
+        return JSON.parse(effect.receipt ?? "{}").workspace === workspace
+      } catch {
+        return false
+      }
+    })
+    if (!source) return undefined
+    const attempts = this.store
+      .attempts(plan.id)
+      .filter((attempt) => attempt.workspace === workspace)
+    if (!attempts.length) return undefined
+
+    const sampledAt = this.now()
+    const workers: CleanupAuditDiagnostics["workers"] = []
+    for (const attempt of attempts) {
+      const observation = await this.observeCleanupSession(attempt)
+      const workerSampledAt = this.now()
+      const classification = this.classifyCleanupWorker(plan, attempt, observation)
+      workers.push({
+        ...classification,
+        planVersion: plan.version,
+        sampledAt: workerSampledAt,
+      })
+      // Cleanup stops at the first worker that is not conclusively quiescent.
+      if (classification.firstBlocker) break
+    }
+    return {
+      diagnosticOnly: true,
+      planID: plan.id,
+      planVersion: plan.version,
+      sampledAt,
+      workspace,
+      workers,
+    }
   }
 
   private backgroundBlockReason(
@@ -4426,24 +4627,12 @@ export class TaskRuntime {
     if (!attempts.length)
       throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
     for (const attempt of attempts) {
-      const session = await this.host.session(attempt.session_id, { messages: true })
-      if (
-        !session ||
-        session.id !== attempt.session_id ||
-        session.projectID !== this.projectID ||
-        session.directory !== workspace ||
-        session.agent !== "lazers-implementor" ||
-        session.metadata?.lazersAttemptID !== attempt.id ||
-        session.busy !== false ||
-        session.pendingInput === true ||
-        session.observationUnstable ||
-        (session.pendingPermissions ?? 0) !== 0 ||
-        (session.pendingForms ?? 0) !== 0 ||
-        !session.outcome ||
-        !["completed", "interrupted"].includes(session.turn?.state ?? "unknown") ||
-        this.backgroundBlockReason(session, attempt, true)
-      )
+      const observation = await this.observeCleanupSession(attempt)
+      const classification = this.classifyCleanupWorker(plan, attempt, observation)
+      if (classification.firstBlocker) {
+        if (observation.kind === "unavailable") throw observation.error
         throw new Error("Owned worktree worker activity is not conclusively idle; preserve it")
+      }
     }
   }
 
