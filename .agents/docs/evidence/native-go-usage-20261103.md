@@ -56,3 +56,18 @@ panel. Observed churn included SVG test selectors/geometry and strict TypeScript
 repairs; Root also found reactivity, literal-tooltip and zero-acceptance defects.
 No model-cost or quality ranking against Luna follows from these unequal tasks.
 The human selected OpenAI Luna Max for remaining UI work after the Go failure.
+
+## Returned product-code cross-check
+
+At Unix ms1793745728368, Root exercised LZ102's returned
+`projectTaskValuation` from commit266dd76 against these actual native session
+records and the exact stored native Go quote. Snapshot
+`05ec11c5-eab1-4af1-9260-9d944d650023` was retrieved2026-11-03T22:07:50.778Z.
+The two separately projected tasks returned$2.9278646 and$0.0771692; their sum
+was$3.0050338, matching the independent calculation above. Native-reported
+subscription cost remained0 in a separate output field. No source records,
+prices, task state or usage were mutated and no inference was launched.
+
+This proves the returned arithmetic on real usage/current native quotes. It
+does not prove common OpenRouter identity association, complete provider-call
+history, registered RPC integration or the final Models UI.

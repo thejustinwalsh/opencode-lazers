@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-03, after canonical Models integration and the Kimi chart return. Recheck live state.
+Updated 2026-11-03 17:47 ET, after the Go quota diagnosis and user-selected Luna UI replacement. Recheck live state.
 This is a current-state checkpoint; prior source history remains in Git and the
 linked evidence. The complete goal is active, not complete.
 
@@ -94,45 +94,66 @@ comparison product. Main acknowledged the full chain: observation ledger →
 current market valuation → comparison/frontier/estimate projection → functional
 UI → actual native acceptance. Main owns small-task decomposition and fan-out.
 
-- User now explicitly selects **OpenCode Go Kimi K3.1 Pro** for the Models UI.
-  Native route `opencode-go/kimi-k3.1-pro#high`, persona ui. This authorizes Go
-  inference; Architect stays OpenAI SolHigh and backend workers stay LunaMax.
-  Native catalog at Unix ms1793740393904 lists Go KimiK3.1Pro enabled with
-  low/high/max. LZ100 returned c00d163 on that exact route, persona ui: task
-  ccd244cc-e5e7-409b-b277-c1770b8c2e2a, planf2ef44ad-d60b-4ce2-ac93-66548f67a885,
-  attempt5fab7e91-64b0-420b-b2d7-52773b30e5d9, worker
-  ses_186dbc76c2a64b3cbd0ff0fcd4836ff9. It implements the chart/read contract,
-  not the complete panel/data product. Native completed image reads for approved,
-  narrow and wide PNGs precede its first write. ECharts6.1.0 is installed in its tree.
-- Approved original image, current narrow/wide PNGs and existing components were
-  relayed through Desktop. Native image reads are verified in message
-  msg_1a35a7b45001OiTjBS0j8O4Hrn (text + file results). Tera6.1High supplied a
-  concise component handoff. Chosen chart library:
-  Apache ECharts6.1.0, modular SVG renderer through a thin Solid component.
-  Updated implementation guide includes398be57's scoped observed pitfalls.
-  Runtime accepted LZ100, but source integration is held for review. Its focused
-  10 tests/133 assertions, quality and GUI build passed. Root's reproduced Solid
-  subscription and unsafe literal-tooltip findings were steered to the same Kimi
-  worker and corrected with actual SVG/tooltip regressions. A third source review
-  probe still accepts a graph point with acceptedTaskCount0 and numeric coordinates;
-  Root relayed that exact safeParse case through Desktop. Keep zero-accepted rows
-  visible, but repair the invalid successful-task coordinate representation. Native
-  reviewer ses_e5c88c335ffe0ANoZjJXpqWns6 is reviewing the return; do not duplicate it.
-- LZ102 current-index valuation is running on LunaMax: task
-  21f0234f-884e-4067-a388-b18799ee5312, plan41b4a86e-5981-4f9f-972e-3050c7762c54,
-  attempt2587c2c4-2bc7-44f1-b924-9e0d4bab6670, worker
-  ses_6748c6d9424e4c19b376fc28329d787f. LZ103 authored task classification is
-  running on LunaMax: task969c383d-a616-482e-a4af-7b4c7707f03c,
+- Remaining UI work uses the user's explicit **OpenAI Luna Max** choice,
+  `openai/gpt-6-luna#max`, persona ui. Do not retry Go Kimi or silently move
+  inference to OpenRouter. Architect remains OpenAI SolHigh.
+- LZ100's Go Kimi chart/contract artifact c00d163 is retained and runtime-accepted,
+  but not integrated as final UI. Task ccd244cc-e5e7-409b-b277-c1770b8c2e2a,
+  plan f2ef44ad-d60b-4ce2-ac93-66548f67a885. Approved/narrow/wide native image
+  reads preceded writing. ECharts6.1.0, modular SVG renderer, thin Solid component;
+  guide398be57 records scoped observed pitfalls. Initial tests passed, but review
+  found Solid subscription, HTML tooltip escaping and zero-acceptance coordinate
+  defects. Repairs need actual SVG/tooltip regressions, not parallel-list assertions.
+- LZ104 Go repair failed with native QuotaExceeded after 30 seconds. Main cancelled
+  it through the supported flow; source/history/worktree remain retained. Task
+  2968299d-7ca6-4b8e-8321-0cb753e7bf3d, plan53e856de-c2d9-4164-bfbb-ceb3852d630d.
+  Measured two-worker usage is10,849,121 processed tokens, mostly cache reads,
+  estimated native-Go allowance$3.0050338, consistent with the base Kimi five-hour
+  cap, not proof of monthly exhaustion. Account meter unavailable. See
+  [measured usage](evidence/native-go-usage-20261103.md).
+- LZ107 replaces that repair on the user-selected OpenAI LunaMax route, confirmed
+  by native session.get. Task f2b6989b-5058-49b0-868a-6d3113c88567,
+  plan23e0d5fe-dfcc-477c-9af5-cf139c05ddc9,
+  attempt61a7c76a-0fc6-4add-b3f6-51dd910ef302,
+  worker ses_7a0d93eed9f34b35a8addaf413c3ca94. Actively patching/tests at checkpoint.
+- LZ102 valuation returned266dd76 and is runtime-accepted; source review/integration
+  pending. Task21f0234f-884e-4067-a388-b18799ee5312,
+  plan41b4a86e-5981-4f9f-972e-3050c7762c54,
+  attempt2587c2c4-2bc7-44f1-b924-9e0d4bab6670. Root exercised the actual returned
+  valuation against real native usage/current Go quote: the independent$3.0050338
+  sum matches, with actual reported subscription charge0 kept separate. This is
+  arithmetic evidence, not final OpenRouter/RPC/UI acceptance.
+- LZ103 classification returned b16344d; Main is resolving three missing fixture
+  metadata failures before compatibility acceptance. Do not weaken required
+  classification/read metadata. Task969c383d-a616-482e-a4af-7b4c7707f03c,
   plan8f369d22-6ca9-494e-9a38-5f4670bedc5c,
-  attemptc9a6481f-83fb-4fe5-b79e-65059ca999f5, worker
-  ses_6da1ede0e4094aa0a468a2b1f051407d. These are independent worktrees.
+  attemptc9a6481f-83fb-4fe5-b79e-65059ca999f5,
+  worker ses_6da1ede0e4094aa0a468a2b1f051407d.
+- LZ105 exact Go Kimi/Qwen→OpenRouter identity returned6d0b705; review/integration
+  pending. Task08e4b37d-d9d6-43a7-9948-5a6a743220c4,
+  planc0b3a66b-9a57-4e7a-a1f0-a64ab629e24a,
+  attempte4df3b54-9e1f-4c9b-807d-51decfdadf44,
+  worker ses_fb6f7d1ea66f41c99f75e2f7dafc1cfe. Root reviewed exact alias changes
+  and independently passed13 identity/group tests204 assertions; no defect found.
+- LZ106 retained observation ledger queued after classification. Task
+  4824151b-0690-4d75-94ae-8a34ce6f51a6,
+  plan6ab01b37-b923-4145-9436-0a9292f62d36. Main owns decomposition of the
+  remaining comparison/frontier/estimates, functional wiring and native acceptance.
+- Local GPU operation recovered after a native renderer-only Reload; service
+  PID59460 and workers survived. All six switches stayed on. A real typed D1
+  question returned false correctly in225ms/65input tokens. This does not fix or
+  prove the recurring device-loss/cache-lease/reconnect cause. See
+  [failure and measured recovery](evidence/native-inference-recovery-20261103.md).
 - Preserve the human's native interview answer: Architect classifies tasks into
   authored task types informed by benchmark taxonomy, not silent persona/name
   inference. Native taxonomy researcher ses_e5cb502f9ffeiqpusOarVqVMg4 ran.
   Other answers: effort/cost per accepted logical task includes cohort failures
   and retries; no arbitrary acceptance threshold; zero-acceptance models remain
   visible without invented successful-task coordinates. Use observed spread,
-  with n=1 shown as one value, not predictive confidence.
+  with n=1 shown as one value, not predictive confidence. Empirical estimate
+  samples are accepted logical-task histories including their own retries;
+  label separately from the failure-inclusive aggregate. Root answered the
+  native interview on that basis.
 - Latest user price rule: revalue recorded usage using CURRENT pricing lookups,
   OpenRouter as the common market index. Old price snapshots are audit history,
   not today's graph basis. Keep actual charges/subscription accounting separate,
@@ -140,8 +161,8 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
 - Earlier live-source projection resolved direct Fable/Sonnet/Haiku/Luna to
   correct OpenRouter products across separate effort configurations. The reviewed
   backend is now merged, but registered native RPC, final UI and real-data visual
-  acceptance still need observation. Go Kimi/Qwen market association remains a
-  separate source-backed mapping gap, not an inference/admission restriction.
+  acceptance still need observation. Go Kimi/Qwen market association is addressed by returned LZ105 source,
+  pending integration; it is not an inference/admission restriction.
 
 ## Models visual and data defects — final acceptance open
 
