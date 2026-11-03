@@ -254,6 +254,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const count = nextCount(key)
               comparisonCounts.set(directory, (comparisonCounts.get(directory) ?? 0) + 1)
               record(directory, "lazers.models", "comparison", input, options.signal)
+              if (directory === DIRECTORY_A && count === 9)
+                throw new Error("comparison request unavailable")
               const projectID = directory === DIRECTORY_A ? PROJECT_A : PROJECT_B
               return comparison(projectID, count > 1 ? 2 : 1, input.cursor)
             },
@@ -270,6 +272,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               sourceSignals.set(directory, observed)
               if (directory === DIRECTORY_A && count === 1) return deferredA1.promise
               if (directory === DIRECTORY_A && count === 3) return deferredA3.promise
+              if (directory === DIRECTORY_A && count === 7)
+                throw new Error("source request unavailable")
               if (directory === DIRECTORY_B && count === 2) return deferredB2.promise
               return sourceEvidence()
             },
@@ -487,9 +491,41 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA.querySelector('[data-candidate-id="' + CANDIDATE_A + '"]') !== null &&
-        containerA.textContent?.includes("Source refresh is running in the background") === true,
+        containerA.textContent?.includes("Refreshing sources") === true,
     )
     await until(() => containerA.textContent?.includes("Objective A initial") === true)
+
+    const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
+    const filterDetails = topPaneA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-filter-details",
+    )!
+    const sourceDetails = topPaneA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-sources-details",
+    )!
+    expect(filterDetails.open).toBe(false)
+    expect(sourceDetails.open).toBe(false)
+    expect(filterDetails.querySelector("div")?.closest("details")).toBe(filterDetails)
+    expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
+      sourceDetails,
+    )
+    const comparePanel = topPaneA.querySelector<HTMLElement>("#lazers-models-compare-panel")!
+    const overview = comparePanel.querySelector<HTMLElement>(".lazers-models-overview")!
+    expect(sourceDetails.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(comparePanel.querySelector(".lazers-models-chart-empty")?.textContent).toContain(
+      "No sample points or frontier are shown",
+    )
+    expect(comparePanel.querySelectorAll(".lazers-models-chart-empty p")).toHaveLength(1)
+    const refreshWarning = topPaneA.querySelector<HTMLElement>(".lazers-models-refresh-note")!
+    expect(refreshWarning.textContent).toContain("Refreshing sources")
+    expect(refreshWarning.closest("details")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-project")?.getAttribute("aria-label")).toBe(
+      `Project · ${DIRECTORY_A}`,
+    )
+    const taskMenu = topPaneA.querySelector<HTMLButtonElement>(".lazers-models-task-select button")!
+    expect(taskMenu.getAttribute("aria-label")).toContain(TASK_A)
+    expect(taskMenu.textContent).toContain("Objective A initial")
 
     const rowsBeforeMore = [
       ...containerA.querySelectorAll<HTMLButtonElement>("[data-candidate-id]"),
@@ -497,6 +533,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(rowsBeforeMore).toHaveLength(2)
     expect(rowsBeforeMore[0]?.tabIndex).toBe(0)
     expect(rowsBeforeMore[1]?.tabIndex).toBe(-1)
+    expect(rowsBeforeMore[0]?.textContent).toContain("Effort Not specified")
+    expect(rowsBeforeMore[0]?.textContent).toContain("Available")
+    expect(rowsBeforeMore[0]?.textContent).not.toContain("No exact match")
+    expect(rowsBeforeMore[0]?.textContent).not.toContain("No matched benchmark")
+    expect(rowsBeforeMore[0]?.getAttribute("aria-label")).toContain("openai / gpt-6")
+    expect(rowsBeforeMore[0]?.getAttribute("aria-label")).not.toContain(TASK_A)
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "The selected candidate is not in the available evidence page.",
     )
@@ -531,6 +573,43 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ?.getAttribute("aria-pressed"),
     ).toBe("true")
     await until(() => containerA.textContent?.includes("10 tokens") === true)
+
+    const inspectorA = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
+    expect(inspectorA.querySelector(".lazers-models-estimate")?.textContent).toContain(
+      "Task estimate unavailable",
+    )
+    expect(inspectorA.querySelector(".lazers-models-task-summary")?.textContent).toContain("LZ-17")
+    const effortDetails = inspectorA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-task-effort-details",
+    )!
+    expect(effortDetails.open).toBe(false)
+    expect(effortDetails.querySelector(".lazers-models-category-list")?.closest("details")).toBe(
+      effortDetails,
+    )
+    effortDetails.open = true
+    expect(effortDetails.textContent).toContain("10 tokens · observed subtotal")
+    expect(effortDetails.textContent).toContain("native-session-usage")
+    expect(effortDetails.textContent).toContain("observed ")
+    expect(effortDetails.textContent).toContain("partial coverage")
+    expect(effortDetails.textContent).toContain("not read")
+    expect(effortDetails.textContent).toContain("attempt-route-1")
+    expect(effortDetails.textContent).toContain("Plan route · explicit")
+    expect(effortDetails.textContent).toContain("market-equivalent cost: Unknown")
+
+    const candidateEvidence = inspectorA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-evidence-details",
+    )!
+    expect(candidateEvidence.open).toBe(false)
+    expect(
+      candidateEvidence.querySelector(".lazers-models-evidence-summary")?.closest("details"),
+    ).toBe(candidateEvidence)
+    candidateEvidence.open = true
+    expect(candidateEvidence.textContent).toContain("Variants (coverage unknown): Not reported")
+    expect(candidateEvidence.textContent).toContain("Selected route variant: Not specified")
+    expect(candidateEvidence.textContent).toContain("External model correspondence: unresolved")
+    expect(candidateEvidence.textContent).toContain("Benchmark correspondence: unresolved")
+    candidateEvidence.open = false
+    effortDetails.open = false
 
     const rowsAfterMore = [...containerA.querySelectorAll<HTMLButtonElement>("[data-candidate-id]")]
     rowsAfterMore[2]?.focus()
@@ -641,7 +720,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     firstRow.click()
     expect(firstRow.getAttribute("aria-pressed")).toBe("true")
     const trajectoryButton = buttonWithText(
-      containerA.querySelector(".lazers-models-inspector-heading")!,
+      containerA.querySelector(".lazers-models-task-summary")!,
       "Open trajectory",
     )
     trajectoryButton?.click()
@@ -686,7 +765,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       cursor: "more-candidates",
     })
 
+    const topPaneBeforeRefresh = containerA.querySelector<HTMLElement>(".lazers-models-top")!
+    const inspectorBeforeRefresh = containerA.querySelector<HTMLElement>(
+      ".lazers-models-inspector",
+    )!
+    topPaneBeforeRefresh.scrollTop = 42
+    topPaneBeforeRefresh.dispatchEvent(new Event("scroll"))
+    inspectorBeforeRefresh.scrollTop = 55
+    inspectorBeforeRefresh.dispatchEvent(new Event("scroll"))
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.topScroll).toBe(42)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.inspectorScroll).toBe(55)
     buttonWithText(containerA, "Refresh")?.click()
+    topPaneBeforeRefresh.scrollTop = 0
+    inspectorBeforeRefresh.scrollTop = 0
     await until(
       () =>
         containerA
@@ -696,6 +787,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           true &&
         containerA.textContent?.includes("openai / route-2") === true,
     )
+    expect(topPaneBeforeRefresh.scrollTop).toBe(42)
+    expect(inspectorBeforeRefresh.scrollTop).toBe(55)
     expect(
       calls.some(
         (call) =>
@@ -761,6 +854,18 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(details.textContent).toContain("100 shown of 105 total; 5 omitted")
     expect(details.textContent).toContain("effort-100")
     expect(details.textContent).not.toContain("effort-101")
+    const effortDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-task-effort-details",
+    )!
+    const sourceDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-sources-details",
+    )!
+    const filterDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-filter-details",
+    )!
+    effortDetailsBeforeRefresh.open = true
+    sourceDetailsBeforeRefresh.open = true
+    filterDetailsBeforeRefresh.open = true
 
     buttonWithText(containerA, "Refresh")?.click()
     await until(() => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 3)
@@ -769,7 +874,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-candidate-list")?.textContent).toContain(
       "GPT-6 refreshed",
     )
-    expect(containerA.textContent).toContain("Source refresh is running in the background")
+    expect(containerA.textContent).toContain("Refreshing sources")
+    expect(
+      containerA
+        .querySelector(".lazers-models-inspector")
+        ?.querySelector<HTMLDetailsElement>(".lazers-models-evidence-details")?.open,
+    ).toBe(true)
+    expect(
+      containerA.querySelector(".lazers-models-task-effort-details")?.closest("details")?.open,
+    ).toBe(true)
+    expect(
+      containerA.querySelector<HTMLDetailsElement>(".lazers-models-sources-details")?.open,
+    ).toBe(true)
+    expect(
+      containerA.querySelector<HTMLDetailsElement>(".lazers-models-filter-details")?.open,
+    ).toBe(true)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
     mountA.setVisible(false)
     await until(() => hiddenSignal?.aborted === true)
     const beforeLateHiddenResult = comparisonCounts.get(DIRECTORY_A)
@@ -844,6 +965,73 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(() => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 5)
     await until(() => comparisonCounts.get(DIRECTORY_A) === comparisonsBeforeRetry + 2)
     expect(counts.get(`${DIRECTORY_A}:refreshSources`)).toBe(5)
+
+    await until(() => !buttonWithText(containerA, "Refresh")?.disabled)
+    const retainedEvidence = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-evidence-details",
+    )!
+    const retainedEffort = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-task-effort-details",
+    )!
+    const retainedSources = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-sources-details",
+    )!
+    const retainedFilters = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-filter-details",
+    )!
+    retainedEvidence.open = true
+    retainedEffort.open = true
+    retainedSources.open = true
+    retainedFilters.open = true
+    expect(
+      [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
+        warning.textContent?.includes("Comparison is stale"),
+      ),
+    ).toBe(false)
+    buttonWithText(containerA, "Refresh")?.click()
+    await until(() =>
+      [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
+        warning.textContent?.includes("Comparison is stale"),
+      ),
+    )
+    const staleWarning = [
+      ...containerA.querySelectorAll<HTMLElement>(".lazers-models-refresh-note"),
+    ].find((warning) => warning.textContent?.includes("Comparison is stale"))!
+    expect(staleWarning.closest("details")).toBeNull()
+    expect(retainedEvidence.open).toBe(true)
+    expect(retainedEffort.open).toBe(true)
+    expect(retainedSources.open).toBe(true)
+    expect(retainedFilters.open).toBe(true)
+    expect(retainedSources.textContent).toContain(
+      "Comparison read error: comparison request unavailable",
+    )
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
+
+    await until(() => !buttonWithText(containerA, "Refresh")?.disabled)
+    buttonWithText(containerA, "Refresh")?.click()
+    await until(() => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 7)
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-error")
+          ?.textContent?.includes("Source refresh failed") === true,
+    )
+    const failedRefreshWarning = containerA.querySelector<HTMLElement>(".lazers-models-error")!
+    expect(failedRefreshWarning.closest("details")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-evidence-details")).toBe(retainedEvidence)
+    expect(containerA.querySelector(".lazers-models-task-effort-details")).toBe(retainedEffort)
+    expect(containerA.querySelector(".lazers-models-sources-details")).toBe(retainedSources)
+    expect(containerA.querySelector(".lazers-models-filter-details")).toBe(retainedFilters)
+    expect(retainedEvidence.open).toBe(true)
+    expect(retainedEffort.open).toBe(true)
+    expect(retainedSources.open).toBe(true)
+    expect(retainedFilters.open).toBe(true)
+    expect(retainedSources.textContent).toContain(
+      "Source refresh error: source request unavailable",
+    )
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
 
     const containerB = browserDocument.createElement("main")
     browserDocument.body.append(containerB)
