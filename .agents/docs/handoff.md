@@ -63,11 +63,12 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
   Both Luna workers and Main are active again; cause remains unproven. See
   evidence/native-service-lifecycle-20261103.md. Do not equate cached local
   plugin load attempts with actual setup generations or assume WebGPU cause.
-- LZ98 e27bad48-ffe1-4d4b-8d2e-edaacd25511b is running the focused LZ95
-  three-file repair in attempt4f27d368-125d-4b0d-b599-3a13ab60d881, worker
-  ses_b64766a8bad0471f9019663fc318aa98. Neither active worker has pending
-  permissions/forms at Unix ms1793739081928. LZ99 same-attempt restart resume
-  is queued behind LZ72's retained runtime reservation.
+- LZ98 e27bad48-ffe1-4d4b-8d2e-edaacd25511b is accepted and integrated,
+  source055ab04 merged with the original preflight as0d212d5; quality formatting
+  f50d2b1. Native non-forced cleanup removed its owned worktree. Root independently
+  passed11 tests/106 assertions; Main passed21 tests/199 assertions plus quality.
+  Original LZ94/95 source/combined integration is recorded; their cleanup remains
+  held. LZ99 same-attempt restart resume is queued behind LZ72's reservation.
 - Root caught LZ97's draft hardcoding only Fable/Luna. Main attached/read back
   durable steering to the same worker; generic exact-ID rules are now present,
   with final source review pending. Commit6f30987 adds one concise generalization
@@ -87,6 +88,41 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
   219,062bytes/5,604lines, mostly effort provenance (130,231 serialized chars;
   trajectory2,477). Main is using small Code Mode projections and recorded a
   compact-default/progressive-detail repair for later. Keep full data accessible.
+
+## Current Models delivery priority
+
+User rejected the missing graph as delivery. LZ96 was only presentation repair;
+its acceptance allowed a chart-unavailable state. Do not count it as the Models
+comparison product. Main acknowledged the full chain: observation ledger →
+current market valuation → comparison/frontier/estimate projection → functional
+UI → actual native acceptance. Main owns small-task decomposition and fan-out.
+
+- User now explicitly selects **OpenCode Go Kimi K3.1 Pro** for the Models UI.
+  Native route `opencode-go/kimi-k3.1-pro#high`, persona ui. This authorizes Go
+  inference; Architect stays OpenAI SolHigh and backend workers stay LunaMax.
+  Native catalog at Unix ms1793740393904 lists Go KimiK3.1Pro enabled with
+  low/high/max; the UI worker is not yet observed dispatched at this checkpoint.
+- Approved original image, current narrow/wide PNGs and existing components were
+  relayed through Desktop. Main promises to verify the worker's actual image
+  reads. Tera6.1High supplied a concise component handoff. Chosen chart library:
+  Apache ECharts6.1.0, modular SVG renderer through a thin Solid component.
+  Updated implementation guide is7da721b; no chart implementation is claimed.
+- Preserve the human's native interview answer: Architect classifies tasks into
+  authored task types informed by benchmark taxonomy, not silent persona/name
+  inference. Native taxonomy researcher ses_e5cb502f9ffeiqpusOarVqVMg4 ran.
+  Other answers: effort/cost per accepted logical task includes cohort failures
+  and retries; no arbitrary acceptance threshold; zero-acceptance models remain
+  visible without invented successful-task coordinates. Use observed spread,
+  with n=1 shown as one value, not predictive confidence.
+- Latest user price rule: revalue recorded usage using CURRENT pricing lookups,
+  OpenRouter as the common market index. Old price snapshots are audit history,
+  not today's graph basis. Keep actual charges/subscription accounting separate,
+  and retain source/date and exact source quote/average semantics honestly.
+- LZ97 draft passed65 Models tests/923 assertions and quality before its latest
+  small test edits. Root's real read-only project-source probe at Unix
+  ms1793741278523 now yields511 groups. Direct Fable/Sonnet/Haiku/Luna all match
+  the correct OpenRouter products across separate effort configurations. This
+  is not yet registered live RPC or final UI acceptance. Finish source review.
 
 ## Models visual and data defects — final acceptance open
 
@@ -175,3 +211,13 @@ Authorities: [roadmap](../../design/roadmap.md), [execution](roadmap-execution.m
 - Concise progressive skills/agents; usable public package, clean install/upgrade,
   backup/restore and cross-machine checks, one plugin/no custom daemon. No launch
   announcement. Finish requirement audit and improvement proposal from observations.
+
+## Follow-up source audit finding
+
+The newly integrated offline preflight duplicates an artifact's full Git tree
+object manifest in its supplied inspection and compares it on re-read, despite
+already checking artifact/HEAD and ordinary clean Git state. Review/remove that
+redundant per-file manifest ceremony under the user's no-evidence-hashing rule;
+retain normal commit identity, operation IDs and real test/probe receipts. This
+is not a Models dependency. Do not confuse existing effect-ID derivation with
+hashing repository files as correctness evidence.
