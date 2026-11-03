@@ -5,7 +5,7 @@ import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/inte
 import { createServer } from "vite"
 import { fileURLToPath } from "node:url"
 
-test("shipped GUI setup registers both observation panels exactly once", async () => {
+test("shipped GUI setup registers the observation and comparison panels exactly once", async () => {
   const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
   const inferenceRuntimeModule = "\0lazers-test-unused-inference-runtime"
   let replacedInferenceRuntime = false
@@ -60,6 +60,7 @@ test("shipped GUI setup registers both observation panels exactly once", async (
     try {
       expect(Object.keys(gui.stores)).toContain("radarView")
       expect(Object.keys(gui.stores)).toContain("trajectoryView")
+      expect(Object.keys(gui.stores)).toContain("modelsView")
 
       const panels = registrations
         .filter((entry) => entry.token === Panel)
@@ -71,9 +72,15 @@ test("shipped GUI setup registers both observation panels exactly once", async (
               render: unknown
             },
         )
-      expect(panels.map((panel) => panel.id).toSorted()).toEqual(["radar", "tasks", "trajectory"])
+      expect(panels.map((panel) => panel.id).toSorted()).toEqual([
+        "models",
+        "radar",
+        "tasks",
+        "trajectory",
+      ])
       for (const [id, title] of [
         ["radar", "Radar"],
+        ["models", "Models"],
         ["trajectory", "Trajectory"],
       ] as const) {
         const panel = panels.find((item) => item.id === id)!
@@ -82,18 +89,21 @@ test("shipped GUI setup registers both observation panels exactly once", async (
         expect(typeof panel.render).toBe("function")
       }
 
-      for (const id of ["radar", "trajectory"]) {
+      for (const id of ["radar", "models", "trajectory"]) {
         registrations
           .filter(
             (entry) =>
               (entry.token === Command || entry.token === MenuItem) &&
-              (entry.value as { id?: string }).id === `${id}.open`,
+              ((entry.value as { id?: string }).id === `${id}.open` ||
+                (id === "models" && (entry.value as { id?: string }).id === "lz-models")),
           )
           .forEach((entry) => (entry.value as { run: () => void }).run())
       }
       expect(opened).toEqual([
         [`lazers:radar`, session, { tab: "select" }],
         [`lazers:radar`, session, { tab: "select" }],
+        [`lazers:models`, session, { tab: "select" }],
+        [`lazers:models`, session, { tab: "select" }],
         [`lazers:trajectory`, session, { tab: "select" }],
         [`lazers:trajectory`, session, { tab: "select" }],
       ])
