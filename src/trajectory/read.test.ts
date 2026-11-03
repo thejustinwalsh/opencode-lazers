@@ -10,6 +10,53 @@ function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
 }
 
+function configureFailedAttemptRoute(
+  fixture: ReturnType<typeof makeFixture>,
+  modelID: string,
+  observedModelID = modelID,
+) {
+  const nativeModel = { providerID: "openai", id: modelID, variant: "high" }
+  const observedModel = { ...nativeModel, id: observedModelID }
+  const plan = fixture.store.plan(fixture.receipt.planID)!
+  const body = JSON.parse(plan.body) as Record<string, unknown>
+  body.workerModel = nativeModel
+  fixture.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET body=?,model=? WHERE id=?").run(
+      JSON.stringify(body),
+      JSON.stringify(nativeModel),
+      fixture.receipt.planID,
+    )
+    db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
+      JSON.stringify({ model: nativeModel, repairAttempt: false }),
+      firstAttemptID,
+    )
+  })
+
+  const session = fixture.sessions.get("ses-failed")!
+  session.model = observedModel
+  session.messages = [
+    {
+      id: "msg-long-route",
+      type: "assistant",
+      model: observedModel,
+      time: { created: 1_300 },
+      content: [],
+    },
+  ] as never
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  recorder.recordNativeEvent({
+    id: "evt-long-route-step",
+    type: "session.step.started",
+    created: 1_300,
+    data: {
+      sessionID: "ses-failed",
+      assistantMessageID: "msg-long-route",
+      agent: "lazers-implementor",
+      model: observedModel,
+    },
+  })
+}
+
 test("trajectory specifications preserve legacy policy references and omit absent ones", async () => {
   for (const withoutPolicy of [false, true]) {
     const fixture = makeFixture({ withoutPolicy })
@@ -391,6 +438,105 @@ test("versioned task effort accounting survives task, attempt, paged, and read-o
     expect(reopenedReport.effort.taskEffortBasis).toEqual(basis)
   } finally {
     reopened?.close()
+    fixture.close()
+  }
+})
+
+test("trajectory route accounting compares identical 121-character plan, policy, session, and step IDs losslessly", async () => {
+  const fixture = makeFixture()
+  const modelID = "m".repeat(121)
+  try {
+    configureFailedAttemptRoute(fixture, modelID)
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const basis = report.effort.taskEffortBasis
+    const assessments = basis.routes.assessments.filter(
+      (assessment) => assessment.attemptID === firstAttemptID,
+    )
+    expect(assessments.map(({ scope, status }) => [scope, status])).toEqual([
+      ["session", "match"],
+      ["step", "match"],
+    ])
+    expect(basis.routes.assignments[0]?.planSelection.route?.modelID).toBe(
+      `${"m".repeat(120)}…[truncated]`,
+    )
+    expect(JSON.stringify(basis)).not.toContain(modelID)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("trajectory route accounting distinguishes 121-character IDs with the same retained prefix", async () => {
+  const fixture = makeFixture()
+  const prefix = "m".repeat(120)
+  const plannedID = `${prefix}a`
+  const observedID = `${prefix}b`
+  try {
+    configureFailedAttemptRoute(fixture, plannedID, observedID)
+
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const basis = report.effort.taskEffortBasis
+    const assessments = basis.routes.assessments.filter(
+      (assessment) => assessment.attemptID === firstAttemptID,
+    )
+    expect(
+      assessments.map(({ scope, status, frozenRouteStatus }) => [scope, status, frozenRouteStatus]),
+    ).toEqual([
+      ["session", "mismatch", "mismatch"],
+      ["step", "mismatch", "mismatch"],
+    ])
+    expect(
+      basis.routes.mismatches
+        .filter((assessment) => assessment.attemptID === firstAttemptID)
+        .map(({ scope, status, frozenRouteStatus }) => [scope, status, frozenRouteStatus]),
+    ).toEqual([
+      ["session", "mismatch", "mismatch"],
+      ["step", "mismatch", "mismatch"],
+    ])
+    expect(JSON.stringify(basis)).not.toContain(plannedID)
+    expect(JSON.stringify(basis)).not.toContain(observedID)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("trajectory accounting keeps long native context identities exact and marks truncated progress identities unavailable", async () => {
+  const fixture = makeFixture()
+  const modelID = "m".repeat(401)
+  try {
+    configureFailedAttemptRoute(fixture, modelID)
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const basis = report.effort.taskEffortBasis
+    const assessments = basis.routes.assessments.filter(
+      (assessment) => assessment.attemptID === firstAttemptID,
+    )
+    expect(assessments.map(({ scope, status }) => [scope, status])).toEqual([
+      ["session", "match"],
+      ["step", "match"],
+      ["step", "unavailable"],
+    ])
+    expect(
+      basis.routes.mismatches.some((assessment) => assessment.attemptID === firstAttemptID),
+    ).toBe(false)
+    expect(JSON.stringify(basis)).not.toContain(modelID)
+  } finally {
     fixture.close()
   }
 })

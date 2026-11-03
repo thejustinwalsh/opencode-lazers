@@ -467,3 +467,67 @@ test("keeps frozen assignment separate from mixed observed routes and exposes un
   expect(report.cost.architectReviewIntegrationOverheadUSD.status).toBe("unallocated")
   expect(report.quality).toMatchObject({ status: "not-recorded", value: null })
 })
+
+test("route accounting compares exact identities behind bounded displays and leaves lost identities unavailable", () => {
+  const prefix = "m".repeat(120)
+  const displayedID = `${prefix}…[truncated]`
+  const withIdentity = (suffix: string): AccountingRoute => ({
+    providerID: "openai",
+    modelID: displayedID,
+    variant: "high",
+    identity: { providerID: "openai", modelID: `${prefix}${suffix}`, variant: "high" },
+  })
+  const routeA = withIdentity("a")
+  const routeB = withIdentity("b")
+
+  const identical = project([
+    attempt({
+      planRoute: routeA,
+      frozenRoute: routeA,
+      currentRoute: routeA,
+      stepRoutes: [{ messageID: "message-a", route: routeA, observedAt: 100 }],
+    }),
+  ])
+  expect(identical.routes.assessments.map(({ scope, status }) => [scope, status])).toEqual([
+    ["session", "match"],
+    ["step", "match"],
+  ])
+  expect(identical.routes.assignments[0]?.planSelection.route).toEqual({
+    providerID: "openai",
+    modelID: displayedID,
+    variant: "high",
+  })
+
+  const distinct = project([
+    attempt({
+      planRoute: routeA,
+      frozenRoute: routeA,
+      currentRoute: routeB,
+      stepRoutes: [{ messageID: "message-b", route: routeB, observedAt: 100 }],
+    }),
+  ])
+  expect(distinct.routes.assessments.map(({ scope, status }) => [scope, status])).toEqual([
+    ["session", "mismatch"],
+    ["step", "mismatch"],
+  ])
+
+  const lost = { ...routeA, identity: null }
+  const unavailable = project([
+    attempt({
+      planRoute: routeA,
+      frozenRoute: routeA,
+      currentRoute: lost,
+      stepRoutes: [{ messageID: "message-lost", route: lost, observedAt: 100 }],
+    }),
+  ])
+  expect(
+    unavailable.routes.assessments.map(({ status, frozenRouteStatus }) => [
+      status,
+      frozenRouteStatus,
+    ]),
+  ).toEqual([
+    ["unavailable", "unavailable"],
+    ["unavailable", "unavailable"],
+  ])
+  expect(unavailable.routes.mismatches).toEqual([])
+})

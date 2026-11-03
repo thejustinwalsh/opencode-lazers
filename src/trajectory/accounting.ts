@@ -2,6 +2,12 @@ export type AccountingRoute = {
   providerID: string
   modelID: string
   variant: string | null
+  /** Exact private comparison identity; null means the source identity was lost. */
+  identity?: {
+    providerID: string
+    modelID: string
+    variant: string | null
+  } | null
 }
 
 export type AccountingRouteSource = {
@@ -151,19 +157,41 @@ function route(value: unknown): AccountingRoute | null {
   const providerID = text(data?.providerID)
   const modelID = text(data?.modelID) ?? text(data?.id)
   if (!providerID || !modelID) return null
+  const variant = text(data?.variant)
+  const identityLost = [providerID, modelID, variant].some(
+    (part) => part?.endsWith("…[truncated]") || part?.includes("[REDACTED]"),
+  )
   return {
     providerID,
     modelID,
-    variant: text(data?.variant),
+    variant,
+    identity: identityLost ? null : { providerID, modelID, variant },
   }
 }
 
+function exactRouteIdentity(value: AccountingRoute) {
+  if (Object.hasOwn(value, "identity")) return value.identity ?? null
+  return { providerID: value.providerID, modelID: value.modelID, variant: value.variant }
+}
+
+let unavailableRouteSequence = 0
+const unavailableRouteKeys = new WeakMap<AccountingRoute, string>()
+
 function routeKey(value: AccountingRoute) {
-  return `${value.providerID}\u0000${value.modelID}\u0000${value.variant ?? ""}`
+  const identity = exactRouteIdentity(value)
+  if (identity) return JSON.stringify([identity.providerID, identity.modelID, identity.variant])
+  let key = unavailableRouteKeys.get(value)
+  if (!key) {
+    key = `unavailable:${++unavailableRouteSequence}`
+    unavailableRouteKeys.set(value, key)
+  }
+  return key
 }
 
 function routeView(value: AccountingRoute | null) {
-  return value ? { ...value } : null
+  return value
+    ? { providerID: value.providerID, modelID: value.modelID, variant: value.variant }
+    : null
 }
 
 function emptyCategory(basis: UsageBasis, status: UsageStatus): CategoryMeasure {
@@ -492,10 +520,18 @@ function aggregateCategory(category: UsageCategory, sessions: ReturnType<typeof 
 
 function routeComparison(expected: AccountingRoute | null, observed: AccountingRoute) {
   if (!expected) return "unavailable" as const
-  if (expected.providerID !== observed.providerID || expected.modelID !== observed.modelID)
+  const expectedIdentity = exactRouteIdentity(expected)
+  const observedIdentity = exactRouteIdentity(observed)
+  if (!expectedIdentity || !observedIdentity) return "unavailable" as const
+  if (
+    expectedIdentity.providerID !== observedIdentity.providerID ||
+    expectedIdentity.modelID !== observedIdentity.modelID
+  )
     return "mismatch" as const
-  if (expected.variant !== null && observed.variant === null) return "unavailable" as const
-  if (expected.variant !== null && expected.variant !== observed.variant) return "mismatch" as const
+  if (expectedIdentity.variant !== null && observedIdentity.variant === null)
+    return "unavailable" as const
+  if (expectedIdentity.variant !== null && expectedIdentity.variant !== observedIdentity.variant)
+    return "mismatch" as const
   return "match" as const
 }
 
@@ -914,8 +950,8 @@ export function projectTaskEffortBasis(input: {
                   : "mismatch",
         },
       })),
-      distinctRequestedRoutes,
-      distinctFrozenRoutes,
+      distinctRequestedRoutes: distinctRequestedRoutes.map(routeView),
+      distinctFrozenRoutes: distinctFrozenRoutes.map(routeView),
       observedSessionRoutes: observedSessionRoutes.map((item) => ({
         ...item,
         route: routeView(item.route),
