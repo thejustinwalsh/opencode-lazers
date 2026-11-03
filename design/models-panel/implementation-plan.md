@@ -15,6 +15,33 @@ Use `ctx.ui` menus, buttons, icon buttons and text inputs, and the optional clos
 
 [Models RPC](../../src/models/contract.ts) already exposes saved settings/configure, advisory native catalog, source evidence and refresh. [Source schemas](../../src/models/source-schema.ts) preserve source-specific records and freshness; [trajectory accounting](../../src/trajectory/accounting.ts) and [history](../../src/trajectory/history.ts) provide foundations for task effort and lineage. These are foundations, not an existing comparison or estimate API: add a bounded read projection where required rather than deriving authoritative cohorts in the view. Resolve exact route/source identity explicitly; unavailable mappings, prices and attribution stay unknown. Preserve existing revision-conflict and uncertain-write handling when the secondary editor is connected.
 
+## Chart implementation
+
+Use Apache ECharts 6.1.0 through a small Solid component, with modular imports
+and `SVGRenderer`. Scatter points, a separate line series for the actual frontier,
+grid/axes, labels and tooltips cover this design. Keep point, row and inspector
+selection connected. Let the chart manage coordinates and label layout; keep
+cohort, valuation and frontier decisions in the data projection.
+
+Map native semantic colors and the host font into chart options, including live
+appearance changes. Resize with the panel and dispose chart/listeners on unmount.
+Preserve a complete keyboard-accessible table alternative. Render actual valid
+observations even for one sample; the concept's smooth curve is not a function
+to fit or extrapolate.
+
+Current comparisons revalue recorded usage using the current shared pricing
+lookup, with OpenRouter as the market index. Retain retrieval time and source
+semantics. Historical price snapshots are audit records, not the valuation basis
+for today's graph. Actual charges remain separate from market-equivalent cost.
+
+Checked 2026-11-03 against official [modular import guidance](https://echarts.apache.org/handbook/en/basics/import/)
+and [SVG renderer guidance](https://echarts.apache.org/handbook/en/best-practices/canvas-vs-svg/).
+Published npm metadata lists ECharts6.1.0 with `zrender`/`tslib` dependencies.
+Unovis1.7.1 also supplies a Solid adapter compatible with this project's Solid1.9,
+but its core installation includes mapping and 3D dependencies. Observable Plot
+offers SVG marks and pointer interactions; ECharts is the selected fit for the
+linked comparison interactions and label management.
+
 ## Increment and verification boundaries
 
 Reuse the integrated source snapshots and accounting. Architect can specify small remaining increments: resolve exact route/source identity and coverage; project comparable historical cohorts; expose a task estimate with assumptions and insufficient-data states; then connect the comparison panel to those reads. Specify assignment editing and live per-attempt resolution separately against the existing mapping contract. Each increment should expose genuine partial data and have its own acceptance boundary.
