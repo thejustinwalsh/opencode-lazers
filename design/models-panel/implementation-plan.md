@@ -7,7 +7,7 @@ Use [models-approved.png](models-approved.png) for composition and [DESIGN.md](.
 - Keep a continuous native surface with a compact Models header, project scope, refresh, Compare/Assignments tabs, and wrapping persona, explicit task-class and cohort/time controls. Show the accounting basis near the comparison. Use actual available filter values; distinguish loading, empty, partial, stale and failed reads.
 - Above a horizontal, resizable divider, put the token-versus-comparable-cost chart above candidate rows at 330–450 CSS px; at wide widths put chart and table side by side. Rows remain a complete keyboard-accessible alternative to the chart, including unplottable candidates and unknown values. Align selection between row and point with a non-color cue, and retain accepted/terminal counts and coverage. Use tabular numerals and readable host-sized text.
 - Below the divider, the selected route inspector leads with model/provider/effort and the selected task's projected market-equivalent range when supported. Show its cohort size, coverage and uncertainty; otherwise show unavailable. Link contributing trajectories, keep evidence, source dates and assumptions collapsed, and offer a compact assignment action. The panes scroll independently and preserve selection, split and scroll across refresh. Keep the routing-not-active warning visible for assignment until dispatch integration actually exists.
-- Use attributable cohort tokens and current market-equivalent cost divided by accepted logical tasks, including the cohort's failed work and retries in the numerator. Show acceptance counts and measurement coverage beside each exact configuration. There is no arbitrary acceptance-rate or sample-size threshold. Zero-acceptance configurations stay visible without a successful-task efficiency coordinate. A frontier connects only actual nondominated points with compatible, supported accounting bases; do not extrapolate or substitute benchmark scores for our outcomes. Keep actual reported costs and subscription accounting separate.
+- Use attributable cohort tokens and current market-equivalent cost from the selected price source divided by accepted logical tasks, including the cohort's failed work and retries in the numerator. Show acceptance counts and measurement coverage beside each exact configuration. There is no arbitrary acceptance-rate or sample-size threshold. Zero-acceptance configurations stay visible without a successful-task efficiency coordinate. A frontier connects only actual nondominated points with compatible, supported accounting bases; do not extrapolate or substitute benchmark scores for our outcomes. Raw provider accounting is optional historical diagnostic evidence, not a product cost or a prominent subscription-accounting view.
 
 ## Existing building blocks
 
@@ -33,17 +33,39 @@ Read reactive chart inputs before a nonreactive mount guard so later data-only
 changes stay subscribed. Verify updated SVG geometry and selection, not only
 the parallel textual controls. Keep model labels literal in HTML tooltips.
 
-Current comparisons revalue recorded usage using the current shared pricing
-lookup, with OpenRouter as the market index. Retain retrieval time and source
+Product cost records, comparisons and estimates revalue recorded usage using the
+ordered price-source setting, independent of execution provider or subscription.
+Initially offer OpenRouter and OpenCode, in that default order, reusing configured
+OpenCode access. Skip unavailable sources; if none supplies an applicable price,
+show unavailable. OpenCode fallback uses published catalog rates, not recorded
+session charges. Preserve missing rates and explicitly published zeros correctly.
+Retain the chosen source, retrieval time and source
 semantics. Historical price snapshots are audit records, not the valuation basis
 for today's graph. Actual charges remain separate from market-equivalent cost.
+
+An applicable [published OpenRouter caching rule](https://openrouter.ai/docs/guides/best-practices/prompt-caching#moonshot-ai)
+may establish a zero cache-write rate with applicability and retrieval provenance;
+an omitted API field alone is not zero. Model-specific published quotes take
+precedence over generic multipliers. Select native catalog rates only through the
+configured OpenCode source; do not mix providers silently or average endpoint
+quotes without a defined basis.
+
+OpenCode's native `model.list` exposes `Model.Info.cost` tiers in USD per million
+tokens: input, output, cache read/write, with optional context thresholds.
+The pinned [session cost implementation](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session/usage.ts)
+prefers endpoint-reported `Usage.cost`, otherwise calculates from catalog rates,
+and returns zero when no rate exists. Use the catalog for the OpenCode price
+source, not that session total. Observed OpenAI subscription catalog entries have
+empty cost arrays; preserve that missing-data state.
 
 Refreshing the common price index must revalue the same historical usage and
 task estimates without changing that usage. Preserve the source's exact quote
 or average semantics; catalog quotes are not an observed endpoint average.
-The first estimate range is empirical observed spread from its stated cohort,
-not predictive confidence. One observation is one value with `n = 1`, not an
-invented interval.
+The estimate range is empirical observed spread across accepted logical-task
+histories, each including its own retries, not predictive confidence. Label this
+sample basis separately from the failure-inclusive aggregate above; do not assign
+failed-only task effort arbitrarily to accepted samples. One observation is one
+value with `n = 1`, not an invented interval.
 
 ## Task-type cohorts
 

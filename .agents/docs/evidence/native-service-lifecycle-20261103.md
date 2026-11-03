@@ -63,3 +63,32 @@ immutable release/upgrade boundary may reduce development reload exposure;
 no packaging or lifecycle change is justified from these counts alone.
 
 No inference setting was changed and no profiler or service restart was armed.
+
+## Third interruption — 22:56 UTC
+
+At Unix ms1793746618856, the registration changed59460→95968 on the same49374
+endpoint. Root had issued no service stop, restart, location reload or renderer
+reload in this interval. Desktop main.log records service missing at
+2026-11-03T22:56:37.097Z and ready at22:56:42.886Z. The prior service's cause
+remains unproven: no matching fatal/shutdown/unresponsive entry or macOS
+OpenCode/Bun diagnostic report was found in this bounded inspection.
+
+Both native implementors disappeared from the new active-session inventory;
+Main Architect and a native review session remained active. Classification
+repair session `ses_4e70382928c9434d81f7ee1ca4f14dc5` retained three dirty fixture
+changes in attempt `3cd4e4c5-113d-4a46-a824-75cf38c256b5`. UI repair
+`ses_7a0d93eed9f34b35a8addaf413c3ca94` retained its four dirty files in attempt
+`61a7c76a-0fc6-4add-b3f6-51dd910ef302`. A previously passing targeted UI run
+(11 tests) did not establish final quality: typecheck then reported25 test-harness
+errors, the worker patched them and its next shell outcome was not retained.
+Classification's full-suite shell was also interrupted; no pass is inferred.
+
+A subsequent read-only process inventory showed service95968 alive and no
+process matching `bun test`, `bun check`, `bun run build:gui` or
+`models-chart-dom-test`. This is narrow process evidence, not universal old
+background-resource idleness. Main received the interruption and retained-work
+facts through Desktop and began supported cancellation/reconciliation. Identity
+source integration61ef0b3 is on main; temporal proximity does not prove source
+watching caused the service loss. The startup reconstruction efficiency repair
+was documented but not found as a dedicated task; Root corrected its earlier
+assumption to Main so actual tasking can be deduplicated and queued.

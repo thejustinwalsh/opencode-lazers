@@ -96,9 +96,14 @@ are illustrative; derive actual points and the frontier from compatible records.
 Help choose a capable model that completes the intended work efficiently, using
 our research, live catalogs/prices/benchmarks and historical task outcomes. The
 primary view is **comparison for a task class/persona**, not a config editor.
-Use live APIs wherever the relevant data is available. When configured,
-OpenRouter is the default fallback for prices, benchmark evidence and related
-model metadata. Reuse its native configured connection; retain dated source
+Use live APIs wherever the relevant data is available. Product costs, recorded
+market valuations, estimates and comparisons use an ordered price-source setting,
+independent of execution provider or subscription. Initially offer OpenRouter and
+OpenCode, defaulting to OpenRouter then OpenCode. Reuse access configured in
+OpenCode; skip unavailable sources and show unavailable when none provides an
+applicable price. Identify the chosen source and rates. A session's reported
+charge is not a market-price source, and absent prices are not zero. OpenRouter
+also supplies benchmark evidence and related model metadata. Retain dated source
 observations and refresh without blocking the panel. Native OpenCode remains
 the authority for available execution routes; the data source does not choose
 or restrict the execution provider.
@@ -112,7 +117,7 @@ completed logical task, with acceptance quality alongside. Cost per accepted
 result versus accepted tasks/hour is a useful alternate. Compare compatible
 cohorts/accounting bases only; include failed/repaired work in outcome costs.
 Keep observed results, projections and external benchmarks distinct. Show sample
-counts, missing coverage, dated OpenRouter fallback market prices and the basis
+counts, missing coverage, dated OpenRouter market prices and the basis
 of each task estimate. Unknown is not zero; subscription usage is not free API
 cost. No invented task-fit score, universal ranking or causal claim from an
 unmatched small sample. An empty chart explains what data is missing and still

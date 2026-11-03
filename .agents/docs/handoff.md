@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-03 17:47 ET, after the Go quota diagnosis and user-selected Luna UI replacement. Recheck live state.
+Updated 2026-11-03 18:12 ET, after same-session recovery and pricing-source refinement. Recheck live state.
 This is a current-state checkpoint; prior source history remains in Git and the
 linked evidence. The complete goal is active, not complete.
 
@@ -30,7 +30,10 @@ and Code Mode, no worker subagents. No arbitrary budgets or provider vetoes.
 
 ## Live state and immediate work
 
-Service PID59460, `http://127.0.0.1:49374`. Native tools and commands use `lz-*`.
+Service PID95968, `http://127.0.0.1:49374`. Prior59460 disappeared unexpectedly
+at17:56 ET; Desktop restarted the missing service automatically. Root issued no
+restart/reload. Native recovery resumed the same three worker sessions/attempts; confirmed live
+at Unix ms1793747493525. Preserve their retained source/history. No crash cause is proven. Native tools and commands use `lz-*`.
 Offline atomic rename9736261 and actual Code Mode/panel smoke9fff29b are DONE.
 No legacy aliases; agent/package/storage identities and historical data remain.
 Main has normal Architect tools. Desktop is available at this checkpoint.
@@ -115,22 +118,32 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   by native session.get. Task f2b6989b-5058-49b0-868a-6d3113c88567,
   plan23e0d5fe-dfcc-477c-9af5-cf139c05ddc9,
   attempt61a7c76a-0fc6-4add-b3f6-51dd910ef302,
-  worker ses_7a0d93eed9f34b35a8addaf413c3ca94. Actively patching/tests at checkpoint.
-- LZ102 valuation returned266dd76 and is runtime-accepted; source review/integration
-  pending. Task21f0234f-884e-4067-a388-b18799ee5312,
+  worker ses_7a0d93eed9f34b35a8addaf413c3ca94. Interrupted by service loss with four dirty files retained. Supported
+  cancellation/resume retained its session and attempt. It returned3c6cfb9 after
+  correcting both remaining DOM type errors:11 targeted tests/201assertions,
+  formatter/lint/typecheck/diff and GUI build passed. Source review/integration
+  still pending; this is component repair, not full panel delivery.
+- LZ102 valuation returned266dd76 and is runtime-accepted; source review found a route-allocation blocker. Task21f0234f-884e-4067-a388-b18799ee5312,
   plan41b4a86e-5981-4f9f-972e-3050c7762c54,
   attempt2587c2c4-2bc7-44f1-b924-9e0d4bab6670. Root exercised the actual returned
   valuation against real native usage/current Go quote: the independent$3.0050338
   sum matches, with actual reported subscription charge0 kept separate. This is
-  arithmetic evidence, not final OpenRouter/RPC/UI acceptance.
+  arithmetic evidence, not final OpenRouter/RPC/UI acceptance. Independent reviewer
+  reproduced ignored retained progress routes: mixed/progress-only usage can be
+  priced as the current session route. LZ109 repair119ad3bb-4808-4abf-8137-c5b03fa25fd1,
+  plane931108e-a9f1-48f3-b514-27093e2e514c, attemptd6ab75c2-6029-4d85-92d9-ef3625a1a060
+  was interrupted before doing tool work and cancelled; preserve history and resume.
 - LZ103 classification returned b16344d; Main is resolving three missing fixture
   metadata failures before compatibility acceptance. Do not weaken required
   classification/read metadata. Task969c383d-a616-482e-a4af-7b4c7707f03c,
   plan8f369d22-6ca9-494e-9a38-5f4670bedc5c,
   attemptc9a6481f-83fb-4fe5-b79e-65059ca999f5,
-  worker ses_6da1ede0e4094aa0a468a2b1f051407d.
-- LZ105 exact Go Kimi/Qwen→OpenRouter identity returned6d0b705; review/integration
-  pending. Task08e4b37d-d9d6-43a7-9948-5a6a743220c4,
+  worker ses_6da1ede0e4094aa0a468a2b1f051407d. Repair attempt
+  3cd4e4c5-113d-4a46-a824-75cf38c256b5/session ses_4e70382928c9434d81f7ee1ca4f14dc5
+  resumed the same session and passed the full811-test suite/8,692assertions after
+  generating the required Radar build artifact. Await its final commit/quality
+  and independent integration; the first rerun failed only before build preparation.
+- LZ105 exact Go Kimi/Qwen→OpenRouter identity returned6d0b705; reviewed and integrated as61ef0b3. Task08e4b37d-d9d6-43a7-9948-5a6a743220c4,
   planc0b3a66b-9a57-4e7a-a1f0-a64ab629e24a,
   attempte4df3b54-9e1f-4c9b-807d-51decfdadf44,
   worker ses_fb6f7d1ea66f41c99f75e2f7dafc1cfe. Root reviewed exact alias changes
@@ -144,6 +157,20 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   question returned false correctly in225ms/65input tokens. This does not fix or
   prove the recurring device-loss/cache-lease/reconnect cause. See
   [failure and measured recovery](evidence/native-inference-recovery-20261103.md).
+- LZ108 functional panel/controller wiring is queued on OpenAI LunaMax/ui:
+  taskc66971e0-167f-430e-bc43-956f26747fc8, plan6ecf2211-3d3a-45e8-b9e3-59ec34ff8131,
+  after LZ107/LZ103 integration. Backend producer/server is still a separate needed
+  increment. Actual native UI/Tera acceptance remains open.
+- Root reproduced the latest System One unavailable review: the8,000-character
+  guard split a7,026-character shared state/14questions into7 sequential jobs.
+  All completed, last just after the global60s deadline. Actual per-job input was
+  about2,000tokens, not a proven8,192-token overflow or fresh device loss. Main
+  has primary-source research and is tasking a proportional capacity/batching fix,
+  preserving actual tokenizer checks, all questions, no truncation and3rounds.
+- Project-wide progress reconstruction repeats at each loaded location; a scoped
+  efficiency task was not found at checkpoint. Main is deduplicating/tasking it.
+  Replacement service observed104%CPU/~5GB RSS after6minutes; correlation does
+  not establish the exit cause. See native-service-lifecycle evidence.
 - Preserve the human's native interview answer: Architect classifies tasks into
   authored task types informed by benchmark taxonomy, not silent persona/name
   inference. Native taxonomy researcher ses_e5cb502f9ffeiqpusOarVqVMg4 ran.
@@ -154,15 +181,20 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   samples are accepted logical-task histories including their own retries;
   label separately from the failure-inclusive aggregate. Root answered the
   native interview on that basis.
-- Latest user price rule: revalue recorded usage using CURRENT pricing lookups,
-  OpenRouter as the common market index. Old price snapshots are audit history,
+- Latest user price rule: configurable ordered price sources in plugin settings,
+  initially OpenRouter then OpenCode. Reuse API access configured in OpenCode;
+  unavailable sources fall through, and no applicable price means unknown. With
+  current OR access, OpenRouter is primary regardless of execution subscription.
+  Use OpenCode model.list catalog tiers for its fallback, never session.cost.
+  Root verified direct OpenAI Sol/Luna and Anthropic Fable/Sonnet/Haiku all match
+  exact OR products in real saved source projection, plus13tests/204assertions. Old price snapshots are audit history,
   not today's graph basis. Keep actual charges/subscription accounting separate,
   and retain source/date and exact source quote/average semantics honestly.
 - Earlier live-source projection resolved direct Fable/Sonnet/Haiku/Luna to
   correct OpenRouter products across separate effort configurations. The reviewed
   backend is now merged, but registered native RPC, final UI and real-data visual
   acceptance still need observation. Go Kimi/Qwen market association is addressed by returned LZ105 source,
-  pending integration; it is not an inference/admission restriction.
+  integrated as61ef0b3; it is not an inference/admission restriction.
 
 ## Models visual and data defects — final acceptance open
 

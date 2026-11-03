@@ -24,7 +24,25 @@ Cache reads are97.66% of the total; reads plus writes99.46%. These are repeated
 processed context tokens, not10.85 million newly generated tokens. Native cost
 is0 for both subscription sessions; that is not proof of free usage.
 
-## Allowance reconciliation
+## Current market-equivalent valuation
+
+The product uses the selected price source, defaulting to OpenRouter then
+OpenCode when unavailable; execution provider and subscription do not determine
+its market price. Public OpenRouter catalog retrieval at Unix ms1793747083233
+matched `moonshotai/kimi-k3.1-pro`: prompt$2/M, completion$10/M and cache-read
+$0.20/M. Its endpoint catalog was checked at1793747122538. These are published
+reference quotes, not a measured average across standard and high-speed endpoints.
+
+The API omits cache-write; OpenRouter's [Moonshot caching documentation](https://openrouter.ai/docs/guides/best-practices/prompt-caching#moonshot-ai)
+explicitly states no cache-write cost. Using that published rule for the separate
+recorded write category, with model-specific API rates overriding generic cache
+multipliers, gives **$2.6154018 market equivalent**: LZ100$2.6058166 and
+LZ104$0.0095852. This is revaluation of recorded token categories, not an invoice
+or a Go allowance estimate. The prior$3.0050338 figure below is retained solely
+to explain the actual provider quota failure; it is not the product cost basis.
+A missing API field alone must never establish a zero rate.
+
+## Historical Go allowance diagnostic
 
 Current [OpenCode Go documentation](https://opencode.ai/v2/docs/console/go/)
 checked2026-11-03 publishes Kimi K3.1 Pro rates per million: input$2,

@@ -6,6 +6,10 @@ Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep 
 
 Once our Architect is available in OpenCode Desktop, use it to specify subsequent plugin spikes. Each spike follows the task record and acceptance boundary in README.md. Implement only the current increment.
 
+## Product cost basis
+
+Product costs and estimates use configured ordered price sources, independent of execution provider or subscription. Initially offer OpenRouter then OpenCode by default, reusing access configured in OpenCode. Skip unavailable sources; missing applicable prices remain unknown. Preserve chosen-source provenance, exact execution provider/model/effort and measured tokens. Published zeros require source support; session-reported charges are diagnostics, not market rates. Refresh reprices unchanged usage. Price lookup does not authorize inference.
+
 ## Development and verification servers
 
 Before launching or restarting a development, preview, documentation, Storybook, application, or networked verification server, load and follow `$portless-dev-servers`. Route project servers through Portless with a stable HTTPS `.localhost` URL. Never silently fall back to a numbered HTTP port. One-shot tests without a listening socket are exempt.
