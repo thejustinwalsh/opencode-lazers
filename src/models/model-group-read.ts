@@ -426,7 +426,11 @@ function makeGroups(sources: ModelEvidenceComparisonSourceRead[]): {
             resolved.resolution.status === "exact"
               ? (resolved.catalogMatches[0]?.record ?? null)
               : null,
-          catalogEvidence: resolved.resolution.evidence.catalog,
+          catalogEvidence: catalog
+            ? resolved.catalogMatches.map(({ record, recordIndex }) =>
+                modelIdentityReference("openrouter-models", catalog, recordIndex, record.id),
+              )
+            : [],
           nativeEntries: supporting,
           routeEntries,
         })
@@ -437,7 +441,8 @@ function makeGroups(sources: ModelEvidenceComparisonSourceRead[]): {
   const groupRows: ModelGroup[] = []
   const configurationPages = new Map<string, ModelGroupConfiguration[]>()
   for (const group of accumulators.values()) {
-    const configurations = [...group.configurations.values()]
+    const configurationAccumulators = [...group.configurations.values()]
+    const configurations = configurationAccumulators
       .map((configuration) => {
         const nativeEntryView = nativeView(
           native!,
@@ -515,14 +520,16 @@ function makeGroups(sources: ModelEvidenceComparisonSourceRead[]): {
 
     const catalogRecords = group.catalogEntries.map(({ record }) => record)
     const nativeEvidence = boundedEvidence(
-      configurations.flatMap((configuration) => configuration.native.evidence.records),
+      configurationAccumulators.flatMap((configuration) =>
+        identityReferences(native!, configuration.nativeEntries, nativeSource),
+      ),
     )
     const catalogIdentityReferences = group.catalogEntries.flatMap(({ record, recordIndex }) =>
       catalog ? [modelIdentityReference("openrouter-models", catalog, recordIndex, record.id)] : [],
     )
     const catalogEvidence = boundedEvidence([
       ...catalogIdentityReferences,
-      ...configurations.flatMap((configuration) => configuration.externalCatalog.evidence.records),
+      ...configurationAccumulators.flatMap((configuration) => configuration.catalogEvidence),
     ])
     const configStatuses = configurations.map((configuration) => configuration.identity.status)
     const rules = new Map<string, ModelIdentityResolution["rules"][number]>()

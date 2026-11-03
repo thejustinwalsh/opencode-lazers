@@ -91,14 +91,6 @@ const VERIFIED_ROUTE_ALIASES: Array<RouteRule & { providerID: string; modelID: s
         retrievedAt: null,
         recordID: null,
       },
-      {
-        url: "https://openrouter.ai/api/v1/models",
-        retrievedOn: "2026-11-03",
-        excerpt: '"id": "anthropic/claude-haiku-5.5"',
-        snapshotID: "1687a6df-7108-48ab-8579-549af69abc91",
-        retrievedAt: "2026-11-03T19:44:37.529Z",
-        recordID: "anthropic/claude-haiku-5.5",
-      },
     ],
   },
   {
@@ -117,14 +109,6 @@ const VERIFIED_ROUTE_ALIASES: Array<RouteRule & { providerID: string; modelID: s
         snapshotID: null,
         retrievedAt: null,
         recordID: null,
-      },
-      {
-        url: "https://openrouter.ai/api/v1/models",
-        retrievedOn: "2026-11-03",
-        excerpt: '"id": "anthropic/claude-sonnet-5.5"',
-        snapshotID: "1687a6df-7108-48ab-8579-549af69abc91",
-        retrievedAt: "2026-11-03T19:44:37.529Z",
-        recordID: "anthropic/claude-sonnet-5.5",
       },
     ],
   },
@@ -260,6 +244,41 @@ function routeRules(route: Route, catalogSnapshot: CatalogSnapshot | null): Rout
   ]
 }
 
+function serializeRules(
+  rules: RouteRule[],
+  catalogSnapshot: CatalogSnapshot | null,
+  catalogMatches: Array<RecordEntry<OpenRouterModelRecord>>,
+) {
+  return rules
+    .map((rule) => {
+      const matchedCatalogRecord =
+        rule.basis === "verified-source-backed-route-alias"
+          ? catalogMatches.find(({ record }) => record.id === rule.catalogModelID)?.record
+          : undefined
+      const citations = [
+        ...(rule.citations ?? []),
+        ...(catalogSnapshot && matchedCatalogRecord
+          ? [
+              {
+                url: "https://openrouter.ai/api/v1/models",
+                retrievedOn: catalogSnapshot.retrievedAt.slice(0, 10),
+                excerpt: `"id": "${matchedCatalogRecord.id}"`,
+                snapshotID: catalogSnapshot.snapshotID,
+                retrievedAt: catalogSnapshot.retrievedAt,
+                recordID: matchedCatalogRecord.id,
+              },
+            ]
+          : []),
+      ]
+      return {
+        id: rule.id,
+        version: MODEL_IDENTITY_RULE_VERSION as 1,
+        ...(citations.length ? { citations } : {}),
+      }
+    })
+    .sort((left, right) => compareText(left.id, right.id))
+}
+
 export type ModelIdentityResolutionResult = {
   resolution: ModelIdentityResolution
   catalogMatches: Array<RecordEntry<OpenRouterModelRecord>>
@@ -303,13 +322,6 @@ export function resolveModelIdentity(input: {
 
   const uniqueProductIDs = [...new Set(rules.map((rule) => rule.productID))].sort(compareText)
   const productID = uniqueProductIDs.length === 1 ? uniqueProductIDs[0]! : null
-  const publicRules = rules
-    .map(({ id, citations }) => ({
-      id,
-      version: MODEL_IDENTITY_RULE_VERSION as 1,
-      ...(citations ? { citations } : {}),
-    }))
-    .sort((left, right) => compareText(left.id, right.id))
   const basis = rules.length === 1 ? rules[0]!.basis : null
 
   if (!catalogSnapshot) {
@@ -317,7 +329,7 @@ export function resolveModelIdentity(input: {
       resolution: {
         status: "source-unavailable",
         productID,
-        rules: publicRules,
+        rules: serializeRules(rules, null, []),
         basis,
         catalogSourceState: catalogState,
         evidence: {
@@ -344,6 +356,7 @@ export function resolveModelIdentity(input: {
       modelIdentityReference("openrouter-models", catalogSnapshot, recordIndex, record.id),
     ),
   )
+  const publicRules = serializeRules(rules, catalogSnapshot, catalogMatches)
   const status: ModelIdentityResolution["status"] =
     rules.length > 1 || catalogMatches.length > 1
       ? "ambiguous"

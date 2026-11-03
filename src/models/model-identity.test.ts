@@ -199,3 +199,68 @@ test("aliases require exact route rules and exact catalog IDs, never names or sl
   })
   expect(suffixRoute.resolution.productID).not.toBe("anthropic/claude-fable-5")
 })
+
+test("route-alias citations bind catalog provenance to the selected snapshot", () => {
+  const projectDirectory = `/portable-project/${crypto.randomUUID()}`
+  const selectedCatalog = ModelEvidenceSnapshotSchema.parse({
+    ...catalogSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: 7,
+    retrievedAt: "2026-11-03T22:00:00.000Z",
+  }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+
+  for (const [modelID, productID] of [
+    ["claude-haiku-5-5", "anthropic/claude-haiku-5.5"],
+    ["claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"],
+  ] as const) {
+    const { resolution } = resolveModelIdentity({
+      route: { providerID: "anthropic", modelID },
+      nativeEvidence: [],
+      catalogSource: sourceRead(selectedCatalog),
+    })
+    const citations = resolution.rules[0]?.citations ?? []
+    expect(resolution).toMatchObject({ status: "exact", productID })
+    expect(citations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          url: "https://platform.claude.com/docs/en/models/overview",
+          snapshotID: null,
+          retrievedAt: null,
+          recordID: null,
+        }),
+        expect.objectContaining({
+          url: "https://openrouter.ai/api/v1/models",
+          snapshotID: selectedCatalog.snapshotID,
+          retrievedAt: selectedCatalog.retrievedAt,
+          retrievedOn: "2026-11-03",
+          recordID: productID,
+        }),
+      ]),
+    )
+    expect(
+      citations.every(
+        (citation) =>
+          citation.snapshotID === null || citation.snapshotID === selectedCatalog.snapshotID,
+      ),
+    ).toBe(true)
+    expect(citations.some((citation) => citation.snapshotID === catalogSnapshot.snapshotID)).toBe(
+      false,
+    )
+  }
+
+  const unavailable = resolveModelIdentity({
+    route: { providerID: "anthropic", modelID: "claude-haiku-5-5" },
+    nativeEvidence: [],
+    catalogSource: sourceRead(null, "missing-snapshot"),
+  })
+  expect(unavailable.resolution).toMatchObject({ status: "source-unavailable" })
+  expect(unavailable.resolution.rules[0]?.citations).toEqual([
+    expect.objectContaining({
+      url: "https://platform.claude.com/docs/en/models/overview",
+      snapshotID: null,
+      retrievedAt: null,
+      recordID: null,
+    }),
+  ])
+})

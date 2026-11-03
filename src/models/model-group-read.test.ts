@@ -365,16 +365,25 @@ test("adversarial shared-slug IDs remain distinct products and unsupported route
 })
 
 test("captured direct Anthropic Haiku and Sonnet punctuation aliases retain cited rule provenance", () => {
-  const aliases = ModelEvidenceSnapshotSchema.parse(capturedAnthropicAliases.native.snapshot)
-  if (aliases.source !== "native-catalog") throw new Error("Expected Anthropic native alias rows")
+  const projectDirectory = `/portable-project/${crypto.randomUUID()}`
+  const capturedAliases = ModelEvidenceSnapshotSchema.parse(
+    capturedAnthropicAliases.native.snapshot,
+  )
+  if (capturedAliases.source !== "native-catalog")
+    throw new Error("Expected Anthropic native alias rows")
+  const aliases = newNativeSnapshot(capturedAliases.records, projectDirectory)
   const catalog = ModelEvidenceSnapshotSchema.parse({
     ...catalogSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: 1,
+    retrievedAt: "2026-11-03T22:00:00.000Z",
     records: catalogSnapshot.records.filter((record) =>
       ["anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5"].includes(record.id),
     ),
   })
   if (catalog.source !== "openrouter-models") throw new Error("Expected OpenRouter alias products")
-  const stores = createStores(capturedProject, {
+  const stores = createStores(projectDirectory, {
     native: aliases,
     catalog,
     nativeRecordIndexes: capturedAnthropicAliases.native.originalRecordIndices,
@@ -404,6 +413,11 @@ test("captured direct Anthropic Haiku and Sonnet punctuation aliases retain cite
         page.configurations.every((configuration) => configuration.identity.status === "exact"),
       ).toBe(true)
       const configuration = page.configurations.find(({ route }) => route.variant === "high")!
+      const citationSnapshotIDs = (configuration.identity.rules[0]?.citations ?? [])
+        .map((citation) => citation.snapshotID)
+        .filter((snapshotID): snapshotID is string => snapshotID !== null)
+      expect(citationSnapshotIDs).toEqual([catalog.snapshotID])
+      expect(citationSnapshotIDs).not.toContain(catalogSnapshot.snapshotID)
       expect(configuration).toMatchObject({
         groupID,
         candidateID: configuration.configurationID,
@@ -422,8 +436,8 @@ test("captured direct Anthropic Haiku and Sonnet punctuation aliases retain cite
                 }),
                 expect.objectContaining({
                   url: "https://openrouter.ai/api/v1/models",
-                  snapshotID: catalogSnapshot.snapshotID,
-                  retrievedAt: "2026-11-03T19:44:37.529Z",
+                  snapshotID: catalog.snapshotID,
+                  retrievedAt: catalog.retrievedAt,
                   recordID: catalogID,
                 }),
               ]),
@@ -439,6 +453,80 @@ test("captured direct Anthropic Haiku and Sonnet punctuation aliases retain cite
           },
         },
       })
+    }
+    expect(groups.context.snapshots["openrouter-models"]).toBe(catalog.snapshotID)
+  } finally {
+    stores.reader.close()
+    stores.writer.close()
+    rmSync(stores.root, { recursive: true, force: true })
+  }
+})
+
+test("group and configuration evidence retain omitted records without multiplying shared efforts", () => {
+  const projectDirectory = `/portable-project/${crypto.randomUUID()}`
+  const modelID = "anthropic/evidence-overflow-model"
+  const native = newNativeSnapshot(
+    Array.from({ length: 101 }, () => ({
+      ...nativeRow(0),
+      providerID: "openrouter",
+      id: modelID,
+      variants: ["high", "low"],
+    })),
+    projectDirectory,
+  )
+  const catalog = ModelEvidenceSnapshotSchema.parse({
+    ...catalogSnapshot,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: 1,
+    retrievedAt: "2026-11-03T22:30:00.000Z",
+    records: Array.from({ length: 101 }, () => ({
+      ...catalogSnapshot.records[0]!,
+      id: modelID,
+    })),
+  }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>
+  const stores = createStores(projectDirectory, { native, catalog })
+  try {
+    const groups = readModelGroups(stores.reader, { limit: 100 })
+    const group = groups.groups.find((candidate) => candidate.groupID === modelID)!
+    expect(group).toMatchObject({
+      configurationCount: 2,
+      nativeRecordCount: 101,
+      catalogRecordCount: 101,
+      nativeEvidence: { recordCount: 101, truncated: true },
+      catalogEvidence: { recordCount: 101, truncated: true },
+    })
+    expect(group.nativeEvidence.records).toHaveLength(100)
+    expect(group.catalogEvidence.records).toHaveLength(100)
+    expect(new Set(group.nativeEvidence.records.map((record) => record.recordIndex)).size).toBe(100)
+    expect(new Set(group.catalogEvidence.records.map((record) => record.recordIndex)).size).toBe(
+      100,
+    )
+
+    const configurations = readModelConfigurations(stores.reader, {
+      groupID: modelID,
+      context: groups.context,
+      limit: 100,
+    })
+    expect(configurations.totalConfigurations).toBe(2)
+    expect(configurations.configurations.map(({ route }) => route.variant)).toEqual(["high", "low"])
+    for (const configuration of configurations.configurations) {
+      expect(configuration.native.evidence).toMatchObject({
+        recordCount: 101,
+        truncated: true,
+      })
+      expect(configuration.native.evidence.records).toHaveLength(100)
+      expect(configuration.identity.evidence).toMatchObject({
+        nativeRecordCount: 101,
+        nativeTruncated: true,
+        catalogRecordCount: 101,
+        catalogTruncated: true,
+      })
+      expect(configuration.externalCatalog.evidence).toMatchObject({
+        recordCount: 101,
+        truncated: true,
+      })
+      expect(configuration.externalCatalog.evidence.records).toHaveLength(100)
     }
   } finally {
     stores.reader.close()
