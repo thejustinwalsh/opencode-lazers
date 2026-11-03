@@ -43,3 +43,11 @@ Resolve the retained resource through a supported runtime-owned reconciliation/o
 LZ-72's diagnostic source is retained at `e6a58ea5b1c1c0fd687983d257f48a2cf48e7f55`, not integrated or activated. Its own interrupted-check recovery and logical reservation remain separate limitations; they were not bypassed for this inspection.
 
 Once the actual guard is supported and satisfied, reread the plan version and retry the existing `integrated` command without `taskID`, naming the exact accepted artifact and `targetBranch: main`. Let runtime perform non-forced removal and retain its actual receipt. Until then, preserve these resources and all historical attempts, findings and integration records. No cleanup retry was issued during this inspection.
+
+## Subsequent LZ-82 inspection and requested guarded retry
+
+After the three-plan inspection above, separately checked LZ-82 plan `e5a078b8-5364-49d2-a571-0710c70e8bbb` at version 14 against evidence-only Main `e02c0997f2a42de9b86b28fa33c91b173a912874`. Retained attempt `d2e45d4c-ccad-44ce-b9de-079c1589cb62` was clean, exactly at accepted `0e13a75d85852756ea958c92f4f89c8188ad0148`, an ancestor of Main. Thirteen effects were complete and one removal uncertain.
+
+Native session `ses_71af5e28c324495b9ac5770def2b53bf` matched the project, worktree, agent and attempt metadata. Bracketed metadata was unchanged, outcome succeeded, foreground inactive, inbox empty, explicit location permission/form counts zero. Latest user input matched assigned `msg_831a427c7acb4a4597672c658d30cab3`; there were no synthetic inputs. Latest assistant finished `stop` at `1793655725112`. This still did not prove background quiescence.
+
+Exercised the user's existing integration-command retry once: `integrated`, expected version 14, exact accepted artifact, no task ID, target `main`. The reason explicitly did not assert background quiescence and required all native ownership/idle/clean/ancestry guards to remain enforced. Runtime returned `cleanup-requested` at version 15, then `cleanup-blocked` at version 16 with the same inconclusive-idle reason. Thirteen effects remained complete, one removal uncertain; the tree was preserved. No repeated retry, product-check replay, model turn, persistent permission change or guard weakening followed. This failed guarded retry is not cleanup success or a recovered background report.
