@@ -57,3 +57,12 @@ lint of both changed files; formatting clear with pinned Bun1.4.4-canary.1. The
 existing pagination/read-only/reopen/privacy tests passed. No runtime task/DB state
 or returned worker artifact was changed. Native application and review still need
 the Architect; Desktop was locked during preparation.
+
+## Source integration — 2026-11-03
+
+Root integrated the native artifact in cfd96f1 and the prepared ownership
+correction in a9b1392 while Desktop remained locked. Integrated checks pass:
+44 trajectory/read/store/panel tests / 362 assertions, strict checking and lint.
+This is source integration, not native acceptance or a live accounting/UI claim.
+Returned worker trees and task state are preserved. The payload-size concern
+above still needs observation and proportional summary/drilldown work.

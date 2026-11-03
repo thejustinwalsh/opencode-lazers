@@ -1,44 +1,67 @@
 # LAZERS current handoff
 
-2026-11-03, approximately 00:33 UTC. Recheck native state before acting.
+2026-11-03, approximately 15:05 UTC. Recheck native state before acting.
 
 ## Latest checkpoint — takes precedence over the older snapshot below
 
-- User chose the exact attached Models comparison mockup. It is saved as
-  `design/models-panel/models-approved.png` (original `models-compare-v1.png`).
-  It supersedes v2 as the visual target. DESIGN.md and the Models review now
-  point to it. Keep OpenCode theme/fonts, comparison-first composition,
-  narrow chart-over-table / wide chart-beside-table, horizontal lower inspector,
-  collapsed evidence and secondary assignments. The image's numbers/curve are
-  illustrative; use real compatible observations. Do not resume the rejected UI.
-- Main source remains at 011e5e4 before this design checkpoint. Native Architect
-  merged corrected prerequisite runtime as 6d620de. Its scoped background
-  verification sh_19e3394d5001bvkiZpq3rDZoGi exited 0; this is not a full-repo or
-  live activation claim. All six previous native workers returned artifacts:
-  LZ77 8ebdce9, LZ78 05d2355, LZ79 7aabc47 (merged), LZ80 6ea1091,
-  LZ81 ad45e8a, LZ82 0e13a75. Native visual/activation gates remain open.
-- Root prepared tested corrections against exact returned artifacts, without
-  modifying their trees or task DB:
-  `.agents/docs/evidence/models-accounting/openrouter-source-correction.json`
-  and `accounting-route-correction.json`. Decode each `patch` field and apply
-  through native review/correction flows. LZ77 handles actual -1 dynamic prices
-  as unknown, preserves real zero prices and raw UTC price overrides. Corrected
-  real reprobe succeeded: 470 native / 415 OpenRouter models / 152 benchmarks;
-  source/store tests 11 with 65 assertions. Registered RPC/UI proof still open.
-  LZ78 retains progress attempt ownership and avoids fabricated historical
-  mismatch comparisons for ambiguous shared sessions; 21 tests / 181 assertions.
-  Review notes link from design/models-panel/review.md. Neither correction has
-  yet been relayed to Architect or integrated into its returned artifact.
-- Main service PID7793 and Architect ses_e68a9ed37ffeVqzPWRXN5SB7Uw are preserved.
-  Read-only API at Unix ms1793663570577 confirmed Main waiting on the Namespace
-  cutover interview. Choose Quiet-boundary cutover (Recommended), then relay the
-  two tested corrections and the approved mockup through Desktop. No legacy
-  aliases needed. Current workers returned, but verify actual quiet boundary
-  before activation. Preserve the full roadmap and native acceptance gates.
-- User answered Unlocked, but a fresh Computer Use call still explicitly reported
-  macOS locked. A new concise unlock question is pending. Do not infer Desktop
-  input succeeded. Later worker conclusion read timed out; do not treat that
-  alone as service failure or restart by assumption.
+2026-11-03: Root made source integration progress while Desktop remained locked.
+Main Architect is still waiting on the Namespace cutover interview; no native
+model prompt or interview answer was sent. The last public API read confirmed
+service PID7793 and only Main active. Computer Use again explicitly reports locked.
+One unlock question remains pending; do not repeatedly ask.
+
+### Integrated source; native acceptance still open
+
+- e708fef merges LZ81 ad45e8a: truthful model short name, theme icon status,
+  no vendor/Ready/green prose. e39933c fixes two missing fixture exports exposed
+  by broader tests. Broad WebGPU run:106 pass /2 missing-export failures; the two
+  decision tests passed after repair. Indicator tests pass. A combined lifecycle
+  retry timed out, then the unchanged lifecycle test passed alone in6.22s;
+  retain the timeout rather than claim a single fully green broad run.
+- 6915872 merges LZ82 0e13a75: /lz-tasks, /lz-radar, /lz-trajectory. Eight panel
+  tests /51 assertions pass. This is not the atomic public-tool cutover.
+- fff7644 merges LZ77 8ebdce9;17a5582 applies the tested OpenRouter correction.
+  All24 Models tests /203 assertions pass. Raw UTC override markers are retained;
+  their pricing semantics are not invented. Prior real adapter reprobe:
+  470 native /415 OpenRouter models /152 benchmarks. Live registered RPC still open.
+- cfd96f1 merges LZ78 05d2355;a9b1392 applies exact attempt-owned route comparisons.
+  44 trajectory/store/read/panel tests /362 assertions pass. Payload-size concern
+  remains recorded. Native acceptance and live UI proof remain open.
+- Strict typecheck passes277 files; relevant lint and whitespace checks pass.
+  Final post-foundation GUI build passed (5.48s), retaining the existing ONNX
+  CommonJS import.meta and deprecated inlineDynamicImports warnings. No service restart, inference disable, task DB
+  mutation, worker-tree edit or cleanup occurred. Native integration receipts
+  and acceptance need reconciliation through Architect, without replaying work.
+
+### Continue through Desktop
+
+1. Answer Namespace cutover: Quiet-boundary cutover (Recommended). Current workers
+   returned; verify actual quiet boundary before activation. Implement hyphenated
+   tool names atomically across registrations, Code Mode calls, permissions,
+   agent/skill guidance, hooks and current docs; no hidden aliases exist.
+2. Relay the integrated source commits above to Architect; inspect actual runtime
+   before recording native receipts. Keep pending live acceptance gates intact.
+3. User chose the exact attached comparison mockup, saved as
+   design/models-panel/models-approved.png (original models-compare-v1.png).
+   dc37053 updates DESIGN.md and review. This supersedes v2 as visual target.
+   Build comparison first using real compatible data and OpenCode fonts/theme;
+   chart over table when narrow, beside it when wide, selected inspector below
+   a horizontal split. Assignments secondary. Do not resume the rejected LZ68 UI.
+4. LZ80 6ea1091 atop49a1170 remains unmerged. Row identity correction is useful,
+   but source review shows a prominent verbose worker strip before the graph.
+   Obtain actual narrow/wide connected screenshots and Tera review, preserving
+   graph-first focus and the genuine two-worker activity gate. No visual acceptance.
+5. Existing Tera6.1High review agent is preparing concise approved-reference
+   component guidance in design/models-panel/implementation-plan.md. It is
+   design/source guidance, not a native screenshot or acceptance claim.
+6. Preserve the complete roadmap, proactive recovery/handoff/live-verification
+   walkthroughs, persona routing, Models comparison/cohorts/estimates and packaging.
+   Do not turn the source integrations into task-completion or live-product claims.
+
+Earlier returned artifacts: LZ79 7aabc47 was merged by native Architect as6d620de;
+its scoped background shell sh_19e3394d5001bvkiZpq3rDZoGi exited0. That does not prove
+live activation. All six workers returned. Current native questions and status
+must be rechecked after unlock; do not restart on an observation timeout.
 
 ## Earlier snapshot (historical states below need reconciliation)
 

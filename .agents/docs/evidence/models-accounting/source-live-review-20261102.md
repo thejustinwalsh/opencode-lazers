@@ -72,3 +72,13 @@ through the native workflow after Desktop unlock; do not assert it is integrated
 
 The correction artifact stores the exact unified diff in its JSON `patch` field;
 write that field to a temporary file and check/apply it against the stated base.
+
+## Source integration — 2026-11-03
+
+While Desktop remained locked, Root integrated the native artifact in fff7644
+and applied the prepared real-feed correction as 17a5582. Main now passes all
+24 Models tests / 203 assertions, strict checking and lint. This includes the
+registered-handler fixtures, not a live registered RPC observation. The prior
+real metadata reprobe remains adapter evidence. Native task acceptance, runtime
+activation and the approved comparison UI remain open; no task DB or worker tree
+was changed.
