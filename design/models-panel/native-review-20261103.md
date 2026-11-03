@@ -62,7 +62,6 @@ One data-display follow-up remains: the menu correctly calls LZ93 accepted while
 the inspector says submitted, because it renders specification status instead
 of the existing execution state. Correct this in the subsequent UI wiring.
 
-
 ## Draft identity check against saved live snapshots
 
 At Unix ms1793739349979 Root read LZ97's draft projection against the real

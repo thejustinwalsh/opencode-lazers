@@ -49,7 +49,6 @@ landing at plan version 37. This does not activate live routing.
 Combined integration and cleanup remain unclaimed while LZ-95 is withheld.
 Do not remove either retained worktree or repeat an unchanged cleanup hold.
 
-
 ## LZ98 focused repair review
 
 Source `055ab04de034f0aa3000c4fccac9841b68032e0e` addresses the four LZ95
