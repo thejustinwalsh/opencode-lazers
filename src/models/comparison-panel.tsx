@@ -92,6 +92,18 @@ function benchmarkLabel(candidate: ModelCandidate) {
     : `Coding index ${benchmark.codingIndex}`
 }
 
+function variantCoverageLabel(candidate: ModelCandidate) {
+  const variants = candidate.native.availableVariants
+  const coverage = candidate.native.variantCoverage
+  const labels = variants?.length ? variants.join(", ") : "None reported"
+
+  if (coverage.status === "truncated")
+    return `Variants (${formatNumber(variants?.length)} shown of ${formatNumber(coverage.totalVariants)} total; ${formatNumber(coverage.omittedVariants)} omitted): ${labels}`
+  if (coverage.status === "complete")
+    return `Variants (${formatNumber(coverage.totalVariants)} total): ${labels}`
+  return `Variants (coverage unknown): ${variants?.join(", ") || "Not reported"}`
+}
+
 export function ModelCandidateRow(props: {
   candidate: ModelCandidate
   selected: boolean
@@ -360,6 +372,15 @@ function ModelPanel(
     visible()?.candidates.find(
       (candidate) => candidate.candidateID === visible()?.selectedCandidateID,
     )
+  const candidateFocusID = () => {
+    const current = visible()
+    if (!current?.candidates.length) return undefined
+    if (
+      current.candidates.some((candidate) => candidate.candidateID === current.selectedCandidateID)
+    )
+      return current.selectedCandidateID
+    return current.candidates[0]?.candidateID
+  }
   const selectedTask = () => visible()?.task
   const taskLabel = () => {
     const task = selectedTask()
@@ -734,13 +755,7 @@ function ModelPanel(
                         <ModelCandidateRow
                           candidate={candidate}
                           selected={candidate.candidateID === visible()?.selectedCandidateID}
-                          tabIndex={
-                            candidate.candidateID === visible()?.selectedCandidateID ||
-                            (!visible()?.selectedCandidateID &&
-                              candidate === visible()?.candidates[0])
-                              ? 0
-                              : -1
-                          }
+                          tabIndex={candidate.candidateID === candidateFocusID() ? 0 : -1}
                           onKeyDown={candidateKey}
                           onSelect={() => state.selectCandidate(candidate.candidateID)}
                         />
@@ -878,35 +893,36 @@ function ModelPanel(
                           >
                             <For each={categoryRows}>
                               {([label, key]) => {
-                                const measure = basis().usage.categories[key]
-                                const provenance = [
-                                  measure.sources?.join(", "),
-                                  measure.sourceTypes?.join(", "),
-                                  measure.observationTimeBases?.join(", "),
-                                ]
-                                  .filter(Boolean)
-                                  .join(" · ")
-                                const observedRange = measure.observedAtRange
-                                const observedDates =
-                                  observedRange?.earliest === null || !observedRange
-                                    ? ""
-                                    : observedRange.earliest === observedRange.latest
-                                      ? ` · observed ${new Date(observedRange.earliest).toLocaleString()}`
-                                      : ` · observed ${new Date(observedRange.earliest).toLocaleString()}–${new Date(observedRange.latest ?? observedRange.earliest).toLocaleString()}`
+                                const measure = () => basis().usage.categories[key]
+                                const provenance = () =>
+                                  [
+                                    measure().sources?.join(", "),
+                                    measure().sourceTypes?.join(", "),
+                                    measure().observationTimeBases?.join(", "),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")
+                                const observedDates = () => {
+                                  const range = measure().observedAtRange
+                                  if (!range || range.earliest === null) return ""
+                                  return range.earliest === range.latest
+                                    ? ` · observed ${new Date(range.earliest).toLocaleString()}`
+                                    : ` · observed ${new Date(range.earliest).toLocaleString()}–${new Date(range.latest ?? range.earliest).toLocaleString()}`
+                                }
                                 return (
                                   <>
                                     <div class="lazers-models-category-row">
                                       <span>{label}</span>
-                                      <span data-status={measure.status}>
-                                        {measure.value === null
-                                          ? statusText(measure.status)
-                                          : `${formatNumber(measure.value)} tokens${measure.status === "partial" ? " · observed subtotal" : ""}`}
+                                      <span data-status={measure().status}>
+                                        {measure().value === null
+                                          ? statusText(measure().status)
+                                          : `${formatNumber(measure().value)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
                                       </span>
                                     </div>
-                                    <Show when={provenance}>
+                                    <Show when={provenance()}>
                                       <p class="lazers-models-source-meta">
-                                        {provenance}
-                                        {observedDates}
+                                        {provenance()}
+                                        {observedDates()}
                                       </p>
                                     </Show>
                                   </>
@@ -1079,8 +1095,7 @@ function ModelPanel(
                         {candidate().native.capabilities.input?.join(", ") ?? "Not reported"} ·
                         output{" "}
                         {candidate().native.capabilities.output?.join(", ") ?? "Not reported"} ·
-                        variants{" "}
-                        {candidate().native.availableVariants?.join(", ") ?? "Not reported"}
+                        {variantCoverageLabel(candidate())}
                       </p>
                       <Show when={candidate().externalModel}>
                         {(model) => (
