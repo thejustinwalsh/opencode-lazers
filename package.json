@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.2.0",
+    "echarts": "6.1.0",
     "elkjs": "0.12.1",
     "ignore": "7.0.14",
     "onnxruntime-web": "1.31.1",
