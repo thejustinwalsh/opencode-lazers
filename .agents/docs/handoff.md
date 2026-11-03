@@ -30,7 +30,7 @@ and Code Mode, no worker subagents. No arbitrary budgets or provider vetoes.
 
 ## Live state and immediate work
 
-Service PID47672, `http://127.0.0.1:49374`. Native tools and commands use `lz-*`.
+Service PID59460, `http://127.0.0.1:49374`. Native tools and commands use `lz-*`.
 Offline atomic rename9736261 and actual Code Mode/panel smoke9fff29b are DONE.
 No legacy aliases; agent/package/storage identities and historical data remain.
 Main has normal Architect tools. Desktop is available at this checkpoint.
@@ -49,8 +49,7 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
 - LZ97 identity/group projection is dispatched on actual LunaMax. Task
   511a371a-a5e6-4ef3-bd69-713154df80ef, planbb47fbce-be29-446c-b783-a74d62383ff7,
   attempt98724b83-605f-4a9a-9383-f4e3a24b3428, worker
-  ses_0ec8c285a334405a8ff465cba3cec555. Two untracked source files are preserved
-  in its original worktree. Old service54033 disappeared around15:26:49; Desktop
+  ses_0ec8c285a334405a8ff465cba3cec555. Its original worktree and in-progress implementation are preserved. Old service54033 disappeared around15:26:49; Desktop
   auto-started47672 at15:27:16. Root issued only View→Reload, no service stop or
   location reload. Cause is not proved. Reconciliation reports worker interrupted
   and unknown native idle background observation in this new host. Main used
@@ -59,6 +58,22 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
   ms1793738194458 the original worker is active and toolCount advanced34. The old
   background uncertainty remains recorded, not fabricated idle. A proportional
   restart-recovery fix remains under Main's investigation.
+- Second unrequested service loss:47672 disappeared around20:40 UTC; Desktop
+  auto-started59460 at20:41:00. Root issued no restart/reload this interval.
+  Both Luna workers and Main are active again; cause remains unproven. See
+  evidence/native-service-lifecycle-20261103.md. Do not equate cached local
+  plugin load attempts with actual setup generations or assume WebGPU cause.
+- LZ98 e27bad48-ffe1-4d4b-8d2e-edaacd25511b is running the focused LZ95
+  three-file repair in attempt4f27d368-125d-4b0d-b599-3a13ab60d881, worker
+  ses_b64766a8bad0471f9019663fc318aa98. Neither active worker has pending
+  permissions/forms at Unix ms1793739081928. LZ99 same-attempt restart resume
+  is queued behind LZ72's retained runtime reservation.
+- Root caught LZ97's draft hardcoding only Fable/Luna. Main attached/read back
+  durable steering to the same worker; generic exact-ID rules are now present,
+  with final source review pending. Commit6f30987 adds one concise generalization
+  sentence to Architect/implementor guidance: examples are regression cases.
+  Main confirmed the next independent Models UI increment will consume groups,
+  add provider/effort selectors and use task execution.state in the inspector.
 - Root has completed the renderer lane and explicitly RELEASED the temporary
   local-inference hold through Desktop. Main can task/execute again. All six
   switches remain on; after the earlier reload an error recovered automatically,
