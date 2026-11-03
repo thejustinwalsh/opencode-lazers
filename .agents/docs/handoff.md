@@ -4,6 +4,26 @@
 
 ## Latest checkpoint — takes precedence over the older snapshot below
 
+2026-11-03 continuation: Tera's approved-reference component guide is complete at
+`design/models-panel/implementation-plan.md`; reviewed and formatting/whitespace
+checks pass. It reuses integrated foundations, with connected visual checks open.
+Root bcae19b tightens Architect guidance to choose routine authorized coordination
+choices; packaged agent test passes1/26 assertions. This is not live activation.
+
+At Unix ms1793718653175 the native API confirmed Main/service7793 still waiting
+on Namespace cutover; only Main active. A fresh Computer Use call again explicitly
+reported macOS locked. The same lock has now prevented Desktop work for three
+consecutive goal turns. No interview answer was sent, no restart occurred.
+Current read-only plan/attempt counts and exact holds are saved in
+`evidence/native-liveness/20261103-native-hold.json`. All81 recorded attempts are
+terminal (59 accepted,10 cancelled,12 failed), not81 completed tasks. LZ72's plan
+still says running with no active native worker; reconcile its dependency and
+integration state after unlock rather than assume it is executing. Five cleanup
+holds and live qualification gates remain; source merges do not satisfy them.
+The goal is incomplete and Desktop continuation requires unlock. Do not fabricate
+acceptance or replay implementations. Preserve the pending native interview,
+resources, task history and full roadmap.
+
 2026-11-03: Root made source integration progress while Desktop remained locked.
 Main Architect is still waiting on the Namespace cutover interview; no native
 model prompt or interview answer was sent. The last public API read confirmed

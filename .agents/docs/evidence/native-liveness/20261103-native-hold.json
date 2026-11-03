@@ -1,0 +1,183 @@
+{
+  "observedAt": 1793718885467,
+  "scope": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+  "source": "read-only project SQLite query; no mutations",
+  "plans": [
+    {
+      "state": "accepted",
+      "count": 5
+    },
+    {
+      "state": "blocked",
+      "count": 10
+    },
+    {
+      "state": "cancelled",
+      "count": 12
+    },
+    {
+      "state": "cleanup-blocked",
+      "count": 5
+    },
+    {
+      "state": "draft",
+      "count": 1
+    },
+    {
+      "state": "integrated",
+      "count": 30
+    },
+    {
+      "state": "running",
+      "count": 1
+    }
+  ],
+  "attempts": [
+    {
+      "state": "accepted",
+      "count": 59
+    },
+    {
+      "state": "cancelled",
+      "count": 10
+    },
+    {
+      "state": "failed",
+      "count": 12
+    }
+  ],
+  "remainingPlans": [
+    {
+      "plan": "e5a078b8-5364-49d2-a571-0710c70e8bbb",
+      "state": "blocked",
+      "tasks": ["LZ-82"],
+      "reason": "Combined artifact evidence missing: native-command-registration:human"
+    },
+    {
+      "plan": "83b8b87e-974f-4b34-9830-4166343427e9",
+      "state": "blocked",
+      "tasks": ["LZ-81"],
+      "reason": "Combined artifact evidence missing: native-indicator:human"
+    },
+    {
+      "plan": "9ed449d7-66d2-49a6-9297-fbe9a226f7a5",
+      "state": "blocked",
+      "tasks": ["LZ-80"],
+      "reason": "Combined artifact evidence missing: corrected-native-two-workers:human"
+    },
+    {
+      "plan": "21625514-8f61-4f9e-be16-65a609f4710e",
+      "state": "accepted",
+      "tasks": ["LZ-79"],
+      "reason": null
+    },
+    {
+      "plan": "40b9de31-bf51-4ae6-ac5a-e2d386a1637a",
+      "state": "accepted",
+      "tasks": ["LZ-78"],
+      "reason": null
+    },
+    {
+      "plan": "c5ff050c-0b5b-4f22-8b48-f729e26f4d94",
+      "state": "blocked",
+      "tasks": ["LZ-77"],
+      "reason": "Combined artifact evidence missing: connected-live-evidence:human"
+    },
+    {
+      "plan": "e7308bed-1fe9-4c8a-b688-122abe42e1a3",
+      "state": "accepted",
+      "tasks": ["LZ-75"],
+      "reason": null
+    },
+    {
+      "plan": "a9c4ade6-3df4-4164-9672-afefe3099f2e",
+      "state": "cleanup-blocked",
+      "tasks": ["LZ-74"],
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "plan": "0dab6e0d-6ad1-4902-a315-4066f5dee32c",
+      "state": "running",
+      "tasks": ["LZ-72"],
+      "reason": null
+    },
+    {
+      "plan": "6c9cc71f-0897-4287-a44a-c52ec0c2c8a3",
+      "state": "accepted",
+      "tasks": ["LZ-71"],
+      "reason": null
+    },
+    {
+      "plan": "6d178295-0a17-41f9-91dd-f903e617b69d",
+      "state": "cleanup-blocked",
+      "tasks": ["LZ-70"],
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "plan": "8715d804-8543-4fa6-8031-7e9bbb6847c4",
+      "state": "cleanup-blocked",
+      "tasks": ["LZ-69"],
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "plan": "67f3790e-17a9-4cf3-97bf-c21eef98a3ca",
+      "state": "cleanup-blocked",
+      "tasks": ["LZ-67"],
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "plan": "04e0422b-09da-4885-97a4-d44eac9aaee0",
+      "state": "blocked",
+      "tasks": ["LZ-63"],
+      "reason": "Combined artifact evidence missing: actual-preserved-closure:human"
+    },
+    {
+      "plan": "49201384-47b2-4ef6-a018-bd83a42d7c16",
+      "state": "blocked",
+      "tasks": ["LZ-62"],
+      "reason": "Combined artifact evidence missing: native-visual:human"
+    },
+    {
+      "plan": "9bd413fb-a195-4946-af73-a66766d271e6",
+      "state": "cleanup-blocked",
+      "tasks": ["LZ-61"],
+      "reason": "Owned worktree worker activity is not conclusively idle; preserve it"
+    },
+    {
+      "plan": "b6e9aab5-0a11-4ca7-aeae-aab0e5f4f134",
+      "state": "blocked",
+      "tasks": ["LZ-59"],
+      "reason": "Combined artifact verification failed"
+    },
+    {
+      "plan": "d0ce36bb-3b8a-481b-b525-9e2b45c55cb6",
+      "state": "draft",
+      "tasks": ["LZ-57", "LZ-58"],
+      "reason": null
+    },
+    {
+      "plan": "d1bc1882-be6e-42a2-9626-ab018c595227",
+      "state": "blocked",
+      "tasks": ["LZ-56"],
+      "reason": "Combined artifact evidence missing: enabled-native-review:human"
+    },
+    {
+      "plan": "f4b36a89-917f-4eb4-94a4-8f05b7649766",
+      "state": "accepted",
+      "tasks": ["LZ-53"],
+      "reason": null
+    },
+    {
+      "plan": "b76de1a5-4c2b-423e-8867-0afa7e704c07",
+      "state": "blocked",
+      "tasks": ["LZ-50"],
+      "reason": "Required evidence missing: worker-full-instance:human, repeatable-procedure:human"
+    },
+    {
+      "plan": "2af3a7c6-f1ea-4c7e-a455-9b6b7a4c094d",
+      "state": "blocked",
+      "tasks": ["LZ-43"],
+      "reason": "Combined artifact evidence missing: native-profile-ready:human"
+    }
+  ]
+}
