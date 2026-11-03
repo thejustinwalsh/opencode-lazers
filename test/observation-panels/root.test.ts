@@ -26,14 +26,21 @@ import {
 type Deferred<T> = {
   promise: Promise<T>
   resolve(value: T): void
+  reject(reason: unknown): void
+}
+
+type PanelLocation = {
+  project: { canonical: string; id: string }
 }
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 async function until(predicate: () => boolean) {
@@ -143,10 +150,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     }> = []
     const counts = new Map<string, number>()
     const sourceSignals = new Map<string, AbortSignal[]>()
+    const locationSignals = new Map<string, AbortSignal[]>()
     const comparisonCounts = new Map<string, number>()
     const deferredA1 = deferred<ReturnType<typeof sourceEvidence>>()
     const deferredA3 = deferred<ReturnType<typeof sourceEvidence>>()
     const deferredB2 = deferred<ReturnType<typeof sourceEvidence>>()
+    const deferredLocationA2 = deferred<PanelLocation>()
+    const deferredLocationA3 = deferred<PanelLocation>()
+    const deferredLocationA4 = deferred<PanelLocation>()
+    const deferredLocationB1 = deferred<PanelLocation>()
     const opened: unknown[][] = []
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const modelStore = host.createReactiveStore({
@@ -185,6 +197,32 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       counts.set(key, count)
       return count
     }
+    const connectionRPCs = [
+      { service: "lazers.models", method: "comparison", count: 2 },
+      { service: "lazers.models", method: "refreshSources", count: 1 },
+      { service: "lazers.models", method: "settings", count: 1 },
+      { service: "lazers.tasks", method: "query", count: 1 },
+      { service: "lazers.tasks", method: "get", count: 1 },
+      { service: "lazers.observability", method: "trajectoryStatus", count: 1 },
+    ] as const
+    const connectionCounts = (directory: string) =>
+      connectionRPCs.map(
+        ({ service, method }) =>
+          calls.filter(
+            (call) =>
+              call.directory === directory && call.service === service && call.method === method,
+          ).length,
+      )
+    const connectedOnceSince = (directory: string, before: number[]) =>
+      connectionRPCs.every(
+        (request, index) => connectionCounts(directory)[index] === before[index]! + request.count,
+      )
+    const locationResult = (directory: string): PanelLocation => ({
+      project: {
+        canonical: directory,
+        id: directory === DIRECTORY_A ? PROJECT_A : PROJECT_B,
+      },
+    })
     const client = {
       location: {
         get: async (
@@ -193,12 +231,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ) => {
           const directory = input.location.directory
           record(directory, "location", "get", input, options.signal)
-          return {
-            project: {
-              canonical: directory,
-              id: directory === DIRECTORY_A ? PROJECT_A : PROJECT_B,
-            },
-          }
+          const count = nextCount(`${directory}:location`)
+          const observed = locationSignals.get(directory) ?? []
+          observed.push(options.signal)
+          locationSignals.set(directory, observed)
+          if (directory === DIRECTORY_A && count === 2) return deferredLocationA2.promise
+          if (directory === DIRECTORY_A && count === 3) return deferredLocationA3.promise
+          if (directory === DIRECTORY_A && count === 4) return deferredLocationA4.promise
+          if (directory === DIRECTORY_B && count === 1) return deferredLocationB1.promise
+          return locationResult(directory)
         },
       },
       rpc(definition: { id: string }) {
@@ -310,14 +351,24 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       },
     }
 
-    const sessionA = {
+    const sessionScope = host.createReactiveStore({
       id: "ses-models-panel",
-      location: { directory: DIRECTORY_A },
       directory: DIRECTORY_A,
+    })
+    const sessionA = {
+      get id() {
+        return sessionScope.value.id
+      },
+      get location() {
+        return { directory: sessionScope.value.directory }
+      },
+      get directory() {
+        return sessionScope.value.directory
+      },
       server: { id: "server-models", connected: true, client },
     }
     const sessionB = {
-      id: sessionA.id,
+      id: "ses-models-panel",
       location: { directory: DIRECTORY_B },
       directory: DIRECTORY_B,
       server: sessionA.server,
@@ -381,7 +432,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modelCss).toContain("container-name: models-panel")
     expect(modelCss).toContain("@container models-panel (min-width: 720px)")
     expect(modelCss).toContain("@container models-panel (max-width: 500px)")
-    expect(modelCss).toContain("grid-template-rows: minmax(180px, var(--models-top-size)) 8px")
+    expect(modelCss).toContain(
+      "grid-template-rows: minmax(0, var(--models-top-size)) 8px minmax(0, 1fr)",
+    )
+    expect(modelCss).not.toContain("minmax(180px")
+    expect(modelCss).not.toContain("minmax(150px")
+    expect(modelCss).toContain("min-height: 0")
+    expect(modelCss).toContain("overflow: auto")
     expect(modelCss).toContain(".lazers-models-separator {")
     expect(modelCss).toContain("cursor: row-resize")
     expect(modelCss).toContain("touch-action: none")
@@ -494,26 +551,89 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     separator.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }))
     expect(separator.getAttribute("aria-valuenow")).toBe("24")
     const root = containerA.querySelector<HTMLDivElement>(".lazers-models")!
+    let rootHeight = 500
     Object.defineProperty(root, "getBoundingClientRect", {
       configurable: true,
       value: () =>
-        ({ top: 0, left: 0, right: 800, bottom: 1_000, width: 800, height: 1_000 }) as DOMRect,
+        ({
+          top: 0,
+          left: 0,
+          right: 800,
+          bottom: rootHeight,
+          width: 800,
+          height: rootHeight,
+        }) as DOMRect,
     })
+    // happy-dom does not lay out CSS grid; compare the declared percentage tracks against each root height.
+    const assertSplitGeometry = (height: number) => {
+      rootHeight = height
+      const topPercent = Number.parseFloat(root.style.getPropertyValue("--models-top-size"))
+      const ariaValue = Number.parseFloat(separator.getAttribute("aria-valuenow") ?? "NaN")
+      const topHeight = (height * topPercent) / 100
+      const inspectorHeight = height - topHeight - 8
+      expect(ariaValue).toBe(topPercent)
+      expect(topPercent).toBeGreaterThanOrEqual(Number(separator.getAttribute("aria-valuemin")))
+      expect(topPercent).toBeLessThanOrEqual(Number(separator.getAttribute("aria-valuemax")))
+      expect(topHeight + 8 + inspectorHeight).toBeCloseTo(height, 6)
+      expect(topHeight).toBeGreaterThan(0)
+      expect(inspectorHeight).toBeGreaterThan(0)
+      return { topHeight, inspectorHeight, topPercent }
+    }
+    expect(assertSplitGeometry(500)).toMatchObject({
+      topHeight: 120,
+      inspectorHeight: 372,
+      topPercent: 24,
+    })
+    expect(assertSplitGeometry(900)).toMatchObject({
+      topHeight: 216,
+      inspectorHeight: 676,
+      topPercent: 24,
+    })
+    const beforeAdjacentKeyboardMove = assertSplitGeometry(500).topHeight
+    separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
+    expect(separator.getAttribute("aria-valuenow")).toBe("29")
+    expect(assertSplitGeometry(500).topHeight - beforeAdjacentKeyboardMove).toBe(25)
+    expect(assertSplitGeometry(900).topHeight).toBe(261)
+    expect(assertSplitGeometry(500).topHeight).toBe(145)
     const captureTarget = separator as HTMLDivElement & {
       setPointerCapture?: (pointerId: number) => void
     }
     captureTarget.setPointerCapture ??= () => {}
     separator.dispatchEvent(
-      new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientY: 0 }),
+      new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientY: 145 }),
     )
     separator.dispatchEvent(
-      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 850 }),
+      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 160 }),
     )
+    expect(separator.getAttribute("aria-valuenow")).toBe("32")
     separator.dispatchEvent(
-      new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientY: 850 }),
+      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 350 }),
+    )
+    expect(separator.getAttribute("aria-valuenow")).toBe("70")
+    separator.dispatchEvent(
+      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 450 }),
     )
     expect(separator.getAttribute("aria-valuenow")).toBe("76")
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.split).toBe(76)
+    expect(assertSplitGeometry(500)).toMatchObject({
+      topHeight: 380,
+      inspectorHeight: 112,
+      topPercent: 76,
+    })
+    separator.dispatchEvent(
+      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 325 }),
+    )
+    expect(separator.getAttribute("aria-valuenow")).toBe("65")
+    separator.dispatchEvent(
+      new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientY: 325 }),
+    )
+    expect(assertSplitGeometry(500)).toMatchObject({ topHeight: 325, topPercent: 65 })
+    expect(assertSplitGeometry(900)).toMatchObject({
+      topHeight: 585,
+      inspectorHeight: 307,
+      topPercent: 65,
+    })
+    expect(assertSplitGeometry(500).topHeight).toBe(325)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.split).toBe(65)
 
     const firstRow = containerA.querySelector<HTMLButtonElement>(
       `[data-candidate-id="${CANDIDATE_A}"]`,
@@ -653,12 +773,31 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     mountA.setVisible(false)
     await until(() => hiddenSignal?.aborted === true)
     const beforeLateHiddenResult = comparisonCounts.get(DIRECTORY_A)
+    const rpcsBeforeLocationReopen = calls.filter((call) => call.service !== "location").length
     mountA.setVisible(true)
-    await until(
-      () =>
-        containerA.querySelector('[data-candidate-id="' + CANDIDATE_A + '"]') !== null &&
-        (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 4,
+    await until(() => (locationSignals.get(DIRECTORY_A)?.length ?? 0) === 2)
+    expect(calls.filter((call) => call.service !== "location")).toHaveLength(
+      rpcsBeforeLocationReopen,
     )
+    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).toBeNull()
+    mountA.setVisible(false)
+    await until(() => locationSignals.get(DIRECTORY_A)?.[1]?.aborted === true)
+    mountA.setVisible(true)
+    await until(() => (locationSignals.get(DIRECTORY_A)?.length ?? 0) === 3)
+    expect(locationSignals.get(DIRECTORY_A)?.[1]?.aborted).toBe(true)
+    expect(calls.filter((call) => call.service !== "location")).toHaveLength(
+      rpcsBeforeLocationReopen,
+    )
+    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).toBeNull()
+    deferredLocationA2.resolve(locationResult(DIRECTORY_A))
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(calls.filter((call) => call.service !== "location")).toHaveLength(
+      rpcsBeforeLocationReopen,
+    )
+    const connectionCountsBeforeReopen = connectionCounts(DIRECTORY_A)
+    deferredLocationA3.resolve(locationResult(DIRECTORY_A))
+    await until(() => connectedOnceSince(DIRECTORY_A, connectionCountsBeforeReopen))
+    await until(() => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 4)
     await until(() => comparisonCounts.get(DIRECTORY_A) === (beforeLateHiddenResult ?? 0) + 2)
     const afterReconnectComparisons = comparisonCounts.get(DIRECTORY_A)
     deferredA3.resolve(sourceEvidence())
@@ -668,6 +807,43 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "GPT-6 refreshed",
     )
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
+
+    const rpcsBeforeSessionSwitch = calls.filter((call) => call.service !== "location").length
+    sessionScope.update((draft: { id: string; directory: string }) => {
+      draft.id = "ses-models-switched"
+      draft.directory = DIRECTORY_B
+    })
+    await until(() => (locationSignals.get(DIRECTORY_B)?.length ?? 0) === 1)
+    expect(calls.filter((call) => call.service !== "location")).toHaveLength(
+      rpcsBeforeSessionSwitch,
+    )
+    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).toBeNull()
+    sessionScope.update((draft: { id: string; directory: string }) => {
+      draft.id = "ses-models-panel"
+      draft.directory = DIRECTORY_A
+    })
+    await until(() => (locationSignals.get(DIRECTORY_A)?.length ?? 0) === 4)
+    expect(locationSignals.get(DIRECTORY_B)?.[0]?.aborted).toBe(true)
+    const rpcsBeforeLateProjectResult = calls.filter((call) => call.service !== "location").length
+    deferredLocationB1.resolve(locationResult(DIRECTORY_B))
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(calls.filter((call) => call.service !== "location")).toHaveLength(
+      rpcsBeforeLateProjectResult,
+    )
+    deferredLocationA4.reject(new Error("location lookup failed"))
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(calls.filter((call) => call.service !== "location")).toHaveLength(
+      rpcsBeforeLateProjectResult,
+    )
+    const comparisonsBeforeRetry = comparisonCounts.get(DIRECTORY_A) ?? 0
+    const connectionCountsBeforeRetry = connectionCounts(DIRECTORY_A)
+    mountA.setVisible(false)
+    mountA.setVisible(true)
+    await until(() => (locationSignals.get(DIRECTORY_A)?.length ?? 0) === 5)
+    await until(() => connectedOnceSince(DIRECTORY_A, connectionCountsBeforeRetry))
+    await until(() => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 5)
+    await until(() => comparisonCounts.get(DIRECTORY_A) === comparisonsBeforeRetry + 2)
+    expect(counts.get(`${DIRECTORY_A}:refreshSources`)).toBe(5)
 
     const containerB = browserDocument.createElement("main")
     browserDocument.body.append(containerB)

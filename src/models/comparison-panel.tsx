@@ -1,7 +1,7 @@
 import { Store, bindPlugin, createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
 import { Tasks } from "../tasks/contract.ts"
@@ -227,36 +227,36 @@ function ModelPanel(
   let inspector: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
 
-  const source = createLatest(
-    () => {
-      if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
-      return {
-        client: props.session.server.client,
-        server: props.session.server.id,
-        session: props.session.id,
-        directory: props.session.directory,
-      }
-    },
-    async (value, signal) => {
-      const location = await value.client.location.get(
-        { location: { directory: value.directory } },
-        { signal },
-      )
-      return {
-        ...value,
-        project: location.project.canonical,
-        projectID: location.project.id,
-      }
-    },
-  )
-  const current = () => {
+  const locationRequest = createMemo(() => {
     if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
+    return {
+      lookup: Symbol("models-location"),
+      client: props.session.server.client,
+      server: props.session.server.id,
+      session: props.session.id,
+      directory: props.session.directory,
+    }
+  })
+  const source = createLatest(locationRequest, async (value, signal) => {
+    const location = await value.client.location.get(
+      { location: { directory: value.directory } },
+      { signal },
+    )
+    return {
+      ...value,
+      project: location.project.canonical,
+      projectID: location.project.id,
+    }
+  })
+  const current = () => {
+    const request = locationRequest()
+    if (!request) return undefined
     const value = source.latest
     return value &&
+      value.lookup === request.lookup &&
       value.server === props.session.server.id &&
       value.session === props.session.id &&
-      value.directory === props.session.directory &&
-      !source.loading
+      value.directory === props.session.directory
       ? value
       : undefined
   }
@@ -786,7 +786,7 @@ function ModelPanel(
         aria-orientation="horizontal"
         aria-valuemin={24}
         aria-valuemax={76}
-        aria-valuenow={Math.round(split())}
+        aria-valuenow={split()}
         tabIndex={0}
         onPointerDown={drag}
         onKeyDown={(event) => {

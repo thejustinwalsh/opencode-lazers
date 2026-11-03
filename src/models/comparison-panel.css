@@ -1,6 +1,6 @@
 .lazers-models {
   display: grid;
-  grid-template-rows: minmax(180px, var(--models-top-size)) 8px minmax(150px, 1fr);
+  grid-template-rows: minmax(0, var(--models-top-size)) 8px minmax(0, 1fr);
   container-name: models-panel;
   container-type: inline-size;
   width: 100%;
