@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-03, approximately 15:00 America/Detroit. Recheck live state.
+Updated 2026-11-03, after the connected LZ96 review. Recheck live state.
 This is a current-state checkpoint; prior source history remains in Git and the
 linked evidence. The complete goal is active, not complete.
 
@@ -30,47 +30,65 @@ and Code Mode, no worker subagents. No arbitrary budgets or provider vetoes.
 
 ## Live state and immediate work
 
-Service PID54033, `http://127.0.0.1:49374`. Native tools and commands use `lz-*`.
+Service PID47672, `http://127.0.0.1:49374`. Native tools and commands use `lz-*`.
 Offline atomic rename9736261 and actual Code Mode/panel smoke9fff29b are DONE.
 No legacy aliases; agent/package/storage identities and historical data remain.
 Main has normal Architect tools. Desktop is available at this checkpoint.
 
-- LZ96 visual repair is running. Task `5057afaf-2c8c-479b-8274-00ca49f30e9b`,
-  plan `ae8438ef-c789-4432-b225-d833aa7de558`, attempt
-  `46449e1b-afad-407d-ba12-2f44e664baa2`, worker
-  `ses_448240ec2b464b099f42eddac9858e00`, actual LunaMax. Tree under
-  `~/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
-- LZ94 pure dispatch-route foundation returned a448d4c, worker
-  `ses_61d99279dbdb430f95baa4abc74ad73a`. Native review/integration pending.
-  It does not activate live routing.
-- LZ95 read-only maintenance preflight is running, worker
-  `ses_72e0e79759074032ae71ac765fc09523`, actual LunaMax; actual location tree
-  `7d7be832-a7e0-480e-95f2-50cfe2b94841`. It cannot perform recovery or shutdown.
-- Main consumed the grouping/matching correction below. Root answered its native
-  interview: one source-verified canonical model row with provider and effort
-  selectors; preserve separate exact-route measurements. Main is coordinating
-  identity and presentation follow-up without duplicating active LZ96 work.
-- Root committed confirmed findings011f89d; latest Desktop follow-up relayed it
-  and may still be Pending. Verify consumed before repeating.
+- LZ96 source6d548cb is accepted, merged as afa5e57, runtime-recorded and built.
+  Root329799d fixes the actual native task-trigger clipping found afterward;
+  updated DOM checks, lint/typecheck/build passed and actual narrow/wide trigger
+  captures are Tera-reviewed. Early presentation passes; final grouped UI/data
+  acceptance stays open. Task5057afaf-2c8c-479b-8274-00ca49f30e9b,
+  plan ae8438ef-c789-4432-b225-d833aa7de558.
+- LZ94 a448d4c is reviewed and merged b3f95fa; runtime source integration recorded.
+  This pure route resolver does not activate live routing.
+- LZ95 returned08911ce. Independent production-shaped probes found four real
+  defects; source withheld, retained. See evidence/maintenance-preflight-review.md.
+  Combined plan b048598f-ab73-4494-980c-1368fa9342c7 is not integrated/cleaned.
+- LZ97 identity/group projection is dispatched on actual LunaMax. Task
+  511a371a-a5e6-4ef3-bd69-713154df80ef, planbb47fbce-be29-446c-b783-a74d62383ff7,
+  attempt98724b83-605f-4a9a-9383-f4e3a24b3428, worker
+  ses_0ec8c285a334405a8ff465cba3cec555. Two untracked source files are preserved
+  in its original worktree. Old service54033 disappeared around15:26:49; Desktop
+  auto-started47672 at15:27:16. Root issued only View→Reload, no service stop or
+  location reload. Cause is not proved. Reconciliation reports worker interrupted
+  and unknown native idle background observation in this new host. Main is
+  investigating supported same-worker recovery; do not replay or fabricate idle.
+- Root has completed the renderer lane and explicitly RELEASED the temporary
+  local-inference hold through Desktop. Main can task/execute again. All six
+  switches remain on; after the earlier reload an error recovered automatically,
+  and a real native typed decision returned ok:true/kind:boolean/value:true.
+- Main consumed canonical grouping choice: one source-verified model row with
+  provider/effort selectors, exact-route measurements separate. LZ97 backend then
+  follow-up UI wiring must implement it; common Sonnet/Haiku punctuation aliases
+  remain unsupported unless source-backed. Underlying native modelID can be
+  useful evidence but alone would wrongly collapse Luna Fast. See the review.
+- Measured tool-efficiency follow-up: lz-inspect-trajectory(limit8) returned
+  219,062bytes/5,604lines, mostly effort provenance (130,231 serialized chars;
+  trajectory2,477). Main is using small Code Mode projections and recorded a
+  compact-default/progressive-detail repair for later. Keep full data accessible.
 
-## Models visual and data defects — acceptance failed
+## Models visual and data defects — final acceptance open
 
 Canonical approved image: [models-approved.png](../../design/models-panel/models-approved.png)
 (original v1, not v2). [DESIGN.md](../../DESIGN.md), [component guide](../../design/models-panel/implementation-plan.md),
 [Tera connected review and confirmed data defects](../../design/models-panel/native-review-20261103.md).
 Source/DOM checks are not native visual acceptance.
 
-Root captured actual connected wide and ~400CSSpx views in `/private/tmp/`:
-`lazers-models-wide-20261103.png`, `lazers-models-narrow-20261103.png`,
-`lazers-models-narrow-candidates-20261103.png`. Tera rejected presentation:
-source/filter prose hides comparison below fold; candidate blocks are enormous;
-detailed lower usage/provenance competes with decision surface. Restore compact
-controls, chart/short candidates first, lower decision inspector and disclosures.
-The chart/estimate must stay honestly unavailable until real data exists.
-One upper scroll left inspector stationary; hide/reopen connected and retained
-selection, but exact scroll restoration and other interactions need verification.
+Current actual captures in `/private/tmp/`:
+`lazers-models-narrow-trigger-fixed-20261103.png` (~400CSSpx) and
+`lazers-models-wide-trigger-fixed-20261103.png` (~800CSSpx). Tera accepts the
+corrected visible composition and task trigger. Root observed actual keyboard
+Down/Enter selecting Low and updating inspector, Up/Enter restoring High;
+separator56.92482→61.92482→56.92482, source disclosure open/close, task menu
+open/Escape, and upper scroll independent of inspector. Detailed evidence is
+collapsed. Theme/font changes, final grouped selectors and data acceptance remain
+open. The honest chart/estimate unavailable state must not be filled with fakes.
+Task menu correctly shows LZ93 accepted while inspector incorrectly renders
+specification status submitted; fix through existing execution.state in UI wiring.
 
-Actual source snapshot:471 native,417 OpenRouter,152 coding benchmarks.
+Actual refreshed panel snapshot:471 native,418 OpenRouter,152 coding benchmarks.
 Effort expansion produces1,373 candidate rows. Effort belongs in model settings,
 not separate model rows. Canonical presentation must not pool provider/effort
 outcome or cost statistics or merge uncertain/version/fast/batch identities.
