@@ -531,3 +531,32 @@ test("route accounting compares exact identities behind bounded displays and lea
   ])
   expect(unavailable.routes.mismatches).toEqual([])
 })
+
+test("unavailable route ordering follows source occurrences, not lossy displays or allocation order", () => {
+  const sharedDisplay = `${"s".repeat(120)}…[truncated]`
+  const otherDisplay = `${"z".repeat(120)}…[truncated]`
+  const inputs = [
+    { id: "attempt-z", sessionID: "session-z", display: otherDisplay },
+    { id: "attempt-m", sessionID: "session-m", display: sharedDisplay },
+    { id: "attempt-a", sessionID: "session-a", display: sharedDisplay },
+  ]
+  const read = (order: typeof inputs) =>
+    project(
+      order.map(({ id, sessionID, display }) =>
+        attempt({
+          id,
+          sessionID,
+          currentRoute: {
+            providerID: "openai",
+            modelID: display,
+            variant: "high",
+            identity: null,
+          },
+        }),
+      ),
+    ).routes.distinctObservedRoutes.flatMap((route) => (route ? [route.modelID] : []))
+
+  const ordered = read(inputs)
+  expect(ordered).toEqual([sharedDisplay, sharedDisplay, otherDisplay])
+  expect(read([...inputs].reverse())).toEqual(ordered)
+})
