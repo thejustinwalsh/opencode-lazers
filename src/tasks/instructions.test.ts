@@ -5,6 +5,26 @@ import { taskInstructions } from "./instructions.ts"
 
 const detail = GetOutput.parse({
   status: "found",
+  classification: {
+    revision: 1,
+    classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+    provenance: {
+      kind: "embedded",
+      sessionID: "owner",
+      createdAt: "2026-10-31T12:00:00.000Z",
+    },
+  },
+  classificationHistory: [
+    {
+      revision: 1,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+      provenance: {
+        kind: "embedded",
+        sessionID: "owner",
+        createdAt: "2026-10-31T12:00:00.000Z",
+      },
+    },
+  ],
   reference: "LZ-1",
   task: {
     schemaVersion: 1,

@@ -17,6 +17,11 @@ export const CANDIDATE_A = "6:openai|5:gpt-6|-"
 export const CANDIDATE_A_SECOND = "6:openai|10:gpt-6-mini|-"
 export const CANDIDATE_B = "9:anthropic|8:claude-4|-"
 export const CANDIDATE_C = "6:openai|9:gpt-6-pro|-"
+const legacyClassification = {
+  revision: 0,
+  classification: null,
+  provenance: { kind: "legacy" },
+} as const
 
 const evidence = { records: [], recordCount: 0, truncated: false }
 const sources = ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const
@@ -146,6 +151,7 @@ export function taskPage(
         revision: 1,
         status: "submitted",
         reason: null,
+        classification: legacyClassification,
         title: objective,
         objective,
         createdAt: "2026-11-03T00:00:00.000Z",
@@ -196,7 +202,13 @@ export function taskDetail(
       verification: [],
     },
   })
-  return GetOutput.parse({ status: "found", task, reference })
+  return GetOutput.parse({
+    status: "found",
+    task,
+    reference,
+    classification: legacyClassification,
+    classificationHistory: [legacyClassification],
+  })
 }
 
 export function settings(projectDirectory: string, taskID: string | undefined, revision: number) {
