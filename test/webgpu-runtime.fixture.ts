@@ -32,6 +32,10 @@ let releases = 0
 let cleanupAttempts = 0
 let failCleanup = false
 let cleanupGate: Promise<void> | undefined
+let failDecisionEnsure = false
+let failDecisionLoad = false
+let chatLoadGate: Promise<void> | undefined
+let decisionLoadGate: Promise<void> | undefined
 const allocate = () => {
   assert.equal(allocations, 0, "A second GPU model must never allocate")
   allocations++
@@ -49,37 +53,40 @@ const allocate = () => {
 }
 mock.module("../.cache/lfm3-engine.js", () => ({
   Lfm3OmniForConditionalGeneration: {
-    from_pretrained: async () => ({
-      dispose: allocate(),
-      lost: new Promise(() => {}),
-      deviceInfo: () => ({ description: "Test GPU" }),
-      create_session: () => ({
-        dispose: async () => {},
-        generate: () => {
-          assert.equal(
-            traces.at(-1)?.stage,
-            "generate",
-            "The stage must reach the independent log sink before model work",
-          )
-          const gate = generationGate
-          generationStarted.resolve()
-          return {
-            async *[Symbol.asyncIterator]() {
-              await gate
-              yield { type: "text", text: "" }
-            },
-            result: (async () => {
-              await gate
-              return {
-                message: { content: "ready" },
-                usage: { prompt_tokens: 1, completion_tokens: 1 },
-                finish_reason: "stop",
-              }
-            })(),
-          }
-        },
-      }),
-    }),
+    from_pretrained: async () => {
+      await chatLoadGate
+      return {
+        dispose: allocate(),
+        lost: new Promise(() => {}),
+        deviceInfo: () => ({ description: "Test GPU" }),
+        create_session: () => ({
+          dispose: async () => {},
+          generate: () => {
+            assert.equal(
+              traces.at(-1)?.stage,
+              "generate",
+              "The stage must reach the independent log sink before model work",
+            )
+            const gate = generationGate
+            generationStarted.resolve()
+            return {
+              async *[Symbol.asyncIterator]() {
+                await gate
+                yield { type: "text", text: "" }
+              },
+              result: (async () => {
+                await gate
+                return {
+                  message: { content: "ready" },
+                  usage: { prompt_tokens: 1, completion_tokens: 1 },
+                  finish_reason: "stop",
+                }
+              })(),
+            }
+          },
+        }),
+      }
+    },
   },
 }))
 mock.module("../src/webgpu/decision-runtime.ts", () => ({
@@ -88,15 +95,19 @@ mock.module("../src/webgpu/decision-runtime.ts", () => ({
     _signal: unknown,
     _progress: unknown,
     lost: () => void,
-  ) => ({
-    dispose: allocate(),
-    loseDevice: lost,
-    systemOne: async () => ({
-      model: "d1-omni-2b",
-      answers: { q: { type: "noul", noul: 0.9 } },
-      usage: { input_tokens: 1, output_tokens: 0 },
-    }),
-  }),
+  ) => {
+    await decisionLoadGate
+    if (failDecisionLoad) throw Error("simulated decision model load failure")
+    return {
+      dispose: allocate(),
+      loseDevice: lost,
+      systemOne: async () => ({
+        model: "d1-omni-2b",
+        answers: { q: { type: "noul", noul: 0.9 } },
+        usage: { input_tokens: 1, output_tokens: 0 },
+      }),
+    }
+  },
 }))
 Object.defineProperty(globalThis, "navigator", { configurable: true, value: { gpu: {} } })
 const { createInferenceRuntime } = await import("../src/webgpu/runtime.ts")
@@ -134,7 +145,9 @@ const files = {
   release: async ({ owner }: { owner: string }) => lease.release(1, owner),
   cancel: async ({ owner }: { owner: string }) => lease.assert(1, owner),
   ensure: async () => {},
-  decisionEnsure: async () => {},
+  decisionEnsure: async () => {
+    if (failDecisionEnsure) throw Error("simulated decision cache failure")
+  },
   status: async () => ({ phase: "cached" }),
   decisionStatus: async () => ({ phase: "cached" }),
 }
@@ -144,6 +157,8 @@ const ctx = {
   client: { rpc: (definition: unknown) => (definition === LocalInference ? {} : worker) },
 } as unknown as Parameters<Plugin.Setup>[0]
 const [features, setFeatures] = solid.createSignal(defaultFeatures(true))
+const initialChatLoad = Promise.withResolvers<void>()
+chatLoadGate = initialChatLoad.promise
 const timing = {
   now: () => fakeNow,
   wallNow: () => wallNow,
@@ -172,7 +187,13 @@ const until = async (condition: () => boolean) => {
   }
 }
 try {
+  await until(() => runtime.modelName() === "LFM3" && runtime.phase() === "loading")
+  assert.equal(runtime.resident(), undefined, "A cold chat load is named from its selected target")
+  initialChatLoad.resolve()
+  chatLoadGate = undefined
   await until(() => runtime.state() === "ready")
+  assert.equal(runtime.modelName(), "LFM3")
+  assert.equal(runtime.resident(), "chat")
   const timerTick = () => {
     assert.ok(rendererTimer, "The production renderer timer callback is installed")
     rendererTimer()
@@ -224,6 +245,8 @@ try {
   await until(() =>
     traces.some((event) => event.requestID !== runtimeID && event.stage === "generate"),
   )
+  assert.equal(runtime.modelName(), "LFM3", "A busy resident keeps its short name")
+  assert.equal(runtime.phase(), "busy")
   const firstRequestID = traces.find(
     (event) => event.requestID !== runtimeID && event.stage === "generate",
   )!.requestID
@@ -443,21 +466,108 @@ try {
   )
   assert.equal(withoutLogs.ok, true, "A failed diagnostic sink cannot fail model inference")
   failTracing = false
-  const decision = () =>
-    broker.generate(
+  const decision = () => {
+    const result = broker.generate(
       { prompt: "{}", mode: "systemone", maxTokens: 1, timeoutMs: 3_000 },
       controller.signal,
     )
-  assert.equal((await decision()).ok, true)
+    timerTick()
+    return result
+  }
+  const chat = () => {
+    const result = broker.generate(
+      { prompt: "switch back to chat", maxTokens: 16, timeoutMs: 3_000 },
+      controller.signal,
+    )
+    timerTick()
+    return result
+  }
+
+  failDecisionEnsure = true
+  assert.equal((await decision()).ok, false, "Cache failure occurs before old-model disposal")
+  failDecisionEnsure = false
+  assert.equal(runtime.modelName(), "LFM3", "The resident model wins over a failed target")
+  assert.equal(runtime.resident(), "chat")
+  assert.equal(runtime.state(), "error")
+
+  failCleanup = true
+  assert.equal((await decision()).ok, false, "Failed disposal retains the old allocation")
+  failCleanup = false
+  assert.equal(runtime.modelName(), "LFM3", "A tainted resident wins over the requested d1 target")
+  assert.equal(runtime.resident(), "chat")
+  assert.equal(runtime.state(), "error")
+
+  const decisionLoad = Promise.withResolvers<void>()
+  decisionLoadGate = decisionLoad.promise
+  const oldDisposal = Promise.withResolvers<void>()
+  cleanupGate = oldDisposal.promise
+  const toDecision = decision()
+  await until(() => runtime.modelName() === "LFM3" && runtime.phase() === "loading")
+  assert.equal(runtime.resident(), "chat", "A resident remains authoritative during its disposal")
+  oldDisposal.resolve()
+  cleanupGate = undefined
+  await until(() => runtime.modelName() === "d1" && runtime.resident() === undefined)
+  assert.equal(runtime.phase(), "loading")
+  assert.equal(runtime.state(), "loading", "After disposal the selected target is named")
+  decisionLoad.resolve()
+  decisionLoadGate = undefined
+  assert.equal((await toDecision).ok, true)
+  assert.equal(runtime.modelName(), "d1")
   assert.equal(runtime.resident(), "decision")
+
+  const chatLoad = Promise.withResolvers<void>()
+  chatLoadGate = chatLoad.promise
+  const toChat = chat()
+  await until(
+    () =>
+      runtime.modelName() === "LFM3" &&
+      runtime.resident() === undefined &&
+      runtime.phase() === "loading",
+  )
+  chatLoad.resolve()
+  chatLoadGate = undefined
+  assert.equal((await toChat).ok, true)
+  assert.equal(runtime.modelName(), "LFM3", "Switching back restores the chat identity")
+
+  failDecisionLoad = true
+  assert.equal((await decision()).ok, false, "Load failure occurs after disposing the old model")
+  failDecisionLoad = false
+  assert.equal(runtime.resident(), undefined)
+  assert.equal(runtime.modelName(), "d1", "The failed target is named without claiming residency")
+  assert.equal(runtime.state(), "error")
+  await Bun.sleep(600)
+  assert.equal(
+    runtime.resident(),
+    undefined,
+    "A failed switch is not retargeted from feature settings",
+  )
+  assert.equal(runtime.modelName(), "d1")
+  assert.equal((await decision()).ok, true)
+  assert.equal(runtime.modelName(), "d1")
+
   for (let loss = 0; loss < 3; loss++) {
     const before = releases
+    const recoveryLoad = loss === 0 ? Promise.withResolvers<void>() : undefined
+    if (recoveryLoad) decisionLoadGate = recoveryLoad.promise
     runtime.simulateDeviceLoss()
+    if (recoveryLoad) {
+      await until(
+        () =>
+          runtime.modelName() === "d1" &&
+          runtime.resident() === undefined &&
+          runtime.phase() === "loading",
+      )
+      recoveryLoad.resolve()
+      decisionLoadGate = undefined
+    }
     await until(
       () => releases > before && (runtime.state() === "ready" || runtime.state() === "error"),
     )
+    assert.equal(runtime.modelName(), "d1", "Device loss recovery retains the known identity")
   }
   assert.equal(runtime.state(), "error")
+  assert.equal(runtime.resident(), undefined, "Circuit breaker does not leave a model resident")
+  assert.equal(runtime.modelName(), "d1", "The failed recovery target remains explicitly named")
   assert.match(runtime.detail(), /cooling down/)
   const afterCircuit = releases
   await Bun.sleep(700)
@@ -472,6 +582,7 @@ try {
   await until(() => runtime.state() === "ready")
   assert.equal(allocations, 1, "Repeated loss retries after cooling down without new demand")
   assert.equal(broker.demand().requested, false)
+  assert.equal(runtime.modelName(), "d1")
   assert.equal((await decision()).ok, true, "The recovered model must serve a fresh request")
   for (let loss = 0; loss < 3 && runtime.state() !== "error"; loss++) {
     const before = releases
@@ -491,6 +602,7 @@ try {
   await Bun.sleep(10)
   assert.equal(lease.occupied(), true)
   assert.equal(allocations, 1)
+  assert.equal(runtime.modelName(), "d1", "An in-progress unload keeps the resident identity")
   await runtime.load()
   assert.equal(allocations, 1)
   gate.resolve()
@@ -498,6 +610,7 @@ try {
   cleanupGate = undefined
   assert.equal(lease.occupied(), false)
   assert.equal(allocations, 0)
+  assert.equal(runtime.modelName(), undefined, "A successful unload has no inferred model identity")
   timerTick()
   await Bun.sleep(20)
   assert.equal(allocations, 0, "Manual unload does not rearm automatic loading")
@@ -507,6 +620,7 @@ try {
   failCleanup = true
   await runtime.unload()
   assert.equal(runtime.state(), "error")
+  assert.equal(runtime.modelName(), "d1", "A tainted resource keeps its retained identity")
   assert.equal(lease.occupied(), true)
   assert.equal(allocations, 1)
   assert.throws(() => lease.acquire(2))
@@ -530,6 +644,13 @@ try {
   await runtime.unload()
   assert.equal(lease.occupied(), false)
   assert.equal(maximum, 1)
+  assert.equal(runtime.modelName(), undefined)
+  setFeatures({ ...defaultFeatures(true), questions: false, dictation: false, readAloud: false })
+  const coldDecisionLoad = runtime.load()
+  assert.equal(runtime.modelName(), "d1", "A cold decision load is named from its selected target")
+  await coldDecisionLoad
+  assert.equal(runtime.modelName(), "d1")
+  assert.equal(runtime.resident(), "decision")
   assert.equal((await decision()).ok, true)
   const finalGate = Promise.withResolvers<void>()
   cleanupGate = finalGate.promise

@@ -32,6 +32,10 @@ export const modelURL = (name: string) =>
 
 export const DECISION_REPOSITORY = "LiquidAI/d1-Omni-2B-ONNX"
 export const DECISION_REVISION = "2552a495cd0fc6d82f7911110f07bca7a05c11c6"
+export const MODEL_SHORT_NAMES = {
+  chat: "LFM3",
+  decision: "d1",
+} as const
 export const DECISION_FILES = [
   {
     id: "decoder",

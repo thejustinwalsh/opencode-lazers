@@ -9,6 +9,7 @@ import {
   MODEL_FILES,
   MODEL_REPOSITORY,
   MODEL_REVISION,
+  MODEL_SHORT_NAMES,
 } from "./manifest.ts"
 import { cachedModelFetch } from "./files-fetch.ts"
 import { LocalInference, RendererInference } from "./rpc.ts"
@@ -87,6 +88,7 @@ export function createInferenceRuntime(
   const [gpu, setGPU] = createSignal("")
   const [phase, setPhase] = createSignal("unloaded")
   const [resident, setResident] = createSignal<ModelKind | undefined>()
+  const [target, setTarget] = createSignal<ModelKind | undefined>()
   const models = new ExclusiveModels<{
     chat: { engine: Lfm3OmniForConditionalGeneration; dispose(): Promise<void> }
     decision: { engine: DecisionRuntime; dispose(): Promise<void> }
@@ -115,8 +117,8 @@ export function createInferenceRuntime(
   const rpc = () => ctx.client.rpc(LocalInference)
   const worker = () => ctx.client.rpc(RendererInference)
   const ready = () => {
+    setResident(models.current())
     if (models.isTainted()) {
-      setResident(models.current())
       setState("error")
       setPhase("error")
       setDetail(
@@ -125,7 +127,6 @@ export function createInferenceRuntime(
       return
     }
     if (!usesGPU(features())) {
-      setResident(models.current())
       setState("disabled")
       setPhase("disabled")
       setDetail(
@@ -135,7 +136,6 @@ export function createInferenceRuntime(
       )
       return
     }
-    setResident(models.current())
     setState(models.current() ? "ready" : "unloaded")
     setPhase(models.current() ? "ready" : "unloaded")
     setDetail(
@@ -153,24 +153,38 @@ export function createInferenceRuntime(
   }
 
   const ensureModel = async (kind: ModelKind, signal: AbortSignal) => {
+    const requestedSignal = signal
     signal = AbortSignal.any([signal, AbortSignal.timeout(120_000)])
     if (
       (kind === "chat" && !needsChat(features())) ||
       (kind === "decision" && !featureEnabled(features(), "decisions"))
     )
       throw Error("This model's local features are turned off")
-    if (models.get(kind)) return
-    if (!owner) throw new Error("Local model cache ownership was lost")
+    if (models.get(kind)) {
+      setResident(models.current())
+      setTarget(undefined)
+      return
+    }
+    setTarget(kind)
+    if (!owner) {
+      const error = new Error("Local model cache ownership was lost")
+      fail(error)
+      throw error
+    }
     const token = owner
     switching = true
     setState("loading")
     setPhase("loading")
-    setResident(undefined)
+    setResident(models.current())
     setDetail(`Loading ${kind === "chat" ? "chat and speech" : "d1 decision"} model from cache`)
     try {
       if (!usesGPU(features())) throw Error("Local inference is turned off")
       if (kind === "chat") await files.ensure({ owner: token }, { signal })
       else await files.decisionEnsure({ owner: token }, { signal })
+      if (models.current() && (models.current() !== kind || models.isTainted())) {
+        await models.release()
+        setResident(models.current())
+      }
       if (kind === "chat") {
         const loaded = await models.ensure(
           "chat",
@@ -244,8 +258,16 @@ export function createInferenceRuntime(
         setGPU("WebGPU · d1-Omni-2B Q4f16")
       }
       signal.throwIfAborted()
-      setResident(kind)
+      setResident(models.current())
+      setTarget(undefined)
       lastUsed = Date.now()
+    } catch (error) {
+      setResident(models.current())
+      if (requestedSignal.aborted) {
+        if (!models.current()) setTarget(undefined)
+        if (!unloading && !disposed) ready()
+      } else fail(error)
+      throw error
     } finally {
       switching = false
     }
@@ -257,6 +279,7 @@ export function createInferenceRuntime(
     losses.push(wallNow())
     recoveryController = new AbortController()
     recoveryKind = kind
+    setTarget(kind)
     const recoverySignal = AbortSignal.any([
       ctx.signal,
       recoveryController.signal,
@@ -267,7 +290,7 @@ export function createInferenceRuntime(
       try {
         await active?.done
         await models.release()
-        setResident(undefined)
+        setResident(models.current())
         if (disposed || unloading) return
         if (losses.length > 2) {
           recoveryRetry = { kind, at: wallNow() + 60_000 }
@@ -431,7 +454,7 @@ export function createInferenceRuntime(
         .catch(() => {})
       active = undefined
       lastUsed = Date.now()
-      if (!unloading && !disposed && !recovery) ready()
+      if (!unloading && !disposed && !recovery && state() !== "error") ready()
     }
   }
 
@@ -448,6 +471,8 @@ export function createInferenceRuntime(
         await active?.done.catch(() => {})
         await recovery
         await models.release()
+        setResident(models.current())
+        setTarget(undefined)
         const token = owner
         if (token) {
           await worker()
@@ -480,6 +505,7 @@ export function createInferenceRuntime(
     const signal = AbortSignal.any([ctx.signal, controller.signal, AbortSignal.timeout(600_000)])
     setState("loading")
     setPhase("loading")
+    setTarget(needsChat(features()) ? "chat" : "decision")
     setDetail("Preparing verified local model files")
     const cacheOperations: Promise<void>[] = []
     initializing = (async () => {
@@ -510,13 +536,13 @@ export function createInferenceRuntime(
         await Promise.allSettled(cacheOperations)
         try {
           await models.release()
+          setResident(models.current())
         } catch (cleanup) {
           autoload = false
           setResident(models.current())
           fail(`Model cleanup failed; GPU ownership retained: ${String(cleanup)}`)
           return
         }
-        setResident(undefined)
         if (owner) {
           const token = owner
           await worker()
@@ -624,6 +650,7 @@ export function createInferenceRuntime(
         !switching &&
         !recovery &&
         !recoveryRetry &&
+        state() !== "error" &&
         !models.isTainted() &&
         (!models.current() ||
           (models.current() === "chat" && !needsChat(features())) ||
@@ -737,6 +764,11 @@ export function createInferenceRuntime(
     gpu,
     phase,
     resident,
+    modelName: () => {
+      void resident()
+      const kind = models.current() ?? target()
+      return kind ? MODEL_SHORT_NAMES[kind] : undefined
+    },
     load,
     unload,
     dispose,
