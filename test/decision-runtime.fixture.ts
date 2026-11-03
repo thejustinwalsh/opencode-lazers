@@ -23,6 +23,7 @@ mock.module("../src/webgpu/manifest.ts", () => ({
   MODEL_BYTES: 0,
   MODEL_REPOSITORY: "test/model",
   MODEL_REVISION: "test",
+  MODEL_SHORT_NAMES: { chat: "LFM3", decision: "d1" },
   modelURL: () => "",
 }))
 
