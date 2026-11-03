@@ -40,3 +40,24 @@ identity alone must not erase intentional Fast configurations/products. Any
 remaining alias gap must be reported as unsupported association rather than
 upstream absence. Retaining this field is useful source-harvest work, not proof
 that all provider aliases are solved.
+
+## Post-LZ96 visual assessment
+
+The connected [narrow](/private/tmp/lazers-models-narrow-lz96-20261103.png) and [wide](/private/tmp/lazers-models-wide-lz96-20261103.png) captures show a substantial correction: compact context and collapsed source snapshots now let the honest unavailable-chart state and candidate list appear above the split. The narrow view stacks them; the wide view places them side by side. The selected route and unavailable estimate lead the lower inspector, with task and evidence details subordinate. This matches the approved composition's hierarchy for the data currently available.
+
+**Remaining visual blocker:** the selected-task menu trigger clips its text vertically in both captures, with the chevron on a separate line. Make the native trigger a single aligned row with a bounded, meaningful task label and ellipsis; expose the complete task identity accessibly and in the menu/inspector. Verify at both widths after the correction. At narrow width, keep the unavailable-chart message concise so more than one compact candidate can be scanned above the divider without reducing text size.
+
+The wide list repeats one model for each effort; the active LZ97 grouping and subsequent provider/effort selector wiring address that known identity issue. These captures do not establish that behavior. Comparable cohorts, frontier, valuation and estimates remain unavailable, and the approved image's illustrative numbers are not a basis to fill them. The captures alone do not establish keyboard, theme, refresh or disclosure behavior; recapture after the trigger fix and check those interactions separately.
+
+**Trigger correction:** The subsequent [narrow](/private/tmp/lazers-models-narrow-trigger-fixed-20261103.png) and [wide](/private/tmp/lazers-models-wide-trigger-fixed-20261103.png) captures show “Task · LZ-93” and its chevron aligned and fully visible. The previously observed clipping blocker is resolved in these views. This disposition covers the captured partial layout only; grouping, matching and comparable-cohort features remain pending, and screenshots do not establish interactive or complete Models acceptance.
+
+Root's connected interaction pass confirmed the native task menu opens and
+closes with Escape; keyboard Down/Enter selects Fable Low and updates its
+inspector; Up/Enter restores High. The keyboard divider moved from56.92482 to
+61.92482 and back. Source disclosure revealed the actual dated471 native /418
+OpenRouter /152 benchmark snapshots and collapsed again. These checks do not
+establish theme/font changes, grouped-route selectors or full Models acceptance.
+
+One data-display follow-up remains: the menu correctly calls LZ93 accepted while
+the inspector says submitted, because it renders specification status instead
+of the existing execution state. Correct this in the subsequent UI wiring.

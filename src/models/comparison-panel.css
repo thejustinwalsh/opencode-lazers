@@ -104,14 +104,12 @@
 }
 
 .lazers-models-task-select {
-  flex: 1 1 180px;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
 }
 
 .lazers-models-task-select button {
-  display: block;
-  width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;

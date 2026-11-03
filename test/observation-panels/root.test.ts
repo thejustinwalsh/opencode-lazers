@@ -493,7 +493,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         containerA.querySelector('[data-candidate-id="' + CANDIDATE_A + '"]') !== null &&
         containerA.textContent?.includes("Refreshing sources") === true,
     )
-    await until(() => containerA.textContent?.includes("Objective A initial") === true)
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-task-select")
+          ?.getAttribute("title")
+          ?.includes("Objective A initial") === true,
+    )
 
     const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
     const filterDetails = topPaneA.querySelector<HTMLDetailsElement>(
@@ -524,8 +530,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       `Project · ${DIRECTORY_A}`,
     )
     const taskMenu = topPaneA.querySelector<HTMLButtonElement>(".lazers-models-task-select button")!
-    expect(taskMenu.getAttribute("aria-label")).toContain(TASK_A)
-    expect(taskMenu.textContent).toContain("Objective A initial")
+    expect(taskMenu.textContent).toBe("Task · LZ-17")
+    expect(taskMenu.textContent).not.toContain(TASK_A)
+    expect(taskMenu.closest(".lazers-models-task-select")?.getAttribute("aria-label")).toContain(
+      TASK_A,
+    )
+    expect(taskMenu.closest(".lazers-models-task-select")?.getAttribute("title")).toContain(
+      "Objective A initial",
+    )
 
     const rowsBeforeMore = [
       ...containerA.querySelectorAll<HTMLButtonElement>("[data-candidate-id]"),

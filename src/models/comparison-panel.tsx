@@ -355,11 +355,17 @@ function ModelPanel(
   const selectedTask = () => visible()?.task
   const taskLabel = () => {
     const task = selectedTask()
-    if (!task)
-      return visible()?.selectedTaskID
-        ? `Task unavailable · ${visible()!.selectedTaskID}`
+    return task
+      ? `Task · ${task.reference}`
+      : visible()?.selectedTaskID
+        ? "Task unavailable"
         : "Choose task"
-    return `${task.reference} · ${task.task.id} · ${task.task.proposal.objective}`
+  }
+  const taskDescription = () => {
+    const task = selectedTask()
+    return task
+      ? `${task.reference} · ${task.task.id} · ${task.task.proposal.objective}`
+      : (visible()?.selectedTaskID ?? "Choose a task for comparison")
   }
   const projectLabel = () => current()?.project.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project"
   const personas = () => visible()?.settings?.personas ?? []
@@ -562,14 +568,19 @@ function ModelPanel(
                 recorded; comparable cohorts and a period filter are unavailable.
               </div>
             </details>
-            <span class="lazers-models-task-select">
+            <span
+              class="lazers-models-task-select"
+              role="group"
+              aria-label={taskDescription()}
+              title={taskDescription()}
+            >
               <Ui.Menu
                 label={taskLabel()}
                 trigger="button"
                 icon="chevron-down"
                 disabled={!visible()?.tasks.length}
                 items={(visible()?.tasks ?? []).map((task) => ({
-                  label: `${task.reference} · ${task.taskID} · ${task.title || task.objective} · ${task.status}`,
+                  label: `${task.reference} · ${task.title || task.objective} · ${task.status}`,
                   onSelect: () => selectTask(task.taskID),
                 }))}
               />
