@@ -1325,7 +1325,7 @@ export function setupTaskPanel(ctx: TaskContext, openTrajectory: TaskTrajectoryO
     id: "tasks.open",
     title: "Open LAZERS tasks",
     section: "session",
-    slash: { name: "tasks" },
+    slash: { name: "lz-tasks" },
     run: open,
   })
   // Native `session.panel` items list in ascending `order` (Review 10, Browser 15, Terminal 20,

@@ -87,15 +87,25 @@ test("native registration exposes its closable tab and renders through real obse
 
     const command = registrations.find((item) => item.kind === Command)?.value as {
       id: string
+      title: string
+      slash: { name: string }
       run: () => void
     }
     const menu = registrations.find((item) => item.kind === MenuItem)?.value as {
       id: string
       run: () => void
     }
+    expect(command).toMatchObject({
+      id: "radar.open",
+      title: "Open LAZERS Radar",
+      slash: { name: "lz-radar" },
+    })
     command.run()
     menu.run()
-    expect(opened).toHaveLength(2)
+    expect(opened).toEqual([
+      ["lazers:radar", session, { tab: "select" }],
+      ["lazers:radar", session, { tab: "select" }],
+    ])
     panel.render({} as PanelProps)
     await until(() => Boolean(state?.data.snapshot) && Boolean(state?.data.radar))
     expect(state?.data.snapshot?.machine.version).toBe("lazers-task/1")

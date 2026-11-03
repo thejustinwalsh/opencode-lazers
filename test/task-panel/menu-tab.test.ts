@@ -166,8 +166,9 @@ describe("tasks native affordances", () => {
     expect(installed.opened).toEqual(["lazers:tasks"])
     const command = installed.find(gui.Command)
     expect(command!.id).toBe("tasks.open")
+    expect(command!.slash).toEqual({ name: "lz-tasks" })
     ;(command!.run as () => void)()
-    expect(installed.opened.length).toBe(2)
+    expect(installed.opened).toEqual(["lazers:tasks", "lazers:tasks"])
   })
 
   test("opening without a located session does nothing", () => {

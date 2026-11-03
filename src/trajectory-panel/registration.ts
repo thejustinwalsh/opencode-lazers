@@ -28,7 +28,7 @@ export function registerTrajectoryPanel(
     id: "trajectory.open",
     title: "Open LAZERS trajectory",
     section: "session",
-    slash: { name: "trajectory" },
+    slash: { name: "lz-trajectory" },
     run: open,
   })
   ctx.add(MenuItem, {

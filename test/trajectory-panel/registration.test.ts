@@ -4,12 +4,16 @@ import { registerTrajectoryPanel } from "../../src/trajectory-panel/registration
 
 test("Trajectory registers as a closable optional panel with command and session menu entry", () => {
   const registrations: Array<{ token: unknown; value: unknown }> = []
+  const session = { id: "ses-trajectory", location: {} }
+  const opened: unknown[][] = []
   const context = {
     id: "lazers",
     add: (token: unknown, value: unknown) => {
       registrations.push({ token, value })
       return () => {}
     },
+    sessions: { current: () => session },
+    layout: { open: (...args: unknown[]) => opened.push(args) },
   }
   registerTrajectoryPanel(
     context as never,
@@ -35,12 +39,19 @@ test("Trajectory registers as a closable optional panel with command and session
     { id: "trajectory", title: "Trajectory", closable: "hover" },
   ])
   expect(typeof contribution.render).toBe("function")
-  expect(
-    registrations.some(
-      ({ token, value }) =>
-        token === Command && (value as { id?: string }).id === "trajectory.open",
-    ),
-  ).toBe(true)
+  const command = registrations.find(({ token }) => token === Command)?.value as {
+    id: string
+    title: string
+    slash: { name: string }
+    run: () => void
+  }
+  expect(command).toMatchObject({
+    id: "trajectory.open",
+    title: "Open LAZERS trajectory",
+    slash: { name: "lz-trajectory" },
+  })
+  command.run()
+  expect(opened).toEqual([["lazers:trajectory", session, { tab: "select" }]])
   expect(
     registrations.some(
       ({ token, value }) =>
