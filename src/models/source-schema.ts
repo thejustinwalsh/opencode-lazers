@@ -67,6 +67,9 @@ export const NativeModelEvidenceRecordSchema = z.strictObject({
 
 const OpenRouterPriceTierSchema = z.strictObject({
   minPromptTokens: FiniteNonnegative.nullable(),
+  // Published schedule markers are retained without inventing a context threshold or clock conversion.
+  utcStart: FiniteNonnegative.nullable().optional(),
+  utcEnd: FiniteNonnegative.nullable().optional(),
   prompt: DecimalString,
   completion: DecimalString,
   inputCacheRead: DecimalString,

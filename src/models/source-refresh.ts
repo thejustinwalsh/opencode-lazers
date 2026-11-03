@@ -81,6 +81,8 @@ function optionalBoolean(value: unknown): boolean | null {
 
 function decimal(value: unknown): string | null {
   if (value === undefined || value === null) return null
+  // Router prices are resolved after routing; OpenRouter publishes -1 for these quotes.
+  if (value === -1 || value === "-1") return null
   const text = typeof value === "number" && Number.isFinite(value) ? String(value) : value
   if (
     typeof text !== "string" ||
@@ -219,6 +221,8 @@ function openRouterPriceTier(value: unknown, minimum: number | null) {
   const pricing = object(value)
   return {
     minPromptTokens: minimum,
+    utcStart: optionalFinite(pricing.utc_start),
+    utcEnd: optionalFinite(pricing.utc_end),
     prompt: decimal(pricing.prompt),
     completion: decimal(pricing.completion),
     inputCacheRead: decimal(pricing.input_cache_read),
@@ -244,7 +248,12 @@ function openRouterModelRecords(payload: unknown): ModelEvidenceSnapshot["record
         for (const overrideValue of pricing.overrides) {
           const override = object(overrideValue)
           const minimum = optionalFinite(override.min_prompt_tokens)
-          if (minimum === null) return malformed()
+          if (
+            minimum === null &&
+            optionalFinite(override.utc_start) === null &&
+            optionalFinite(override.utc_end) === null
+          )
+            return malformed()
           tiers.push(openRouterPriceTier(override, minimum))
         }
       }

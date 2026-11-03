@@ -494,3 +494,94 @@ test("cancellation after fetching but before persistence prevents any successful
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("real router quote sentinel remains unknown without dropping normal or explicitly free records", async () => {
+  const root = directory()
+  const store = new ModelEvidenceStore(root + "/fixture.sqlite", "/price-regression")
+  try {
+    const context = {
+      location: { directory: "/price-regression" },
+      model: { list: () => Effect.succeed({ data: [] }) },
+      integration: { connection: { active: () => Effect.succeed(null) } },
+    }
+    const fetcher = async () =>
+      Response.json({
+        data: [
+          { id: "normal/model", pricing: { prompt: "0.000001", completion: "0.000004" } },
+          { id: "openrouter/auto", pricing: { prompt: "-1", completion: -1 } },
+          { id: "normal/free", pricing: { prompt: "0", completion: "0" } },
+        ],
+      })
+    const output = await new ModelEvidenceRefresher(context as never, store, fetcher).refresh(
+      AbortSignal.timeout(5000),
+    )
+    const source = output.sources.find((x) => x.source === "openrouter-models")!
+    expect(source.state).toBe("succeeded")
+    expect(source.latestRecordCount).toBe(3)
+    const records = store.read({ snapshotID: source.latestSnapshotID!, limit: 10 }).snapshot!
+      .records
+    const quotes = records
+      .filter((x) => x.kind === "openrouter-model")
+      .map((x) => ({
+        id: x.id,
+        prompt: x.prices?.tiers[0]?.prompt,
+        completion: x.prices?.tiers[0]?.completion,
+      }))
+    expect(quotes).toEqual([
+      { id: "normal/model", prompt: "0.000001", completion: "0.000004" },
+      { id: "openrouter/auto", prompt: null, completion: null },
+      { id: "normal/free", prompt: "0", completion: "0" },
+    ])
+  } finally {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("published UTC price overrides are retained separately from context thresholds", async () => {
+  const root = directory()
+  const store = new ModelEvidenceStore(root + "/fixture.sqlite", "/price-regression")
+  try {
+    const context = {
+      location: { directory: "/price-regression" },
+      model: { list: () => Effect.succeed({ data: [] }) },
+      integration: { connection: { active: () => Effect.succeed(null) } },
+    }
+    const fetcher = async () =>
+      Response.json({
+        data: [
+          {
+            id: "minimax/minimax-m3.1-flash",
+            pricing: {
+              prompt: "0.000000075",
+              completion: "0.0000003",
+              overrides: [
+                { utc_start: 1500, utc_end: 100, prompt: "0.000000075", completion: "0.0000003" },
+                { utc_start: 100, utc_end: 1500, prompt: "0.00000015", completion: "0.0000006" },
+              ],
+            },
+          },
+        ],
+      })
+    const output = await new ModelEvidenceRefresher(context as never, store, fetcher).refresh(
+      AbortSignal.timeout(5000),
+    )
+    const source = output.sources.find((x) => x.source === "openrouter-models")!
+    expect(source.state).toBe("succeeded")
+    const record = store.read({ snapshotID: source.latestSnapshotID!, limit: 10 }).snapshot!
+      .records[0]!
+    expect(record).toMatchObject({
+      kind: "openrouter-model",
+      prices: {
+        tiers: [
+          { minPromptTokens: null, utcStart: null, utcEnd: null, prompt: "0.000000075" },
+          { minPromptTokens: null, utcStart: 1500, utcEnd: 100, prompt: "0.000000075" },
+          { minPromptTokens: null, utcStart: 100, utcEnd: 1500, prompt: "0.00000015" },
+        ],
+      },
+    })
+  } finally {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
