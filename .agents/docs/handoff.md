@@ -46,18 +46,14 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
 - LZ95 returned08911ce. Independent production-shaped probes found four real
   defects; source withheld, retained. See evidence/maintenance-preflight-review.md.
   Combined plan b048598f-ab73-4494-980c-1368fa9342c7 is not integrated/cleaned.
-- LZ97 identity/group projection is dispatched on actual LunaMax. Task
-  511a371a-a5e6-4ef3-bd69-713154df80ef, planbb47fbce-be29-446c-b783-a74d62383ff7,
-  attempt98724b83-605f-4a9a-9383-f4e3a24b3428, worker
-  ses_0ec8c285a334405a8ff465cba3cec555. Its original worktree and in-progress implementation are preserved. Old service54033 disappeared around15:26:49; Desktop
-  auto-started47672 at15:27:16. Root issued only View→Reload, no service stop or
-  location reload. Cause is not proved. Reconciliation reports worker interrupted
-  and unknown native idle background observation in this new host. Main used
-  supported cancel/resume: cancellation settled with work retained and no uncertain
-  runner effects, then resumed the SAME attempt/session/tree/route/usage. At Unix
-  ms1793738194458 the original worker is active and toolCount advanced34. The old
-  background uncertainty remains recorded, not fabricated idle. A proportional
-  restart-recovery fix remains under Main's investigation.
+- LZ97 identity/group projection is accepted at source574331f, not yet merged.
+  Root and Main passed the focused real-source/compatibility checks. Source review
+  found nonportable citation references and understated omission counts; LZ101
+  repairs them on LunaMax in parallel with Kimi. Task511a371a-a5e6-4ef3-bd69-713154df80ef,
+  planbb47fbce-be29-446c-b783-a74d62383ff7; original worker
+  ses_0ec8c285a334405a8ff465cba3cec555 and tree are retained. LZ101 plan
+  89397376-a6ff-45bc-9e52-d212857e1521, worker
+  ses_8b90e4b253a6452e8c08347fe692a631. Do not treat runtime acceptance as merge.
 - Second unrequested service loss:47672 disappeared around20:40 UTC; Desktop
   auto-started59460 at20:41:00. Root issued no restart/reload this interval.
   Both Luna workers and Main are active again; cause remains unproven. See
@@ -101,12 +97,24 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   Native route `opencode-go/kimi-k3.1-pro#high`, persona ui. This authorizes Go
   inference; Architect stays OpenAI SolHigh and backend workers stay LunaMax.
   Native catalog at Unix ms1793740393904 lists Go KimiK3.1Pro enabled with
-  low/high/max; the UI worker is not yet observed dispatched at this checkpoint.
+  low/high/max. LZ100 is now running on that exact route, persona ui: task
+  ccd244cc-e5e7-409b-b277-c1770b8c2e2a, planf2ef44ad-d60b-4ce2-ac93-66548f67a885,
+  attempt5fab7e91-64b0-420b-b2d7-52773b30e5d9, worker
+  ses_186dbc76c2a64b3cbd0ff0fcd4836ff9. It implements the chart/read contract,
+  not the complete panel/data product. Native completed image reads for approved,
+  narrow and wide PNGs precede its first write. ECharts6.1.0 is installed in its tree.
 - Approved original image, current narrow/wide PNGs and existing components were
-  relayed through Desktop. Main promises to verify the worker's actual image
-  reads. Tera6.1High supplied a concise component handoff. Chosen chart library:
+  relayed through Desktop. Native image reads are verified in message
+  msg_1a35a7b45001OiTjBS0j8O4Hrn (text + file results). Tera6.1High supplied a
+  concise component handoff. Chosen chart library:
   Apache ECharts6.1.0, modular SVG renderer through a thin Solid component.
-  Updated implementation guide is7da721b; no chart implementation is claimed.
+  Updated implementation guide is7da721b/9024fca. Draft chart source exists;
+  renderer/DOM tests are being repaired, with no accepted chart or native visual
+  acceptance yet. Root independently reproduced a Solid subscription defect:
+  createEffect precedes onMount and skips data reads while a nonreactive adapter
+  is undefined. Desktop review feedback is queued for Main to steer the same
+  Kimi worker and test actual SVG data updates. A missing-SVG assertion also
+  compared undefined with null and could falsely pass; verify its correction.
 - Preserve the human's native interview answer: Architect classifies tasks into
   authored task types informed by benchmark taxonomy, not silent persona/name
   inference. Native taxonomy researcher ses_e5cb502f9ffeiqpusOarVqVMg4 ran.
