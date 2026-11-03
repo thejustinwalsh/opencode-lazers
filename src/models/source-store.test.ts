@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -8,7 +9,7 @@ import {
   ModelEvidenceSnapshotSchema,
 } from "./source-schema.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
-import { ModelEvidenceStore } from "./source-store.ts"
+import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 
 const projectDirectory = "/source-store-project"
 
@@ -191,6 +192,96 @@ test("a retained snapshot ID cannot be read by a foreign project", () => {
   } finally {
     owner.close()
     foreign.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("comparison reader reports missing tables without initializing source storage", () => {
+  const root = directory()
+  const path = join(root, "empty.sqlite")
+  const empty = new Database(path, { create: true, strict: true })
+  empty.close()
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    expect(
+      reader.readComparisonSources().map(({ source, storage, snapshotState, refresh }) => ({
+        source,
+        storage,
+        snapshotState,
+        refresh,
+      })),
+    ).toEqual([
+      {
+        source: "native-catalog",
+        storage: "missing-both-tables",
+        snapshotState: "missing-table",
+        refresh: null,
+      },
+      {
+        source: "openrouter-models",
+        storage: "missing-both-tables",
+        snapshotState: "missing-table",
+        refresh: null,
+      },
+      {
+        source: "openrouter-benchmarks",
+        storage: "missing-both-tables",
+        snapshotState: "missing-table",
+        refresh: null,
+      },
+    ])
+    const check = new Database(path, { readonly: true, strict: true })
+    try {
+      expect(
+        check
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'model_evidence_%'",
+          )
+          .all(),
+      ).toEqual([])
+    } finally {
+      check.close()
+    }
+  } finally {
+    reader.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("comparison reader pins snapshots and scopes selected IDs to the project", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const owner = new ModelEvidenceStore(path, projectDirectory)
+  const foreign = new ModelEvidenceReadStore(path, "/foreign-project")
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    const firstGeneration = owner.beginRefresh()["native-catalog"]
+    const first = snapshot("native-catalog", projectDirectory, firstGeneration, [
+      nativeRecord("first"),
+    ])
+    owner.saveSnapshot(first)
+    const selected = Object.fromEntries(
+      reader.readComparisonSources().map(({ source, snapshotID }) => [source, snapshotID]),
+    ) as Record<ModelEvidenceSource, string | null>
+    const nextGeneration = owner.beginRefresh()["native-catalog"]
+    owner.saveSnapshot(
+      snapshot("native-catalog", projectDirectory, nextGeneration, [nativeRecord("second")]),
+    )
+
+    expect(reader.readComparisonSources(selected)[0]).toMatchObject({
+      snapshotID: first.snapshotID,
+      snapshot: { snapshotID: first.snapshotID, generation: firstGeneration },
+    })
+    expect(foreign.readComparisonSources(selected)[0]).toMatchObject({
+      snapshotState: "missing-snapshot",
+      snapshotID: first.snapshotID,
+      snapshot: null,
+      refresh: { state: "never" },
+    })
+  } finally {
+    reader.close()
+    foreign.close()
+    owner.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
