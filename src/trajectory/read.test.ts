@@ -302,6 +302,99 @@ test("task reports include unsuccessful and accepted attempts, usage categories,
   }
 })
 
+test("versioned task effort accounting survives task, attempt, paged, and read-only reopened reads", async () => {
+  const fixture = makeFixture()
+  let reopened: ReturnType<typeof openReadOnlyTrajectoryStore> | undefined
+  try {
+    const taskReport = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 2 }),
+      cursorSecret,
+    )
+    const basis = taskReport.effort.taskEffortBasis
+    expect(basis.schemaVersion).toBe(1)
+    expect(basis.attempts).toMatchObject({
+      count: 2,
+      states: [
+        { attemptID: firstAttemptID, state: "failed" },
+        { attemptID: "509e5ba7-6b7e-40eb-8f49-25b3789c1ba6", state: "accepted" },
+      ],
+    })
+    expect(basis.usage.coverage.totalUniqueSessions).toBe(2)
+    expect(basis.usage.categories.uncachedInput.bySession).toEqual([
+      expect.objectContaining({
+        sessionID: "ses-accepted",
+        source: "native-session",
+        observedAt: 2100,
+        status: "observed",
+      }),
+      expect.objectContaining({
+        sessionID: "ses-failed",
+        source: "native-session",
+        observedAt: 1200,
+        status: "observed",
+      }),
+    ])
+    expect(basis.routes.assignments[0]).toMatchObject({
+      planSelection: {
+        route: { providerID: "openai", modelID: "gpt-6-luna", variant: "max" },
+        status: "explicit",
+      },
+      frozenAttemptRoute: {
+        route: { providerID: "openai", modelID: "gpt-6-luna", variant: "max" },
+        source: "runner_attempt.policy.model",
+      },
+    })
+    expect(basis.routes.mixedRoutes).toBe(true)
+    expect(basis.routes.mismatches.length).toBeGreaterThan(0)
+    expect(basis.routes.usageAttribution).toContain("Mixed observed routes")
+    expect(basis.cost).toMatchObject({
+      fullTaskCostUSD: { valueUSD: null, status: "unknown" },
+      marketEquivalentCostUSD: { valueUSD: null, status: "unknown" },
+      architectReviewIntegrationOverheadUSD: { valueUSD: null, status: "unallocated" },
+    })
+    expect(basis.quality).toEqual({
+      status: "not-recorded",
+      value: null,
+      meaning: "No quality score or task-class value is inferred by trajectory accounting",
+    })
+
+    const focused = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ attemptID: firstAttemptID, limit: 2 }),
+      cursorSecret,
+    )
+    expect(focused.attempts).toHaveLength(1)
+    expect(focused.effort.taskEffortBasis).toEqual(basis)
+
+    const nextPage = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 2, cursor: taskReport.trajectory.nextCursor! }),
+      cursorSecret,
+    )
+    expect(nextPage.effort.taskEffortBasis).toEqual(basis)
+
+    reopened = openReadOnlyTrajectoryStore(fixture.repository.path, fixture.directory)
+    const reopenedReport = await inspectTrajectory(
+      reopened.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 2 }),
+      cursorSecret,
+    )
+    expect(reopenedReport.effort.taskEffortBasis).toEqual(basis)
+  } finally {
+    reopened?.close()
+    fixture.close()
+  }
+})
+
 test("bounded pages preserve exact event order and reject stale or foreign continuations", async () => {
   const fixture = makeFixture()
   try {
