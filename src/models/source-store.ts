@@ -316,3 +316,174 @@ export class ModelEvidenceStore {
     this.db.close()
   }
 }
+
+export type ModelEvidenceComparisonSourceRead = {
+  source: ModelEvidenceSource
+  storage: "ready" | "missing-snapshot-table" | "missing-refresh-table" | "missing-both-tables"
+  snapshotState: "available" | "none" | "missing-table" | "missing-snapshot"
+  snapshotID: string | null
+  refresh: ModelEvidenceRefreshStatus | null
+  snapshot: ModelEvidenceSnapshot | null
+}
+
+export type ModelEvidenceComparisonSnapshotSelection = Record<ModelEvidenceSource, string | null>
+
+/** Read-only, project-scoped snapshot access for comparison projections. */
+export class ModelEvidenceReadStore {
+  private readonly db: Database
+
+  constructor(
+    path: string,
+    readonly projectDirectory: string,
+  ) {
+    this.db = new Database(path, { readonly: true, strict: true })
+  }
+
+  readComparisonSources(
+    selection?: ModelEvidenceComparisonSnapshotSelection,
+  ): ModelEvidenceComparisonSourceRead[] {
+    const read = this.db.transaction(() => {
+      const snapshotsTable = this.tableExists("model_evidence_snapshots")
+      const refreshesTable = this.tableExists("model_evidence_refreshes")
+      const storage: ModelEvidenceComparisonSourceRead["storage"] = snapshotsTable
+        ? refreshesTable
+          ? "ready"
+          : "missing-refresh-table"
+        : refreshesTable
+          ? "missing-snapshot-table"
+          : "missing-both-tables"
+      const refreshRows = refreshesTable
+        ? this.db
+            .query<RefreshRow, [string]>(
+              `SELECT r.source, r.state, r.generation, r.started_at, r.completed_at,
+                      r.latest_snapshot_id, r.latest_retrieved_at, r.latest_record_count,
+                      r.error_code, r.http_status
+               FROM model_evidence_refreshes r WHERE r.project_directory=?`,
+            )
+            .all(this.projectDirectory)
+        : []
+      const refreshBySource = new Map(refreshRows.map((row) => [row.source, row]))
+
+      return MODEL_EVIDENCE_SOURCES.map((source): ModelEvidenceComparisonSourceRead => {
+        const refreshRow = refreshBySource.get(source)
+        const refresh = refreshesTable
+          ? ModelEvidenceRefreshStatusSchema.parse(
+              refreshRow
+                ? {
+                    source,
+                    state: refreshRow.state,
+                    generation: refreshRow.generation,
+                    startedAt: refreshRow.started_at,
+                    completedAt: refreshRow.completed_at,
+                    latestSnapshotID: refreshRow.latest_snapshot_id,
+                    latestRetrievedAt: refreshRow.latest_retrieved_at,
+                    latestRecordCount: refreshRow.latest_record_count,
+                    errorCode: refreshRow.error_code,
+                    httpStatus: refreshRow.http_status,
+                  }
+                : {
+                    source,
+                    state: "never",
+                    generation: 0,
+                    startedAt: null,
+                    completedAt: null,
+                    latestSnapshotID: null,
+                    latestRetrievedAt: null,
+                    latestRecordCount: null,
+                    errorCode: null,
+                    httpStatus: null,
+                  },
+            )
+          : null
+        if (!snapshotsTable)
+          return {
+            source,
+            storage,
+            snapshotState: "missing-table",
+            snapshotID: selection?.[source] ?? null,
+            refresh,
+            snapshot: null,
+          }
+
+        let snapshotID: string | null
+        if (selection) {
+          snapshotID = selection[source]
+        } else if (refreshRow) {
+          snapshotID = refreshRow.latest_snapshot_id
+        } else {
+          snapshotID =
+            this.db
+              .query<{ snapshot_id: string }, [string, ModelEvidenceSource]>(
+                `SELECT snapshot_id FROM model_evidence_snapshots
+                 WHERE project_directory=? AND source=? ORDER BY generation DESC LIMIT 1`,
+              )
+              .get(this.projectDirectory, source)?.snapshot_id ?? null
+        }
+
+        if (snapshotID === null)
+          return {
+            source,
+            storage,
+            snapshotState: "none",
+            snapshotID: null,
+            refresh,
+            snapshot: null,
+          }
+
+        const row = this.db
+          .query<SnapshotRow, [string, string]>(
+            `SELECT snapshot_id, project_directory, source, generation, retrieved_at,
+                    record_count, body FROM model_evidence_snapshots
+             WHERE project_directory=? AND snapshot_id=?`,
+          )
+          .get(this.projectDirectory, snapshotID)
+        if (!row)
+          return {
+            source,
+            storage,
+            snapshotState: "missing-snapshot",
+            snapshotID,
+            refresh,
+            snapshot: null,
+          }
+
+        if (row.source !== source)
+          throw new Error("Model evidence snapshot source does not match its selection")
+
+        const snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
+        if (
+          snapshot.snapshotID !== row.snapshot_id ||
+          snapshot.projectDirectory !== row.project_directory ||
+          snapshot.source !== row.source ||
+          snapshot.generation !== row.generation ||
+          snapshot.retrievedAt !== row.retrieved_at ||
+          snapshot.records.length !== row.record_count
+        )
+          throw new Error("Model evidence snapshot is inconsistent")
+        return {
+          source,
+          storage,
+          snapshotState: "available",
+          snapshotID,
+          refresh,
+          snapshot,
+        }
+      })
+    })
+    return read.deferred()
+  }
+
+  private tableExists(name: string): boolean {
+    return Boolean(
+      this.db
+        .query<{ name: string }, [string]>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        )
+        .get(name),
+    )
+  }
+
+  close(): void {
+    this.db.close()
+  }
+}

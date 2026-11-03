@@ -2,6 +2,12 @@ export type AccountingRoute = {
   providerID: string
   modelID: string
   variant: string | null
+  /** Exact private comparison identity; null means the source identity was lost. */
+  identity?: {
+    providerID: string
+    modelID: string
+    variant: string | null
+  } | null
 }
 
 export type AccountingRouteSource = {
@@ -17,6 +23,8 @@ export type AccountingStepRoute = {
   sessionID: string
   messageID: string | null
   route: AccountingRoute
+  /** Internal provenance for unavailable route keys; omitted from the public view. */
+  sourceOccurrence: string
   sources: AccountingRouteSource[]
 }
 
@@ -151,19 +159,35 @@ function route(value: unknown): AccountingRoute | null {
   const providerID = text(data?.providerID)
   const modelID = text(data?.modelID) ?? text(data?.id)
   if (!providerID || !modelID) return null
+  const variant = text(data?.variant)
+  const identityLost = [providerID, modelID, variant].some(
+    (part) => part?.endsWith("…[truncated]") || part?.includes("[REDACTED]"),
+  )
   return {
     providerID,
     modelID,
-    variant: text(data?.variant),
+    variant,
+    identity: identityLost ? null : { providerID, modelID, variant },
   }
 }
 
-function routeKey(value: AccountingRoute) {
-  return `${value.providerID}\u0000${value.modelID}\u0000${value.variant ?? ""}`
+function exactRouteIdentity(value: AccountingRoute) {
+  if (Object.hasOwn(value, "identity")) return value.identity ?? null
+  return { providerID: value.providerID, modelID: value.modelID, variant: value.variant }
+}
+
+/** Keep exact model identity authoritative; unavailable routes use source provenance, never display text. */
+function routeKey(value: AccountingRoute, sourceOccurrence: string) {
+  const identity = exactRouteIdentity(value)
+  if (identity)
+    return JSON.stringify(["exact", identity.providerID, identity.modelID, identity.variant])
+  return JSON.stringify(["unavailable", sourceOccurrence])
 }
 
 function routeView(value: AccountingRoute | null) {
-  return value ? { ...value } : null
+  return value
+    ? { providerID: value.providerID, modelID: value.modelID, variant: value.variant }
+    : null
 }
 
 function emptyCategory(basis: UsageBasis, status: UsageStatus): CategoryMeasure {
@@ -492,17 +516,63 @@ function aggregateCategory(category: UsageCategory, sessions: ReturnType<typeof 
 
 function routeComparison(expected: AccountingRoute | null, observed: AccountingRoute) {
   if (!expected) return "unavailable" as const
-  if (expected.providerID !== observed.providerID || expected.modelID !== observed.modelID)
+  const expectedIdentity = exactRouteIdentity(expected)
+  const observedIdentity = exactRouteIdentity(observed)
+  if (!expectedIdentity || !observedIdentity) return "unavailable" as const
+  if (
+    expectedIdentity.providerID !== observedIdentity.providerID ||
+    expectedIdentity.modelID !== observedIdentity.modelID
+  )
     return "mismatch" as const
-  if (expected.variant !== null && observed.variant === null) return "unavailable" as const
-  if (expected.variant !== null && expected.variant !== observed.variant) return "mismatch" as const
+  if (expectedIdentity.variant !== null && observedIdentity.variant === null)
+    return "unavailable" as const
+  if (expectedIdentity.variant !== null && expectedIdentity.variant !== observedIdentity.variant)
+    return "mismatch" as const
   return "match" as const
 }
 
-function distinctRoutes(routes: AccountingRoute[]) {
-  const unique = new Map<string, AccountingRoute>()
-  for (const value of routes) unique.set(routeKey(value), value)
-  return [...unique.values()].sort((left, right) => routeKey(left).localeCompare(routeKey(right)))
+function distinctRoutes(routes: { route: AccountingRoute; sourceOccurrence: string }[]) {
+  const unique = new Map<string, { route: AccountingRoute; sourceOccurrence: string }>()
+  for (const value of routes) {
+    const key = routeKey(value.route, value.sourceOccurrence)
+    if (!unique.has(key)) unique.set(key, value)
+  }
+  return [...unique.values()].sort((left, right) =>
+    routeKey(left.route, left.sourceOccurrence).localeCompare(
+      routeKey(right.route, right.sourceOccurrence),
+    ),
+  )
+}
+
+function routeSourceOccurrence(value: {
+  attemptID: string | null
+  sessionID: string
+  messageID: string | null
+  source: string
+  sourceType: string
+  eventID: string | null
+  factID?: string | null
+  observationIndex?: number | null
+}) {
+  if (value.source === "native-session-context")
+    return JSON.stringify(["session-context", value.sessionID, value.messageID])
+  if (value.eventID)
+    return JSON.stringify(["source-event", value.sessionID, value.source, value.eventID])
+  if (value.factID)
+    return JSON.stringify([
+      "source-observation-slot",
+      value.sessionID,
+      value.factID,
+      value.observationIndex ?? null,
+    ])
+  return JSON.stringify([
+    "source-record",
+    value.sessionID,
+    value.source,
+    value.sourceType,
+    value.messageID,
+    value.attemptID,
+  ])
 }
 
 function addRouteSource(
@@ -517,10 +587,14 @@ function addRouteSource(
     observedAt: number | null
     recordedAt: number | null
     eventID: string | null
+    factID?: string | null
+    observationIndex?: number | null
+    sourceOccurrence?: string
   },
 ) {
   const identity = value.messageID ?? `${value.source}:${value.eventID ?? "unknown"}`
-  const key = `${value.sessionID}\u0000${identity}\u0000${routeKey(value.route)}`
+  const sourceOccurrence = value.sourceOccurrence ?? routeSourceOccurrence(value)
+  const key = `${value.sessionID}\u0000${identity}\u0000${routeKey(value.route, sourceOccurrence)}`
   const existing = map.get(key)
   const source: AccountingRouteSource = {
     attemptID: value.attemptID,
@@ -535,6 +609,7 @@ function addRouteSource(
       sessionID: value.sessionID,
       messageID: value.messageID,
       route: value.route,
+      sourceOccurrence,
       sources: [source],
     })
     return
@@ -559,9 +634,9 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
     const fact = object(value)
     const routeFact = route(fact?.route)
     const record = byID.get(text(fact?.id) ?? "")
-    if (!routeFact || !record || record.kind !== "worker-step") continue
+    if (!record || record.kind !== "worker-step") continue
     const observations = Array.isArray(fact?.observations) ? fact.observations : []
-    const routedObservations = observations.flatMap((raw) => {
+    const routedObservations = observations.flatMap((raw, observationIndex) => {
       const observation = object(raw)
       const observedRoute = route(observation?.route)
       if (!observedRoute) return []
@@ -576,12 +651,15 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
           observedAt: epoch(observation?.at) ?? record.at,
           recordedAt: record.recordedAt,
           eventID: text(observation?.eventID),
+          factID: record.id,
+          observationIndex,
         },
       ]
     })
     if (routedObservations.length) {
       for (const observation of routedObservations) addRouteSource(routes, observation)
     } else {
+      if (!routeFact) continue
       const sourceTypes = record.sources.length ? record.sources : [record.source]
       addRouteSource(routes, {
         attemptID: record.attemptID || null,
@@ -593,6 +671,8 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
         observedAt: record.at,
         recordedAt: record.recordedAt,
         eventID: record.eventIDs[0] ?? null,
+        factID: record.id,
+        observationIndex: null,
       })
     }
   }
@@ -600,7 +680,9 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
     (left, right) =>
       left.sessionID.localeCompare(right.sessionID) ||
       (left.messageID ?? "").localeCompare(right.messageID ?? "") ||
-      routeKey(left.route).localeCompare(routeKey(right.route)),
+      routeKey(left.route, left.sourceOccurrence).localeCompare(
+        routeKey(right.route, right.sourceOccurrence),
+      ),
   )
 }
 
@@ -639,6 +721,7 @@ export function projectTaskEffortBasis(input: {
       sessionID: string
       attemptIDs: string[]
       route: AccountingRoute
+      sourceOccurrence: string
       source: string
       sourceType: string
       observedAt: number | null
@@ -646,7 +729,8 @@ export function projectTaskEffortBasis(input: {
   >()
   for (const attempt of input.attempts) {
     if (attempt.sessionStatus !== "available" || !attempt.currentRoute) continue
-    const key = `${attempt.sessionID}\u0000${routeKey(attempt.currentRoute)}`
+    const sourceOccurrence = JSON.stringify(["session-model", attempt.sessionID])
+    const key = `${attempt.sessionID}\u0000${routeKey(attempt.currentRoute, sourceOccurrence)}`
     const existing = sessionRoutes.get(key)
     if (existing) {
       if (!existing.attemptIDs.includes(attempt.id)) existing.attemptIDs.push(attempt.id)
@@ -655,6 +739,7 @@ export function projectTaskEffortBasis(input: {
         sessionID: attempt.sessionID,
         attemptIDs: [attempt.id],
         route: attempt.currentRoute,
+        sourceOccurrence,
         source: "native-session",
         sourceType: "session.model",
         observedAt: attempt.currentRouteObservedAt,
@@ -664,7 +749,9 @@ export function projectTaskEffortBasis(input: {
   const observedSessionRoutes = [...sessionRoutes.values()].sort(
     (left, right) =>
       left.sessionID.localeCompare(right.sessionID) ||
-      routeKey(left.route).localeCompare(routeKey(right.route)),
+      routeKey(left.route, left.sourceOccurrence).localeCompare(
+        routeKey(right.route, right.sourceOccurrence),
+      ),
   )
 
   const stepRoutes = new Map<string, AccountingStepRoute>()
@@ -688,12 +775,15 @@ export function projectTaskEffortBasis(input: {
         messageID: observed.messageID,
         route: observed.route,
         ...source,
+        sourceOccurrence: observed.sourceOccurrence,
       })
   const observedStepRoutes = [...stepRoutes.values()].sort(
     (left, right) =>
       left.sessionID.localeCompare(right.sessionID) ||
       (left.messageID ?? "").localeCompare(right.messageID ?? "") ||
-      routeKey(left.route).localeCompare(routeKey(right.route)),
+      routeKey(left.route, left.sourceOccurrence).localeCompare(
+        routeKey(right.route, right.sourceOccurrence),
+      ),
   )
 
   const sessionRoutesByID = new Map<string, typeof observedSessionRoutes>()
@@ -769,17 +859,44 @@ export function projectTaskEffortBasis(input: {
   })
 
   const distinctObservedRoutes = distinctRoutes([
-    ...observedSessionRoutes.map((item) => item.route),
-    ...observedStepRoutes.map((item) => item.route),
+    ...observedSessionRoutes.map((item) => ({
+      route: item.route,
+      sourceOccurrence: item.sourceOccurrence,
+    })),
+    ...observedStepRoutes.map((item) => ({
+      route: item.route,
+      sourceOccurrence: item.sourceOccurrence,
+    })),
   ])
   const distinctFrozenRoutes = distinctRoutes(
-    input.attempts.flatMap((attempt) => (attempt.frozenRoute ? [attempt.frozenRoute] : [])),
+    input.attempts.flatMap((attempt) =>
+      attempt.frozenRoute
+        ? [
+            {
+              route: attempt.frozenRoute,
+              sourceOccurrence: JSON.stringify(["attempt-frozen-route", attempt.id]),
+            },
+          ]
+        : [],
+    ),
   )
   const distinctRequestedRoutes = distinctRoutes(
     input.attempts.flatMap((attempt) => {
       const requested =
         attempt.planRouteStatus === "explicit" ? attempt.planRoute : attempt.frozenRoute
-      return requested ? [requested] : []
+      return requested
+        ? [
+            {
+              route: requested,
+              sourceOccurrence: JSON.stringify([
+                attempt.planRouteStatus === "explicit"
+                  ? "attempt-plan-route"
+                  : "attempt-frozen-route",
+                attempt.id,
+              ]),
+            },
+          ]
+        : []
     }),
   )
   const uniqueSessionAttempts = [...bySession.values()].flatMap((attempts) =>
@@ -914,17 +1031,23 @@ export function projectTaskEffortBasis(input: {
                   : "mismatch",
         },
       })),
-      distinctRequestedRoutes,
-      distinctFrozenRoutes,
+      distinctRequestedRoutes: distinctRequestedRoutes.map(({ route }) => routeView(route)),
+      distinctFrozenRoutes: distinctFrozenRoutes.map(({ route }) => routeView(route)),
       observedSessionRoutes: observedSessionRoutes.map((item) => ({
-        ...item,
+        sessionID: item.sessionID,
+        attemptIDs: item.attemptIDs,
         route: routeView(item.route),
+        source: item.source,
+        sourceType: item.sourceType,
+        observedAt: item.observedAt,
       })),
       observedStepRoutes: observedStepRoutes.map((item) => ({
-        ...item,
+        sessionID: item.sessionID,
+        messageID: item.messageID,
         route: routeView(item.route),
+        sources: item.sources,
       })),
-      distinctObservedRoutes: distinctObservedRoutes.map(routeView),
+      distinctObservedRoutes: distinctObservedRoutes.map(({ route }) => routeView(route)),
       mixedRoutes: distinctObservedRoutes.length > 1,
       assessments: routeAssessments,
       mismatches: routeAssessments.filter(

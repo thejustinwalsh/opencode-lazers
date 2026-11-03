@@ -52,6 +52,14 @@ type PlanSnapshot = {
 
 const ACTIVE_ATTEMPTS = new Set(["preparing", "running", "verifying"])
 const MAX_CONTEXT_MESSAGES = 10_000
+const modelIdentities = new WeakMap<
+  object,
+  {
+    providerID: string
+    modelID: string
+    variant: string | null
+  }
+>()
 
 function object(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -117,21 +125,42 @@ function modelView(value: unknown, stats: PrivacyStats) {
   const providerID = typeof data.providerID === "string" ? data.providerID : null
   const id = typeof data.id === "string" ? data.id : null
   if (!providerID || !id) return null
-  return {
+  const view = {
     providerID: safeText(providerID, stats, 120),
     id: safeText(id, stats, 120),
     ...(typeof data.variant === "string" ? { variant: safeText(data.variant, stats, 120) } : {}),
   }
+  modelIdentities.set(view, {
+    providerID,
+    modelID: id,
+    variant: typeof data.variant === "string" ? data.variant : null,
+  })
+  return view
 }
 
 function modelKey(model: ReturnType<typeof modelView>) {
-  return model ? `${model.providerID}/${model.id}/${model.variant ?? ""}` : ""
+  if (!model) return ""
+  const identity = modelIdentities.get(model)
+  return identity
+    ? JSON.stringify([identity.providerID, identity.modelID, identity.variant])
+    : JSON.stringify([model.providerID, model.id, model.variant ?? null])
 }
 
 function accountingRoute(model: ReturnType<typeof modelView>): AccountingRoute | null {
-  return model
-    ? { providerID: model.providerID, modelID: model.id, variant: model.variant ?? null }
-    : null
+  if (!model) return null
+  const identity = modelIdentities.get(model)
+  return {
+    providerID: model.providerID,
+    modelID: model.id,
+    variant: model.variant ?? null,
+    identity: identity
+      ? {
+          providerID: identity.providerID,
+          modelID: identity.modelID,
+          variant: identity.variant,
+        }
+      : null,
+  }
 }
 
 function sessionStepRoutes(session: TrajectorySession | null, stats: PrivacyStats) {

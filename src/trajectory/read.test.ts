@@ -10,6 +10,115 @@ function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
 }
 
+function configureFailedAttemptRoute(
+  fixture: ReturnType<typeof makeFixture>,
+  modelID: string,
+  observedModelID = modelID,
+) {
+  const nativeModel = { providerID: "openai", id: modelID, variant: "high" }
+  const observedModel = { ...nativeModel, id: observedModelID }
+  const plan = fixture.store.plan(fixture.receipt.planID)!
+  const body = JSON.parse(plan.body) as Record<string, unknown>
+  body.workerModel = nativeModel
+  fixture.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET body=?,model=? WHERE id=?").run(
+      JSON.stringify(body),
+      JSON.stringify(nativeModel),
+      fixture.receipt.planID,
+    )
+    db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
+      JSON.stringify({ model: nativeModel, repairAttempt: false }),
+      firstAttemptID,
+    )
+  })
+
+  const session = fixture.sessions.get("ses-failed")!
+  session.model = observedModel
+  session.messages = [
+    {
+      id: "msg-long-route",
+      type: "assistant",
+      model: observedModel,
+      time: { created: 1_300 },
+      content: [],
+    },
+  ] as never
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  recorder.recordNativeEvent({
+    id: "evt-long-route-step",
+    type: "session.step.started",
+    created: 1_300,
+    data: {
+      sessionID: "ses-failed",
+      assistantMessageID: "msg-long-route",
+      agent: "lazers-implementor",
+      model: observedModel,
+    },
+  })
+}
+
+function recordUnavailableRouteOccurrences(
+  fixture: ReturnType<typeof makeFixture>,
+  source: string,
+) {
+  const sameDisplayPrefix = "s".repeat(300)
+  const modelIDs = [
+    `${sameDisplayPrefix}PRIVATE_ROUTE_TAIL_A`,
+    `${sameDisplayPrefix}PRIVATE_ROUTE_TAIL_B`,
+    ...Array.from({ length: 10 }, (_, index) => {
+      const prefix = `route-${String(index).padStart(2, "0")}-`
+      return `${prefix}${"x".repeat(300 - prefix.length)}PRIVATE_ROUTE_TAIL_${String(index).padStart(2, "0")}`
+    }),
+  ]
+  const session = fixture.sessions.get("ses-failed")!
+  session.model = null as never
+  session.messages = [] as never
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  for (const [index, modelID] of modelIDs.entries())
+    recorder.recordNativeEvent({
+      id: `${source}-route-event-${index}`,
+      type: "session.step.started",
+      created: 5_000 + index,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID:
+          index < 2 ? `${source}-same-route-message` : `${source}-route-message-${index}`,
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: modelID, variant: "high" },
+      },
+    })
+  return { modelIDs, sameDisplayPrefix }
+}
+
+function recordIDlessUnavailableRouteOccurrences(
+  fixture: ReturnType<typeof makeFixture>,
+  source: string,
+) {
+  const sharedPrefix = "s".repeat(300)
+  const modelIDs = [
+    `${sharedPrefix}${"A".repeat(101)}`,
+    `${sharedPrefix}${"B".repeat(101)}`,
+    `${"A".repeat(300)}${"C".repeat(101)}`,
+    `${"B".repeat(300)}${"D".repeat(101)}`,
+  ]
+  const session = fixture.sessions.get("ses-failed")!
+  session.model = null as never
+  session.messages = [] as never
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  for (const [index, modelID] of modelIDs.entries())
+    recorder.recordNativeEvent({
+      type: "session.step.started",
+      created: 1_300 + index,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: `${source}-idless-route-message`,
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: modelID, variant: "high" },
+      },
+    })
+  return { modelIDs, sharedPrefix }
+}
+
 test("trajectory specifications preserve legacy policy references and omit absent ones", async () => {
   for (const withoutPolicy of [false, true]) {
     const fixture = makeFixture({ withoutPolicy })
@@ -395,6 +504,250 @@ test("versioned task effort accounting survives task, attempt, paged, and read-o
   }
 })
 
+test("trajectory route accounting compares identical 121-character plan, policy, session, and step IDs losslessly", async () => {
+  const fixture = makeFixture()
+  const modelID = "m".repeat(121)
+  try {
+    configureFailedAttemptRoute(fixture, modelID)
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const basis = report.effort.taskEffortBasis
+    const assessments = basis.routes.assessments.filter(
+      (assessment) => assessment.attemptID === firstAttemptID,
+    )
+    expect(assessments.map(({ scope, status }) => [scope, status])).toEqual([
+      ["session", "match"],
+      ["step", "match"],
+    ])
+    expect(basis.routes.assignments[0]?.planSelection.route?.modelID).toBe(
+      `${"m".repeat(120)}…[truncated]`,
+    )
+    expect(JSON.stringify(basis)).not.toContain(modelID)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("trajectory route accounting distinguishes 121-character IDs with the same retained prefix", async () => {
+  const fixture = makeFixture()
+  const prefix = "m".repeat(120)
+  const plannedID = `${prefix}a`
+  const observedID = `${prefix}b`
+  try {
+    configureFailedAttemptRoute(fixture, plannedID, observedID)
+
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const basis = report.effort.taskEffortBasis
+    const assessments = basis.routes.assessments.filter(
+      (assessment) => assessment.attemptID === firstAttemptID,
+    )
+    expect(
+      assessments.map(({ scope, status, frozenRouteStatus }) => [scope, status, frozenRouteStatus]),
+    ).toEqual([
+      ["session", "mismatch", "mismatch"],
+      ["step", "mismatch", "mismatch"],
+    ])
+    expect(
+      basis.routes.mismatches
+        .filter((assessment) => assessment.attemptID === firstAttemptID)
+        .map(({ scope, status, frozenRouteStatus }) => [scope, status, frozenRouteStatus]),
+    ).toEqual([
+      ["session", "mismatch", "mismatch"],
+      ["step", "mismatch", "mismatch"],
+    ])
+    expect(JSON.stringify(basis)).not.toContain(plannedID)
+    expect(JSON.stringify(basis)).not.toContain(observedID)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("trajectory accounting keeps long native context identities exact and marks truncated progress identities unavailable", async () => {
+  const fixture = makeFixture()
+  const modelID = "m".repeat(401)
+  try {
+    configureFailedAttemptRoute(fixture, modelID)
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )
+    const basis = report.effort.taskEffortBasis
+    const assessments = basis.routes.assessments.filter(
+      (assessment) => assessment.attemptID === firstAttemptID,
+    )
+    expect(assessments.map(({ scope, status }) => [scope, status])).toEqual([
+      ["session", "match"],
+      ["step", "match"],
+      ["step", "unavailable"],
+    ])
+    expect(
+      basis.routes.mismatches.some((assessment) => assessment.attemptID === firstAttemptID),
+    ).toBe(false)
+    expect(JSON.stringify(basis)).not.toContain(modelID)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("unavailable-route cursors remain stable across trajectory reads", async () => {
+  if (process.env.LAZERS_TRAJECTORY_CURSOR_REGRESSION !== "1") {
+    const child = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        "test",
+        "--test-name-pattern=unavailable-route cursors remain stable",
+        "src/trajectory/read.test.ts",
+      ],
+      cwd: process.cwd(),
+      env: { ...process.env, LAZERS_TRAJECTORY_CURSOR_REGRESSION: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const output = `${new TextDecoder().decode(child.stdout)}\n${new TextDecoder().decode(child.stderr)}`
+    if (child.exitCode !== 0) throw new Error(output)
+    return
+  }
+
+  const fixture = makeFixture()
+  const unrelated = makeFixture()
+  let reopened: ReturnType<typeof openReadOnlyTrajectoryStore> | undefined
+  const originalProgressFacts = fixture.store.progressFacts.bind(fixture.store)
+  try {
+    const { modelIDs, sameDisplayPrefix } = recordUnavailableRouteOccurrences(fixture, "primary")
+    const idless = recordIDlessUnavailableRouteOccurrences(fixture, "primary")
+    recordUnavailableRouteOccurrences(unrelated, "interleaved")
+
+    const inspect = (options: { attemptID?: string; cursor?: string } = {}) =>
+      inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        parse({ taskID, limit: 2, ...options }),
+        cursorSecret,
+      )
+    const first = await inspect()
+    const cursor = first.trajectory.nextCursor!
+    expect(cursor).toBeTruthy()
+
+    const routeOrder = (report: Awaited<ReturnType<typeof inspect>>) =>
+      report.effort.taskEffortBasis.routes.distinctObservedRoutes.filter(
+        (route): route is NonNullable<typeof route> => route !== null,
+      )
+    const routes = routeOrder(first)
+    const unavailable = routes.filter((route) => route.modelID.endsWith("…[truncated]"))
+    const expectedModelIDs = [...modelIDs, ...idless.modelIDs]
+    const expectedDisplays = new Set(
+      expectedModelIDs.map((modelID) => `${modelID.slice(0, 300)}…[truncated]`),
+    )
+    expect(unavailable).toHaveLength(expectedModelIDs.length)
+    expect(new Set(unavailable.map((route) => route.modelID)).size).toBe(expectedDisplays.size)
+    expect(
+      unavailable.filter((route) => route.modelID === `${sameDisplayPrefix}…[truncated]`),
+    ).toHaveLength(4)
+    const sameMessageRoutes = first.effort.taskEffortBasis.routes.observedStepRoutes.filter(
+      (route) => route.messageID === "primary-same-route-message",
+    )
+    expect(sameMessageRoutes).toHaveLength(2)
+    expect(sameMessageRoutes.map((route) => route.sources[0]?.eventID)).toEqual([
+      "primary-route-event-0",
+      "primary-route-event-1",
+    ])
+    expect(idless.modelIDs.every((modelID) => modelID.length === 401)).toBe(true)
+    const idlessRoutes = first.effort.taskEffortBasis.routes.observedStepRoutes.filter(
+      (route) => route.messageID === "primary-idless-route-message",
+    )
+    expect(idlessRoutes).toHaveLength(4)
+    expect(idlessRoutes.map((route) => [route.route?.modelID ?? null, route.sources[0]])).toEqual(
+      idless.modelIDs.map((modelID, index) => [
+        `${modelID.slice(0, 300)}…[truncated]`,
+        {
+          attemptID: firstAttemptID,
+          source: "native-event",
+          sourceType: "session.step.started",
+          observedAt: 1_300 + index,
+          recordedAt: expect.any(Number),
+          eventID: null,
+        },
+      ]),
+    )
+    const serialized = JSON.stringify(first)
+    expect(serialized).not.toContain("sourceOccurrence")
+    for (const modelID of expectedModelIDs) expect(serialized).not.toContain(modelID)
+    expect(serialized).not.toContain(`${idless.sharedPrefix}${"A".repeat(101)}`)
+
+    const repeated = await inspect()
+    expect(routeOrder(repeated)).toEqual(routes)
+    expect((await inspect({ cursor })).trajectory.page).toBe(2)
+
+    await inspectTrajectory(
+      unrelated.store,
+      unrelated.host,
+      "project",
+      parse({ taskID, limit: 2 }),
+      cursorSecret,
+    )
+    expect(routeOrder(await inspect())).toEqual(routes)
+    expect((await inspect({ cursor })).trajectory.page).toBe(2)
+
+    fixture.store.progressFacts = (attemptIDs, limit) =>
+      originalProgressFacts(attemptIDs, limit).toReversed()
+    const reorderedFacts = await inspect({ cursor })
+    expect(reorderedFacts.trajectory.page).toBe(2)
+    expect(routeOrder(reorderedFacts)).toEqual(routes)
+    fixture.store.progressFacts = originalProgressFacts
+
+    const filtered = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ attemptID: firstAttemptID, limit: 2 }),
+      cursorSecret,
+    )
+    expect(routeOrder(filtered)).toEqual(routes)
+    expect(
+      (
+        await inspectTrajectory(
+          fixture.store,
+          fixture.host,
+          "project",
+          parse({ attemptID: firstAttemptID, limit: 2, cursor: filtered.trajectory.nextCursor! }),
+          cursorSecret,
+        )
+      ).trajectory.page,
+    ).toBe(2)
+
+    reopened = openReadOnlyTrajectoryStore(fixture.repository.path, fixture.directory)
+    const reopenedPage = await inspectTrajectory(
+      reopened.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 2, cursor }),
+      cursorSecret,
+    )
+    expect(reopenedPage.trajectory.page).toBe(2)
+    expect(routeOrder(reopenedPage)).toEqual(routes)
+  } finally {
+    fixture.store.progressFacts = originalProgressFacts
+    reopened?.close()
+    unrelated.close()
+    fixture.close()
+  }
+})
+
 test("bounded pages preserve exact event order and reject stale or foreign continuations", async () => {
   const fixture = makeFixture()
   try {
@@ -439,6 +792,16 @@ test("bounded pages preserve exact event order and reject stale or foreign conti
     )
 
     const cursorFromFirst = first.trajectory.nextCursor!
+    await expect(
+      inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        parse({ taskID, limit: 3, cursor: cursorFromFirst }),
+        cursorSecret,
+      ),
+    ).rejects.toThrow("Stale trajectory cursor")
+
     await expect(
       inspectTrajectory(
         fixture.store,
@@ -841,11 +1204,33 @@ test("native session errors are redacted before appearing in the report", async 
   }
 })
 
-test("trajectory reads do not create audits or change tasks, attempts, transitions, or watermarks", async () => {
+test("trajectory reads leave seeded task, attempt, progress, effect, transition, audit rows and watermark unchanged", async () => {
   const fixture = makeFixture()
   try {
+    new ProgressRecorder(fixture.store, "project").recordNativeEvent({
+      id: "read-only-seeded-progress",
+      type: "session.step.started",
+      created: 1_500,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "read-only-seeded-message",
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: "seeded-model", variant: "high" },
+      },
+    })
+    fixture.repository.atomic((db) =>
+      db
+        .query("INSERT INTO runner_audits VALUES(?,?,?,?,?)")
+        .run("seeded-audit", fixture.directory, fixture.repository.version(), '{"findings":[]}', 1),
+    )
     const before = fixture.repository.atomic((db) => ({
       taskChanges: fixture.repository.version(),
+      taskRows: JSON.stringify(db.query("SELECT * FROM tasks ORDER BY rowid").all()),
+      attemptRows: JSON.stringify(db.query("SELECT * FROM runner_attempts ORDER BY rowid").all()),
+      transitionRows: JSON.stringify(
+        db.query("SELECT * FROM runner_transitions ORDER BY rowid").all(),
+      ),
+      effectRows: JSON.stringify(db.query("SELECT * FROM runner_effects ORDER BY rowid").all()),
       tasks: db.query<{ count: number }, []>("SELECT count(*) AS count FROM tasks").get()!.count,
       attempts: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
@@ -856,6 +1241,11 @@ test("trajectory reads do not create audits or change tasks, attempts, transitio
       effects: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_effects")
         .get()!.count,
+      progress: JSON.stringify(db.query("SELECT * FROM runner_progress ORDER BY seq").all()),
+      progressCount: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
+        .get()!.count,
+      auditRows: JSON.stringify(db.query("SELECT * FROM runner_audits ORDER BY id").all()),
       audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
         .count,
     }))
@@ -867,6 +1257,12 @@ test("trajectory reads do not create audits or change tasks, attempts, transitio
     fixture.store.audit = oldAudit
     const after = fixture.repository.atomic((db) => ({
       taskChanges: fixture.repository.version(),
+      taskRows: JSON.stringify(db.query("SELECT * FROM tasks ORDER BY rowid").all()),
+      attemptRows: JSON.stringify(db.query("SELECT * FROM runner_attempts ORDER BY rowid").all()),
+      transitionRows: JSON.stringify(
+        db.query("SELECT * FROM runner_transitions ORDER BY rowid").all(),
+      ),
+      effectRows: JSON.stringify(db.query("SELECT * FROM runner_effects ORDER BY rowid").all()),
       tasks: db.query<{ count: number }, []>("SELECT count(*) AS count FROM tasks").get()!.count,
       attempts: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_attempts")
@@ -877,6 +1273,11 @@ test("trajectory reads do not create audits or change tasks, attempts, transitio
       effects: db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_effects")
         .get()!.count,
+      progress: JSON.stringify(db.query("SELECT * FROM runner_progress ORDER BY seq").all()),
+      progressCount: db
+        .query<{ count: number }, []>("SELECT count(*) AS count FROM runner_progress")
+        .get()!.count,
+      auditRows: JSON.stringify(db.query("SELECT * FROM runner_audits ORDER BY id").all()),
       audits: db.query<{ count: number }, []>("SELECT count(*) AS count FROM runner_audits").get()!
         .count,
     }))

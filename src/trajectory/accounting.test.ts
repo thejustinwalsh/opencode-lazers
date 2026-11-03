@@ -467,3 +467,195 @@ test("keeps frozen assignment separate from mixed observed routes and exposes un
   expect(report.cost.architectReviewIntegrationOverheadUSD.status).toBe("unallocated")
   expect(report.quality).toMatchObject({ status: "not-recorded", value: null })
 })
+
+test("route accounting compares exact identities behind bounded displays and leaves lost identities unavailable", () => {
+  const prefix = "m".repeat(120)
+  const displayedID = `${prefix}…[truncated]`
+  const withIdentity = (suffix: string): AccountingRoute => ({
+    providerID: "openai",
+    modelID: displayedID,
+    variant: "high",
+    identity: { providerID: "openai", modelID: `${prefix}${suffix}`, variant: "high" },
+  })
+  const routeA = withIdentity("a")
+  const routeB = withIdentity("b")
+
+  const identical = project([
+    attempt({
+      planRoute: routeA,
+      frozenRoute: routeA,
+      currentRoute: routeA,
+      stepRoutes: [{ messageID: "message-a", route: routeA, observedAt: 100 }],
+    }),
+  ])
+  expect(identical.routes.assessments.map(({ scope, status }) => [scope, status])).toEqual([
+    ["session", "match"],
+    ["step", "match"],
+  ])
+  expect(identical.routes.assignments[0]?.planSelection.route).toEqual({
+    providerID: "openai",
+    modelID: displayedID,
+    variant: "high",
+  })
+
+  const distinct = project([
+    attempt({
+      planRoute: routeA,
+      frozenRoute: routeA,
+      currentRoute: routeB,
+      stepRoutes: [{ messageID: "message-b", route: routeB, observedAt: 100 }],
+    }),
+  ])
+  expect(distinct.routes.assessments.map(({ scope, status }) => [scope, status])).toEqual([
+    ["session", "mismatch"],
+    ["step", "mismatch"],
+  ])
+
+  const lost = { ...routeA, identity: null }
+  const unavailable = project([
+    attempt({
+      planRoute: routeA,
+      frozenRoute: routeA,
+      currentRoute: lost,
+      stepRoutes: [{ messageID: "message-lost", route: lost, observedAt: 100 }],
+    }),
+  ])
+  expect(
+    unavailable.routes.assessments.map(({ status, frozenRouteStatus }) => [
+      status,
+      frozenRouteStatus,
+    ]),
+  ).toEqual([
+    ["unavailable", "unavailable"],
+    ["unavailable", "unavailable"],
+  ])
+  expect(unavailable.routes.mismatches).toEqual([])
+})
+
+test("unavailable route ordering follows source occurrences, not lossy displays or allocation order", () => {
+  const sharedDisplay = `${"s".repeat(120)}…[truncated]`
+  const otherDisplay = `${"z".repeat(120)}…[truncated]`
+  const inputs = [
+    { id: "attempt-z", sessionID: "session-z", display: otherDisplay },
+    { id: "attempt-m", sessionID: "session-m", display: sharedDisplay },
+    { id: "attempt-a", sessionID: "session-a", display: sharedDisplay },
+  ]
+  const read = (order: typeof inputs) =>
+    project(
+      order.map(({ id, sessionID, display }) =>
+        attempt({
+          id,
+          sessionID,
+          currentRoute: {
+            providerID: "openai",
+            modelID: display,
+            variant: "high",
+            identity: null,
+          },
+        }),
+      ),
+    ).routes.distinctObservedRoutes.flatMap((route) => (route ? [route.modelID] : []))
+
+  const ordered = read(inputs)
+  expect(ordered).toEqual([sharedDisplay, sharedDisplay, otherDisplay])
+  expect(read([...inputs].reverse())).toEqual(ordered)
+})
+
+test("ID-less unavailable routes retain distinct fact and observation-slot occurrences", () => {
+  const unavailable = (modelID: string): AccountingRoute => ({
+    providerID: "openai",
+    modelID,
+    variant: "high",
+    identity: null,
+  })
+  const sharedPrefix = "s".repeat(120)
+  const factRouteA = unavailable(`${sharedPrefix}…[truncated]`)
+  const factRouteB = unavailable(`${sharedPrefix}…[truncated]`)
+  const slotRouteA = unavailable(`${"a".repeat(120)}…[truncated]`)
+  const slotRouteB = unavailable(`${"b".repeat(120)}…[truncated]`)
+  const routeFact = (input: {
+    id: string
+    sequence: number
+    messageID: string
+    at: number | null
+    observations: Array<{ at: number | null; route: AccountingRoute }>
+  }) => ({
+    id: `progress:${input.id}`,
+    sequence: input.sequence,
+    attemptID: "attempt-a",
+    sessionID: "session-a",
+    kind: "worker-step",
+    source: "native-event",
+    sources: ["native-event"],
+    at: input.at,
+    recordedAt: input.at,
+    messageID: input.messageID,
+    eventIDs: [],
+    measurementBasis: "additive-step-measurement",
+    usage: {},
+    route: input.observations.at(-1)?.route,
+    observations: input.observations.map(({ at, route }) => ({
+      source: "native-event",
+      eventType: "session.step.started",
+      at,
+      messageID: input.messageID,
+      route,
+    })),
+  })
+
+  const firstMessage = "same-message-facts"
+  const secondMessage = "same-message-slots"
+  const facts = [
+    routeFact({
+      id: "fact-a",
+      sequence: 1,
+      messageID: firstMessage,
+      at: 1_300,
+      observations: [{ at: 1_300, route: factRouteA }],
+    }),
+    routeFact({
+      id: "fact-b",
+      sequence: 2,
+      messageID: firstMessage,
+      at: 1_300,
+      observations: [{ at: 1_300, route: factRouteB }],
+    }),
+    routeFact({
+      id: "fact-slots",
+      sequence: 3,
+      messageID: secondMessage,
+      at: null,
+      observations: [
+        { at: null, route: slotRouteA },
+        { at: null, route: slotRouteB },
+      ],
+    }),
+  ]
+  const report = project([attempt({ currentRoute: null, currentRouteObservedAt: null })], facts)
+  const observed = report.routes.observedStepRoutes
+
+  expect(observed).toHaveLength(4)
+  expect(report.routes.distinctObservedRoutes).toHaveLength(4)
+  expect(observed.filter((item) => item.messageID === firstMessage)).toHaveLength(2)
+  expect(observed.filter((item) => item.messageID === secondMessage)).toHaveLength(2)
+  expect(
+    observed.map((item) => [
+      item.messageID,
+      item.route?.modelID ?? null,
+      item.sources.map(({ eventID, observedAt, source, sourceType }) => [
+        eventID,
+        observedAt,
+        source,
+        sourceType,
+      ]),
+    ]),
+  ).toEqual([
+    [firstMessage, factRouteA.modelID, [[null, 1_300, "native-event", "session.step.started"]]],
+    [firstMessage, factRouteB.modelID, [[null, 1_300, "native-event", "session.step.started"]]],
+    [secondMessage, slotRouteA.modelID, [[null, null, "native-event", "session.step.started"]]],
+    [secondMessage, slotRouteB.modelID, [[null, null, "native-event", "session.step.started"]]],
+  ])
+  const serialized = JSON.stringify(report.routes)
+  expect(serialized).not.toContain("sourceOccurrence")
+  expect(serialized).not.toContain("identity")
+})
