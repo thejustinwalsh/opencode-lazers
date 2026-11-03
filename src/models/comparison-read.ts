@@ -14,12 +14,13 @@ import type {
 } from "./comparison-schema.ts"
 import { ModelEvidenceSnapshotSummarySchema, type ModelEvidenceSnapshot } from "./source-schema.ts"
 import type { ModelEvidenceComparisonSourceRead, ModelEvidenceReadStore } from "./source-store.ts"
+import {
+  modelConfigurationID,
+  resolveModelIdentity,
+  type ModelIdentityEvidenceReference,
+} from "./model-identity.ts"
 
 type NativeRecord = Extract<ModelEvidenceSnapshot, { source: "native-catalog" }>["records"][number]
-type OpenRouterModelRecord = Extract<
-  ModelEvidenceSnapshot,
-  { source: "openrouter-models" }
->["records"][number]
 type OpenRouterBenchmarkRecord = Extract<
   ModelEvidenceSnapshot,
   { source: "openrouter-benchmarks" }
@@ -49,11 +50,6 @@ function stableJSON(value: unknown): string {
   return JSON.stringify(value)
 }
 
-function candidateID(providerID: string, modelID: string, variant: string | null): string {
-  const segment = (value: string | null) => (value === null ? "-" : `${value.length}:${value}`)
-  return [segment(providerID), segment(modelID), segment(variant)].join("|")
-}
-
 function sameValue<T>(values: T[]): T | undefined {
   if (!values.length) return undefined
   const first = values[0]!
@@ -61,7 +57,21 @@ function sameValue<T>(values: T[]): T | undefined {
 }
 
 function reference(
-  source: ModelEvidenceSnapshot,
+  source: Extract<ModelEvidenceSnapshot, { source: "native-catalog" | "openrouter-models" }>,
+  recordIndex: number,
+  recordID: string,
+): ModelIdentityEvidenceReference {
+  return {
+    source: source.source,
+    snapshotID: source.snapshotID,
+    generation: source.generation,
+    recordIndex,
+    recordID,
+  }
+}
+
+function benchmarkReference(
+  source: Extract<ModelEvidenceSnapshot, { source: "openrouter-benchmarks" }>,
   recordIndex: number,
   recordID: string,
 ): EvidenceReference {
@@ -174,7 +184,7 @@ function makeNativeView(
   )
   const prices = sameValue(records.map((record) => record.prices))
   return {
-    candidateID: candidateID(group.providerID, group.modelID, variant),
+    candidateID: modelConfigurationID(group.providerID, group.modelID, variant),
     identity: {
       providerID: group.providerID,
       modelID: group.modelID,
@@ -211,16 +221,6 @@ function filtered(groups: CandidateGroup[], filters: ModelComparisonFilters): Ca
   })
 }
 
-function indexByID<T extends { id: string }>(records: T[] | undefined) {
-  const index = new Map<string, Array<{ record: T; recordIndex: number }>>()
-  records?.forEach((record, recordIndex) => {
-    const matches = index.get(record.id) ?? []
-    matches.push({ record, recordIndex })
-    index.set(record.id, matches)
-  })
-  return index
-}
-
 function indexBenchmarks(records: OpenRouterBenchmarkRecord[] | undefined) {
   const index = new Map<string, Array<{ record: OpenRouterBenchmarkRecord; recordIndex: number }>>()
   records?.forEach((record, recordIndex) => {
@@ -233,38 +233,37 @@ function indexBenchmarks(records: OpenRouterBenchmarkRecord[] | undefined) {
 
 function candidatesFor(
   nativeSnapshot: Extract<ModelEvidenceSnapshot, { source: "native-catalog" }> | null,
-  modelSnapshot: Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }> | null,
+  catalogSource: ModelEvidenceComparisonSourceRead,
   benchmarkSnapshot: Extract<ModelEvidenceSnapshot, { source: "openrouter-benchmarks" }> | null,
   filters: ModelComparisonFilters,
 ): Candidate[] {
   if (!nativeSnapshot) return []
   const groups = filtered(candidateGroups(nativeSnapshot), filters)
-  const modelRecords = (modelSnapshot?.records ?? []) as OpenRouterModelRecord[]
   const benchmarkRecords = (benchmarkSnapshot?.records ?? []) as OpenRouterBenchmarkRecord[]
-  const modelIndex = indexByID(modelRecords)
   const benchmarkIndex = indexBenchmarks(benchmarkRecords)
   const output: Candidate[] = []
 
   for (const group of groups) {
-    const matchingModels =
-      group.providerID === "openrouter" ? (modelIndex.get(group.modelID) ?? []) : []
-    const modelReferences = modelSnapshot
-      ? matchingModels.map(({ record, recordIndex }) =>
-          reference(modelSnapshot, recordIndex, record.id),
-        )
-      : []
-    const correspondenceStatus: Candidate["correspondence"]["status"] =
-      matchingModels.length === 1 ? "exact" : matchingModels.length > 1 ? "ambiguous" : "unresolved"
-    const exactModel = matchingModels.length === 1 ? matchingModels[0]!.record : null
     const nativeBaseReferences = group.records.map(({ recordIndex }) =>
       reference(nativeSnapshot, recordIndex, group.modelID),
     )
+    const identity = resolveModelIdentity({
+      route: { providerID: group.providerID, modelID: group.modelID },
+      nativeEvidence: nativeBaseReferences,
+      catalogSource,
+    })
+    const modelReferences = identity.resolution.evidence.catalog
+    const exactModel =
+      identity.resolution.status === "exact" ? (identity.catalogMatches[0]?.record ?? null) : null
     const correspondenceEvidence = boundedEvidence([...nativeBaseReferences, ...modelReferences])
     const correspondence = {
-      status: correspondenceStatus,
-      basis: matchingModels.length
-        ? ("direct-openrouter-route-and-exact-catalog-id" as const)
-        : null,
+      status:
+        identity.resolution.status === "exact"
+          ? ("exact" as const)
+          : identity.resolution.status === "ambiguous"
+            ? ("ambiguous" as const)
+            : ("unresolved" as const),
+      basis: identity.resolution.basis,
       evidence: correspondenceEvidence,
     }
 
@@ -274,13 +273,10 @@ function candidatesFor(
     }
     const benchmarkReferences = benchmarkSnapshot
       ? benchmarkMatches.map(({ record, recordIndex }) =>
-          reference(benchmarkSnapshot, recordIndex, record.modelPermaslug),
+          benchmarkReference(benchmarkSnapshot, recordIndex, record.modelPermaslug),
         )
       : []
-    const exactModelReference =
-      exactModel && modelSnapshot
-        ? reference(modelSnapshot, matchingModels[0]!.recordIndex, exactModel.id)
-        : null
+    const exactModelReference = exactModel ? (modelReferences[0] ?? null) : null
     const benchmarkEvidence = boundedEvidence([
       ...nativeBaseReferences,
       ...(exactModelReference ? [exactModelReference] : modelReferences),
@@ -389,13 +385,13 @@ export function readModelComparison(
   const sources = store.readComparisonSources(decoded?.snapshots)
   const selection = decoded?.snapshots ?? snapshotSelection(sources)
   const nativeSource = sources.find((source) => source.source === "native-catalog")?.snapshot
-  const modelSource = sources.find((source) => source.source === "openrouter-models")?.snapshot
+  const modelSource = sources.find((source) => source.source === "openrouter-models")!
   const benchmarkSource = sources.find(
     (source) => source.source === "openrouter-benchmarks",
   )?.snapshot
   const allCandidates = candidatesFor(
     nativeSource?.source === "native-catalog" ? nativeSource : null,
-    modelSource?.source === "openrouter-models" ? modelSource : null,
+    modelSource,
     benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
     filters,
   )
