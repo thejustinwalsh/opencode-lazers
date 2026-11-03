@@ -9,3 +9,24 @@
 These are presentation corrections to the current partial view. Comparable cohorts, frontier, valuation, task estimates and editable/live assignments remain separate data and behavior work; the screenshots do not prove them complete. Root observed that one upper-pane scroll left the inspector stationary. The captures do not establish keyboard, theme/font, refresh, disclosure or divider interaction acceptance. Recapture connected narrow and wide views after correction, including a selected candidate and an unavailable or stale state, and exercise those interactions separately.
 
 References: [approved composition](models-approved.png), [implementation guide](implementation-plan.md). Captures: `/private/tmp/lazers-models-wide-20261103.png`, `/private/tmp/lazers-models-narrow-20261103.png`, and `/private/tmp/lazers-models-narrow-candidates-20261103.png`.
+
+## Confirmed grouping and identity defects
+
+The user clarified that effort is a model configuration, not a separate model
+row. The connected view expands 471 native catalog records into 1,373 candidates.
+Group the model presentation and offer applicable effort selection; retain exact
+provider/model/effort identity and separate measurements beneath that presentation.
+
+`comparison-read.ts` currently attempts the external model join only when
+`providerID === "openrouter"`. This excludes direct Anthropic/OpenAI routes from
+the provider-independent fallback. The app already retains both native
+`anthropic / claude-fable-5` and external `anthropic/claude-fable-5`, yet the direct
+route shows no match. A fresh authenticated metadata-only call to
+`https://openrouter.ai/api/v1/models` at Unix ms `1793735476720` returned HTTP200,
+417 records and 20 Anthropic records, including that model, Sonnet 5.5, Haiku 5.5
+and `openai/gpt-6-luna`. No inference or credential persistence occurred.
+
+Associate source-backed model identities across execution providers, including
+verified aliases where necessary. Preserve real release/fast/batch differences
+and ambiguity; distinguish an unsupported association from upstream absence.
+Corrected direct Anthropic/OpenAI rows require live validation before acceptance.
