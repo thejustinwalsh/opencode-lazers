@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-03, after the connected LZ96 review. Recheck live state.
+Updated 2026-11-03, after canonical Models integration and the Kimi chart return. Recheck live state.
 This is a current-state checkpoint; prior source history remains in Git and the
 linked evidence. The complete goal is active, not complete.
 
@@ -43,17 +43,18 @@ Main has normal Architect tools. Desktop is available at this checkpoint.
   plan ae8438ef-c789-4432-b225-d833aa7de558.
 - LZ94 a448d4c is reviewed and merged b3f95fa; runtime source integration recorded.
   This pure route resolver does not activate live routing.
-- LZ95 returned08911ce. Independent production-shaped probes found four real
-  defects; source withheld, retained. See evidence/maintenance-preflight-review.md.
-  Combined plan b048598f-ab73-4494-980c-1368fa9342c7 is not integrated/cleaned.
-- LZ97 identity/group projection is accepted at source574331f, not yet merged.
-  Root and Main passed the focused real-source/compatibility checks. Source review
-  found nonportable citation references and understated omission counts; LZ101
-  repairs them on LunaMax in parallel with Kimi. Task511a371a-a5e6-4ef3-bd69-713154df80ef,
-  planbb47fbce-be29-446c-b783-a74d62383ff7; original worker
-  ses_0ec8c285a334405a8ff465cba3cec555 and tree are retained. LZ101 plan
+- LZ95 preflight source and LZ98's production-binding repair are integrated as
+  0d212d5, with formattingf50d2b1. Cleanup of the original retained resources is
+  still independent; do not treat the earlier review hold as current source state.
+- LZ97 identity/group projection574331f and LZ101 repair9c781fa are accepted and
+  merged as6b56fb0. Main recorded both task integrations; cleanup is requested.
+  Combined checks passed71 tests/976 assertions plus fmt/lint/typecheck. Root
+  independently reviewed the four-file repair and passed11 tests/116 assertions.
+  This fixes portable selected-snapshot alias citations and complete deduplicated
+  evidence counts; it does not deliver the final comparison panel. LZ101 plan
   89397376-a6ff-45bc-9e52-d212857e1521, worker
-  ses_8b90e4b253a6452e8c08347fe692a631. Do not treat runtime acceptance as merge.
+  ses_8b90e4b253a6452e8c08347fe692a631. Original LZ97 plan
+  bb47fbce-be29-446c-b783-a74d62383ff7.
 - Second unrequested service loss:47672 disappeared around20:40 UTC; Desktop
   auto-started59460 at20:41:00. Root issued no restart/reload this interval.
   Both Luna workers and Main are active again; cause remains unproven. See
@@ -97,7 +98,7 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   Native route `opencode-go/kimi-k3.1-pro#high`, persona ui. This authorizes Go
   inference; Architect stays OpenAI SolHigh and backend workers stay LunaMax.
   Native catalog at Unix ms1793740393904 lists Go KimiK3.1Pro enabled with
-  low/high/max. LZ100 is now running on that exact route, persona ui: task
+  low/high/max. LZ100 returned c00d163 on that exact route, persona ui: task
   ccd244cc-e5e7-409b-b277-c1770b8c2e2a, planf2ef44ad-d60b-4ce2-ac93-66548f67a885,
   attempt5fab7e91-64b0-420b-b2d7-52773b30e5d9, worker
   ses_186dbc76c2a64b3cbd0ff0fcd4836ff9. It implements the chart/read contract,
@@ -108,13 +109,23 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   msg_1a35a7b45001OiTjBS0j8O4Hrn (text + file results). Tera6.1High supplied a
   concise component handoff. Chosen chart library:
   Apache ECharts6.1.0, modular SVG renderer through a thin Solid component.
-  Updated implementation guide is7da721b/9024fca. Draft chart source exists;
-  renderer/DOM tests are being repaired, with no accepted chart or native visual
-  acceptance yet. Root independently reproduced a Solid subscription defect:
-  createEffect precedes onMount and skips data reads while a nonreactive adapter
-  is undefined. Desktop review feedback is queued for Main to steer the same
-  Kimi worker and test actual SVG data updates. A missing-SVG assertion also
-  compared undefined with null and could falsely pass; verify its correction.
+  Updated implementation guide includes398be57's scoped observed pitfalls.
+  Runtime accepted LZ100, but source integration is held for review. Its focused
+  10 tests/133 assertions, quality and GUI build passed. Root's reproduced Solid
+  subscription and unsafe literal-tooltip findings were steered to the same Kimi
+  worker and corrected with actual SVG/tooltip regressions. A third source review
+  probe still accepts a graph point with acceptedTaskCount0 and numeric coordinates;
+  Root relayed that exact safeParse case through Desktop. Keep zero-accepted rows
+  visible, but repair the invalid successful-task coordinate representation. Native
+  reviewer ses_e5c88c335ffe0ANoZjJXpqWns6 is reviewing the return; do not duplicate it.
+- LZ102 current-index valuation is running on LunaMax: task
+  21f0234f-884e-4067-a388-b18799ee5312, plan41b4a86e-5981-4f9f-972e-3050c7762c54,
+  attempt2587c2c4-2bc7-44f1-b924-9e0d4bab6670, worker
+  ses_6748c6d9424e4c19b376fc28329d787f. LZ103 authored task classification is
+  running on LunaMax: task969c383d-a616-482e-a4af-7b4c7707f03c,
+  plan8f369d22-6ca9-494e-9a38-5f4670bedc5c,
+  attemptc9a6481f-83fb-4fe5-b79e-65059ca999f5, worker
+  ses_6da1ede0e4094aa0a468a2b1f051407d. These are independent worktrees.
 - Preserve the human's native interview answer: Architect classifies tasks into
   authored task types informed by benchmark taxonomy, not silent persona/name
   inference. Native taxonomy researcher ses_e5cb502f9ffeiqpusOarVqVMg4 ran.
@@ -126,11 +137,11 @@ UI → actual native acceptance. Main owns small-task decomposition and fan-out.
   OpenRouter as the common market index. Old price snapshots are audit history,
   not today's graph basis. Keep actual charges/subscription accounting separate,
   and retain source/date and exact source quote/average semantics honestly.
-- LZ97 draft passed65 Models tests/923 assertions and quality before its latest
-  small test edits. Root's real read-only project-source probe at Unix
-  ms1793741278523 now yields511 groups. Direct Fable/Sonnet/Haiku/Luna all match
-  the correct OpenRouter products across separate effort configurations. This
-  is not yet registered live RPC or final UI acceptance. Finish source review.
+- Earlier live-source projection resolved direct Fable/Sonnet/Haiku/Luna to
+  correct OpenRouter products across separate effort configurations. The reviewed
+  backend is now merged, but registered native RPC, final UI and real-data visual
+  acceptance still need observation. Go Kimi/Qwen market association remains a
+  separate source-backed mapping gap, not an inference/admission restriction.
 
 ## Models visual and data defects — final acceptance open
 
