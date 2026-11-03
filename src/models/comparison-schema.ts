@@ -72,6 +72,12 @@ const EffortApplicabilitySchema = z.strictObject({
   evidence: EvidenceReferencesSchema,
 })
 
+const VariantCoverageSchema = z.strictObject({
+  status: z.enum(["complete", "truncated", "unknown"]),
+  totalVariants: z.number().int().nonnegative().max(200_000).nullable(),
+  omittedVariants: z.number().int().nonnegative().max(200_000).nullable(),
+})
+
 export const ModelComparisonCandidateSchema = z.strictObject({
   candidateID: z.string().min(1).max(2048),
   identity: z.strictObject({
@@ -86,6 +92,7 @@ export const ModelComparisonCandidateSchema = z.strictObject({
     contextTokens: z.number().finite().nonnegative().nullable(),
     capabilities: NativeModelEvidenceRecordSchema.shape.capabilities,
     availableVariants: z.array(z.string().min(1).max(512)).max(100).nullable(),
+    variantCoverage: VariantCoverageSchema,
     prices: NativeModelEvidenceRecordSchema.shape.prices,
     ambiguousIdentity: z.boolean(),
     evidence: EvidenceReferencesSchema,

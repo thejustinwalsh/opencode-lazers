@@ -447,6 +447,9 @@ export class ModelEvidenceReadStore {
             snapshot: null,
           }
 
+        if (row.source !== source)
+          throw new Error("Model evidence snapshot source does not match its selection")
+
         const snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
         if (
           snapshot.snapshotID !== row.snapshot_id ||
