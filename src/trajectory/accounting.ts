@@ -5,6 +5,7 @@ export type AccountingRoute = {
 }
 
 export type AccountingRouteSource = {
+  attemptID: string | null
   source: string
   sourceType: string
   observedAt: number | null
@@ -507,6 +508,7 @@ function distinctRoutes(routes: AccountingRoute[]) {
 function addRouteSource(
   map: Map<string, AccountingStepRoute>,
   value: {
+    attemptID: string | null
     sessionID: string
     messageID: string | null
     route: AccountingRoute
@@ -521,6 +523,7 @@ function addRouteSource(
   const key = `${value.sessionID}\u0000${identity}\u0000${routeKey(value.route)}`
   const existing = map.get(key)
   const source: AccountingRouteSource = {
+    attemptID: value.attemptID,
     source: value.source,
     sourceType: value.sourceType,
     observedAt: value.observedAt,
@@ -539,6 +542,7 @@ function addRouteSource(
   if (
     !existing.sources.some(
       (item) =>
+        item.attemptID === source.attemptID &&
         item.source === source.source &&
         item.sourceType === source.sourceType &&
         item.eventID === source.eventID &&
@@ -563,6 +567,7 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
       if (!observedRoute) return []
       return [
         {
+          attemptID: record.attemptID || null,
           sessionID: record.sessionID,
           messageID: text(observation?.messageID) ?? record.messageID,
           route: observedRoute,
@@ -579,6 +584,7 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
     } else {
       const sourceTypes = record.sources.length ? record.sources : [record.source]
       addRouteSource(routes, {
+        attemptID: record.attemptID || null,
         sessionID: record.sessionID,
         messageID: record.messageID,
         route: routeFact,
@@ -665,6 +671,7 @@ export function projectTaskEffortBasis(input: {
   for (const attempt of input.attempts)
     for (const observed of attempt.stepRoutes)
       addRouteSource(stepRoutes, {
+        attemptID: bySession.get(attempt.sessionID)?.length === 1 ? attempt.id : null,
         sessionID: attempt.sessionID,
         messageID: observed.messageID,
         route: observed.route,
@@ -710,7 +717,10 @@ export function projectTaskEffortBasis(input: {
         ? "runner_plans.body.workerModel"
         : attempt.frozenRouteSource
     const observations = [
-      ...(sessionRoutesByID.get(attempt.sessionID) ?? []).map((item) => ({
+      ...(bySession.get(attempt.sessionID)?.length === 1
+        ? (sessionRoutesByID.get(attempt.sessionID) ?? [])
+        : []
+      ).map((item) => ({
         scope: "session" as const,
         route: item.route,
         source: item.source,
@@ -718,22 +728,29 @@ export function projectTaskEffortBasis(input: {
         observedAt: item.observedAt,
         messageID: null,
       })),
-      ...(stepRoutesByID.get(attempt.sessionID) ?? []).map((item) => ({
-        scope: "step" as const,
-        route: item.route,
-        source: item.sources.map((source) => source.source).join("+"),
-        sourceType: item.sources.map((source) => source.sourceType).join("+"),
-        observedAt: item.sources.reduce<number | null>(
-          (latest, source) =>
-            source.observedAt === null
-              ? latest
-              : latest === null
-                ? source.observedAt
-                : Math.max(latest, source.observedAt),
-          null,
-        ),
-        messageID: item.messageID,
-      })),
+      ...(stepRoutesByID.get(attempt.sessionID) ?? [])
+        .filter((item) => {
+          const owners = new Set(
+            item.sources.flatMap((source) => (source.attemptID ? [source.attemptID] : [])),
+          )
+          return owners.size === 1 && owners.has(attempt.id)
+        })
+        .map((item) => ({
+          scope: "step" as const,
+          route: item.route,
+          source: item.sources.map((source) => source.source).join("+"),
+          sourceType: item.sources.map((source) => source.sourceType).join("+"),
+          observedAt: item.sources.reduce<number | null>(
+            (latest, source) =>
+              source.observedAt === null
+                ? latest
+                : latest === null
+                  ? source.observedAt
+                  : Math.max(latest, source.observedAt),
+            null,
+          ),
+          messageID: item.messageID,
+        })),
     ]
     return observations.map((observation) => ({
       attemptID: attempt.id,

@@ -97,6 +97,80 @@ function project(
   })
 }
 
+test("shared-session steps compare only with their exact retained attempt owner", () => {
+  const first = attempt({
+    id: "attempt-a",
+    planRoute: routeA,
+    frozenRoute: routeA,
+    currentRoute: routeB,
+  })
+  const second = attempt({
+    id: "attempt-b",
+    planRoute: routeB,
+    frozenRoute: routeB,
+    currentRoute: routeB,
+  })
+  const report = project(
+    [first, second],
+    [
+      progressFact({
+        id: "a",
+        sequence: 1,
+        attemptID: first.id,
+        kind: "worker-step",
+        at: 100,
+        messageID: "message-a",
+        usage: { input: 1 },
+        measurementBasis: "additive-step-measurement",
+        route: routeA,
+      }),
+      progressFact({
+        id: "b",
+        sequence: 2,
+        attemptID: second.id,
+        kind: "worker-step",
+        at: 200,
+        messageID: "message-b",
+        usage: { input: 1 },
+        measurementBasis: "additive-step-measurement",
+        route: routeB,
+      }),
+    ],
+  )
+  expect(report.routes.assessments.map((x) => [x.attemptID, x.messageID])).toEqual([
+    [first.id, "message-a"],
+    [second.id, "message-b"],
+  ])
+  expect(report.routes.mismatches).toEqual([])
+  expect(report.usage.coverage.totalUniqueSessions).toBe(1)
+})
+
+test("shared-session context and current selection remain visible without invented historical attempt ownership", () => {
+  const steps = [
+    { messageID: "message-a", route: routeA, observedAt: 100 },
+    { messageID: "message-b", route: routeB, observedAt: 200 },
+  ]
+  const first = attempt({
+    id: "attempt-a",
+    planRoute: routeA,
+    frozenRoute: routeA,
+    currentRoute: routeB,
+    stepRoutes: steps,
+  })
+  const second = attempt({
+    id: "attempt-b",
+    planRoute: routeB,
+    frozenRoute: routeB,
+    currentRoute: routeB,
+    stepRoutes: steps,
+  })
+  const report = project([first, second])
+  expect(report.routes.observedSessionRoutes).toHaveLength(1)
+  expect(report.routes.observedStepRoutes).toHaveLength(2)
+  expect(report.routes.assessments).toEqual([])
+  expect(report.routes.mismatches).toEqual([])
+})
+
 test("deduplicates session references and never fills a current cumulative snapshot from older or additive observations", () => {
   const first = attempt({
     sessionUsage: {
