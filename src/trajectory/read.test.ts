@@ -90,6 +90,35 @@ function recordUnavailableRouteOccurrences(
   return { modelIDs, sameDisplayPrefix }
 }
 
+function recordIDlessUnavailableRouteOccurrences(
+  fixture: ReturnType<typeof makeFixture>,
+  source: string,
+) {
+  const sharedPrefix = "s".repeat(300)
+  const modelIDs = [
+    `${sharedPrefix}${"A".repeat(101)}`,
+    `${sharedPrefix}${"B".repeat(101)}`,
+    `${"A".repeat(300)}${"C".repeat(101)}`,
+    `${"B".repeat(300)}${"D".repeat(101)}`,
+  ]
+  const session = fixture.sessions.get("ses-failed")!
+  session.model = null as never
+  session.messages = [] as never
+  const recorder = new ProgressRecorder(fixture.store, "project")
+  for (const [index, modelID] of modelIDs.entries())
+    recorder.recordNativeEvent({
+      type: "session.step.started",
+      created: 1_300 + index,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: `${source}-idless-route-message`,
+        agent: "lazers-implementor",
+        model: { providerID: "openai", id: modelID, variant: "high" },
+      },
+    })
+  return { modelIDs, sharedPrefix }
+}
+
 test("trajectory specifications preserve legacy policy references and omit absent ones", async () => {
   for (const withoutPolicy of [false, true]) {
     const fixture = makeFixture({ withoutPolicy })
@@ -599,6 +628,7 @@ test("unavailable-route cursors remain stable across trajectory reads", async ()
   const originalProgressFacts = fixture.store.progressFacts.bind(fixture.store)
   try {
     const { modelIDs, sameDisplayPrefix } = recordUnavailableRouteOccurrences(fixture, "primary")
+    const idless = recordIDlessUnavailableRouteOccurrences(fixture, "primary")
     recordUnavailableRouteOccurrences(unrelated, "interleaved")
 
     const inspect = (options: { attemptID?: string; cursor?: string } = {}) =>
@@ -619,11 +649,15 @@ test("unavailable-route cursors remain stable across trajectory reads", async ()
       )
     const routes = routeOrder(first)
     const unavailable = routes.filter((route) => route.modelID.endsWith("…[truncated]"))
-    expect(unavailable).toHaveLength(modelIDs.length)
-    expect(new Set(unavailable.map((route) => route.modelID)).size).toBe(modelIDs.length - 1)
+    const expectedModelIDs = [...modelIDs, ...idless.modelIDs]
+    const expectedDisplays = new Set(
+      expectedModelIDs.map((modelID) => `${modelID.slice(0, 300)}…[truncated]`),
+    )
+    expect(unavailable).toHaveLength(expectedModelIDs.length)
+    expect(new Set(unavailable.map((route) => route.modelID)).size).toBe(expectedDisplays.size)
     expect(
       unavailable.filter((route) => route.modelID === `${sameDisplayPrefix}…[truncated]`),
-    ).toHaveLength(2)
+    ).toHaveLength(4)
     const sameMessageRoutes = first.effort.taskEffortBasis.routes.observedStepRoutes.filter(
       (route) => route.messageID === "primary-same-route-message",
     )
@@ -632,9 +666,28 @@ test("unavailable-route cursors remain stable across trajectory reads", async ()
       "primary-route-event-0",
       "primary-route-event-1",
     ])
+    expect(idless.modelIDs.every((modelID) => modelID.length === 401)).toBe(true)
+    const idlessRoutes = first.effort.taskEffortBasis.routes.observedStepRoutes.filter(
+      (route) => route.messageID === "primary-idless-route-message",
+    )
+    expect(idlessRoutes).toHaveLength(4)
+    expect(idlessRoutes.map((route) => [route.route?.modelID ?? null, route.sources[0]])).toEqual(
+      idless.modelIDs.map((modelID, index) => [
+        `${modelID.slice(0, 300)}…[truncated]`,
+        {
+          attemptID: firstAttemptID,
+          source: "native-event",
+          sourceType: "session.step.started",
+          observedAt: 1_300 + index,
+          recordedAt: expect.any(Number),
+          eventID: null,
+        },
+      ]),
+    )
     const serialized = JSON.stringify(first)
     expect(serialized).not.toContain("sourceOccurrence")
-    for (const modelID of modelIDs) expect(serialized).not.toContain(modelID.slice(300))
+    for (const modelID of expectedModelIDs) expect(serialized).not.toContain(modelID)
+    expect(serialized).not.toContain(`${idless.sharedPrefix}${"A".repeat(101)}`)
 
     const repeated = await inspect()
     expect(routeOrder(repeated)).toEqual(routes)

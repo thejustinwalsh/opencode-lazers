@@ -551,11 +551,20 @@ function routeSourceOccurrence(value: {
   source: string
   sourceType: string
   eventID: string | null
+  factID?: string | null
+  observationIndex?: number | null
 }) {
   if (value.source === "native-session-context")
     return JSON.stringify(["session-context", value.sessionID, value.messageID])
   if (value.eventID)
     return JSON.stringify(["source-event", value.sessionID, value.source, value.eventID])
+  if (value.factID)
+    return JSON.stringify([
+      "source-observation-slot",
+      value.sessionID,
+      value.factID,
+      value.observationIndex ?? null,
+    ])
   return JSON.stringify([
     "source-record",
     value.sessionID,
@@ -578,10 +587,13 @@ function addRouteSource(
     observedAt: number | null
     recordedAt: number | null
     eventID: string | null
+    factID?: string | null
+    observationIndex?: number | null
+    sourceOccurrence?: string
   },
 ) {
   const identity = value.messageID ?? `${value.source}:${value.eventID ?? "unknown"}`
-  const sourceOccurrence = routeSourceOccurrence(value)
+  const sourceOccurrence = value.sourceOccurrence ?? routeSourceOccurrence(value)
   const key = `${value.sessionID}\u0000${identity}\u0000${routeKey(value.route, sourceOccurrence)}`
   const existing = map.get(key)
   const source: AccountingRouteSource = {
@@ -622,9 +634,9 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
     const fact = object(value)
     const routeFact = route(fact?.route)
     const record = byID.get(text(fact?.id) ?? "")
-    if (!routeFact || !record || record.kind !== "worker-step") continue
+    if (!record || record.kind !== "worker-step") continue
     const observations = Array.isArray(fact?.observations) ? fact.observations : []
-    const routedObservations = observations.flatMap((raw) => {
+    const routedObservations = observations.flatMap((raw, observationIndex) => {
       const observation = object(raw)
       const observedRoute = route(observation?.route)
       if (!observedRoute) return []
@@ -639,12 +651,15 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
           observedAt: epoch(observation?.at) ?? record.at,
           recordedAt: record.recordedAt,
           eventID: text(observation?.eventID),
+          factID: record.id,
+          observationIndex,
         },
       ]
     })
     if (routedObservations.length) {
       for (const observation of routedObservations) addRouteSource(routes, observation)
     } else {
+      if (!routeFact) continue
       const sourceTypes = record.sources.length ? record.sources : [record.source]
       addRouteSource(routes, {
         attemptID: record.attemptID || null,
@@ -656,6 +671,8 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
         observedAt: record.at,
         recordedAt: record.recordedAt,
         eventID: record.eventIDs[0] ?? null,
+        factID: record.id,
+        observationIndex: null,
       })
     }
   }
@@ -758,6 +775,7 @@ export function projectTaskEffortBasis(input: {
         messageID: observed.messageID,
         route: observed.route,
         ...source,
+        sourceOccurrence: observed.sourceOccurrence,
       })
   const observedStepRoutes = [...stepRoutes.values()].sort(
     (left, right) =>
