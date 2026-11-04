@@ -1,0 +1,63 @@
+# Lifecycle coupling review — 2026-11-04
+
+Read-only source and SELECT-only task review; runtime inspected around main `e054df4`. No source/settings/lifecycle changes, inference, tests or proof-only turns. This review does not assess LZ127's active source corrections. Function called `nativeIdleReason` in the request is currently `backgroundBlockReason` at `src/runner/runtime.ts:2525`.
+
+## Finding
+
+**Cleanup must not invalidate valid implementation evidence. The repository already implements much of that separation. The remaining coupling occurs before ordinary verification, where a historical worker-idle observation gates access to tests run in the worker's mutable checkout.** Removing that guard without changing the verification context would be unsafe. Requiring that same historical observation for an independently isolated, already verified candidate is a different question; the current runtime has no supported general path to express that case.
+
+Three facts must stay separate:
+
+1. **Candidate correctness:** the required tests, scope checks and actual product probes establish the behavior of a specific candidate. A commit identifies it; a file hash is not behavioral evidence.
+2. **Execution/resource state:** whether the old worker or its children can still write a particular checkout, shared service/profile or other verification resource.
+3. **Cleanup:** whether owned resources have been safely removed. Failure here preserves resources and history; it does not revoke a valid product pass.
+
+This is already the declared contract: `README.md:105–111`; `design/live-product-verification.md:207` explicitly says failed cleanup cannot revoke a product pass, block valid review/integration, trigger implementation repair or require a passed probe to repeat. It also prohibits handing a dirty shared environment to another worker.
+
+## What source actually enforces
+
+| Boundary                  | Current behavior                                                                                                                                                                                     | Assessment                                                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary task completion  | `runtime.ts:3124–3182` reads native background evidence, then blocks on absent/mismatched evidence before `VERIFY` or `verify()`.                                                                    | Historical lineage can prevent any runtime verification of otherwise useful source. It is not itself evidence of defective source.                                     |
+| Ordinary verification     | `runtime.ts:3231` calls `commitArtifact` on the worker workspace; `:3317` runs checks there; `:3361` reads required evidence there. `artifacts.ts:201` may stage/snapshot a private worker checkout. | Current implementation needs protection from concurrent writers. An immutable commit does not make its checkout immutable.                                             |
+| Task/combined integration | `runtime.ts:611` accepts task-only integration for an accepted node without requiring combined acceptance or deleting its tree. Combined integration records the merge then enters `cleaning`.       | Source landing and combined delivery already have separate records. It cannot record an unaccepted node as integrated.                                                 |
+| Cleanup                   | `runtime.ts:4428–4464` checks owned session/control/background state before removal. Adapter `native.ts:317` uses native `worktree.remove(force:false)`.                                             | Preserve this safety boundary. It governs deletion/reuse, not whether earlier tests passed.                                                                            |
+| Dependent plans           | `runtime.ts:2735` explicitly permits prerequisite states `cleaning`, `cleanup-blocked`, or `integrated`, with actual current acceptance/integration records.                                         | Cleanup completion is already unnecessary for correctly integrated prerequisites. Do not “fix” this by weakening prerequisite acceptance.                              |
+| Descendant adoption       | `runtime.ts:295–357` rejects uncertain effects, requires latest failed/accepted attempt and conclusive owned-worker idleness. `:3568` rechecks it.                                                   | No existing adoption escape for LZ126's running/blocked attempt or LZ72's uncertain check. Even separately created adoption workspaces retain this admission coupling. |
+
+**Concrete safety counterexample, derived from the execution path rather than observed live:** a background writer changes a file while `runCheck()` reads it, then restores it before the final Git comparison. The check can pass against transient code while `artifactUnchanged()` reports true. Ignored build outputs can likewise change without that Git check noticing (`artifacts.ts:135`). A live probe can race on a shared profile or service without any source-file change. Therefore replacing background evidence with clean Git status or a hash is not an adequate same-workspace fix. No such race is claimed to have occurred in LZ126.
+
+## What the current cases establish
+
+- **LZ126:** SELECT-only read found node running/plan blocked v9 on native success/idle mismatch. Handoff evidence identifies genuinely missing execution-start lineage following listener replacement. The reviewed source and passing independent tests remain legitimate evidence. I did not establish that every current delivery requirement is complete; control activation and real-link product follow-through remain separately recorded work. Missing old lineage is not a new failing behavior assertion. A prospective producer correction cannot reconstruct the missing event by design.
+- **LZ127:** the user has authorized corrected-source-first rollout at natural quiet after independent review. That is the immediate bootstrap path; it need not wait for the very producer it repairs to certify its original turn. It does not declare old certificates valid or task acceptance complete. The worker is doing actual source repair; this review adds no duplicate task or code change.
+- **LZ57/58:** fresh DB read found both queued, original plan v3. LZ57 provides explicit same-attempt repair of accepted unintegrated work. LZ58 already specifies **zero-turn retained verification**: normal checks/evidence, preserved attempt/session/route/history, no worker prompt or replacement. Use this existing lane rather than inventing proof-only work. Its present immutable specification also forbids worktree creation, so it does not yet authorize the separate verification workspace proposed below.
+- **LZ72:** verifying/blocked v9 with an uncertain `verify:runner` effect and no conclusive receipt. This is distinct from a missed idle observation after a known completed candidate. `runCheck()` launches a detached shell and publishes a receipt after exit/drain (`artifacts.ts:355`); old launch identity/containment is not durably established. Fresh checks cannot retroactively say that old check passed or stopped. Its diagnostic-only scope cannot be expanded silently into a recovery engine.
+
+## Existing commands: useful boundaries, no hidden recovery shortcut
+
+- `reconcile` (`runtime.ts:920`) refuses uncertain effects; otherwise it retries observation/normal progression. It cannot recover an event that was never captured. Repeating it unchanged adds no evidence.
+- `cancel` can settle foreground/task cancellation while retaining an unknown-background diagnostic, when other conditions permit (`:2359–2478`). **Cancelled is not a quiescence certificate.** Do not use cancellation simply to shed a reservation or certify cleanup.
+- `resume`/`retry` return to preparing and prompt/create execution (`:803–919`, `:3032`). They are appropriate for actual remaining work, not for generating an idle event.
+- `human-evidence` satisfies an authored assertion for its actual candidate (`:724`); it is not authority to override native state or arbitrary acceptance.
+- Native `worktree.create/list/refresh/remove` supplies isolated Git directories and non-forced removal (`native.ts:299–325`). It does not establish isolation from an old process with access to shared external resources. Session interrupt/wait, empty active inventory and shell removal acknowledgements do not retrospectively prove all historical children stopped. Existing pinned-native research documents those limits in `.agents/docs/evidence/native-verification-shell-fit-20261104.md`.
+
+## Smallest safe proposal
+
+**Immediate:** use the already authorized source-first LZ127 rollout after corrected review and natural quiet. Preserve its original task/attempt and pending native verification. Continue useful independent work; do not wait for cleanup to record valid reviewed source landing, and do not fabricate an old certificate. This authorization is specific to LZ127, not blanket permission to activate all blocked candidates.
+
+**Next, within the existing retained-verification lane:** let the runtime verify and accept a named committed candidate through a verification-only operation attached to the original task/attempt, independently of that worker's historical completion certificate. Keep ordinary required tests and live probes as the evidence. Reuse still-valid results; rerun only changed/invalidated procedures. A failed check remains a failed check. No new worker, prompt, acceptance override or file-hash proof is needed.
+
+The narrow implementation distinction is the **verification context**:
+
+- Reusing the old worker checkout still needs trustworthy current writer exclusion under the existing safety rules.
+- If historical idle proof is unavailable, use a runtime-owned verification context isolated from that old writer and its shared resources. Reuse the native worktree/verification machinery already present for combined/adoption checks (`runtime.ts:3700`, `:4215`), rather than another orchestration service. A new Git directory alone is not a complete resource-isolation claim.
+- Keep the old execution, uncertain effects and cleanup status intact. A new independent check must have its own result; it must not overwrite an unresolved old check. Keep relevant resource reservations until the actual resource is safe. Source-path overlap alone should eventually be distinguished from a shared mutable checkout/profile, but current reservations cannot simply be dropped when marking a candidate accepted (`runtime.ts:2274`, `:2920`).
+
+This requires a focused LZ58 specification amendment before implementing a separate verification workspace; its current zero-worktree-creation assertion otherwise conflicts. It is not necessary to reopen LZ57 or LZ72's entire scope. If the available host cannot isolate the relevant resources, that particular execution/probe remains blocked; reviewed source and valid prior results remain valid, and unrelated work proceeds. Do not add a universal cleanup prerequisite or a new broad certification ceremony.
+
+The decisive regression is simple: lost historical idle lineage plus a safely isolated candidate can reach normal tests/probes and acceptance while the old tree remains cleanup-blocked; the same candidate with a shared active writer cannot. Failed tests/probes still reject it. Late results from an older operation cannot accept a newer candidate. Existing cleanup and uncertain-check tests remain intact. These validate the separation rather than manufacture native idleness.
+
+## Limits
+
+No supported current command was found that can zero-turn accept LZ126 under its present state while bypassing historical idle evidence safely. No claim is made that old background writers are harmless, that LZ72's child is contained, or that all LZ126 product observations are complete. The exact safe isolation available for a new verification context still needs qualification within the existing verification/resource work. The proposed change separates facts already required by the product contract; it does not weaken behavioral acceptance.
