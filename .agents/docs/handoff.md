@@ -8,6 +8,32 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Original110 source/task accepted, live gate still open:** exact clean
+  `028c53ec923eb51fcf08b310c963fcee6551f5ac` includes6a9d45c and is Root-reviewed
+  with **35tests/389assertions** plus quality; no broader repeat without change or
+  concern. Native planv25 confirms task acceptance/all11effects complete and passing
+  exact-artifact task/combined checks, but retains`coordinated-runtime-observation:human`.
+  A genuine new110durable idle row exists (revision11,start1011,report0,terminal1376);
+  this is not reconstruction of old certificates or later retirement/reopen proof.
+  [Evidence and live gate](evidence/review110-final-source-20261104.md).
+  130 remains running (planv6,67tools at last observation),131zeroattempts queued;
+  no110merge/build/activation/liveprobe while130works or Astra captures.
+- **Bounded bootstrap authorized, first installation not yet available:** extension
+  `0b9b178` qualifies existing57→58 for72's uncertain-check case while preserving old
+  checkout/check/shared-resource holds and requiring real writer exclusion before
+  code-scope release. [Reachability research](evidence/retained-bootstrap-installation-boundary-20261104.md)
+  found no safe non-overlapping native admission seam: both source-reservation gates
+  are in72-reserved`runtime.ts`; hiding72 via store getters corrupts lifecycle/scope
+  truth. Root/operator must provide a controlled first-installation route. Do not
+  dispatch dead preparatory storage as the solution or bypass installed admission.
+  88 remains the existing repair, nowpriority2050/planv3; its72integration edge stays.
+- **Driver interruption correction:** Root removed Escape-before-super+Return;
+  pinned composer maps Escape to stop while working. Corresponding interrupted
+  authoring/tools are driver interference, not semantic failure or plugin proof.
+  Do not replay completed review/merge/build effects. Separately explicit WebGPU
+  device-loss errors remain concrete failures. Root's renderer profile is retained
+  at`/private/tmp/lazers-renderer-live-20261104T2057.json.gz`; DevTools closed, no
+  reload/settings/inference initiated by that capture. Coordinate new activation.
 - **Native timing execution authorized and requested:** plan
   `96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0` contains **LZ130**
   `6a0b0d92-fd4d-44b1-a3e5-9cb8a5d1b8ea` (known check intervals/exact selected
