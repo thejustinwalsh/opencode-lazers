@@ -70,3 +70,18 @@ hits, terminal enrichment/concurrent calls, cancellation/reset/scope races and
 privacy/foreign decoys. Source/fixture acceptance does not complete later Radar B
 consumer/Desktop narrow/wide/Tera gates. No implementation check has run yet in
 this evidence note.
+
+## Approval-only outcome reconciled, original work preserved
+
+The native outcome reported planv10 blocked on six permissions/zero forms. At
+1793833410343 an exact project/agent/attempt/location-bound native read instead
+found **zero pending permissions, zero forms**, unarchived session and running
+native execution. No permission replies or policy changes were made.
+
+Compact inspection showed all three effects complete, no pending effects and no
+reviewable candidate/checks. Allowed audit retainedv10; then allowed reconcile
+advanced tov11. Follow-up inspection confirmed **plan and original node running,
+reason null**, same58d8d699 attempt/session/worktree and three completed effects.
+No retry, cancel, replacement, source mutation, effect replay or acceptance override
+was used. This resolves that recorded hold, not implementation acceptance or proof
+that future permission observations cannot recur.

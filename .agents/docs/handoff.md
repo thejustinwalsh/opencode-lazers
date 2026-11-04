@@ -8,6 +8,12 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **129 approval-only outcome resolved via allowed audit/reconcile:** v10reported
+  six permissions; exact native observation1793833410343 found0permissions/0forms
+  and same unarchived worker running. All3effects complete/no pending effects.
+  Allowed audit then reconcile advancedplan243f8093tov11; follow-up plan/node both
+  running/reasonnull, original58d8d699/session/tree unchanged. No permission reply,
+  retry/cancel/replacement/effect replay/acceptance override. [Retained evidence](evidence/radar129-execution-20261104.md).
 - **Original129 now executing; residual performance stays in existing lanes:**
   research confirms Astra did not fulfill bounded-live129. Native isolated plan
   `243f8093-7c3c-44e3-bda5-e06870e4f680` runs the original129/attempt58d8d699,
