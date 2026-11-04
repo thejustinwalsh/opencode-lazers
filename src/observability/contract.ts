@@ -135,6 +135,85 @@ export const SnapshotOutput = z.strictObject({
   checks: z.array(TimelineCheck).max(10_000),
 })
 
+export const ProgressDiagnosticsInput = z.strictObject({ scope: ObservationScope })
+const ProcessSchedulerTotals = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("available"),
+    scope: z.literal("process"),
+    audience: z.literal("architect-only"),
+    source: z.literal("sharedScheduler.snapshot"),
+    implementation: z.literal("scheduler/v2"),
+    generation: z.uuid(),
+    timerCount: z.int().nonnegative(),
+    groups: z.int().nonnegative(),
+    participants: z.int().nonnegative(),
+    running: z.int().nonnegative(),
+    runs: z.int().nonnegative(),
+    errors: z.int().nonnegative(),
+    wakeups: z.int().nonnegative(),
+  }),
+  z.strictObject({ status: z.literal("unavailable"), reason: z.literal("architect-only") }),
+])
+export const ProgressDiagnosticsOutput = z.strictObject({
+  schemaVersion: z.literal(1),
+  scope: z.strictObject({ kind: z.literal("project") }),
+  observedAt: z.number().finite(),
+  implementationID: z.string().min(1).max(80),
+  moduleGenerationID: z.uuid(),
+  state: z.enum(["absent", "uninitialized", "initialized", "instrumentation-unavailable"]),
+  coverage: z.enum(["not-started", "complete", "partial"]),
+  coordinator: z.strictObject({
+    participantCount: z.int().nonnegative(),
+    participantGenerations: z
+      .array(
+        z.strictObject({
+          generationID: z.uuid().nullable(),
+          participantCount: z.int().positive(),
+        }),
+      )
+      .max(32),
+    participantGenerationsTruncated: z.boolean(),
+    locationCount: z.int().nonnegative(),
+    locationParticipantCounts: z.array(z.int().positive()).max(32),
+    unknownLocationParticipantCount: z.int().nonnegative(),
+    locationsTruncated: z.boolean(),
+    assignments: z.strictObject({
+      baselineCaptured: z.boolean(),
+      cachedCount: z.int().nonnegative(),
+      activeCount: z.int().nonnegative(),
+      terminalCount: z.int().nonnegative(),
+      asOf: z.number().finite().nullable(),
+    }),
+    work: z.strictObject({
+      queuedCount: z.int().nonnegative(),
+      delayedCount: z.int().nonnegative(),
+      dirtyCount: z.int().nonnegative(),
+      drainOwned: z.boolean(),
+      reconstructionActive: z.boolean(),
+      timerScheduled: z.boolean(),
+      outstandingRetiredReads: z.int().nonnegative(),
+    }),
+    nativeReads: z
+      .strictObject({
+        startedAt: z.number().finite(),
+        get: z.strictObject({
+          invocations: z.int().nonnegative(),
+          succeeded: z.int().nonnegative(),
+          failed: z.int().nonnegative(),
+          pending: z.int().nonnegative(),
+        }),
+        context: z.strictObject({
+          invocations: z.int().nonnegative(),
+          succeeded: z.int().nonnegative(),
+          failed: z.int().nonnegative(),
+          pending: z.int().nonnegative(),
+        }),
+      })
+      .nullable(),
+  }),
+  processSchedulerTotals: ProcessSchedulerTotals,
+})
+
 const RadarRoute = z.strictObject({
   id: z.string().min(1).max(512),
   providerID: z.string().min(1).max(200),
@@ -395,6 +474,10 @@ export const Observability = Rpc.define({
   id: "lazers.observability",
   methods: {
     snapshot: { input: SnapshotInput, output: SnapshotOutput },
+    progressDiagnostics: {
+      input: ProgressDiagnosticsInput,
+      output: ProgressDiagnosticsOutput,
+    },
     radar: { input: RadarInput, output: RadarOutput },
     trajectory: { input: TrajectoryInput, output: TrajectoryOutput },
     trajectoryHistory: {
@@ -411,6 +494,8 @@ export type ObservationScope = z.infer<typeof ObservationScope>
 export type ObservationScopeView = z.infer<typeof ObservationScopeView>
 export type SnapshotRequest = z.infer<typeof SnapshotInput>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>
+export type ProgressDiagnosticsRequest = z.infer<typeof ProgressDiagnosticsInput>
+export type ProgressDiagnosticsResponse = z.infer<typeof ProgressDiagnosticsOutput>
 export type RadarRequest = z.infer<typeof RadarInput>
 export type RadarRequestInput = z.input<typeof RadarInput>
 export type RadarResponse = z.infer<typeof RadarOutput>

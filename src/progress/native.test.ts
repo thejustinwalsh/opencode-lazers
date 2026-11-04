@@ -11,6 +11,7 @@ import { nativeLivenessFixture } from "../../test/runner-native-liveness/fixture
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { ProgressRecorder } from "./recorder.ts"
+import { progressReconstructionDiagnostics } from "./reconstruction.ts"
 import { registerProgress } from "./native.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
@@ -277,6 +278,77 @@ test("registered report tool, hook, native events, and recovery share one record
     expect(comment.payload).not.toContain("private model input field")
     expect(comment.payload).not.toContain("must not be captured as a tool input")
     expect(comment.payload).not.toContain("token fields")
+  } finally {
+    fixture.close()
+  }
+})
+
+test("reconstruction diagnostics count actual native read outcomes without exposing error details", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(secondAttemptID),
+    )
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const nativeGetCalls: string[] = []
+    const nativeContextCalls: string[] = []
+    const ctx = makeContext(fixture, {
+      readSession: (sessionID) => {
+        nativeGetCalls.push(sessionID)
+        return sessionID === "ses-failed"
+          ? Effect.fail(new Error("private native session error value"))
+          : Effect.succeed({
+              id: sessionID,
+              projectID: "project",
+              agent: "lazers-implementor",
+              location: { directory: fixture.directory },
+            })
+      },
+      readContext: (sessionID) => {
+        nativeContextCalls.push(sessionID)
+        return Effect.succeed([])
+      },
+    })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const diagnostics = progressReconstructionDiagnostics(
+                fixture.store.repository.path,
+                fixture.directory,
+                "project",
+              )
+              return (
+                diagnostics.coordinator.nativeReads?.get.invocations === 2 &&
+                diagnostics.coordinator.nativeReads.get.pending === 0 &&
+                diagnostics.coordinator.nativeReads.context.invocations === 1 &&
+                diagnostics.coordinator.nativeReads.context.pending === 0
+              )
+            }),
+          )
+          const diagnostics = progressReconstructionDiagnostics(
+            fixture.store.repository.path,
+            fixture.directory,
+            "project",
+          )
+          expect(diagnostics.coordinator.nativeReads).toMatchObject({
+            get: { invocations: 2, succeeded: 1, failed: 1, pending: 0 },
+            context: { invocations: 1, succeeded: 1, failed: 0, pending: 0 },
+          })
+          expect(diagnostics.coordinator.assignments.cachedCount).toBe(2)
+          expect(diagnostics.coordinator.assignments.asOf).not.toBeNull()
+          expect(nativeGetCalls.sort()).toEqual(["ses-accepted", "ses-failed"])
+          expect(nativeContextCalls).toEqual(["ses-accepted"])
+          const serialized = JSON.stringify(diagnostics)
+          expect(serialized).not.toContain("private native session error value")
+          expect(serialized).not.toContain("ses-accepted")
+          expect(serialized).not.toContain(fixture.directory)
+        }),
+      ),
+    )
   } finally {
     fixture.close()
   }

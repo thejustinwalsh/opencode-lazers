@@ -22,7 +22,11 @@ import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
 import { resolveNativeInputID } from "../runner/native-input.ts"
 import type { ProgressAssignment, ProgressRecorder } from "./recorder.ts"
-import { registerProgressReconstruction, sameProgressAssignment } from "./reconstruction.ts"
+import {
+  registerProgressReconstruction,
+  sameProgressAssignment,
+  type ReconstructionRead,
+} from "./reconstruction.ts"
 
 type ProgressContext = Pick<
   Plugin.Context,
@@ -203,16 +207,20 @@ async function reconstructSession(
   recorder: ProgressRecorder,
   assignment: ProgressAssignment,
   isCurrent: () => boolean,
+  readStarted: ReconstructionRead,
 ) {
   const assignmentIsCurrent = () =>
     isCurrent() &&
     sameProgressAssignment(recorder.assignmentForSession(assignment.sessionID), assignment)
   let session: Session.Info
+  const finishGet = readStarted("get")
   try {
     session = await Effect.runPromise(
       ctx.session.get({ sessionID: Session.ID.make(assignment.sessionID) }),
     )
+    finishGet("succeeded")
   } catch (error) {
+    finishGet("failed")
     if (!assignmentIsCurrent()) return "stale" as const
     recorder.markRecoveryGap(
       assignment.sessionID,
@@ -236,12 +244,15 @@ async function reconstructSession(
 
   recorder.recordSessionSnapshot(assignment.sessionID, session)
   recorder.recordSessionOutcome(assignment.sessionID, session)
+  const finishContext = readStarted("context")
   try {
     const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+    finishContext("succeeded")
     if (!assignmentIsCurrent()) return "stale" as const
     recorder.reconcileMessages(assignment.sessionID, messages)
     return "complete" as const
   } catch (error) {
+    finishContext("failed")
     if (!assignmentIsCurrent()) return "stale" as const
     recorder.markRecoveryGap(
       assignment.sessionID,
@@ -449,11 +460,12 @@ export function registerProgress(
       databasePath: recorder.store.repository.path,
       projectDirectory: recorder.store.repository.projectDirectory,
       projectID,
+      location: ctx.location?.directory ?? projectDirectory,
       participant: {
         assignments: () => recorder.assignments(),
         assignmentForSession: (sessionID) => recorder.assignmentForSession(sessionID),
-        reconstruct: (assignment, isCurrent) =>
-          reconstructSession(ctx, recorder, assignment, isCurrent),
+        reconstruct: (assignment, isCurrent, readStarted) =>
+          reconstructSession(ctx, recorder, assignment, isCurrent, readStarted),
       },
     })
     yield* Effect.addFinalizer(() => Effect.sync(() => reconstruction.dispose()))
