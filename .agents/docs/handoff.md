@@ -41,6 +41,15 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   -127's later approval noticev8 was cleared on fresh1793817949995native ownership
   check: original sessionforegroundactive, BOTHworker-location/sessionpermissions
   empty,34tools. Reconcile requestedv9; no absent request answered or worker replaced.
+  -127 noticev10 was freshly checked at **1793818170873**: foreground active,
+  BOTHworker-location/session permission lists empty,37tools. **Do not keep manually
+  reconciling this stale permission reason while the worker progresses.** Source
+  `runtime.ts:3184–3186` returns for busy work before`resumeTransientObservationWait`;
+  the latter clears old approval/background holds only on terminal progression.
+  Repeated reconcile commands have regenerated blocked notices without a current
+  approval to answer. Let ordinary native observation progress; inspect a genuinely
+  new permission/terminal/evidence condition, never infer actual model inference
+  or quiescence from the plan label. No runtime source change is authorized here.
 
 - Root's external quiet activation completed **1793812977491**, 1971ms,
   activeBefore=[], servicePID95968 unchanged, all six flags true, generation
