@@ -8,16 +8,18 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
-- **Radar direction changed; implementation remains deferred pending review/mockups.**
-  User wants a live operations command center, not a C4-first primary map. Read
-  [Astra's independent review](../../design/reviews/astra-radar-perf-20261104.md):
-  compact Now / Needs attention / Next, recent meaningful activity and stable lower
-  inspector; preserve native navigation, evidence/freshness and optional diagnostic
-  map. Review narrow/wide actual busy-plus-permission, idle-evidence hold, queued
-  dependency, cleanup and disconnected cases before implementation. No new runtime
-  controller, synthetic health score or inferred ETA. Task running state is not
-  actual model activity; model residency is not inference, GPU-process CPU is not
-  GPU utilization. The review's proposed finite timeout is discussion only: all
+- **Latest user panel split supersedes Astra's initial Radar hierarchy.** Tasks owns
+  **Now / attention / next / priority / dependencies**. Radar is the **realtime
+  system/agent monitor**: what each task/session/model is doing, tools currently
+  called, files edited, elapsed activity, grounded health and message/data flow.
+  Keep the panels distinct; no Radar UI implementation yet. Astra is revising
+  [the recommendation](../../design/reviews/astra-radar-perf-20261104.md), then review
+  and mock up the clarified direction before implementation. Do not carry the initial
+  Now/Attention/Next recommendation into Radar. Preserve native navigation,
+  evidence/freshness and explicit unavailable/disconnected coverage; no new runtime
+  controller, synthetic health score or inferred ETA. Task running is not actual
+  model activity; residency is not inference and GPU-process CPU is not GPU
+  utilization. The review's finite timeout is discussion only: all
   six switches stay enabled and **Never unload** remains unchanged; no restart,
   profiler or setting change was authorized. Retain performance candidates as
   source risks, not causal or battery-fix claims.
@@ -38,6 +40,9 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   **Root owns performance-only`src/tasks/panel-state.ts` and its tests in an isolated
   native worktree; do not overlap.** Root will not merge watched source while native
   workers are active. Radar redesign remains review/mockups only, not implementation.
+  Root reports the isolated native Task event adapter now receives the actual
+  `server.connected` announcement. Production source remains unchanged; this proves
+  that announcement path, not complete reconnect correctness or a measured battery fix.
   -127's later approval noticev8 was cleared on fresh1793817949995native ownership
   check: original sessionforegroundactive, BOTHworker-location/sessionpermissions
   empty,34tools. Reconcile requestedv9; no absent request answered or worker replaced.
