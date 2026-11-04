@@ -5747,6 +5747,87 @@ test("terminal verification rejects a fresh idle report from a different native 
   ).toBe(false)
 })
 
+test.each([false, true])(
+  "a deferred blocked tick cannot undo resume or a later cancellation (cancel=%s)",
+  async (cancelAfterResume) => {
+    const f = fixture({ wrongFirstA: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await drive(f.runtime, 4)
+    const planID = f.receipt.planID
+    const attempt = f.store.attempts(planID)[0]!
+    expect(f.store.plan(planID)?.state).toBe("blocked")
+    expect(attempt.state).toBe("failed")
+
+    const originalSession = f.host.session
+    let entered!: () => void
+    let release!: () => void
+    const reading = new Promise<void>((resolve) => (entered = resolve))
+    const paused = new Promise<void>((resolve) => (release = resolve))
+    let defer = true
+    f.host.session = async (id, options) => {
+      const session = await originalSession(id, options)
+      if (id === "owner" && defer) {
+        defer = false
+        entered()
+        await paused
+      }
+      return session
+    }
+
+    const staleTick = f.runtime.tick()
+    await reading
+    let resumedInput: string
+    try {
+      await f.runtime.command(
+        {
+          requestID: "resume-during-owner-read",
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "resume",
+          taskID: attempt.task_id,
+          reason: "Continue the stopped attempt after repairing its verification failure",
+        },
+        "owner",
+      )
+      resumedInput = f.store.attempts(planID)[0]!.message_id
+      expect(resumedInput).not.toBe(attempt.message_id)
+      if (cancelAfterResume)
+        await f.runtime.command(
+          {
+            requestID: "cancel-after-resume",
+            planID,
+            expectedVersion: f.store.plan(planID)!.version,
+            action: "cancel",
+          },
+          "owner",
+        )
+    } finally {
+      release()
+    }
+    await staleTick
+
+    if (cancelAfterResume)
+      expect(["cancelling", "cancelled"]).toContain(f.store.plan(planID)!.state)
+    else expect(f.store.plan(planID)?.state).toBe("running")
+    expect(f.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      session_id: attempt.session_id,
+      workspace: attempt.workspace,
+      message_id: resumedInput!,
+    })
+    if (cancelAfterResume)
+      expect(["preparing", "cancelled"]).toContain(f.store.attempts(planID)[0]!.state)
+    else expect(f.store.attempts(planID)[0]?.state).toBe("preparing")
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+    await f.runtime.tick()
+    expect(f.store.attempts(planID)[0]?.state).toBe(cancelAfterResume ? "cancelled" : "running")
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(
+      cancelAfterResume ? 1 : 2,
+    )
+    expect(f.store.attempts(planID)).toHaveLength(1)
+  },
+)
+
 test("explicit cancellation after process replacement resumes the same dirty attempt exactly once", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)

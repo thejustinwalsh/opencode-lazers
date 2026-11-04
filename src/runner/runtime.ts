@@ -2183,6 +2183,8 @@ export class TaskRuntime {
       await this.ensureArchitectOwner(plan, owner)
       plan = this.store.plan(plan.id)!
     }
+    // An owner read can overlap an authorized resume, cancellation, or reassignment.
+    if (this.store.plan(plan.id)?.version !== plan.version) return
     const pending = this.store
       .effects(plan.id)
       .find((e) => ["intended", "uncertain"].includes(e.state))
