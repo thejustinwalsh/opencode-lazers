@@ -8,6 +8,19 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Astra profiling is explicitly authorized now:** the user assigns Root's Astra
+  agent hands-on launch/test/profile/fix of live performance with isolated repairs.
+  Initial service/renderer/GPU OS captures are complete; meaningful JS profiling is
+  next. Earlier no-profiler notes are historical and **do not block this assigned
+  work**. Avoid duplicate diagnosis/implementation; keep128lease repair queued until
+  ownership coordinates. Preserve running work and coordinate any restart, live build
+  or activation with Root/Astra while captures run.
+  Root's separate timing investigation matches existing130/131; do not create another
+  timestamp/render repair. Native timing planv6 currently has130running/99tools and
+  131queued/zeroattempts.130owns panel/projection/CSS/focusedtests;131backend timing
+  excludes observability readers. Coordinate Root's investigation and Astra's actual
+  read-performance paths before consumer wiring. Completed receipt endpoints exist;
+  attempt-end persistence/projection and check interval rendering are distinct gaps.
 - **Original110 source/task accepted, live gate still open:** exact clean
   `028c53ec923eb51fcf08b310c963fcee6551f5ac` includes6a9d45c and is Root-reviewed
   with **35tests/389assertions** plus quality; no broader repeat without change or
