@@ -1,0 +1,11 @@
+Refine this Radar concept while preserving its exact compact native OpenCode / Linear visual family, side-by-side narrow/wide composition and horizontal lower inspector. This is a realtime agent monitor, not a task queue.
+
+Apply the screenshot review corrections as one focused clarity pass:
+- Normal connected/running icons are neutral theme colors, never green. Lavender selection remains.
+- Session identity shows role and task only; model and effort appear once, consistently: Sol · High, Luna · Max.
+- Remove all unlabeled bar charts and aggregate Reads/Edits counts. Use readable last-activity age and evidence-based tool phases instead.
+- Architect current phase: Model request · 8s. LZ-127 current phase: patch running · src/progress/native.ts · 1.8s; expand it into two small tool rows: read completed in 1.1s, patch running in 1.8s. Its task title stays Native progress updates.
+- LZ-122 shows Waiting for permission · bun test · 40s, last activity 40s ago, using muted amber. Header accurately says Scheduler running · 1 worker active · 1 waiting. Keep its Luna · Max model visible. Add a small clear file-target coverage note only where needed, such as File activity unavailable for the shell call.
+- Recent flow should distinguish message transfers from tool events: Scheduler → Implementor / dispatch · admitted; LZ-127 / patch started (no fake transfer arrow); Architect → Scheduler / review · consumed. Keep timestamps and selectable-looking rows.
+- Inspector remains BELOW in both widths. Selected call LZ-127 · patch, src/progress/native.ts. Mark the small diff as Proposed edit because the call is still running; it is not a confirmed file change. Quiet links Open worker, Open task, Open trajectory.
+Use restrained spacing, no giant badges/cards/legends, no artificial health score or percentage completion. Keep all active sessions and their actual operations visible above the split. This remains an illustrative mockup, not a screenshot of a real current execution.
