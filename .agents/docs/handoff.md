@@ -16,7 +16,13 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   effects/resource and cleanup holds; a new directory alone does not isolate shared
   probe resources. Real checks/probes govern acceptance, not a hash or manual override.
   LZ72 old containment stays separate.57→58planv3 is queued/zeroattempts, reservations
-  unchanged. Scope assessment is running; deliver exact amendment durably at58dispatch.
+  unchanged. Scope assessment confirms no required path expansion; semantic authority
+  is an explicit append-only exception, not a rewritten task or a schedule reason.
+  Also qualify cancelled-only eligibility for latest committed candidates blocked
+  solely on historical idle, without cancellation merely for eligibility. Deliver
+  the pinned amendment through keyed native instructions with58's assignment before
+  implementing it. Current real blocker is72's runtime.ts/runtime.test.ts reservation,
+  not an afterPlans edge; do not cancel to shed it or invent/drop dependencies.
 - **0dfd8e6 remains not cleared** despite88tests/527assertions/quality: ordered
   two-listener B-start failure→L1Bsuccess→L2staleBstart→L2Bsuccess can retainL2localA
   and confirmIdleA; unknown null fence only refreshes at resubscription, so isolated

@@ -2,7 +2,8 @@
 
 User-authorized addition to **existing LZ58**, task
 `95f7a783-009b-4d26-9fa8-ace3cbcac0c3`, in original57→58 plan
-`d0ce36bb-3b8a-481b-b525-9e2b45c55cb6`. It is not a replacement task, rewritten
+`d0ce36bb-3b8a-481b-b525-9e2b45c55cb6` (task revision1, plan specification revision2).
+It is not a replacement task, rewritten
 immutable specification, new recovery system or permission to bypass reservations.
 Source: [Astra lifecycle review](../../../design/reviews/astra-lifecycle-coupling-20261104.md)
 at`ac94144`, explicitly endorsed by the user.127 corrections and authorized quiet
@@ -18,6 +19,13 @@ for tests/live probes of a named committed retained candidate when historical wo
 idle lineage is irrecoverable.** The original worker workspace/session/attempt/message/
 route/usage remain unchanged; this exception is verification-only, never worker
 creation, movement, source repair, model prompts or proof-only turns.
+
+This also narrowly qualifies the original **cancelled-only** eligibility wording:
+the latest named retained committed candidate blocked solely on unavailable
+historical idle lineage can use the independent lane without first manufacturing
+a successful worker outcome or cancelling/retrying merely to change eligibility.
+This is not authority to treat actual ongoing implementation/pending input as a
+completed candidate, or bypass operation/owner/version/resource guards.
 
 The old checkout still requires trustworthy writer exclusion if reused. A different
 directory alone establishes neither independence from the old writer nor isolation
@@ -74,3 +82,26 @@ extensions; generic shell inventory/acknowledgements are not durable proof.
 At authoring,57/58 remain queued with zero attempts in planv3. Existing runtime source
 reservations are genuine; no execution, source amendment outside native authorization,
 maintenance, server launch or live probe is performed by this document.
+
+## Scope and dispatch delivery
+
+Read-only source assessment found **no required write-scope expansion** for an
+implementation contained in58's existing runtime/store/schema/host/native/roles/tools,
+retained-repair directory and retained-reverify tests. Do not add blanket scope or
+new instructions machinery. If explicit check-executor environment/resource bindings
+need shared`artifacts.ts`/tests, request that focused scope addition before editing;
+LZ57's permission there does not automatically authorize LZ58.
+
+The task specification remains immutable. `amend-scope` unions write paths only;
+`schedule` changes scheduling, neither delivers this semantic authorization to a
+worker. Preserve this explicit exception alongside the original specification and
+deliver its exact pinned reference/text via keyed native instructions with the
+existing58 implementation assignment, before implementing the exception. Verify
+receipt/content and final implementation against it; never assume a reason string
+was consumed. No generic amendment framework is warranted for this increment.
+
+57→58 stays intact, afterPlans remains[]; do not manufacture a source dependency.
+The actual blocker is72's retained verifying reservation on runtime.ts/runtime.test.ts
+(attempt`ed96f0b9-102b-4c64-aa8b-708a62d49fe7`, uncertain verify:runner effect
+`cd7cb493807b9dbcc552f552586351cbdb78d420baee04da31440ac86c36a8f8`). Do not cancel
+merely to shed it or claim native shell research supplied missing containment.
