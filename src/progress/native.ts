@@ -309,7 +309,32 @@ export function registerProgress(
     const idleStore = new NativeIdleStore(recorder.store.repository)
     const listenerID = crypto.randomUUID()
     let observing = true
-    const observedExecutionStarts = new Map<string, number>()
+    const observedExecutionStarts = new Map<
+      string,
+      { binding: NativeIdleBinding; sequence: number }
+    >()
+    const startsRequiringNewerObservation = new Map<string, number>()
+    const requireNewerStart = (sessionID: string, afterSequence: number) => {
+      startsRequiringNewerObservation.set(
+        sessionID,
+        Math.max(startsRequiringNewerObservation.get(sessionID) ?? -1, afterSequence),
+      )
+    }
+    const invalidateListenerStarts = () => {
+      observedExecutionStarts.clear()
+      for (const assignment of recorder.assignments()) {
+        const binding = bindingFor(assignment.sessionID)
+        let lastEventSequence: number
+        try {
+          lastEventSequence = binding
+            ? (idleStore.read(binding)?.lastEventSequence ?? -1)
+            : Number.MAX_SAFE_INTEGER
+        } catch {
+          lastEventSequence = Number.MAX_SAFE_INTEGER
+        }
+        requireNewerStart(assignment.sessionID, lastEventSequence)
+      }
+    }
     const projectDirectory = recorder.store.repository.projectDirectory
     const bindingFor = (sessionID: string) =>
       idleBinding(recorder.assignmentForSession(sessionID), projectDirectory)
@@ -452,10 +477,12 @@ export function registerProgress(
         }
         const executionStartSequence = latest?.executionStartSequence
         const eventSequence = latest?.lastEventSequence
+        const observedStart = observedExecutionStarts.get(sessionID)
         if (
           executionStartSequence === null ||
           executionStartSequence === undefined ||
-          observedExecutionStarts.get(sessionID) !== executionStartSequence
+          observedStart?.sequence !== executionStartSequence ||
+          !sameIdleBinding(observedStart.binding, binding)
         ) {
           trace(sessionID, "idle-lineage-unavailable", {
             inputID,
@@ -612,36 +639,55 @@ export function registerProgress(
               terminalMessageID = undefined
             }
           }
-          const result = idleStore.observeEvent(binding, type, sequence, eventID, terminalMessageID)
-          trace(sessionID, `event-${result.status}`, {
-            eventSequence: sequence,
-            executionStartSequence: idleStore.read(binding)?.executionStartSequence ?? undefined,
-          })
-          if (
-            type === "session.execution.started" &&
-            result.status === "changed" &&
-            sequence !== undefined
-          )
-            observedExecutionStarts.set(sessionID, sequence)
-          else if (
-            sequence === undefined ||
-            type === "session.execution.failed" ||
-            type === "session.execution.interrupted"
-          )
-            observedExecutionStarts.delete(sessionID)
-          if (type === "session.execution.succeeded" && sequence !== undefined) {
-            const current = idleStore.read(binding)
-            const pending = current?.pendingTerminal
-            if (
-              current &&
-              pending &&
-              pending.sequence === sequence &&
-              current.lastEventSequence === sequence
+          try {
+            const result = idleStore.observeEvent(
+              binding,
+              type,
+              sequence,
+              eventID,
+              terminalMessageID,
             )
-              await observeExecutionSuccess(binding, pending, current.revision)
+            const current = idleStore.read(binding)
+            trace(sessionID, `event-${result.status}`, {
+              eventSequence: sequence,
+              executionStartSequence: current?.executionStartSequence ?? undefined,
+            })
+            if (type === "session.execution.started" && sequence !== undefined) {
+              if (result.status === "changed" || result.status === "seen") {
+                if (
+                  current?.lastEventSequence === sequence &&
+                  current.executionStartSequence === sequence &&
+                  sameIdleBinding(current.binding, binding) &&
+                  sequence > (startsRequiringNewerObservation.get(sessionID) ?? -1)
+                ) {
+                  observedExecutionStarts.set(sessionID, { binding, sequence })
+                  startsRequiringNewerObservation.delete(sessionID)
+                }
+              }
+            } else if (
+              sequence === undefined ||
+              type === "session.execution.failed" ||
+              type === "session.execution.interrupted"
+            ) {
+              observedExecutionStarts.delete(sessionID)
+            }
+            if (type === "session.execution.succeeded" && sequence !== undefined) {
+              const pending = current?.pendingTerminal
+              if (
+                current &&
+                pending &&
+                pending.sequence === sequence &&
+                current.lastEventSequence === sequence
+              )
+                await observeExecutionSuccess(binding, pending, current.revision)
+            }
+            if (result.status === "changed" && sequence === undefined)
+              trace(sessionID, "event-order-unknown")
+          } catch (error) {
+            observedExecutionStarts.delete(sessionID)
+            requireNewerStart(sessionID, sequence ?? Number.MAX_SAFE_INTEGER)
+            throw error
           }
-          if (result.status === "changed" && sequence === undefined)
-            trace(sessionID, "event-order-unknown")
         }
       }
       try {
@@ -661,23 +707,25 @@ export function registerProgress(
         Effect.match({
           onFailure: (error) => {
             trace("unknown", "stream-failed", { error })
-            observedExecutionStarts.clear()
-            for (const assignment of recorder.assignments())
+            invalidateListenerStarts()
+            for (const assignment of recorder.assignments()) {
               recorder.markRecoveryGap(
                 assignment.sessionID,
                 "Native event stream disconnected; retained public session facts are reconciled at startup.",
                 "event-stream",
               )
+            }
           },
           onSuccess: () => {
             trace("unknown", "stream-ended")
-            observedExecutionStarts.clear()
-            for (const assignment of recorder.assignments())
+            invalidateListenerStarts()
+            for (const assignment of recorder.assignments()) {
               recorder.markRecoveryGap(
                 assignment.sessionID,
                 "Native event stream ended; retained public session facts are reconciled at startup.",
                 "event-stream",
               )
+            }
           },
         }),
         Effect.andThen(Effect.sleep(1_000)),

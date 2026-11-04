@@ -171,6 +171,7 @@ export class NativeIdleStore {
       return this.save(db, {
         ...state,
         binding,
+        executionStartSequence: null,
         pendingTerminal: null,
         terminal: null,
         invalidation: {

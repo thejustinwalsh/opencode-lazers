@@ -266,6 +266,17 @@ function nativeIdleBackground(fixture: ReturnType<typeof makeFixture>, sessionID
       }
 }
 
+function nativeObservations(fixture: ReturnType<typeof makeFixture>, sessionID: string) {
+  return fixture.repository.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_progress WHERE session_id=? AND kind='native-observation' ORDER BY seq",
+      )
+      .all(sessionID)
+      .map(({ payload }) => JSON.parse(payload) as Record<string, unknown>),
+  )
+}
+
 async function waitForNativeState(predicate: () => Promise<boolean>, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -793,6 +804,98 @@ test("a same-input newer execution and delayed older success cannot resurrect ze
   }
 })
 
+test("a received live duplicate start establishes owning-listener lineage and survives reopen", async () => {
+  const fixture = makeFixture()
+  let reopenedRepository: TaskRepository | undefined
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const persisting = makeContext(fixture, { liveEvents: true, messages })
+    const owning = makeContext(fixture, { liveEvents: true, messages })
+    const store = new NativeIdleStore(fixture.repository)
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(persisting.context, recorder, "project")
+          yield* registerProgress(owning.context, recorder, "project")
+          yield* Effect.promise(() =>
+            persisting.emitEvent(executionEvent("session.execution.started", sessionID, 700)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                nativeObservations(fixture, sessionID).some(
+                  (row) => row.phase === "event-changed" && row.eventSequence === 700,
+                ) && store.read(binding)?.executionStartSequence === 700,
+            ),
+          )
+
+          yield* Effect.promise(() =>
+            owning.emitEvent(executionEvent("session.execution.started", sessionID, 700)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () =>
+              nativeObservations(fixture, sessionID).some(
+                (row) => row.phase === "event-seen" && row.eventSequence === 700,
+              ),
+            ),
+          )
+          const startObservations = nativeObservations(fixture, sessionID).filter(
+            (row) => row.eventSequence === 700,
+          )
+          const changed = startObservations.find((row) => row.phase === "event-changed")
+          const seen = startObservations.find((row) => row.phase === "event-seen")
+          expect(changed).toBeDefined()
+          expect(seen).toBeDefined()
+          expect(seen?.listenerID).not.toBe(changed?.listenerID)
+          yield* owning.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          expect(store.read(binding)?.report).toMatchObject({
+            inputID: binding.assignedMessageID,
+            executionStartSequence: 700,
+            eventSequence: 700,
+            count: 0,
+          })
+
+          yield* Effect.promise(() =>
+            owning.emitEvent(executionEvent("session.execution.succeeded", sessionID, 701)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () => nativeIdleBackground(fixture, sessionID).state === "observed",
+            ),
+          )
+        }),
+      ),
+    )
+
+    const retained = nativeIdleBackground(fixture, sessionID)
+    expect(retained).toMatchObject({
+      state: "observed",
+      inputID: binding.assignedMessageID,
+      executionStartSequence: 700,
+      eventSequence: 700,
+      count: 0,
+      terminalSequence: 701,
+      terminalEventID: "evt_701",
+      terminalMessageID: "msg_701",
+    })
+    expect(persisting.syntheticCalls() + owning.syntheticCalls()).toBe(0)
+
+    fixture.repository.close()
+    reopenedRepository = new TaskRepository(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    expect(new NativeIdleStore(reopenedRepository).background(binding)).toEqual(retained)
+  } finally {
+    reopenedRepository?.close()
+    fixture.close()
+  }
+})
+
 test("independent listeners and disposal preserve only confirmed durable idle evidence", async () => {
   const fixture = makeFixture()
   try {
@@ -992,14 +1095,143 @@ test("a replacement stream gap before its first event invalidates inherited exec
           yield* registerProgress(next.context, recorder, "project")
           yield* Effect.promise(() => next.failEvents())
           yield* Effect.promise(() => gap.promise)
+          yield* Effect.promise(() =>
+            next.emitEvent(executionEvent("session.execution.started", "ses-accepted", 20)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                nativeObservations(fixture, "ses-accepted").some(
+                  (row) => row.phase === "event-seen" && row.eventSequence === 20,
+                ),
+              4_000,
+            ),
+          )
           yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
           expect(
             (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background?.state,
           ).toBe("unknown")
+          expect(
+            new NativeIdleStore(fixture.repository).read(
+              nativeIdleBinding(fixture, "ses-accepted")!,
+            )?.report,
+          ).toBeNull()
+          yield* Effect.promise(() =>
+            next.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 21)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const state = new NativeIdleStore(fixture.repository).read(
+                nativeIdleBinding(fixture, "ses-accepted")!,
+              )
+              return state?.lastEventSequence === 21 && state.invalidation !== null
+            }),
+          )
+          expect(nativeIdleBackground(fixture).state).toBe("unknown")
+          yield* Effect.promise(() =>
+            next.emitEvent(executionEvent("session.execution.started", "ses-accepted", 22)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                new NativeIdleStore(fixture.repository).read(
+                  nativeIdleBinding(fixture, "ses-accepted")!,
+                )?.executionStartSequence === 22,
+            ),
+          )
+          yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          yield* Effect.promise(() =>
+            next.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 23)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => nativeIdleBackground(fixture).state === "observed"),
+          )
+          expect(nativeIdleBackground(fixture)).toMatchObject({
+            state: "observed",
+            executionStartSequence: 22,
+            terminalSequence: 23,
+          })
         }),
       ),
     )
   } finally {
+    fixture.close()
+  }
+})
+
+test("failed durable event observation prevents late idle input from confirming an old start", async () => {
+  const fixture = makeFixture()
+  const originalObserveEvent = NativeIdleStore.prototype.observeEvent
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const ctx = makeContext(fixture, { liveEvents: true, messages })
+    const barrier = Promise.withResolvers<void>()
+    const recordNativeEvent = recorder.recordNativeEvent.bind(recorder)
+    let failNextInputEvent = false
+    recorder.recordNativeEvent = (event) => {
+      const saved = recordNativeEvent(event)
+      if (testObject(event)?.id === "evt_812") barrier.resolve()
+      return saved
+    }
+    NativeIdleStore.prototype.observeEvent = function (
+      currentBinding,
+      type,
+      sequence,
+      eventID,
+      messageID,
+    ) {
+      if (failNextInputEvent && type === "session.inbox.delivered") {
+        failNextInputEvent = false
+        throw new Error("Injected native idle persistence failure")
+      }
+      return originalObserveEvent.call(this, currentBinding, type, sequence, eventID, messageID)
+    }
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 810)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                new NativeIdleStore(fixture.repository).read(binding)?.executionStartSequence ===
+                810,
+            ),
+          )
+
+          messages.push({ id: "msg-next", type: "synthetic", text: "Continue with new input" })
+          failNextInputEvent = true
+          yield* Effect.promise(() =>
+            ctx.emitEvent(inboxEvent("session.inbox.delivered", sessionID, 811, "msg-next")),
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.step.started", sessionID, 812)),
+          )
+          yield* Effect.promise(() => barrier.promise)
+
+          yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          expect(new NativeIdleStore(fixture.repository).read(binding)?.report).toBeNull()
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 813)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const state = new NativeIdleStore(fixture.repository).read(binding)
+              return state?.lastEventSequence === 813 && state.report === null
+            }),
+          )
+          expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+        }),
+      ),
+    )
+  } finally {
+    NativeIdleStore.prototype.observeEvent = originalObserveEvent
     fixture.close()
   }
 })
