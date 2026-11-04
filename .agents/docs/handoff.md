@@ -8,6 +8,17 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Reviewed110/130 task sources landed and built:** Root cleared the quiet window;
+  main **a2182239423f533603d7b40ddcd1bd4e3888e73d** preserves both accepted candidate
+  ancestries. Merged **36tests/344assertions** and quality passed. Task-only native
+  integration is recorded130planv9/110planv26; **no plan finalization or cleanup**.
+  GUI build/process-free smoke passed; postbuild1793829039412 retains PID95968/2.2.5,
+  only Architect active, six flags true, canonical plugin active and new server module
+  generation647b3e32. No explicit reload/restart/inference/settings change occurred.
+  [Exact landing evidence](evidence/quiet-landing-110-130-20261104.md) retains source
+  review, quiet preflight, build warnings and hashes. Do not repeat completed jobs.
+  Root still owes actual Desktop check-duration observations and the separately
+  coordinated110full-state measured review; no GPU-recovery or whole-plan claim.
 - **Astra profiling is explicitly authorized now:** the user assigns Root's Astra
   agent hands-on launch/test/profile/fix of live performance with isolated repairs.
   Initial service/renderer/GPU OS captures are complete; meaningful JS profiling is
