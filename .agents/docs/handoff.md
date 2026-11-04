@@ -8,6 +8,15 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **57/58 source reuse pre-audit complete, NOT post-install authorization:**
+  [Outcome comparison](evidence/retained57-58-reuse-preaudit-20261104.md) finds genuine
+  remaining57same-original-worker accepted repair and amended58zero-turn independent
+  verification; adopt-descendant and Root source quarantine are delivered foundations
+  to reuse, not implementations to repeat or evidence that those remaining outcomes
+  are already met. No blanket58scope expansion. After actual Root installation/
+  qualification, re-audit installed controls/receipts before supported original requeue.
+  Deliver approved pinned amendments through actual assignment instructions;132advice
+  may carry reuse findings but cannot rewrite acceptance. Preaudit reviewer complete.
 - **Next actual quiet window RESERVED for Root first install/control qualification;
   Astra owns residual performance:** no new long-running Architect dispatch before
   that boundary.132had already started before this hold; preserve it with129. Exact
