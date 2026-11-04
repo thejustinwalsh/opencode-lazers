@@ -87,9 +87,10 @@ sample. Workload changed between windows. Raw paths:
 `/private/tmp/lazers-energy-radar-open-20261104.txt` and
 `/private/tmp/lazers-energy-radar-closed-20261104.txt`.
 
-## Native database subscription follow-up — review pending
+## Native database subscription — integrated and exercised
 
-Final candidate `2782f96` on `84ad51d` removes the one-second per-location
+Final source `642430b` (including the simplification `2782f96`) is integrated
+as `119fa8e` and removes the one-second per-location
 Tasks/Observability source polls. Native SQLite hooks on transactional task and
 observation revision rows schedule one deferred in-service invalidation. Read-side
 durable revisions distinguish actual changes from rollback/duplicates. Existing
@@ -106,10 +107,11 @@ until close. Root removed that path and its cross-process claims rather than
 shipping unreliable extra watchers or inventing a cross-process protocol.
 
 Independent service connections, idle silence, disposal, module sharing, lost
-delivery, storage operations, runtime-only writes and rollback pass **21 tests /
-122 assertions**. Formatter, lint, typecheck and diff checks pass. The installed
-service executable identifies Bun 1.4.4 and contains SQLite update-hook symbols;
-actual native hook-driven delivery remains to be verified after integration.
+delivery, storage operations, runtime-only writes and rollback pass **22 tests /
+128 assertions**. Failed source reads and Observation delivery also recover without
+healthy polling. Native merged checks pass **60 tests / 352 assertions**, format,
+lint, typecheck, diff and GUI build. Installed-service insertion delivery is
+observed below; that observation does not certify every hook operation.
 Primary reference: [Bun SQLite update hooks](https://bun.sh/docs/runtime/sqlite#update-hooks).
 Callbacks run before commit, so reads are deferred until the synchronous statement
 ends. No file/document hashing is used as correctness evidence.
@@ -140,3 +142,38 @@ errors, runs 4046 → 4205 and wakeups 1125 → 1170. Reconstruction get calls
 cover their named components; they are not whole-process native call totals.
 Raw CPU windows: `/private/tmp/lazers-energy-before-full-activation-20261104.txt`
 and `/private/tmp/lazers-energy-after-scheduler-activation-20261104.txt`.
+
+## Final native insertion proof and current limits
+
+Second supported location reload on `119fa8e` completed Unix **1793798450626**,
+5,655ms. An immediate settings read failed transiently with service-unavailable;
+subsequent separate settings and diagnostic reads succeeded without another
+reload. All six switches remained enabled and LFM3 showed Available in Desktop.
+
+The authenticated Tasks subscription settled at **1793798636518**, baseline
+version **13830**. Architect used the native classification tool on real legacy
+**LZ-111** (`db1218b5-1635-4756-a672-9aa768da2c25`), appending its reviewed
+bug-repair classification at revision 1. **Tasks.changed 13831** arrived at
+**1793798658008**, before any confirming read. Subsequent native readback
+confirmed the classification and version. No watcher fallback exists; this
+observes the installed service's exercised SQLite insertion path. No task
+execution, acceptance or artifact history was fabricated for this probe.
+
+Root's post-feed 20-second window averaged **38.5% service, 19.8% renderer,
+29.2% GPU helper**, with 67 loaded locations. Native Architect's later 32.482s
+window held 66 locations stable: **46.9%, 23.0%, 31.2%** respectively, no
+foreground implementors, one shared scheduler timer and zero scheduler errors.
+Reconstruction added **6 get / 6 context** calls. Component coverage remains
+partial. Logs retained one renderer-ownership error and one expired permission
+404; no HTTP 5xx was recorded in that later window. Historical background state
+remains unknown. These observations do not establish that the reported 2,000%
+spike or battery drain is permanently solved; no working-implementor comparison
+is claimed yet.
+
+Raw evidence: `/private/tmp/lazers-energy-after-database-events-20261104.txt`
+and native shell outputs `sh_1a6bb02570017IiqQp4G4XqHtm.out` (event probe) /
+`sh_1a6bd786f001FsPsRiT0fXgdW2.out` (counter/CPU/error window) under the existing
+OpenCode project shell directory. Root's clean merged performance worktree was
+removed through native `worktree.remove(force:false)` at **1793798904235**.
+Architect is now checking LZ103 for supported same-attempt recovery. Radar's
+functional redesign remains deferred by the user.

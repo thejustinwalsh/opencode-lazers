@@ -21,17 +21,24 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
    all six inference switches enabled and no service restart. Root's nearby
    service CPU window improved **53.1% to 39.6%**, but later native churn grew
    locations 5 to 22 and service CPU averaged **61.1%**. Energy issue remains open.
-4. **Root final DB event candidate `2782f96` on `84ad51d` awaits native review**
-   in `/private/tmp/lazers-shared-scheduler`. Removes Tasks/Observability 1s
-   polls using native SQLite hooks shared across service connections. No OS
-   watchers, daemon or cross-process protocol. Independent-service/raw external
-   writes are read on initial/manual/reconnect; no automatic peer-sync claim.
-   **21 tests / 122 assertions**, quality pass. Native hook delivery and another
-   activation/CPU/error window remain required. Avoid unrelated dispatch ahead
-   of this bounded performance lane; preserve active/retained work and switches.
-5. After effective performance activation recover **LZ103's same attempt**,
-   preserving failures, then supported integration releases ledger/UI/manifest.
-   See [measurement and limits](evidence/native-scheduler-performance-20261104.md).
+4. **DB subscriptions are integrated and live:** final `642430b`, merge
+   `119fa8e`; native merged **60 tests / 352 assertions**, quality and GUI build
+   passed. Native SQLite hooks share event invalidation across service locations;
+   no healthy Tasks/Observability source polling or OS watchers. Real LZ111
+   classification produced Tasks.changed **13830 → 13831 before confirming reads**.
+   Initial/manual/reconnect reads see external state; no independent-service
+   live-sync claim. Root's merged worktree was removed through native non-forced
+   API at Unix 1793798904235.
+5. Later stable 66-location native window: service **46.9%**, renderer **23.0%**,
+   GPU **31.2%**, one scheduler timer, zero scheduler errors, reconstruction
+   **6 get / 6 context** calls. One renderer-ownership error and one expired
+   permission 404 remain; no HTTP 5xx in that window. All six inference switches
+   stayed enabled. Do not claim the original spike/battery issue permanently
+   solved or a working-worker comparison established yet.
+6. **Native Architect is recovering LZ103's same attempt now**, preserving failures,
+   before releasing ledger/UI/manifest work. Continue the original roadmap and
+   measure actual working behavior; do not reopen Radar redesign before the user
+   supplies the promised brainstorm. See [report](evidence/native-scheduler-performance-20261104.md).
 
 ## Source and native state
 
