@@ -8,12 +8,31 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
-- **127 is now blockedv13 on actual completion-evidence mismatch, not permissions.**
+- **User authorizes controlled source-first127 rollout before native task acceptance,
+  ONLY after independent corrected-source review clears and a coordinated natural
+  quiet boundary.** No settings change, proof-only turn, old-certificate reconstruction
+  or acceptance override.127 remains unaccepted until genuine native verification.
+- Candidate29363e9 is **not cleared**: independent review found P2 at
+  `progress/native.ts:686–689` catch versus terminal paths576–615/674–682. Same-input
+  A→genuineIdleA leaves unconfirmed zero; newer B start persistence throws before
+  write; B success without fresh idle must not confirm A. Existing failure test
+  changes input and has no old report, so misses it. Scoped red/green correction
+  queued durably on original127session under
+  `lazers-native-start127-persistence-failure-fence-correction-20261104-v1`, readback
+  **1793818960218**. Native cancellation requestedv14 to settle ended original turn,
+  then same-attempt resume for this **actual source repair**, not proof manufacture.
+- Actual127 diagnosis1793818714143–1793818714280 confirms the OLD installed seen-start
+  bug, not candidate failure/replacement: owning965c19cf received live start7 seen,
+  input9`msg_0c69767e556f4de89f19ec847324800b`, genuine0hook8556803 rejected8556838;
+  success827/Idle`msg_1a7eaf9e000183P34bKn8w29ue`8556896, rev8 report/terminalsNULL.
+  Foreground inactive and empty controls cannot reconstruct that discarded report.
+
+- **127's v13 completion-evidence block was not a permission hold.**
   Original candidate **29363e91f5e189551a429b8ff2d6f6bd31edb39b**, parent74272db,
   is clean/unchanged before-after independent **76tests/427assertions** plus quality
-  pass. These are source checks, not native verification or acceptance. Exact-source
-  review and actual start/hook/success/listener diagnosis are running separately;
-  no repeated reconcile, new task/worker turn solely for proof, retrospective
+  pass. These are source checks, not native verification or acceptance, and missed
+  the persistence-failure P2 found by subsequent review above. No repeated reconcile,
+  new task/worker turn solely for proof, retrospective
   certificate write or unreviewed activation. Keep original110cancelledv18 and
   126blockedv9/source intact while assessing the producer bootstrap boundary.
 
