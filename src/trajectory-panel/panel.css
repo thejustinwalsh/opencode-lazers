@@ -224,36 +224,62 @@
   top: 12px;
   border-radius: 50%;
 }
-.lazers-trajectory-check-marker {
+.lazers-trajectory-check-interval {
   position: absolute;
   z-index: 1;
-  top: 4px;
-  width: 20px;
-  height: 22px;
+  top: 13px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--icon-base);
+}
+.lazers-trajectory-check-interval[data-result="failed"] {
+  background: var(--icon-critical-base);
+}
+.lazers-trajectory-check-interval[data-result="passed"] {
+  background: var(--icon-success-base);
+}
+.lazers-trajectory-check-interval[data-invalid="true"] {
+  background: var(--icon-warning-base);
+}
+.lazers-trajectory-check-interval[data-point="true"] {
+  width: 6px !important;
+  height: 6px;
+  top: 12px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+}
+.lazers-trajectory-check-interval[data-selected="true"]:not([data-point="true"]) {
+  top: 12px;
+  height: 6px;
+}
+.lazers-trajectory-check-endpoint {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  width: 6px;
+  height: 6px;
+  transform: translateX(-50%);
+  border: 1px solid var(--background-base);
+  border-radius: 50%;
+  background: var(--icon-warning-base);
+}
+.lazers-trajectory-check-marker {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  width: 0;
+  min-width: 24px;
+  height: 30px;
   transform: translateX(-50%);
   padding: 0;
   border: 0;
-  color: var(--icon-base);
   background: transparent;
   cursor: pointer;
 }
-.lazers-trajectory-check-marker::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 1px;
-  height: 20px;
-  border-left: 2px dotted currentColor;
-}
-.lazers-trajectory-check-marker[data-result="failed"] {
-  color: var(--icon-critical-base);
-}
-.lazers-trajectory-check-marker[data-result="passed"] {
-  color: var(--icon-success-base);
-}
-.lazers-trajectory-check-marker[aria-pressed="true"]::before {
-  border-left-style: solid;
-  border-left-width: 3px;
+.lazers-trajectory-check-marker:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: -2px;
+  border-radius: 3px;
 }
 .lazers-trajectory-tool-count {
   color: var(--text-weak);
