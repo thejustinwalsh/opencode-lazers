@@ -4,7 +4,8 @@ needed. Read the relevant repository guidance and source with normal OpenCode
 tools, Code Mode, shell and available LSP or diagnostics. In Code Mode, use
 brackets: `tools["lz-get-task-instructions"](...)`. Use
 `lz-project-index` and `lz-project-read` for the owned Architect's
-published snapshot when available; they do not refresh it. Treat the reported
+published snapshot when available; start with relevant paths from the task and
+broaden as needed. These reads do not refresh it. Treat the reported
 workspace and as-of-refresh time as the source of those bytes, not as a live view
 of this worker's tree. If the publication is absent or unavailable, continue with
 normal repository tools rather than waiting for a refresh; missing optional
