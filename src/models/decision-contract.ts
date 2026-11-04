@@ -480,6 +480,23 @@ const EmptyEmpiricalRange = z.strictObject({
   currentMarketUSD: z.null(),
 })
 
+/**
+ * Route coverage for the complete retry history of accepted logical tasks.
+ * `mixed` means the history contains both same-route and cross-route observations.
+ */
+export const ModelDecisionEstimateHistoryScopeSchema = z.strictObject({
+  completeness: z.literal("complete-accepted-logical-task-retry-history"),
+  routeScope: z.enum(["same-route", "cross-route", "mixed", "unknown"]),
+})
+export type ModelDecisionEstimateHistoryScope = z.infer<
+  typeof ModelDecisionEstimateHistoryScopeSchema
+>
+
+const EstimateHistoryScope = {
+  /** Omission preserves old v2 records without implying same-route history. */
+  historyScope: ModelDecisionEstimateHistoryScopeSchema.nullable().optional(),
+}
+
 /** Observed spread, never a predictive confidence interval. */
 export const ModelDecisionEstimateSchema = z
   .discriminatedUnion("status", [
@@ -489,6 +506,7 @@ export const ModelDecisionEstimateSchema = z
       observationCount: z.int().min(2),
       range: EmpiricalRange,
       confidenceInterval: z.null(),
+      ...EstimateHistoryScope,
     }),
     z.strictObject({
       status: z.literal("single-observation"),
@@ -496,6 +514,7 @@ export const ModelDecisionEstimateSchema = z
       observationCount: z.literal(1),
       range: EmpiricalRange,
       confidenceInterval: z.null(),
+      ...EstimateHistoryScope,
     }),
     z.strictObject({
       status: z.literal("partial"),
@@ -507,6 +526,7 @@ export const ModelDecisionEstimateSchema = z
       }),
       confidenceInterval: z.null(),
       missing: z.array(z.enum(["tokens", "current-price", "attribution"])).min(1),
+      ...EstimateHistoryScope,
     }),
     z.strictObject({
       status: z.literal("zero-accepted"),
@@ -514,6 +534,7 @@ export const ModelDecisionEstimateSchema = z
       observationCount: Count,
       range: EmptyEmpiricalRange,
       confidenceInterval: z.null(),
+      ...EstimateHistoryScope,
     }),
     z.strictObject({
       status: z.literal("unknown"),
@@ -522,6 +543,7 @@ export const ModelDecisionEstimateSchema = z
       range: EmptyEmpiricalRange,
       confidenceInterval: z.null(),
       reason: z.string().min(1).max(2000),
+      ...EstimateHistoryScope,
     }),
   ])
   .superRefine((estimate, context) => {
@@ -543,6 +565,10 @@ export const ModelDecisionContributorSchema = z.strictObject({
   attemptID: z.uuid().nullable(),
   sessionID: z.string().min(1).max(200),
   contribution: z.enum(["accepted", "failed", "retry"]),
+  /** Missing or null route means the exact contributor route is unknown. */
+  route: ModelDecisionRouteSchema.nullable().optional(),
+  /** Whether this work contributes to the configuration cohort, accepted history, or both. */
+  membership: z.enum(["cohort-effort", "empirical-history", "both"]).optional(),
   tokens: Nonnegative.nullable(),
   currentMarketUSD: Nonnegative.nullable(),
   nativeReportedUSD: Nonnegative.nullable(),
