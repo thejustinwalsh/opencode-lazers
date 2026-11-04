@@ -8,6 +8,29 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **LZ58, not a new recovery system:** user endorsed lifecycle review`ac94144` and
+  [focused context amendment](evidence/retained-verification-amendment-20261104.md).
+  Exception to no-worktree creation permits a runtime-owned **genuinely independent**
+  verification context for retained committed-candidate tests/live probes when old
+  idle lineage is irrecoverable. Preserve original worker identity/usage/uncertain
+  effects/resource and cleanup holds; a new directory alone does not isolate shared
+  probe resources. Real checks/probes govern acceptance, not a hash or manual override.
+  LZ72 old containment stays separate.57→58planv3 is queued/zeroattempts, reservations
+  unchanged. Scope assessment is running; deliver exact amendment durably at58dispatch.
+- **0dfd8e6 remains not cleared** despite88tests/527assertions/quality: ordered
+  two-listener B-start failure→L1Bsuccess→L2staleBstart→L2Bsuccess can retainL2localA
+  and confirmIdleA; unknown null fence only refreshes at resubscription, so isolated
+  write failure on a healthy stream cannot heal. Both need registered red/green,
+  including first-reconnect watermark read still failing then later recovery.
+  Durable original127guidance key
+  `lazers-native-start127-ordered-listener-recovery-correction-20261104-v1` readback
+  **1793820680186**. Cancellation settledv27/all4effects; **same-attempt resumev29**
+  requested for real structural source corrections. No rollout until correctedreview.
+- Retain [panel CPU observation](../../design/reviews/panel-cpu-observation-20261104.md):
+  visible/hidden/restored real-work windows differ (70.62/51.42/44.60serviceCPU,
+  33.15/23.18/24.25rendererCPU). Hiding did not eliminate load; restoring did not
+  reproduce the first rate. Not matched idle runs, no causal/battery-fix claim.
+
 - Root Tasks performance candidate **d04248043d56718a69ad87e48304123ed73f7c4c** in
   `/private/tmp/lazers-panel-events` removes healthy3s reads via real native events,
   handles server.connected/reconnect-during-read, retains failure-only backoff and
