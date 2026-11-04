@@ -8,6 +8,19 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Merged source; GUI activation still pending:** main
+  **b8fe479811dd354ec412503171383e648629c989** contains all three reviewed
+  ancestries (127633da56, Tasks6c05cf6, Trajectorya86a6e1). Merged checks passed
+  **200 tests / 1,893 assertions**, formatter, lint, typecheck and diff checks;
+  native-input and GUI build/smoke root files were unchanged. Merge/check job
+  `sh_1a836d8e10010HAs6YjLedtr2t` completed; **do not repeat it**. GUI build was
+  deliberately excluded. First guarded attempt stopped before mutation on Root's
+  docs-only544c9d3; that timing review is preserved. Successful preflight
+  **1793823476310–1793823476329** retained PID95968/2.2.5, only Architect active,
+  empty owned127/126/110 controls and six flags true. Recheck quietness before
+  authorized GUI build/process-free smoke, then observe effective generations and
+  actual Desktop/inference. No unnecessary explicit reload, old idle reconstruction
+  or native acceptance claim follows from these source/check results.
 - **Current quiet-rollout front:** original127 finished naturally at clean
   **633da56c4ad08129ad43562adea90c1b98167832**. Earlier repeated timeout is retained
   history, not a current stuck worker. Root native1793822037352 saw only Architect.
