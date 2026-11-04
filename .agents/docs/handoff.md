@@ -19,6 +19,13 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   then integrate/build at coordinated quiet boundary and verify actual Desktop.
   Five Root-owned Tasks files include panel, events adapter and tests; no overlap.
   No battery-resolution claim or Radar implementation.
+  Final follow-up **6c05cf653d29816285b06a8c5cd91eeb977db30f** is now independently
+  source-cleared, clean/unchanged before-after **44tests/296assertions** and
+  fmt/lint/types/diff pass. It avoids a redundant read already covered by an in-flight
+  snapshot while retaining newer-version catch-up and unconditional reconnect
+  recovery. Review found no new P1/P2. Ready for **quiet-boundary integration/build**,
+  not yet merged/activated; then verify actual Desktop idle read/subscription counts,
+  reconnect, hidden-panel cleanup and selection/focus/paging. No battery claim.
 - Root's second127concern in29363e9 is under independent frozen-source research:
   `startsRequiringNewerObservation` usesMAX_SAFE_INTEGER after unreadable idle-row/
   unsequenced persistence failure; a later genuine finite start may be poisoned
