@@ -1,0 +1,335 @@
+{
+  "native": {
+    "snapshotID": "41000000-0000-4000-8000-000000000001",
+    "projectDirectory": "/models-current-price-index-test",
+    "source": "native-catalog",
+    "generation": 1,
+    "retrievedAt": "2026-11-04T10:00:00.000Z",
+    "asOf": null,
+    "version": null,
+    "citation": "Captured native catalog fixture",
+    "upstreamSourceURL": null,
+    "sourceURL": "https://opencode.ai/v2/docs/models/",
+    "query": "OpenCode model.list for the current project location",
+    "records": [
+      {
+        "kind": "native-model",
+        "providerID": "openai",
+        "id": "fixture-model",
+        "name": "Fixture Model",
+        "enabled": true,
+        "type": "language",
+        "contextTokens": 200000,
+        "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+        "variants": ["high", "max"],
+        "prices": {
+          "unit": "USD per million tokens",
+          "tiers": [
+            {
+              "contextTierTokens": null,
+              "input": 2,
+              "output": 10,
+              "cacheRead": 0.2,
+              "cacheWrite": 2
+            }
+          ]
+        }
+      },
+      {
+        "kind": "native-model",
+        "providerID": "openai",
+        "id": "fallback-model",
+        "name": "Fallback Model",
+        "enabled": true,
+        "type": "language",
+        "contextTokens": 200000,
+        "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+        "variants": [],
+        "prices": {
+          "unit": "USD per million tokens",
+          "tiers": [
+            {
+              "contextTierTokens": null,
+              "input": 3,
+              "output": 11,
+              "cacheRead": 0.3,
+              "cacheWrite": 3
+            }
+          ]
+        }
+      },
+      {
+        "kind": "native-model",
+        "providerID": "openai",
+        "id": "empty-model",
+        "name": "Empty Model",
+        "enabled": true,
+        "type": "language",
+        "contextTokens": 200000,
+        "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+        "variants": null,
+        "prices": null
+      },
+      {
+        "kind": "native-model",
+        "providerID": "openai",
+        "id": "zero-model",
+        "name": "Zero Model",
+        "enabled": true,
+        "type": "language",
+        "contextTokens": 200000,
+        "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+        "variants": null,
+        "prices": {
+          "unit": "USD per million tokens",
+          "tiers": [
+            {
+              "contextTierTokens": null,
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            }
+          ]
+        }
+      },
+      {
+        "kind": "native-model",
+        "providerID": "openai",
+        "id": "tiered-native",
+        "name": "Tiered Native",
+        "enabled": true,
+        "type": "language",
+        "contextTokens": 400000,
+        "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+        "variants": null,
+        "prices": {
+          "unit": "USD per million tokens",
+          "tiers": [
+            {
+              "contextTierTokens": 200000,
+              "input": 2,
+              "output": 10,
+              "cacheRead": 0.2,
+              "cacheWrite": 2
+            },
+            {
+              "contextTierTokens": 400000,
+              "input": 4,
+              "output": 20,
+              "cacheRead": 0.4,
+              "cacheWrite": 4
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "openrouter": {
+    "snapshotID": "41000000-0000-4000-8000-000000000002",
+    "projectDirectory": "/models-current-price-index-test",
+    "source": "openrouter-models",
+    "generation": 1,
+    "retrievedAt": "2026-11-04T11:00:00.000Z",
+    "asOf": null,
+    "version": null,
+    "citation": "Captured OpenRouter catalog fixture",
+    "upstreamSourceURL": null,
+    "sourceURL": "https://openrouter.ai/api/v1/models",
+    "query": "GET https://openrouter.ai/api/v1/models",
+    "records": [
+      {
+        "kind": "openrouter-model",
+        "id": "openai/fixture-model",
+        "canonicalSlug": "openai/fixture-model-20261104",
+        "name": "Fixture Model",
+        "contextLength": 200000,
+        "architecture": {
+          "modality": "text->text",
+          "inputModalities": ["text"],
+          "outputModalities": ["text"],
+          "tokenizer": "fixture",
+          "instructType": null
+        },
+        "supportedParameters": ["tools", "reasoning_effort"],
+        "prices": {
+          "unit": "USD per token",
+          "tiers": [
+            {
+              "minPromptTokens": null,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": "0.000002",
+              "completion": "0.000010",
+              "inputCacheRead": "0.0000005",
+              "inputCacheWrite": "0.000003"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "openrouter-model",
+        "id": "openai/fallback-model",
+        "canonicalSlug": "openai/fallback-model-20261104",
+        "name": "Fallback Model",
+        "contextLength": 200000,
+        "architecture": {
+          "modality": "text->text",
+          "inputModalities": ["text"],
+          "outputModalities": ["text"],
+          "tokenizer": "fixture",
+          "instructType": null
+        },
+        "supportedParameters": null,
+        "prices": {
+          "unit": "USD per token",
+          "tiers": [
+            {
+              "minPromptTokens": null,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": "0.000004",
+              "completion": null,
+              "inputCacheRead": "0.0000004",
+              "inputCacheWrite": "0.000004"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "openrouter-model",
+        "id": "openai/empty-model",
+        "canonicalSlug": "openai/empty-model-20261104",
+        "name": "Empty Model",
+        "contextLength": 200000,
+        "architecture": {
+          "modality": null,
+          "inputModalities": null,
+          "outputModalities": null,
+          "tokenizer": null,
+          "instructType": null
+        },
+        "supportedParameters": null,
+        "prices": {
+          "unit": "USD per token",
+          "tiers": [
+            {
+              "minPromptTokens": null,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": null,
+              "completion": null,
+              "inputCacheRead": null,
+              "inputCacheWrite": null
+            }
+          ]
+        }
+      },
+      {
+        "kind": "openrouter-model",
+        "id": "openai/zero-model",
+        "canonicalSlug": "openai/zero-model-20261104",
+        "name": "Zero Model",
+        "contextLength": 200000,
+        "architecture": {
+          "modality": "text->text",
+          "inputModalities": ["text"],
+          "outputModalities": ["text"],
+          "tokenizer": null,
+          "instructType": null
+        },
+        "supportedParameters": null,
+        "prices": {
+          "unit": "USD per token",
+          "tiers": [
+            {
+              "minPromptTokens": null,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": "0",
+              "completion": "0",
+              "inputCacheRead": "0",
+              "inputCacheWrite": "0"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "openrouter-model",
+        "id": "openai/tiered-router",
+        "canonicalSlug": "openai/tiered-router-20261104",
+        "name": "Tiered Router",
+        "contextLength": 400000,
+        "architecture": {
+          "modality": "text->text",
+          "inputModalities": ["text"],
+          "outputModalities": ["text"],
+          "tokenizer": null,
+          "instructType": null
+        },
+        "supportedParameters": null,
+        "prices": {
+          "unit": "USD per token",
+          "tiers": [
+            {
+              "minPromptTokens": null,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": "0.000001",
+              "completion": "0.000002",
+              "inputCacheRead": "0.0000001",
+              "inputCacheWrite": "0.000001"
+            },
+            {
+              "minPromptTokens": 100000,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": "0.000003",
+              "completion": "0.000006",
+              "inputCacheRead": "0.0000003",
+              "inputCacheWrite": "0.000003"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "openrouter-model",
+        "id": "openai/scheduled-router",
+        "canonicalSlug": "openai/scheduled-router-20261104",
+        "name": "Scheduled Router",
+        "contextLength": 200000,
+        "architecture": {
+          "modality": "text->text",
+          "inputModalities": ["text"],
+          "outputModalities": ["text"],
+          "tokenizer": null,
+          "instructType": null
+        },
+        "supportedParameters": null,
+        "prices": {
+          "unit": "USD per token",
+          "tiers": [
+            {
+              "minPromptTokens": null,
+              "utcStart": null,
+              "utcEnd": null,
+              "prompt": "0.000001",
+              "completion": "0.000002",
+              "inputCacheRead": "0.0000001",
+              "inputCacheWrite": "0.000001"
+            },
+            {
+              "minPromptTokens": null,
+              "utcStart": 100,
+              "utcEnd": 200,
+              "prompt": "0.000003",
+              "completion": "0.000006",
+              "inputCacheRead": "0.0000003",
+              "inputCacheWrite": "0.000003"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
