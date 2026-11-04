@@ -8,6 +8,27 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Radar direction changed; implementation remains deferred pending review/mockups.**
+  User wants a live operations command center, not a C4-first primary map. Read
+  [Astra's independent review](../../design/reviews/astra-radar-perf-20261104.md):
+  compact Now / Needs attention / Next, recent meaningful activity and stable lower
+  inspector; preserve native navigation, evidence/freshness and optional diagnostic
+  map. Review narrow/wide actual busy-plus-permission, idle-evidence hold, queued
+  dependency, cleanup and disconnected cases before implementation. No new runtime
+  controller, synthetic health score or inferred ETA. Task running state is not
+  actual model activity; model residency is not inference, GPU-process CPU is not
+  GPU utilization. The review's proposed finite timeout is discussion only: all
+  six switches stay enabled and **Never unload** remains unchanged; no restart,
+  profiler or setting change was authorized. Retain performance candidates as
+  source risks, not causal or battery-fix claims.
+- Root's actual1793817741993–1793817745184 read found native active Architect+127,
+  127planrunningv7,126blockedv9,110cancelledv18. This supersedes transient127approval
+  holds; location/session permissions were empty at1793817711583 and reconcilev7
+  was requested without granting an absent request. Preserve the original127
+  attempt`38e12d10-7fbf-4c3a-a442-cf5aae0121fd`, session
+  `ses_42ac41f32a83465c8a71161d511ba045`. Do not substitute plan state for fresh
+  native activity or repeatedly reconcile unchanged holds.
+
 - Root's external quiet activation completed **1793812977491**, 1971ms,
   activeBefore=[], servicePID95968 unchanged, all six flags true, generation
   `72299e4a-6586-47c7-b793-874e688ba90f`. No further reload/settings change authorized.
