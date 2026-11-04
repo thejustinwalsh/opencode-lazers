@@ -15,6 +15,8 @@ import { TaskReviewer } from "./task-review.ts"
 import { registerTaskReviewTool, REVIEW_COMMUNICATION } from "./review-tool.ts"
 import { defaultFeatures, FeaturePolicy, FeatureSettings, featureEnabled } from "./features.ts"
 import type { LocalFeature } from "./features.ts"
+import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
+import { defaultSettingsAuthority, readFeatureSettings } from "./settings-read.ts"
 
 export function registerLocalInference(
   ctx: Pick<
@@ -243,9 +245,16 @@ export function registerLocalInference(
       syncing = true
       const epoch = settingsEpoch
       try {
-        const next = await (
-          await worker()
-        ).settings({}, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]) })
+        const next = await readFeatureSettings(
+          resolveWorker ?? defaultSettingsAuthority,
+          async () =>
+            (await worker()).settings(
+              {},
+              {
+                signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
+              },
+            ),
+        )
         if (epoch !== settingsEpoch || controller.signal.aborted) return
         if (JSON.stringify(next) !== JSON.stringify(features)) {
           features = next
@@ -259,17 +268,21 @@ export function registerLocalInference(
     }
     yield* Effect.acquireRelease(
       Effect.sync(() => {
-        const timer = setInterval(() => {
-          broker.expire()
-          void sync()
-        }, 1_000)
-        void sync()
-        return timer
+        return sharedScheduler.register(
+          JSON.stringify(["inference-settings", crypto.randomUUID()]),
+          {
+            intervalMs: 1000,
+            run: async () => {
+              broker.expire()
+              await sync()
+            },
+          },
+        )
       }),
-      (timer) =>
-        Effect.sync(() => {
+      (registration) =>
+        Effect.promise(async () => {
           controller.abort()
-          clearInterval(timer)
+          await registration.dispose()
           broker.close()
         }),
     )
