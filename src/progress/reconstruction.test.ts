@@ -207,10 +207,12 @@ test("suspended changes coalesce, assignment changes are polled, and stale reads
   const started = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   let latest = assignment(1)
+  let contentRevision = 1
   let calls = 0
   let active = 0
   let maxActive = 0
   const seen: ProgressAssignment[] = []
+  const seenContent: number[] = []
   const registration = registerProgressReconstruction({
     databasePath: fixture.store.repository.path,
     projectDirectory: fixture.directory,
@@ -224,13 +226,14 @@ test("suspended changes coalesce, assignment changes are polled, and stale reads
         active++
         maxActive = Math.max(maxActive, active)
         seen.push(value)
+        const contentAtRead = contentRevision
         try {
           if (calls === 1) {
             started.resolve()
             await release.promise
-            if (!isCurrent()) return "stale"
-            if (!sameProgressAssignment(latest, value)) return "stale"
           }
+          if (!isCurrent()) return "stale"
+          seenContent.push(contentAtRead)
           return "complete"
         } finally {
           active--
@@ -241,27 +244,32 @@ test("suspended changes coalesce, assignment changes are polled, and stale reads
 
   try {
     await started.promise
-    latest = { ...latest, assignedMessageID: "msg-updated", workspace: "/workspace/updated" }
+    contentRevision = 2
+    expect(sameProgressAssignment(latest, seen[0])).toBe(true)
     registration.changed(latest.sessionID)
     registration.changed(latest.sessionID)
     registration.changed(latest.sessionID)
     release.resolve()
     await waitFor(() => calls === 2)
-    expect(seen[1]).toMatchObject({
+    expect(seenContent).toEqual([1, 2])
+    expect(maxActive).toBe(1)
+
+    latest = { ...latest, assignedMessageID: "msg-updated", workspace: "/workspace/updated" }
+    await waitFor(() => calls === 3)
+    expect(seen[2]).toMatchObject({
       assignedMessageID: "msg-updated",
       workspace: "/workspace/updated",
     })
-    expect(maxActive).toBe(1)
 
     latest = { ...latest, attemptState: "failed" }
-    await waitFor(() => calls === 3)
-    expect(seen[2]?.attemptState).toBe("failed")
+    await waitFor(() => calls === 4)
+    expect(seen[3]?.attemptState).toBe("failed")
 
     await waitFor(() => active === 0)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     registration.changed(latest.sessionID)
-    await waitFor(() => calls === 4)
-    expect(calls).toBe(4)
+    await waitFor(() => calls === 5)
+    expect(calls).toBe(5)
   } finally {
     release.resolve()
     registration.dispose()
@@ -274,6 +282,7 @@ test("all-participant disposal preserves unfinished recovery without replaying c
   const entered = Promise.withResolvers<void>()
   const release = Promise.withResolvers<void>()
   const retiredSettled = Promise.withResolvers<void>()
+  let released = false
   const assignments = [assignment(1), assignment(2), assignment(3)]
   const oldWrites: string[] = []
   const newWrites: string[] = []
@@ -304,9 +313,6 @@ test("all-participant disposal preserves unfinished recovery without replaying c
     await entered.promise
     expect(oldWrites).toEqual([assignments[0]!.sessionID])
     registration.dispose()
-    release.resolve()
-    await retiredSettled.promise
-
     registration = registerProgressReconstruction({
       databasePath: fixture.store.repository.path,
       projectDirectory: fixture.directory,
@@ -323,8 +329,12 @@ test("all-participant disposal preserves unfinished recovery without replaying c
     })
 
     await waitFor(() => newWrites.length === 2)
+    expect(released).toBe(false)
     expect(oldWrites).toEqual([assignments[0]!.sessionID])
     expect(newWrites.sort()).toEqual([assignments[1]!.sessionID, assignments[2]!.sessionID].sort())
+    released = true
+    release.resolve()
+    await retiredSettled.promise
   } finally {
     release.resolve()
     registration.dispose()
@@ -384,6 +394,40 @@ test("terminal historical context is fairly rechecked without a native event", a
     contextRevision = 2
     await waitFor(() => reads.includes(2))
     expect(reads).toContain(2)
+  } finally {
+    registration.dispose()
+    fixture.close()
+  }
+})
+
+test("mixed-case terminal sessions advance fairly across complete refresh cycles", async () => {
+  const fixture = makeFixture()
+  const sessionIDs = ["ses-a", "ses-A", "ses-b", "ses-B"]
+  const reads = new Map(sessionIDs.map((sessionID) => [sessionID, 0]))
+  const assignments = sessionIDs.map((sessionID, index) => ({
+    ...assignment(index + 1, "project", "accepted"),
+    sessionID,
+  }))
+  const registration = registerProgressReconstruction({
+    databasePath: fixture.store.repository.path,
+    projectDirectory: fixture.directory,
+    projectID: "project",
+    pollIntervalMs: 1,
+    terminalRefreshMs: 1,
+    participant: participantFor(
+      () => assignments.map((value) => ({ ...value })),
+      async (value, isCurrent) => {
+        if (!isCurrent()) return "stale"
+        reads.set(value.sessionID, reads.get(value.sessionID)! + 1)
+        return "complete"
+      },
+    ),
+  })
+
+  try {
+    await waitFor(() => [...reads.values()].every((count) => count >= 3))
+    expect([...reads.keys()]).toEqual(sessionIDs)
+    expect([...reads.values()].every((count) => count >= 3)).toBe(true)
   } finally {
     registration.dispose()
     fixture.close()

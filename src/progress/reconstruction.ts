@@ -34,7 +34,12 @@ type Participant = ReconstructionParticipant & {
   pollIntervalMs: number
   terminalRefreshMs: number
 }
-type InFlight = { sessionID: string; participant: Participant }
+type InFlight = {
+  sessionID: string
+  participant: Participant
+  work: Work
+  drainOwner: symbol
+}
 
 type Coordinator = {
   assignments: Map<string, ProgressAssignment>
@@ -48,7 +53,7 @@ type Coordinator = {
   terminalRefreshMs: number
   terminalCursor?: string
   inFlight?: InFlight
-  draining: boolean
+  drainOwner?: symbol
   timer?: ReturnType<typeof setTimeout>
 }
 
@@ -166,7 +171,9 @@ function scheduleTerminalRefresh(coordinator: Coordinator) {
   const now = Date.now()
   const terminal = [...coordinator.assignments.values()]
     .filter((assignment) => assignmentIsTerminal(assignment))
-    .sort((left, right) => left.sessionID.localeCompare(right.sessionID))
+    .sort((left, right) =>
+      left.sessionID < right.sessionID ? -1 : left.sessionID > right.sessionID ? 1 : 0,
+    )
   if (terminal.length === 0) return
 
   const start = coordinator.terminalCursor
@@ -198,7 +205,7 @@ function retryDelay(failures: number) {
 function scheduleTimer(coordinator: Coordinator) {
   if (coordinator.timer) clearTimeout(coordinator.timer)
   coordinator.timer = undefined
-  if (!activeParticipant(coordinator) || coordinator.draining) return
+  if (!activeParticipant(coordinator) || coordinator.drainOwner) return
 
   let wakeAt = coordinator.scanAt
   for (const work of coordinator.jobs.values()) wakeAt = Math.min(wakeAt, work.dueAt)
@@ -210,11 +217,12 @@ function scheduleTimer(coordinator: Coordinator) {
 }
 
 function drive(coordinator: Coordinator) {
-  if (coordinator.draining) return
-  coordinator.draining = true
+  if (coordinator.drainOwner) return
+  const drainOwner = Symbol("progress-reconstruction-drain")
+  coordinator.drainOwner = drainOwner
   void (async () => {
     try {
-      while (true) {
+      while (coordinator.drainOwner === drainOwner) {
         const participant = activeParticipant(coordinator)
         if (!participant) return
 
@@ -229,21 +237,23 @@ function drive(coordinator: Coordinator) {
         try {
           assignment = participant.assignmentForSession(sessionID)
         } catch {
+          if (coordinator.drainOwner !== drainOwner) return
           const failures = work.failures + 1
           enqueue(coordinator, sessionID, Date.now() + retryDelay(failures), failures)
           continue
         }
-        if (!participant.active) {
+        if (!participant.active || coordinator.participants.get(participant.id) !== participant) {
           enqueue(coordinator, sessionID, Date.now(), work.failures)
-          return
+          continue
         }
         if (!assignment) continue
 
-        const inFlight = { sessionID, participant }
+        const inFlight = { sessionID, participant, work, drainOwner }
         coordinator.inFlight = inFlight
         coordinator.dirty.delete(sessionID)
         let result: ReconstructionResult = "retry"
         const isCurrent = () =>
+          coordinator.drainOwner === drainOwner &&
           participant.active &&
           coordinator.participants.get(participant.id) === participant &&
           coordinator.inFlight === inFlight
@@ -252,6 +262,11 @@ function drive(coordinator: Coordinator) {
         } catch {
           result = "retry"
         }
+
+        // A retired drain has already handed its in-flight work to a successor.
+        // Its unresolved native read may settle later, but it no longer owns any
+        // coordinator state and must not alter the successor's queue or timer.
+        if (coordinator.drainOwner !== drainOwner) return
 
         const retired = !isCurrent()
         const wasDirty = coordinator.dirty.delete(sessionID)
@@ -267,8 +282,10 @@ function drive(coordinator: Coordinator) {
         }
       }
     } finally {
-      coordinator.draining = false
-      scheduleTimer(coordinator)
+      if (coordinator.drainOwner === drainOwner) {
+        coordinator.drainOwner = undefined
+        scheduleTimer(coordinator)
+      }
     }
   })()
 }
@@ -286,7 +303,6 @@ function coordinatorFor(key: string, options: ReconstructionOptions): Coordinato
       scanAt: 0,
       pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
       terminalRefreshMs: options.terminalRefreshMs ?? DEFAULT_TERMINAL_REFRESH_MS,
-      draining: false,
     }
     coordinators.set(key, coordinator)
   }
@@ -326,6 +342,13 @@ export function registerProgressReconstruction(
       disposed = true
       participant.active = false
       coordinator.participants.delete(participant.id)
+      const inFlight = coordinator.inFlight
+      if (inFlight?.participant === participant) {
+        coordinator.inFlight = undefined
+        coordinator.dirty.delete(inFlight.sessionID)
+        enqueue(coordinator, inFlight.sessionID, Date.now(), inFlight.work.failures)
+        if (coordinator.drainOwner === inFlight.drainOwner) coordinator.drainOwner = undefined
+      }
       updateIntervals(coordinator)
       coordinator.scanAt = Math.min(coordinator.scanAt, Date.now())
       if (!activeParticipant(coordinator) && coordinator.timer) {
