@@ -8,6 +8,34 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- Root Tasks performance candidate **d04248043d56718a69ad87e48304123ed73f7c4c** in
+  `/private/tmp/lazers-panel-events` removes healthy3s reads via real native events,
+  handles server.connected/reconnect-during-read, retains failure-only backoff and
+  cancellation. Root reports43tests/294assertions, lint5/type338/format/diff pass,
+  three regressions red on old controller and actual native handshake passed.
+  Independent **frozen-commit** review is running. Provided tree now has Root-owned
+  uncommitted`panel-state.ts`/`panel-state.test.ts`; do not touch/stash/overwrite or
+  certify those edits asd042480. Wait final Root revision for exact-candidate checks,
+  then integrate/build at coordinated quiet boundary and verify actual Desktop.
+  Five Root-owned Tasks files include panel, events adapter and tests; no overlap.
+  No battery-resolution claim or Radar implementation.
+- Root's second127concern in29363e9 is under independent frozen-source research:
+  `startsRequiringNewerObservation` usesMAX_SAFE_INTEGER after unreadable idle-row/
+  unsequenced persistence failure; a later genuine finite start may be poisoned
+  after DB recovery. Frozen-source review **confirms P2**: valid sequences are safe
+  integers, none can exceedMAX_SAFE_INTEGER;Math.max never lowers the barrier.
+  Required registered red/green cases cover one-shot unreadable-row stream gap and
+  unsequenced persistence failure, restored DB plus trustworthy recovery boundary,
+  then genuinely newer finite start/hook/success (including seen by owning listener)
+  usable after reopen. Inherited/pre-gap/stale replay stays insufficient. Native
+  source-proof guidance key`lazers-native-start127-finite-barrier-source-proof-20261104-v1`
+  readback **1793819402894**. Earlier original-session concern guidance
+  key`lazers-native-start127-finite-start-recovery-concern-20261104-v1` readback
+  **1793819295368** asks scoped red/green investigation/correction if real, preserving
+  inherited-state/old-event fences. Same worker, no new acceptance ceremony; final
+  source review must check both this concern and the earlier stale-zero P2, not
+  assume a mid-flight instruction was consumed.
+
 - **User authorizes controlled source-first127 rollout before native task acceptance,
   ONLY after independent corrected-source review clears and a coordinated natural
   quiet boundary.** No settings change, proof-only turn, old-certificate reconstruction
