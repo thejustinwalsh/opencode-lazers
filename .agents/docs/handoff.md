@@ -6,11 +6,15 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ## Immediate order and ownership
 
-1. **Root scheduler repair is integrated:** source `bfdc6e1`, merge `cba6ab2`.
+1. **Root scheduler repair is integrated:** source `bfdc6e1`, merge `cba6ab2`; inference-settings follow-up
+   `39ea888`, merged `bae990e`.
    One process-shared deadline timer coordinates project reconciliation and lease
    heartbeats. Manual Task Start joins the elected runtime; failed lease claims
    no longer strand the running flag. **138 runtime tests / 2,544 assertions**
    and **15 coordinator tests / 50 assertions** pass; quality checks pass.
+   Per-location inference-settings polling also uses the shared timer, with one
+   shared authority read per polling interval. Merged coordinator/settings/feature/
+   self-review checks pass **30 tests / 145 assertions** and typecheck.
    Source reservations are released. The clean native worktree
    `/private/tmp/lazers-shared-scheduler` remains for independent review and
    non-forced native cleanup. Reuse `sharedScheduler.snapshot()` in diagnostics.

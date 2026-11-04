@@ -46,3 +46,18 @@ do not infer improvement from timer arithmetic or passing tests. Continue the
 reconstruction correction/diagnostics and investigate residual CPU independently.
 Computer Use explicitly reported locked before Root could deliver its commit
 handoff prompt. Native Architect and worker were still confirmed active.
+
+## Inference-settings follow-up
+
+Source `39ea888`, merge `bae990e`, removes the additional one-second interval
+created by each location's inference registration. Those jobs use the same shared
+timer, and their authority reads share an in-flight request/value for one polling
+interval. Feature authority, GPU jobs, enabled settings and scope-local tool/agent
+updates remain intact. Separate injected authorities remain separate.
+
+Merged verification: **30 tests / 145 assertions** across coordinator, settings
+read, feature-server and task-review suites; typecheck and diff checks pass.
+Independent 54-reader tests show one request per interval, retry after failure
+without presenting expired data as refreshed, and sharing across loader copies.
+This remains source/component proof. Native activation and CPU comparison are
+still pending; Computer Use again explicitly reported locked.
