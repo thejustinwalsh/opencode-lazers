@@ -143,8 +143,10 @@ function persistNativeIdle(
   binding: NativeIdleBinding,
   count: number,
   withSuccess = true,
+  executionStartSequence = 100,
+  eventID = "evt_terminal",
 ) {
-  const started = store.observeEvent(binding, "session.execution.started", 100)
+  const started = store.observeEvent(binding, "session.execution.started", executionStartSequence)
   if (started.status !== "changed") throw new Error("Expected fresh native execution start")
   const inputID = "msg_current_input"
   if (
@@ -153,8 +155,8 @@ function persistNativeIdle(
       {
         observedAt: 123,
         inputID,
-        executionStartSequence: 100,
-        eventSequence: 100,
+        executionStartSequence,
+        eventSequence: executionStartSequence,
         count,
         kinds: { shell: count, subagent: 0, image: 0 },
       },
@@ -163,12 +165,11 @@ function persistNativeIdle(
   )
     throw new Error("Expected genuine native idle report")
   if (!withSuccess) return undefined
-  const eventID = "evt_terminal"
   const messageID = SessionMessage.ID.fromEvent(eventID)
   const terminal = store.observeEvent(
     binding,
     "session.execution.succeeded",
-    101,
+    executionStartSequence + 1,
     eventID,
     messageID,
   )
@@ -178,7 +179,7 @@ function persistNativeIdle(
     !store.confirmSuccess(
       binding,
       inputID,
-      { sequence: 101, eventID, messageID },
+      { sequence: executionStartSequence + 1, eventID, messageID },
       terminal.revision,
     )
   )
@@ -1232,6 +1233,102 @@ test("fresh native reads confirm the separate pinned idle terminal marker after 
     ).toBe(true)
   } finally {
     fixture.close()
+  }
+})
+
+test("fresh revalidation requires the latest same-input execution's own idle certificate", async () => {
+  const now = DateTime.nowUnsafe()
+  const assistantA = {
+    id: "msg_assistant_execution_a",
+    type: "assistant",
+    time: { created: now, completed: now },
+    finish: "stop",
+    content: [],
+  }
+  const assistantB = {
+    id: "msg_assistant_execution_b",
+    type: "assistant",
+    time: { created: now, completed: now },
+    finish: "stop",
+    content: [],
+  }
+
+  const olderFixture = makeTrajectoryFixture()
+  try {
+    const store = new NativeIdleStore(olderFixture.repository)
+    const binding = store.assignmentForSession("ses-accepted")!
+    const olderTerminal = persistNativeIdle(store, binding, 0)!
+    const latestMessageID = SessionMessage.ID.fromEvent("evt_newer_terminal")
+    const messages = [
+      { id: "msg_current_input", type: "user", text: "Continue" },
+      assistantA,
+      {
+        id: olderTerminal.messageID,
+        type: "idle",
+        outcome: "succeeded",
+        time: { created: now },
+      },
+      assistantB,
+      {
+        id: latestMessageID,
+        type: "idle",
+        outcome: "succeeded",
+        time: { created: now },
+      },
+    ]
+    const result = await nativeRevalidationHost(olderFixture.repository, { messages }).host.session(
+      binding.sessionID,
+      { messages: true },
+    )
+
+    expect(latestMessageID).not.toBe(olderTerminal.messageID)
+    expect(result?.background).toMatchObject({
+      state: "unknown",
+      reason:
+        "Native zero-background idle evidence lacked the exact current successful idle marker",
+    })
+  } finally {
+    olderFixture.close()
+  }
+
+  const currentFixture = makeTrajectoryFixture()
+  try {
+    const store = new NativeIdleStore(currentFixture.repository)
+    const binding = store.assignmentForSession("ses-accepted")!
+    const currentTerminal = persistNativeIdle(store, binding, 0, true, 102, "evt_newer_terminal")!
+    const messages = [
+      { id: "msg_current_input", type: "user", text: "Continue" },
+      assistantA,
+      {
+        id: SessionMessage.ID.fromEvent("evt_terminal"),
+        type: "idle",
+        outcome: "succeeded",
+        time: { created: now },
+      },
+      assistantB,
+      {
+        id: currentTerminal.messageID,
+        type: "idle",
+        outcome: "succeeded",
+        time: { created: now },
+      },
+    ]
+    const result = await nativeRevalidationHost(currentFixture.repository, {
+      messages,
+    }).host.session(binding.sessionID, { messages: true })
+
+    expect(currentTerminal.messageID).toBe(SessionMessage.ID.fromEvent(currentTerminal.eventID))
+    expect(currentTerminal.messageID).not.toBe(assistantB.id)
+    expect(result?.background).toMatchObject({
+      state: "observed",
+      count: 0,
+      executionStartSequence: 102,
+      terminalSequence: 103,
+      terminalEventID: "evt_newer_terminal",
+      terminalMessageID: currentTerminal.messageID,
+    })
+  } finally {
+    currentFixture.close()
   }
 })
 

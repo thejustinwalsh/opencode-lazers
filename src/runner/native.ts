@@ -67,6 +67,7 @@ function hasLatestSuccessfulIdleMarker(
   const marker = messages[latestIdleIndex]
   if (
     marker?.type !== "idle" ||
+    marker.id !== terminal.messageID ||
     marker.outcome !== "succeeded" ||
     !DateTime.isDateTime(marker.time.created) ||
     !Number.isFinite(DateTime.toEpochMillis(marker.time.created))
