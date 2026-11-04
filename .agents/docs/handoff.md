@@ -28,6 +28,19 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   attempt`38e12d10-7fbf-4c3a-a442-cf5aae0121fd`, session
   `ses_42ac41f32a83465c8a71161d511ba045`. Do not substitute plan state for fresh
   native activity or repeatedly reconcile unchanged holds.
+- Root's actual bounded performance metadata at1793817944244–1793817946707 is
+  retained verbatim in [read-cost records](evidence/radar-read-cost-20261104.jsonl),
+  originally`/private/tmp/lazers-radar-read-cost-20261104.jsonl`: session Radar
+  **8211339bytes/868ms** plus lifecycle **2329629bytes/103ms/88plans**; project Radar
+  **8651662bytes/1363ms** plus lifecycle **2792796bytes/109ms/103plans**. Radar session
+  coverage101/project132, both **progressTruncated:true**. These sequential scoped
+  observations are not an atomic snapshot, CPU cause or matched battery comparison.
+  **Root owns performance-only`src/tasks/panel-state.ts` and its tests in an isolated
+  native worktree; do not overlap.** Root will not merge watched source while native
+  workers are active. Radar redesign remains review/mockups only, not implementation.
+  -127's later approval noticev8 was cleared on fresh1793817949995native ownership
+  check: original sessionforegroundactive, BOTHworker-location/sessionpermissions
+  empty,34tools. Reconcile requestedv9; no absent request answered or worker replaced.
 
 - Root's external quiet activation completed **1793812977491**, 1971ms,
   activeBefore=[], servicePID95968 unchanged, all six flags true, generation

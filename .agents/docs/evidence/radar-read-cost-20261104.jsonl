@@ -1,0 +1,4 @@
+{"at":1793817944244,"end":1793817944348,"scope":"session","method":"snapshot","elapsedMs":103,"responseBytes":2329629,"plans":88}
+{"at":1793817944355,"end":1793817945223,"scope":"session","method":"radar","elapsedMs":868,"responseBytes":8211339,"coverage":{"sessionCount":101,"managedSessionCount":101,"includeUnmanagedSessions":false,"inventoryTruncated":false,"workTruncated":false,"progressTruncated":true,"routeTruncated":false,"toolTruncated":false,"edgeTruncated":false}}
+{"at":1793817945232,"end":1793817945341,"scope":"project","method":"snapshot","elapsedMs":109,"responseBytes":2792796,"plans":103}
+{"at":1793817945344,"end":1793817946707,"scope":"project","method":"radar","elapsedMs":1363,"responseBytes":8651662,"coverage":{"sessionCount":132,"managedSessionCount":132,"includeUnmanagedSessions":false,"inventoryTruncated":false,"workTruncated":false,"progressTruncated":true,"routeTruncated":false,"toolTruncated":false,"edgeTruncated":false}}
