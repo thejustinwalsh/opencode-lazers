@@ -32,6 +32,14 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   no semantic pass claimed. Existing122 plan nowv5 waits for126 plus its original
   prerequisites. Send clarified policies and committed capture research as durable
   guidance at122dispatch. Unknown linkage is interim, not final Models delivery.
+  Candidate **bb26ab267863601338102747f99d3fc94539f29b** is source-cleared; independent
+  candidate **51tests/443assertions** and quality pass, clean/unchanged before-after.
+  No P1/P2 found; extra same-child/concurrent-replay/native-reassignment test gaps
+  noted, not a demonstrated defect or added gate. Nativev9 remains blocked on exact
+  success/idle execution mismatch, not acceptance. Exact native binding diagnosis
+  is in progress; preserve source and do not manufacture zero-background evidence.
+  [Prepared producer guidance](evidence/models-producer-guidance-20261104.md)
+  carries the concrete reader/capture/counting handoff; deliver durably at dispatch.
 - Original117 sameattempt completed marker-ID correction **f170a6b**; independent
   source review cleared actual A/IdleA→B/successfulIdleB regression. Nativev23 task
   accepted, all six checks pass; combined installed-native evidence remains open.
