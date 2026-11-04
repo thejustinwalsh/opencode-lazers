@@ -14,6 +14,11 @@ import {
   ModelGroupsOutputSchema,
   ModelGroupsReadInputSchema,
 } from "./model-group-schema.ts"
+import {
+  ModelPriceSourceSettingsSchema,
+  ModelPriceSourceUpdateSchema,
+  ModelPriceSourceWriteOutputSchema,
+} from "./price-source-settings.ts"
 
 const SessionID = z.string().min(1).max(200)
 
@@ -49,6 +54,11 @@ export const ModelGroupsRPCInputSchema = z.strictObject({
 export const ModelConfigurationsRPCInputSchema = z.strictObject({
   sessionID: SessionID,
   ...ModelConfigurationsReadInputSchema.shape,
+})
+export const ModelPriceSourceSettingsRPCInputSchema = z.strictObject({ sessionID: SessionID })
+export const ModelPriceSourceConfigureRPCInputSchema = z.strictObject({
+  sessionID: SessionID,
+  ...ModelPriceSourceUpdateSchema.shape,
 })
 
 export const ModelPersonaSettingsSchema = z.strictObject({
@@ -137,6 +147,14 @@ export const Models = Rpc.define({
     modelConfigurations: {
       input: ModelConfigurationsRPCInputSchema,
       output: ModelConfigurationsOutputSchema,
+    },
+    priceSources: {
+      input: ModelPriceSourceSettingsRPCInputSchema,
+      output: ModelPriceSourceSettingsSchema,
+    },
+    configurePriceSources: {
+      input: ModelPriceSourceConfigureRPCInputSchema,
+      output: ModelPriceSourceWriteOutputSchema,
     },
   },
 })

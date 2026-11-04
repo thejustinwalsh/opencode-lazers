@@ -25,6 +25,8 @@ type ModelRPC = {
   comparison(input: unknown): Effect.Effect<unknown, unknown>
   modelGroups(input: unknown): Effect.Effect<unknown, unknown>
   modelConfigurations(input: unknown): Effect.Effect<unknown, unknown>
+  priceSources(input: unknown): Effect.Effect<unknown, unknown>
+  configurePriceSources(input: unknown): Effect.Effect<unknown, unknown>
   refreshSources(input: unknown): Effect.Effect<unknown, unknown>
 }
 type NativeSession = {
@@ -92,6 +94,10 @@ function modelContext(options: {
   permissionCalls?: unknown[]
   permissionWait?: () => Effect.Effect<void>
   sourceAccessCalls?: { active: number; resolve: number }
+  sourceConnections?: Record<string, unknown>
+  sourceAccessFailure?: () => boolean
+  storage?: Map<string, unknown>
+  storageCalls?: { get: number; set: number }
 }) {
   let actor: NativeSession | null = options.actor ?? {
     id: "ses-native",
@@ -101,6 +107,9 @@ function modelContext(options: {
   }
   const permissionCalls = options.permissionCalls ?? []
   const sourceAccessCalls = options.sourceAccessCalls ?? { active: 0, resolve: 0 }
+  const sourceConnections = options.sourceConnections ?? {}
+  const storage = options.storage ?? new Map<string, unknown>()
+  const storageCalls = options.storageCalls ?? { get: 0, set: 0 }
   const modelListCalls = { count: 0 }
   const server: ModelRPC = {
     settings: () => Effect.die(new Error("RPC not registered")),
@@ -110,6 +119,8 @@ function modelContext(options: {
     comparison: () => Effect.die(new Error("RPC not registered")),
     modelGroups: () => Effect.die(new Error("RPC not registered")),
     modelConfigurations: () => Effect.die(new Error("RPC not registered")),
+    priceSources: () => Effect.die(new Error("RPC not registered")),
+    configurePriceSources: () => Effect.die(new Error("RPC not registered")),
     refreshSources: () => Effect.die(new Error("RPC not registered")),
   }
   let registered: ModelRPC | undefined
@@ -148,15 +159,31 @@ function modelContext(options: {
     },
     integration: {
       connection: {
-        active: () => {
+        active: (integrationID: string) => {
           sourceAccessCalls.active += 1
-          return Effect.succeed(undefined)
+          if (options.sourceAccessFailure?.())
+            return Effect.fail(new Error("provider metadata contained secret credential-value"))
+          return Effect.succeed(sourceConnections[integrationID] as never)
         },
         resolve: () => {
           sourceAccessCalls.resolve += 1
           return Effect.succeed(undefined)
         },
       },
+    },
+    storage: {
+      get: (key: string) => {
+        storageCalls.get += 1
+        return Effect.succeed(storage.get(key))
+      },
+      set: (key: string, value: unknown) => {
+        storageCalls.set += 1
+        return Effect.sync(() => {
+          storage.set(key, value)
+        })
+      },
+      remove: () => Effect.void,
+      scan: () => Effect.succeed({ entries: [] }),
     },
     agent: { get: () => Effect.succeed({ data: { model: null } }) },
   }
@@ -170,6 +197,8 @@ function modelContext(options: {
     permissionCalls,
     sourceAccessCalls,
     modelListCalls,
+    storage,
+    storageCalls,
   }
 }
 
@@ -585,6 +614,253 @@ test("RPC validates live native session and permission before any settings acces
       "desktop-settings-user",
     ])
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("price-source settings persist an ordered whole-model policy without changing model routes or exposing credentials", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const storage = new Map<string, unknown>()
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const sourceConnections = {
+    openrouter: { id: "credential-record", label: "secret credential-value" },
+    opencode: {
+      id: "another-credential-record",
+      status: { status: "needs_auth", message: "secret credential-value" },
+    },
+  }
+  const harness = await register(repository, {
+    storage,
+    sourceConnections,
+    sourceAccessCalls,
+  })
+  repository.close()
+  const methods = harness.methods()
+
+  try {
+    const initial = await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" }))
+    expect(initial).toMatchObject({
+      policy: {
+        schemaVersion: 1,
+        revision: 0,
+        sources: ["openrouter", "opencode"],
+        fallback: "whole-model",
+      },
+      access: { openrouter: "configured", opencode: "reauthentication-required" },
+    })
+    expect(JSON.stringify(initial)).not.toContain("credential")
+    expect(sourceAccessCalls).toEqual({ active: 2, resolve: 0 })
+    expect(harness.modelListCalls.count).toBe(0)
+
+    const route = { providerID: "openai", id: "gpt-6", variant: "high" }
+    expect(
+      await Effect.runPromise(
+        methods.configure({
+          sessionID: "ses-native",
+          target: { scope: "project" },
+          persona: "systems",
+          expectedRevision: 0,
+          route,
+        }),
+      ),
+    ).toMatchObject({ status: "updated", mapping: { route } })
+
+    expect(
+      await Effect.runPromise(
+        methods.configurePriceSources({
+          sessionID: "ses-native",
+          expectedRevision: 0,
+          sources: ["opencode", "openrouter"],
+        }),
+      ),
+    ).toMatchObject({
+      status: "updated",
+      policy: { revision: 1, sources: ["opencode", "openrouter"], fallback: "whole-model" },
+    })
+    expect(
+      await Effect.runPromise(
+        methods.configurePriceSources({
+          sessionID: "ses-native",
+          expectedRevision: 1,
+          sources: ["opencode"],
+        }),
+      ),
+    ).toMatchObject({ status: "updated", policy: { revision: 2, sources: ["opencode"] } })
+
+    const stale = await Effect.runPromise(
+      methods.configurePriceSources({
+        sessionID: "ses-native",
+        expectedRevision: 0,
+        sources: ["openrouter"],
+      }),
+    )
+    expect(stale).toMatchObject({
+      status: "conflict",
+      expectedRevision: 0,
+      currentRevision: 2,
+      current: { sources: ["opencode"] },
+    })
+    expect(harness.storageCalls.set).toBe(2)
+    expect(
+      [...storage.values()].every((value) => !JSON.stringify(value).includes("credential")),
+    ).toBe(true)
+
+    const settings = (await Effect.runPromise(methods.settings({ sessionID: "ses-native" }))) as {
+      personas: Array<{ persona: string; layers: { project: { route: unknown } | null } }>
+    }
+    expect(
+      settings.personas.find(({ persona }) => persona === "systems")?.layers.project,
+    ).toMatchObject({ route })
+
+    const reopenedRepository = new TaskRepository(path, projectDirectory)
+    const reopened = await register(reopenedRepository, { storage, sourceConnections })
+    reopenedRepository.close()
+    expect(
+      await Effect.runPromise(reopened.methods().priceSources({ sessionID: "ses-native" })),
+    ).toMatchObject({ policy: { revision: 2, sources: ["opencode"] } })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("price-source RPCs authorize the live project session before storage or host metadata access", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const storageCalls = { get: 0, set: 0 }
+  const storage = new Map<string, unknown>()
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const permissionCalls: unknown[] = []
+  let denied = false
+  const harness = await register(repository, {
+    denied: () => denied,
+    permissionCalls,
+    sourceAccessCalls,
+    storage,
+    storageCalls,
+  })
+  repository.close()
+  const methods = harness.methods()
+  const read = () => methods.priceSources({ sessionID: "ses-native" })
+  const write = () =>
+    methods.configurePriceSources({
+      sessionID: "ses-native",
+      expectedRevision: 0,
+      sources: ["opencode"],
+    })
+
+  try {
+    for (const invalidActor of [
+      null,
+      { id: "ses-native", projectID, agent: "desktop-settings-user", time: { archived: 10 } },
+      { id: "ses-native", projectID: "foreign-project", agent: "desktop-settings-user", time: {} },
+    ]) {
+      harness.setActor(invalidActor)
+      expect(await rejects(read())).toBeInstanceOf(Error)
+      expect(await rejects(write())).toBeInstanceOf(Error)
+    }
+
+    harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
+    denied = true
+    expect(await rejects(read())).toMatchObject({ message: "native permission denied" })
+    expect(await rejects(write())).toMatchObject({ message: "native permission denied" })
+    expect(storageCalls).toEqual({ get: 0, set: 0 })
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+
+    denied = false
+    expect(await Effect.runPromise(write())).toMatchObject({
+      status: "updated",
+      policy: { revision: 1 },
+    })
+    expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
+      "lz-get-model-settings",
+      "lz-configure-models",
+      "lz-configure-models",
+    ])
+    expect(permissionCalls.slice(-1)[0]).toMatchObject({
+      resources: [projectDirectory],
+      action: "lz-configure-models",
+    })
+    expect(harness.storageCalls.set).toBe(1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("price-source access reports uncertainty from host metadata without leaking provider errors", async () => {
+  const root = directory()
+  const repository = new TaskRepository(join(root, "tasks.sqlite"), projectDirectory)
+  const harness = await register(repository, {
+    sourceAccessFailure: () => true,
+  })
+  repository.close()
+
+  try {
+    const output = await Effect.runPromise(
+      harness.methods().priceSources({ sessionID: "ses-native" }),
+    )
+    expect(output).toMatchObject({
+      access: { openrouter: "unknown", opencode: "unknown" },
+      policy: { sources: ["openrouter", "opencode"] },
+    })
+    expect(JSON.stringify(output)).not.toContain("credential-value")
+    expect(harness.sourceAccessCalls).toEqual({ active: 2, resolve: 0 })
+    expect(harness.modelListCalls.count).toBe(0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("cancelled price-source write cannot persist after a late native permission grant", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let grant!: () => void
+  let interrupted = false
+  const storage = new Map<string, unknown>()
+  const storageCalls = { get: 0, set: 0 }
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const harness = await register(repository, {
+    permissionWait: () =>
+      Effect.callback<void>((resume) => {
+        grant = () => resume(Effect.void)
+        enter()
+        return Effect.sync(() => {
+          interrupted = true
+        })
+      }),
+    sourceAccessCalls,
+    storage,
+    storageCalls,
+  })
+  repository.close()
+  const controller = new AbortController()
+  const pending = Effect.runPromiseExit(
+    harness.methods().configurePriceSources({
+      sessionID: "ses-native",
+      expectedRevision: 0,
+      sources: ["opencode"],
+    }),
+    { signal: controller.signal },
+  )
+  try {
+    await entered
+    controller.abort()
+    await pending
+    grant()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(storageCalls).toEqual({ get: 0, set: 0 })
+    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect([...storage.values()]).toEqual([])
+    expect(interrupted).toBe(true)
+  } finally {
+    grant?.()
     rmSync(root, { recursive: true, force: true })
   }
 })
