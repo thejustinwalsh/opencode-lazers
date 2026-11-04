@@ -74,5 +74,8 @@ but retains this lifecycle P1. Exact corrected-candidate references:
 `source-quarantine.ts:20–22,79–84`. The reopen test manually reinstalls the guard
 (`runtime.test.ts:827`), so it does not cover empty-registry recovery. Architect
 independently inspected the frozen pending-selection and guard-precondition paths.
-The second original review remains pending. No new worker or replacement recovery
-task is assigned. Root/Astra coordination is required before eventual installation.
+The second original reviewer also confirms all three repairs and the same remaining
+lifecycle P1, adding the overlapping admission consequence at `runtime.ts:2515–2542`
+and scoped registration disposal at `roles.ts:87–89`. Both reviews are complete.
+No new worker or replacement recovery task is assigned. Root/Astra coordination is
+required before eventual installation; this candidate remains offline.

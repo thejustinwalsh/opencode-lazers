@@ -1,5 +1,24 @@
 # Independent bootstrap review — cb6d447
 
+## Corrected candidate follow-up — 79ceb78
+
+Both original reviewers independently rechecked exact clean
+`79ceb78c063b49381c5a61c56029c3c2b6758295`. **All three original repair areas are
+source-addressed.** Actual dedicated archival is at `native.ts:703–764`, explicit
+clear controls at `543–546`, and physical hard denial before logical scope admission
+at `runtime.ts:3165–3170` / `source-quarantine.ts:23–28`.
+
+One independent unchanged/clean run passed **189 tests / 2,974 assertions**, plus
+formatter, lint, typecheck and diff checks. Neither reviewer ran additional tests.
+**Still not source-clear:** both identify the same remaining lifecycle P1. Restart
+or explicit location invalidation can remove the old guard, while initial/pending
+recovery requires it before demand-loading and sealed rows never recover it.
+Archive does not itself unload. See the
+[lifecycle assessment and minimal current-runtime capability proposal](retained-source-guard-lifecycle-20261104.md).
+No activation, Root-tree edit, uncertain-effect settlement or resource release.
+
+## Original frozen candidate findings
+
 **Not source-clear. Do not activate.** Reviewed exact clean
 `cb6d447b9830184da6425439fe75fc7ea014048f` in Root's isolated bootstrap tree.
 Two read-only reviewers examined native fencing and durable admission/replay;

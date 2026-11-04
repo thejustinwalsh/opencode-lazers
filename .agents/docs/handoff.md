@@ -8,6 +8,12 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Both original79ceb78 reviews complete:** all three original P1 repair areas
+  source-addressed, with the same remaining guard-lifecycle P1 confirmed by both.
+  [Corrected-candidate review](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  189/2974 plus quality are genuine passing checks, not whole-route proof. Root owns
+  the focused exact-location current-runtime enforcement repair; no activation,
+  replacement worker/engine, source fencing waiver or old resource-hold release.
 - **79ceb78 independent checks complete; lifecycle P1 remains:** the single exact
   candidate run passed **189tests/2974assertions**, formatter/lint/typecheck/diff,
   unchanged/clean. Original native reviewer confirms authoritative clear controls
