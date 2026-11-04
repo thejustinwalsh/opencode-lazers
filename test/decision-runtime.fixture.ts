@@ -6,6 +6,7 @@ import { ExclusiveModels, retryLoad } from "../src/webgpu/lifecycle.ts"
 import { ModelLease } from "../src/webgpu/lease.ts"
 import { LocalInference } from "../src/webgpu/rpc.ts"
 import type { DecisionRuntime } from "../src/webgpu/decision-runtime.ts"
+import type { SystemOneInput } from "../src/webgpu/system-one.ts"
 
 const contents = new Map([
   ["decoder", new Uint8Array([1])],
@@ -15,6 +16,8 @@ const contents = new Map([
   ["calibration", new TextEncoder().encode('{"default":1}')],
 ])
 const decisionFiles = [...contents].map(([id, bytes]) => ({ id, bytes: bytes.length }))
+let targetInputTokens = 1
+let targetQuestionCount = 1
 mock.module("../src/webgpu/manifest.ts", () => ({
   DECISION_FILES: decisionFiles,
   DECISION_BYTES: decisionFiles.reduce((sum, file) => sum + file.bytes, 0),
@@ -35,6 +38,10 @@ class TestTokenizer {
   }
 
   encode(text: string) {
+    if (text.startsWith("<|startoftext|>"))
+      return { ids: Array.from({ length: targetInputTokens - targetQuestionCount + 1 }, () => 1) }
+    if (text.startsWith("QUESTION:\n")) return { ids: [1] }
+    if (text.includes("<|im_end|>")) return { ids: [] }
     return { ids: text ? [1] : [] }
   }
 }
@@ -49,7 +56,14 @@ mock.module("../src/webgpu/system-one.ts", () => ({
 
 let releaseFailure: Error | undefined
 let deviceFailure: Error | undefined
-const counts = { deviceRequests: 0, destroys: 0, creates: 0, releases: 0 }
+const counts = {
+  deviceRequests: 0,
+  destroys: 0,
+  creates: 0,
+  releases: 0,
+  tensorCreates: 0,
+  runs: 0,
+}
 const reset = () => {
   releaseFailure = undefined
   deviceFailure = undefined
@@ -57,14 +71,36 @@ const reset = () => {
   counts.destroys = 0
   counts.creates = 0
   counts.releases = 0
+  counts.tensorCreates = 0
+  counts.runs = 0
+}
+
+class TestTensor {
+  constructor(
+    readonly type: string,
+    readonly data: BigInt64Array | Float32Array,
+    readonly dims: number[],
+  ) {
+    counts.tensorCreates++
+  }
+
+  dispose() {}
 }
 
 mock.module("onnxruntime-web/webgpu", () => ({
   env: { wasm: {} },
+  Tensor: TestTensor,
   InferenceSession: {
     create: async () => {
       counts.creates++
       return {
+        run: async (feeds: { slot_positions: TestTensor }) => {
+          counts.runs++
+          const rows = feeds.slot_positions.dims[0]!
+          return {
+            logits: new TestTensor("float32", new Float32Array(rows * 128_000), [rows, 128_000]),
+          }
+        },
         release: async () => {
           counts.releases++
           if (releaseFailure) throw releaseFailure
@@ -356,9 +392,57 @@ const failedRuntimeLoadRetainsTheMainOwnershipLease = async () => {
   }
 }
 
+const actualTokenCapacityGuardsBeforeTensorAllocationAndRun = async () => {
+  reset()
+  targetQuestionCount = 14
+  targetInputTokens = 8_192
+  const controller = new AbortController()
+  const decision = await load(controller.signal)
+  const stateTextLength = 7_026 - JSON.stringify({ payload: "" }).length
+  const state = { payload: "x".repeat(stateTextLength) }
+  assert.equal(JSON.stringify(state).length, 7_026)
+  const questions: SystemOneInput["questions"] = Object.fromEntries(
+    Array.from({ length: 14 }, (_, index) => [
+      `check-${index}`,
+      { type: "noul" as const, instructions: `Question ${index}: Is the behavior preserved?` },
+    ]),
+  )
+  const input: SystemOneInput = {
+    model: "d1-omni-2b",
+    state,
+    questions,
+    timeoutMs: 60_000,
+  }
+  assert.ok(JSON.stringify(input).length > 8_000)
+
+  const accepted = await decision.systemOne(input, controller.signal)
+  assert.equal(accepted.usage.input_tokens, 8_192)
+  assert.deepEqual(Object.keys(accepted.answers), Object.keys(questions))
+  assert.equal(counts.runs, 1)
+  const allocations = counts.tensorCreates
+
+  targetInputTokens = 8_193
+  await assert.rejects(
+    decision.systemOne(input, controller.signal),
+    (error: Error & { name?: string; required?: number; capacity?: number }) => {
+      assert.equal(error.name, "ContextOverflowError")
+      assert.equal(error.required, 8_193)
+      assert.equal(error.capacity, 8_192)
+      assert.match(error.message, /input was not truncated/)
+      return true
+    },
+  )
+  assert.equal(counts.tensorCreates, allocations, "overflow must fail before tensor allocation")
+  assert.equal(counts.runs, 1, "overflow must fail before session.run")
+  await decision.dispose()
+  targetInputTokens = 1
+  targetQuestionCount = 1
+}
+
 await residentReleaseBarrier()
 await failedLoadBarrier(true)
 await failedLoadBarrier(false)
 await healthyCancellationAllowsExplicitReload()
 await failedRuntimeLoadRetainsTheMainOwnershipLease()
-console.log("decision cleanup fault injection passed")
+await actualTokenCapacityGuardsBeforeTensorAllocationAndRun()
+console.log("decision cleanup fault injection and context capacity checks passed")

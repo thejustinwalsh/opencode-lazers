@@ -115,3 +115,42 @@ test("a cold request queues before renderer attachment and wakes on demand", asy
   expect(broker.demand().requested).toBe(false)
   broker.close()
 })
+
+test("System One uses its bounded transport envelope without widening ordinary chat", async () => {
+  const broker = new InferenceBroker()
+  broker.attach("window")
+  const payload = JSON.stringify({
+    model: "d1-omni-2b",
+    state: { shared: "x".repeat(7_026) },
+    questions: Object.fromEntries(
+      Array.from({ length: 14 }, (_, index) => [
+        `check-${index}`,
+        { type: "noul", instructions: `Question ${index}: Is the recorded behavior preserved?` },
+      ]),
+    ),
+    timeoutMs: 60_000,
+  })
+  expect(payload.length).toBeGreaterThan(8_000)
+  expect(payload.length).toBeLessThanOrEqual(64_000)
+  const waiting = broker.generate(
+    { ...request(payload), mode: "systemone" },
+    new AbortController().signal,
+  )
+  const job = broker.poll("window").job!
+  expect(job.mode).toBe("systemone")
+  expect(job.prompt).toBe(payload)
+  broker.complete("window", job.id, result("one complete result"))
+  expect((await waiting).text).toBe("one complete result")
+
+  const oversized = await broker.generate(
+    { ...request("x".repeat(64_001)), mode: "systemone" },
+    new AbortController().signal,
+  )
+  expect(oversized.error).toContain("System One transport payload")
+  const oversizedChat = await broker.generate(
+    request("x".repeat(8_001)),
+    new AbortController().signal,
+  )
+  expect(oversizedChat.error).toContain("experiment limits")
+  broker.close()
+})

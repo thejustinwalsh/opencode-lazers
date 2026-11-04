@@ -1,6 +1,7 @@
 import type { InferenceJob, InferenceRequest, InferenceResult } from "./rpc.ts"
 import { DEFAULT_VOICE } from "./speech.ts"
 import type { SpeechVoice } from "./speech.ts"
+import { SYSTEM_ONE_TRANSPORT_MAX_CHARS } from "./system-one.ts"
 
 export const failed = (error: string): InferenceResult => ({
   ok: false,
@@ -98,9 +99,10 @@ export class InferenceBroker {
     this.expire()
     if (this.queue.length + Number(Boolean(this.pending)) >= 8)
       return Promise.resolve(failed("Local inference queue is full (8 requests)"))
+    const promptLimit = request.mode === "systemone" ? SYSTEM_ONE_TRANSPORT_MAX_CHARS : 8_000
     if (
       !request.prompt.trim() ||
-      request.prompt.length > 8_000 ||
+      request.prompt.length > promptLimit ||
       !Number.isInteger(request.maxTokens) ||
       request.maxTokens < 1 ||
       request.maxTokens > 512 ||
@@ -108,7 +110,13 @@ export class InferenceBroker {
       request.timeoutMs < 1_000 ||
       request.timeoutMs > 120_000
     )
-      return Promise.resolve(failed("Inference request exceeds the experiment limits"))
+      return Promise.resolve(
+        failed(
+          request.mode === "systemone" && request.prompt.length > promptLimit
+            ? `System One transport payload exceeds ${SYSTEM_ONE_TRANSPORT_MAX_CHARS} characters`
+            : "Inference request exceeds the experiment limits",
+        ),
+      )
     if (signal.aborted) return Promise.resolve(failed("Inference cancelled"))
     return new Promise((resolve) => {
       let settled = false

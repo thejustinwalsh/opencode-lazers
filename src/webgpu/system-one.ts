@@ -1,5 +1,8 @@
 import { z } from "zod"
 
+/** Serialized System One RPC envelope bound; this is not the model's token context capacity. */
+export const SYSTEM_ONE_TRANSPORT_MAX_CHARS = 64_000
+
 const content = z.union([z.string(), z.record(z.string(), z.json()), z.array(z.json())])
 const question = z.discriminatedUnion("type", [
   z.strictObject({
@@ -36,8 +39,8 @@ export const SystemOneRequest = z
     timeoutMs: z.int().min(1_000).max(120_000).default(60_000),
   })
   .refine(
-    (value) => JSON.stringify(value).length <= 8_000,
-    "Decision request exceeds 8,000 characters",
+    (value) => JSON.stringify(value).length <= SYSTEM_ONE_TRANSPORT_MAX_CHARS,
+    `System One serialized transport envelope exceeds ${SYSTEM_ONE_TRANSPORT_MAX_CHARS} characters`,
   )
 export type SystemOneInput = z.input<typeof SystemOneRequest>
 export type SystemOneQuestion = z.infer<typeof question>

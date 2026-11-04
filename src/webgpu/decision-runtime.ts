@@ -19,6 +19,8 @@ import { isOrtWebGpuDeviceLoss } from "./decision-loss.ts"
 
 type DecisionTrace = (stage: TraceStage, mark?: InferenceTraceMark) => Promise<void>
 
+export const DECISION_CONTEXT_CAPACITY_TOKENS = 8_192
+
 export async function loadDecisionRuntime(
   read: (id: string, offset: number, length: number) => Promise<string>,
   signal: AbortSignal,
@@ -172,14 +174,20 @@ export async function loadDecisionRuntime(
       }
       await trace?.("inputs-ready", {
         actualInputTokens: ids.length,
-        contextCapacityTokens: 8_192,
+        contextCapacityTokens: DECISION_CONTEXT_CAPACITY_TOKENS,
         inputShape: [1, ids.length],
         questionCount: entries.length,
       })
-      if (ids.length > 8_192)
+      if (ids.length > DECISION_CONTEXT_CAPACITY_TOKENS)
         throw Object.assign(
-          new Error("Decision context exceeds 8,192 tokens; input was not truncated"),
-          { name: "ContextOverflowError", required: ids.length, capacity: 8_192 },
+          new Error(
+            `Decision context exceeds ${DECISION_CONTEXT_CAPACITY_TOKENS.toLocaleString("en-US")} tokens; input was not truncated`,
+          ),
+          {
+            name: "ContextOverflowError",
+            required: ids.length,
+            capacity: DECISION_CONTEXT_CAPACITY_TOKENS,
+          },
         )
       return withResources(async (own) => {
         const int64 = (values: number[], dims: number[]) =>
