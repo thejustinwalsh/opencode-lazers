@@ -8,6 +8,16 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Root bootstrap implementation is active; reserve its paths:** native worktree
+  `/private/tmp/lazers-retained-bootstrap`, branch`feat/retained-source-bootstrap`,
+  base7828387. Root reports first native before-tool guard/additive storage present,
+  32role/native tests and typecheck passing; command/admission wiring is **unfinished**,
+  so no control is installed or usable yet. Current edits cover runner inspection,
+  native tests, roles/tests, runtime/tests, schema, store, tools and the new
+  `source-quarantine.ts`, plus Root's untracked design plan. Do not edit/duplicate,
+  stash, overwrite or certify this in-flight tree. No observability edits or live
+  activation are assigned. Reconcile held Tasks/Radar specs against the final handoff;
+  preserve existing57→58,72effects/holds and88integration prerequisite meanwhile.
 - **Reviewed110/130 task sources landed and built:** Root cleared the quiet window;
   main **a2182239423f533603d7b40ddcd1bd4e3888e73d** preserves both accepted candidate
   ancestries. Merged **36tests/344assertions** and quality passed. Task-only native
