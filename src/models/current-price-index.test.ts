@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AccountingAttempt, AccountingRoute } from "../trajectory/accounting.ts"
 import captured from "../../test/models-current-price-index/fixtures/captured-catalogs.json" with { type: "json" }
+import gpt52Quote from "../../test/models-current-price-index/fixtures/gpt-5.2-openrouter-quote.json" with { type: "json" }
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import type { ModelEvidenceSnapshot } from "./source-schema.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
@@ -25,6 +26,49 @@ function fixtureSnapshots(): FixtureSnapshots {
   if (native.source !== "native-catalog" || openrouter.source !== "openrouter-models")
     throw new Error("Current price index fixture has an unexpected source")
   return { native, openrouter }
+}
+
+function addGpt52Snapshots(snapshots: FixtureSnapshots) {
+  snapshots.native.records.push({
+    kind: "native-model",
+    providerID: "openai",
+    id: "gpt-5.2",
+    name: "GPT-5.2",
+    enabled: true,
+    type: "language",
+    contextTokens: 400_000,
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: null,
+    prices: null,
+  })
+
+  while (snapshots.openrouter.records.length < 268) {
+    const recordIndex = snapshots.openrouter.records.length
+    snapshots.openrouter.records.push({
+      kind: "openrouter-model",
+      id: `fixture/record-index-${recordIndex}`,
+      canonicalSlug: null,
+      name: null,
+      contextLength: null,
+      architecture: {
+        modality: null,
+        inputModalities: null,
+        outputModalities: null,
+        tokenizer: null,
+        instructType: null,
+      },
+      supportedParameters: null,
+      prices: null,
+    })
+  }
+
+  const quoteSnapshot = ModelEvidenceSnapshotSchema.parse({
+    ...snapshots.openrouter,
+    records: [gpt52Quote],
+  })
+  if (quoteSnapshot.source !== "openrouter-models")
+    throw new Error("Expected OpenRouter GPT-5.2 quote fixture")
+  snapshots.openrouter.records.push(quoteSnapshot.records[0]!)
 }
 
 function makeHarness(
@@ -109,7 +153,16 @@ function build(
   })
 }
 
-function valuationAttempt(route: AccountingRoute): AccountingAttempt {
+function valuationAttempt(
+  route: AccountingRoute,
+  sessionUsage: Record<string, unknown> = {
+    input: 1_000,
+    output: 100,
+    reasoning: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  },
+): AccountingAttempt {
   return {
     id: "attempt-price-index",
     sessionID: "session-price-index",
@@ -126,26 +179,34 @@ function valuationAttempt(route: AccountingRoute): AccountingAttempt {
     contextStatus: "available",
     currentRoute: route,
     currentRouteObservedAt: 1_000,
-    sessionUsage: {
-      input: 1_000,
-      output: 100,
-      reasoning: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
+    sessionUsage,
     sessionUsageObservedAt: 1_000,
     stepRoutes: [],
   }
 }
 
-function value(index: CurrentPriceIndex, route: AccountingRoute) {
+function value(
+  index: CurrentPriceIndex,
+  route: AccountingRoute,
+  attempt = valuationAttempt(route),
+) {
   return projectTaskValuation({
-    attempts: [valuationAttempt(route)],
+    attempts: [attempt],
     progressFacts: [],
     progressTruncated: false,
     truncatedContextSessionIDs: [],
     currentIndex: index,
   })
+}
+
+function completeZeroUsage(): NonNullable<CurrentPriceApplicability["usage"]> {
+  return {
+    uncachedInput: { value: 0, status: "observed" },
+    output: { value: 0, status: "observed" },
+    reasoning: { value: 0, status: "observed" },
+    cacheRead: { value: 0, status: "observed" },
+    cacheWrite: { value: 0, status: "observed" },
+  }
 }
 
 test("builds schema-valid pins from cached whole catalogs and values fixture usage exactly", () => {
@@ -199,6 +260,90 @@ test("builds schema-valid pins from cached whole catalogs and values fixture usa
     })
     expect(result.reportedWorkerCost.valueUSD).toBe(0.22)
     expect(settings).toEqual(settingsBefore)
+  } finally {
+    harness.close()
+  }
+})
+
+test("observed category completeness values the captured GPT-5.2 quote without inventing cache-write price", () => {
+  const harness = makeHarness(addGpt52Snapshots)
+  try {
+    const route: AccountingRoute = {
+      providerID: "openai",
+      modelID: "gpt-5.2",
+      variant: null,
+    }
+    const usage = {
+      ...completeZeroUsage(),
+      uncachedInput: { value: 1_000, status: "observed" as const },
+      output: { value: 100, status: "observed" as const },
+      cacheRead: { value: 200, status: "observed" as const },
+    }
+    const index = build(harness, [observation("gpt-5.2", { usage })], priceSources(["openrouter"]))
+    expect(CurrentPriceIndexSchema.parse(index)).toEqual(index)
+    expect(index.pins).toHaveLength(1)
+    expect(index.pins[0]).toMatchObject({
+      route,
+      semantics: "average",
+      resolution: {
+        route: "resolved",
+        sku: "resolved",
+        configuration: "resolved",
+        tier: "resolved",
+        schedule: "not-applicable",
+      },
+      rates: {
+        unit: "USD per token",
+        uncachedInput: "0.00000175",
+        completion: "0.000014",
+        cacheRead: "0.000000175",
+        cacheWrite: null,
+      },
+      provenance: {
+        source: "openrouter-models",
+        generation: 1,
+        retrievedAt: "2026-11-04T11:00:00.000Z",
+        asOf: null,
+        sourceURL: "https://openrouter.ai/api/v1/models",
+        recordIndex: 268,
+        recordID: "openai/gpt-5.2",
+      },
+    })
+    expect(index.pins[0]?.provenance.snapshotID).toMatch(/^[0-9a-f-]{36}$/)
+
+    const result = value(
+      index,
+      route,
+      valuationAttempt(route, {
+        input: 1_000,
+        output: 100,
+        reasoning: 0,
+        cacheRead: 200,
+        cacheWrite: 0,
+      }),
+    )
+    expect(result.marketEquivalentCost.valueUSD).toBe(0.003185)
+    expect(result.marketEquivalentCost.status).toBe("observed")
+    expect(result.usage.sessions[0]?.categories).toMatchObject({
+      uncachedInput: { value: 1_000, status: "observed" },
+      output: { value: 100, status: "observed" },
+      reasoning: { value: 0, status: "observed" },
+      cacheRead: { value: 200, status: "observed" },
+      cacheWrite: { value: 0, status: "observed" },
+    })
+    expect(result.marketEquivalentCost.sessions[0]?.categories.cacheWrite).toMatchObject({
+      tokens: 0,
+      valueUSD: 0,
+      status: "zero-usage",
+    })
+    expect(result.reportedWorkerCost.valueUSD).toBe(0.22)
+
+    const unknownCacheWrite = build(harness, [
+      observation("gpt-5.2", {
+        usage: { ...usage, cacheWrite: { value: null, status: "missing" } },
+      }),
+    ])
+    expect(unknownCacheWrite.pins).toEqual([])
   } finally {
     harness.close()
   }
@@ -380,6 +525,135 @@ test("missing rates stay unknown while supported published zero remains a real q
   }
 })
 
+test("positive, unknown, and partial-zero categories require their whole-source rate", () => {
+  const rateCases = [
+    {
+      openrouter: "prompt",
+      opencode: "input",
+      rate: "uncachedInput",
+      categories: ["uncachedInput"],
+    },
+    {
+      openrouter: "completion",
+      opencode: "output",
+      rate: "completion",
+      categories: ["output", "reasoning"],
+    },
+    {
+      openrouter: "inputCacheRead",
+      opencode: "cacheRead",
+      rate: "cacheRead",
+      categories: ["cacheRead"],
+    },
+    {
+      openrouter: "inputCacheWrite",
+      opencode: "cacheWrite",
+      rate: "cacheWrite",
+      categories: ["cacheWrite"],
+    },
+  ] as const
+  const incompleteUsage = [
+    { value: 1, status: "observed" as const },
+    { value: null, status: "missing" as const },
+    { value: 0, status: "partial" as const },
+  ]
+
+  for (const source of ["openrouter", "opencode"] as const) {
+    for (const rateCase of rateCases) {
+      const harness = makeHarness((snapshots) => {
+        if (source === "openrouter") {
+          const record = snapshots.openrouter.records.find(
+            (candidate) => candidate.id === "openai/fixture-model",
+          )
+          if (record?.kind !== "openrouter-model" || !record.prices)
+            throw new Error("Expected priced OpenRouter fixture")
+          record.prices.tiers[0]![rateCase.openrouter] = null
+        } else {
+          const record = snapshots.native.records.find(
+            (candidate) => candidate.id === "fixture-model",
+          )
+          if (record?.kind !== "native-model" || !record.prices)
+            throw new Error("Expected priced native fixture")
+          record.prices.tiers[0]![rateCase.opencode] = null
+        }
+      })
+      try {
+        const settings = priceSources([source])
+        for (const category of rateCase.categories) {
+          for (const evidence of incompleteUsage) {
+            const usage: NonNullable<CurrentPriceApplicability["usage"]> = {
+              ...completeZeroUsage(),
+              [category]: evidence,
+            }
+            expect(
+              build(harness, [observation("fixture-model", { usage })], settings).pins,
+            ).toEqual([])
+          }
+        }
+
+        expect(build(harness, [observation("fixture-model")], settings).pins).toEqual([])
+        const allZero = build(
+          harness,
+          [observation("fixture-model", { usage: completeZeroUsage() })],
+          settings,
+        )
+        expect(allZero.pins[0]?.rates[rateCase.rate]).toBeNull()
+      } finally {
+        harness.close()
+      }
+    }
+  }
+})
+
+test("duplicate route selectors merge usage conservatively without treating amounts as selector conflicts", () => {
+  const harness = makeHarness((snapshots) => {
+    const record = snapshots.openrouter.records.find(
+      (candidate) => candidate.id === "openai/fallback-model",
+    )
+    if (record?.kind !== "openrouter-model" || !record.prices)
+      throw new Error("Expected priced OpenRouter fallback fixture")
+    record.prices.tiers[0]!.inputCacheWrite = null
+  })
+  try {
+    const route = "fallback-model"
+    const firstUsage = {
+      ...completeZeroUsage(),
+      uncachedInput: { value: 100, status: "observed" as const },
+    }
+    const secondUsage = {
+      ...completeZeroUsage(),
+      uncachedInput: { value: 200, status: "observed" as const },
+    }
+    const observations = [
+      observation(route, { usage: firstUsage }),
+      observation(route, { usage: secondUsage }),
+    ]
+    const openRouterOnly = priceSources(["openrouter"])
+    const amountsDiffer = build(harness, observations, openRouterOnly)
+    expect(amountsDiffer.pins).toHaveLength(1)
+    expect(build(harness, [...observations].reverse(), openRouterOnly).indexID).toBe(
+      amountsDiffer.indexID,
+    )
+
+    const incompleteZero = {
+      ...completeZeroUsage(),
+      cacheWrite: { value: 0, status: "partial" as const },
+    }
+    expect(
+      build(
+        harness,
+        [
+          observation(route, { usage: completeZeroUsage() }),
+          observation(route, { usage: incompleteZero }),
+        ],
+        openRouterOnly,
+      ).pins,
+    ).toEqual([])
+  } finally {
+    harness.close()
+  }
+})
+
 test("identity hashes policy, access, selectors and source state while pins retain authentic dates", () => {
   const harness = makeHarness()
   try {
@@ -393,6 +667,21 @@ test("identity hashes policy, access, selectors and source state while pins reta
     expect(
       build(harness, [observation("fixture-model", { openRouterMinPromptTokens: null })]).indexID,
     ).not.toBe(base.indexID)
+    expect(
+      build(harness, [observation("fixture-model", { usage: completeZeroUsage() })]).indexID,
+    ).not.toBe(base.indexID)
+    expect(
+      build(harness, [
+        observation("fixture-model", {
+          usage: {
+            ...completeZeroUsage(),
+            cacheWrite: { value: 0, status: "partial" },
+          },
+        }),
+      ]).indexID,
+    ).not.toBe(
+      build(harness, [observation("fixture-model", { usage: completeZeroUsage() })]).indexID,
+    )
 
     const firstPin = base.pins[0]!
     const generation = harness.store.beginRefresh()["openrouter-models"]

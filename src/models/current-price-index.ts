@@ -16,14 +16,35 @@ import { CurrentPriceIndexSchema, ValuationRouteSchema } from "./valuation-schem
 import type { CurrentPriceIndex, CurrentPricePin } from "./valuation-schema.ts"
 
 const FiniteNonnegative = z.number().finite().nonnegative()
+const UsageCategoryEvidenceSchema = z.strictObject({
+  value: FiniteNonnegative.nullable(),
+  status: z.enum(["observed", "partial", "missing", "unavailable"]),
+})
+const CurrentPriceUsageEvidenceSchema = z.strictObject({
+  uncachedInput: UsageCategoryEvidenceSchema.optional(),
+  output: UsageCategoryEvidenceSchema.optional(),
+  reasoning: UsageCategoryEvidenceSchema.optional(),
+  cacheRead: UsageCategoryEvidenceSchema.optional(),
+  cacheWrite: UsageCategoryEvidenceSchema.optional(),
+})
 
-/** Selectors are the caller's observed, source-normalized tier/schedule choice. */
+const USAGE_CATEGORIES = [
+  "uncachedInput",
+  "output",
+  "reasoning",
+  "cacheRead",
+  "cacheWrite",
+] as const
+type UsageCategory = (typeof USAGE_CATEGORIES)[number]
+
+/** Route selectors and usage evidence are caller-observed; unresolved choices stay conservative. */
 export const CurrentPriceApplicabilitySchema = z.strictObject({
   route: ValuationRouteSchema,
   nativeContextTierTokens: FiniteNonnegative.nullable().optional(),
   openRouterMinPromptTokens: FiniteNonnegative.nullable().optional(),
   openRouterUtcStart: FiniteNonnegative.nullable().optional(),
   openRouterUtcEnd: FiniteNonnegative.nullable().optional(),
+  usage: CurrentPriceUsageEvidenceSchema.optional(),
 })
 export type CurrentPriceApplicability = z.infer<typeof CurrentPriceApplicabilitySchema>
 
@@ -162,14 +183,69 @@ function chooseOpenRouterTier(
   return matches.length === 1 ? matches[0]! : null
 }
 
-function completeNativeRates(tier: NativePriceTier) {
-  return [tier.input, tier.output, tier.cacheRead, tier.cacheWrite].every((rate) => rate !== null)
+function completeObservedZero(
+  evidence: NonNullable<CurrentPriceApplicability["usage"]>[UsageCategory] | undefined,
+) {
+  return evidence?.status === "observed" && evidence.value === 0
 }
 
-function completeOpenRouterRates(tier: OpenRouterPriceTier) {
-  return [tier.prompt, tier.completion, tier.inputCacheRead, tier.inputCacheWrite].every(
-    (rate) => rate !== null,
+function rateRequired(usage: CurrentPriceApplicability["usage"], category: UsageCategory) {
+  return !completeObservedZero(usage?.[category])
+}
+
+function nativeRatesApplicable(tier: NativePriceTier, usage: CurrentPriceApplicability["usage"]) {
+  return (
+    (!rateRequired(usage, "uncachedInput") || tier.input !== null) &&
+    (!(rateRequired(usage, "output") || rateRequired(usage, "reasoning")) ||
+      tier.output !== null) &&
+    (!rateRequired(usage, "cacheRead") || tier.cacheRead !== null) &&
+    (!rateRequired(usage, "cacheWrite") || tier.cacheWrite !== null)
   )
+}
+
+function openRouterRatesApplicable(
+  tier: OpenRouterPriceTier,
+  usage: CurrentPriceApplicability["usage"],
+) {
+  return (
+    (!rateRequired(usage, "uncachedInput") || tier.prompt !== null) &&
+    (!(rateRequired(usage, "output") || rateRequired(usage, "reasoning")) ||
+      tier.completion !== null) &&
+    (!rateRequired(usage, "cacheRead") || tier.inputCacheRead !== null) &&
+    (!rateRequired(usage, "cacheWrite") || tier.inputCacheWrite !== null)
+  )
+}
+
+function selectorIdentity(applicability: CurrentPriceApplicability) {
+  return canonical({
+    nativeContextTierTokens: applicability.nativeContextTierTokens,
+    openRouterMinPromptTokens: applicability.openRouterMinPromptTokens,
+    openRouterUtcStart: applicability.openRouterUtcStart,
+    openRouterUtcEnd: applicability.openRouterUtcEnd,
+  })
+}
+
+function combineApplicabilities(
+  observations: readonly CurrentPriceApplicability[],
+): CurrentPriceApplicability | null {
+  const first = observations[0]
+  if (!first) return null
+  const usage = Object.fromEntries(
+    USAGE_CATEGORIES.flatMap((category) =>
+      observations.every((observation) => completeObservedZero(observation.usage?.[category]))
+        ? [[category, { value: 0, status: "observed" as const }]]
+        : [],
+    ),
+  ) as NonNullable<CurrentPriceApplicability["usage"]>
+
+  return {
+    route: first.route,
+    nativeContextTierTokens: first.nativeContextTierTokens,
+    openRouterMinPromptTokens: first.openRouterMinPromptTokens,
+    openRouterUtcStart: first.openRouterUtcStart,
+    openRouterUtcEnd: first.openRouterUtcEnd,
+    usage,
+  }
 }
 
 function nativePin(
@@ -184,7 +260,7 @@ function nativePin(
   const match = matches[0]!
   if (!hasNativeConfiguration(match.record, route) || !match.record.prices) return null
   const tier = chooseNativeTier(match.record.prices.tiers, applicability)
-  if (!tier || !completeNativeRates(tier)) return null
+  if (!tier || !nativeRatesApplicable(tier, applicability.usage)) return null
 
   return CurrentPriceIndexSchema.shape.pins.element.parse({
     route,
@@ -253,7 +329,7 @@ function openRouterPin(
   const match = identity.catalogMatches[0]!
   if (!match.record.prices) return null
   const tier = chooseOpenRouterTier(match.record.prices.tiers, applicability)
-  if (!tier || !completeOpenRouterRates(tier)) return null
+  if (!tier || !openRouterRatesApplicable(tier, applicability.usage)) return null
   const hasSchedule =
     (tier.utcStart ?? null) !== null ||
     (tier.utcEnd ?? null) !== null ||
@@ -331,14 +407,15 @@ function inputIdentity(
       refresh: source.refresh,
       snapshot: source.snapshot,
     }))
-  const routes = [...observedRoutes].sort((left, right) =>
-    modelConfigurationID(
-      left.route.providerID,
-      left.route.modelID,
-      left.route.variant,
-    ).localeCompare(
-      modelConfigurationID(right.route.providerID, right.route.modelID, right.route.variant),
-    ),
+  const routes = [...observedRoutes].sort(
+    (left, right) =>
+      modelConfigurationID(
+        left.route.providerID,
+        left.route.modelID,
+        left.route.variant,
+      ).localeCompare(
+        modelConfigurationID(right.route.providerID, right.route.modelID, right.route.variant),
+      ) || canonical(left).localeCompare(canonical(right)),
   )
   return canonical({ settings, routes, sources: relevantSources })
 }
@@ -356,7 +433,7 @@ export function buildCurrentPriceIndex(input: {
   const sources = input.sourceStore.readComparisonSources()
   const native = selectedSource(sources, "native-catalog")
   const openRouter = selectedSource(sources, "openrouter-models")
-  const routeGroups = new Map<string, Map<string, CurrentPriceApplicability>>()
+  const routeGroups = new Map<string, Map<string, CurrentPriceApplicability[]>>()
 
   for (const applicability of parsed.observedRoutes) {
     const routeKey = modelConfigurationID(
@@ -364,16 +441,20 @@ export function buildCurrentPriceIndex(input: {
       applicability.route.modelID,
       applicability.route.variant,
     )
-    const group = routeGroups.get(routeKey) ?? new Map<string, CurrentPriceApplicability>()
-    group.set(canonical(applicability), applicability)
+    const group = routeGroups.get(routeKey) ?? new Map<string, CurrentPriceApplicability[]>()
+    const selectors = selectorIdentity(applicability)
+    const observations = group.get(selectors) ?? []
+    observations.push(applicability)
+    group.set(selectors, observations)
     routeGroups.set(routeKey, group)
   }
 
   const pins: CurrentPricePin[] = []
   for (const group of routeGroups.values()) {
-    // Conflicting observed applicability for one route is not resolved by input order.
+    // Conflicting selectors are unresolved; usage amounts only combine rate requirements.
     if (group.size !== 1) continue
-    const applicability = group.values().next().value as CurrentPriceApplicability | undefined
+    const observations = group.values().next().value as CurrentPriceApplicability[] | undefined
+    const applicability = observations ? combineApplicabilities(observations) : null
     if (!applicability) continue
 
     for (const priceSource of parsed.priceSources.policy.sources) {
