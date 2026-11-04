@@ -4,6 +4,8 @@ import { Session } from "@opencode/schema/session"
 import { Effect, Stream } from "effect"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
+import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
+import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { Observability } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
@@ -80,6 +82,7 @@ async function authorize(
       resources: action === "read" ? [projectDirectory] : ["*"],
     }),
   )
+  return session.agent
 }
 
 export function registerObservability(
@@ -101,6 +104,40 @@ export function registerObservability(
               "read",
             )
             return reads.snapshot(input.scope, tracker)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
+      progressDiagnostics: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const agent = await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            signal.throwIfAborted()
+            const reconstruction = progressReconstructionDiagnostics(
+              reads.store.repository.path,
+              reads.store.repository.projectDirectory,
+              projectID,
+            )
+            const processSchedulerTotals =
+              agent === "architect"
+                ? {
+                    status: "available" as const,
+                    scope: "process" as const,
+                    audience: "architect-only" as const,
+                    source: "sharedScheduler.snapshot" as const,
+                    ...sharedScheduler.snapshot(),
+                  }
+                : { status: "unavailable" as const, reason: "architect-only" as const }
+            return {
+              ...reconstruction,
+              scope: { kind: "project" as const },
+              processSchedulerTotals,
+            }
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),

@@ -3,6 +3,11 @@ import { resolve } from "node:path"
 import type { ProgressAssignment } from "./recorder.ts"
 
 export type ReconstructionResult = "complete" | "retry" | "stale"
+export type ReconstructionReadKind = "get" | "context"
+export type ReconstructionReadOutcome = "succeeded" | "failed"
+export type ReconstructionRead = (
+  kind: ReconstructionReadKind,
+) => (outcome: ReconstructionReadOutcome) => void
 
 export type ReconstructionParticipant = {
   assignments(): ProgressAssignment[]
@@ -10,6 +15,7 @@ export type ReconstructionParticipant = {
   reconstruct(
     assignment: ProgressAssignment,
     isCurrent: () => boolean,
+    readStarted: ReconstructionRead,
   ): Promise<ReconstructionResult>
 }
 
@@ -17,6 +23,7 @@ export type ReconstructionOptions = {
   databasePath: string
   projectDirectory: string
   projectID: string
+  location?: string
   participant: ReconstructionParticipant
   pollIntervalMs?: number
   terminalRefreshMs?: number
@@ -30,6 +37,8 @@ export type ReconstructionRegistration = {
 type Work = { dueAt: number; failures: number }
 type Participant = ReconstructionParticipant & {
   id: symbol
+  generationID: string
+  location: string
   active: boolean
   pollIntervalMs: number
   terminalRefreshMs: number
@@ -39,6 +48,18 @@ type InFlight = {
   participant: Participant
   work: Work
   drainOwner: symbol
+}
+
+type NativeReadCounts = Record<
+  ReconstructionReadKind,
+  Record<ReconstructionReadOutcome, number> & {
+    invocations: number
+  }
+>
+type PendingNativeRead = {
+  kind: ReconstructionReadKind
+  participantID: symbol
+  retired: boolean
 }
 
 type Coordinator = {
@@ -55,9 +76,18 @@ type Coordinator = {
   inFlight?: InFlight
   drainOwner?: symbol
   timer?: ReturnType<typeof setTimeout>
+  assignmentsObservedAt?: number
+  nativeReadCounts?: NativeReadCounts
+  pendingNativeReads?: Map<symbol, PendingNativeRead>
+  diagnosticsStartedAt?: number
+  diagnosticsPartial?: boolean
 }
 
 type CoordinatorRegistry = Map<string, Coordinator>
+
+const RECONSTRUCTION_IMPLEMENTATION_ID = "lazers.progress.reconstruction.v1"
+const moduleGenerationID = crypto.randomUUID()
+const MAX_DIAGNOSTIC_GROUPS = 32
 
 const coordinatorRegistryKey = Symbol.for("opencode-lazers.progress-reconstruction.v1")
 const coordinatorHost = globalThis as typeof globalThis & {
@@ -163,6 +193,7 @@ function scanAssignments(coordinator: Coordinator, participant: Participant) {
   }
   coordinator.assignments = current
   coordinator.baselineCaptured = true
+  coordinator.assignmentsObservedAt = Date.now()
   scheduleTerminalRefresh(coordinator)
   coordinator.scanAt = Date.now() + coordinator.pollIntervalMs
 }
@@ -200,6 +231,230 @@ function scheduleTerminalRefresh(coordinator: Coordinator) {
 
 function retryDelay(failures: number) {
   return Math.min(1_000 * 2 ** Math.min(Math.max(failures - 1, 0), 6), MAX_RETRY_DELAY_MS)
+}
+
+function newNativeReadCounts(): NativeReadCounts {
+  return {
+    get: { invocations: 0, succeeded: 0, failed: 0 },
+    context: { invocations: 0, succeeded: 0, failed: 0 },
+  }
+}
+
+function initializeDiagnostics(coordinator: Coordinator) {
+  if (!coordinator.nativeReadCounts) coordinator.nativeReadCounts = newNativeReadCounts()
+  if (!coordinator.pendingNativeReads) coordinator.pendingNativeReads = new Map()
+  coordinator.diagnosticsStartedAt ??= Date.now()
+}
+
+function nativeReadStarted(
+  coordinator: Coordinator,
+  participant: Participant,
+  kind: ReconstructionReadKind,
+): (outcome: ReconstructionReadOutcome) => void {
+  const counts = coordinator.nativeReadCounts
+  const pendingReads = coordinator.pendingNativeReads
+  if (!counts || !pendingReads) return () => {}
+
+  counts[kind].invocations++
+  const id = Symbol("progress-reconstruction-native-read")
+  pendingReads.set(id, {
+    kind,
+    participantID: participant.id,
+    retired: !participant.active || coordinator.participants.get(participant.id) !== participant,
+  })
+  let settled = false
+  return (outcome) => {
+    if (settled) return
+    settled = true
+    counts[kind][outcome]++
+    pendingReads.delete(id)
+  }
+}
+
+export type ProgressReconstructionDiagnostics = {
+  schemaVersion: 1
+  implementationID: typeof RECONSTRUCTION_IMPLEMENTATION_ID
+  moduleGenerationID: string
+  observedAt: number
+  state: "absent" | "uninitialized" | "initialized" | "instrumentation-unavailable"
+  coverage: "not-started" | "complete" | "partial"
+  coordinator: {
+    participantCount: number
+    participantGenerations: Array<{ generationID: string | null; participantCount: number }>
+    participantGenerationsTruncated: boolean
+    locationCount: number
+    locationParticipantCounts: number[]
+    unknownLocationParticipantCount: number
+    locationsTruncated: boolean
+    assignments: {
+      baselineCaptured: boolean
+      cachedCount: number
+      activeCount: number
+      terminalCount: number
+      asOf: number | null
+    }
+    work: {
+      queuedCount: number
+      delayedCount: number
+      dirtyCount: number
+      drainOwned: boolean
+      reconstructionActive: boolean
+      timerScheduled: boolean
+      outstandingRetiredReads: number
+    }
+    nativeReads: {
+      startedAt: number
+      get: {
+        invocations: number
+        succeeded: number
+        failed: number
+        pending: number
+      }
+      context: {
+        invocations: number
+        succeeded: number
+        failed: number
+        pending: number
+      }
+    } | null
+  }
+}
+
+function emptyDiagnostics(
+  observedAt: number,
+  state: ProgressReconstructionDiagnostics["state"],
+  coverage: ProgressReconstructionDiagnostics["coverage"],
+): ProgressReconstructionDiagnostics {
+  return {
+    schemaVersion: 1,
+    implementationID: RECONSTRUCTION_IMPLEMENTATION_ID,
+    moduleGenerationID,
+    observedAt,
+    state,
+    coverage,
+    coordinator: {
+      participantCount: 0,
+      participantGenerations: [],
+      participantGenerationsTruncated: false,
+      locationCount: 0,
+      locationParticipantCounts: [],
+      unknownLocationParticipantCount: 0,
+      locationsTruncated: false,
+      assignments: {
+        baselineCaptured: false,
+        cachedCount: 0,
+        activeCount: 0,
+        terminalCount: 0,
+        asOf: null,
+      },
+      work: {
+        queuedCount: 0,
+        delayedCount: 0,
+        dirtyCount: 0,
+        drainOwned: false,
+        reconstructionActive: false,
+        timerScheduled: false,
+        outstandingRetiredReads: 0,
+      },
+      nativeReads: null,
+    },
+  }
+}
+
+/** Lookup-only project diagnostics. This deliberately never creates or wakes a coordinator. */
+export function progressReconstructionDiagnostics(
+  databasePath: string,
+  projectDirectory: string,
+  projectID: string,
+): ProgressReconstructionDiagnostics {
+  const observedAt = Date.now()
+  const coordinator = coordinators.get(
+    progressReconstructionKey(databasePath, projectDirectory, projectID),
+  )
+  if (!coordinator) return emptyDiagnostics(observedAt, "absent", "not-started")
+
+  const participants = [...coordinator.participants.values()].filter(
+    (participant) => participant.active,
+  )
+  const generations = new Map<string | null, number>()
+  const locations = new Map<string, number>()
+  let unknownLocationParticipantCount = 0
+  for (const participant of participants) {
+    const generation =
+      typeof participant.generationID === "string" ? participant.generationID : null
+    generations.set(generation, (generations.get(generation) ?? 0) + 1)
+    const location = typeof participant.location === "string" ? participant.location : undefined
+    if (location === undefined) unknownLocationParticipantCount++
+    else locations.set(location, (locations.get(location) ?? 0) + 1)
+  }
+  const generationGroups = [...generations.entries()]
+    .sort(([left], [right]) => (left ?? "").localeCompare(right ?? ""))
+    .slice(0, MAX_DIAGNOSTIC_GROUPS)
+    .map(([generationID, participantCount]) => ({ generationID, participantCount }))
+  const locationGroups = [...locations.values()].sort((left, right) => right - left)
+  const pending = coordinator.pendingNativeReads
+  const counts = coordinator.nativeReadCounts
+  const countPending = (kind: ReconstructionReadKind) => {
+    let count = 0
+    for (const read of pending?.values() ?? []) if (read.kind === kind) count++
+    return count
+  }
+  const nativeReads =
+    counts && pending && coordinator.diagnosticsStartedAt !== undefined
+      ? {
+          startedAt: coordinator.diagnosticsStartedAt,
+          get: { ...counts.get, pending: countPending("get") },
+          context: { ...counts.context, pending: countPending("context") },
+        }
+      : null
+  const assignments = [...coordinator.assignments.values()]
+  const activeCount = assignments.filter((assignment) => !assignmentIsTerminal(assignment)).length
+  const terminalCount = assignments.length - activeCount
+  const now = Date.now()
+  const queuedCount = [...coordinator.jobs.values()].filter((work) => work.dueAt <= now).length
+  const delayedCount = coordinator.jobs.size - queuedCount
+  let outstandingRetiredReads = 0
+  for (const read of pending?.values() ?? []) if (read.retired) outstandingRetiredReads++
+  const coverage = coordinator.diagnosticsPartial || generations.has(null) ? "partial" : "complete"
+
+  return {
+    schemaVersion: 1,
+    implementationID: RECONSTRUCTION_IMPLEMENTATION_ID,
+    moduleGenerationID,
+    observedAt,
+    state: nativeReads
+      ? coordinator.baselineCaptured
+        ? "initialized"
+        : "uninitialized"
+      : "instrumentation-unavailable",
+    coverage,
+    coordinator: {
+      participantCount: participants.length,
+      participantGenerations: generationGroups,
+      participantGenerationsTruncated: generations.size > generationGroups.length,
+      locationCount: locations.size + (unknownLocationParticipantCount > 0 ? 1 : 0),
+      locationParticipantCounts: locationGroups.slice(0, MAX_DIAGNOSTIC_GROUPS),
+      unknownLocationParticipantCount,
+      locationsTruncated: locationGroups.length > MAX_DIAGNOSTIC_GROUPS,
+      assignments: {
+        baselineCaptured: coordinator.baselineCaptured,
+        cachedCount: assignments.length,
+        activeCount,
+        terminalCount,
+        asOf: coordinator.assignmentsObservedAt ?? null,
+      },
+      work: {
+        queuedCount,
+        delayedCount,
+        dirtyCount: coordinator.dirty.size,
+        drainOwned: coordinator.drainOwner !== undefined,
+        reconstructionActive: coordinator.inFlight !== undefined,
+        timerScheduled: coordinator.timer !== undefined,
+        outstandingRetiredReads,
+      },
+      nativeReads,
+    },
+  }
 }
 
 function scheduleTimer(coordinator: Coordinator) {
@@ -258,7 +513,9 @@ function drive(coordinator: Coordinator) {
           coordinator.participants.get(participant.id) === participant &&
           coordinator.inFlight === inFlight
         try {
-          result = await participant.reconstruct(assignment, isCurrent)
+          result = await participant.reconstruct(assignment, isCurrent, (kind) =>
+            nativeReadStarted(coordinator, participant, kind),
+          )
         } catch {
           result = "retry"
         }
@@ -305,6 +562,10 @@ function coordinatorFor(key: string, options: ReconstructionOptions): Coordinato
       terminalRefreshMs: options.terminalRefreshMs ?? DEFAULT_TERMINAL_REFRESH_MS,
     }
     coordinators.set(key, coordinator)
+    initializeDiagnostics(coordinator)
+  } else if (!coordinator.nativeReadCounts || !coordinator.pendingNativeReads) {
+    coordinator.diagnosticsPartial = true
+    initializeDiagnostics(coordinator)
   }
   return coordinator
 }
@@ -321,6 +582,8 @@ export function registerProgressReconstruction(
   const participant: Participant = {
     ...options.participant,
     id: Symbol("progress-reconstruction-participant"),
+    generationID: moduleGenerationID,
+    location: canonicalPath(options.location ?? options.projectDirectory),
     active: true,
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     terminalRefreshMs: options.terminalRefreshMs ?? DEFAULT_TERMINAL_REFRESH_MS,
@@ -342,6 +605,8 @@ export function registerProgressReconstruction(
       disposed = true
       participant.active = false
       coordinator.participants.delete(participant.id)
+      for (const read of coordinator.pendingNativeReads?.values() ?? [])
+        if (read.participantID === participant.id) read.retired = true
       const inFlight = coordinator.inFlight
       if (inFlight?.participant === participant) {
         coordinator.inFlight = undefined

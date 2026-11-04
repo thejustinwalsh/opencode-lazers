@@ -5,6 +5,7 @@ import { makeFixture } from "../../test/trajectory/fixture.ts"
 import type { ProgressAssignment } from "./recorder.ts"
 import type { ReconstructionParticipant } from "./reconstruction.ts"
 import {
+  progressReconstructionDiagnostics,
   progressReconstructionKey,
   registerProgressReconstruction,
   sameProgressAssignment,
@@ -66,6 +67,7 @@ test("54 registrations across pinned loader generations share one 97-session bas
   let contexts = 0
   let activeReads = 0
   let maxActiveReads = 0
+  let assignmentReads = 0
   const assignments = Array.from({ length: 94 }, (_, index) => assignment(index + 1))
 
   try {
@@ -82,7 +84,10 @@ test("54 registrations across pinned loader generations share one 97-session bas
 
       const makeParticipant = () =>
         participantFor(
-          () => assignments.map((value) => ({ ...value })),
+          () => {
+            assignmentReads++
+            return assignments.map((value) => ({ ...value }))
+          },
           async (value, isCurrent) => {
             gets++
             activeReads++
@@ -130,6 +135,33 @@ test("54 registrations across pinned loader generations share one 97-session bas
       expect(gets).toBe(97)
       expect(contexts).toBe(97)
       expect(maxActiveReads).toBe(1)
+
+      const beforeDiagnostics = assignmentReads
+      const firstDiagnostics = first.progressReconstructionDiagnostics(
+        fixture.store.repository.path,
+        fixture.directory,
+        "project",
+      )
+      const secondDiagnostics = second.progressReconstructionDiagnostics(
+        fixture.store.repository.path,
+        fixture.directory,
+        "project",
+      )
+      expect(firstDiagnostics.moduleGenerationID).not.toBe(secondDiagnostics.moduleGenerationID)
+      expect(firstDiagnostics.implementationID).toBe("lazers.progress.reconstruction.v1")
+      expect(firstDiagnostics.coordinator.participantCount).toBe(54)
+      expect(
+        firstDiagnostics.coordinator.participantGenerations.map((group) => group.participantCount),
+      ).toEqual([27, 27])
+      expect(firstDiagnostics.coordinator.assignments.cachedCount).toBe(96)
+      expect(firstDiagnostics.coordinator.nativeReads).toMatchObject({
+        get: { invocations: 0, succeeded: 0, failed: 0, pending: 0 },
+        context: { invocations: 0, succeeded: 0, failed: 0, pending: 0 },
+      })
+      expect(assignmentReads).toBe(beforeDiagnostics)
+      expect(JSON.stringify(firstDiagnostics)).not.toContain("ses-recovery-001")
+      expect(JSON.stringify(firstDiagnostics)).not.toContain("task-001")
+      expect(JSON.stringify(firstDiagnostics)).not.toContain(fixture.directory)
     } finally {
       releaseFirst.resolve()
       for (const registration of registrations) registration.dispose()
@@ -137,6 +169,182 @@ test("54 registrations across pinned loader generations share one 97-session bas
       secondLoader.dispose()
     }
   } finally {
+    fixture.close()
+  }
+})
+
+test("diagnostics are lookup-only for absent and initialized project coordinators", async () => {
+  const fixture = makeFixture()
+  const projectID = "diagnostics-read-only-project"
+  let assignmentCalls = 0
+  let reconstructionCalls = 0
+  const absent = progressReconstructionDiagnostics(
+    `${fixture.store.repository.path}.absent`,
+    fixture.directory,
+    projectID,
+  )
+  const absentAgain = progressReconstructionDiagnostics(
+    `${fixture.store.repository.path}.absent`,
+    fixture.directory,
+    projectID,
+  )
+  const registration = registerProgressReconstruction({
+    databasePath: fixture.store.repository.path,
+    projectDirectory: fixture.directory,
+    projectID,
+    pollIntervalMs: 60_000,
+    participant: participantFor(
+      () => {
+        assignmentCalls++
+        return [assignment(1, projectID)]
+      },
+      async () => {
+        reconstructionCalls++
+        return "complete"
+      },
+    ),
+  })
+
+  try {
+    expect(absent.state).toBe("absent")
+    expect(absentAgain.state).toBe("absent")
+    expect(absent.coordinator.participantCount).toBe(0)
+    expect(absent.coordinator.nativeReads).toBeNull()
+    await waitFor(() => reconstructionCalls === 1)
+
+    const before = progressReconstructionDiagnostics(
+      fixture.store.repository.path,
+      fixture.directory,
+      projectID,
+    )
+    const readsBeforeSnapshots = assignmentCalls
+    const after = progressReconstructionDiagnostics(
+      fixture.store.repository.path,
+      fixture.directory,
+      projectID,
+    )
+    expect(before.state).toBe("initialized")
+    expect(before.coordinator.assignments).toMatchObject({
+      baselineCaptured: true,
+      cachedCount: 1,
+      activeCount: 1,
+      terminalCount: 0,
+    })
+    expect(before.coordinator.assignments.asOf).not.toBeNull()
+    expect(after.coordinator).toEqual(before.coordinator)
+    expect(assignmentCalls).toBe(readsBeforeSnapshots)
+    expect(reconstructionCalls).toBe(1)
+  } finally {
+    registration.dispose()
+    fixture.close()
+  }
+})
+
+test("retired native reads remain visible until settlement without reclaiming queue ownership", async () => {
+  const fixture = makeFixture()
+  const projectID = "diagnostics-retired-read-project"
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let retiredReadFinished: ((outcome: "succeeded" | "failed") => void) | undefined
+  const oldRegistration = registerProgressReconstruction({
+    databasePath: fixture.store.repository.path,
+    projectDirectory: fixture.directory,
+    projectID,
+    pollIntervalMs: 60_000,
+    participant: {
+      assignments: () => [assignment(1, projectID)],
+      assignmentForSession: (sessionID) =>
+        sessionID === assignment(1, projectID).sessionID ? assignment(1, projectID) : undefined,
+      reconstruct: async (_value, _isCurrent, readStarted) => {
+        retiredReadFinished = readStarted("get")
+        entered.resolve()
+        await release.promise
+        return "stale"
+      },
+    },
+  })
+  let successor: ReturnType<typeof registerProgressReconstruction> | undefined
+
+  try {
+    await entered.promise
+    const pending = progressReconstructionDiagnostics(
+      fixture.store.repository.path,
+      fixture.directory,
+      projectID,
+    )
+    expect(pending.coordinator.nativeReads?.get).toMatchObject({
+      invocations: 1,
+      pending: 1,
+      succeeded: 0,
+      failed: 0,
+    })
+
+    oldRegistration.dispose()
+    successor = registerProgressReconstruction({
+      databasePath: fixture.store.repository.path,
+      projectDirectory: fixture.directory,
+      projectID,
+      pollIntervalMs: 60_000,
+      participant: participantFor(
+        () => [assignment(1, projectID)],
+        async () => "complete",
+      ),
+    })
+    await waitFor(() => {
+      const current = progressReconstructionDiagnostics(
+        fixture.store.repository.path,
+        fixture.directory,
+        projectID,
+      )
+      return (
+        current.coordinator.nativeReads?.get.pending === 1 &&
+        !current.coordinator.work.reconstructionActive
+      )
+    })
+    const beforeLateSettlement = progressReconstructionDiagnostics(
+      fixture.store.repository.path,
+      fixture.directory,
+      projectID,
+    )
+    expect(beforeLateSettlement.coordinator.work).toMatchObject({
+      outstandingRetiredReads: 1,
+      reconstructionActive: false,
+      drainOwned: false,
+    })
+    expect(beforeLateSettlement.coordinator.nativeReads?.get.pending).toBe(1)
+
+    release.resolve()
+    retiredReadFinished!("succeeded")
+    await waitFor(() => {
+      const settled = progressReconstructionDiagnostics(
+        fixture.store.repository.path,
+        fixture.directory,
+        projectID,
+      )
+      return settled.coordinator.nativeReads?.get.pending === 0
+    })
+    const afterLateSettlement = progressReconstructionDiagnostics(
+      fixture.store.repository.path,
+      fixture.directory,
+      projectID,
+    )
+    expect(afterLateSettlement.coordinator.nativeReads?.get).toMatchObject({
+      invocations: 1,
+      pending: 0,
+      succeeded: 1,
+      failed: 0,
+    })
+    expect(afterLateSettlement.coordinator.work).toMatchObject({
+      queuedCount: beforeLateSettlement.coordinator.work.queuedCount,
+      delayedCount: beforeLateSettlement.coordinator.work.delayedCount,
+      dirtyCount: beforeLateSettlement.coordinator.work.dirtyCount,
+      reconstructionActive: false,
+      drainOwned: false,
+    })
+  } finally {
+    release.resolve()
+    oldRegistration.dispose()
+    successor?.dispose()
     fixture.close()
   }
 })
@@ -159,11 +367,13 @@ test("canonical aliases share ownership while different database and project key
       projectID: string,
       value: ProgressAssignment,
       increment: () => void,
+      location = fixture.directory,
     ) =>
       registerProgressReconstruction({
         databasePath,
         projectDirectory: fixture.directory,
         projectID,
+        location,
         pollIntervalMs: 60_000,
         participant: participantFor(
           () => [{ ...value }],
@@ -177,7 +387,13 @@ test("canonical aliases share ownership while different database and project key
 
     registrations.push(
       add(fixture.store.repository.path, "project", assignment(1), () => sharedReads++),
-      add(databaseAlias, "project", assignment(1), () => sharedReads++),
+      add(
+        databaseAlias,
+        "project",
+        assignment(1),
+        () => sharedReads++,
+        join(fixture.directory, "alternate-location"),
+      ),
       add(
         fixture.store.repository.path,
         "different-project",
@@ -196,6 +412,29 @@ test("canonical aliases share ownership while different database and project key
     expect(sharedReads).toBe(1)
     expect(differentProjectReads).toBe(1)
     expect(differentDatabaseReads).toBe(1)
+    const sharedDiagnostics = progressReconstructionDiagnostics(
+      fixture.store.repository.path,
+      fixture.directory,
+      "project",
+    )
+    expect(sharedDiagnostics.coordinator.participantCount).toBe(2)
+    expect(sharedDiagnostics.coordinator.locationCount).toBe(2)
+    expect(sharedDiagnostics.coordinator.locationParticipantCounts).toEqual([1, 1])
+    expect(JSON.stringify(sharedDiagnostics)).not.toContain("alternate-location")
+    expect(
+      progressReconstructionDiagnostics(
+        fixture.store.repository.path,
+        fixture.directory,
+        "different-project",
+      ).coordinator.participantCount,
+    ).toBe(1)
+    expect(
+      progressReconstructionDiagnostics(
+        join(fixture.directory, "other.sqlite"),
+        fixture.directory,
+        "project",
+      ).coordinator.participantCount,
+    ).toBe(1)
   } finally {
     for (const registration of registrations) registration.dispose()
     fixture.close()
