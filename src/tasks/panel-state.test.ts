@@ -71,6 +71,111 @@ test("state preferences remain independent while old history preferences retain 
   expect(preferredTaskStateFilter("completed", false)).toBe("completed")
 })
 
+test("healthy connected Tasks does not repeat list and inspector reads without changes", async () => {
+  let queries = 0
+  let details = 0
+  const state = new TaskPanelState(() => {})
+  const current = page("/project")
+  try {
+    state.connect(
+      "view",
+      "/project",
+      transport(
+        async () => {
+          queries++
+          return current
+        },
+        async () => {
+          details++
+          return { status: "not_found" }
+        },
+      ),
+      {},
+    )
+    await Bun.sleep(3_150)
+    expect(state.data.page).toEqual(current)
+    expect(queries).toBe(1)
+    expect(details).toBe(1)
+  } finally {
+    state.close()
+  }
+})
+
+test("native reconnect catches missed state even when repository version did not advance", async () => {
+  const reconnect = deferred<void>()
+  const first = deferred<TaskPage>()
+  let calls = 0
+  const state = new TaskPanelState(() => {})
+  const original = page("/project")
+  const recovered = { ...original, serverTime: "2026-11-04T19:00:00.000Z" }
+  const api = transport(async () => (++calls === 1 ? first.promise : recovered))
+  api.changes = (signal) =>
+    (async function* () {
+      await reconnect.promise
+      yield { projectDirectory: "/project", version: 0, resnapshotRequired: true }
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      )
+    })()
+  try {
+    state.connect("view", "/project", api, {})
+    reconnect.resolve()
+    await tick()
+    first.resolve(original)
+    await tick()
+    await tick()
+    expect(calls).toBe(2)
+    expect(state.data.page).toEqual(recovered)
+    expect(state.data.stale).toBe(false)
+  } finally {
+    state.close()
+  }
+})
+
+test("failed reads retry without events and stop retrying after recovery", async () => {
+  let calls = 0
+  const state = new TaskPanelState(() => {})
+  const recovered = page("/project")
+  try {
+    state.connect(
+      "view",
+      "/project",
+      transport(async () => {
+        if (++calls === 1) throw new Error("temporary read failure")
+        return recovered
+      }),
+      {},
+    )
+    await tick()
+    expect(state.data.stale).toBe(true)
+    await Bun.sleep(1_100)
+    expect(state.data.page).toEqual(recovered)
+    expect(state.data.stale).toBe(false)
+    await Bun.sleep(3_150)
+    expect(calls).toBe(2)
+  } finally {
+    state.close()
+  }
+})
+
+test("closing a failed view cancels its recovery reads", async () => {
+  let calls = 0
+  const state = new TaskPanelState(() => {})
+  state.connect(
+    "view",
+    "/project",
+    transport(async () => {
+      calls++
+      throw new Error("temporary read failure")
+    }),
+    {},
+  )
+  await tick()
+  state.close()
+  await Bun.sleep(1_100)
+  expect(calls).toBe(1)
+})
+
 test("old session/project/server/filter responses and old detail selections cannot replace the current view", async () => {
   const old = deferred<TaskPage>()
   const detailA = deferred<TaskDetail>()
