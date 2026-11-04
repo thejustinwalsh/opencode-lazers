@@ -69,7 +69,7 @@ export function createTrajectoryTransport(
       ),
     status: (scope, taskID, signal) =>
       rpc.trajectoryStatus({ scope, taskID }, { location: { directory }, signal }),
-    changes: (signal) => trajectoryChanges(events, projectID, signal),
+    changes: (signal) => trajectoryChanges(events, projectID, directory, signal),
     online,
   }
 }

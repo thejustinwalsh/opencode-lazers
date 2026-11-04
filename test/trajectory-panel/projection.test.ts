@@ -267,6 +267,7 @@ test("transport adapts scoped observation RPC calls without widening task trajec
         (async function* () {
           yield {
             type: "rpc.lazers.observability.changed",
+            location: { directory: "/workspace" },
             data: {
               projectID: "project",
               sequence: 1,

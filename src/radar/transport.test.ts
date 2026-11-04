@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import type { ObservationScope } from "../observability/contract.ts"
 import { makeFixture } from "../../test/trajectory/fixture.ts"
 import { ObservationChangeTracker } from "../observability/changes.ts"
+import { ObservationSyncState } from "../observability/state.ts"
 import { createRadarTransport } from "./transport.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 
@@ -35,6 +36,7 @@ test("RPC adapter sends the explicit scope, directory, and abort signal", async 
           subscribe: async function* (_name, options) {
             calls.push({ eventSignal: options.signal })
             yield {
+              location: { directory: "/workspace/project" },
               data: {
                 projectID: "project",
                 sequence: 4,
@@ -72,4 +74,51 @@ test("RPC adapter sends the explicit scope, directory, and abort signal", async 
   } finally {
     fixture.close()
   }
+})
+
+test("other worktree counters cannot trigger Radar gaps or suppress this location", async () => {
+  const sync = new ObservationSyncState()
+  const generation = sync.connect("project", { kind: "project", sessionID: "ses-owner" })
+  const change = (sequence: number) => ({
+    projectID: "project",
+    sequence,
+    repositoryVersion: 0,
+    sourceRevision: 0,
+    nativeRevision: sequence,
+    cause: "native" as const,
+    resnapshotRequired: false,
+  })
+  const transport = createRadarTransport(
+    () => ({
+      snapshot: async () => {
+        throw new Error("not requested")
+      },
+      radar: async () => {
+        throw new Error("not requested")
+      },
+      events: {
+        subscribe: async function* () {
+          yield { location: { directory: "/workspace/project" }, data: change(1) }
+          yield { location: { directory: "/workspace/worker" }, data: change(100) }
+          yield { data: change(200) }
+          yield {
+            location: { directory: "/workspace/project" },
+            data: { ...change(900), projectID: "other" },
+          }
+          yield { location: { directory: "/workspace/project" }, data: change(2) }
+        },
+      },
+    }),
+    "/workspace/project",
+    () => true,
+  )
+  const sequences: number[] = []
+  const contiguous: boolean[] = []
+  for await (const event of transport.changes(new AbortController().signal)) {
+    sequences.push(event.sequence)
+    contiguous.push(sync.acceptChange(generation, "project", event))
+  }
+  expect(sequences).toEqual([1, 900, 2])
+  expect(contiguous).toEqual([false, false, true])
+  expect(sync.eventSequence).toBe(2)
 })

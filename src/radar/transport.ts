@@ -17,7 +17,7 @@ export type RadarRPC = {
     subscribe(
       name: "changed",
       options: { signal: AbortSignal },
-    ): AsyncIterable<{ data: ObservationChange }>
+    ): AsyncIterable<{ location?: { directory: string }; data: ObservationChange }>
   }
 }
 
@@ -44,7 +44,12 @@ export function createRadarTransport(
       rpc().radar({ scope, includeUnmanagedSessions }, { location: { directory }, signal }),
     changes: (signal) =>
       (async function* () {
-        for await (const event of rpc().events.subscribe("changed", { signal })) yield event.data
+        for await (const event of rpc().events.subscribe("changed", { signal })) {
+          if (signal.aborted) return
+          // Every loaded worktree has its own observation sequence, even when
+          // projectID is shared. Match the location used for our read methods.
+          if (event.location?.directory === directory) yield event.data
+        }
       })(),
     online,
   }
