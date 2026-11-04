@@ -36,8 +36,18 @@ export type HostBackgroundObservation =
       executionStartSequence: number
       /** Latest durable event sequence observed when the idle hook ran. */
       eventSequence: number
-      /** Matching native execution success observed after the idle hook. */
+      /** Durable sequence of the matching native execution-success event. */
       terminalSequence?: number
+      /** Native event that produced the terminal idle marker. */
+      terminalEventID?: string
+      /** Pinned SessionMessage.ID.fromEvent marker; distinct from the assistant response ID. */
+      terminalMessageID?: string
+      projectDirectory?: string
+      projectID?: string
+      attemptID?: string
+      sessionID?: string
+      workspace?: string
+      assignedMessageID?: string
       /** Most recent older durable event ignored without overwriting this report. */
       staleEventSequence?: number
       count: number
