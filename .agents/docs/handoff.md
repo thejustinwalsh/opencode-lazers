@@ -8,6 +8,18 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Exact lifecycle candidatee699793 under the original two reviewers:** Root
+  supplied clean `e699793a3c04ff733c81ac7b5b0d3a456ac5b3f2` in its isolated tree,
+  reconciled with main/performance. Read-only reviewers
+  `ses_e576d7ecfffeHyxWcUXLddebyV` / `ses_e576d378affeuXd3g4C12KTaRQ` are reused
+  for prior lifecycle P1, actual V2 location RPC activation and initial/pending/
+  sealed recovery/lease/fence semantics. Root reports193tests/3077assertions before
+  main reconciliation; its merged seven-suite run is underway and Root will supply
+  the result. **Do not duplicate it**, edit Root's tree or activate while129runs.
+  Candidate source/plan read only; no native capability probe was invoked here.
+ 129plan remainsv13running/reasonnull/same58d8d699 with all3effectscomplete. Root
+  independently confirmed Main SolHigh and129 OpenAI LunaMax routes. Continue
+  nonoverlapping authoring; source clearance is not permission for mid-worker rollout.
 - **129 approval-only outcome resolved via allowed audit/reconcile:** v10reported
   six permissions; exact native observation1793833410343 found0permissions/0forms
   and same unarchived worker running. All3effects complete/no pending effects.
