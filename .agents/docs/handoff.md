@@ -8,6 +8,36 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Native timing execution authorized and requested:** plan
+  `96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0` contains **LZ130**
+  `6a0b0d92-fd4d-44b1-a3e5-9cb8a5d1b8ea` (known check intervals/exact selected
+  timing) and **LZ131**`569db237-8d92-4a8e-98f8-0ebdd7c4c649` (actual lifecycle/native
+  endpoints, resume-safe provenance). Both have exact task-local Luna Max routes.
+  130 original`bd377e53-04fe-4a96-a21f-a1a6caf50e04` is running;131 has zero attempts
+  and must respect plan/runner reservations. Neither touches Astra's observability
+  reader; later attempt-timing consumer wiring must be coordinated after its handoff.
+  Source/current SELECT-only research found125attempts/no end column,658valid check
+  receipts and39resumes across23attempts;20laststops precede the latest resume.
+  Never derive missing endpoints from status or recording time. Existing22/61
+  acceptance/history remain intact; their reviewed primary kinds are now annotated.
+- **Original110 resumed for real repair:** cancellationv18 → same-attempt resumev20
+  in plan`2aa51f63-fd41-4510-92a6-6bad700d8880`, retaining original`addfb6ee…`,
+  session/route/candidate/failures/usage. At1793825289506 ownership and canonical
+  owning-plugin source matched, controls were empty, service95968/2.2.5 unchanged,
+  and exact durable pre-dispatch-cancellation guidance was read back. This follows
+  the completed reviewed quiet producer rollout; it does not reconstruct old idle.
+  No source merge, live build, restart, reload, profiler or new inference is assigned.
+- **Root owns actual Desktop observation; no new OS permissions:** retained
+  `/private/tmp/lazers-root-desktop-panel-observations-20261104.md` confirms Completed,
+  correct old125trajectory, real check start/end and task/filter continuity.
+  Check selection resets on remount: UX follow-up, **not a new acceptance gate**.
+  Our osascript denial limits that probe, not Root's working authorized Computer Use.
+  User authorizes independent native timing execution now; coordinate **actual
+  overlapping paths only** with Astra, and no live build/activation/restart during
+  announced captures. All six settings remain true. Later authoring inference
+  reported a real WebGPU mapAsync/device-loss error, distinct from the old cache-owner
+  failure; Root sent it to Astra. Concerns and three-round advancement are retained,
+  **no semantic pass** claimed and no settings/restart workaround used.
 - **GUI build completed; actual inference succeeded:** after fresh quiet preflight
   **1793823901438–1793823901453**, `bun run build:gui` and process-free smoke passed
   at docs-only descendant`1d8a7b1`, with existing bundler warnings retained. A single
