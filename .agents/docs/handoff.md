@@ -30,6 +30,17 @@ and Code Mode, no worker subagents. No arbitrary budgets or provider vetoes.
 
 ## Live state and immediate work
 
+Root fixture repair310439c is now on main: the maintenance CLI integration test
+uses the same captured commit with a native Git sparse checkout of src/task.ts,
+and its Git subprocesses ignore global hooks/configuration. All11 maintenance
+tests107assertions passed in3.34s; lint and main typecheck passed. This reduces
+fixture materialization, not proof of the historical timeout cause. LZ103's
+worktree still has the old fixture until native adoption/reverification brings
+in this repair; do not call its failed runtime suite passed. Computer Use still
+explicitly reports locked; the unlock request remains pending. Root sent no model
+prompt or permission reply through API/CLI. Main95968 still reported an active
+Architect in the last read; active alone does not prove useful progress.
+
 Latest verified checkpoint (Unix ms1793767580567; supersedes older task-state notes below):
 
 - Main includes chart original+Luna repair integration95904a7. Root found missing
