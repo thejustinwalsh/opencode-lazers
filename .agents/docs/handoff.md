@@ -30,6 +30,33 @@ and Code Mode, no worker subagents. No arbitrary budgets or provider vetoes.
 
 ## Live state and immediate work
 
+Latest verified checkpoint (Unix ms1793767580567; supersedes older task-state notes below):
+
+- Main includes chart original+Luna repair integration95904a7. Root found missing
+  installed ECharts, ran `bun install --frozen-lockfile`, then main passed
+  `bun check` and11 contract/chart/SVG tests201assertions. No source change or
+  service restart was needed. Functional panel wiring is still queued.
+- LZ103 returned73ad2d5 and its worker full suite passed811tests, but the later
+  native runtime suite receipt timed out (exit137, started1793747635810,
+  ended1793748041488). Nodefailed/planblocked. Do not call that native gate passed;
+  inspect command environment/timing and use supported repair/reverification.
+- LZ109 returned clean3cef021 with12 valuation tests and38 accounting/read/progress
+  tests plus quality passing. It is not integrated; native state is blocked on
+  interrupted execution/unknown background. Preserve the return and session.
+- LZ110 worker ses_34c9ce29a6d548cda5ffa21144ad41aa/attempt
+  addfb6ee-15f5-4b2a-8d09-d0864708dbac waited inside initial index/instructions
+  on native read permissions for canonical-publication source files. Latest DB
+  state is blocked/unknown after execution.failed; recheck actual controls.
+- Main/researcher also retained `getaddrinfo ENOTFOUND auth.openai.com` and a
+  response timeout. Public OpenAI auth and OR catalog checks later returned200;
+  that is connectivity evidence, not a successful model call or a quota claim.
+- Computer Use explicitly reported macOS locked. An unlock request is pending;
+  no model prompt or permission reply was sent through CLI/API. Main has used
+  native wakeups meanwhile. Source settings are specified in AGENTS/DESIGN/guide,
+  but configurable pricing, ledger, producer and final UI remain unimplemented.
+- LZ105/LZ107 are source-integrated, cleanup-blocked independently. LZ106/LZ108
+  remain queued; preserve full roadmap. No task111+ was present in the last DB read.
+
 Service PID95968, `http://127.0.0.1:49374`. Prior59460 disappeared unexpectedly
 at17:56 ET; Desktop restarted the missing service automatically. Root issued no
 restart/reload. Native recovery resumed the same three worker sessions/attempts; confirmed live

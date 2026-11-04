@@ -79,3 +79,14 @@ identifies `claude-sonnet-5-5` and `claude-haiku-5-5`; the respective
 the dotted catalog products. These support explicit documented aliases, not
 global punctuation normalization, suffix stripping or pooling measurements.
 Main received the finding for the same native workflow before final acceptance.
+
+## Integrated component check
+
+Main integration95904a7 contains the original chart/contract and reviewed Luna
+repair3c6cfb9. Root's first post-merge checks failed because ECharts was absent
+from main's installed dependencies. `bun install --frozen-lockfile` installed
+the committed ECharts6.1.0 dependency; main then passed typecheck and11 tests
+with201 assertions across decision-contract, chart options and actual mounted
+SVG/tooltip tests. No tracked source was changed by that environment repair.
+This verifies the integrated component, not final panel wiring, real cohorts,
+pricing settings or native visual acceptance.
