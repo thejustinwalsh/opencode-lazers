@@ -10,6 +10,7 @@ import { TaskRepository } from "./storage.ts"
 import { submitTask } from "./submission.ts"
 import type { TaskSpec } from "./task.ts"
 import { fingerprint } from "./identity.ts"
+import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -493,6 +494,193 @@ test("concurrent stale classification corrections serialize to one commit and on
   ).toBe(1)
 }, 30_000)
 
+test("independent processes replay durable project-local correction receipts without rewriting provenance", async () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const root = submitTask(repository, keyedProposal("process-correction-root"), provenance)
+  const correction = submitTask(repository, keyedProposal("process-correction-child"), provenance)
+  if (root.status !== "submitted" || correction.status !== "submitted")
+    throw new Error("Expected submitted correction tasks")
+  const other = open(path, "/other")
+  const otherRoot = submitTask(other, keyedProposal("other-correction-root"), () => ({
+    ...provenance(),
+    projectDirectory: "/other",
+  }))
+  const otherCorrection = submitTask(other, keyedProposal("other-correction-child"), () => ({
+    ...provenance(),
+    projectDirectory: "/other",
+  }))
+  if (otherRoot.status !== "submitted" || otherCorrection.status !== "submitted")
+    throw new Error("Expected other-project tasks")
+
+  const input = {
+    taskID: correction.taskID,
+    originalTaskID: root.taskID,
+    requestID: "process-correction-request",
+    expectedRevision: 0,
+    reason: "The second accepted record corrects the original goal.",
+  }
+  const options = {
+    path,
+    project: "/repo",
+    workspace: "/repo",
+    session: "correction-session-original",
+    action: "correct" as const,
+    input,
+  }
+  repository.close()
+  const first = JSON.parse(await output(child(options)))
+  expect(first).toMatchObject({ status: "recorded", correction: { revision: 1 } })
+  const replay = JSON.parse(
+    await output(child({ ...options, session: "correction-session-replay" })),
+  )
+  expect(replay).toEqual({ status: "replayed", correction: first.correction })
+  expect(first.correction).toMatchObject({
+    sessionID: "correction-session-original",
+    agent: "architect",
+    requestID: input.requestID,
+    reason: input.reason,
+    taskID: correction.taskID,
+    originalTaskID: root.taskID,
+  })
+  expect(
+    JSON.parse(
+      await output(
+        child({
+          ...options,
+          session: "correction-session-changed",
+          input: { ...input, reason: "Changed payload." },
+        }),
+      ),
+    ),
+  ).toMatchObject({ status: "conflict" })
+  expect(
+    JSON.parse(
+      await output(
+        child({
+          ...options,
+          session: "correction-session-stale",
+          input: { ...input, requestID: "process-stale-correction" },
+        }),
+      ),
+    ),
+  ).toMatchObject({ status: "conflict", expectedRevision: 0, currentRevision: 1 })
+
+  const independentProjectInput = {
+    ...input,
+    taskID: otherCorrection.taskID,
+    originalTaskID: otherRoot.taskID,
+  }
+  expect(
+    JSON.parse(
+      await output(
+        child({
+          ...options,
+          project: "/other",
+          workspace: "/other",
+          session: "other-project-session",
+          input: independentProjectInput,
+        }),
+      ),
+    ),
+  ).toMatchObject({
+    status: "recorded",
+    correction: {
+      taskID: otherCorrection.taskID,
+      originalTaskID: otherRoot.taskID,
+      revision: 1,
+    },
+  })
+
+  const reopened = open(path)
+  const reader = openReadOnlyTaskCorrections(path, "/repo")
+  try {
+    expect(reader.inspect(correction.taskID)).toMatchObject({
+      status: "found",
+      task: { rootTaskID: root.taskID },
+      members: [root.taskID, correction.taskID]
+        .sort()
+        .map((taskID) => ({ taskID, rootTaskID: root.taskID })),
+    })
+    expect(reopened.get(root.taskID)?.provenance.sessionID).toBe("s")
+    expect(reopened.get(correction.taskID)?.provenance.sessionID).toBe("s")
+    expect(
+      reopened.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string, string]>(
+              "SELECT count(*) AS count FROM task_corrections WHERE project_directory=? AND task_id=?",
+            )
+            .get("/repo", correction.taskID)!.count,
+      ),
+    ).toBe(1)
+  } finally {
+    reader.close()
+  }
+}, 30_000)
+
+test("independent processes serialize opposing links and atomically prevent a cross-task cycle", async () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const firstTask = submitTask(repository, keyedProposal("opposing-link-a"), provenance)
+  const secondTask = submitTask(repository, keyedProposal("opposing-link-b"), provenance)
+  if (firstTask.status !== "submitted" || secondTask.status !== "submitted")
+    throw new Error("Expected submitted cycle endpoints")
+  const base = {
+    path,
+    project: "/repo",
+    workspace: "/repo",
+    action: "correct" as const,
+  }
+  const results = await contend([
+    {
+      ...base,
+      session: "opposing-session-a",
+      input: {
+        taskID: firstTask.taskID,
+        originalTaskID: secondTask.taskID,
+        requestID: "opposing-link-a",
+        expectedRevision: 0,
+        reason: "A corrects B.",
+      },
+    },
+    {
+      ...base,
+      session: "opposing-session-b",
+      input: {
+        taskID: secondTask.taskID,
+        originalTaskID: firstTask.taskID,
+        requestID: "opposing-link-b",
+        expectedRevision: 0,
+        reason: "B corrects A.",
+      },
+    },
+  ])
+  expect(results.map((result) => result.status).sort()).toEqual(["error", "recorded"])
+  expect(results.find((result) => result.status === "error")?.message).toContain("cycle")
+  const reader = openReadOnlyTaskCorrections(path, "/repo")
+  try {
+    const snapshot = reader.read()
+    const first = snapshot.tasks.find((task) => task.taskID === firstTask.taskID)!
+    const second = snapshot.tasks.find((task) => task.taskID === secondTask.taskID)!
+    expect(first.rootTaskID).toBe(second.rootTaskID)
+    expect(first.memberTaskIDs).toEqual([firstTask.taskID, secondTask.taskID].sort())
+    expect(new Set(first.memberTaskIDs).size).toBe(2)
+    expect(
+      repository.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT count(*) AS count FROM task_corrections WHERE project_directory=?",
+            )
+            .get("/repo")!.count,
+      ),
+    ).toBe(1)
+  } finally {
+    reader.close()
+  }
+}, 30_000)
+
 test("genuine v1 data migrates transactionally and mappings survive repeated reopening", () => {
   const { path, provenance } = fixture()
   const task: TaskSpec = {
@@ -524,7 +712,7 @@ test("genuine v1 data migrates transactionally and mappings survive repeated reo
     const db = new Database(path)
     try {
       expect(db.query("SELECT body FROM tasks WHERE id=?").get(task.id)).toEqual({ body })
-      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 7 })
     } finally {
       db.close()
     }

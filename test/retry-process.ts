@@ -78,7 +78,7 @@ export type RetryProcessOptions = {
   workspace: string
   session: string
   input: unknown
-  action?: "submit" | "classify"
+  action?: "submit" | "classify" | "correct"
   discard?: boolean
   inspect?: boolean
   gate?: boolean
@@ -97,22 +97,37 @@ if (import.meta.main) {
       })
       process.disconnect!()
     }
-    const receipt = await call(
-      options.action === "classify" ? "lz-classify-task" : "lz-submit-task",
-      options.input,
-    )
+    const name =
+      options.action === "classify"
+        ? "lz-classify-task"
+        : options.action === "correct"
+          ? "lz-correct-task"
+          : "lz-submit-task"
+    let receipt: unknown
+    let failure: unknown
+    try {
+      receipt = await call(name, options.input)
+    } catch (error) {
+      failure = error
+    }
     if (!options.discard) {
-      console.log(
-        JSON.stringify(
-          options.inspect
-            ? {
-                receipt,
-                get: await call("lz-get-task", { taskID: receipt.taskID }),
-                list: await call("lz-list-tasks", { limit: 100 }),
-              }
-            : receipt,
-        ),
-      )
+      if (failure) {
+        console.log(JSON.stringify({ status: "error", message: String(failure) }))
+      } else {
+        console.log(
+          JSON.stringify(
+            options.inspect
+              ? {
+                  receipt,
+                  get: await call("lz-get-task", {
+                    taskID: (receipt as { taskID: string }).taskID,
+                  }),
+                  list: await call("lz-list-tasks", { limit: 100 }),
+                }
+              : receipt,
+          ),
+        )
+      }
     }
   } finally {
     repository.close()

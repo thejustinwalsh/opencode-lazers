@@ -259,6 +259,234 @@ test("Architect classification tool appends, exactly replays, and returns confli
   })
 })
 
+test("Architect correction controls record, replay, revise, retract, and inspect explicit membership", async () => {
+  const { tools, repository } = await setup()
+  const submit = tools.get("lz-submit-task")!
+  const rootReceipt = JSON.parse(
+    String(
+      await Effect.runPromise(submit.execute(keyedProposal("correction-tool-root"), context)).then(
+        (r) => r.content,
+      ),
+    ),
+  )
+  const childReceipt = JSON.parse(
+    String(
+      await Effect.runPromise(submit.execute(keyedProposal("correction-tool-child"), context)).then(
+        (r) => r.content,
+      ),
+    ),
+  )
+  const runner = new RunnerStore(repository)
+  const rootTask = repository.get(rootReceipt.taskID)!
+  const childTask = repository.get(childReceipt.taskID)!
+  const plan = runner.submit(
+    {
+      requestID: "native-correction-accepted-fixture",
+      objective: "Retain both accepted physical task histories.",
+      baseCommit: "a".repeat(40),
+      nodes: [
+        { taskID: rootTask.id, revision: 1 },
+        { taskID: childTask.id, revision: 1 },
+      ],
+      dependencies: [],
+      integrationOrder: [rootTask.id, childTask.id],
+      verification: validProposal().verification,
+      acceptance: validProposal().acceptance,
+    },
+    "architect",
+  )
+  for (const [task, suffix] of [
+    [rootTask, "root"],
+    [childTask, "child"],
+  ] as const) {
+    runner.move(plan.planID, task.id, "READY")
+    runner.move(plan.planID, task.id, "DISPATCH")
+    runner.move(plan.planID, task.id, "VERIFY")
+    runner.move(plan.planID, task.id, "ACCEPT")
+    runner.record(plan.planID, task.id, "ARTIFACT_ACCEPTED", {
+      artifact: `${suffix}-native-artifact`,
+    })
+  }
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='accepted', artifact='native-plan' WHERE id=?").run(
+      plan.planID,
+    )
+    const setArtifact = db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?")
+    setArtifact.run("root-native-artifact", plan.planID, rootTask.id)
+    setArtifact.run("child-native-artifact", plan.planID, childTask.id)
+    const insertAttempt = db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,
+        started_at,token_count,tool_count,retry_count,cost)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (const [task, suffix, tokens] of [
+      [rootTask, "root", 100],
+      [childTask, "child", 50],
+    ] as const) {
+      insertAttempt.run(
+        crypto.randomUUID(),
+        plan.planID,
+        task.id,
+        1,
+        `native-worker-${suffix}`,
+        `native-message-${suffix}`,
+        process.cwd(),
+        "a".repeat(40),
+        `${suffix}-native-artifact`,
+        "{}",
+        "accepted",
+        Date.now(),
+        tokens,
+        5,
+        0,
+        null,
+      )
+    }
+  })
+  const acceptedHistory = () =>
+    repository.atomic((db) => ({
+      plan: db
+        .query<{ state: string; artifact: string | null }, [string]>(
+          "SELECT state, artifact FROM runner_plans WHERE id=?",
+        )
+        .get(plan.planID),
+      nodes: db
+        .query<{ task_id: string; state: string; artifact: string | null }, [string]>(
+          "SELECT task_id, state, artifact FROM runner_nodes WHERE plan_id=? ORDER BY task_id",
+        )
+        .all(plan.planID),
+      attempts: db
+        .query<
+          { task_id: string; state: string; artifact: string | null; token_count: number | null },
+          [string]
+        >(
+          "SELECT task_id, state, artifact, token_count FROM runner_attempts WHERE plan_id=? ORDER BY task_id",
+        )
+        .all(plan.planID),
+      accepts: db
+        .query<{ task_id: string | null; event: string; payload: string }, [string]>(
+          "SELECT task_id, event, payload FROM runner_transitions WHERE plan_id=? AND event IN ('ACCEPT','ARTIFACT_ACCEPTED') ORDER BY id",
+        )
+        .all(plan.planID),
+    }))
+  const acceptedBefore = acceptedHistory()
+  const correction = tools.get("lz-correct-task")!
+  const inspect = tools.get("lz-inspect-task-corrections")!
+  expect(correction.options?.permission).toBe("lz-correct-task")
+  expect(correction.output).toBeUndefined()
+  expect(inspect.options).toMatchObject({
+    codemode: true,
+    pinned: true,
+    permission: "lz-inspect-task-corrections",
+  })
+  expect(inspect.output).toBeDefined()
+  const input = {
+    taskID: childReceipt.taskID,
+    originalTaskID: rootReceipt.taskID,
+    requestID: "tool-correction-1",
+    expectedRevision: 0,
+    reason: "Both accepted records satisfy the same original goal.",
+  }
+  const recorded = JSON.parse(
+    String(await Effect.runPromise(correction.execute(input, context)).then((r) => r.content)),
+  )
+  expect(recorded).toMatchObject({
+    status: "recorded",
+    correction: {
+      taskID: childReceipt.taskID,
+      originalTaskID: rootReceipt.taskID,
+      revision: 1,
+      requestID: input.requestID,
+      reason: input.reason,
+      sessionID: "session",
+      agent: "architect",
+    },
+  })
+  expect(acceptedHistory()).toEqual(acceptedBefore)
+  const replayed = JSON.parse(
+    String(
+      await Effect.runPromise(
+        correction.execute(input, {
+          ...context,
+          sessionID: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("SessionID")))(
+            "replay-session",
+          ),
+        }),
+      ).then((r) => r.content),
+    ),
+  )
+  expect(replayed).toEqual({ status: "replayed", correction: recorded.correction })
+  expect(
+    JSON.parse(
+      String(
+        await Effect.runPromise(
+          correction.execute({ ...input, reason: "Different reviewed content." }, context),
+        ).then((r) => r.content),
+      ),
+    ).status,
+  ).toBe("conflict")
+  expect(
+    JSON.parse(
+      String(
+        await Effect.runPromise(
+          correction.execute({ ...input, requestID: "tool-correction-stale" }, context),
+        ).then((r) => r.content),
+      ),
+    ),
+  ).toMatchObject({ status: "conflict", expectedRevision: 0, currentRevision: 1 })
+
+  const group = await Effect.runPromise(inspect.execute({ taskID: childReceipt.taskID }, context))
+  const groupOutput = JSON.parse(String(group.content))
+  expect(groupOutput).toMatchObject({
+    status: "found",
+    identity: { projectDirectory: process.cwd(), storage: "available", revision: 1 },
+    task: {
+      taskID: childReceipt.taskID,
+      rootTaskID: rootReceipt.taskID,
+      relation: "linked",
+    },
+    members: [childReceipt.taskID, rootReceipt.taskID]
+      .sort()
+      .map((taskID: string) => ({ taskID, rootTaskID: rootReceipt.taskID })),
+  })
+  expect(
+    groupOutput.members.find((member: { taskID: string }) => member.taskID === childReceipt.taskID)
+      .history[0],
+  ).toMatchObject({
+    requestID: input.requestID,
+    reason: input.reason,
+    sessionID: "session",
+    agent: "architect",
+    revision: 1,
+  })
+
+  const retracted = JSON.parse(
+    String(
+      await Effect.runPromise(
+        correction.execute(
+          {
+            ...input,
+            originalTaskID: null,
+            requestID: "tool-correction-retract",
+            expectedRevision: 1,
+            reason: "Review confirms these are independent after all.",
+          },
+          context,
+        ),
+      ).then((r) => r.content),
+    ),
+  )
+  expect(retracted).toMatchObject({ status: "recorded", correction: { revision: 2 } })
+  expect(acceptedHistory()).toEqual(acceptedBefore)
+  expect(
+    (await Effect.runPromise(inspect.execute({ taskID: childReceipt.taskID }, context))).output,
+  ).toMatchObject({
+    task: { rootTaskID: childReceipt.taskID, relation: "independent", revision: 2 },
+    members: [{ taskID: childReceipt.taskID }],
+  })
+})
+
 test("a replayed submission receipt reports current queued state without claiming execution", async () => {
   const { tools, repository } = await setup()
   const input = keyedProposal()
@@ -346,25 +574,21 @@ test("task disposition is Architect-only even when native permission allows the 
   ).rejects.toThrow("restricted to Architect")
 })
 
-test("non-Architect classification denial precedes database access", async () => {
+test("non-Architect correction and classification denials precede parsing and database access", async () => {
   const { tools } = await setup()
   const query = spyOn(Database.prototype, "query")
   const exec = spyOn(Database.prototype, "exec")
   try {
-    await expect(
-      Effect.runPromise(
-        tools.get("lz-classify-task")!.execute(
-          {
-            taskID: crypto.randomUUID(),
-            requestID: "non-architect-classification",
-            expectedRevision: 0,
-            classification: { taxonomy: "task-kind/v1", primaryKind: "testing" },
-            reason: "Test.",
-          },
-          { ...context, agent: Agent.ID.make("lazers-implementor") },
-        ),
-      ),
-    ).rejects.toThrow("restricted to Architect")
+    const implementor = { ...context, agent: Agent.ID.make("lazers-implementor") }
+    for (const [name, input] of [
+      ["lz-classify-task", {}],
+      ["lz-correct-task", {}],
+      ["lz-inspect-task-corrections", { taskID: "invalid-id" }],
+    ] as const) {
+      await expect(Effect.runPromise(tools.get(name)!.execute(input, implementor))).rejects.toThrow(
+        "restricted to Architect",
+      )
+    }
     expect(query).not.toHaveBeenCalled()
     expect(exec).not.toHaveBeenCalled()
   } finally {
@@ -550,6 +774,14 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
   const { tools, call, assertions } = await nativeTools(repository, { denied: () => deny })
   const receipt = await call("lz-submit-task", keyedProposal())
   const original = repository.get(receipt.taskID)
+  const correctionInput = {
+    taskID: receipt.taskID,
+    originalTaskID: null,
+    requestID: "permission-correction-replay",
+    expectedRevision: 0,
+    reason: "Reviewed as independent before permission is revoked.",
+  }
+  expect((await call("lz-correct-task", correctionInput)).status).toBe("recorded")
   deny = true
   const query = spyOn(Database.prototype, "query")
   const exec = spyOn(Database.prototype, "exec")
@@ -572,6 +804,11 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
         reason: "Denied calls must not query project metadata.",
       },
     ],
+    ["lz-correct-task", correctionInput],
+    ["lz-correct-task", { ...correctionInput, reason: "Changed payload." }],
+    ["lz-correct-task", {}],
+    ["lz-inspect-task-corrections", { taskID: receipt.taskID }],
+    ["lz-inspect-task-corrections", { taskID: "invalid-id" }],
   ] as const
   try {
     for (const [name, input] of calls) {
@@ -585,7 +822,7 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
     query.mockRestore()
     exec.mockRestore()
   }
-  expect(assertions).toEqual(["lz-submit-task", ...calls.map(([name]) => name)])
+  expect(assertions).toEqual(["lz-submit-task", "lz-correct-task", ...calls.map(([name]) => name)])
   expect(repository.list()).toEqual([original!])
   deny = false
   expect(await call("lz-submit-task", keyedProposal())).toEqual(receipt)

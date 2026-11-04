@@ -20,6 +20,15 @@ import type {
   TaskClassificationSnapshot,
 } from "./task-classification.ts"
 import { taskClassificationFor } from "./tasks/classification.ts"
+import {
+  TaskCorrectionInput,
+  TaskCorrectionRecord,
+  TaskCorrectionReceipt,
+} from "./task-correction.ts"
+import type {
+  TaskCorrectionRecord as TaskCorrectionRecordType,
+  TaskCorrectionReceipt as TaskCorrectionReceiptType,
+} from "./task-correction.ts"
 import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
 import type { TaskQueryState } from "./tasks/state-filter.ts"
 import { canonical, fingerprint } from "./identity.ts"
@@ -68,7 +77,7 @@ export class TaskRepository {
       const version = () =>
         db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
       const initial = version()
-      if (initial > 6) throw new Error(`Unsupported LAZERS database version ${initial}`)
+      if (initial > 7) throw new Error(`Unsupported LAZERS database version ${initial}`)
       // SQLite can fail a concurrent first WAL transition immediately despite
       // busy_timeout. Retry only connection configuration, never a task write.
       const deadline = Date.now() + 5_000
@@ -88,7 +97,7 @@ export class TaskRepository {
       }
       db.transaction(() => {
         const current = version()
-        if (current > 6) throw new Error(`Unsupported LAZERS database version ${current}`)
+        if (current > 7) throw new Error(`Unsupported LAZERS database version ${current}`)
         db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
@@ -198,6 +207,32 @@ export class TaskRepository {
             CREATE TRIGGER task_classifications_no_delete BEFORE DELETE ON task_classifications
             BEGIN SELECT RAISE(ABORT, 'Task classification annotations are append-only'); END;
             PRAGMA user_version=6;
+          `)
+        if (current < 7)
+          db.exec(`
+            CREATE TABLE task_corrections (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_directory TEXT NOT NULL,
+              task_id TEXT NOT NULL REFERENCES tasks(id),
+              original_task_id TEXT REFERENCES tasks(id),
+              request_id TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              revision INTEGER NOT NULL CHECK(revision > 0),
+              reason TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              agent TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(project_directory, request_id),
+              UNIQUE(project_directory, task_id, revision),
+              CHECK(original_task_id IS NULL OR original_task_id <> task_id)
+            );
+            CREATE INDEX task_corrections_history
+              ON task_corrections(project_directory, task_id, revision);
+            CREATE TRIGGER task_corrections_no_update BEFORE UPDATE ON task_corrections
+            BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
+            CREATE TRIGGER task_corrections_no_delete BEFORE DELETE ON task_corrections
+            BEGIN SELECT RAISE(ABORT, 'Task correction annotations are append-only'); END;
+            PRAGMA user_version=7;
           `)
       }).immediate()
       databaseChanges.track(db, this.path)
@@ -588,6 +623,126 @@ export class TaskRepository {
     return receipt
   }
 
+  /** Append an explicit correction relation without changing task or execution history. */
+  recordTaskCorrection(
+    input: unknown,
+    actor: { sessionID: string; agent: string },
+  ): TaskCorrectionReceiptType {
+    const parsed = TaskCorrectionInput.parse(input)
+    let changed = false
+    const receipt = this.atomic((db) => {
+      const payload = canonical({
+        taskID: parsed.taskID,
+        originalTaskID: parsed.originalTaskID,
+        expectedRevision: parsed.expectedRevision,
+        reason: parsed.reason,
+      })
+      const existing = db
+        .query<CorrectionRow, [string, string]>(
+          "SELECT * FROM task_corrections WHERE project_directory=? AND request_id=?",
+        )
+        .get(this.projectDirectory, parsed.requestID)
+      if (existing) {
+        if (existing.payload !== payload)
+          return TaskCorrectionReceipt.parse({
+            status: "conflict",
+            taskID: parsed.taskID,
+            message: "requestID already identifies different task correction content",
+          })
+        return TaskCorrectionReceipt.parse({
+          status: "replayed",
+          correction: correctionRecord(existing),
+        })
+      }
+
+      const taskExists = (taskID: string) =>
+        Boolean(
+          db
+            .query<{ id: string }, [string, string]>(
+              "SELECT id FROM tasks WHERE project_directory=? AND id=?",
+            )
+            .get(this.projectDirectory, taskID),
+        )
+      if (!taskExists(parsed.taskID)) throw new Error("Correction task not found in this project")
+      if (parsed.originalTaskID !== null && !taskExists(parsed.originalTaskID))
+        throw new Error("Original task not found in this project")
+
+      const currentRevision =
+        db
+          .query<{ revision: number }, [string, string]>(
+            "SELECT MAX(revision) AS revision FROM task_corrections WHERE project_directory=? AND task_id=?",
+          )
+          .get(this.projectDirectory, parsed.taskID)?.revision ?? null
+      const revision = currentRevision ?? 0
+      if (parsed.expectedRevision !== revision)
+        return TaskCorrectionReceipt.parse({
+          status: "conflict",
+          taskID: parsed.taskID,
+          expectedRevision: parsed.expectedRevision,
+          currentRevision: revision,
+          message: "Task correction revision changed; inspect current membership before correcting",
+        })
+
+      if (parsed.originalTaskID !== null) {
+        const latest = db
+          .query<Pick<CorrectionRow, "task_id" | "original_task_id">, [string, string]>(
+            `SELECT correction.task_id, correction.original_task_id
+             FROM task_corrections correction
+             JOIN (
+               SELECT task_id, MAX(revision) AS revision
+               FROM task_corrections WHERE project_directory=? GROUP BY task_id
+             ) current ON current.task_id=correction.task_id
+                    AND current.revision=correction.revision
+             WHERE correction.project_directory=?`,
+          )
+          .all(this.projectDirectory, this.projectDirectory)
+        const parents = new Map(
+          latest.flatMap((row) =>
+            row.original_task_id === null ? [] : [[row.task_id, row.original_task_id] as const],
+          ),
+        )
+        const seen = new Set<string>()
+        let ancestor: string | undefined = parsed.originalTaskID
+        while (ancestor !== undefined) {
+          if (ancestor === parsed.taskID) throw new Error("Task correction would create a cycle")
+          if (seen.has(ancestor)) throw new Error("Existing task correction links contain a cycle")
+          seen.add(ancestor)
+          ancestor = parents.get(ancestor)
+        }
+      }
+
+      db.query(
+        `INSERT INTO task_corrections
+         (project_directory,task_id,original_task_id,request_id,payload,revision,reason,session_id,agent,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        this.projectDirectory,
+        parsed.taskID,
+        parsed.originalTaskID,
+        parsed.requestID,
+        payload,
+        revision + 1,
+        parsed.reason,
+        actor.sessionID,
+        actor.agent,
+        new Date().toISOString(),
+      )
+      this.changed()
+      changed = true
+      const inserted = db
+        .query<CorrectionRow, [string, string]>(
+          "SELECT * FROM task_corrections WHERE project_directory=? AND request_id=?",
+        )
+        .get(this.projectDirectory, parsed.requestID)!
+      return TaskCorrectionReceipt.parse({
+        status: "recorded",
+        correction: correctionRecord(inserted),
+      })
+    })
+    if (changed) this.notify()
+    return receipt
+  }
+
   /** Return the latest durable disposition without changing the immutable task. */
   taskDisposition(taskID: string): TaskDispositionRecordType | undefined {
     const row = this.db
@@ -759,6 +914,20 @@ type ClassificationRow = {
   created_at: string
 }
 
+type CorrectionRow = {
+  id: number
+  project_directory: string
+  task_id: string
+  original_task_id: string | null
+  request_id: string
+  payload: string
+  revision: number
+  reason: string
+  session_id: string
+  agent: string
+  created_at: string
+}
+
 function hasTable(db: Database, name: string): boolean {
   return Boolean(
     db
@@ -791,6 +960,20 @@ function classificationRecord(row: ClassificationRow): TaskClassificationAnnotat
     requestID: row.request_id,
     revision: row.revision,
     classification: JSON.parse(row.classification),
+    reason: row.reason,
+    sessionID: row.session_id,
+    agent: row.agent,
+    createdAt: row.created_at,
+  })
+}
+
+function correctionRecord(row: CorrectionRow): TaskCorrectionRecordType {
+  return TaskCorrectionRecord.parse({
+    id: row.id,
+    taskID: row.task_id,
+    originalTaskID: row.original_task_id,
+    requestID: row.request_id,
+    revision: row.revision,
     reason: row.reason,
     sessionID: row.session_id,
     agent: row.agent,
