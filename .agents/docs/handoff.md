@@ -60,6 +60,16 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   `ses_34c9ce29a6d548cda5ffa21144ad41aa` via runtime. No replacement/replayed old check.
   Existing task removes character-proxy review rejection (126's first6.7k-character
   draft was rejected); unavailable local review is a limitation, never a pass.
+  Root committed **81908be** (only the two owned files), reports **72tests/410assertions**
+  and lint/types/diff pass. Live selected input at **1793815327625** now matches the
+  original assignment. Fresh runtime inspection found cancellation already settled
+  **v10**; native same-attempt resume requested **v12**, not a redundant cancellation
+  reconciliation. No126 interruption or reload. Preserve provider-failure history
+  and unknown background evidence.
+  Exact126 authoring evidence: first draft task6672chars/request1141/evidence1208 hit
+  SystemOneRequest's8000-character proxy. Shorter draft's live review returned
+  **All fibers interrupted at60s**, unavailable—not semantic pass. All six flags
+  remain true; Root is checking actual traces/forwarding before any GPU attribution.
 - [Native shell research](evidence/native-verification-shell-fit-20261104.md)
   belongs to existing V3/R5/R6 recovery. Evaluate native execution before extending
   custom children; capped memory inventory and teardown acknowledgements cannot
