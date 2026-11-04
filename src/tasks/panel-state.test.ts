@@ -329,6 +329,38 @@ test("invalidations during snapshot acquisition are caught up, foreign and dupli
   expect(streamClosed).toBe(true)
 })
 
+test("a change already covered by the in-flight snapshot does not repeat the read", async () => {
+  const first = deferred<TaskPage>()
+  const change = deferred<void>()
+  let calls = 0
+  const state = new TaskPanelState(() => {})
+  const current = page("/project", crypto.randomUUID(), 2)
+  const api = transport(async () => {
+    calls++
+    return first.promise
+  })
+  api.changes = (signal) =>
+    (async function* () {
+      await change.promise
+      yield { projectDirectory: "/project", version: 2 }
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      )
+    })()
+  try {
+    state.connect("view", "/project", api, {})
+    change.resolve()
+    await tick()
+    first.resolve(current)
+    await tick()
+    await tick()
+    expect(state.data.page).toEqual(current)
+    expect(calls).toBe(1)
+  } finally {
+    state.close()
+  }
+})
+
 test("read failures retain stale scoped data and recovery preserves the selected task", async () => {
   const original = page("/project")
   let fail = false

@@ -323,7 +323,7 @@ export class TaskPanelState {
           }
           if (event.version <= (this.data.page?.snapshot ?? 0)) continue
           this.pendingVersion = Math.max(this.pendingVersion, event.version)
-          void this.refresh()
+          if (!this.refreshing) void this.refresh()
         }
         if (!signal.aborted) throw new Error("Task update connection closed")
       } catch (error) {
