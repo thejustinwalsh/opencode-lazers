@@ -2,17 +2,21 @@
 
 Updated 2026-11-04 after ordered price-source integration. Recheck native state;
 source landing, task acceptance, effective activation and cleanup are distinct.
-The [previous checkpoint](handoff-20261103-retained.md) retains historical evidence.
+The [previous checkpoint](evidence/handoff-20261103-retained.md) retains historical evidence.
 
 ## Immediate order and ownership
 
-1. **Root owns scheduler performance:** `src/index.ts`, `src/runner/runtime.ts`
-   and the new `src/runner/scheduler-coordinator.ts` plus its test. Do not edit or
-   task these concurrently. Root is implementing shared wakes, explicit Task Start
-   reconciliation and active-drain heartbeat scheduling in a native worktree.
-   Review returned source; diagnostics should reuse `sharedScheduler.snapshot()`
-   once available, not create another timer. Twelve focused tests and quality
-   checks passed during development; broad load-induced timeouts are not a pass.
+1. **Root scheduler repair is integrated:** source `bfdc6e1`, merge `cba6ab2`.
+   One process-shared deadline timer coordinates project reconciliation and lease
+   heartbeats. Manual Task Start joins the elected runtime; failed lease claims
+   no longer strand the running flag. **138 runtime tests / 2,544 assertions**
+   and **15 coordinator tests / 50 assertions** pass; quality checks pass.
+   Source reservations are released. The clean native worktree
+   `/private/tmp/lazers-shared-scheduler` remains for independent review and
+   non-forced native cleanup. Reuse `sharedScheduler.snapshot()` in diagnostics.
+   **Effective activation and sustained improvement remain unproven.** Desktop
+   explicitly locked before Root could send the commit handoff; unlock requested.
+   See [measurement and limits](evidence/native-scheduler-performance-20261104.md).
 2. **LZ115 → LZ116** run in plan `338bebc5-557a-4135-86dc-de7a4c304975`:
    repair reconstruction ownership/fairness, then add authorized read-only
    aggregate diagnostics. No index edits; coordinate any need with Root.
