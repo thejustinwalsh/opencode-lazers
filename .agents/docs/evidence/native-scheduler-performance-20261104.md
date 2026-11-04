@@ -87,32 +87,32 @@ sample. Workload changed between windows. Raw paths:
 `/private/tmp/lazers-energy-radar-open-20261104.txt` and
 `/private/tmp/lazers-energy-radar-closed-20261104.txt`.
 
-## Database subscription follow-up — review pending
+## Native database subscription follow-up — review pending
 
-Root commit `84ad51d` removes one-second per-location Tasks/Observability source
-polls. SQLite native row hooks schedule a deferred shared invalidation when
-transactional task/revision rows change. Read-side durable revisions distinguish
-actual changes from rollback/duplicate notifications. Existing OpenCode native
-event subscriptions and RPC changed events remain. The database-family OS
-subscription additionally observes external writes and WAL/journal replacement;
-it is shared across loaded module copies and released after the last reader.
-Healthy subscriptions have no polling interval. Failed subscriptions and failed
-RPC delivery have retry-only timers. Notifications arriving during delivery
-schedule a follow-up instead of being discarded.
+Final candidate `2782f96` on `84ad51d` removes the one-second per-location
+Tasks/Observability source polls. Native SQLite hooks on transactional task and
+observation revision rows schedule one deferred in-service invalidation. Read-side
+durable revisions distinguish actual changes from rollback/duplicates. Existing
+OpenCode native event subscriptions and RPC changed events remain. Initial,
+manual and reconnect reads query current durable state. Healthy subscriptions
+have no polling interval. Failed RPC deliveries retain retry-only timers, and
+changes arriving during delivery schedule a follow-up.
 
-Actual macOS tests showed directory-only watching missed writes to an existing
-WAL; the implementation includes direct file subscriptions and native SQLite
-hooks rather than relying on directory events. Independent connections, a writer
-process, unrelated-file silence, disposal, module sharing, lost delivery,
-storage behavior and durable runtime invalidation passed **22 tests / 122
-assertions**. Additional rollback coverage passed **2 tests / 18 assertions**.
-Formatter, lint, typecheck and diff checks pass. The service executable identifies
-Bun 1.4.4; effective native hook behavior remains to be observed after integration.
+All TaskRepository writers inside the connected OpenCode service participate.
+This does not claim automatic live synchronization with an independent service
+or arbitrary raw SQLite writer. A stronger external-writer probe found the
+unactivated filesystem-watcher variant could miss an open writer's WAL overwrite
+until close. Root removed that path and its cross-process claims rather than
+shipping unreliable extra watchers or inventing a cross-process protocol.
 
-Primary API references: [Bun SQLite update hooks](https://bun.sh/docs/runtime/sqlite#update-hooks)
-(pre-commit callbacks, defer reads; hooks do not report other connections) and
-[Node filesystem subscriptions](https://nodejs.org/api/fs.html#fswatchfilename-options-listener).
-No file/document hashing is used as correctness evidence.
+Independent service connections, idle silence, disposal, module sharing, lost
+delivery, storage operations, runtime-only writes and rollback pass **21 tests /
+122 assertions**. Formatter, lint, typecheck and diff checks pass. The installed
+service executable identifies Bun 1.4.4 and contains SQLite update-hook symbols;
+actual native hook-driven delivery remains to be verified after integration.
+Primary reference: [Bun SQLite update hooks](https://bun.sh/docs/runtime/sqlite#update-hooks).
+Callbacks run before commit, so reads are deferred until the synchronous statement
+ends. No file/document hashing is used as correctness evidence.
 
 At Unix 1793797008722, the authorized read-only diagnostics RPC returned
 `scheduler/v2`, one timer, 9 groups, 13 registrations, zero scheduler errors and
@@ -120,3 +120,23 @@ At Unix 1793797008722, the authorized read-only diagnostics RPC returned
 location reload had been reported yet. This proves that diagnostic generation
 was loaded, not that every retained runtime was replaced or CPU improved.
 Raw aggregate records: `/private/tmp/lazers-live-performance-diagnostics-20261104.jsonl`.
+
+## First activation window
+
+Supported server-wide location reload completed at Unix **1793797070040**, in
+1,646ms. All six inference switches remained enabled; no service restart or
+settings writes occurred. Root's nearby 20-second pre/post windows measured
+service **53.1% → 39.6%**, renderer **22.8% → 19.9%**, GPU helper **29.7% → 29.2%**.
+These are initial observations, not a stable performance acceptance: native Main's
+later window grew from 5 to 22 locations and averaged service **61.1%**, with
+reload-related RPC errors still under investigation. Do not claim the energy
+issue is solved. Desktop native View → Reload loaded the rebuilt client bundle;
+LFM3 transiently showed Error, then Loading, then Available without switch edits.
+
+Root's Unix 1793797161092 → 1793797189772 aggregate boundary retained one
+scheduler/v2 generation and one timer, 8 groups / 12 registrations, zero scheduler
+errors, runs 4046 → 4205 and wakeups 1125 → 1170. Reconstruction get calls
+93 → 99, context calls 84 → 90, 5 locations, partial coverage. These counters
+cover their named components; they are not whole-process native call totals.
+Raw CPU windows: `/private/tmp/lazers-energy-before-full-activation-20261104.txt`
+and `/private/tmp/lazers-energy-after-scheduler-activation-20261104.txt`.

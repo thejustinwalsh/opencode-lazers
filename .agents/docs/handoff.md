@@ -6,34 +6,32 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ## Immediate order and ownership
 
-1. **Root scheduler repair is integrated:** source `bfdc6e1`, merge `cba6ab2`; inference-settings follow-up
-   `39ea888`, merged `bae990e`.
-   One process-shared deadline timer coordinates project reconciliation and lease
-   heartbeats. Manual Task Start joins the elected runtime; failed lease claims
-   no longer strand the running flag. **138 runtime tests / 2,544 assertions**
-   and **15 coordinator tests / 50 assertions** pass; quality checks pass.
-   Per-location inference-settings polling also uses the shared timer, with one
-   shared authority read per polling interval. Merged coordinator/settings/feature/
-   self-review checks pass **30 tests / 145 assertions** and typecheck.
-   Source reservations are released. The clean native worktree
-   `/private/tmp/lazers-shared-scheduler` remains for independent review and
-   non-forced native cleanup. Reuse `sharedScheduler.snapshot()` in diagnostics.
-   **Effective activation and sustained improvement remain unproven.** Desktop
-   explicitly locked before Root could send the commit handoff; unlock requested.
+1. **Performance first; Radar redesign deferred by the user.** Root scheduler
+   correction `6a7b4dd` is integrated as `e2da051`; client interval removal
+   `3e1bd30` is integrated as `8a5c82a`. One process-shared scheduler timer,
+   coalesced project reconciliation/heartbeats, correct Start/disposal behavior.
+   Combined coordinator/runtime: **155 tests / 2,608 assertions**, quality pass.
+   Radar now uses initial/change/manual/reconnect reads, with no 3s poll:
+   **9 tests / 61 assertions**, quality and native GUI rebuild pass.
+2. **LZ115 and LZ116 are source-integrated** (`79e523f`, `0420037`). Read-only
+   `progressDiagnostics` reports project reconstruction and Architect-only process
+   scheduler totals. Coverage is explicitly partial; generation/count reads do
+   not prove all retained runtime state or old cleanup unknowns are resolved.
+3. Supported location reload completed Unix **1793797070040** in 1,646ms, with
+   all six inference switches enabled and no service restart. Root's nearby
+   service CPU window improved **53.1% to 39.6%**, but later native churn grew
+   locations 5 to 22 and service CPU averaged **61.1%**. Energy issue remains open.
+4. **Root final DB event candidate `2782f96` on `84ad51d` awaits native review**
+   in `/private/tmp/lazers-shared-scheduler`. Removes Tasks/Observability 1s
+   polls using native SQLite hooks shared across service connections. No OS
+   watchers, daemon or cross-process protocol. Independent-service/raw external
+   writes are read on initial/manual/reconnect; no automatic peer-sync claim.
+   **21 tests / 122 assertions**, quality pass. Native hook delivery and another
+   activation/CPU/error window remain required. Avoid unrelated dispatch ahead
+   of this bounded performance lane; preserve active/retained work and switches.
+5. After effective performance activation recover **LZ103's same attempt**,
+   preserving failures, then supported integration releases ledger/UI/manifest.
    See [measurement and limits](evidence/native-scheduler-performance-20261104.md).
-2. **LZ115 → LZ116** run in plan `338bebc5-557a-4135-86dc-de7a4c304975`:
-   repair reconstruction ownership/fairness, then add authorized read-only
-   aggregate diagnostics. No index edits; coordinate any need with Root.
-3. Finish this bounded efficiency lane, then **stop adding worker dispatch ahead
-   of a finite quiet activation boundary**. Root can coordinate Desktop observation.
-   Preserve active workers and all six inference settings. No unrequested restart,
-   WebGPU disable or profiler activation.
-4. At that boundary verify loaded source; collect sustained CPU and actual wake,
-   tick and native reconstruction counts in matched no-worker and working windows.
-   No historical public tick counter was found: timer arithmetic is not a measured
-   baseline. Do not invent missing before counts or claim improvement from tests.
-5. After effective activation recover **LZ103's same attempt**, preserving failures,
-   then record supported integration to release ledger/UI/manifest work.
 
 ## Source and native state
 
