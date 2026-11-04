@@ -8,6 +8,19 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Performance integrated8aed4ea; quiet hold RELEASED:** read
+  [Astra's final report](../../design/reviews/astra-performance-repair-20261104.md).
+  Actual same-PID warm serviceCPU46.36→17.61% (~62% lower bounded window), exact
+  outboxquery390.34→4.74ms/identical98rows, liveoutboxsample2853→37. Root independent
+  checks/quality passed; temporary JSC API/helper/tests removed, all6true/Never
+  unchanged/noexplicitrestart. Clean fully merged Astra tree removed natively
+  force:false; raw captures retained privately. [Roadmap current delivery front](../../design/roadmap.md)
+  now keeps Tasks/Radar/Models/recovery/live-verification and proportional residual
+  Git/session/attempt reads visible. Never skip prerequisite proof merely because
+  no task is queued: proof also gates finalization. Root still owns offline79ceb78
+  lifecycle repair; no edit/activation/duplicate writer. Nonoverlapping authoring
+  and native execution may resume; research is reconciling original129 against
+  landed optimizations before its execution plan, not creating a duplicate task.
 - **Performance-only landed; quiet hold extends to Astra idle-JSC profile:** source
   merge744d9a9 (Astra9edc37f) plus focused472→d2d31a3 are integrated. Root reports
   independent33tests/364assertions query/privacy and14tests/62assertions transport,

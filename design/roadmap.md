@@ -3,6 +3,29 @@
 LAZERS builds itself through OpenCode Desktop. The goal is accepted software
 changes with clear intent, efficient execution and little manual intervention.
 
+## Current delivery front — 2026-11-04
+
+This table supplements the increment definitions below; it is not acceptance or
+permission to bypass runtime admission. Native state, source landing, live proof
+and resource cleanup remain distinct. Preserve original task/attempt identities.
+
+| Lane                               | Existing work and next boundary                                                                                                                                    | Current delivery limit                                                                                                                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Measured performance               | Permanent Radar query/privacy, Radar + Trajectory event-directory filters and outbox query repair integrated at8aed4ea. Reuse them; no duplicate repair.           | Quiet hold released. Warm same-PID service CPU46.36→17.61% in bounded windows, not battery-life proof. Residual work follows the proportional lane below.                                             |
+| Tasks                              | Held Tasks A authoritative eligibility/order feed → Tasks B Now/Attention/Next consumer. Preserve filters, DAG, completed history and exact trajectory navigation. | Drafts require final scoped specifications; runtime-owned decisions, not client eligibility guesses. Runtime edits serialize with retained recovery/bootstrap work.                                   |
+| Radar                              | Original **LZ129** bounded live contract → safe registered-tool file/edit producer → compact live consumer/selected preview.                                       | Landed full-reader optimization is not bounded live architecture. Reuse129, not a second contract. Connected narrow/wide and Tera6.1High evidence still required.                                     |
+| Trajectory                         | **LZ130** check-duration UI/source landed and actual Desktop PLAN/attempt check observations retained; original **LZ131** backend endpoints remains queued.        | Unknown historical attempt ends stay unknown. Astra owns both landed event-directory filters; do not duplicate them in131.                                                                            |
+| Models                             | Original **LZ126→LZ122**, explicit goal links, complete retained cohorts and current-market producer → actual comparison/estimates product.                        | 126 source review is not runtime acceptance;122 waits. Keep real connected narrow/wide/Tera gates and exact route/price/unknown provenance.                                                           |
+| Retained recovery                  | Root-owned offline bootstrap lifecycle repair → original **LZ57→LZ58** and existing **LZ88/LZ99/LZ118** through real reservations/prerequisites.                   | 79ceb78 remains offline/not source-clear for guard lifecycle. Preserve72 uncertain check/resources,88 integrated72 edge and all original receipts. No replacement workers or fabricated certificates. |
+| Native reliability                 | Original **LZ117** durable revalidation, **LZ127** historical idle gap, **LZ128** generation retirement and **LZ110** enabled inference observation.               | Source/fixture readiness is not native proof.110's genuine full-state observation failed with explicit WebGPU device loss; no automatic replay or recovery pass.                                      |
+| Recovery/live verification/release | Continue R2–R6, H3–H5, V3–V6, N1 and packaged skills/runbook/release below, reusing integrated foundations and original qualification chain.                       | Actual same-worker correction/reprobe, candidate-owned full Desktop identity and positive cleanup remain required; preserve inconclusive native cleanup trees.                                        |
+
+Detailed held slice boundaries and user-resolved Radar choices are in
+[Tasks/Radar held increments](../.agents/docs/evidence/tasks-radar-held-slices-20261104.md).
+Independent nonoverlapping work may execute under ordinary runtime admission;
+blocked lanes are not a global development freeze. Source activation still needs
+Root coordination when watched generations or native observations can be affected.
+
 ## 1. Tasks, Radar and Trajectory
 
 Tasks needs explicit state filtering alongside Session/Project scope, including
@@ -24,6 +47,43 @@ The [Astra review](reviews/astra-radar-perf-20261104.md) guides the next mockups
 Trajectory history should remain usable while live events arrive. Existing
 lifecycle, trajectory privacy and renderer responsiveness defects remain open;
 local inference stays enabled. Current findings are in the delivery audit.
+
+### Proportional performance continuation
+
+[Astra's measured repair](reviews/astra-performance-repair-20261104.md) is the
+baseline, not unfinished work to reassign: identical98-row outbox results with
+actual query median390.34→4.74ms, live attribution2853→37outbox samples, and final
+warm same-PID service CPU17.61% versus46.36%. Radar read and event-directory
+semantics also landed. Temporary JSC profiler API/helper/tests were removed; keep
+raw captures private under `/private/tmp`. All six inference flags and Never unload
+remain unchanged. These are bounded observed windows, not battery-life estimates.
+
+Keep the next work within existing Tasks/Radar/runtime and recovery/verification
+lanes rather than opening a parallel performance program:
+
+1. Execute the unfulfilled **LZ129** bounded-live producer boundary, then the held
+   consumer. Avoid repeated full-history/lifecycle reconstruction and megabyte live
+   payloads; preserve separately fetched selected history, privacy and unknown
+   coverage. Source-work/native-call/response-byte bounds are part of delivery,
+   not just a faster final query or row cap. Reuse landed filters and query repairs.
+2. Investigate the remaining measured prerequisite Git, native-session and attempt/
+   transition reads proportionally. Reuse authoritative eligibility/proof seams for
+   Tasks A and runtime work; do not add a second evaluator or unmeasured cache.
+   Any optimization must preserve dispatch **and finalization** proof behavior.
+   No queued task is not sufficient reason to skip prerequisite proof: it also gates
+   combined verification/finalization. Reuse across observations requires a justified
+   freshness/invalidation boundary, not a timer or presumed idle state.
+3. Require semantic and work-count regressions covering changed prerequisite
+   artifact/acceptance/branch ancestry, cleanup-in-progress integration, stale or
+   cancelled proof, session/attempt changes, reopen and concurrent transitions.
+   Missing/unavailable evidence remains blocked or unknown, never a cached pass.
+   Reserve measured before/after native same-scope/same-PID checks only at a
+   coordinated boundary; record workload and actual elapsed/calls/bytes, not an
+   invented CPU target or another permanent diagnostic endpoint.
+
+Residual runtime optimization is authoring/research until its safe boundary and
+real write reservations are resolved. It must not displace Root's offline source
+fence repair, weaken lifecycle/cleanup checks, or stall unrelated producer/UI work.
 
 ### Proactive worker recovery
 
@@ -230,9 +290,15 @@ acceptance, rework, elapsed time and sample size. Distinguish external evidence,
 observations and projections, and link results to contributing trajectories.
 
 Scheduler and Trajectory own measurement through integration, including failed
-attempts, repairs and attributable Architect/review effort. OpenRouter average
-market pricing is always the fallback index for subscription model/effort usage.
-Keep dated price/averaging basis and actual charges/allowances separate.
+attempts, repairs and attributable Architect/review effort. Product costs use the
+configured ordered whole-source price basis, initially OpenRouter then OpenCode,
+independent of execution provider or subscription. Skip unavailable sources;
+missing applicable prices stay unknown. Preserve chosen-source provenance, exact
+provider/model/effort and measured tokens. Published zeros need source support;
+native session charges remain collapsed diagnostics, not market rates. Refresh
+reprices unchanged usage; price lookup never authorizes inference. Preserve compact
+Model / Accepted / Cost-task comparison and one latest genuine artifact-backed
+acceptance credit per explicitly linked goal, including all correction effort.
 
 ## 3. Plan evolution and research
 
