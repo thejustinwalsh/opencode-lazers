@@ -26,7 +26,7 @@ EXPLAIN: materialize only seq/at/observed-at → sort narrow rows → fetch reta
 records by integer primary key → final retained-window ordering. JSONB iteration
 also avoids converting each observation object to text before extracting its
 timestamp. A capability probe preserves `json_each` on older SQLite builds.
-[SQLite documents JSONB iteration and its format](https://www.sqlite.org/json1.html#jarray).
+[SQLite documents JSONB iteration and its format](https://www.sqlite.org/json1.html).
 
 Same-process interleaved actual-query comparison returns all 5,001 rows deeply
 equal, in the same order. Excluding first cold runs, median query time changes
@@ -46,8 +46,9 @@ window plus overflow detection.
 
 ## Verification and remaining work
 
-33 tests / 364 assertions pass across observability, progress projection and
-privacy. Added coverage checks JSONB-unavailable fallback equivalence and
+33 tests / 364 assertions pass across `src/observability` and
+`src/trajectory/privacy.test.ts`. The command also named a nonexistent
+`src/progress/projection.test.ts`; Bun skipped it, so it adds no coverage. Added coverage checks JSONB-unavailable fallback equivalence and
 Unicode/redaction bounds. Bun native formatter, linter and typechecker pass;
 isolated GUI build and process-free bundle smoke pass. Build retains its existing
 ORT import.meta warning. Native production activation is pending coordination.
@@ -74,3 +75,29 @@ projection/delta design remains the appropriate next architectural boundary.
 Matched production read timings/process counters and actual event trigger rates
 must precede any battery-improvement claim. Actual ORT MapAsync device-loss
 failures remain a separate recovery investigation.
+
+## Follow-up: bind event counters to their read location
+
+A read-only native event observation at Unix1793831090311–1793831100315
+received six canonical-location changes and the same six native changes from
+each of three loaded worker locations: 24 envelopes in ten seconds. Their
+independent counters differed (canonical sequence370 versus another location39).
+Main and one native subagent were active. This is a measured trigger rate for
+that work interval, not a steady idle rate or actual request-count measurement.
+
+Both Radar and Trajectory had discarded `event.location` and passed independent
+same-project counters to one synchronization state. A larger foreign counter
+could cause a false gap and suppress later canonical changes; lower foreign
+counters were discarded by the sequence guard. Both adapters now keep only the
+location used by their scoped read methods. Missing locations are ignored.
+Trajectory preserves native `server.connected` announcements and project checks;
+Radar retains its synchronization state's project guard.
+
+The focused follow-up passes 45 tests / 292 assertions across Radar transport/
+state and `test/trajectory-panel`, including foreign high counters, missing
+location, unrelated project, canonical continuation and reconnect. Native fmt,
+lint, check and isolated GUI build/process-free smoke pass. A twelve-second
+native-adapter smoke at1793831296414–1793831308416 observed one connection
+announcement and no change events; it verifies connection handling but cannot
+claim live changed-event filtering during that quiet interval. Production
+activation and live verification remain coordinated by Root.
