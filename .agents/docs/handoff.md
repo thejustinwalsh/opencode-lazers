@@ -38,6 +38,16 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   noted, not a demonstrated defect or added gate. Nativev9 remains blocked on exact
   success/idle execution mismatch, not acceptance. Exact native binding diagnosis
   is in progress; preserve source and do not manufacture zero-background evidence.
+  Diagnosis now establishes **missing execution-start lineage across producer
+  replacement**, not stale input: old listener disposed1793814658788 after126start,
+  following main117source merge/plugin reload log; genuine0hook6374887 and matching
+  success6375011/seq1144 could not certify the missing start, invalidationrev1 at 6375013. Actual126foreground inactive/110active; empty controls do not repair this.
+  **Do not merge production runtime source while workers are active:** local-plugin
+  source merges can auto-replace listeners without an explicit location.reload.
+  Detailed actual bindings and historical-vs-current distinction are retained in
+  [installed observation evidence](evidence/native-idle-installed-observation-20261104.md).
+  Provable compatibility recovery and supported same-attempt117repair eligibility
+  are under read-only research; no repeated reconcile/worker wake/fabricated certificate.
   [Prepared producer guidance](evidence/models-producer-guidance-20261104.md)
   carries the concrete reader/capture/counting handoff; deliver durably at dispatch.
 - Original117 sameattempt completed marker-ID correction **f170a6b**; independent

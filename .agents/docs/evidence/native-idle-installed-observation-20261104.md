@@ -7,6 +7,46 @@ a new global gate, implementation task or permission to manufacture evidence.
 
 ## Observed blocker
 
+### Later actual126 execution: replacement gap, not stale input
+
+Authenticated public reads1793816483905–1793816484007, PID95968/OpenCode2.2.5,
+verified project/attempt/session/workspace ownership.126 remains blockedv9 with
+clean candidate`bb26ab267863601338102747f99d3fc94539f29b`; no native verify effects.
+
+- Actual task start1793814613159, event`evt_1a7aecca7001Ucy4Zmd5fhSM51`.
+- Assigned/current input`msg_3fd61aaa88244bfbba9bca99daa30ca8`; no other user/synthetic
+  input in current public context. Not the continuation-note input bug.
+- Old listener`bdb2b3d1…` disposed1793814658788, about45.6s after start. Service log
+  `opencode.log:162931` shows117merge, then plugin loading/LAZERS loaded around
+  17:50:58Z at162942–162974. **Source merge itself coincided with automatic plugin
+  replacement.** No additional explicit Root reload/restart is asserted.
+- Genuine idle hook1793816374887, background0, listener
+  `51451219-800f-4679-95ab-6dbbbb859180`; hook lineage read6374940 had correct input
+  but `idle-lineage-unavailable` and no start/event sequence.
+- Success1793816375011, sequence1144, event`evt_1a7c9aee3001bnCbKJ2iTUwggH`; matching
+  public successful Idle`msg_1a7c9aee3001bnCbKJ2iTUwggH`. Final assistant stopped and
+  Idle followed; success did not precede the hook.
+- Durable invalidation6375013 revision1, lastEventSequence1144, with start/report/
+  pendingTerminal/terminal null. This is not a zero-background certificate.
+- Public experimental session log(follow:false) returned only log.synced; task-start
+  durable sequence remains unavailable. Diagnostic start2/success5 belongs to an
+  earlier pre-task execution and must not be substituted.
+
+126 foreground inactive,110 foreground active; both had empty inbox/owned permissions/
+forms/location shells. These are real observations, not background-certification
+authority. Producer`progress/native.ts:453–466` rejects missing observed start;
+`native-idle.ts:334–355` rejects success without a matching report. The new durable
+path has executed, but complete installed artifact/rollout certification is not proved.
+
+**Guardrail:** defer production-runtime source merges as well as explicit reloads
+until a coordinated natural quiet boundary. The previous assumption that source
+merge could safely precede explicit activation while126 ran was disproved here.
+Keep both original attempts. Feed the gap into existing117 recovery; investigate
+a provable compatibility recovery, never reconstruct a certificate from these facts
+by direct writes, repeated reconciliation or a new turn solely for convergence.
+
+### Earlier baseline (historical, not current after the126 invalidation)
+
 SELECT-only reads of the installed `tasks.sqlite` at **1793815032874–1793815117597**:
 
 - `runner_native_idle` exists with **zero rows**; no `execution-success-confirmed`
