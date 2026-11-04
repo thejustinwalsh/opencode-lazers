@@ -546,6 +546,7 @@ test("native worker selection survives role registration and reaches native crea
   let catalogReads = 0
   let fail = false
   const ctx = {
+    location: { directory: "/work" },
     agent: {
       get: () => Effect.succeed({ data: agent }),
       transform: (transform: (editor: unknown) => void) =>
@@ -586,7 +587,13 @@ test("native worker selection survives role registration and reaches native crea
     },
     tool: { hook: () => Effect.void },
   } as unknown as Plugin.Context
-  await Effect.runPromise(Effect.scoped(registerWorker(ctx, {} as RunnerStore)))
+  await Effect.runPromise(
+    Effect.scoped(
+      registerWorker(ctx, {
+        repository: { path: "/synthetic/native-roles.sqlite" },
+      } as RunnerStore),
+    ),
+  )
   const host = nativeHost(ctx, {} as TaskRepository)
   for (const [index, route] of routes.entries()) {
     agent.model = route

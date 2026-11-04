@@ -4,6 +4,11 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
+import {
+  quarantinedSession,
+  registerSourceGuard,
+  sourceQuarantineToolError,
+} from "./source-quarantine.ts"
 
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
@@ -50,9 +55,11 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
     )
     yield* ctx.tool.hook("execute.before", (call) =>
       Effect.suspend(() => {
+        const quarantineError = sourceQuarantineToolError(store, call.sessionID, call.tool)
+        if (quarantineError) return Effect.fail(new Tool.Error({ message: quarantineError }))
         const owned = attempt(call.sessionID)
         if (!owned) {
-          if (call.agent === "lazers-implementor")
+          if (call.agent === "lazers-implementor" && !quarantinedSession(store, call.sessionID))
             return Effect.fail(
               new Tool.Error({ message: "Implementor requires an admitted runtime assignment" }),
             )
@@ -76,6 +83,10 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
           db.query("UPDATE runner_attempts SET retry_count=retry_count+1 WHERE id=?").run(owned.id),
         )
       }),
+    )
+    yield* Effect.acquireRelease(
+      Effect.sync(() => registerSourceGuard(store, ctx.location.directory)),
+      (unregister) => Effect.sync(unregister),
     )
   })
 }

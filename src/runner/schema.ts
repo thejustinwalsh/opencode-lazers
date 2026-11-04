@@ -175,6 +175,7 @@ export const CommandInput = z.strictObject({
     "schedule",
     "amend-scope",
     "adopt-descendant",
+    "quarantine-source",
   ]),
   reason: z
     .string()

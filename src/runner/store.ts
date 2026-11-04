@@ -311,6 +311,16 @@ export class RunnerStore {
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT, attempt_id TEXT REFERENCES runner_attempts(id),
         kind TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT, fence INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS runner_source_quarantines (
+        attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
+        plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
+        assigned_message_id TEXT NOT NULL, requested_owner TEXT NOT NULL,
+        workspace TEXT NOT NULL, request_id TEXT NOT NULL, reason TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK(phase IN ('pending','sealed')), hold_reason TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runner_source_quarantines_pending
+        ON runner_source_quarantines(plan_id,created_at) WHERE phase='pending';
       CREATE TABLE IF NOT EXISTS runner_adoptions (
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id),
         task_id TEXT NOT NULL, request_id TEXT NOT NULL, owner TEXT NOT NULL,

@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -29,6 +30,12 @@ import { taskInstructions } from "../tasks/instructions.ts"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { sharedScheduler, schedulerProjectKey } from "./scheduler-coordinator.ts"
+import {
+  registerSourceGuard,
+  sourceQuarantine,
+  sourceReservationExcluded,
+} from "./source-quarantine.ts"
+import { inspectPlan } from "./inspection.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -300,7 +307,8 @@ function fixture(
     },
     updateInstruction: async (input) => {
       const effect = store
-        .effects(store.execution(tasks[0]!.id)!.planID)
+        .plans()
+        .flatMap((plan) => store.effects(plan.id))
         .find(
           (item) => item.kind === "scope-instruction" && JSON.parse(item.payload).key === input.key,
         )
@@ -484,6 +492,289 @@ function fixture(
 async function drive(runtime: TaskRuntime, count = 8) {
   for (let n = 0; n < count; n++) await runtime.tick()
 }
+
+async function retainedSourceFixture() {
+  const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id)
+  const worker = f.sessions.get(attempt.session_id)!
+  Object.assign(worker, {
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    background: {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "Old background lineage unavailable",
+    },
+  })
+  const artifact = git(attempt.workspace, ["rev-parse", "HEAD"])
+  const effectID = crypto.randomUUID()
+  f.store.move(f.receipt.planID, attempt.task_id, "VERIFY")
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='verifying',artifact=? WHERE id=?").run(
+      artifact,
+      attempt.id,
+    )
+    db.query("UPDATE runner_nodes SET artifact=? WHERE task_id=?").run(artifact, attempt.task_id)
+    db.query(
+      "UPDATE runner_plans SET state='blocked',reason='Retained check is uncertain' WHERE id=?",
+    ).run(f.receipt.planID)
+    db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'uncertain',?,NULL,0)").run(
+      effectID,
+      f.receipt.planID,
+      attempt.task_id,
+      attempt.id,
+      "verify:content",
+      JSON.stringify({
+        workspace: attempt.workspace,
+        artifact,
+        check: f.tasks[0]!.proposal.verification[0],
+        identity: "retained-check",
+        receiptPath: join(f.root, "missing-retained-check.json"),
+      }),
+    )
+  })
+  const retained = f.store.attempts(f.receipt.planID)[0]!
+  const command = (requestID = crypto.randomUUID()) => ({
+    requestID,
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "quarantine-source",
+    attemptID: attempt.id,
+    reason: "Retain unknown check resources while excluding this source writer",
+  })
+  const install = (store = f.store) => {
+    const unregister = registerSourceGuard(store, attempt.workspace)
+    cleanup.push(unregister)
+    return unregister
+  }
+  return { ...f, retained, worker, artifact, effectID, command, install }
+}
+
+test("source quarantine seals only a stopped guarded native writer and permits independent code without accepting old work", async () => {
+  const f = await retainedSourceFixture()
+  f.install()
+  const heldEffect = f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!
+  const scope = f.store.effectiveWriteScope(f.retained.task_id)
+  const command = f.command()
+  const receipt = await f.runtime.command(command, "owner")
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("pending")
+  const next = f.createTask("b", "shared.txt")
+  const following = f.store.submit(f.inputFor([next], { requestID: "independent-source" }), "owner")
+  await runPlan(f, following.planID, "run-independent-source")
+  f.worker.busy = true
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("pending")
+  expect(f.store.attempts(following.planID)).toHaveLength(0)
+  expect(f.worker.archived).toBe(false)
+  f.worker.busy = false
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
+  expect(f.worker.archived).toBe(true)
+  expect(f.store.attempts(following.planID)).toHaveLength(1)
+  const successor = f.store.attempts(following.planID)[0]!
+  expect(successor.workspace).not.toBe(f.retained.workspace)
+  expect(readFileSync(join(successor.workspace, "shared.txt"), "utf8")).toBe("b")
+  expect(readFileSync(join(f.retained.workspace, "shared.txt"), "utf8")).toBe("a")
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("verifying")
+  expect(f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)).toEqual(heldEffect)
+  expect(f.store.effectiveWriteScope(f.retained.task_id)).toEqual(scope)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  await f.runtime.command(
+    {
+      requestID: "amend-independent-quarantined-overlap",
+      planID: following.planID,
+      expectedVersion: f.store.plan(following.planID)!.version,
+      action: "amend-scope",
+      taskID: next.id,
+      scopeAdditions: ["extra.txt"],
+      reason: "Independent active source remains disjoint from the retained checkout",
+    },
+    "owner",
+  )
+  expect(f.store.effectiveWriteScope(next.id)).toContain("extra.txt")
+  expect(await f.runtime.command(command, "owner")).toEqual(receipt)
+  expect(inspectPlan(f.store, { planID: f.receipt.planID, full: false })).toHaveProperty(
+    "sourceQuarantines.0.phase",
+    "sealed",
+  )
+  const dependent = f.createTask("c", "c.txt")
+  const dependentPlan = f.store.submit(
+    {
+      ...f.inputFor([dependent], { requestID: "retained-integration-dependency" }),
+      afterPlans: [f.receipt.planID],
+    },
+    "owner",
+  )
+  await runPlan(f, dependentPlan.planID, "run-retained-dependent")
+  await f.runtime.tick()
+  expect(f.store.attempts(dependentPlan.planID)).toHaveLength(0)
+})
+
+test("source quarantine preserves shared and physical-checkout exclusion at both admission gates", async () => {
+  for (const destination of ["shared", "same", "symlink"] as const) {
+    const f = await retainedSourceFixture()
+    f.install()
+    await f.runtime.command(f.command(), "owner")
+    await f.runtime.tick()
+    const next = f.createTask("b", "shared.txt")
+    const input = {
+      ...f.inputFor([next], { requestID: `unsafe-${destination}` }),
+      baseCommit: f.artifact,
+      workspaceMode: destination === "shared" ? "shared" : "isolated",
+    }
+    if (destination !== "shared") {
+      const alias = join(f.root, "retained-source-alias")
+      if (destination === "symlink") symlinkSync(f.retained.workspace, alias, "dir")
+      f.host.worktree = async () => (destination === "same" ? f.retained.workspace : alias)
+    }
+    const plan = f.store.submit(input, "owner")
+    await runPlan(f, plan.planID, `run-unsafe-${destination}`)
+    const prompts = f.events.filter((event) => event.startsWith("prompt:")).length
+    await f.runtime.tick()
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)
+    expect(readFileSync(join(f.retained.workspace, "shared.txt"), "utf8")).toBe("a")
+    expect(f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!.state).toBe(
+      "uncertain",
+    )
+    if (destination === "shared") expect(f.store.attempts(plan.planID)).toHaveLength(0)
+    else expect(f.store.attempts(plan.planID)[0]!.state).toBe("preparing")
+  }
+})
+
+test("source quarantine recovers lost archive replies after reopen without inventing old receipts or replaying archive", async () => {
+  const f = await retainedSourceFixture()
+  const disposeFirstGuard = f.install()
+  let archives = 0
+  f.host.updateSession = async ({ sessionID, archived }) => {
+    archives++
+    f.sessions.get(sessionID)!.archived = archived
+    throw new Error("Archive acknowledgement lost")
+  }
+  const command = f.command()
+  await f.runtime.command(command, "owner")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("pending")
+  expect(archives).toBe(1)
+  await f.runtime.stop()
+  disposeFirstGuard()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const repository = new TaskRepository(f.repository.path, f.root)
+  const store = new RunnerStore(repository)
+  const runtime = new TaskRuntime(store, f.host, "project")
+  try {
+    await runtime.tick()
+    expect(sourceQuarantine(store, f.retained.id)?.phase).toBe("pending")
+    expect(sourceQuarantine(store, f.retained.id)?.hold_reason).toContain(
+      "source guard is not installed",
+    )
+    const disposeSecondGuard = f.install(store)
+    await runtime.tick()
+    expect(sourceQuarantine(store, f.retained.id)?.hold_reason).toBeNull()
+    expect(sourceQuarantine(store, f.retained.id)?.phase).toBe("sealed")
+    expect(archives).toBe(1)
+    expect(store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!.receipt).toBeNull()
+    expect(
+      sourceReservationExcluded(store, store.attempts(f.receipt.planID)[0]!, { mode: "isolated" }),
+    ).toBe(true)
+    disposeSecondGuard()
+    expect(
+      sourceReservationExcluded(store, store.attempts(f.receipt.planID)[0]!, { mode: "isolated" }),
+    ).toBe(false)
+    expect(await runtime.command(command, "owner")).toMatchObject({ status: "quarantining-source" })
+  } finally {
+    await runtime.stop()
+    repository.close()
+  }
+})
+
+test("source quarantine rejects missing enforcement, active writers, stale versions and foreign owners before mutation", async () => {
+  const f = await retainedSourceFixture()
+  await expect(f.runtime.command(f.command(), "owner")).rejects.toThrow("source guard")
+  f.install()
+  f.worker.busy = true
+  await expect(f.runtime.command(f.command(), "owner")).rejects.toThrow("active or unresolved")
+  f.worker.busy = false
+  await expect(f.runtime.command({ ...f.command(), expectedVersion: 1 }, "owner")).rejects.toThrow(
+    "Stale plan version",
+  )
+  await expect(f.runtime.command(f.command(), "another-owner")).rejects.toThrow(
+    "Only the plan owner",
+  )
+  expect(sourceQuarantine(f.store, f.retained.id)).toBeNull()
+  expect(f.worker.archived).toBe(false)
+})
+
+test("source quarantine fences reassignment during archive and accepts a fresh authorized continuation", async () => {
+  const f = await retainedSourceFixture()
+  f.install()
+  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner" })
+  const archive = f.host.updateSession!
+  f.host.updateSession = async (input) => {
+    await archive(input)
+    await f.runtime.command(
+      {
+        requestID: "reassign-during-quarantine",
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "reassign",
+        targetSessionID: "new-owner",
+      },
+      "owner",
+    )
+  }
+  await f.runtime.command(f.command(), "owner")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("pending")
+  expect(sourceQuarantine(f.store, f.retained.id)?.hold_reason).toContain(
+    "authority or assignment changed",
+  )
+  expect(
+    sourceReservationExcluded(f.store, f.store.attempts(f.receipt.planID)[0]!, {
+      mode: "isolated",
+    }),
+  ).toBe(false)
+  await f.runtime.command(f.command(), "new-owner")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
+  expect(f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!.state).toBe(
+    "uncertain",
+  )
+})
+
+test("source quarantine recovery does not inspect or mutate another project sharing its database", async () => {
+  const f = await retainedSourceFixture()
+  f.install()
+  await f.runtime.command(f.command(), "owner")
+  const before = sourceQuarantine(f.store, f.retained.id)
+  const foreignRoot = mkdtempSync(join(tmpdir(), "lazers-quarantine-foreign-"))
+  const repository = new TaskRepository(f.repository.path, foreignRoot)
+  let reads = 0
+  const runtime = new TaskRuntime(
+    new RunnerStore(repository),
+    {
+      ...f.host,
+      session: async () => {
+        reads++
+        throw new Error("Foreign project cannot read this worker")
+      },
+    },
+    "foreign-project",
+  )
+  try {
+    await runtime.tick()
+    expect(reads).toBe(0)
+    expect(sourceQuarantine(f.store, f.retained.id)).toEqual(before)
+    expect(f.worker.archived).toBe(false)
+  } finally {
+    await runtime.stop()
+    repository.close()
+    rmSync(foreignRoot, { recursive: true, force: true })
+  }
+})
 
 test("active scope amendments durably update the same worker after it fetched old instructions and survive reopen", async () => {
   const f = fixture({

@@ -44,6 +44,12 @@ import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { sharedScheduler } from "./scheduler-coordinator.ts"
+import {
+  sourceGuardInstalled,
+  sourceQuarantine,
+  sourceReservationExcluded,
+} from "./source-quarantine.ts"
+import type { SourceQuarantine } from "./source-quarantine.ts"
 
 const terminal = new Set([
   "accepted",
@@ -424,6 +430,56 @@ export class TaskRuntime {
     }
   }
 
+  private quarantineTarget(plan: PlanRow, command: PlanCommand) {
+    if (!command.attemptID || !command.reason)
+      throw new Error("Source quarantine requires attemptID and reason")
+    const attempt = this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
+    if (
+      !attempt ||
+      attempt.state !== "verifying" ||
+      !["running", "blocked"].includes(plan.state) ||
+      attempt.workspace === this.directory ||
+      JSON.parse(plan.body).workspaceMode === "shared"
+    )
+      throw new Error("Source quarantine requires an isolated retained verifying attempt")
+    if (
+      !this.store
+        .effects(plan.id)
+        .some(
+          (effect) =>
+            effect.attempt_id === attempt.id &&
+            effect.state === "uncertain" &&
+            effect.kind.startsWith("verify:"),
+        )
+    )
+      throw new Error("Source quarantine requires a retained uncertain check")
+    if (!this.host.updateSession || !sourceGuardInstalled(this.store, attempt.workspace))
+      throw new Error("The native worker source guard and archive control must be installed")
+    return attempt
+  }
+
+  private sourceWorkerWait(
+    attempt: Pick<AttemptRow, "session_id" | "workspace">,
+    session: HostSession | null | undefined,
+  ) {
+    if (
+      !session ||
+      session.id !== attempt.session_id ||
+      session.projectID !== this.projectID ||
+      session.directory !== attempt.workspace
+    )
+      return "Retained worker ownership or location is unavailable"
+    if (
+      session.busy ||
+      session.pendingInput !== false ||
+      session.observationUnstable ||
+      session.pendingPermissions !== 0 ||
+      session.pendingForms !== 0
+    )
+      return "Retained worker has active or unresolved foreground/input/approval work"
+    return undefined
+  }
+
   async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
@@ -446,9 +502,15 @@ export class TaskRuntime {
     const target = command.action === "reassign" ? command.targetSessionID : old.owner
     let ownerSession: HostSession | null | undefined
     if (
-      ["run", "reassign", "reconcile", "resume", "retry", "adopt-descendant"].includes(
-        command.action,
-      )
+      [
+        "run",
+        "reassign",
+        "reconcile",
+        "resume",
+        "retry",
+        "adopt-descendant",
+        "quarantine-source",
+      ].includes(command.action)
     ) {
       if (!target) throw new Error("Target session required")
       ownerSession = await this.host.session(target)
@@ -461,6 +523,20 @@ export class TaskRuntime {
       command.action === "adopt-descendant"
         ? await this.prepareAdoption(old, command, caller, ownerSession)
         : undefined
+    let quarantineAttempt: AttemptRow | undefined
+    if (command.action === "quarantine-source") {
+      if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
+      quarantineAttempt = this.quarantineTarget(old, command)
+      const worker = await this.host.session(quarantineAttempt.session_id)
+      const wait = this.sourceWorkerWait(quarantineAttempt, worker)
+      if (wait) throw new Error(wait)
+      const worktrees = await this.host.worktrees()
+      if (
+        !worktrees.includes(quarantineAttempt.workspace) ||
+        realpathSync(quarantineAttempt.workspace) === realpathSync(this.directory)
+      )
+        throw new Error("Retained source must be a separate native-owned worktree")
+    }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -479,6 +555,59 @@ export class TaskRuntime {
         throw new Error(
           "A descendant adoption is pending; only its evidence or cancellation is allowed",
         )
+      if (command.action === "quarantine-source") {
+        const attempt = this.quarantineTarget(plan, command)
+        if (
+          !quarantineAttempt ||
+          attempt.message_id !== quarantineAttempt.message_id ||
+          attempt.session_id !== quarantineAttempt.session_id ||
+          attempt.workspace !== quarantineAttempt.workspace
+        )
+          throw new Error("Retained worker changed during source quarantine admission")
+        const existing = sourceQuarantine(this.store, attempt.id)
+        if (
+          existing &&
+          (existing.session_id !== attempt.session_id ||
+            existing.assigned_message_id !== attempt.message_id ||
+            existing.workspace !== attempt.workspace)
+        )
+          throw new Error("Existing source quarantine belongs to a different worker assignment")
+        if (existing?.phase === "sealed")
+          return { status: "source-quarantined", attemptID: attempt.id, version: plan.version }
+        const at = Date.now()
+        db.query(
+          `INSERT INTO runner_source_quarantines
+          (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,phase,hold_reason,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,'pending',NULL,?,?)
+          ON CONFLICT(attempt_id) DO UPDATE SET requested_owner=excluded.requested_owner,
+            request_id=excluded.request_id,reason=excluded.reason,hold_reason=NULL,updated_at=excluded.updated_at`,
+        ).run(
+          attempt.id,
+          plan.id,
+          attempt.session_id,
+          attempt.message_id,
+          plan.owner,
+          attempt.workspace,
+          command.requestID,
+          command.reason!,
+          at,
+          at,
+        )
+        db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+        this.store.record(plan.id, attempt.task_id, "SOURCE_QUARANTINE_REQUESTED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          requestID: command.requestID,
+          reason: command.reason,
+          resourceHoldsRetained: true,
+        })
+        return {
+          status: "quarantining-source",
+          attemptID: attempt.id,
+          version: this.store.plan(plan.id)!.version,
+        }
+      }
       if (command.action === "amend-scope") {
         if (!command.taskID || !command.scopeAdditions?.length || !command.reason)
           throw new Error("Scope amendment requires task, added paths and reason")
@@ -491,16 +620,21 @@ export class TaskRuntime {
         const additions = writeScope.filter((path) => !previous.includes(path))
         if (!additions.length) return { status: "scope-unchanged", version: plan.version }
         const active = ["preparing", "running", "verifying"]
-        if (
-          this.store
-            .attempts(plan.id)
-            .some((a) => a.task_id === node.task_id && active.includes(a.state))
-        ) {
+        const writers = this.store
+          .attempts(plan.id)
+          .filter((a) => a.task_id === node.task_id && active.includes(a.state))
+        if (writers.length) {
           for (const otherPlan of this.store.plans())
             for (const other of this.store.attempts(otherPlan.id))
               if (
                 other.task_id !== node.task_id &&
                 active.includes(other.state) &&
+                !writers.every((writer) =>
+                  sourceReservationExcluded(this.store, other, {
+                    mode: writer.workspace === this.directory ? "shared" : "isolated",
+                    workspace: writer.workspace,
+                  }),
+                ) &&
                 scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
               )
                 throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
@@ -2076,6 +2210,94 @@ export class TaskRuntime {
     }
   }
 
+  private async advanceSourceQuarantines(fence: number) {
+    const pending = this.store.atomic((db) =>
+      db
+        .query<SourceQuarantine, [string]>(
+          `SELECT quarantine.* FROM runner_source_quarantines quarantine
+           JOIN runner_plans plan ON plan.id=quarantine.plan_id
+           WHERE quarantine.phase='pending' AND plan.project_directory=?
+           ORDER BY quarantine.created_at`,
+        )
+        .all(this.directory),
+    )
+    for (const quarantine of pending) {
+      const wait = (reason: string) =>
+        this.store.fenced(this.owner, fence, (db) => {
+          const changed = db
+            .query(
+              `UPDATE runner_source_quarantines SET hold_reason=?,updated_at=?
+          WHERE attempt_id=? AND request_id=? AND phase='pending' AND hold_reason IS NOT ?`,
+            )
+            .run(reason, Date.now(), quarantine.attempt_id, quarantine.request_id, reason).changes
+          if (changed)
+            this.store.record(quarantine.plan_id, null, "SOURCE_QUARANTINE_WAIT", {
+              attemptID: quarantine.attempt_id,
+              reason,
+              resourceHoldsRetained: true,
+            })
+        })
+      const current = () => {
+        const row = sourceQuarantine(this.store, quarantine.attempt_id)
+        const plan = this.store.plan(quarantine.plan_id)
+        const attempt = this.store
+          .attempts(quarantine.plan_id)
+          .find((item) => item.id === quarantine.attempt_id)
+        if (
+          !row ||
+          row.phase !== "pending" ||
+          row.request_id !== quarantine.request_id ||
+          plan?.owner !== quarantine.requested_owner ||
+          !attempt ||
+          attempt.state !== "verifying" ||
+          attempt.session_id !== quarantine.session_id ||
+          attempt.message_id !== quarantine.assigned_message_id ||
+          attempt.workspace !== quarantine.workspace
+        )
+          throw new Error("Retained source quarantine authority or assignment changed")
+        if (!sourceGuardInstalled(this.store, quarantine.workspace))
+          throw new Error("Native worker source guard is not installed")
+        return attempt
+      }
+      try {
+        const attempt = this.store.fenced(this.owner, fence, current)
+        let worker = await this.host.session(quarantine.session_id)
+        let reason = this.sourceWorkerWait(attempt, worker)
+        if (reason) {
+          wait(reason)
+          continue
+        }
+        this.store.fenced(this.owner, fence, current)
+        if (!worker!.archived) {
+          if (!this.host.updateSession) throw new Error("Native archive control is unavailable")
+          await this.host.updateSession({ sessionID: quarantine.session_id, archived: true })
+        }
+        worker = await this.host.session(quarantine.session_id)
+        reason = this.sourceWorkerWait(attempt, worker)
+        if (reason || !worker?.archived) {
+          wait(reason ?? "Native archive has not been observed")
+          continue
+        }
+        this.store.fenced(this.owner, fence, (db) => {
+          current()
+          db.query(
+            `UPDATE runner_source_quarantines SET phase='sealed',hold_reason=NULL,updated_at=?
+            WHERE attempt_id=? AND request_id=? AND phase='pending'`,
+          ).run(Date.now(), quarantine.attempt_id, quarantine.request_id)
+          this.store.record(quarantine.plan_id, attempt.task_id, "SOURCE_QUARANTINE_SEALED", {
+            attemptID: attempt.id,
+            sessionID: attempt.session_id,
+            workspace: attempt.workspace,
+            requestID: quarantine.request_id,
+            resourceHoldsRetained: true,
+          })
+        })
+      } catch (error) {
+        wait(errorText(error))
+      }
+    }
+  }
+
   async tick() {
     if (this.running || this.stopped) return
     this.running = true
@@ -2123,6 +2345,7 @@ export class TaskRuntime {
         }
       }
       await this.reconcileArchitectSources(fence)
+      await this.advanceSourceQuarantines(fence)
       for (let plan of this.store
         .plans()
         .filter((p) => !terminal.has(p.state) && (p.state !== "draft" || this.taskStartID(p)))
@@ -2277,10 +2500,15 @@ export class TaskRuntime {
         .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
         .map((attempt) => ({ attempt, plan: candidate })),
     )
-    const occupied = activeProject.map(({ attempt }) => ({
-      shared: attempt.workspace === this.directory,
-      scopes: this.store.effectiveWriteScope(attempt.task_id),
-    }))
+    const occupied = activeProject
+      .filter(
+        ({ attempt }) =>
+          !sourceReservationExcluded(this.store, attempt, { mode: input.workspaceMode }),
+      )
+      .map(({ attempt }) => ({
+        shared: attempt.workspace === this.directory,
+        scopes: this.store.effectiveWriteScope(attempt.task_id),
+      }))
     occupied.push(
       ...this.store.activeAdoptions().map((adoption) => ({
         shared: false,
@@ -2906,6 +3134,7 @@ export class TaskRuntime {
   }
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
   private preparationAllowed(attempt: AttemptRow) {
+    if (sourceQuarantine(this.store, attempt.id)) return false
     const scope = this.store.effectiveWriteScope(attempt.task_id)
     if (
       this.store
@@ -2920,6 +3149,13 @@ export class TaskRuntime {
     for (const plan of this.store.plans()) {
       for (const other of this.store.attempts(plan.id)) {
         if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
+          continue
+        if (
+          sourceReservationExcluded(this.store, other, {
+            mode: attempt.workspace === this.directory ? "shared" : "isolated",
+            workspace: attempt.workspace,
+          })
+        )
           continue
         const promptIntended = this.store
           .effects(plan.id)
