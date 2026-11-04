@@ -60,7 +60,6 @@ export class RadarPanelState {
   private scope?: ObservationScope
   private includeUnmanagedSessions = false
   private reconnecting = false
-  private poll?: ReturnType<typeof setInterval>
   /** Keep gap/reconnect catch-up quiet until Radar has crossed its recovery fence. */
   private recoveryFence?: number
   private recoveryBaselinePending = false
@@ -99,9 +98,6 @@ export class RadarPanelState {
     this.update({})
     void this.watch(epoch, generation, projectID, transport, signal)
     void this.refresh(epoch, generation, transport, signal)
-    this.poll = setInterval(() => {
-      if (!signal.aborted) void this.refresh(epoch, this.sync.generation, transport, signal)
-    }, 3_000)
   }
 
   async refresh(epoch: number, generation: number, transport: RadarTransport, signal: AbortSignal) {
@@ -314,8 +310,6 @@ export class RadarPanelState {
     this.recoveryFence = undefined
     this.recoveryBaselinePending = false
     this.controller.abort()
-    if (this.poll) clearInterval(this.poll)
-    this.poll = undefined
     this.transport = undefined
     this.scope = undefined
     this.data = blank()
