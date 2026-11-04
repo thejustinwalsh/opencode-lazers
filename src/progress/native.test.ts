@@ -1336,7 +1336,141 @@ test("failed newer start persistence cannot confirm an earlier zero report with 
   }
 })
 
-test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
+test("a stale second-listener start cannot confirm an older zero after a failed newer start", async () => {
+  const fixture = makeFixture()
+  let reopenedRepository: TaskRepository | undefined
+  const originalObserveEvent = NativeIdleStore.prototype.observeEvent
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const first = makeContext(fixture, { liveEvents: true, messages })
+    const second = makeContext(fixture, { liveEvents: true, messages })
+    const store = new NativeIdleStore(fixture.repository)
+    const firstSuccessProcessed = Promise.withResolvers<void>()
+    const secondSuccessProcessed = Promise.withResolvers<void>()
+    const recordNativeEvent = recorder.recordNativeEvent.bind(recorder)
+    let successCount = 0
+    recorder.recordNativeEvent = (event) => {
+      const saved = recordNativeEvent(event)
+      if (testObject(event)?.id === "evt_23") {
+        successCount++
+        if (successCount === 1) firstSuccessProcessed.resolve()
+        if (successCount === 2) secondSuccessProcessed.resolve()
+      }
+      return saved
+    }
+    const failedStart = Promise.withResolvers<void>()
+    let failNextStart = false
+    NativeIdleStore.prototype.observeEvent = function (
+      currentBinding,
+      type,
+      sequence,
+      eventID,
+      messageID,
+    ) {
+      if (failNextStart && type === "session.execution.started" && sequence === 22) {
+        failNextStart = false
+        failedStart.resolve()
+        throw new Error("Injected newer-start persistence failure")
+      }
+      return originalObserveEvent.call(this, currentBinding, type, sequence, eventID, messageID)
+    }
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(first.context, recorder, "project")
+          yield* registerProgress(second.context, recorder, "project")
+          yield* Effect.promise(() =>
+            first.emitEvent(executionEvent("session.execution.started", sessionID, 20)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.executionStartSequence === 20),
+          )
+          yield* Effect.promise(() =>
+            second.emitEvent(executionEvent("session.execution.started", sessionID, 20)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () =>
+              nativeObservations(fixture, sessionID).some(
+                (row) => row.phase === "event-seen" && row.eventSequence === 20,
+              ),
+            ),
+          )
+          yield* first.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          expect(store.read(binding)?.report).toMatchObject({
+            executionStartSequence: 20,
+            eventSequence: 20,
+            inputID: binding.assignedMessageID,
+            count: 0,
+          })
+
+          failNextStart = true
+          yield* Effect.promise(() =>
+            first.emitEvent(executionEvent("session.execution.started", sessionID, 22)),
+          )
+          yield* Effect.promise(() => failedStart.promise)
+          yield* Effect.promise(() =>
+            first.emitEvent(executionEvent("session.execution.succeeded", sessionID, 23)),
+          )
+          yield* Effect.promise(() => firstSuccessProcessed.promise)
+          expect(store.read(binding)?.pendingTerminal?.sequence).toBe(23)
+          expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+
+          // The second listener sees B before its success, but only after L1 moved the shared watermark.
+          const staleCount = nativeObservations(fixture, sessionID).filter(
+            (row) => row.phase === "event-stale" && row.eventSequence === 22,
+          ).length
+          yield* Effect.promise(() =>
+            second.emitEvent(executionEvent("session.execution.started", sessionID, 22)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                nativeObservations(fixture, sessionID).filter(
+                  (row) => row.phase === "event-stale" && row.eventSequence === 22,
+                ).length > staleCount,
+            ),
+          )
+          yield* Effect.promise(() =>
+            second.emitEvent(executionEvent("session.execution.succeeded", sessionID, 23)),
+          )
+          yield* Effect.promise(() => secondSuccessProcessed.promise)
+
+          expect(store.read(binding)?.report).toMatchObject({
+            executionStartSequence: 20,
+            eventSequence: 20,
+          })
+          expect(store.read(binding)?.pendingTerminal?.sequence).toBe(23)
+          expect(store.read(binding)?.terminal).toBeNull()
+          expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+        }),
+      ),
+    )
+
+    fixture.repository.close()
+    reopenedRepository = new TaskRepository(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    expect(new NativeIdleStore(reopenedRepository).background(binding)).toMatchObject({
+      state: "unknown",
+    })
+  } finally {
+    NativeIdleStore.prototype.observeEvent = originalObserveEvent
+    reopenedRepository?.close()
+    fixture.close()
+  }
+})
+
+test.each([
+  "stream-loss-read",
+  "stream-loss-first-reconnect-read-fails",
+  "unsequenced-event-reconnect",
+  "unsequenced-event-continuing",
+] as const)(
   "%s recovers from an unknown lineage barrier only at a finite live-start boundary",
   async (failureMode) => {
     const fixture = makeFixture()
@@ -1353,8 +1487,11 @@ test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
       const store = new NativeIdleStore(fixture.repository)
       const streamGap = Promise.withResolvers<void>()
       const failureInjected = Promise.withResolvers<void>()
+      const firstGapReadFailure = Promise.withResolvers<void>()
+      const secondGapReadFailure = Promise.withResolvers<void>()
       const originalMarkRecoveryGap = recorder.markRecoveryGap.bind(recorder)
-      let failNextGapRead = false
+      let remainingGapReadFailures = 0
+      let gapReadFailureCount = 0
       let failNextUnsequencedWrite = false
       recorder.markRecoveryGap = (...args) => {
         const result = originalMarkRecoveryGap(...args)
@@ -1362,9 +1499,11 @@ test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
         return result
       }
       NativeIdleStore.prototype.read = function (currentBinding) {
-        if (failNextGapRead && currentBinding.sessionID === sessionID) {
-          failNextGapRead = false
-          failureInjected.resolve()
+        if (remainingGapReadFailures > 0 && currentBinding.sessionID === sessionID) {
+          const failureNumber = ++gapReadFailureCount
+          remainingGapReadFailures--
+          if (failureNumber === 1) firstGapReadFailure.resolve()
+          if (failureNumber === 2) secondGapReadFailure.resolve()
           throw new Error("Injected idle-row read failure at stream loss")
         }
         return originalRead.call(this, currentBinding)
@@ -1426,7 +1565,9 @@ test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
             })
 
             if (failureMode === "stream-loss-read") {
-              failNextGapRead = true
+              remainingGapReadFailures = 1
+            } else if (failureMode === "stream-loss-first-reconnect-read-fails") {
+              remainingGapReadFailures = 2
             } else {
               failNextUnsequencedWrite = true
               yield* Effect.promise(() =>
@@ -1439,17 +1580,38 @@ test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
               )
               yield* Effect.promise(() => failureInjected.promise)
             }
-            yield* Effect.promise(() => owning.failEvents())
-            yield* Effect.promise(() => streamGap.promise)
-            if (failureMode === "stream-loss-read")
-              yield* Effect.promise(() => failureInjected.promise)
+            if (failureMode !== "unsequenced-event-continuing") {
+              yield* Effect.promise(() => owning.failEvents())
+              yield* Effect.promise(() => streamGap.promise)
+              if (failureMode === "stream-loss-read") {
+                yield* Effect.promise(() => firstGapReadFailure.promise)
+              } else if (failureMode === "stream-loss-first-reconnect-read-fails") {
+                yield* Effect.promise(() => firstGapReadFailure.promise)
+                yield* Effect.promise(() => secondGapReadFailure.promise)
+                // A later stream boundary can recover the still-unknown cutoff.
+                yield* Effect.promise(() => owning.failEvents())
+                yield* Effect.promise(() =>
+                  waitForNativeState(async () => owning.subscriptions() >= 3, 5_000),
+                )
+              }
+              yield* Effect.promise(() =>
+                waitForNativeState(async () => owning.subscriptions() >= 2, 5_000),
+              )
+            } else {
+              expect(owning.subscriptions()).toBe(1)
+            }
+
+            // This finite, durably observed event is a recovery cutoff, not start lineage.
             yield* Effect.promise(() =>
-              waitForNativeState(async () => owning.subscriptions() >= 2, 5_000),
+              owning.emitEvent(inboxEvent("session.inbox.delivered", sessionID, 21, "msg-next")),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => store.read(binding)?.lastEventSequence === 21),
             )
 
             const reportBeforeOldStart = store.read(binding)?.report
-            const oldStartSeenCount = nativeObservations(fixture, sessionID).filter(
-              (row) => row.phase === "event-seen" && row.eventSequence === 20,
+            const oldStartStaleCount = nativeObservations(fixture, sessionID).filter(
+              (row) => row.phase === "event-stale" && row.eventSequence === 20,
             ).length
             yield* Effect.promise(() =>
               owning.emitEvent(executionEvent("session.execution.started", sessionID, 20)),
@@ -1458,8 +1620,8 @@ test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
               waitForNativeState(
                 async () =>
                   nativeObservations(fixture, sessionID).filter(
-                    (row) => row.phase === "event-seen" && row.eventSequence === 20,
-                  ).length > oldStartSeenCount,
+                    (row) => row.phase === "event-stale" && row.eventSequence === 20,
+                  ).length > oldStartStaleCount,
               ),
             )
             yield* owning.idle()!({

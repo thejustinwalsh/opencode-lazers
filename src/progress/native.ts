@@ -677,12 +677,38 @@ export function registerProgress(
             )
             const current = idleStore.read(binding)
             const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
+            if (
+              requiredAfterSequence === null &&
+              result.status === "changed" &&
+              sequence !== undefined &&
+              Number.isSafeInteger(sequence) &&
+              sequence >= 0 &&
+              current?.lastEventSequence === sequence
+            ) {
+              if (type === "session.execution.started") {
+                // A newly advanced durable start proves it is beyond the unknown cutoff.
+                startsRequiringNewerObservation.delete(sessionID)
+              } else {
+                // A finite event advances only the cutoff; it never creates local start lineage.
+                startsRequiringNewerObservation.set(sessionID, sequence)
+              }
+            }
             trace(sessionID, `event-${result.status}`, {
               eventSequence: sequence,
               executionStartSequence: current?.executionStartSequence ?? undefined,
             })
             if (type === "session.execution.started" && sequence !== undefined) {
-              if (result.status === "changed" || result.status === "seen") {
+              const observedStart = observedExecutionStarts.get(sessionID)
+              if (
+                result.status === "stale" &&
+                observedStart &&
+                sameIdleBinding(observedStart.binding, binding) &&
+                sequence > observedStart.sequence
+              ) {
+                observedExecutionStarts.delete(sessionID)
+                requireNewerStart(sessionID, sequence)
+              } else if (result.status === "changed" || result.status === "seen") {
+                const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
                 if (
                   current?.lastEventSequence === sequence &&
                   current.executionStartSequence === sequence &&
