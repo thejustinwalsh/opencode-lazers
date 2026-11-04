@@ -28,6 +28,7 @@ import { TaskReads } from "../tasks/read.ts"
 import { taskInstructions } from "../tasks/instructions.ts"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
+import { sharedScheduler, schedulerProjectKey } from "./scheduler-coordinator.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -933,6 +934,56 @@ test("scope amendment requires this plan's unfinished task and explicit additive
     f.runtime.command({ ...command, taskID: f.tasks[0]!.id, scopeAdditions: [] }, "owner"),
   ).rejects.toThrow()
   expect(f.store.plan(planID)!.version).toBe(1)
+})
+
+test("shared scheduler routes manual Start through its elected runtime instead of a second lease owner", async () => {
+  const f = fixture({ shared: true, startOnly: true, delayed: true })
+  const leader = new TaskRuntime(f.store, f.host, "project")
+  const registration = sharedScheduler.register(
+    schedulerProjectKey(f.repository.path, f.root, "project"),
+    { intervalMs: 2000, run: () => leader.tick() },
+  )
+  const follower = new TaskRuntime(f.store, f.host, "project", undefined, {
+    requestTick: () => registration.runNow(),
+  })
+  try {
+    const result = await follower.startTask({
+      taskID: f.tasks[0]!.id,
+      revision: 1,
+      sessionID: "owner",
+    })
+    expect(result.status).toBe("started")
+    expect(f.store.attempts(result.planID)).toHaveLength(1)
+    expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+    expect(
+      f.repository.atomic((db) =>
+        db
+          .query<{ owner: string }, [string]>(
+            "SELECT owner FROM runner_leases WHERE project_directory=?",
+          )
+          .get(f.root),
+      )?.owner,
+    ).toBe(leader.owner)
+    expect(leader.owner).not.toBe(follower.owner)
+  } finally {
+    await registration.dispose()
+    await leader.stop()
+    await follower.stop()
+  }
+})
+
+test("scheduler retries after a failed lease claim instead of remaining permanently running", async () => {
+  const f = fixture()
+  const claim = f.store.claim.bind(f.store)
+  let calls = 0
+  f.store.claim = (...args) => {
+    calls++
+    if (calls === 1) throw new Error("database temporarily unavailable")
+    return claim(...args)
+  }
+  await expect(f.runtime.tick()).rejects.toThrow("database temporarily unavailable")
+  await f.runtime.tick()
+  expect(calls).toBe(2)
 })
 
 test("inspector Start admits one real runtime plan and returns record-backed task state", async () => {
