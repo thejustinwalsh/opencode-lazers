@@ -101,3 +101,11 @@ native-adapter smoke at1793831296414–1793831308416 observed one connection
 announcement and no change events; it verifies connection handling but cannot
 claim live changed-event filtering during that quiet interval. Production
 activation and live verification remain coordinated by Root.
+
+## Idle-service attribution capture (temporary)
+
+The quiet native comparison after the query/transport rollout left service CPU unchanged (46.36% before, 46.37% after; same PID 95968). Renderer/GPU-process CPU was near zero. Those windows establish a separate persistent service cost; the read benchmark does not explain it.
+
+A temporary `serviceCPUProfile` method on the existing typed Observability RPC captures the current Bun/JSC process for 10 seconds at a requested 1,000 μs interval. It requires the existing scoped read authorization and an Architect session. A process-global single-flight guard covers every plugin location, and request cancellation or registration disposal aborts the callback. `bun:jsc.profile` owns start/stop around that callback; no listener, controller, model-facing tool, permanent background timer, source body, prompt, or header is added. Returned data is function/file/line/category metadata and counted stacks. Actual elapsed time is recorded because a busy event loop can delay the timer. The capture itself adds diagnostic overhead and is not a baseline CPU measurement.
+
+The route and helper are deliberately a separate commit to remove after attribution. Seven focused tests (65 assertions) cover authorization boundaries, disposed registration, concurrent capture refusal, cancellation/failure recovery, legacy profile metadata shape, and source-body exclusion. Native lint and TypeScript checks pass. A local one-shot probe confirmed that an asynchronous `profile` callback observes unrelated work on the same event loop while it waits; no live service capture has yet been invoked at this preparation boundary.
