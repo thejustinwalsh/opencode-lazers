@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskReviewer } from "./task-review.ts"
 import type { ReviewInput, ReviewStore } from "./task-review.ts"
-import { reviewChecks } from "./review-questions.ts"
-import { SystemOneRequest } from "./system-one.ts"
+import { reviewChecks, reviewQuestions } from "./review-questions.ts"
+import { SYSTEM_ONE_TRANSPORT_MAX_CHARS, SystemOneRequest } from "./system-one.ts"
 import type { SystemOneInput, SystemOneOutput } from "./system-one.ts"
 
 const draft = (): ReviewInput => ({
@@ -19,6 +19,34 @@ test("self-review questions cover unnecessary requirements and repetition as wel
   expect(checks.find((c) => c.question.includes("repeat instructions"))!.guidance).toContain(
     "preserving necessary requirements",
   )
+})
+
+test("System One separates its transport envelope from measured token capacity", () => {
+  const makeRequest = (instructions: string) => ({
+    model: "d1-omni-2b" as const,
+    state: "",
+    questions: { q: { type: "noul" as const, instructions } },
+    timeoutMs: 60_000,
+  })
+  const empty = makeRequest("")
+  const exact = makeRequest(
+    "x".repeat(SYSTEM_ONE_TRANSPORT_MAX_CHARS - JSON.stringify(empty).length),
+  )
+  expect(JSON.stringify(exact)).toHaveLength(SYSTEM_ONE_TRANSPORT_MAX_CHARS)
+  expect(SystemOneRequest.parse(exact)).toMatchObject({
+    state: exact.state,
+    questions: exact.questions,
+  })
+
+  const oversized = makeRequest(
+    "x".repeat(SYSTEM_ONE_TRANSPORT_MAX_CHARS - JSON.stringify(empty).length + 1),
+  )
+  const rejected = SystemOneRequest.safeParse(oversized)
+  expect(rejected.success).toBe(false)
+  if (!rejected.success)
+    expect(rejected.error.issues.map((issue) => issue.message).join(" ")).toContain(
+      "serialized transport envelope",
+    )
 })
 const memory = () => {
   const data = new Map<string, unknown>()
@@ -66,7 +94,10 @@ test("structural errors and oversized tasks never invoke the model or save a rev
     "invalid",
   )
   const large = draft()
-  large.task.context.push({ reference: "a".repeat(8000), revision: null })
+  large.task.context = Array.from({ length: 10 }, () => ({
+    reference: "a".repeat(8_000),
+    revision: null,
+  }))
   expect((await reviewer.verify(large, "owner", AbortSignal.timeout(1000))).status).toBe("invalid")
   expect(calls).toBe(0)
   expect(store.data.size).toBe(0)
@@ -240,6 +271,8 @@ test("inference errors remain explicit and may retry identical state within the 
   const input = draft()
   const one = await reviewer.verify(input, "owner", new AbortController().signal)
   expect(one.status).toBe("unavailable")
+  if (!("usage" in one)) throw Error("Expected review result")
+  expect(one.usage).toEqual({ input_tokens: null, output_tokens: 0 })
   if (!("reviewID" in one)) throw Error("Expected review")
   const resumed = { ...input, reviewID: one.reviewID }
   await reviewer.verify(resumed, "owner", new AbortController().signal)
@@ -307,13 +340,24 @@ test("one review round splits a larger question collection into bounded complete
     assertion: `Reopening retrieves task example ${index}`,
     evidence: [{ kind: "verification" as const, verificationID: "tests" }],
   }))
+  const expectedState = {
+    task: input.task,
+    intent: { request: input.request },
+    evidence: input.evidence ?? [],
+  }
+  const expectedQuestions = reviewQuestions(reviewChecks(input.task))
+  const seenQuestions: Record<string, (typeof expectedQuestions)[string]> = {}
   let calls = 0
   const reviewer = new TaskReviewer(memory(), {
     systemOne: async (request) => {
       calls++
       expect(Object.keys(request.questions).length).toBeLessThanOrEqual(16)
-      expect(JSON.stringify(request).length).toBeLessThanOrEqual(8000)
-      expect((request.state as { task: unknown }).task).toEqual(input.task)
+      expect(JSON.stringify(request).length).toBeLessThanOrEqual(SYSTEM_ONE_TRANSPORT_MAX_CHARS)
+      expect(request.state).toEqual(expectedState)
+      for (const [name, question] of Object.entries(request.questions)) {
+        expect(Object.hasOwn(seenQuestions, name)).toBe(false)
+        seenQuestions[name] = question
+      }
       return reply(request)
     },
   })
@@ -322,7 +366,165 @@ test("one review round splits a larger question collection into bounded complete
   expect(result.status).toBe("completed")
   if (!("findings" in result)) throw Error("Expected findings")
   expect(result.findings).toHaveLength(reviewChecks(input.task).length)
+  expect(seenQuestions).toEqual(expectedQuestions)
+  expect(Object.keys(seenQuestions)).toHaveLength(Object.keys(expectedQuestions).length)
   expect(result.round).toBe(1)
+})
+
+test("a 7,026-character shared state and 14 checks stay intact in one transport job", async () => {
+  const input = draft()
+  input.task.acceptance = Array.from({ length: 2 }, (_, index) => ({
+    id: `criterion-${index}`,
+    assertion: `The task review preserves behavior ${index}`,
+    evidence: [{ kind: "verification" as const, verificationID: "tests" }],
+  }))
+  input.task.assumptions = ["The stated repository boundary is intentional."]
+  const stateWithTwoEmptyEvidence = {
+    task: input.task,
+    intent: { request: input.request },
+    evidence: ["", ""] as string[],
+  }
+  const evidenceCharacters = 7_026 - JSON.stringify(stateWithTwoEmptyEvidence).length
+  expect(evidenceCharacters).toBeGreaterThan(6_000)
+  expect(evidenceCharacters).toBeLessThanOrEqual(12_000)
+  const evidence = ["x".repeat(6_000), "x".repeat(evidenceCharacters - 6_000)]
+  input.evidence = evidence
+  const expectedState = {
+    task: input.task,
+    intent: { request: input.request },
+    evidence,
+  }
+  expect(JSON.stringify(expectedState)).toHaveLength(7_026)
+
+  const calls: SystemOneInput[] = []
+  const reviewer = new TaskReviewer(memory(), {
+    systemOne: async (request) => {
+      calls.push(request)
+      return reply(request)
+    },
+  })
+  const result = await reviewer.verify(input, "owner", new AbortController().signal)
+  expect(calls).toHaveLength(1)
+  const request = calls[0]!
+  if (!("findings" in result)) throw Error("Expected findings")
+  expect(JSON.stringify(request).length).toBeGreaterThan(8_000)
+  expect(JSON.stringify(request).length).toBeLessThanOrEqual(SYSTEM_ONE_TRANSPORT_MAX_CHARS)
+  expect(request.state).toEqual(expectedState)
+  expect(request.questions).toEqual(reviewQuestions(reviewChecks(input.task)))
+  expect(Object.keys(request.questions)).toHaveLength(14)
+  expect(Object.keys(result.answers)).toEqual(Object.keys(request.questions))
+  expect(result.status).toBe("completed")
+  expect(result.findings).toHaveLength(reviewChecks(input.task).length)
+})
+
+test("late and cancelled review responses retain measured usage but cannot merge answers or start another batch", async () => {
+  const input = draft()
+  input.task.acceptance = Array.from({ length: 6 }, (_, index) => ({
+    id: `criterion-${index}`,
+    assertion: `The task review preserves behavior ${index}`,
+    evidence: [{ kind: "verification" as const, verificationID: "tests" }],
+  }))
+
+  for (const outcome of ["deadline", "cancel"] as const) {
+    const store = memory()
+    let now = 0
+    let calls = 0
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const controller = new AbortController()
+    const reviewer = new TaskReviewer(
+      store,
+      {
+        systemOne: async (request) => {
+          calls++
+          entered()
+          await gate
+          return reply(request)
+        },
+      },
+      () => now,
+    )
+
+    const pending = reviewer.verify(input, "owner", controller.signal)
+    await started
+    if (outcome === "deadline") now = 60_000
+    else controller.abort(new Error("review cancelled"))
+    release()
+    const result = await pending
+
+    expect(calls).toBe(1)
+    expect(result.status).toBe("unavailable")
+    if (!("findings" in result)) throw Error("Expected findings")
+    expect(result.answers).toEqual({})
+    expect(
+      result.findings.every((finding) => finding.probability === null && finding.score === null),
+    ).toBe(true)
+    expect(result.errors[0]).toContain(
+      outcome === "deadline" ? "deadline exceeded" : "review cancelled",
+    )
+    expect(result.usage).toEqual({ input_tokens: 123, output_tokens: 0 })
+    const saved = store.data.get(`task-review.${result.reviewID}`) as {
+      history: Array<{ result: unknown }>
+    }
+    expect(saved.history).toHaveLength(1)
+    expect(saved.history[0]!.result).toEqual(result)
+  }
+})
+
+test("a later batch error preserves prior answers and history without establishing any finding", async () => {
+  const input = draft()
+  input.task.acceptance = Array.from({ length: 6 }, (_, index) => ({
+    id: `criterion-${index}`,
+    assertion: `The task review preserves behavior ${index}`,
+    evidence: [{ kind: "verification" as const, verificationID: "tests" }],
+  }))
+  const store = memory()
+  const batches: SystemOneInput[] = []
+  let calls = 0
+  const reviewer = new TaskReviewer(store, {
+    systemOne: async (request) => {
+      calls++
+      batches.push(request)
+      return calls === 2 ? { error: "later batch failed" } : reply(request)
+    },
+  })
+
+  const partial = await reviewer.verify(input, "owner", new AbortController().signal)
+  expect(partial.status).toBe("unavailable")
+  if (!("findings" in partial)) throw Error("Expected findings")
+  expect(calls).toBe(2)
+  expect(Object.keys(partial.answers)).toEqual(Object.keys(batches[0]!.questions))
+  expect(partial.errors).toEqual(["later batch failed"])
+  expect(partial.usage).toEqual({ input_tokens: null, output_tokens: 0 })
+  expect(partial.findings.every((finding) => finding.score === null)).toBe(true)
+
+  const resumed = await reviewer.verify(
+    { ...input, reviewID: partial.reviewID },
+    "owner",
+    new AbortController().signal,
+  )
+  expect(resumed.status).toBe("completed")
+  if (!("findings" in resumed)) throw Error("Expected findings")
+  expect(resumed.round).toBe(2)
+  expect(calls).toBe(4)
+  const history = (
+    store.data.get(`task-review.${partial.reviewID}`) as {
+      history: Array<{ result: unknown }>
+    }
+  ).history
+  expect(history).toHaveLength(2)
+  expect(history[0]!.result).toEqual(partial)
+  expect(history[1]!.result).toEqual(resumed)
+  expect(
+    await reviewer.verify(
+      { ...input, reviewID: partial.reviewID },
+      "owner",
+      new AbortController().signal,
+    ),
+  ).toEqual(resumed)
+  expect(calls).toBe(4)
 })
 
 test("interrupted attempts retain their reserved rounds and exhaust with an explicit limitation", async () => {

@@ -287,7 +287,7 @@ test("malformed, oversized, foreign, unauthorized, and stale review requests res
   expect(malformed.status).toBe("invalid")
   expect(authCalls).toBe(0)
 
-  const oversizedEvidence: HandoffEvidence[] = Array.from({ length: 6 }, (_, index) => ({
+  const oversizedEvidence: HandoffEvidence[] = Array.from({ length: 40 }, (_, index) => ({
     kind: "other",
     reference: `evidence:${index}`,
     note: "x".repeat(2_000),
