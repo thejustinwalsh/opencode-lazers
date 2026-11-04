@@ -7,6 +7,7 @@ import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { RunnerStore } from "./runner/store.ts"
 import { TaskRuntime, architectIdleWindowMs } from "./runner/runtime.ts"
+import { schedulerProjectKey, sharedScheduler } from "./runner/scheduler-coordinator.ts"
 import { nativeHost } from "./runner/native.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
@@ -88,9 +89,11 @@ export default Plugin.define({
       const runnerStore = new RunnerStore(repository)
       const progress = new ProgressRecorder(runnerStore, ctx.location.project.id)
       const host = nativeHost(ctx, repository)
+      let scheduler: ReturnType<typeof sharedScheduler.register> | undefined
       const runtime = new TaskRuntime(runnerStore, host, ctx.location.project.id, progress, {
         architectIdleWindowMs: architectIdleWindowMs(ctx.options.architectIdleWindowMs),
         architectPromptHook: true,
+        requestTick: () => (scheduler ? scheduler.runNow() : runtime.tick()),
       })
       yield* ctx.session.hook("prompt", (prompt) =>
         Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
@@ -118,19 +121,26 @@ export default Plugin.define({
       ).pipe(Effect.orDie)
       yield* Effect.acquireRelease(
         Effect.sync(() => {
-          const tick = () => {
-            void runtime.tick().catch((error) =>
-              Effect.runPromise(
-                Effect.logError("LAZERS scheduler reconciliation failed", {
-                  error: String(error),
-                }),
-              ),
-            )
-          }
-          const timer = setInterval(tick, 2000)
-          tick()
+          scheduler = sharedScheduler.register(
+            schedulerProjectKey(
+              repository.path,
+              repository.projectDirectory,
+              ctx.location.project.id,
+            ),
+            {
+              intervalMs: 2000,
+              run: () => runtime.tick(),
+              onError: (error) =>
+                Effect.runPromise(
+                  Effect.logError("LAZERS scheduler reconciliation failed", {
+                    error: String(error),
+                  }),
+                ),
+            },
+          )
+          const registration = scheduler
           return async () => {
-            clearInterval(timer)
+            await registration.dispose()
             await runtime.stop()
           }
         }),

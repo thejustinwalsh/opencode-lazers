@@ -43,6 +43,7 @@ import type { OutcomeOwnership } from "./inbox.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
+import { sharedScheduler } from "./scheduler-coordinator.ts"
 
 const terminal = new Set([
   "accepted",
@@ -82,6 +83,7 @@ export type TaskRuntimeOptions = {
   architectIdleWindowMs?: number
   now?: () => number
   architectPromptHook?: boolean
+  requestTick?: () => Promise<void>
 }
 
 type AdoptionSeed = {
@@ -119,6 +121,7 @@ export class TaskRuntime {
   private readonly now: () => number
   private readonly architectIdleWindowMs: number
   private readonly architectPromptHook: boolean
+  private readonly requestTick: () => Promise<void>
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -130,6 +133,7 @@ export class TaskRuntime {
     this.now = options.now ?? Date.now
     this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
     this.architectPromptHook = options.architectPromptHook ?? false
+    this.requestTick = options.requestTick ?? (() => this.tick())
   }
   get directory() {
     return this.store.repository.projectDirectory
@@ -1026,7 +1030,7 @@ export class TaskRuntime {
       plan = this.store.plan(existing.planID)!
       if (plan.state !== "draft" || !["queued", "ready"].includes(existing.state)) {
         if (plan.state === "running" && ["queued", "ready"].includes(existing.state))
-          await this.tick()
+          await this.requestTick()
         return { status: "existing", planID: plan.id, state: this.store.execution(task.id)!.state }
       }
     } else {
@@ -1064,7 +1068,7 @@ export class TaskRuntime {
         },
         plan.owner,
       )
-    await this.tick()
+    await this.requestTick()
     const execution = this.store.execution(task.id)
     if (!execution) throw new Error("Runtime did not record task execution")
     return {
@@ -2075,15 +2079,26 @@ export class TaskRuntime {
   async tick() {
     if (this.running || this.stopped) return
     this.running = true
-    const fence = this.store.claim(this.owner)
-    if (fence === null) {
-      this.running = false
-      return
-    }
-    const heartbeat = setInterval(() => {
-      this.store.renew(this.owner, fence)
-    }, 10000)
+    let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
     try {
+      const fence = this.store.claim(this.owner)
+      if (fence === null) return
+      let heartbeatFailed = false
+      let heartbeatError: unknown
+      heartbeat = sharedScheduler.register(
+        JSON.stringify(["lease", this.owner, fence]),
+        {
+          intervalMs: 10000,
+          run: () => {
+            this.store.renew(this.owner, fence)
+          },
+          onError: (error) => {
+            heartbeatFailed = true
+            heartbeatError = error
+          },
+        },
+        10000,
+      )
       // A lease only selects a reconciler; it never proves an old side effect stopped.
       for (const renewal of this.store.architectRenewalsNeedingRecovery()) {
         try {
@@ -2126,10 +2141,11 @@ export class TaskRuntime {
           plan = this.store.plan(plan.id)!
         }
         await this.step(plan, fence)
+        if (heartbeatFailed) throw heartbeatError
       }
       await this.deliver(fence)
     } finally {
-      clearInterval(heartbeat)
+      await heartbeat?.dispose()
       this.running = false
       for (const resolve of this.idleWaiters.splice(0)) resolve()
     }
