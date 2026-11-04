@@ -3,6 +3,7 @@ import {
   CONFIG_ONE,
   CONFIG_SINGLE,
   CONFIG_ZERO,
+  DECISION_ATTEMPT_ID,
   DECISION_TASK_ID,
   decisionConfigurations,
   decisionContext,
@@ -79,7 +80,190 @@ test("versioned reads share producer context while the global graph stays indepe
   })
   expect(inspect.configuration.currentPrice.semantics).toBe("exact-route-quote")
   expect(inspect.estimate.status).toBe("available")
+  expect(inspect.estimate.historyScope).toBeUndefined()
+  expect(inspect.contributorPage.contributors[0]?.route).toBeUndefined()
+  expect(inspect.contributorPage.contributors[0]?.membership).toBeUndefined()
   expect(inspect.estimate.confidenceInterval).toBeNull()
+})
+
+test("inspection distinguishes complete accepted-task retry history and contributor membership", () => {
+  const base = decisionInspect()
+  if (base.status !== "found") throw new Error("Expected a found inspection fixture")
+
+  const routeA = {
+    providerID: "anthropic",
+    modelID: "claude-3-7-sonnet",
+    variant: "extended",
+  }
+  const routeB = base.configuration.route
+  const historyScope = {
+    completeness: "complete-accepted-logical-task-retry-history" as const,
+    routeScope: "cross-route" as const,
+  }
+  const contributor = base.contributorPage.contributors[0]!
+  const aFailed = {
+    ...contributor,
+    taskID: DECISION_TASK_ID,
+    taskReference: "LZ-42",
+    attemptID: "33333333-3333-4333-8333-333333333333",
+    sessionID: "ses-route-a-failure",
+    contribution: "failed" as const,
+    route: routeA,
+    membership: "empirical-history" as const,
+  }
+  const bAccepted = {
+    ...contributor,
+    taskID: DECISION_TASK_ID,
+    taskReference: "LZ-42",
+    attemptID: DECISION_ATTEMPT_ID,
+    sessionID: "ses-route-b-acceptance",
+    contribution: "accepted" as const,
+    route: routeB,
+    membership: "both" as const,
+  }
+  const cohortOnly = {
+    ...contributor,
+    taskID: "44444444-4444-4444-8444-444444444444",
+    taskReference: "LZ-43",
+    attemptID: "55555555-5555-4555-8555-555555555555",
+    sessionID: "ses-route-b-unaccepted-task",
+    contribution: "failed" as const,
+    route: routeB,
+    membership: "cohort-effort" as const,
+  }
+  const crossRouteInspection = {
+    ...base,
+    selectedTaskID: DECISION_TASK_ID,
+    estimate: { ...base.estimate, historyScope },
+    contributorPage: {
+      ...base.contributorPage,
+      contributors: [aFailed, bAccepted, cohortOnly],
+    },
+  }
+
+  const parsed = ModelDecisionInspectOutputSchema.parse(crossRouteInspection)
+  if (parsed.status !== "found") throw new Error("Expected a found inspection fixture")
+  expect(parsed.selectedTaskID).toBe(DECISION_TASK_ID)
+  expect(parsed.estimate.historyScope).toEqual(historyScope)
+  expect(parsed.contributorPage.contributors).toMatchObject([
+    {
+      taskID: DECISION_TASK_ID,
+      contribution: "failed",
+      route: routeA,
+      membership: "empirical-history",
+    },
+    {
+      taskID: DECISION_TASK_ID,
+      contribution: "accepted",
+      route: routeB,
+      membership: "both",
+    },
+    {
+      contribution: "failed",
+      membership: "cohort-effort",
+    },
+  ])
+  expect(parsed.contributorPage.contributors[0]?.route).not.toEqual(
+    parsed.contributorPage.contributors[1]?.route,
+  )
+
+  for (const routeScope of ["same-route", "cross-route", "mixed", "unknown"] as const) {
+    const scopedContributors =
+      routeScope === "unknown"
+        ? [
+            { ...aFailed, route: null },
+            { ...bAccepted, route: null },
+            { ...cohortOnly, route: null },
+          ]
+        : routeScope === "same-route"
+          ? [{ ...aFailed, route: routeB }, bAccepted, cohortOnly]
+          : routeScope === "mixed"
+            ? [
+                aFailed,
+                bAccepted,
+                cohortOnly,
+                {
+                  ...bAccepted,
+                  taskID: "66666666-6666-4666-8666-666666666666",
+                  taskReference: "LZ-44",
+                  attemptID: "77777777-7777-4777-8777-777777777777",
+                  sessionID: "ses-route-b-same-route-acceptance",
+                },
+              ]
+            : [aFailed, bAccepted, cohortOnly]
+    const scoped = ModelDecisionInspectOutputSchema.parse({
+      ...crossRouteInspection,
+      estimate: {
+        ...crossRouteInspection.estimate,
+        historyScope: { ...historyScope, routeScope },
+      },
+      contributorPage: {
+        ...crossRouteInspection.contributorPage,
+        contributors: scopedContributors,
+      },
+    })
+    if (scoped.status !== "found") throw new Error("Expected a found inspection fixture")
+    expect(scoped.estimate.historyScope?.routeScope).toBe(routeScope)
+  }
+
+  const legacyInspection = ModelDecisionInspectOutputSchema.parse(base)
+  if (legacyInspection.status !== "found") throw new Error("Expected a found inspection fixture")
+  expect(legacyInspection.estimate.historyScope).toBeUndefined()
+  const explicitUnknown = ModelDecisionInspectOutputSchema.parse({
+    ...base,
+    estimate: {
+      ...base.estimate,
+      historyScope: {
+        completeness: "complete-accepted-logical-task-retry-history",
+        routeScope: "unknown",
+      },
+    },
+    contributorPage: {
+      ...base.contributorPage,
+      contributors: [{ ...contributor, route: null }],
+    },
+  })
+  if (explicitUnknown.status !== "found") throw new Error("Expected a found inspection fixture")
+  expect(explicitUnknown.estimate.historyScope?.routeScope).toBe("unknown")
+  expect(explicitUnknown.contributorPage.contributors[0]?.route).toBeNull()
+  const explicitNull = ModelDecisionInspectOutputSchema.parse({
+    ...base,
+    estimate: { ...base.estimate, historyScope: null },
+  })
+  if (explicitNull.status !== "found") throw new Error("Expected a found inspection fixture")
+  expect(explicitNull.estimate.historyScope).toBeNull()
+  expect(explicitNull.estimate.historyScope).not.toEqual({
+    ...historyScope,
+    routeScope: "same-route",
+  })
+
+  expect(
+    ModelDecisionInspectOutputSchema.safeParse({
+      ...crossRouteInspection,
+      estimate: {
+        ...crossRouteInspection.estimate,
+        historyScope: { ...historyScope, routeScope: "mostly-same-route" },
+      },
+    }).success,
+  ).toBe(false)
+  expect(
+    ModelDecisionInspectOutputSchema.safeParse({
+      ...crossRouteInspection,
+      contributorPage: {
+        ...crossRouteInspection.contributorPage,
+        contributors: [{ ...aFailed, membership: "cohort" }],
+      },
+    }).success,
+  ).toBe(false)
+  expect(
+    ModelDecisionInspectOutputSchema.safeParse({
+      ...crossRouteInspection,
+      contributorPage: {
+        ...crossRouteInspection.contributorPage,
+        contributors: [{ ...aFailed, route: { providerID: "openai", modelID: 7, variant: null } }],
+      },
+    }).success,
+  ).toBe(false)
 })
 
 test("source-aware decision context preserves whole-model policy, mixed source pins, and unavailable prices", () => {
