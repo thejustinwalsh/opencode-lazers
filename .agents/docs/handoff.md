@@ -41,6 +41,25 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   Root additionally reports independent **40tests/214assertions** and disposable-store
   stale-confirm/resume/callback repro exit0 at **1793813818607**, with no blocking
   source finding. Those checks still are not full installed-native cleanup proof.
+  [Installed observation research](evidence/native-idle-installed-observation-20261104.md)
+  found **zero durable idle rows** at1793815032874–1793815117597; genuine older
+  idle-report diagnostics are not certificates. Future authorized rollout must
+  precede ordinary work emitting a real certificate, then targeted retirement/reopen
+  and fresh installed consumer evidence. No fabricated turn/event or new global gate.
+  Keep126 combined finalization pending its required control activation/real-link
+  recording so122 cannot dispatch against old installed source; task-only landing
+  and actual product acceptance remain distinct.
+- Root owns a second narrow native-input fix in **native-input.ts and its test**:
+  at1793815241999 LZ110 selected`msg_1a4bbae9c001X2B5PkTRMILZDw` rather than assigned
+  `msg_f29c06d0fd9f4903a71f31abbdab8ae5`. Two exact untagged native continuation/
+  output-limit notes come from pinned`core/session/runner/llm.ts:37–41,333,364` inside
+  one logical step. Root will exclude only those exact notes, preserving user/real
+  steering and unknown metadata. Leave both files untouched. After checked effective
+  activation, reconcile LZ110 plan`2aa51f63-fd41-4510-92a6-6bad700d8880` cancellingv8,
+  then resume **same** attempt`addfb6ee-15f5-4b2a-8d09-d0864708dbac`, session
+  `ses_34c9ce29a6d548cda5ffa21144ad41aa` via runtime. No replacement/replayed old check.
+  Existing task removes character-proxy review rejection (126's first6.7k-character
+  draft was rejected); unavailable local review is a limitation, never a pass.
 - [Native shell research](evidence/native-verification-shell-fit-20261104.md)
   belongs to existing V3/R5/R6 recovery. Evaluate native execution before extending
   custom children; capped memory inventory and teardown acknowledgements cannot
