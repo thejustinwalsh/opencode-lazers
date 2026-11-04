@@ -6,6 +6,41 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ## Immediate order and ownership
 
+### Latest coordination — supersedes earlier provisional Models policy
+
+- Root's external quiet activation completed **1793812977491**, 1971ms,
+  activeBefore=[], servicePID95968 unchanged, all six flags true, generation
+  `72299e4a-6586-47c7-b793-874e688ba90f`. No further reload/settings change authorized.
+- Reviewed corrected **120→125** ancestry merged at **8615cb9**; merged225tests /
+  2997assertions, quality and process-free GUI smoke passed. Native distinct source
+  receipts recorded (125v10,120v11); combined non-forced cleanup requested
+  (125v11,120v12), now cleanup-blocked125v12/120v13: genuine idleness remains
+  inconclusive. Trees preserved; no unchanged retry or forced removal.
+- User chose **unlinked separate by default**, with legacy independence disclosed
+  as unreviewed; **latest genuine artifact-backed acceptance** among linked members
+  gets one completion, without a new reviewed fulfillment witness. Retain all
+  member work, root-time/classification selection and unfinished-correction coverage.
+- **LZ126** `2ba384f5-142d-46ff-abd0-c6fe2ae19f2c`, plan
+  `c64e0231-b47c-4432-96a9-5e5e39fe6a6b`, supplies durable explicit native links,
+  auditable revisions/retraction, atomic cycle protection and coherent SELECT-only
+  readers. Original attempt `a805c93f-0f01-4d18-92d2-a5ee5399cc3e` running atv4.
+  Local authoring inference was interrupted;
+  no semantic pass claimed. Existing122 plan nowv5 waits for126 plus its original
+  prerequisites. Send clarified policies and committed capture research as durable
+  guidance at122dispatch. Unknown linkage is interim, not final Models delivery.
+- Original117 sameattempt completed marker-ID correction **f170a6b**; independent
+  source review cleared actual A/IdleA→B/successfulIdleB regression. Nativev23 task
+  accepted, all six checks pass; combined installed-native evidence remains open.
+  Merged **fcb57cd**, independent merged **80tests/473assertions** and quality pass;
+  task-only source integration recordedv24. Do not mistake fixture cleanup for live
+  proof. Installed rollout/revalidation is pending; do not reload during126 work.
+- [Native shell research](evidence/native-verification-shell-fit-20261104.md)
+  belongs to existing V3/R5/R6 recovery. Evaluate native execution before extending
+  custom children; capped memory inventory and teardown acknowledgements cannot
+  settle LZ72's missing old receipt/containment. No CPU causality established.
+
+### Retained sequence and evidence
+
 1. **Performance first; Radar redesign deferred by the user.** Root scheduler
    correction `6a7b4dd` is integrated as `e2da051`; client interval removal
    `3e1bd30` is integrated as `8a5c82a`. One process-shared scheduler timer,

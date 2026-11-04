@@ -3,6 +3,24 @@
 Research/planning for existing LZ122, not a benchmark or new execution/approval gate.
 Preserve actual separate tasks, attempts, ACCEPT events, artifacts and measured work.
 
+## Superseding user decisions and executable foundation
+
+The earlier provisional unknown-count guidance below is historical, not the final
+product policy. User explicitly chose **Separate by default** for unlinked tasks,
+disclosing legacy independence as unreviewed, and **Latest genuine acceptance**
+among explicitly linked members. No new reviewed fulfillment witness is required;
+unfinished correction coverage stays visible. Root creation/submission and root
+classification select goals while retaining every later member's work. Credit once
+to the accepting exact route; its empirical sample includes the goal's cross-route
+history, without redistributing unrelated failed-only work.
+
+Durable explicit linkage is required now, not permanent unknown handling. LZ126
+`2ba384f5-142d-46ff-abd0-c6fe2ae19f2c`, plan
+`c64e0231-b47c-4432-96a9-5e5e39fe6a6b`, owns neutral native annotations and coherent
+SELECT-only readers. Existing LZ122 planv5 now waits for it. Record119+124 and120+125
+through reviewed activated native controls, never direct DB edits or production
+ID hardcoding.121/123 remain separate evolution. Preserve all physical history.
+
 ## Real dogfood case
 
 LZ119 (`8d324858-260e-48b9-bc7c-1825666717e4`) already required recovery replay
