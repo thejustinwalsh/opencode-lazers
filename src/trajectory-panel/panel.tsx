@@ -1,7 +1,7 @@
 import { Store, bindPlugin, createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
 import { clampSplit, splitFromKey, splitFromPointer, visibleTicks } from "./panel-layout.ts"
@@ -9,6 +9,7 @@ import type { PanelData, PanelPreferences, Selection } from "./panel-state.ts"
 import { selectedAttemptFor, selectedEventFor, TrajectoryPanelState } from "./panel-state.ts"
 import {
   buildTimeline,
+  checkTiming,
   checkKey,
   detailedChecks,
   eventTitle,
@@ -67,6 +68,23 @@ function formatTime(value: number | null, origin: number | null) {
   const minutes = Math.floor(elapsed / 60)
   const seconds = elapsed % 60
   return `${absolute} · +${minutes}:${String(seconds).padStart(2, "0")}`
+}
+
+function elapsedText(value: number) {
+  return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(3)} s (${value} ms)`
+}
+
+function endpointText(label: string, value: number | null, origin: number | null) {
+  return value === null
+    ? `${label} · unavailable`
+    : `${label} · ${value} Unix ms · ${formatTime(value, origin)}`
+}
+
+function timingHint(check: { startedAt: number | null; endedAt: number | null }) {
+  const timing = checkTiming(check)
+  return timing.status === "known"
+    ? `duration ${elapsedText(timing.durationMs)}`
+    : `duration unavailable: ${timing.reason}`
 }
 
 type ScrollAnchor = { key: string; offset: number; scrollTop: number } | undefined
@@ -264,6 +282,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         rpc,
         value.directory,
         () => props.session.server.connected,
+        value.client.event,
+        value.projectID,
       )
       handledTargetRequestID = view.target?.requestID ?? ""
       state.connect(key, value.projectID, value.project, scope, transport, {
@@ -311,12 +331,25 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
       (check) => !attempt || check.attemptID === attempt.id || check.scope === "plan",
     )
   }
-  const timeline = () => {
-    const value = currentData()
-    return value?.snapshot && value.taskID
-      ? buildTimeline(value.snapshot, value.taskID, value.report)
-      : undefined
-  }
+  const timelineInput = createMemo(
+    () => {
+      const value = currentData()
+      return value?.snapshot && value.taskID
+        ? { snapshot: value.snapshot, taskID: value.taskID, report: value.report }
+        : undefined
+    },
+    undefined,
+    {
+      equals: (left, right) =>
+        left?.snapshot === right?.snapshot &&
+        left?.taskID === right?.taskID &&
+        left?.report === right?.report,
+    },
+  )
+  const timeline = createMemo(() => {
+    const value = timelineInput()
+    return value ? buildTimeline(value.snapshot, value.taskID, value.report) : undefined
+  })
   const model = () => modelName(report())
   const runTotal = () => attemptCount(report())
   const splitTo = (next: number) => setSplit(clampSplit(next))
@@ -624,24 +657,54 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           >
                             {(check) => {
                               const detailed = () => selectionForTimelineCheck(check)
+                              const timing = () => checkTiming(check)
+                              const selected = () =>
+                                Boolean(
+                                  detailed() &&
+                                  selectedCheck() &&
+                                  checkKey(detailed()!) === checkKey(selectedCheck()!),
+                                )
                               return (
-                                <button
-                                  type="button"
-                                  class="lazers-trajectory-check-marker"
-                                  data-result={detailed()?.result ?? "unknown"}
-                                  aria-pressed={Boolean(
-                                    detailed() &&
-                                    selectedCheck() &&
-                                    checkKey(detailed()!) === checkKey(selectedCheck()!),
-                                  )}
-                                  aria-label={`Select check ${check.checkID}, ${detailed()?.result ?? check.state}`}
-                                  title={`${check.checkID} · ${check.timingBasis}`}
-                                  style={{ left: `${check.left}%` }}
-                                  onClick={() => {
-                                    const value = detailed()
-                                    if (value) state.selectCheck(checkKey(value))
-                                  }}
-                                />
+                                <>
+                                  <span
+                                    class="lazers-trajectory-check-interval"
+                                    data-result={detailed()?.result ?? "unknown"}
+                                    data-point={check.pointOnly}
+                                    data-selected={selected()}
+                                    data-invalid={timing().status === "invalid-order"}
+                                    aria-hidden="true"
+                                    hidden={!check.visible}
+                                    style={{ left: `${check.left}%`, width: `${check.width}%` }}
+                                  />
+                                  <Show
+                                    when={
+                                      timing().status === "invalid-order" && check.endLeft !== null
+                                    }
+                                  >
+                                    <span
+                                      class="lazers-trajectory-check-endpoint"
+                                      aria-hidden="true"
+                                      style={{ left: `${check.endLeft}%` }}
+                                    />
+                                  </Show>
+                                  <Show when={check.visible}>
+                                    <button
+                                      type="button"
+                                      class="lazers-trajectory-check-marker"
+                                      data-result={detailed()?.result ?? "unknown"}
+                                      aria-pressed={selected()}
+                                      aria-label={`Select check ${check.checkID}, ${detailed()?.result ?? check.state}, ${timingHint(check)}`}
+                                      title={`${check.checkID} · ${check.timingBasis}`}
+                                      style={{
+                                        left: `clamp(12px, ${check.left + check.width / 2}%, calc(100% - 12px))`,
+                                      }}
+                                      onClick={() => {
+                                        const value = detailed()
+                                        if (value) state.selectCheck(checkKey(value))
+                                      }}
+                                    />
+                                  </Show>
+                                </>
                               )
                             }}
                           </For>
@@ -656,34 +719,53 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 <For each={timeline()?.checks.filter((check) => check.attemptID === null) ?? []}>
                   {(check) => {
                     const detailed = () => selectionForTimelineCheck(check)
+                    const timing = () => checkTiming(check)
+                    const selected = () =>
+                      Boolean(
+                        detailed() &&
+                        selectedCheck() &&
+                        checkKey(detailed()!) === checkKey(selectedCheck()!),
+                      )
                     return (
-                      <div
-                        class="lazers-trajectory-plan-checks"
-                        data-selected={Boolean(
-                          detailed() &&
-                          selectedCheck() &&
-                          checkKey(detailed()!) === checkKey(selectedCheck()!),
-                        )}
-                      >
+                      <div class="lazers-trajectory-plan-checks" data-selected={selected()}>
                         <span>Plan check · {check.checkID}</span>
                         <div class="lazers-trajectory-track">
-                          <button
-                            type="button"
-                            class="lazers-trajectory-check-marker"
+                          <span
+                            class="lazers-trajectory-check-interval"
                             data-result={detailed()?.result ?? "unknown"}
-                            aria-pressed={Boolean(
-                              detailed() &&
-                              selectedCheck() &&
-                              checkKey(detailed()!) === checkKey(selectedCheck()!),
-                            )}
-                            aria-label={`Select plan check ${check.checkID}`}
-                            title={check.timingBasis}
-                            style={{ left: `${check.left}%` }}
-                            onClick={() => {
-                              const value = detailed()
-                              if (value) state.selectCheck(checkKey(value))
-                            }}
+                            data-point={check.pointOnly}
+                            data-selected={selected()}
+                            data-invalid={timing().status === "invalid-order"}
+                            aria-hidden="true"
+                            hidden={!check.visible}
+                            style={{ left: `${check.left}%`, width: `${check.width}%` }}
                           />
+                          <Show
+                            when={timing().status === "invalid-order" && check.endLeft !== null}
+                          >
+                            <span
+                              class="lazers-trajectory-check-endpoint"
+                              aria-hidden="true"
+                              style={{ left: `${check.endLeft}%` }}
+                            />
+                          </Show>
+                          <Show when={check.visible}>
+                            <button
+                              type="button"
+                              class="lazers-trajectory-check-marker"
+                              data-result={detailed()?.result ?? "unknown"}
+                              aria-pressed={selected()}
+                              aria-label={`Select plan check ${check.checkID}, ${timingHint(check)}`}
+                              title={`${check.checkID} · ${check.timingBasis}`}
+                              style={{
+                                left: `clamp(12px, ${check.left + check.width / 2}%, calc(100% - 12px))`,
+                              }}
+                              onClick={() => {
+                                const value = detailed()
+                                if (value) state.selectCheck(checkKey(value))
+                              }}
+                            />
+                          </Show>
                         </div>
                         <span />
                       </div>
@@ -744,9 +826,19 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     <p>
                       {check().scope === "plan" ? "Plan check" : "Attempt check"} · {check().state}
                     </p>
-                    <p>
-                      Started {timeText(check().startedAt)} · ended {timeText(check().endedAt)}
+                    <p>{endpointText("Start", check().startedAt, timeline()?.origin ?? null)}</p>
+                    <p>{endpointText("End", check().endedAt, timeline()?.origin ?? null)}</p>
+                    <p
+                      role={checkTiming(check()).status === "invalid-order" ? "alert" : "status"}
+                      aria-live={
+                        checkTiming(check()).status === "invalid-order" ? "assertive" : "polite"
+                      }
+                    >
+                      {checkTiming(check()).status === "known"
+                        ? `Elapsed duration · ${elapsedText(checkTiming(check()).durationMs!)}`
+                        : `Duration unavailable · ${checkTiming(check()).reason}`}
                     </p>
+                    <p>Timing source · {check().timingBasis}</p>
                   </div>
                   <div class="lazers-trajectory-source-links">
                     <For each={checkSources(check())}>
@@ -772,7 +864,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   <details class="lazers-trajectory-payload">
                     <summary>Check output</summary>
                     <div class="lazers-trajectory-metadata">
-                      <p>{check().timingBasis}</p>
                       <Show when={check().timedOut !== null || check().unchanged !== null}>
                         <p>
                           {check().timedOut === null

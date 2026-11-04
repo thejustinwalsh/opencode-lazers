@@ -178,13 +178,22 @@ export class TrajectoryPanelState {
   private projectDirectory = ""
   private target?: TaskTrajectoryTarget
   private targetError = ""
-  private timer?: ReturnType<typeof setInterval>
+  private cancelRetry?: () => void
+  private retryDelay = 1_000
+  private pendingSequence = 0
   private refreshing = false
   private pendingRefresh = false
 
   constructor(
     private readonly changed: (data: PanelData) => void,
     private readonly selected: (preferences: PanelPreferences) => void = () => {},
+    private readonly schedule: (callback: () => void, delayMs: number) => () => void = (
+      callback,
+      delayMs,
+    ) => {
+      const timer = setTimeout(callback, delayMs)
+      return () => clearTimeout(timer)
+    },
   ) {}
 
   private update(change: Partial<PanelData>) {
@@ -225,7 +234,17 @@ export class TrajectoryPanelState {
     const generation = this.generation
     void this.watch(generation, transport, this.controller.signal)
     if (!this.targetError) void this.refresh()
-    this.timer = setInterval(() => void this.refresh(), 4_000)
+  }
+
+  private retryRefresh() {
+    if (this.cancelRetry || this.controller.signal.aborted) return
+    const generation = this.generation
+    this.cancelRetry = this.schedule(() => {
+      if (generation !== this.generation) return
+      this.cancelRetry = undefined
+      void this.refresh()
+    }, this.retryDelay)
+    this.retryDelay = Math.min(30_000, this.retryDelay * 2)
   }
 
   async refresh() {
@@ -236,8 +255,11 @@ export class TrajectoryPanelState {
       this.pendingRefresh = true
       return
     }
+    this.cancelRetry?.()
+    this.cancelRetry = undefined
     if (!transport.online()) {
       this.update({ stale: true, loading: false, error: "Trajectory updates are disconnected." })
+      this.retryRefresh()
       return
     }
 
@@ -280,6 +302,7 @@ export class TrajectoryPanelState {
         tasks,
         taskID,
         taskReference: this.target?.reference ?? null,
+        error: "",
       })
 
       if (!taskID) {
@@ -321,11 +344,18 @@ export class TrajectoryPanelState {
             ? `Trajectory for ${this.target.reference} is unavailable: ${message}`
             : message,
         })
+        this.retryRefresh()
       }
     } finally {
       if (generation === this.generation) {
         this.refreshing = false
-        if (this.pendingRefresh) {
+        if (!this.data.error) this.retryDelay = 1_000
+        const pendingSequence = this.pendingSequence
+        this.pendingSequence = 0
+        if (
+          this.pendingRefresh ||
+          pendingSequence > (this.data.snapshot?.boundary.eventSequence ?? 0)
+        ) {
           this.pendingRefresh = false
           void this.refresh()
         }
@@ -439,12 +469,14 @@ export class TrajectoryPanelState {
         taskRequest === this.taskRequest &&
         request === this.statusRequest &&
         !signal.aborted
-      )
+      ) {
         this.update({
           loading: false,
           stale: true,
           error: requestFailureMessage(error, "Live Trajectory status could not be refreshed."),
         })
+        this.retryRefresh()
+      }
     }
   }
 
@@ -839,7 +871,12 @@ export class TrajectoryPanelState {
         for await (const event of transport.changes(signal)) {
           if (generation !== this.generation || signal.aborted) return
           if (event.projectID !== this.projectID) continue
-          if (
+          // A reconnect may reset the producer sequence below the old snapshot.
+          // Buffer in-flight events before comparing them with that old boundary.
+          if (this.refreshing) {
+            if (event.resnapshotRequired) this.pendingRefresh = true
+            else this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
+          } else if (
             event.resnapshotRequired ||
             event.sequence > (this.data.snapshot?.boundary.eventSequence ?? 0)
           )
@@ -865,7 +902,10 @@ export class TrajectoryPanelState {
     this.historyRequest++
     this.controller.abort()
     this.taskController.abort()
-    if (this.timer) clearInterval(this.timer)
+    this.cancelRetry?.()
+    this.cancelRetry = undefined
+    this.retryDelay = 1_000
+    this.pendingSequence = 0
     this.transport = undefined
     this.scope = undefined
     this.projectDirectory = ""

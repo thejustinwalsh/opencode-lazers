@@ -5,7 +5,8 @@ import type {
   TrajectoryHistoryResponse,
   TrajectoryResponse,
 } from "../observability/contract.ts"
-import type { ObservationChange } from "../observability/contract.ts"
+import { trajectoryChanges } from "./events.ts"
+import type { TrajectoryChange, TrajectoryEventSource } from "./events.ts"
 import { z } from "zod"
 
 export type ObservationRpc = {
@@ -25,12 +26,6 @@ export type ObservationRpc = {
     input: { scope: ObservationScope; taskID: string },
     options: { location: { directory: string }; signal: AbortSignal },
   ): Promise<TrajectoryResponse>
-  events: {
-    subscribe(
-      name: "changed",
-      options: { signal: AbortSignal },
-    ): AsyncIterable<{ data: ObservationChange }>
-  }
 }
 
 export type TrajectoryTransport = {
@@ -49,7 +44,7 @@ export type TrajectoryTransport = {
     limit?: number,
   ): Promise<TrajectoryHistoryResponse>
   status(scope: ObservationScope, taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
-  changes(signal: AbortSignal): AsyncIterable<ObservationChange>
+  changes(signal: AbortSignal): AsyncIterable<TrajectoryChange>
   online(): boolean
 }
 
@@ -57,6 +52,8 @@ export function createTrajectoryTransport(
   rpc: ObservationRpc,
   directory: string,
   online: () => boolean,
+  events: TrajectoryEventSource,
+  projectID: string,
 ): TrajectoryTransport {
   return {
     snapshot: (scope, signal) => rpc.snapshot({ scope }, { location: { directory }, signal }),
@@ -72,10 +69,7 @@ export function createTrajectoryTransport(
       ),
     status: (scope, taskID, signal) =>
       rpc.trajectoryStatus({ scope, taskID }, { location: { directory }, signal }),
-    changes: (signal) =>
-      (async function* () {
-        for await (const event of rpc.events.subscribe("changed", { signal })) yield event.data
-      })(),
+    changes: (signal) => trajectoryChanges(events, projectID, signal),
     online,
   }
 }
@@ -405,7 +399,14 @@ export type AttemptTimeline = {
     basis: string
   }>
 }
-export type CheckTimeline = RecordedCheck & { left: number; pointOnly: boolean }
+export type CheckTimeline = RecordedCheck & {
+  left: number
+  startLeft: number | null
+  endLeft: number | null
+  width: number
+  pointOnly: boolean
+  visible: boolean
+}
 export type Timeline = {
   origin: number | null
   durationMs: number
@@ -538,13 +539,61 @@ export function buildTimeline(
       }),
     }
   })
-  const checksWithGeometry = checks.map((check) => ({
-    ...check,
-    left: position(check.startedAt ?? check.endedAt ?? origin),
-    pointOnly:
-      check.startedAt === null || check.endedAt === null || check.startedAt === check.endedAt,
-  }))
+  const checksWithGeometry = checks.map((check) => {
+    const timing = checkTiming(check)
+    const startLeft = check.startedAt === null ? null : position(check.startedAt)
+    const endLeft = check.endedAt === null ? null : position(check.endedAt)
+    const left = startLeft ?? endLeft ?? 0
+    return {
+      ...check,
+      left,
+      startLeft,
+      endLeft,
+      width:
+        timing.status === "known" && timing.durationMs > 0
+          ? Math.max(0, (endLeft ?? left) - left)
+          : 0,
+      pointOnly: timing.status !== "known" || timing.durationMs === 0,
+      visible: startLeft !== null || endLeft !== null,
+    }
+  })
   return { origin, durationMs, ticks, attempts: attemptsWithGeometry, checks: checksWithGeometry }
+}
+
+export type CheckTiming =
+  | { status: "known"; durationMs: number; reason: null }
+  | {
+      status: "missing-start" | "missing-end" | "missing-endpoints" | "invalid-order"
+      durationMs: null
+      reason: string
+    }
+
+export function checkTiming(check: Pick<TrajectoryCheck, "startedAt" | "endedAt">): CheckTiming {
+  if (check.startedAt === null && check.endedAt === null)
+    return {
+      status: "missing-endpoints",
+      durationMs: null,
+      reason: "Neither start nor end time was recorded.",
+    }
+  if (check.startedAt === null)
+    return {
+      status: "missing-start",
+      durationMs: null,
+      reason: "Start time was not recorded.",
+    }
+  if (check.endedAt === null)
+    return {
+      status: "missing-end",
+      durationMs: null,
+      reason: "End time was not recorded.",
+    }
+  if (check.endedAt < check.startedAt)
+    return {
+      status: "invalid-order",
+      durationMs: null,
+      reason: "The recorded end time precedes the start time; duration is unavailable.",
+    }
+  return { status: "known", durationMs: check.endedAt - check.startedAt, reason: null }
 }
 
 export type DetailedCheck = TrajectoryCheck & { planID: string }

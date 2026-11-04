@@ -105,3 +105,41 @@ The actual blocker is72's retained verifying reservation on runtime.ts/runtime.t
 (attempt`ed96f0b9-102b-4c64-aa8b-708a62d49fe7`, uncertain verify:runner effect
 `cd7cb493807b9dbcc552f552586351cbdb78d420baee04da31440ac86c36a8f8`). Do not cancel
 merely to shed it or claim native shell research supplied missing containment.
+
+## Subsequent bounded bootstrap authorization
+
+The user explicitly selected **“Authorize bounded bootstrap”** after reviewing
+the current72/58 bottleneck. This extends **existing57→58**, not72's diagnostic
+task, and does not claim the required runtime control is already implemented.
+The safe LAZERS implementation route must be established before execution; this
+does not authorize direct Architect source takeover, raw database state edits,
+an admission bypass or another recovery engine.
+
+This narrowly qualifies the **solely historical idle** eligibility wording above
+for the named **LZ72 uncertain-check case**. The original runner effect
+`cd7cb493807b9dbcc552f552586351cbdb78d420baee04da31440ac86c36a8f8` remains uncertain;
+independent verification must not manufacture its receipt or assert containment.
+The legitimate runtime receipt and clean candidate source/tests remain preserved.
+
+The source-writing ownership decision must be separate from the old mutable
+checkout/check/shared-resource holds. Establish actual source-writer exclusion
+and fence subsequent source writes before releasing implementation code scope.
+A historical WORKER_STOPPED, empty controls, elapsed lease or new directory alone
+is insufficient. Keep the old checkout/check/resources quarantined and unavailable
+for unsafe reuse; source-scope release is not their release or cleanup proof.
+This qualifies the earlier no-reservation-release wording **only** for that
+conclusively excluded source-writing ownership, never the retained resource holds.
+
+New verification must use genuinely qualified independent resources, normal
+required checks and distinct operation/candidate/context-bound receipts. Prior
+uncertain effects and all identities, usage, source, tests and receipt history
+remain readable. Late old completions cannot accept or mutate the new operation;
+fresh success cannot relabel an old check as passed or stopped. This authorization
+does not accept72; later acceptance still requires actual valid check/probe evidence.
+
+Preserve57→58's authored dependency and **LZ88's explicit integrated-LZ72
+prerequisite**. Freeing one code reservation alone does not satisfy that edge.
+Coordinate actual source overlap and any live activation with Root/Astra; no
+live build, restart or activation during announced capture. Deliver this extension
+with the original pinned amendment through keyed native implementation instructions,
+not merely a scheduling reason.

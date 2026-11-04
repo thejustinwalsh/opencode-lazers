@@ -8,6 +8,228 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Both original79ceb78 reviews complete:** all three original P1 repair areas
+  source-addressed, with the same remaining guard-lifecycle P1 confirmed by both.
+  [Corrected-candidate review](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  189/2974 plus quality are genuine passing checks, not whole-route proof. Root owns
+  the focused exact-location current-runtime enforcement repair; no activation,
+  replacement worker/engine, source fencing waiver or old resource-hold release.
+- **79ceb78 independent checks complete; lifecycle P1 remains:** the single exact
+  candidate run passed **189tests/2974assertions**, formatter/lint/typecheck/diff,
+  unchanged/clean. Original native reviewer confirms authoritative clear controls
+  and dedicated request-bound worker archive repairs, but initial/pending guard
+  preconditions and pending-only recovery still strand missing old registrations
+  after restart/replacement; sealed exclusion cannot self-recover. The reopen test
+  manually reinstalls its guard. [Exact current-candidate references and minimal fix](../../design/reviews/retained-source-guard-lifecycle-20261104.md).
+  Second original review is pending. **Not source-clear; no activation.**
+- **Corrected bootstrap79ceb78 under original independent review; still offline:**
+  Root supplied clean `79ceb78c063b49381c5a61c56029c3c2b6758295` in its isolated
+  tree, including cb6. Root reports authoritative clear controls, dedicated
+  durable-request-bound native worker archive/readback and hard physical alias/
+  unknown denial for disjoint scopes repaired. Original reviewers
+  `ses_e576d7ecfffeHyxWcUXLddebyV` / `ses_e576d378affeuXd3g4C12KTaRQ` are reused;
+  one six-suite/quality check runs as `sh_1a8a837b40011SvdNmye6tnPnY`—await, do not
+  poll/repeat. [Lifecycle proposal](../../design/reviews/retained-source-guard-lifecycle-20261104.md):
+  archive itself does not unload; restart/explicit replacement can strand old guard
+  registration. Recover exact-location **current-runtime** before-hook capability,
+  not a persisted bit/root-only token, preserving all old holds and native fencing.
+  No Root edits or activation. Astra's actual same-DB Radar replay775–803ms/8.55MB,
+  progressSQL536ms follows its7456s initial CUA attach hang; isolated observability
+  repair remains Astra-owned. Held Radar privacy-check authoring continues separately.
+- **Actual130Desktop timing confirmed; one110native review explicitly failed:** Root
+  observed1308.422s/470ms with Unix-ms endpoints and all four original112**PLAN**
+  checks288/1076/240/2172ms with correct mode/endpoints/provenance/history navigation.
+  [Desktop evidence](evidence/trajectory-live-check-durations-20261104.md). Unknown
+  attempt ends stay for131; raw-ID picker/subpixel readability are UX follow-ups,
+  **not new gates**. Root then authorized one genuine pending full-state review:
+  original131chain continued normally, unchanged full task/request/evidence. One
+  16-question broker job packed**2765/8192tokens**, entered run7861ms, device-lost15573ms,
+  terminal error15577ms; no answers/semantic pass, no replay. Same95968/2.2.5/sixtrue
+  settings/demandfalse before+after. [Native failed observation](evidence/native-fullstate-review110-20261104.md)
+  retains trace/job/usage distinctions;110human gate is not silently closed.
+- **Bootstrap cb6d447 is NOT source-clear; do not activate:** independent same-candidate
+  **187tests/2889assertions** plus quality passed, but review found three P1 production
+  gaps: native clear pending-input/permissions/forms are omitted; worker archive calls
+  Architect-only adapter validation; physical same/symlink/unknown checkout denial
+  falls through for disjoint scopes. [Exact findings and focused fixes](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  Root keeps implementation ownership, including necessary focused native/host
+  adapter repair; no duplicate writer or new recovery task. Await corrected clean
+  candidate/regressions before activation. Old72effects/holds/legitimate tests and
+  88prerequisite remain unchanged. Both reviewers and independent check job completed.
+- **Bootstrap exact candidate in independent review — no activation:** Root committed
+  clean **cb6d447b9830184da6425439fe75fc7ea014048f** at its native bootstrap worktree.
+  Root reports187tests/2889assertions across six runner suites plus quality passing.
+  Two read-only reviewers separately examine native source fencing and durable
+  command/admission/replay safety for the named72→57/58 route, not universal child
+  containment. Independent same-candidate suites/quality are running in shell
+  `sh_1a8937383001OXRaspAC58jLKu`; await completion, do not repeat/poll it.
+  Reviewers`ses_e576d7ecfffeHyxWcUXLddebyV`/`ses_e576d378affeuXd3g4C12KTaRQ` must
+  clear before any activation. New quarantine command/source exclusion is **not yet
+  installed**; no72old-effect settlement,88edge change or independent58verification
+  follows from source tests. Root is verifying newly landed110/130in Desktop.
+- **Root bootstrap implementation is active; reserve its paths:** native worktree
+  `/private/tmp/lazers-retained-bootstrap`, branch`feat/retained-source-bootstrap`,
+  base7828387. Root reports first native before-tool guard/additive storage present,
+  32role/native tests and typecheck passing; command/admission wiring is **unfinished**,
+  so no control is installed or usable yet. Current edits cover runner inspection,
+  native tests, roles/tests, runtime/tests, schema, store, tools and the new
+  `source-quarantine.ts`, plus Root's untracked design plan. Do not edit/duplicate,
+  stash, overwrite or certify this in-flight tree. No observability edits or live
+  activation are assigned. Reconcile held Tasks/Radar specs against the final handoff;
+  preserve existing57→58,72effects/holds and88integration prerequisite meanwhile.
+- **Reviewed110/130 task sources landed and built:** Root cleared the quiet window;
+  main **a2182239423f533603d7b40ddcd1bd4e3888e73d** preserves both accepted candidate
+  ancestries. Merged **36tests/344assertions** and quality passed. Task-only native
+  integration is recorded130planv9/110planv26; **no plan finalization or cleanup**.
+  GUI build/process-free smoke passed; postbuild1793829039412 retains PID95968/2.2.5,
+  only Architect active, six flags true, canonical plugin active and new server module
+  generation647b3e32. No explicit reload/restart/inference/settings change occurred.
+  [Exact landing evidence](evidence/quiet-landing-110-130-20261104.md) retains source
+  review, quiet preflight, build warnings and hashes. Do not repeat completed jobs.
+  Root still owes actual Desktop check-duration observations and the separately
+  coordinated110full-state measured review; no GPU-recovery or whole-plan claim.
+- **Astra profiling is explicitly authorized now:** the user assigns Root's Astra
+  agent hands-on launch/test/profile/fix of live performance with isolated repairs.
+  Initial service/renderer/GPU OS captures are complete; meaningful JS profiling is
+  next. Earlier no-profiler notes are historical and **do not block this assigned
+  work**. Avoid duplicate diagnosis/implementation; keep128lease repair queued until
+  ownership coordinates. Preserve running work and coordinate any restart, live build
+  or activation with Root/Astra while captures run.
+  Root's separate timing investigation matches existing130/131; do not create another
+  timestamp/render repair. Native timing planv6 currently has130running/99tools and
+  131queued/zeroattempts.130owns panel/projection/CSS/focusedtests;131backend timing
+  excludes observability readers. Coordinate Root's investigation and Astra's actual
+  read-performance paths before consumer wiring. Completed receipt endpoints exist;
+  attempt-end persistence/projection and check interval rendering are distinct gaps.
+- **Original110 source/task accepted, live gate still open:** exact clean
+  `028c53ec923eb51fcf08b310c963fcee6551f5ac` includes6a9d45c and is Root-reviewed
+  with **35tests/389assertions** plus quality; no broader repeat without change or
+  concern. Native planv25 confirms task acceptance/all11effects complete and passing
+  exact-artifact task/combined checks, but retains`coordinated-runtime-observation:human`.
+  A genuine new110durable idle row exists (revision11,start1011,report0,terminal1376);
+  this is not reconstruction of old certificates or later retirement/reopen proof.
+  [Evidence and live gate](evidence/review110-final-source-20261104.md).
+  130 remains running (planv6,67tools at last observation),131zeroattempts queued;
+  no110merge/build/activation/liveprobe while130works or Astra captures.
+- **Bounded bootstrap authorized, first installation not yet available:** extension
+  `0b9b178` qualifies existing57→58 for72's uncertain-check case while preserving old
+  checkout/check/shared-resource holds and requiring real writer exclusion before
+  code-scope release. [Reachability research](evidence/retained-bootstrap-installation-boundary-20261104.md)
+  found no safe non-overlapping native admission seam: both source-reservation gates
+  are in72-reserved`runtime.ts`; hiding72 via store getters corrupts lifecycle/scope
+  truth. Root/operator must provide a controlled first-installation route. Do not
+  dispatch dead preparatory storage as the solution or bypass installed admission.
+  88 remains the existing repair, nowpriority2050/planv3; its72integration edge stays.
+- **Driver interruption correction:** Root removed Escape-before-super+Return;
+  pinned composer maps Escape to stop while working. Corresponding interrupted
+  authoring/tools are driver interference, not semantic failure or plugin proof.
+  Do not replay completed review/merge/build effects. Separately explicit WebGPU
+  device-loss errors remain concrete failures. Root's renderer profile is retained
+  at`/private/tmp/lazers-renderer-live-20261104T2057.json.gz`; DevTools closed, no
+  reload/settings/inference initiated by that capture. Coordinate new activation.
+- **Native timing execution authorized and requested:** plan
+  `96cc983c-f6a6-4ea5-8f1a-7a5e8c7f71a0` contains **LZ130**
+  `6a0b0d92-fd4d-44b1-a3e5-9cb8a5d1b8ea` (known check intervals/exact selected
+  timing) and **LZ131**`569db237-8d92-4a8e-98f8-0ebdd7c4c649` (actual lifecycle/native
+  endpoints, resume-safe provenance). Both have exact task-local Luna Max routes.
+  130 original`bd377e53-04fe-4a96-a21f-a1a6caf50e04` is running;131 has zero attempts
+  and must respect plan/runner reservations. Neither touches Astra's observability
+  reader; later attempt-timing consumer wiring must be coordinated after its handoff.
+  Source/current SELECT-only research found125attempts/no end column,658valid check
+  receipts and39resumes across23attempts;20laststops precede the latest resume.
+  Never derive missing endpoints from status or recording time. Existing22/61
+  acceptance/history remain intact; their reviewed primary kinds are now annotated.
+- **Original110 resumed for real repair:** cancellationv18 → same-attempt resumev20
+  in plan`2aa51f63-fd41-4510-92a6-6bad700d8880`, retaining original`addfb6ee…`,
+  session/route/candidate/failures/usage. At1793825289506 ownership and canonical
+  owning-plugin source matched, controls were empty, service95968/2.2.5 unchanged,
+  and exact durable pre-dispatch-cancellation guidance was read back. This follows
+  the completed reviewed quiet producer rollout; it does not reconstruct old idle.
+  No source merge, live build, restart, reload, profiler or new inference is assigned.
+- **Root owns actual Desktop observation; no new OS permissions:** retained
+  `/private/tmp/lazers-root-desktop-panel-observations-20261104.md` confirms Completed,
+  correct old125trajectory, real check start/end and task/filter continuity.
+  Check selection resets on remount: UX follow-up, **not a new acceptance gate**.
+  Our osascript denial limits that probe, not Root's working authorized Computer Use.
+  User authorizes independent native timing execution now; coordinate **actual
+  overlapping paths only** with Astra, and no live build/activation/restart during
+  announced captures. All six settings remain true. Later authoring inference
+  reported a real WebGPU mapAsync/device-loss error, distinct from the old cache-owner
+  failure; Root sent it to Astra. Concerns and three-round advancement are retained,
+  **no semantic pass** claimed and no settings/restart workaround used.
+- **GUI build completed; actual inference succeeded:** after fresh quiet preflight
+  **1793823901438–1793823901453**, `bun run build:gui` and process-free smoke passed
+  at docs-only descendant`1d8a7b1`, with existing bundler warnings retained. A single
+  ordinary local ask returned`4` (**26 prompt / 1 output tokens**). PID95968/2.2.5
+  and all six true flags are unchanged; Never unload was not written. This clears
+  the last observed inference failure for that call, not the unknown cache-owner
+  cause or LZ128 prevention repair. No explicit reload/restart/takeover/profiler ran.
+  [Rollout evidence](evidence/quiet-rollout-20261104.md) preserves hashes, exact
+  observations and remaining Desktop/per-location activation limitations. Do not
+  repeat the completed GUI build or infer old native acceptance from it.
+- **Merged source; GUI activation still pending:** main
+  **b8fe479811dd354ec412503171383e648629c989** contains all three reviewed
+  ancestries (127633da56, Tasks6c05cf6, Trajectorya86a6e1). Merged checks passed
+  **200 tests / 1,893 assertions**, formatter, lint, typecheck and diff checks;
+  native-input and GUI build/smoke root files were unchanged. Merge/check job
+  `sh_1a836d8e10010HAs6YjLedtr2t` completed; **do not repeat it**. GUI build was
+  deliberately excluded. First guarded attempt stopped before mutation on Root's
+  docs-only544c9d3; that timing review is preserved. Successful preflight
+  **1793823476310–1793823476329** retained PID95968/2.2.5, only Architect active,
+  empty owned127/126/110 controls and six flags true. Recheck quietness before
+  authorized GUI build/process-free smoke, then observe effective generations and
+  actual Desktop/inference. No unnecessary explicit reload, old idle reconstruction
+  or native acceptance claim follows from these source/check results.
+- **Current quiet-rollout front:** original127 finished naturally at clean
+  **633da56c4ad08129ad43562adea90c1b98167832**. Earlier repeated timeout is retained
+  history, not a current stuck worker. Root native1793822037352 saw only Architect.
+  Original reviewer **cleared exact633da56**, both remaining P2s fixed; independent
+  **91tests/546assertions** and quality pass, clean/unchanged. Trajectory corrected
+  clean **a86a6e170eeb6e2a703c713be71da56f47acd773** is also original-reviewer cleared,
+  independent **33tests/212assertions** and quality pass. Tasks6c05cf6 stays cleared
+  (44tests/296assertions/quality). Now recheck/coordinate actual quiet boundary for authorized
+  rollout; no proof-only turn, reconstructed old idle or acceptance override.
+- GUI cache finding is a source-confirmed aborted-context cleanup defect, **not a
+  proven live owner/device diagnosis**. **LZ128**`548439b5-48e6-4401-b77f-23db493435b8`,
+  plan`4bcb9aa8-f057-4254-86e7-ab43ba0ea584`v1, is submitted **not run**: same-main-
+  provider GUI-generation predecessor disposal + exact main retirement, cancellation/
+  lost-ack fences, non-secret diagnostics. No opaque-owner takeover or automatic
+  main-provider reload recovery. Actual ordinary inference at quiet rollout remains
+  required; a fulfilled old dispose promise/readiness is not proof.
+- Roadmap authoring paused for127 priority after **LZ129**
+  `91c6c95d-9965-421f-9b35-49da50f84979` bounded Radar live-read task was submitted;
+  its dependency plan and remaining small increments are **not yet submitted**.
+  User chose **Include edit preview**: bounded explicitly attributed proposed-edit
+  preview in selected detail, with privacy/coverage limits—not arbitrary arguments.
+  Continue the planned live-read → safe file/edit projection → Radar consumer and
+  separate runtime-owned Tasks eligibility → Tasks presentation slices after rollout.
+  No new implementation dispatch; preserve existing native/Models/recovery priority.
+
+- User requests Architect break the clarified Tasks/Radar design into **small
+  coherent roadmap tasks**, preserving current priorities/work. Planning research
+  is running against refreshedRepomix`fc4510da-6848-44f7-aaf1-a8e0ebfde321`
+  (1793821197071). Reuse/reconcile existing Radar/Tasks work and native gates; no
+  Radar implementation dispatch is authorized merely by this planning request.
+- Root Trajectory performance candidate **91e88a3** is ready/clean in
+  `/private/tmp/lazers-trajectory-events`; Root owns controller/transport/events/tests,
+  **do not overlap**. Removes healthy4s reads, native change/server.connected,
+  covered-version coalescing/newer+reconnect catch-up, failure-only1/2/4…30s and
+  generation/close cancellation; captured history remains explicit/stable. Root
+  reports37tests/692assertions, quality/build/process-free smoke, four regressions
+  red on old controller and native handshake1793821098915. Frozen review found
+  **P2, not cleared**: panel-state874–879 drops change2 against old snapshot100 while
+  reconnect snapshot1 is in-flight after tracker sequence reset. Require buffered
+  in-flight changes/connection-epoch handling and regression100→reconnect→held1→2→
+  catch-up, retaining captured history/pages/selection. Root owns correction;
+  no overlapping edits. Actual Desktop/reconnect/CPU outcomes remain unproven. Batch
+  quiet integration/build with clearedTasks6c and **cleared corrected127**, not now.
+  -127latestv32 approval notice was not blindly reconciled. SDK discovery initially
+  unavailable; PID95968 remained alive. Read-only configured-auth `/api/info` at
+  **1793821351670** returned200 in1097ms with same PID/version2.2.5, then public
+  discovery recovered. Ownership-checked127at1793821351705foregroundactive with
+  empty worker-location permissions/forms. No restart/ensure/settings change or
+  guessed approval. Discovery failure alone is not service/GPU failure proof.
+
 - **LZ58, not a new recovery system:** user endorsed lifecycle review`ac94144` and
   [focused context amendment](evidence/retained-verification-amendment-20261104.md).
   Exception to no-worktree creation permits a runtime-owned **genuinely independent**

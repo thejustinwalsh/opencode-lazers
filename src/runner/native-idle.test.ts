@@ -345,6 +345,51 @@ test("same-attempt input reassignment invalidates old zero, accepts a fresh turn
   }
 })
 
+test("a duplicate start cannot carry execution lineage across assigned-input changes", () => {
+  const fixture = makeFixture()
+  const store = new NativeIdleStore(fixture.repository)
+  const originalBinding = store.assignmentForSession("ses-accepted")!
+  try {
+    const started = store.observeEvent(originalBinding, "session.execution.started", 20)
+    expect(started.status).toBe("changed")
+
+    const nextInputID = "msg_reassigned_input"
+    fixture.repository.atomic((db) =>
+      db
+        .query("UPDATE runner_attempts SET message_id=? WHERE id=?")
+        .run(nextInputID, originalBinding.attemptID),
+    )
+    const currentBinding = store.assignmentForSession("ses-accepted")!
+    expect(currentBinding.assignedMessageID).toBe(nextInputID)
+    expect(store.observeEvent(currentBinding, "session.execution.started", 20).status).toBe("seen")
+    expect(store.read(currentBinding)).toMatchObject({
+      binding: currentBinding,
+      lastEventSequence: 20,
+      executionStartSequence: null,
+      invalidation: {
+        reason: "Assigned native worker input changed; previous idle evidence is stale",
+      },
+    })
+    expect(store.background(currentBinding)).toMatchObject({ state: "unknown" })
+    expect(
+      store.recordIdle(
+        currentBinding,
+        {
+          observedAt: 456,
+          inputID: nextInputID,
+          executionStartSequence: 20,
+          eventSequence: 20,
+          count: 0,
+          kinds: { shell: 0, subagent: 0, image: 0 },
+        },
+        store.read(currentBinding)!.revision,
+      ),
+    ).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
+
 test("fresh idle hook after delivered input can replace an invalidated report in the same execution", () => {
   const fixture = makeFixture()
   const store = new NativeIdleStore(fixture.repository)
