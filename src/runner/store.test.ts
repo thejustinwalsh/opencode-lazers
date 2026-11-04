@@ -240,6 +240,93 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
+test("active project reservations preserve priority and attempt order and refresh across transitions and reopen", () => {
+  const f = fixture("reservation-facts")
+  const task = f.repository.get(f.input.nodes[0]!.taskID)!
+  const addPlan = (priority: number, foreign = false) => {
+    const next = f.repository.insert({ ...task, id: crypto.randomUUID() })
+    const plan = f.store.submit(
+      {
+        ...f.input,
+        requestID: crypto.randomUUID(),
+        priority,
+        nodes: [{ taskID: next.id, revision: 1 }],
+        integrationOrder: [next.id],
+      },
+      "owner",
+    )
+    if (foreign)
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_plans SET project_directory=? WHERE id=?")
+          .run("/foreign/project", plan.planID),
+      )
+    return { id: plan.planID, taskID: next.id }
+  }
+  const low = addPlan(0)
+  const high = addPlan(5)
+  const foreign = addPlan(10, true)
+  const insert = (plan: typeof low, id: string, number: number, startedAt: number, state: string) =>
+    f.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts
+      (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          id,
+          plan.id,
+          plan.taskID,
+          number,
+          `ses_${id}`,
+          `msg_${id}`,
+          f.projectDirectory,
+          f.input.baseCommit,
+          "{}",
+          state,
+          startedAt,
+        ),
+    )
+  insert(low, "low-later", 1, 200, "preparing")
+  insert(low, "low-first", 2, 100, "running")
+  insert(low, "low-terminal", 3, 1, "accepted")
+  insert(high, "high", 1, 300, "verifying")
+  insert(foreign, "foreign", 1, 0, "running")
+  const expected = () =>
+    f.store
+      .plans()
+      .flatMap((plan) =>
+        f.store
+          .attempts(plan.id)
+          .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state)),
+      )
+  expect(f.store.activeProjectAttempts()).toEqual(expected())
+  expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toEqual([
+    "high",
+    "low-first",
+    "low-later",
+  ])
+  // A second connection publishes changes between decisions; no cached reservation survives.
+  const other = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(other)
+  other.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='accepted' WHERE id='high'").run()
+    db.query("UPDATE runner_attempts SET state='preparing' WHERE id='low-terminal'").run()
+    db.query(
+      "UPDATE runner_attempts SET session_id='ses_new',workspace='/new/workspace' WHERE id='low-first'",
+    ).run()
+  })
+  const refreshed = f.store.activeProjectAttempts()
+  expect(refreshed).toEqual(expected())
+  expect(refreshed.map((attempt) => attempt.id)).toEqual(["low-terminal", "low-first", "low-later"])
+  expect(refreshed[1]).toMatchObject({ session_id: "ses_new", workspace: "/new/workspace" })
+  f.repository.close()
+  const reopened = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(reopened)
+  expect(new RunnerStore(reopened).activeProjectAttempts()).toEqual(refreshed)
+})
+
 test("delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown", () => {
   const f = fixture("bounded-outbox")
   const plan = f.store.submit(f.input, "owner")

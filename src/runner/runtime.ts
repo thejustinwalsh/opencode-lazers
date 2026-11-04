@@ -2271,13 +2271,7 @@ export class TaskRuntime {
         input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
     }
     const nodes = this.store.nodes(plan.id)
-    const activeProject = this.store.plans().flatMap((candidate) =>
-      this.store
-        .attempts(candidate.id)
-        .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
-        .map((attempt) => ({ attempt, plan: candidate })),
-    )
-    const occupied = activeProject.map(({ attempt }) => ({
+    const occupied = this.store.activeProjectAttempts().map((attempt) => ({
       shared: attempt.workspace === this.directory,
       scopes: this.store.effectiveWriteScope(attempt.task_id),
     }))
