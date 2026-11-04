@@ -135,6 +135,25 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   startup-effect replay; inspection confirms plan v11 is running with the stale
   reason cleared. Do not mistake a historical `outcome=succeeded` for this
   live worker's completion.
+  Final committed `809c153` passed Root's independent **72 tests / 404 assertions**
+  and store repro, but exact-source review found a remaining P1: latest successful
+  Idle must match the persisted terminal's **message ID**, not merely validate the
+  old event-to-message conversion. Same-input assistant/Idle A then completed
+  assistant/Idle B must not reuse A's zero evidence. Same-worker correction key
+  `lazers-native-idle-latest-terminal-marker-id-review-20261104-v1` was read back at
+  **1793810226471**; no merge/activation of this unsound candidate was performed.
+  Supported cancellation is settling the ended original turn (plan v14), preserving
+  all code/usage/history before same-attempt continuation; no forced resume or new
+  LZ117 task. Native foreground/permissions/inbox/forms were empty at 1793810522809.
+  Root identified the bootstrap cause: instruction-context synthetic notes were
+  selected as real worker input. Committed fix **`258b4a0`** changes only
+  `native-input.ts` and its regression test; the same live history resolves assigned
+  input at **1793811771932**, versus the instruction note at **1793811661411**.
+  Root reports **65 tests / 352 assertions**, lint/types/diff pass. No activation yet.
+  User authorizes one supported server-wide `location.reload` after LZ125's natural
+  quiet boundary, with continuity and pending original LZ117 correction retained,
+  then settlement/resume through runtime. No service restart, settings change,
+  forced cleanup or replacement. Keep both Root-owned native-input files untouched.
 - **LZ118 is admitted**, task `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
   `2e5b7147-426f-45b6-934f-6da2b07205e7`: explicit conclusive failed-startup
   settlement and new linked resource operation within the original attempt.
@@ -191,8 +210,30 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   `f11e1754-064c-4c28-9888-d488a36ec03d`, is admitted after LZ119 integration:
   schema-valid current-price index from complete cached catalogs, ordered whole-model
   fallback, authentic provenance, unknown versus published zero and actual valuation.
-  Original attempt `b05fddca` is now running at plan v5 after LZ119 source integration;
+  Original attempt `b05fddca` dispatched at plan v5 after LZ119 source integration;
   cleanup holds correctly did not become false source dependencies.
+  A later stale approval reason blocked plan v6 while native observation
+  **1793809777037** showed zero pending permissions and the same worker
+  foreground-active. Supported reconciliation was requested at v7, with all three
+  startup effects complete and no absent-permission reply or worker replay. Track
+  this and LZ117's cleared hold as concern-state recovery observations for the
+  improvement notes, not new approval gates or proof the workers had stopped.
+  Accepted `401349b` is **not integrated**: real generation31 GPT5.2 record268 has
+  published input/output/cache-read but null cache-write, and the builder wrongly
+  requires all four rates. The existing repro supplies no applicability evidence;
+  it demonstrates the restriction, not observed-zero valuation. LZ125 corrects
+  this original needed-rate boundary. Preserve null rates and whole-source policy.
+- **LZ125** `68224b16-5c7c-490f-966e-80e75eada568`, admitted plan
+  `83edaac6-b169-435b-8c4b-be663e72eb24`, builds on exact `401349b` to add conservative
+  observed-category applicability. Only complete observed zero waives a rate;
+  positive/unknown/partial-zero needs it, and completion covers output plus reasoning.
+  Real quote-shape builder→schema→valuation must produce fixture **$0.003185** for
+  1000 uncached input/100 output/200 cache-read with zero reasoning/cache-write,
+  preserving cache-write null. Differing same-selector usage combines requirements;
+  fallback uses an entire quote, never spliced categories. This separate corrective
+  execution belongs to LZ120's original logical outcome, not an extra success.
+  Normal authoring reviews after renderer recovery returned genuine D1 answers,
+  nonzero measured usage and no errors; execution evidence, not correctness proof.
 - User selected **creation/submission-time task membership with complete histories**.
   A-failure/B-acceptance credits acceptance only B; A retains failed effort, while B's
   empirical sample includes that task's own A+B retries, explicitly cross-route.
@@ -225,6 +266,31 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   before output pagination, explicit capture disposal and incremental byte accounting.
   Sequence cutoff alone misses updates to existing progress rows. This is SQL fact
   identity, not file-hashing evidence. Actual data and concurrent-write tests remain.
+  Follow-up SELECT-only research found **29,964 rows / 58,611,456 payload bytes**
+  at 16:35:54Z; a later coherent raw-row envelope proxy exceeded **82 MiB**, above
+  the existing 64 MiB bound. The overflow is not join multiplication. Tool display
+  content alone is about 20 MB, while observation/route identities must remain;
+  25 usage snapshots exceed the output's 100-event-ID bound (maximum 660).
+  [Actual capture shape](evidence/models-retained-capture-20261104.md) supplies the
+  aggregate procedure, separate snapshot times and bounded projection guidance.
+- **Logical correction accounting needs explicit treatment in existing Models work.**
+  User identified the real LZ119/LZ124 case: both raw task records are bug repairs
+  with ACCEPT events, but LZ124 finishes LZ119's already-explicit replay-idempotence
+  assertion. The intended metric includes correction effort in the original logical
+  task, not two successes or omitted repair cost. Preserve both task/attempt/event
+  records. Research is examining durable relation and coverage surfaces; do not
+  infer grouping from kind, source ancestry, context links or every generic
+  `supplements` relation. LZ124's plan already records supplements, which is not the
+  same as a typed correction-of relation. LZ122 must handle supported lineage or
+  explicitly expose incomplete logical-denominator/history coverage, never claim
+  complete logical efficiency from independent accepted task IDs. This is real
+  dogfood accounting, not a synthetic benchmark or additional execution gate.
+  [Logical correction research](evidence/models-logical-correction-20261104.md)
+  records exact relation/acceptance surfaces and the v4 producer planning decision.
+  Mandatory logical counts cannot be replaced with physical counts, zero or lower
+  bounds. Use visible unavailability/explicit measurement failure when necessary,
+  not merely an undisplayed partial note. LZ121/123 remain distinct evolution;
+  generic supplements never automatically collapses them.
 - **LZ123** `f9734934-7ba8-40da-b3ab-72851a433ae5`, admitted plan
   `99e4f80d-ced8-4556-8c1b-969483dc52d3`, covers inspector
   history/route/membership rendering after original LZ108 source and LZ121 schema.
@@ -235,9 +301,15 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   cycle through LZ108's still-open real-data human gate.
   Original attempt `8806c6f8` used selected Luna Max/UI; source-grounded
   numeric-fixture warning read back at **1793807434759**. Native task/combined panel
-  and quality accepted `3aa4a55` at plan v8; exact-source review is underway before
-  source integration. No fixture or accepted source closes original LZ108's real-data
-  Desktop/Tera gate.
+  and quality accepted `3aa4a55`. Exact-source review cleared literal A100/B50,
+  150-history-versus-50-cohort connected DOM assertions, exact contributor
+  routes/membership, unknown omissions, stale metadata publication and retained
+  clicked-node focus. Merged `0c9be8b` passed **207 tests / 2,828 assertions**,
+  formatting/lint/typecheck/diff, GUI build and Root's process-free bundle smoke.
+  Root's three files and corrected valuation remain unchanged. Task/combined source
+  integration recorded through v10; v11 is cleanup-blocked on inconclusive native
+  idleness, so its worktree is preserved. No fixture or accepted source closes
+  original LZ108's real-data Desktop/Tera gate.
 
 ## Source and native state
 
