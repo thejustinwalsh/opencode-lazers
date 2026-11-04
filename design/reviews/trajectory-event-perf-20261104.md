@@ -33,3 +33,15 @@ Independent source review, quiet-boundary integration, merged build, Desktop
 updates/reconnect/hidden-panel checks and comparative runtime measurement remain.
 No model settings, inference, provider routes, ONNX execution settings, scheduler
 state or acceptance policy changed. No claim that this alone fixes battery drain.
+
+Independent frozen review found a real reset-sequence defect: old snapshot100,
+reconnect holds new snapshot1, event2 arrives before that response. Filtering
+against100 discarded it. The registered regression fails on91e88a3; correction
+buffers in-flight events before the previous-boundary comparison, then compares
+them with the arriving snapshot. It retains captured history/selection. The final
+corrected candidate still requires review and installed Desktop observation.
+
+Corrected-candidate checks: 33 panel tests / 212 assertions, lint two changed
+TypeScript files, typecheck338, formatter/diff and rebuilt GUI/process-free smoke
+pass. The broader37/692 run above predates this focused follow-up; do not present
+it as the corrected commit's broader run.

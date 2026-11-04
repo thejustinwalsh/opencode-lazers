@@ -113,7 +113,9 @@ async function waitFor(state: TrajectoryPanelState, predicate: () => boolean) {
     if (predicate()) return
     await tick()
   }
-  throw new Error(`Timed out waiting for trajectory state: ${JSON.stringify(state.data)}`)
+  throw new Error(
+    `Timed out waiting for trajectory state: ${JSON.stringify({ key: state.data.key, taskID: state.data.taskID, loading: state.data.loading, stale: state.data.stale, error: state.data.error })}`,
+  )
 }
 
 test("plan checks and unassociated events never inherit the latest worker attempt", async () => {
@@ -1215,6 +1217,68 @@ test("a retired retry callback cannot disown the current view's recovery timer",
     clock.jobs[0]!.run()
     state.close()
     expect(clock.jobs[1]!.cancelled).toBe(true)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a reset stream sequence during reconnect catches up without replacing captured history", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport, publish } = transportFor(fixture, tracker)
+  const original = transport.snapshot
+  const waiting = deferred<void>()
+  let calls = 0
+  transport.snapshot = async (...args) => {
+    const result = await original(...args)
+    const call = ++calls
+    if (call === 2) await waiting.promise
+    return {
+      ...result,
+      boundary: { ...result.boundary, eventSequence: call === 1 ? 100 : call === 2 ? 1 : 2 },
+    }
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "reset",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    state.selectAttempt(firstAttemptID)
+    const captured = state.data.historyCapturedAt
+    const ids = [...state.data.capturedEventIDs]
+    publish({
+      projectID: "project",
+      sequence: 1,
+      repositoryVersion: 0,
+      sourceRevision: 0,
+      nativeRevision: 0,
+      cause: "gap",
+      resnapshotRequired: true,
+    })
+    await waitFor(state, () => calls === 2)
+    publish({
+      projectID: "project",
+      sequence: 2,
+      repositoryVersion: 0,
+      sourceRevision: 0,
+      nativeRevision: 0,
+      cause: "native",
+      resnapshotRequired: false,
+    })
+    await tick()
+    waiting.resolve()
+    await waitFor(state, () => calls === 3 && state.data.snapshot?.boundary.eventSequence === 2)
+    expect(state.data.historyCapturedAt).toBe(captured)
+    expect(state.data.capturedEventIDs).toEqual(ids)
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
   } finally {
     state.close()
     fixture.close()

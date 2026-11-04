@@ -871,14 +871,16 @@ export class TrajectoryPanelState {
         for await (const event of transport.changes(signal)) {
           if (generation !== this.generation || signal.aborted) return
           if (event.projectID !== this.projectID) continue
-          if (
+          // A reconnect may reset the producer sequence below the old snapshot.
+          // Buffer in-flight events before comparing them with that old boundary.
+          if (this.refreshing) {
+            if (event.resnapshotRequired) this.pendingRefresh = true
+            else this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
+          } else if (
             event.resnapshotRequired ||
             event.sequence > (this.data.snapshot?.boundary.eventSequence ?? 0)
-          ) {
-            if (this.refreshing && !event.resnapshotRequired)
-              this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
-            else void this.refresh()
-          }
+          )
+            void this.refresh()
         }
         if (!signal.aborted) throw new Error("Observation update stream closed")
       } catch {
