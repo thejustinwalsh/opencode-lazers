@@ -8,6 +8,56 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Current quiet-rollout front:** original127 finished naturally at clean
+  **633da56c4ad08129ad43562adea90c1b98167832**. Earlier repeated timeout is retained
+  history, not a current stuck worker. Root native1793822037352 saw only Architect.
+  Original reviewer **cleared exact633da56**, both remaining P2s fixed; independent
+  **91tests/546assertions** and quality pass, clean/unchanged. Trajectory corrected
+  clean **a86a6e170eeb6e2a703c713be71da56f47acd773** is also original-reviewer cleared,
+  independent **33tests/212assertions** and quality pass. Tasks6c05cf6 stays cleared
+  (44tests/296assertions/quality). Now recheck/coordinate actual quiet boundary for authorized
+  rollout; no proof-only turn, reconstructed old idle or acceptance override.
+- GUI cache finding is a source-confirmed aborted-context cleanup defect, **not a
+  proven live owner/device diagnosis**. **LZ128**`548439b5-48e6-4401-b77f-23db493435b8`,
+  plan`4bcb9aa8-f057-4254-86e7-ab43ba0ea584`v1, is submitted **not run**: same-main-
+  provider GUI-generation predecessor disposal + exact main retirement, cancellation/
+  lost-ack fences, non-secret diagnostics. No opaque-owner takeover or automatic
+  main-provider reload recovery. Actual ordinary inference at quiet rollout remains
+  required; a fulfilled old dispose promise/readiness is not proof.
+- Roadmap authoring paused for127 priority after **LZ129**
+  `91c6c95d-9965-421f-9b35-49da50f84979` bounded Radar live-read task was submitted;
+  its dependency plan and remaining small increments are **not yet submitted**.
+  User chose **Include edit preview**: bounded explicitly attributed proposed-edit
+  preview in selected detail, with privacy/coverage limits—not arbitrary arguments.
+  Continue the planned live-read → safe file/edit projection → Radar consumer and
+  separate runtime-owned Tasks eligibility → Tasks presentation slices after rollout.
+  No new implementation dispatch; preserve existing native/Models/recovery priority.
+
+- User requests Architect break the clarified Tasks/Radar design into **small
+  coherent roadmap tasks**, preserving current priorities/work. Planning research
+  is running against refreshedRepomix`fc4510da-6848-44f7-aaf1-a8e0ebfde321`
+  (1793821197071). Reuse/reconcile existing Radar/Tasks work and native gates; no
+  Radar implementation dispatch is authorized merely by this planning request.
+- Root Trajectory performance candidate **91e88a3** is ready/clean in
+  `/private/tmp/lazers-trajectory-events`; Root owns controller/transport/events/tests,
+  **do not overlap**. Removes healthy4s reads, native change/server.connected,
+  covered-version coalescing/newer+reconnect catch-up, failure-only1/2/4…30s and
+  generation/close cancellation; captured history remains explicit/stable. Root
+  reports37tests/692assertions, quality/build/process-free smoke, four regressions
+  red on old controller and native handshake1793821098915. Frozen review found
+  **P2, not cleared**: panel-state874–879 drops change2 against old snapshot100 while
+  reconnect snapshot1 is in-flight after tracker sequence reset. Require buffered
+  in-flight changes/connection-epoch handling and regression100→reconnect→held1→2→
+  catch-up, retaining captured history/pages/selection. Root owns correction;
+  no overlapping edits. Actual Desktop/reconnect/CPU outcomes remain unproven. Batch
+  quiet integration/build with clearedTasks6c and **cleared corrected127**, not now.
+  -127latestv32 approval notice was not blindly reconciled. SDK discovery initially
+  unavailable; PID95968 remained alive. Read-only configured-auth `/api/info` at
+  **1793821351670** returned200 in1097ms with same PID/version2.2.5, then public
+  discovery recovered. Ownership-checked127at1793821351705foregroundactive with
+  empty worker-location permissions/forms. No restart/ensure/settings change or
+  guessed approval. Discovery failure alone is not service/GPU failure proof.
+
 - **LZ58, not a new recovery system:** user endorsed lifecycle review`ac94144` and
   [focused context amendment](evidence/retained-verification-amendment-20261104.md).
   Exception to no-worktree creation permits a runtime-owned **genuinely independent**
