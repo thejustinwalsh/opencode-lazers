@@ -165,67 +165,128 @@ function progressRoute(value: unknown): AccountingRoute | null {
       typeof rawIdentity?.providerID === "string" ? rawIdentity.providerID : null
     const identityModelID = typeof rawIdentity?.modelID === "string" ? rawIdentity.modelID : null
     const identityVariant = rawIdentity?.variant
+    const validIdentity =
+      identityProviderID !== null &&
+      identityModelID !== null &&
+      (identityVariant === null || typeof identityVariant === "string") &&
+      ![identityProviderID, identityModelID, identityVariant].some(
+        (part) =>
+          typeof part === "string" &&
+          (part.endsWith("…[truncated]") || part.includes("[REDACTED]")),
+      )
     return {
       ...route,
-      identity:
-        !identityProviderID ||
-        !identityModelID ||
-        (identityVariant !== null && typeof identityVariant !== "string")
-          ? null
-          : {
-              providerID: identityProviderID,
-              modelID: identityModelID,
-              variant: identityVariant,
-            },
+      identity: validIdentity
+        ? {
+            providerID: identityProviderID,
+            modelID: identityModelID,
+            variant: identityVariant as string | null,
+          }
+        : null,
     }
   }
   if (invalidVariant || identityLost) return { ...route, identity: null }
   return { ...route, identity: { providerID, modelID, variant } }
 }
 
-function retainedProgressRoutes(progressFacts: readonly unknown[], sessionID: string) {
-  const routes: Array<AccountingRoute | null> = []
+type CallRouteEvidence = { routes: AccountingRoute[]; unavailable: boolean }
+
+function callKey(sessionID: string, messageID: string) {
+  return `${sessionID}\u0000${messageID}`
+}
+
+function routeEvidenceForCall(
+  progressFacts: readonly unknown[],
+  sessionID: string,
+  attempts: AccountingAttempt[],
+) {
+  const calls = new Map<string, CallRouteEvidence>()
+  const unscopedRoutes: Array<AccountingRoute | null> = []
+  const getCall = (messageID: string) => {
+    const key = callKey(sessionID, messageID)
+    const existing = calls.get(key)
+    if (existing) return existing
+    const created = { routes: [], unavailable: false }
+    calls.set(key, created)
+    return created
+  }
+  const addRoute = (target: CallRouteEvidence, value: unknown) => {
+    const route = progressRoute(value)
+    if (!route) {
+      target.unavailable = true
+      return
+    }
+    target.routes.push(route)
+  }
+  const addEvidence = (target: CallRouteEvidence, value: unknown) => {
+    const evidence = object(value)
+    if (!evidence) {
+      target.unavailable = true
+      return
+    }
+    if (evidence.status !== "observed") {
+      target.unavailable = true
+      return
+    }
+    addRoute(target, evidence.route)
+  }
+
   for (const raw of progressFacts) {
     const fact = object(raw)
     const kind = typeof fact?.kind === "string" ? fact.kind : ""
     const normalizedKind = kind.startsWith("worker-") ? kind.slice("worker-".length) : kind
     if (fact?.sessionID !== sessionID || normalizedKind !== "step") continue
-
     const payload = object(fact.payload)
-    const routeEvidence = (source: Record<string, unknown>) => {
-      const observations = Array.isArray(source.observations) ? source.observations : []
-      let hasRouteLessLifecycleObservation = false
-      const routedObservations = observations.flatMap((rawObservation) => {
+    const hasCallEvidence =
+      typeof fact.status === "string" ||
+      (Array.isArray(fact.observations) && fact.observations.length > 0) ||
+      (fact.route !== undefined && fact.route !== null) ||
+      object(fact.routeEvidence) !== null ||
+      typeof payload?.status === "string" ||
+      (Array.isArray(payload?.observations) && payload.observations.length > 0) ||
+      (payload?.route !== undefined && payload.route !== null) ||
+      object(payload?.routeEvidence) !== null
+    if (!hasCallEvidence) continue
+    const messageID = typeof fact.messageID === "string" && fact.messageID ? fact.messageID : null
+    const target = messageID ? getCall(messageID) : null
+    if (!target) unscopedRoutes.push(null)
+    const sources = [fact, payload].filter((value): value is Record<string, unknown> =>
+      Boolean(value),
+    )
+    for (const source of sources) {
+      if (Object.hasOwn(source, "routeEvidence") && source.routeEvidence !== null)
+        target ? addEvidence(target, source.routeEvidence) : unscopedRoutes.push(null)
+      if (source.route !== undefined && source.route !== null)
+        target ? addRoute(target, source.route) : unscopedRoutes.push(progressRoute(source.route))
+      if (!Array.isArray(source.observations)) continue
+      for (const rawObservation of source.observations) {
         const observation = object(rawObservation)
-        if (!observation) return []
-        const eventType = observation.eventType
-        const isRouteLessLifecycleObservation =
-          (observation.source === "native-event" || observation.source === "recovery") &&
-          (eventType === "session.step.streamed" ||
-            eventType === "session.step.ended" ||
-            eventType === "session.step.failed") &&
-          typeof fact.messageID === "string" &&
-          fact.messageID.length > 0 &&
-          observation.messageID === fact.messageID
-        if (
-          isRouteLessLifecycleObservation &&
-          (!Object.hasOwn(observation, "route") || observation.route === null)
-        ) {
-          hasRouteLessLifecycleObservation = true
-          return []
-        }
-        return Object.hasOwn(observation, "route") ? [progressRoute(observation.route)] : []
-      })
-      if (routedObservations.length) return routedObservations
-      if (
-        hasRouteLessLifecycleObservation &&
-        (!Object.hasOwn(source, "route") || source.route === null)
-      )
-        return null
-      return Object.hasOwn(source, "route") ? [progressRoute(source.route)] : null
+        if (!observation) continue
+        if (Object.hasOwn(observation, "routeEvidence") && observation.routeEvidence !== null)
+          target ? addEvidence(target, observation.routeEvidence) : unscopedRoutes.push(null)
+        if (observation.route !== undefined && observation.route !== null)
+          target
+            ? addRoute(target, observation.route)
+            : unscopedRoutes.push(progressRoute(observation.route))
+      }
     }
-    const retainedRoutes = routeEvidence(fact) ?? (payload ? routeEvidence(payload) : null)
-    if (retainedRoutes) routes.push(...retainedRoutes)
+  }
+
+  for (const attempt of attempts)
+    for (const step of attempt.stepRoutes) {
+      const target = getCall(step.messageID)
+      target.routes.push(step.route)
+    }
+
+  const routes = [...unscopedRoutes]
+  for (const call of calls.values()) {
+    const distinctCallRoutes = new Map<string, AccountingRoute | null>()
+    for (const route of call.routes) {
+      const identity = sourceRouteIdentity(route)
+      distinctCallRoutes.set(identity ? routeKey(identity) : "identity-unavailable", route)
+    }
+    routes.push(...distinctCallRoutes.values())
+    if (call.unavailable || call.routes.length === 0) routes.push(null)
   }
   return routes
 }
@@ -247,10 +308,9 @@ function sessionRouteAllocation(
       ...(attempt.sessionStatus === "available" && attempt.currentRoute
         ? [attempt.currentRoute]
         : []),
-      ...attempt.stepRoutes.map((step) => step.route),
     )
   }
-  routes.push(...retainedProgressRoutes(progressFacts, sessionID))
+  routes.push(...routeEvidenceForCall(progressFacts, sessionID, attempts))
   for (const route of routes) {
     observedCount++
     if (!route) {
