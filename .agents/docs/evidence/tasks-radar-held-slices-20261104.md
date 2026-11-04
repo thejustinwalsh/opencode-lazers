@@ -7,6 +7,10 @@ it. Finish source coordination before final verification/submission of overlappi
 work. Do not launch local authoring inference into an announced profiling capture
 without Root/Astra coordination.
 
+Before final task submission, reconcile these drafts and existing LZ129 against
+Root's installed bootstrap and Astra's actual source handoff. Reuse already-delivered
+outcomes rather than assigning a second implementation of a fulfilled boundary.
+
 Evidence: Repomix`6c782a4a-bf24-40bc-8ff1-4a7a7cab3083`, as-of1793824414267.
 Read-only Tasks researcher verified the ten inspected production files still match
 that snapshot. No behavior tests or runtime actions were performed for these drafts.
@@ -89,5 +93,102 @@ No real delivery, healthy-idle RPC-count or CPU/battery claim is made by these d
 
 Existing LZ129 supplies the bounded live-read increment. The held remainder is
 safe session/call-attributed file/proposed-edit projection, then the Radar consumer.
-Read-only privacy/attribution research is still active; do not invent its source
-coverage or submit a duplicate performance/read-contract task meanwhile.
+Read-only privacy/attribution research is complete. Production sources/tests and
+manifests match the supplied snapshot between9fa5d87and7828387. No new privacy
+framework, duplicate LZ129 contract or Astra performance implementation is proposed.
+
+### Radar A — safe attributed file/edit producer
+
+**Kind:** feature-implementation. **Read exposure:** LZ129's reviewed contract,
+not a parallel legacy observability-reader rewrite.
+
+**Outcome:** a bounded typed projection records trustworthy file-request/proposed-
+edit observations attached to their exact session/call/message and durable task
+assignment. Proposed excerpts are not approval, actual diff or mutation proof.
+
+**Done conditions:**
+
+- Fixed adapters accept supported pinned native read/edit/patch identities and
+  schemas, plus write metadata only. Unknown/custom tools, shell commands and
+  commentary do not imply file activity. Requested paths remain requested, not
+  claimed resolved targets; native read can select an alternate matching filename.
+- Preserve requested/proposed, explicit executed state, terminal outcome and
+  native-reported result as distinct facts. A failed multi-file operation may
+  have partial effects; never label failure as proof of no changes. Native terminal
+  diff after formatting differs from a proposal excerpt and stays explicitly sourced.
+- Persist/export only sanitized allowlisted projection fields. Never copy original
+  arguments, arbitrary metadata/output, read bodies, directory entries, attachments,
+  URI/base64 or write content into this projection. Reuse redaction-before-truncation
+  and private/encoded/multipart/depth handling without relaxing global sensitive-key
+  filtering. Observation access does not broaden target-content disclosure permission.
+- Conservative first boundary: approved repository-relative targets only; external
+  targets and write bodies/previews are omitted with honest coverage. Define bounded
+  aggregate/per-call path/operation/excerpt limits with truncation/redaction reasons;
+  malformed/oversized patches fail closed without filesystem reads or guessed targets.
+- Durable assignment and exact session/call/message identity prevent cross-call
+  enrichment. Replayed hook/event/recovery facts converge without timestamp churn;
+  stale assignments, mismatched messages and conflicting tool identity cannot attach
+  proposals to another call or overwrite terminal evidence. Legacy rows stay unknown.
+
+**Proposed scope:** focused pure adapter/contract module and tests; narrow native
+hook/event ingestion, recorder and progress export splices. Coordinate actual
+native/recorder/projection overlap with LZ131/Astra before dispatch. No reconstruction
+coordinator, timing fix, SQL-performance work or legacy observability reader edit.
+
+**Grounded guidance:** native417–428 drops hook input; recorder1087–1101/1131–1196/
+1749–1787 intentionally excludes arbitrary input/metadata;759–815/889–977/1102–1109
+already bind assignments and session+call identity. Progress projection231–276 is a
+separate export allowlist. Reuse trajectory/privacy127–173/189–269 and LZ31's
+multipart/depth corrections, not arbitrary payload traversal. Native240–280 fences
+stale recovered assignment/identity; preserve it.
+
+Pinned upstream tools at9bbb8ce supply read path/offset/limit (not resolved target),
+edit oldString/newString proposal fields, patchText validated operations/excerpts,
+and edit/patch terminal files metadata. GPT routes use patch rather than edit/write;
+cover that actual path. Write content is deliberately outside this increment.
+
+Pinned sources:
+[read](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/tool/plugin/read.ts),
+[edit](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/tool/plugin/edit.ts),
+[patch](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/tool/plugin/patch.ts),
+[write](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/tool/plugin/write.ts).
+
+**Discriminating checks:** identical call IDs in different sessions; conflicting
+message/tool identity; terminal-before-called and duplicate/reopen order; stale
+recovery; credentials/private tags/URLs/encoded/multipart/depth canaries in every
+candidate field; read/body/attachment/write-content canaries absent from both new
+stored projection and RPC; oversized malformed patch/traversal/rename/delete/partial
+failure; permission denial and legacy/unsupported coverage. Safe siblings remain
+where allowed. Test actual ingestion→store→export, not only a pure sanitizer.
+
+### Radar B — bounded live consumer and selected preview
+
+**Kind:** feature-implementation. **Depends on:** integrated LZ129 and Radar A.
+
+**Outcome:** the reviewed live Radar view leads with compact actual session/model/
+effort/concurrent-call/grounded-flow summaries above the existing horizontal
+inspector. File/proposed-edit previews appear only in selected detail, with source,
+proposal/result distinction and omission/coverage labels. Tasks owns work ordering.
+
+**Done conditions:**
+
+- Consume only typed bounded summaries and separately fetched selected history.
+  Missing/unavailable/overflow/stale telemetry stays explicit, not idle/healthy.
+  No raw-argument fallback, filesystem read, native-context load, speculative file
+  causality, new telemetry/health rules or recovery controls.
+- Preserve LZ73 exact session-assignment/current-versus-last-task meaning, concurrent
+  calls, composite selection and focus. Events update summaries without replaying
+  old flow as new or rebuilding selected history. Hide/dispose cancels work; reconnect
+  and scope/server switches cannot publish stale identities or previews.
+- Actual registered-panel tests show safe proposal detail, redaction/truncation/
+  unknown reasons and source distinctions, exclude adversarial decoys, and preserve
+  selected detail/history across live updates. Optional C4/XState diagnostics stay
+  secondary; no full legacy Radar/lifecycle payload dependency for the live view.
+- Root-coordinated actual connected Desktop narrow/wide and Tera6.1High review
+  remains required. Existing Radar v2 is an illustrative approved direction, not
+  proof of a live consumer or measured CPU/battery improvement.
+
+**Proposed scope:** Radar contract transport/controller/view/style and focused
+registered-panel tests after upstream contracts stabilize. Preserve existing
+registration/worker-row identities and no healthy full-snapshot polling. Do not
+duplicate Astra's backend performance fixes or add another live-read contract.
