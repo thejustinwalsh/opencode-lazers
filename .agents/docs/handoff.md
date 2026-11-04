@@ -48,6 +48,15 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   [installed observation evidence](evidence/native-idle-installed-observation-20261104.md).
   Provable compatibility recovery and supported same-attempt117repair eligibility
   are under read-only research; no repeated reconcile/worker wake/fabricated certificate.
+  Research concluded no equal-strength retrospective certificate for either record.
+  110 is a **different definite defect**: owning listener received actual start48 as
+  seen, but the local map records only changed;126 truly missed start on replacement.
+  Accepted117 cannot supported-resume/retry. **LZ127**
+  `a683d4bf-ef65-4225-9891-a39237d0ffb6`, plan
+  `f5deb6cf-1414-4060-a65f-0b29be137450`, runrequestedv2, corrects the prospective
+  live-duplicate case while preserving inherited-state/stale-event fences and all
+  original records. No retrospective rewrite or new product gate. Record127→117
+  explicitly after native correction control activation; supplements alone is not it.
   [Prepared producer guidance](evidence/models-producer-guidance-20261104.md)
   carries the concrete reader/capture/counting handoff; deliver durably at dispatch.
 - Original117 sameattempt completed marker-ID correction **f170a6b**; independent
@@ -88,6 +97,15 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   SystemOneRequest's8000-character proxy. Shorter draft's live review returned
   **All fibers interrupted at60s**, unavailable—not semantic pass. All six flags
   remain true; Root is checking actual traces/forwarding before any GPU attribution.
+  110 now has clean candidate **6a9d45c3ea8d791e0909d7245341664c8f850581**, nativev15
+  blocked on idle mismatch. Source review found unresolved P2: await pre-run trace,
+  abort during await, then session.run still starts; add deterministic zero-run
+  dispatch test plus post-await guards/ownership cleanup. Full typed forwarding and
+  exact >16-question content checks need strengthening. Existing scope covers repair.
+  Durable original-worker steering key
+  `lazers-review110-real-dispatch-cancellation-correction-20261104-v1` readback
+  **1793817436605**. Native cancellation requestedv16; resume **same** worker for
+  this real source correction after safe producer rollout, not merely to make a cert.
 - [Native shell research](evidence/native-verification-shell-fit-20261104.md)
   belongs to existing V3/R5/R6 recovery. Evaluate native execution before extending
   custom children; capped memory inventory and teardown acknowledgements cannot

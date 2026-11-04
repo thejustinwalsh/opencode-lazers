@@ -45,6 +45,48 @@ Keep both original attempts. Feed the gap into existing117 recovery; investigate
 a provable compatibility recovery, never reconstruct a certificate from these facts
 by direct writes, repeated reconciliation or a new turn solely for convergence.
 
+### Distinct110 defect and retrospective recovery limit
+
+SELECT1793816942212 distinguishes110 from126: resumed start48 at1793815404504,
+event`evt_1a7badfd8002OTQDn634cqDcMb`, was persisted by listener51451219 as changed.
+The **owning listener2fe57b90 actually received that same live start** as seen at 5404522. Input50 was assigned`msg_6126567d71034ccf9c5f00b93754d8c5`. Genuine0hook
+6771599 had start48/event50; lineage rejected6771651, then success1009 at6771706,
+event`evt_1a7cfbc7a001ytBWV27dP01Vnd`. Durable rowrev4 retains start48 but no report/
+terminal. Authenticated reads1793817014396 show matching final successful Idle,
+inactive foreground and empty controls, not a certificate.
+
+`progress/native.ts:620–625` populates local starts only when persistence returns
+changed; `native-idle.ts:320–321` returns seen for this exact duplicate. This is a
+live-listener deduplication defect, unlike126's genuinely unobserved start. A fix
+must accept actually received exact duplicate starts while rejecting inherited
+state, stale sequences, assignment/disposal/stream gaps and failed persistence.
+
+Research found **no equal-strength retrospective predicate for either record**.
+Pinned Idle hook lacks execution identity; successful Idle lacks a hook/start
+reference; actual historical logs currently yield only watermarks. Same-input latest
+success can confuse A's zero with B's positive background; timestamps/watermarks do
+not recover old identities; diagnostics lack the certificate's CAS binding.
+Do not reconstruct either certificate from those records.
+
+Accepted117 cannot resume/retry via current supported guards (`runtime.ts:835–842`);
+automatic repair applies to failed verification, not accepted tasks. Adoption also
+requires conclusive original idleness, not an escape from that guard.
+
+**LZ127**`a683d4bf-ef65-4225-9891-a39237d0ffb6`, plan
+`f5deb6cf-1414-4060-a65f-0b29be137450`, is a distinct prospective correction of117's
+existing live-listener boundary, not a replacement execution or retrospective
+certificate writer. It must discriminate live duplicate receipt from inherited
+start, stale/newer execution ordering and same-input A/IdleA→B/IdleB. Source-only
+tests do not satisfy117's actual installed condition. Local authoring inference
+was unavailable with no semantic pass; independent review remains required.
+
+110 also has a real source P2 at candidate6a9d45c: after awaiting the run trace,
+`decision-runtime.ts` dispatches without rechecking cancellation. Original worker
+guidance was durably read back1793817436605 under
+`lazers-review110-real-dispatch-cancellation-correction-20261104-v1`; supported
+cancellation requestedv16 preserves its candidate/history, for same-worker actual
+source repair after safe producer rollout—not a turn solely for convergence.
+
 ### Earlier baseline (historical, not current after the126 invalidation)
 
 SELECT-only reads of the installed `tasks.sqlite` at **1793815032874–1793815117597**:
