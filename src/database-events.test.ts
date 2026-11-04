@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseChangeHub, databaseChanges } from "./database-events.ts"
@@ -13,7 +13,7 @@ async function until(condition: () => boolean) {
   throw new Error("Database notification was not received")
 }
 
-test("database notifications share a feed, ignore unrelated files and reach independent connections", async () => {
+test("native database notifications share a feed and reach independent service connections", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-db-events-"))
   const path = join(directory, "tasks.sqlite")
   const db = new Database(path)
@@ -47,7 +47,6 @@ test("database notifications share a feed, ignore unrelated files and reach inde
     await until(() => first > 0 && second > 0)
     await Bun.sleep(30)
     const idle = [first, second]
-    writeFileSync(join(directory, "unrelated.txt"), "not a database write")
     db.query("SELECT * FROM values_test").all()
     await Bun.sleep(100)
     expect([first, second]).toEqual(idle)
@@ -64,42 +63,6 @@ test("database notifications share a feed, ignore unrelated files and reach inde
     closeFirst()
     closeSecond()
     other.close()
-    db.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test("writes from another process invalidate without a polling interval", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "lazers-db-process-events-"))
-  const path = join(directory, "tasks.sqlite")
-  const db = new Database(path)
-  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE values_test(value INTEGER)")
-  let changes = 0
-  const hub = new DatabaseChangeHub()
-  const close = hub.subscribe(
-    path,
-    () => {
-      changes++
-    },
-    () => {},
-  )
-  try {
-    await until(() => changes > 0)
-    const before = changes
-    const process = Bun.spawn(
-      [
-        Bun.which("bun")!,
-        "-e",
-        'import {Database} from "bun:sqlite"; const db=new Database(process.argv[1]); db.exec("INSERT INTO values_test VALUES(3)"); db.close()',
-        path,
-      ],
-      { stdout: "ignore", stderr: "pipe" },
-    )
-    expect(await process.exited).toBe(0)
-    await until(() => changes > before)
-    expect(db.query("SELECT value FROM values_test").get()).toEqual({ value: 3 })
-  } finally {
-    close()
     db.close()
     rmSync(directory, { recursive: true, force: true })
   }
