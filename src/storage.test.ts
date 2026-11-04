@@ -8,6 +8,7 @@ import { keyedProposal, validProposal } from "../test/proposal.ts"
 import { TaskRepository, taskDatabasePath } from "./storage.ts"
 import { startingRevision, submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
+import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -311,6 +312,459 @@ test("classification annotations use exact CAS replay and preserve every immutab
       db.query("DELETE FROM task_classifications WHERE request_id=?").run(request.requestID),
     ),
   ).toThrow("append-only")
+})
+
+test("correction audit persists with CAS replay and leaves physical accepted history untouched", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const originalSubmission = submitTask(
+    repository,
+    keyedProposal("correction-original"),
+    provenance,
+  )
+  const correctionSubmission = submitTask(repository, keyedProposal("correction-task"), provenance)
+  const unfinishedSubmission = submitTask(
+    repository,
+    keyedProposal("unfinished-correction"),
+    provenance,
+  )
+  const evolutionSubmission = submitTask(
+    repository,
+    keyedProposal("separate-evolution"),
+    provenance,
+  )
+  if (
+    originalSubmission.status !== "submitted" ||
+    correctionSubmission.status !== "submitted" ||
+    unfinishedSubmission.status !== "submitted" ||
+    evolutionSubmission.status !== "submitted"
+  )
+    throw new Error("Expected submitted tasks")
+
+  const original = repository.get(originalSubmission.taskID)!
+  const correction = repository.get(correctionSubmission.taskID)!
+  const unfinished = repository.get(unfinishedSubmission.taskID)!
+  const evolution = repository.get(evolutionSubmission.taskID)!
+  const runner = new RunnerStore(repository)
+  const acceptedPlan = runner.submit(
+    {
+      requestID: "accepted-correction-fixture",
+      objective: "Preserve both accepted physical task records.",
+      baseCommit: "a".repeat(40),
+      nodes: [
+        { taskID: original.id, revision: 1 },
+        { taskID: correction.id, revision: 1 },
+      ],
+      dependencies: [],
+      integrationOrder: [original.id, correction.id],
+      verification: validProposal().verification,
+      acceptance: validProposal().acceptance,
+    },
+    "architect",
+  )
+  for (const [task, suffix] of [
+    [original, "original"],
+    [correction, "correction"],
+  ] as const) {
+    runner.move(acceptedPlan.planID, task.id, "READY")
+    runner.move(acceptedPlan.planID, task.id, "DISPATCH")
+    runner.move(acceptedPlan.planID, task.id, "VERIFY")
+    runner.move(acceptedPlan.planID, task.id, "ACCEPT")
+    runner.record(acceptedPlan.planID, task.id, "ARTIFACT_ACCEPTED", {
+      artifact: `${suffix}-artifact`,
+    })
+  }
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='accepted', artifact='accepted-plan' WHERE id=?").run(
+      acceptedPlan.planID,
+    )
+    const setArtifact = db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?")
+    setArtifact.run("original-artifact", acceptedPlan.planID, original.id)
+    setArtifact.run("correction-artifact", acceptedPlan.planID, correction.id)
+    const attempt = db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,
+        started_at,token_count,tool_count,retry_count,cost)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (const [task, tokens, suffix] of [
+      [original, 100, "original"],
+      [correction, 50, "correction"],
+    ] as const) {
+      attempt.run(
+        crypto.randomUUID(),
+        acceptedPlan.planID,
+        task.id,
+        1,
+        `worker-${suffix}`,
+        `message-${suffix}`,
+        "/repo/worktree",
+        "a".repeat(40),
+        `${suffix}-artifact`,
+        "{}",
+        "accepted",
+        Date.now(),
+        tokens,
+        7,
+        0,
+        null,
+      )
+    }
+  })
+  runner.submit(
+    {
+      requestID: "generic-supplement-fixture",
+      objective: "Continue an adjacent area without correcting its original goal.",
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: evolution.id, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [evolution.id],
+      verification: validProposal().verification,
+      acceptance: validProposal().acceptance,
+      dispositions: [
+        {
+          taskID: evolution.id,
+          otherTaskID: original.id,
+          relation: "supplements",
+          rationale: "Related additional work is not a same-original-goal correction.",
+        },
+      ],
+    },
+    "architect",
+  )
+
+  const physicalState = () =>
+    repository.atomic((db) => ({
+      tasks: db
+        .query<{ id: string; body: string }, []>("SELECT id, body FROM tasks ORDER BY id")
+        .all(),
+      submissions: db
+        .query<{ request_id: string; fingerprint: string; task_id: string }, [string]>(
+          "SELECT request_id, fingerprint, task_id FROM submission_requests WHERE project_directory=? ORDER BY request_id",
+        )
+        .all("/repo"),
+      plans: db
+        .query<{ id: string; state: string; artifact: string | null }, [string]>(
+          "SELECT id, state, artifact FROM runner_plans WHERE project_directory=? ORDER BY id",
+        )
+        .all("/repo"),
+      nodes: db
+        .query<
+          { plan_id: string; task_id: string; state: string; artifact: string | null },
+          [string]
+        >(
+          "SELECT plan_id, task_id, state, artifact FROM runner_nodes WHERE plan_id IN (SELECT id FROM runner_plans WHERE project_directory=?) ORDER BY plan_id, task_id",
+        )
+        .all("/repo"),
+      attempts: db
+        .query<
+          {
+            task_id: string
+            state: string
+            artifact: string | null
+            token_count: number | null
+            tool_count: number
+          },
+          [string]
+        >(
+          `SELECT task_id, state, artifact, token_count, tool_count FROM runner_attempts
+           WHERE task_id IN (SELECT task_id FROM runner_nodes WHERE plan_id IN
+             (SELECT id FROM runner_plans WHERE project_directory=?)) ORDER BY task_id`,
+        )
+        .all("/repo"),
+      transitions: db
+        .query<{ task_id: string | null; event: string; payload: string }, [string]>(
+          "SELECT task_id, event, payload FROM runner_transitions WHERE plan_id IN (SELECT id FROM runner_plans WHERE project_directory=?) ORDER BY id",
+        )
+        .all("/repo"),
+    }))
+
+  const before = physicalState()
+  const input = {
+    taskID: correction.id,
+    originalTaskID: original.id,
+    requestID: "same-original-goal-correction",
+    expectedRevision: 0,
+    reason: "This accepted change completes the original acceptance boundary.",
+  }
+  const first = repository.recordTaskCorrection(input, {
+    sessionID: "correction-review-session",
+    agent: "architect",
+  })
+  expect(first.status).toBe("recorded")
+  if (first.status !== "recorded") throw new Error("Expected recorded correction")
+  expect(first.correction).toMatchObject({
+    taskID: correction.id,
+    originalTaskID: original.id,
+    revision: 1,
+    sessionID: "correction-review-session",
+    agent: "architect",
+    requestID: input.requestID,
+    reason: input.reason,
+  })
+  const version = repository.version()
+  expect(
+    repository.recordTaskCorrection(input, { sessionID: "replay-session", agent: "architect" }),
+  ).toEqual({ status: "replayed", correction: first.correction })
+  expect(repository.version()).toBe(version)
+  expect(
+    repository.recordTaskCorrection(
+      { ...input, reason: "Changed payload." },
+      { sessionID: "correction-review-session", agent: "architect" },
+    ),
+  ).toMatchObject({ status: "conflict" })
+  expect(
+    repository.recordTaskCorrection(
+      { ...input, requestID: "stale-correction", expectedRevision: 0 },
+      { sessionID: "correction-review-session", agent: "architect" },
+    ),
+  ).toMatchObject({
+    status: "conflict",
+    expectedRevision: 0,
+    currentRevision: 1,
+  })
+  expect(repository.version()).toBe(version)
+
+  repository.recordTaskCorrection(
+    {
+      taskID: unfinished.id,
+      originalTaskID: correction.id,
+      requestID: "unfinished-correction-branch",
+      expectedRevision: 0,
+      reason: "This submitted branch continues the same reviewed goal.",
+    },
+    { sessionID: "correction-review-session", agent: "architect" },
+  )
+  expect(physicalState()).toEqual(before)
+  expect(repository.get(original.id)).toEqual(original)
+  expect(repository.get(correction.id)).toEqual(correction)
+
+  const reader = openReadOnlyTaskCorrections(path, "/repo")
+  try {
+    const membership = reader.inspect(correction.id)
+    expect(membership).toMatchObject({
+      status: "found",
+      task: { taskID: correction.id, rootTaskID: original.id },
+      members: [original.id, correction.id, unfinished.id]
+        .sort()
+        .map((taskID) => ({ taskID, rootTaskID: original.id })),
+    })
+    expect(reader.inspect(evolution.id)).toMatchObject({
+      status: "found",
+      task: { taskID: evolution.id, rootTaskID: evolution.id, relation: "unreviewed" },
+      members: [{ taskID: evolution.id }],
+    })
+  } finally {
+    reader.close()
+  }
+  expect(
+    repository.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string, string]>(
+            "SELECT count(*) AS count FROM runner_relations WHERE project_directory=? AND task_id=? AND other_task_id=? AND relation='supplements'",
+          )
+          .get("/repo", evolution.id, original.id)!.count,
+    ),
+  ).toBe(1)
+  expect(
+    Object.fromEntries(before.attempts.map((attempt) => [attempt.task_id, attempt])),
+  ).toMatchObject({
+    [original.id]: {
+      state: "accepted",
+      artifact: "original-artifact",
+      token_count: 100,
+    },
+    [correction.id]: {
+      state: "accepted",
+      artifact: "correction-artifact",
+      token_count: 50,
+    },
+  })
+  expect(
+    before.transitions.filter((event) => event.event === "ACCEPT").map((event) => event.task_id),
+  ).toEqual([original.id, correction.id])
+  expect(repository.get(unfinished.id)?.status).toBe("submitted")
+
+  const retracted = repository.recordTaskCorrection(
+    {
+      taskID: correction.id,
+      originalTaskID: null,
+      requestID: "same-original-goal-retracted",
+      expectedRevision: 1,
+      reason: "A later review separates this branch from the original task.",
+    },
+    { sessionID: "correction-re-review", agent: "architect" },
+  )
+  expect(retracted).toMatchObject({ status: "recorded", correction: { revision: 2 } })
+  expect(physicalState()).toEqual(before)
+  const afterRetraction = openReadOnlyTaskCorrections(path, "/repo")
+  try {
+    expect(afterRetraction.inspect(correction.id)).toMatchObject({
+      task: {
+        rootTaskID: correction.id,
+        relation: "independent",
+        revision: 2,
+        history: [
+          { originalTaskID: original.id, revision: 1 },
+          { originalTaskID: null, revision: 2 },
+        ],
+      },
+      members: [correction.id, unfinished.id]
+        .sort()
+        .map((taskID) => ({ taskID, rootTaskID: correction.id })),
+    })
+    expect(afterRetraction.inspect(original.id)).toMatchObject({
+      task: { rootTaskID: original.id },
+      members: [{ taskID: original.id }],
+    })
+  } finally {
+    afterRetraction.close()
+  }
+})
+
+test("correction endpoints reject self, missing, and foreign tasks; request replay is nonduplicating", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const foreignRepository = open(path, "/foreign")
+  const originalSubmission = submitTask(
+    repository,
+    keyedProposal("correction-validation-root"),
+    provenance,
+  )
+  const correctionSubmission = submitTask(
+    repository,
+    keyedProposal("correction-validation-child"),
+    provenance,
+  )
+  const foreignTask = submitTask(
+    foreignRepository,
+    keyedProposal("foreign-correction-task"),
+    () => ({
+      ...provenance(),
+      projectDirectory: "/foreign",
+    }),
+  )
+  if (
+    originalSubmission.status !== "submitted" ||
+    correctionSubmission.status !== "submitted" ||
+    foreignTask.status !== "submitted"
+  )
+    throw new Error("Expected submitted tasks")
+  const correction = (taskID: string, originalTaskID: string | null, requestID: string) => ({
+    taskID,
+    originalTaskID,
+    requestID,
+    expectedRevision: 0,
+    reason: "Explicit relation validation fixture.",
+  })
+  const actor = { sessionID: "architect", agent: "architect" }
+  const initialVersion = repository.version()
+  for (const [taskID, originalTaskID] of [
+    [correctionSubmission.taskID, correctionSubmission.taskID],
+    [crypto.randomUUID(), originalSubmission.taskID],
+    [correctionSubmission.taskID, crypto.randomUUID()],
+    [correctionSubmission.taskID, foreignTask.taskID],
+    [foreignTask.taskID, originalSubmission.taskID],
+  ] as const) {
+    expect(() =>
+      repository.recordTaskCorrection(
+        correction(taskID, originalTaskID, `invalid-${taskID}-${String(originalTaskID)}`),
+        actor,
+      ),
+    ).toThrow()
+  }
+  expect(repository.version()).toBe(initialVersion)
+  expect(
+    repository.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT count(*) AS count FROM task_corrections WHERE project_directory=?",
+          )
+          .get("/repo")!.count,
+    ),
+  ).toBe(0)
+
+  const input = correction(correctionSubmission.taskID, originalSubmission.taskID, "one-link")
+  let notifications = 0
+  const unsubscribe = repository.subscribe(() => notifications++)
+  const injectedFailure = new Database(path)
+  try {
+    injectedFailure.exec(`CREATE TRIGGER fail_correction_change
+      BEFORE INSERT ON task_changes WHEN NEW.kind='mutation'
+      BEGIN SELECT RAISE(ABORT, 'injected correction change failure'); END;`)
+    expect(() => repository.recordTaskCorrection(input, actor)).toThrow(
+      "injected correction change failure",
+    )
+    expect(repository.version()).toBe(initialVersion)
+    expect(notifications).toBe(0)
+    expect(
+      repository.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT count(*) AS count FROM task_corrections WHERE project_directory=?",
+            )
+            .get("/repo")!.count,
+      ),
+    ).toBe(0)
+    injectedFailure.exec("DROP TRIGGER fail_correction_change")
+  } finally {
+    injectedFailure.close()
+  }
+  const first = repository.recordTaskCorrection(input, actor)
+  expect(first.status).toBe("recorded")
+  if (first.status !== "recorded") throw new Error("Expected correction receipt")
+  expect(notifications).toBe(1)
+  expect(
+    repository.recordTaskCorrection(input, { sessionID: "new-session", agent: "architect" }),
+  ).toEqual({
+    status: "replayed",
+    correction: first.correction,
+  })
+  expect(
+    repository.recordTaskCorrection({ ...input, reason: "Changed payload." }, actor),
+  ).toMatchObject({ status: "conflict" })
+  expect(
+    repository.recordTaskCorrection(
+      { ...input, requestID: "stale-link", expectedRevision: 0 },
+      actor,
+    ),
+  ).toMatchObject({ status: "conflict", expectedRevision: 0, currentRevision: 1 })
+  expect(
+    repository.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            "SELECT count(*) AS count FROM task_corrections WHERE project_directory=? AND task_id=?",
+          )
+          .get("/repo", correctionSubmission.taskID)!.count,
+    ),
+  ).toBe(1)
+  expect(notifications).toBe(1)
+  unsubscribe()
+  expect(() =>
+    repository.atomic((db) =>
+      db
+        .query("UPDATE task_corrections SET reason='mutated' WHERE request_id=?")
+        .run(input.requestID),
+    ),
+  ).toThrow("append-only")
+  expect(() =>
+    repository.atomic((db) =>
+      db.query("DELETE FROM task_corrections WHERE request_id=?").run(input.requestID),
+    ),
+  ).toThrow("append-only")
+  const reader = openReadOnlyTaskCorrections(path, "/repo")
+  try {
+    expect(reader.inspect(correctionSubmission.taskID)).toMatchObject({
+      status: "found",
+      task: { memberTaskIDs: [originalSubmission.taskID, correctionSubmission.taskID].sort() },
+    })
+  } finally {
+    reader.close()
+  }
 })
 
 test("repository pages filter execution state before counting while legacy history includes all states", () => {

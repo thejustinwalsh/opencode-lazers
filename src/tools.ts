@@ -16,6 +16,12 @@ import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
 import { TaskClassificationAnnotationInput } from "./task-classification.ts"
+import {
+  TaskCorrectionInput,
+  TaskCorrectionInspectionInput,
+  TaskCorrectionInspection,
+} from "./task-correction.ts"
+import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
 
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
@@ -184,6 +190,91 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
                     }),
                   )
                   return { content: JSON.stringify(receipt) }
+                },
+                catch: (error) =>
+                  error instanceof Tool.Error
+                    ? error
+                    : new Tool.Error({
+                        message: error instanceof Error ? error.message : String(error),
+                      }),
+              }),
+            ),
+          ),
+    })
+    editor.add({
+      name: "lz-correct-task",
+      description:
+        "Architect-only explicit same-original-goal correction link. taskID is the correction task; originalTaskID is the task it corrects. Set originalTaskID to null to explicitly separate/retract the link. Supply the current per-task correction revision and a requestID; inspect membership first and resolve stale conflicts manually. No relation is inferred from supplements, kind, ancestry, scope, or prose.",
+      input: z.toJSONSchema(TaskCorrectionInput, { io: "input" }),
+      options: { codemode: false, permission: "lz-correct-task" },
+      execute: (input, context) =>
+        ctx.permission
+          .assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            action: "lz-correct-task",
+            resources: ["*"],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  if (context.agent !== "architect")
+                    throw new Tool.Error({ message: "Task correction is restricted to Architect" })
+                  const parsed = TaskCorrectionInput.parse(input)
+                  const receipt = withRepository((connection) =>
+                    connection.recordTaskCorrection(parsed, {
+                      sessionID: context.sessionID,
+                      agent: String(context.agent),
+                    }),
+                  )
+                  return { content: JSON.stringify(receipt) }
+                },
+                catch: (error) =>
+                  error instanceof Tool.Error
+                    ? error
+                    : new Tool.Error({
+                        message: error instanceof Error ? error.message : String(error),
+                      }),
+              }),
+            ),
+          ),
+    })
+    editor.add({
+      name: "lz-inspect-task-corrections",
+      description:
+        "Architect-only project-scoped inspection of effective same-goal correction membership and its complete append-only audit. Unlinked tasks remain separate and unreviewed; a retracted link is explicitly independent. The returned identity pins one coherent read snapshot.",
+      input: z.toJSONSchema(TaskCorrectionInspectionInput, { io: "input" }),
+      output: TaskCorrectionInspection,
+      options: {
+        codemode: true,
+        pinned: true,
+        permission: "lz-inspect-task-corrections",
+      },
+      execute: (input, context) =>
+        ctx.permission
+          .assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            action: "lz-inspect-task-corrections",
+            resources: ["*"],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  if (context.agent !== "architect")
+                    throw new Tool.Error({
+                      message: "Task correction inspection is restricted to Architect",
+                    })
+                  const parsed = TaskCorrectionInspectionInput.parse(input)
+                  const reader = openReadOnlyTaskCorrections(path, projectDirectory)
+                  try {
+                    const output = reader.inspect(parsed.taskID)
+                    return { content: JSON.stringify(output), output }
+                  } finally {
+                    reader.close()
+                  }
                 },
                 catch: (error) =>
                   error instanceof Tool.Error
