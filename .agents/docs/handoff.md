@@ -49,6 +49,19 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ## Current feature and recovery follow-through
 
+- **Root GUI repair `f2644c9` is committed and retained.** Actual renderer logs at
+  10:42:07 and 10:46:36 showed LAZERS failing with `ReferenceError: process is not
+defined`. Root reproduced the ECharts stack by evaluating the actual 46MB
+  CommonJS GUI bundle without `process`; explicit production definition in
+  `vite.config.ts` fixes it. `build:gui` now includes the packaged-bundle evaluation
+  smoke check in `scripts/verify-gui-bundle.ts`, without main/setup/inference.
+  Root reports the full pipeline passes, plus formatting **631 files**, lint **336**
+  and typecheck **326**. Actual indicator/microphone/speaker/Tasks/Radar registrations
+  returned without service restart or settings changes. Read-only observations at
+  **1793808486652–55** show all six switches true via default renderer and project
+  forwarding (about 320ms), `demand=false`. This proves GUI recovery/settings
+  transport, **not fresh GPU inference or LZ56 candidate qualification**. The three
+  Root-owned files were left untouched by this orchestration; working tree clean.
 - **LZ113 is merged as `428c6ad`**, accepted artifact `6203a693`. Root reviewed
   production/docs and adversarial legacy-manifest/receipt-bracketing cases;
   independent candidate and merged checks passed **12 tests / 126 assertions**
@@ -107,6 +120,11 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   enqueue/synthetic input during a busy execution still clears required start
   lineage; same worker steered at **1793806808888**. Full native cleanup proof and
   final artifact/check review remain pending; no replacement or runtime-file edit.
+  Native observation **1793808638840** found zero pending permissions and the
+  original worker foreground-active despite the recorded permission hold. Supported
+  reconciliation was requested at plan v11 without interrupt/cancel/replacement or
+  startup-effect replay. Do not mistake a historical `outcome=succeeded` for this
+  live worker's completion.
 - **LZ118 is admitted**, task `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
   `2e5b7147-426f-45b6-934f-6da2b07205e7`: explicit conclusive failed-startup
   settlement and new linked resource operation within the original attempt.
@@ -137,9 +155,20 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   correction on exact accepted `e4d64ad`, preserving LZ119's original worker/artifact,
   history and the full retained valuation chain. Actual first-replay/reopen payload,
   timestamp and accounting checks plus independent review remain required. After
-  correction, request supported fresh original LZ119 gates against the reviewed
-  descendant before integration unblocks LZ120; do not relabel old evidence.
+  correction, preserve original LZ119 receipts and rerun its behavior checks against
+  the reviewed corrected chain before integration unblocks LZ120; do not relabel old
+  evidence. Current descendant adoption requires a blocked plan, while LZ119 is
+  already accepted, so do not manufacture blocked state to make adoption eligible.
+  LZ124's own artifact-bound task/combined receipts run the original recovery,
+  compatibility and quality commands plus the new regression. Record the two source
+  landings honestly with those distinct receipts and the merged verification, not a
+  false claim of fresh original-LZ119 runtime receipts.
   Authoring inference was interrupted with zero usage, not a semantic pass.
+  Original attempt `9fdce7eb` accepted `d1b2b74`; the same reviewer who reproduced the
+  defect has cleared its exact correction. Native task and combined receipts each
+  passed recovery **33 tests / 478 assertions**, compatibility **54 / 317**, and
+  quality, with unchanged inputs. Original first-write comparisons span advancing
+  clocks and reopen-before-first-replay. No integration yet.
 - **LZ120** `0390fded-84db-4db7-a566-538013afaab3`, plan
   `f11e1754-064c-4c28-9888-d488a36ec03d`, is admitted after LZ119 integration:
   schema-valid current-price index from complete cached catalogs, ordered whole-model
@@ -270,6 +299,9 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   post-loss inference is proven, not prevention of future loss. Later producer
   advisory review again encountered device loss; subsequent consumer review
   completed with no errors. Keep genuine failure/recovery history.
+  Separately, Root found no matching GPU job traces for recent 60s
+  `All fibers interrupted` reviews while the GUI was unloaded. Those interruptions
+  are **not demonstrated GPU device-loss failures** and provide no semantic pass.
   Terminal OrtRun classification remained `unknown` despite the explicit
   device-lost stage: retain that diagnostic improvement gap. No context-overflow,
   disabled-feature, model replay, profiler or reload claim.
