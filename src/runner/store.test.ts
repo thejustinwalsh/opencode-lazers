@@ -267,6 +267,67 @@ test("delivery excludes terminal historical unknown rows but retains admitted re
   expect(f.store.detail(plan.planID).delivery as unknown[]).toHaveLength(3)
 })
 
+test("delivery ranks numeric versions once while preserving latest terminal ties, active recovery and project order", () => {
+  const f = fixture("ranked-outbox")
+  const first = f.store.submit(f.input, "owner")
+  const second = { planID: "second-plan" }
+  const foreign = { planID: "foreign-plan" }
+  f.store.atomic((db) => {
+    for (const id of [second.planID, foreign.planID])
+      db.query(
+        `INSERT INTO runner_plans
+        SELECT ?,project_directory,owner,revision,version,state,body,model,reason,artifact
+        FROM runner_plans WHERE id=?`,
+      ).run(id, first.planID)
+    db.query("UPDATE runner_plans SET project_directory=? WHERE id=?").run(
+      "/foreign/project",
+      foreign.planID,
+    )
+    const rows = [
+      ["first-null", first.planID, null, "unknown"],
+      ["first-tie-old", first.planID, "10", "unknown"],
+      ["second-null-old", second.planID, null, "superseded"],
+      ["first-pending", first.planID, 1, "pending"],
+      ["second-null-latest", second.planID, null, "superseded"],
+      ["first-tie-latest", first.planID, 10.9, "superseded"],
+      ["first-sending", first.planID, 2, "sending"],
+      ["first-uncertain", first.planID, 3, "uncertain"],
+      ["first-admitted", first.planID, 4, "admitted"],
+      ["first-delivered", first.planID, 5, "delivered"],
+      ["first-low-newest", first.planID, 9, "unknown"],
+      ["foreign-pending", foreign.planID, 100, "pending"],
+      ["foreign-latest", foreign.planID, 101, "unknown"],
+    ] as const
+    for (const [id, planID, version, state] of rows)
+      db.query(
+        "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,?,1)",
+      ).run(id, planID, "owner", `msg_${id}`, JSON.stringify({ version }), state)
+  })
+  // Foreign history must be scoped out before evaluating its JSON version.
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_outbox SET payload='not json' WHERE id='foreign-latest'").run(),
+  )
+  const rows = f.store.outboxForDelivery()
+  expect(rows.map((row) => [row.id, row.version as number | null])).toEqual([
+    ["first-pending", 1],
+    ["second-null-latest", null],
+    ["first-tie-latest", 10],
+    ["first-sending", 2],
+    ["first-uncertain", 3],
+    ["first-admitted", 4],
+    ["first-delivered", 5],
+  ])
+  expect(rows.map((row) => row.sequence)).toEqual(
+    rows.map((row) => row.sequence).toSorted((a, b) => a - b),
+  )
+  // Delivery does not erase historical terminal rows or their payloads.
+  expect(f.store.detail(first.planID).delivery as unknown[]).toHaveLength(9)
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_outbox SET payload='not json' WHERE id='first-null'").run(),
+  )
+  expect(() => f.store.outboxForDelivery()).toThrow("malformed JSON")
+})
+
 test("legacy delivered outbox schema migrates across an actual close and reopen with unknown consumption", () => {
   const f = fixture("legacy-outbox")
   const plan = f.store.submit(f.input, "owner")
