@@ -69,7 +69,11 @@ lanes rather than opening a parallel performance program:
 2. Investigate the remaining measured prerequisite Git, native-session and attempt/
    transition reads proportionally. Reuse authoritative eligibility/proof seams for
    Tasks A and runtime work; do not add a second evaluator or unmeasured cache.
-   Any optimization must preserve dispatch **and finalization** proof behavior.
+   Tasks A's first internal refactoring boundary is one authoritative evaluator:
+   validate durable evidence before unchanged Git checks, retain both callers,
+   then measure decision-local reservation-fact reuse. Savings on valid proof are
+   not established by sampled stacks. Any optimization must preserve dispatch
+   **and finalization** proof behavior.
    No queued task is not sufficient reason to skip prerequisite proof: it also gates
    combined verification/finalization. Reuse across observations requires a justified
    freshness/invalidation boundary, not a timer or presumed idle state.

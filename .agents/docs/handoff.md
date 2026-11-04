@@ -8,6 +8,18 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Original129 now executing; residual performance stays in existing lanes:**
+  research confirms Astra did not fulfill bounded-live129. Native isolated plan
+  `243f8093-7c3c-44e3-bda5-e06870e4f680` runs the original129/attempt58d8d699,
+  inherited LunaMax/Systems, baselinef06a65e containing8aed4ea. Newest snapshot
+  2444bdbb as-of1793832975691. [Execution/guidance/check boundaries](evidence/radar129-execution-20261104.md).
+  Exact worker instructions put/readback1793833267131; no new turn/permission change.
+  Original task checks unchanged; extra compatibility plan has two mistaken
+  test/radar paths, so real src/radar transport/state checks are explicitly required
+  before integration—never count skipped paths as proof. Both research agents done.
+  Tasks A now includes a small proof-preserving evaluator/fact seam: durable evidence
+  before unchanged Git, both dispatch/finalization gates, decision-local reuse only;
+  no cross-tick cache or skipped proof. No duplicate performance/bootstrap work.
 - **Performance integrated8aed4ea; quiet hold RELEASED:** read
   [Astra's final report](../../design/reviews/astra-performance-repair-20261104.md).
   Actual same-PID warm serviceCPU46.36→17.61% (~62% lower bounded window), exact

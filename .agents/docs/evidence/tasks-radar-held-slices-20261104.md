@@ -11,10 +11,11 @@ Before final task submission, reconcile these drafts and existing LZ129 against
 Root's installed bootstrap and Astra's actual source handoff. Reuse already-delivered
 outcomes rather than assigning a second implementation of a fulfilled boundary.
 
-Current coordination: the next rollout boundary is reserved for Astra performance
-only, before bootstrap. Root owns exact-candidate review and actual native latency/
-same-PID CPU before/after captures. No competing build/reload/dispatch, local GPU
-review or performance measurement during capture. These drafts remain held.
+Current coordination: Astra's permanent repairs are integrated at8aed4ea and the
+quiet hold is released. These four drafts remain unsubmitted; original129 now has
+its own isolated execution plan, not a replacement task. Root retains offline
+bootstrap lifecycle ownership. Ordinary nonoverlapping execution may proceed;
+watched-source activation still needs coordination.
 
 Evidence: Repomix`6c782a4a-bf24-40bc-8ff1-4a7a7cab3083`, as-of1793824414267.
 Read-only Tasks researcher verified the ten inspected production files still match
@@ -51,8 +52,10 @@ coverage. An eligibility observation never authorizes execution.
 
 **Proposed scope:** focused new runner eligibility module/tests, runtime selection/
 admission wiring and focused runtime tests, Tasks contract/read/RPC plus their tests.
-No observability reader or performance work. Add store scope only for a concretely
-needed reviewed seam. Existing reservations serialize runtime edits; this does not
+No observability reader or standalone performance/profiling program. The
+decision-local proof/fact seam below incorporates the measured residual scheduler
+cost without changing eligibility. Add store scope only for a concretely needed
+reviewed seam. Existing reservations serialize runtime edits; this does not
 implement LZ88, retained ownership bootstrap, timing capture or LZ129.
 
 **Grounded guidance:** store580–595 defines priority/submission/node order;
@@ -62,6 +65,44 @@ preparation/prompt admission. Inspection156–175/315–330 is not an equivalent
 eligibility authority. Preserve existing execution behavior when factoring it.
 Use registered Tasks RPC→actual store/runtime tests and compare real dispatch;
 runtime.test4617–4701 provides useful admission cases.
+
+### Tasks A internal first boundary — proof-preserving decision facts
+
+Read-only residual-cost research `ses_e573b2a93ffe047i3H9BpnEWf8` at8aed4ea
+confirms prerequisite proof protects **finalization as well as dispatch**:
+runtime2250–2256 evaluates before node selection;2321–2335 can finish without a
+selected node, while finish4178–4328 has no additional prerequisite check. Prompt
+admission2953–3001 separately revalidates against immutable base_commit across
+preparation/session/prompt awaits. Never skip proof merely because no node is queued.
+
+Small coherent first increment, if separately specified: extract the authoritative
+proof evaluator with equivalent behavior at both callers; validate all durable
+evidence before performing unchanged Git checks. Its primary kind is refactoring,
+not a claimed CPU fix or completion of Tasks A. Rejecting malformed proof may avoid
+Git work; savings on valid proof remain unmeasured. Subsequent bounded reservation
+facts reuse one synchronous decision's necessary inputs, ending reuse at mutation
+or asynchronous boundary. No cross-tick positive cache or session-safety-read removal.
+
+Preserve runtime2672–2780: distinct same-project prerequisite snapshot,100-ID query
+batches, latest plan-level acceptance and combined integration, matching artifact/
+transition version/order and cancellation fences, branch/reason/commit identities,
+actual HEAD or exact candidate basis and **all three ancestry predicates**. Valid
+cleaning/cleanup-blocked integration still qualifies; cleanup ownership is separate.
+Task-only landing and lifecycle labels never substitute for combined proof.
+
+Proposed unexecuted checks: reuse runtime.test4651cleanup-valid,4705/4739cancellation,
+4798/4859/4917async admission,5082malformed,5167ancestry,5217fresh reacceptance and
+5327shared admission. Add no-ready finalization (bad proof cannot start combined
+verification/acceptance; fresh proof can), multiple/duplicate/100-boundary prerequisites,
+old/new evaluator equivalence, rejected-proof Git-call counters and no stale reuse
+after mutation/await. Later reservation reads cover amendments/adoption/ties/zero-
+attempt/foreign-project/complete-blocker cases. Preserve native detail-race5507–5597.
+
+Existing store2455–2485/2145–2193/2335–2344 reread full histories/existence. Optimize
+only facts actually needed for one decision, never truncate blockers. Actual capture
+202Git samples/120inclusive native-session samples are attribution, not invocation
+counts or cache benefits. Future work-count/fixture comparisons precede coordinated
+unprofiled native CPU windows. No restored JSC endpoint or inference/settings change.
 
 ## Tasks B — Now / Attention / Next presentation
 
@@ -101,6 +142,13 @@ safe session/call-attributed file/proposed-edit projection, then the Radar consu
 Read-only privacy/attribution research is complete. Production sources/tests and
 manifests match the supplied snapshot between9fa5d87and7828387. No new privacy
 framework, duplicate LZ129 contract or Astra performance implementation is proposed.
+
+Post-Astra research `ses_e573b2b2effeEr2hfbaySt640k` confirms129 unfulfilled at8aed4ea:
+contract473 exposes legacy methods; read197–425 still examines historical work and
+538–752 resolves up to500selected sessions; Radar state130 still combines legacy
+Radar/lifecycle payloads. Query/outbox/filter landings do not deliver the bounded
+contract. Original129 is now executing in plan243f8093, preserving its original
+scope/acceptance; [execution and current guidance](radar129-execution-20261104.md).
 
 ### Radar A — safe attributed file/edit producer
 
