@@ -8,11 +8,23 @@ Preserve actual separate tasks, attempts, ACCEPT events, artifacts and measured 
 The earlier provisional unknown-count guidance below is historical, not the final
 product policy. User explicitly chose **Separate by default** for unlinked tasks,
 disclosing legacy independence as unreviewed, and **Latest genuine acceptance**
-among explicitly linked members. No new reviewed fulfillment witness is required;
-unfinished correction coverage stays visible. Root creation/submission and root
+among explicitly linked members. No manual certification step or new reviewed
+fulfillment witness is required. **An unfinished linked required correction keeps
+the logical goal unfinished**; an older physical acceptance cannot certify logical
+completion while that correction is pending. Relation metadata never creates or
+overrides native acceptance. Root creation/submission and root
 classification select goals while retaining every later member's work. Credit once
 to the accepting exact route; its empirical sample includes the goal's cross-route
 history, without redistributing unrelated failed-only work.
+
+Producer regression boundary: root A accepted, required correction B unfinished
+means one logical goal but no logical completion/accepted-history sample; retain
+A's physical acceptance and both members' effort. Once B has genuine artifact-backed
+acceptance and no required correction remains unfinished, credit the logical
+completion once to the latest genuine accepting route, including all goal effort.
+A pending required branch cannot disappear behind another branch's acceptance.
+These are consumer122 accounting checks, not a new manual certification workflow
+or a126 authority to alter native outcomes.
 
 Durable explicit linkage is required now, not permanent unknown handling. LZ126
 `2ba384f5-142d-46ff-abd0-c6fe2ae19f2c`, plan

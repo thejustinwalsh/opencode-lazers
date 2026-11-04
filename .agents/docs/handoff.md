@@ -18,8 +18,12 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   inconclusive. Trees preserved; no unchanged retry or forced removal.
 - User chose **unlinked separate by default**, with legacy independence disclosed
   as unreviewed; **latest genuine artifact-backed acceptance** among linked members
-  gets one completion, without a new reviewed fulfillment witness. Retain all
-  member work, root-time/classification selection and unfinished-correction coverage.
+  selects completion credit without manual certification. **An unfinished linked
+  required correction keeps the logical goal unfinished**, despite an older
+  physical acceptance; relation metadata never creates or overrides acceptance.
+  Retain all member work and root-time/classification selection. Producer122 must
+  discriminate accepted root + pending required correction (no logical completion)
+  from genuinely completed correction history (one credit to latest accepting route).
 - **LZ126** `2ba384f5-142d-46ff-abd0-c6fe2ae19f2c`, plan
   `c64e0231-b47c-4432-96a9-5e5e39fe6a6b`, supplies durable explicit native links,
   auditable revisions/retraction, atomic cycle protection and coherent SELECT-only
@@ -34,6 +38,9 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   Merged **fcb57cd**, independent merged **80tests/473assertions** and quality pass;
   task-only source integration recordedv24. Do not mistake fixture cleanup for live
   proof. Installed rollout/revalidation is pending; do not reload during126 work.
+  Root additionally reports independent **40tests/214assertions** and disposable-store
+  stale-confirm/resume/callback repro exit0 at **1793813818607**, with no blocking
+  source finding. Those checks still are not full installed-native cleanup proof.
 - [Native shell research](evidence/native-verification-shell-fit-20261104.md)
   belongs to existing V3/R5/R6 recovery. Evaluate native execution before extending
   custom children; capped memory inventory and teardown acknowledgements cannot
