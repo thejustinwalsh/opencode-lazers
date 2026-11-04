@@ -216,6 +216,141 @@
   min-width: 0;
 }
 
+.lazers-models-decision-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+  padding: 8px 0 2px;
+}
+
+.lazers-models-decision-tools > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.lazers-models-decision-rows {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: var(--text-base);
+  font-size: 11px;
+}
+
+.lazers-models-decision-rows th,
+.lazers-models-decision-rows td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-weak-base);
+  text-align: left;
+  vertical-align: middle;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-decision-rows thead th {
+  color: var(--text-weak);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lazers-models-decision-rows th:first-child {
+  width: 52%;
+}
+
+.lazers-models-decision-rows th:nth-child(2),
+.lazers-models-decision-rows td:nth-child(2) {
+  width: 19%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lazers-models-decision-rows th:nth-child(3),
+.lazers-models-decision-rows td:nth-child(3) {
+  width: 29%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lazers-models-decision-row[data-selected="true"] th[scope="row"] {
+  box-shadow: inset 2px 0 0 var(--border-selected);
+}
+
+.lazers-models-decision-row-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 0;
+  color: var(--text-base);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-decision-row-select[aria-pressed="true"] {
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--border-selected);
+  text-underline-offset: 3px;
+}
+
+.lazers-models-decision-inspection,
+.lazers-models-contributors {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 5px;
+  background: var(--surface-base);
+}
+
+.lazers-models-decision-inspection h3,
+.lazers-models-contributors h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.lazers-models-decision-inspection p,
+.lazers-models-contributors p {
+  margin: 2px 0;
+  color: var(--text-weak);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-contributor {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  min-width: 0;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-weak-base);
+}
+
+.lazers-models-contributor > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-contributor strong {
+  color: var(--text-base);
+  font-size: 11px;
+}
+
 .lazers-models-chart,
 .lazers-models-candidates {
   min-width: 0;

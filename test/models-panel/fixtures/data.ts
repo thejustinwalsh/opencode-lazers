@@ -208,6 +208,14 @@ export function taskDetail(
     reference,
     classification: legacyClassification,
     classificationHistory: [legacyClassification],
+    execution: {
+      planID: "33333333-3333-4333-8333-333333333333",
+      taskID,
+      state: "accepted",
+      version: 2,
+      reason: null,
+      waitingOn: [],
+    },
   })
 }
 

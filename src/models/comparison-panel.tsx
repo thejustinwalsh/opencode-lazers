@@ -4,6 +4,15 @@ import { Schema } from "effect"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
+import { ModelsDecision } from "./decision-contract.ts"
+import type {
+  ModelDecisionConfiguration,
+  ModelDecisionFilters,
+  ModelDecisionRow,
+  ModelDecisionTaskKind,
+} from "./decision-contract.ts"
+import { ComparisonChart } from "./comparison-chart.tsx"
+import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener } from "../tasks/panel.tsx"
@@ -14,8 +23,6 @@ import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
   candidateLabel,
-  candidateFocusIndex,
-  exactRouteMatch,
   formatDate,
   numericValue,
   recordReferenceLabel,
@@ -27,18 +34,33 @@ import css from "./comparison-panel.css?inline"
 
 const Preference = Schema.Struct({
   tab: Schema.Literals(["compare", "assignments"]),
-  persona: Schema.Literals(["ui", "systems", "small-refactoring"]),
+  persona: Schema.NullOr(Schema.Literals(["ui", "systems", "small-refactoring"])),
+  taskKind: Schema.optional(
+    Schema.NullOr(
+      Schema.Literals([
+        "bug-repair",
+        "feature-implementation",
+        "refactoring",
+        "testing",
+        "documentation",
+        "maintenance",
+      ]),
+    ),
+  ),
   selectedTaskID: Schema.NullOr(Schema.String),
   selectedCandidateID: Schema.NullOr(Schema.String),
+  selectedConfigurationID: Schema.optional(Schema.NullOr(Schema.String)),
   split: Schema.Number,
   topScroll: Schema.Number,
   inspectorScroll: Schema.Number,
 })
 const initial: typeof Preference.Type = {
   tab: "compare",
-  persona: "ui",
+  persona: null,
+  taskKind: null,
   selectedTaskID: null,
   selectedCandidateID: null,
+  selectedConfigurationID: null,
   split: 56,
   topScroll: 0,
   inspectorScroll: 0,
@@ -57,15 +79,20 @@ const modelPersonaLabels = {
   systems: "Systems",
   "small-refactoring": "Small task / refactoring",
 } as const
+const modelTaskKindLabels: Record<ModelDecisionTaskKind, string> = {
+  "bug-repair": "Bug repair",
+  "feature-implementation": "Feature implementation",
+  refactoring: "Refactoring",
+  testing: "Testing",
+  documentation: "Documentation",
+  maintenance: "Maintenance",
+}
+const modelTaskKinds = Object.keys(modelTaskKindLabels) as ModelDecisionTaskKind[]
 
 const clampSplit = (value: number) => Math.min(76, Math.max(24, value))
 
 function formatNumber(value: number | null | undefined) {
   return value === null || value === undefined ? "Unknown" : value.toLocaleString()
-}
-
-function modelRoute(candidate: ModelCandidate) {
-  return candidateLabel(candidate)
 }
 
 function benchmarkLabel(candidate: ModelCandidate) {
@@ -87,6 +114,83 @@ function candidateEffortLabel(candidate: ModelCandidate) {
 function candidateAvailabilityLabel(candidate: ModelCandidate) {
   if (candidate.native.enabled === null) return "Availability unknown"
   return candidate.native.enabled ? "Available" : "Disabled"
+}
+
+function personaFilterLabel(persona: typeof initial.persona) {
+  return persona ? modelPersonaLabels[persona] : "All personas"
+}
+
+function decisionStatusLabel(status: ModelComparisonPanelData["decisionStatus"]) {
+  switch (status) {
+    case "loading":
+      return "Loading producer decision data"
+    case "ready":
+      return "Current producer snapshot"
+    case "partial":
+      return "Partial producer evidence"
+    case "stale":
+      return "Stale producer evidence"
+    case "unknown":
+      return "Producer freshness unknown"
+    case "backend-not-ready":
+      return "Decision backend not ready"
+    case "missing-rpc":
+      return "Decision RPC unavailable"
+    case "error":
+      return "Decision read failed"
+  }
+}
+
+function efficiencyLabel(row: ModelDecisionRow) {
+  const efficiency = row.efficiency
+  switch (efficiency.status) {
+    case "available":
+      return `${formatNumber(efficiency.tokensPerAcceptedTask)} tokens · ${formatMoney(efficiency.currentMarketUSDPerAcceptedTask)} per accepted task · ${efficiency.observationCount} observations`
+    case "single-observation":
+      return `${formatNumber(efficiency.tokensPerAcceptedTask)} tokens · ${formatMoney(efficiency.currentMarketUSDPerAcceptedTask)} · n=1`
+    case "partial":
+      return `Partial · ${efficiency.tokensPerAcceptedTask === null ? "tokens unknown" : `${formatNumber(efficiency.tokensPerAcceptedTask)} tokens`} · ${efficiency.currentMarketUSDPerAcceptedTask === null ? "current price unknown" : formatMoney(efficiency.currentMarketUSDPerAcceptedTask)}`
+    case "zero-accepted":
+      return "No accepted tasks; no efficiency coordinate"
+    case "unknown":
+      return `Unknown · ${efficiency.reason}`
+  }
+}
+
+function formatMoney(value: number | null) {
+  return value === null
+    ? "Unknown market cost"
+    : new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 6,
+      }).format(value)
+}
+
+function estimateLabel(
+  inspection: Extract<
+    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
+    { status: "found" }
+  >["estimate"],
+) {
+  const estimate = inspection
+  if (estimate.status === "zero-accepted") return "No accepted tasks; no estimate is available."
+  if (estimate.status === "unknown") return `Estimate unavailable · ${estimate.reason}`
+  const tokenRange = estimate.range.tokens
+  const priceRange = estimate.range.currentMarketUSD
+  const renderRange = (range: { minimum: number; maximum: number } | null) => {
+    if (!range) return "Unknown"
+    return range.minimum === range.maximum
+      ? formatNumber(range.minimum)
+      : `${formatNumber(range.minimum)}–${formatNumber(range.maximum)}`
+  }
+  const basis =
+    estimate.status === "partial"
+      ? `Partial empirical observed spread · n=${estimate.observationCount} · missing ${estimate.missing.join(", ")}`
+      : estimate.status === "single-observation"
+        ? "Empirical observed spread · n=1 (one observed value, no interval)"
+        : `Empirical observed spread · n=${estimate.observationCount} accepted logical-task histories`
+  return `${basis} · ${renderRange(tokenRange)} tokens · ${priceRange ? `${formatMoney(priceRange.minimum)}${priceRange.maximum === priceRange.minimum ? "" : `–${formatMoney(priceRange.maximum)}`}` : "current-price estimate unknown"}`
 }
 
 function variantCoverageLabel(candidate: ModelCandidate) {
@@ -193,6 +297,7 @@ function ModelPanel(
     new ModelComparisonPanelState(() => {}).data,
   )
   const [split, setSplit] = createSignal(initial.split)
+  const [decisionEvidenceOpen, setDecisionEvidenceOpen] = createSignal(false)
   let root: HTMLDivElement | undefined
   let topPane: HTMLDivElement | undefined
   let inspector: HTMLDivElement | undefined
@@ -251,6 +356,7 @@ function ModelPanel(
     save({
       selectedTaskID: selection.selectedTaskID,
       selectedCandidateID: selection.selectedCandidateID,
+      selectedConfigurationID: selection.selectedConfigurationID,
     }),
   )
   const expectedKey = () => {
@@ -282,6 +388,7 @@ function ModelPanel(
       const view = prefs()
       setSplit(clampSplit(view.split))
       const models = value.client.rpc(Models)
+      const decisions = value.client.rpc(ModelsDecision)
       const tasks = value.client.rpc(Tasks)
       const observations = value.client.rpc(Observability)
       const location = { location: { directory: value.directory } }
@@ -317,12 +424,72 @@ function ModelPanel(
             { scope: { kind: "project", sessionID: value.session }, taskID },
             { ...location, signal: timed(signal) },
           ),
+        decisionOverview: (filters, signal) =>
+          decisions.overview(
+            { sessionID: value.session, scope: { projectDirectory: value.project }, filters },
+            { ...location, signal: timed(signal) },
+          ),
+        decisionRows: (filters, cursor, signal) =>
+          decisions.rows(
+            {
+              sessionID: value.session,
+              scope: { projectDirectory: value.project },
+              filters,
+              limit: 50,
+              ...(cursor ? { cursor } : {}),
+            },
+            { ...location, signal: timed(signal) },
+          ),
+        decisionConfigurations: (filters, cursor, signal) =>
+          decisions.configurations(
+            {
+              sessionID: value.session,
+              scope: { projectDirectory: value.project },
+              filters,
+              limit: 50,
+              ...(cursor ? { cursor } : {}),
+            },
+            { ...location, signal: timed(signal) },
+          ),
+        decisionInspect: (
+          filters,
+          snapshotID,
+          configurationID,
+          selectedTaskID,
+          contributorCursor,
+          signal,
+        ) =>
+          decisions.inspect(
+            {
+              sessionID: value.session,
+              scope: { projectDirectory: value.project },
+              filters,
+              snapshotID,
+              configurationID,
+              selectedTaskID,
+              contributorLimit: 50,
+              ...(contributorCursor ? { contributorCursor } : {}),
+            },
+            { ...location, signal: timed(signal) },
+          ),
         online: () => props.session.server.connected,
       }
-      state.connect(key, value.projectID, value.project, transport, {
-        selectedTaskID: view.selectedTaskID,
-        selectedCandidateID: view.selectedCandidateID,
-      })
+      state.connect(
+        key,
+        value.projectID,
+        value.project,
+        transport,
+        {
+          selectedTaskID: view.selectedTaskID,
+          selectedCandidateID: view.selectedCandidateID,
+          selectedConfigurationID: view.selectedConfigurationID ?? null,
+        },
+        {
+          persona: view.persona,
+          taskKind: view.taskKind ?? null,
+          period: { from: null, to: null },
+        },
+      )
       onCleanup(() => state.close())
     },
     {
@@ -339,20 +506,119 @@ function ModelPanel(
       inspector.scrollTop = prefs().inspectorScroll
   })
 
-  const selectedCandidate = () =>
-    visible()?.candidates.find(
-      (candidate) => candidate.candidateID === visible()?.selectedCandidateID,
+  const selectedCandidate = () => {
+    const configuration = selectedDecisionConfiguration()
+    if (!configuration) return undefined
+    return visible()?.candidates.find(
+      (candidate) =>
+        candidate.identity.providerID === configuration?.route.providerID &&
+        candidate.identity.modelID === configuration.route.modelID &&
+        candidate.identity.variant === configuration.route.variant,
     )
-  const candidateFocusID = () => {
-    const current = visible()
-    if (!current?.candidates.length) return undefined
-    if (
-      current.candidates.some((candidate) => candidate.candidateID === current.selectedCandidateID)
-    )
-      return current.selectedCandidateID
-    return current.candidates[0]?.candidateID
+  }
+  const decisionModelLabel = (configuration: ModelDecisionConfiguration) => {
+    const nativeName = visible()?.candidates.find(
+      (candidate) =>
+        candidate.identity.providerID === configuration.route.providerID &&
+        candidate.identity.modelID === configuration.route.modelID &&
+        candidate.identity.variant === configuration.route.variant,
+    )?.native.name
+    if (nativeName) return nativeName
+    const effort = configuration.route.variant
+    if (!effort) return configuration.label
+    const suffixes = [
+      ` · ${effort}`,
+      ` • ${effort}`,
+      ` – ${effort}`,
+      ` — ${effort}`,
+      ` - ${effort}`,
+    ]
+    const suffix = suffixes.find((value) => configuration.label.endsWith(value))
+    return suffix ? configuration.label.slice(0, -suffix.length) : configuration.label
+  }
+  const acceptedTaskValue = (row: ModelDecisionRow) =>
+    new Intl.NumberFormat("en-US").format(row.cohort.acceptedTaskCount)
+  const currentCostPerAcceptedTask = (row: ModelDecisionRow) => {
+    if (row.efficiency.status === "zero-accepted") return "—"
+    if (row.efficiency.currentMarketUSDPerAcceptedTask === null) return "Unknown"
+    return formatMoney(row.efficiency.currentMarketUSDPerAcceptedTask)
   }
   const selectedTask = () => visible()?.task
+  const selectedDecisionConfiguration = () => {
+    const current = visible()
+    if (!current?.selectedConfigurationID) return undefined
+    return (
+      current.decisionInspection?.configuration ??
+      current.decisionConfigurations.find(
+        (configuration) => configuration.configurationID === current.selectedConfigurationID,
+      ) ??
+      current.decisionRows.find(
+        (row) => row.configuration.configurationID === current.selectedConfigurationID,
+      )?.configuration
+    )
+  }
+  const availableConfigurations = (): ModelDecisionConfiguration[] => {
+    const current = visible()
+    if (!current) return []
+    const all = [
+      ...current.decisionConfigurations,
+      ...current.decisionRows.map((row) => row.configuration),
+      ...(current.decisionInspection ? [current.decisionInspection.configuration] : []),
+    ]
+    const seen = new Set<string>()
+    return all.filter((configuration) => {
+      if (seen.has(configuration.configurationID)) return false
+      seen.add(configuration.configurationID)
+      return true
+    })
+  }
+  // Keep For's keys stable across selection and inspection updates. Mapping new
+  // group objects from the whole panel data made Solid replace focused rows even
+  // when the producer's group identity and row contents had not changed.
+  const decisionGroupsByID = createMemo(() => {
+    const groups = new Map<string, ModelDecisionRow[]>()
+    for (const row of visible()?.decisionRows ?? []) {
+      const rows = groups.get(row.configuration.groupID) ?? []
+      rows.push(row)
+      groups.set(row.configuration.groupID, rows)
+    }
+    return groups
+  })
+  const decisionGroupIDs = createMemo(() => [...decisionGroupsByID().keys()])
+  const configurationsForGroup = (groupID: string) =>
+    availableConfigurations().filter((configuration) => configuration.groupID === groupID)
+  const selectedGroupID = () => selectedDecisionConfiguration()?.groupID ?? null
+  const providerChoices = () => {
+    const groupByID = new Map<string, ModelDecisionConfiguration>()
+    for (const configuration of availableConfigurations())
+      if (!groupByID.has(configuration.groupID)) groupByID.set(configuration.groupID, configuration)
+    return [...groupByID.values()]
+  }
+  const changeDecisionFilters = (change: Partial<ModelDecisionFilters>) => {
+    const current = visible()?.decisionFilters ?? emptyModelDecisionFilters
+    const next: ModelDecisionFilters = {
+      ...current,
+      ...change,
+      period: current.period,
+    }
+    save({ persona: next.persona, taskKind: next.taskKind })
+    state.setDecisionFilters(next)
+  }
+  const selectDecisionGroup = (groupID: string) => {
+    const configurations = configurationsForGroup(groupID)
+    const current = selectedDecisionConfiguration()
+    const next =
+      configurations.find(
+        (configuration) => configuration.configurationID === current?.configurationID,
+      ) ?? configurations[0]
+    if (next) state.selectConfiguration(next.configurationID)
+    else {
+      const point = visible()?.decisionOverview?.graph.points.find(
+        (entry) => entry.groupID === groupID,
+      )
+      if (point) state.selectConfiguration(point.configurationID)
+    }
+  }
   const taskLabel = () => {
     const task = selectedTask()
     return task
@@ -436,17 +702,19 @@ function ModelPanel(
     }
     props.openTrajectory(props.session, target)
   }
-
-  const candidateKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
-    const rows = [...(topPane?.querySelectorAll<HTMLButtonElement>("[data-candidate-id]") ?? [])]
-    const index = rows.indexOf(event.currentTarget)
-    const next = candidateFocusIndex(index, rows.length, event.key)
-    if (next === undefined) return
-    event.preventDefault()
-    const row = rows[next]
-    row?.focus()
-    const candidateID = row?.dataset.candidateId
-    if (candidateID) state.selectCandidate(candidateID)
+  const openContributorTrajectory = (
+    contributor: NonNullable<
+      ModelComparisonPanelData["decisionInspection"]
+    >["contributorPage"]["contributors"][number],
+  ) => {
+    const value = current()
+    if (!value) return
+    props.openTrajectory(props.session, {
+      taskID: contributor.taskID,
+      reference: contributor.taskReference,
+      projectID: value.projectID,
+      projectDirectory: value.project,
+    })
   }
 
   const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
@@ -471,12 +739,6 @@ function ModelPanel(
     element.addEventListener("pointercancel", end, { once: true })
     endDrag = end
   }
-
-  const routeAssignments = () => visible()?.effortBasis?.routes.assignments ?? []
-  const assessmentsFor = (attemptID: string) =>
-    (visible()?.effortBasis?.routes.assessments ?? []).filter(
-      (assessment) => assessment.attemptID === attemptID,
-    )
 
   const categoryRows = [
     ["Uncached input", "uncachedInput"],
@@ -552,22 +814,35 @@ function ModelPanel(
           </div>
           <div class="lazers-models-filters">
             <Ui.Menu
-              label={`Persona · ${modelPersonaLabels[prefs().persona]}`}
+              label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
               trigger="button"
               icon="chevron-down"
-              items={(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
-                label: modelPersonaLabels[persona],
-                onSelect: () => save({ persona }),
-              }))}
+              items={[
+                { label: "All personas", onSelect: () => changeDecisionFilters({ persona: null }) },
+                ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
+                  label: modelPersonaLabels[persona],
+                  onSelect: () => changeDecisionFilters({ persona }),
+                })),
+              ]}
             />
-            <span class="lazers-models-filter-status">Context only</span>
-            <details class="lazers-models-filter-details">
-              <summary>Filters unavailable</summary>
-              <div>
-                Persona supplies context only and does not filter candidates. Task class is not
-                recorded; comparable cohorts and a period filter are unavailable.
-              </div>
-            </details>
+            <Ui.Menu
+              label={`Task kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
+              trigger="button"
+              icon="chevron-down"
+              items={[
+                {
+                  label: "All task kinds",
+                  onSelect: () => changeDecisionFilters({ taskKind: null }),
+                },
+                ...modelTaskKinds.map((taskKind) => ({
+                  label: modelTaskKindLabels[taskKind],
+                  onSelect: () => changeDecisionFilters({ taskKind }),
+                })),
+              ]}
+            />
+            <span class="lazers-models-filter-status">
+              {visible()?.decisionContext?.classification.status ?? "Classification loading"}
+            </span>
             <span
               class="lazers-models-task-select"
               role="group"
@@ -759,61 +1034,207 @@ function ModelPanel(
               </div>
             </details>
 
+            <div class="lazers-models-decision-tools" aria-label="Exact route selection">
+              <Ui.Menu
+                label={`Provider · ${selectedDecisionConfiguration() ? `${selectedDecisionConfiguration()!.route.providerID} / ${selectedDecisionConfiguration()!.route.modelID}` : "Select route"}`}
+                trigger="button"
+                icon="chevron-down"
+                disabled={!providerChoices().length}
+                items={providerChoices().map((configuration) => ({
+                  label: `${configuration.route.providerID} / ${configuration.route.modelID}`,
+                  onSelect: () => selectDecisionGroup(configuration.groupID),
+                }))}
+              />
+              <Ui.Menu
+                label={`Effort · ${selectedDecisionConfiguration()?.route.variant ?? "Not specified"}`}
+                trigger="button"
+                icon="chevron-down"
+                disabled={!selectedGroupID() || !configurationsForGroup(selectedGroupID()!).length}
+                items={configurationsForGroup(selectedGroupID() ?? "").map((configuration) => ({
+                  label: configuration.route.variant ?? "Not specified",
+                  onSelect: () => state.selectConfiguration(configuration.configurationID),
+                }))}
+              />
+              <span
+                class="lazers-models-filter-status"
+                data-decision-status={visible()?.decisionStatus}
+              >
+                {decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
+              </span>
+            </div>
+            <Show when={visible()?.decisionError}>
+              <p
+                class={
+                  visible()?.decisionStatus === "error" ||
+                  visible()?.decisionStatus === "missing-rpc"
+                    ? "lazers-models-error"
+                    : "lazers-models-refresh-note"
+                }
+                role={
+                  visible()?.decisionStatus === "error" ||
+                  visible()?.decisionStatus === "missing-rpc"
+                    ? "alert"
+                    : "status"
+                }
+              >
+                {visible()?.decisionError}
+              </p>
+            </Show>
             <div class="lazers-models-overview">
               <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
                 <div class="lazers-models-section-heading">
                   <h3 id="lazers-models-chart-title">Historical task outcomes</h3>
-                  <span>Observed LAZERS evidence</span>
-                </div>
-                <HistoricalChartPlaceholder />
-              </section>
-
-              <section
-                class="lazers-models-candidates"
-                aria-labelledby="lazers-models-candidates-title"
-              >
-                <div class="lazers-models-section-heading">
-                  <h3 id="lazers-models-candidates-title">Native candidates</h3>
                   <span>
-                    {visible()?.comparison
-                      ? `${visible()!.candidates.length} of ${visible()!.comparison!.totalCandidates}`
-                      : "Waiting for catalog evidence"}
+                    {visible()?.decisionOverview
+                      ? `${visible()!.decisionOverview!.graph.points.length} plotted configurations · global filtered snapshot`
+                      : "Producer data"}
                   </span>
                 </div>
-                <div class="lazers-models-candidate-list" aria-label="Model candidates">
-                  <Show
-                    when={visible()?.candidates.length}
-                    fallback={
-                      <div class="lazers-models-note">
-                        {visible()?.comparisonLoading
-                          ? "Loading candidate evidence…"
-                          : visible()?.comparison
-                            ? "No candidates in the saved catalog."
-                            : "Candidate evidence is unavailable."}
-                      </div>
-                    }
-                  >
-                    <For each={visible()?.candidates ?? []}>
-                      {(candidate) => (
-                        <ModelCandidateRow
-                          candidate={candidate}
-                          selected={candidate.candidateID === visible()?.selectedCandidateID}
-                          tabIndex={candidate.candidateID === candidateFocusID() ? 0 : -1}
-                          onKeyDown={candidateKey}
-                          onSelect={() => state.selectCandidate(candidate.candidateID)}
-                        />
-                      )}
-                    </For>
-                  </Show>
+                <Show
+                  when={
+                    visible()?.decisionStatus === "backend-not-ready"
+                      ? undefined
+                      : visible()?.decisionOverview
+                  }
+                  fallback={
+                    <div class="lazers-models-chart-empty" role="status">
+                      <strong>{decisionStatusLabel(visible()?.decisionStatus ?? "loading")}</strong>
+                      <p>
+                        {visible()?.decisionStatus === "backend-not-ready"
+                          ? (visible()?.decisionContext?.unavailableReason ??
+                            "No decision points or estimate are available yet.")
+                          : visible()?.decisionStatus === "missing-rpc"
+                            ? "The native Models decision service is not registered. No fixture data is substituted."
+                            : visible()?.decisionStatus === "error"
+                              ? "No graph or estimate is shown because the producer read failed."
+                              : "Waiting for the producer-owned comparison snapshot."}
+                      </p>
+                    </div>
+                  }
+                >
+                  {(overview) => (
+                    <ComparisonChart
+                      points={overview().graph.points}
+                      frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
+                      selectedConfigurationID={visible()?.selectedConfigurationID}
+                      onSelect={(configurationID) => state.selectConfiguration(configurationID)}
+                      appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
+                      monoFontFamily={ctx.appearance.font("mono")}
+                    />
+                  )}
+                </Show>
+              </section>
+
+              <section class="lazers-models-candidates" aria-labelledby="lazers-models-rows-title">
+                <div class="lazers-models-section-heading">
+                  <h3 id="lazers-models-rows-title">Canonical model groups</h3>
+                  <span>
+                    {visible()?.decisionOverview
+                      ? `${decisionGroupIDs().length} of ${visible()!.decisionOverview!.groupCount} groups · ${visible()!.decisionRows.length} configurations loaded`
+                      : "Waiting for producer rows"}
+                  </span>
                 </div>
-                <Show when={visible()?.comparison?.nextCursor && !visible()?.comparisonStale}>
+                <Show
+                  when={decisionGroupIDs().length}
+                  fallback={
+                    <p class="lazers-models-note" role="status">
+                      {visible()?.decisionRowsLoading
+                        ? "Loading canonical model groups…"
+                        : visible()?.decisionStatus === "backend-not-ready"
+                          ? "No producer-backed model groups are available."
+                          : visible()?.decisionStatus === "missing-rpc"
+                            ? "Decision rows are unavailable because the RPC is not registered."
+                            : visible()?.decisionStatus === "error"
+                              ? "Decision rows are unavailable after a producer error."
+                              : "No attributable configurations are present in this filtered cohort."}
+                    </p>
+                  }
+                >
+                  <table
+                    class="lazers-models-decision-rows"
+                    aria-label="Canonical model comparison"
+                  >
+                    <thead>
+                      <tr>
+                        <th scope="col">Model</th>
+                        <th scope="col">Accepted</th>
+                        <th scope="col">Cost / task</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={decisionGroupIDs()}>
+                        {(groupID) => {
+                          const groupRows = () => decisionGroupsByID().get(groupID) ?? []
+                          const row = () =>
+                            groupRows().find(
+                              (entry) =>
+                                entry.configuration.configurationID ===
+                                visible()?.selectedConfigurationID,
+                            ) ?? groupRows()[0]!
+                          const configuration = () => row().configuration
+                          return (
+                            <tr
+                              class="lazers-models-decision-row"
+                              data-group-id={groupID}
+                              data-selected={
+                                groupRows().some(
+                                  (entry) =>
+                                    entry.configuration.configurationID ===
+                                    visible()?.selectedConfigurationID,
+                                )
+                                  ? "true"
+                                  : "false"
+                              }
+                            >
+                              <th scope="row">
+                                <button
+                                  type="button"
+                                  class="lazers-models-decision-row-select"
+                                  data-configuration-id={configuration().configurationID}
+                                  aria-pressed={
+                                    configuration().configurationID ===
+                                    visible()?.selectedConfigurationID
+                                  }
+                                  aria-label={`Inspect ${decisionModelLabel(configuration())}; ${acceptedTaskValue(row())} accepted tasks; ${currentCostPerAcceptedTask(row())} current market cost per accepted task`}
+                                  onClick={() =>
+                                    state.selectConfiguration(configuration().configurationID)
+                                  }
+                                >
+                                  {decisionModelLabel(configuration())}
+                                </button>
+                              </th>
+                              <td>{acceptedTaskValue(row())}</td>
+                              <td
+                                title="Current market valuation per accepted task."
+                                data-status={row().efficiency.status}
+                              >
+                                {currentCostPerAcceptedTask(row())}
+                              </td>
+                            </tr>
+                          )
+                        }}
+                      </For>
+                    </tbody>
+                  </table>
+                </Show>
+                <Show when={visible()?.decisionRowsNextCursor}>
                   <Ui.Button
                     size="small"
                     variant="ghost"
-                    busy={visible()?.comparisonLoading}
-                    onClick={() => void state.moreCandidates()}
+                    busy={visible()?.decisionRowsLoading}
+                    onClick={() => void state.moreDecisionRows()}
                   >
-                    Load more candidates
+                    Load more model groups
+                  </Ui.Button>
+                </Show>
+                <Show when={visible()?.decisionConfigurationsNextCursor}>
+                  <Ui.Button
+                    size="small"
+                    variant="ghost"
+                    busy={visible()?.decisionConfigurationsLoading}
+                    onClick={() => void state.moreDecisionConfigurations()}
+                  >
+                    Load more exact configurations
                   </Ui.Button>
                 </Show>
               </section>
@@ -856,396 +1277,339 @@ function ModelPanel(
         onScroll={(event) => save({ inspectorScroll: event.currentTarget.scrollTop })}
       >
         <Show
-          when={selectedCandidate()}
+          when={selectedDecisionConfiguration()}
           fallback={
-            <div class="lazers-models-note">
-              {visible()?.selectedCandidateID
-                ? "The selected candidate is not in the available evidence page."
-                : "Select a native candidate to inspect its evidence and task effort."}
-            </div>
+            <p class="lazers-models-note" role="status">
+              {visible()?.selectedConfigurationID
+                ? `Inspecting exact configuration ${visible()!.selectedConfigurationID}…`
+                : visible()?.decisionStatus === "missing-rpc"
+                  ? "The decision RPC is not registered; no route inspection or estimate is available."
+                  : "Select a producer-backed configuration or chart point to inspect its evidence."}
+            </p>
           }
         >
-          {(candidate) => (
+          {(configuration) => (
             <>
               <div class="lazers-models-inspector-heading">
                 <div>
-                  <h2>{candidate().native.name ?? candidate().identity.modelID}</h2>
-                  <p>{modelRoute(candidate())}</p>
-                  <p class="lazers-models-inspector-effort">
-                    Effort · {candidateEffortLabel(candidate())}
-                  </p>
+                  <h2>{decisionModelLabel(configuration())}</h2>
                 </div>
               </div>
-              <p class="lazers-models-estimate" role="status">
-                <strong>Task estimate unavailable</strong>
-                <span>No comparable cohort or estimate projection is available.</span>
-              </p>
-              <div class="lazers-models-inspector-columns">
-                <section class="lazers-models-inspector-block">
-                  <h3>Selected task</h3>
-                  <Show
-                    when={visible()?.selectedTaskID}
-                    fallback={
-                      <p class="lazers-models-note">
-                        Choose an existing project task to inspect recorded effort.
-                      </p>
-                    }
-                  >
-                    <Show when={visible()?.taskLoading || visible()?.effortLoading}>
-                      <p class="lazers-models-note">
-                        <Ui.Loader size="small" /> Loading selected task evidence…
-                      </p>
-                    </Show>
-                    <Show when={visible()?.taskError}>
-                      <p class="lazers-models-error" role="alert">
-                        Task detail unavailable: {visible()?.taskError}
-                      </p>
-                    </Show>
-                    <Show when={visible()?.effortError}>
-                      <p class="lazers-models-note" role="status">
-                        Categorized effort unavailable: {visible()?.effortError}
-                      </p>
-                    </Show>
-                    <Show when={selectedTask()}>
-                      <div class="lazers-models-task-summary">
-                        <p class="lazers-models-task-reference">
-                          {selectedTask()?.reference} · {selectedTask()?.task.status}
-                        </p>
-                        <Ui.Button
-                          size="small"
-                          variant="ghost-muted"
-                          aria-label={`Open trajectory for ${selectedTask()?.reference ?? "selected task"}`}
-                          onClick={openSelectedTrajectory}
+              <Show when={visible()?.decisionInspectLoading}>
+                <p class="lazers-models-note" role="status">
+                  <Ui.Loader size="small" /> Loading exact configuration inspection…
+                </p>
+              </Show>
+              <Show when={visible()?.decisionInspectError}>
+                <p class="lazers-models-error" role="alert">
+                  Configuration inspection unavailable: {visible()?.decisionInspectError}
+                </p>
+              </Show>
+              <Show when={visible()?.decisionNotFound}>
+                <p class="lazers-models-note" role="status">
+                  This exact configuration is not present in the selected producer snapshot.
+                </p>
+              </Show>
+              <Show when={visible()?.decisionStatus === "backend-not-ready"}>
+                <p class="lazers-models-estimate" role="status">
+                  <strong>Decision backend not ready</strong>
+                  <span>
+                    {visible()?.decisionContext?.unavailableReason ?? "No estimate is available."}
+                  </span>
+                </p>
+              </Show>
+              <Show when={visible()?.decisionInspection}>
+                {(inspection) => (
+                  <>
+                    <p class="lazers-models-estimate" role="status">
+                      <strong>
+                        {visible()?.decisionStatus === "missing-rpc" ||
+                        visible()?.decisionStatus === "error"
+                          ? "Estimate unavailable"
+                          : estimateLabel(inspection().estimate)}
+                      </strong>
+                      <span>
+                        Empirical spread across accepted logical-task histories; each accepted
+                        history includes its own retries. This is observed spread, not a predictive
+                        interval.
+                      </span>
+                    </p>
+                    <details
+                      class="lazers-models-evidence-details"
+                      open={decisionEvidenceOpen()}
+                      onToggle={(event) => setDecisionEvidenceOpen(event.currentTarget.open)}
+                    >
+                      <summary>Route, cohort and price evidence</summary>
+                      <div class="lazers-models-evidence-content">
+                        <section
+                          class="lazers-models-decision-inspection"
+                          aria-label="Producer comparison evidence"
                         >
-                          Open trajectory
-                        </Ui.Button>
-                      </div>
-                      <p class="lazers-models-task-objective">
-                        {selectedTask()?.task.proposal.objective}
-                      </p>
-                    </Show>
-                    <Show when={visible()?.effortBasis}>
-                      {(basis) => (
-                        <details class="lazers-models-task-effort-details">
-                          <summary>{effortDetailsSummary()}</summary>
-                          <div class="lazers-models-evidence-content">
-                            <p class="lazers-models-coverage">
-                              {basis().attempts.count} recorded attempts ·{" "}
-                              {basis().usage.coverage.totalUniqueSessions} unique worker sessions
-                            </p>
-                            <div
-                              class="lazers-models-category-list"
-                              aria-label="Categorized task token usage"
-                            >
-                              <For each={categoryRows}>
-                                {([label, key]) => {
-                                  const measure = () => basis().usage.categories[key]
-                                  const provenance = () =>
-                                    [
-                                      measure().sources?.join(", "),
-                                      measure().sourceTypes?.join(", "),
-                                      measure().observationTimeBases?.join(", "),
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ")
-                                  const observedDates = () => {
-                                    const range = measure().observedAtRange
-                                    if (!range || range.earliest === null) return ""
-                                    return range.earliest === range.latest
-                                      ? ` · observed ${new Date(range.earliest).toLocaleString()}`
-                                      : ` · observed ${new Date(range.earliest).toLocaleString()}–${new Date(range.latest ?? range.earliest).toLocaleString()}`
-                                  }
-                                  return (
-                                    <>
-                                      <div class="lazers-models-category-row">
-                                        <span>{label}</span>
-                                        <span data-status={measure().status}>
-                                          {measure().value === null
-                                            ? statusText(measure().status)
-                                            : `${formatNumber(measure().value)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
-                                        </span>
-                                      </div>
-                                      <Show when={provenance()}>
-                                        <p class="lazers-models-source-meta">
-                                          {provenance()}
-                                          {observedDates()}
-                                        </p>
-                                      </Show>
-                                    </>
-                                  )
-                                }}
-                              </For>
-                            </div>
-                            <p class="lazers-models-source-meta">
-                              Usage follows the session-deduplicated accounting basis. Legacy
-                              per-attempt scalar token counts are not included.
-                            </p>
-                            <p class="lazers-models-coverage">
-                              {basis().usage.coverage.nativeCumulativeSnapshots} native snapshots ·{" "}
-                              {basis().usage.coverage.retainedCumulativeSnapshots} retained
-                              snapshots · {basis().usage.coverage.additiveStepSubtotals} additive
-                              subtotals · {basis().usage.coverage.missingSessions.length} missing
-                              sessions · {basis().usage.coverage.unavailableSessions.length}{" "}
-                              unavailable sessions
-                              {basis().usage.coverage.progressTruncated
-                                ? " · progress evidence truncated"
-                                : ""}
-                            </p>
-                            <p class="lazers-models-unknown-cost">
-                              Full task cost: Unknown · market-equivalent cost: Unknown · quality:
-                              Not recorded · task class: Not recorded
-                            </p>
-                            <section
-                              class="lazers-models-task-routes"
-                              aria-label="Selected task route evidence"
-                            >
-                              <h4>Route evidence for this candidate</h4>
-                              <p>{basis().routes.usageAttribution}</p>
-                              <p>
-                                {basis().routes.coverage.observedSessionRouteCount} of{" "}
-                                {basis().routes.coverage.totalUniqueSessions} worker sessions have
-                                an observed current route ·{" "}
-                                {basis().routes.coverage.sessionsWithoutCurrentRoute.length} missing
-                                current routes ·{" "}
-                                {basis().routes.coverage.stepContextsByStatus.available} step
-                                contexts available,{" "}
-                                {basis().routes.coverage.stepContextsByStatus.notRead} not read,{" "}
-                                {basis().routes.coverage.stepContextsByStatus.unavailable}{" "}
-                                unavailable
-                                {basis().routes.coverage.progressTruncated
-                                  ? " · progress context truncated"
-                                  : ""}
-                              </p>
-                              <Show
-                                when={routeAssignments().length}
-                                fallback={
-                                  <p>
-                                    No task route assignment records are available;
-                                    candidate-specific route attribution is unavailable.
-                                  </p>
-                                }
-                              >
-                                <For each={routeAssignments().slice(0, 20)}>
-                                  {(assignment) => (
-                                    <article class="lazers-models-route-evidence">
-                                      <code style={{ "font-family": ctx.appearance.font("mono") }}>
-                                        {assignment.attemptID}
-                                      </code>
-                                      <span>
-                                        Plan route · {assignment.planSelection.status} ·{" "}
-                                        {assignment.planSelection.route
-                                          ? `${routeLabel(assignment.planSelection.route)}${exactRouteMatch(assignment.planSelection.route, candidate()) ? " · selected candidate" : " · different from selected candidate"}`
-                                          : "Unknown"}
-                                        {assignment.planSelection.source
-                                          ? ` · ${assignment.planSelection.source}`
-                                          : ""}
-                                      </span>
-                                      <span>
-                                        Frozen attempt route ·{" "}
-                                        {assignment.frozenAttemptRoute.status} ·{" "}
-                                        {assignment.frozenAttemptRoute.route
-                                          ? `${routeLabel(assignment.frozenAttemptRoute.route)}${exactRouteMatch(assignment.frozenAttemptRoute.route, candidate()) ? " · selected candidate" : " · different from selected candidate"}`
-                                          : "Unknown"}
-                                        {assignment.frozenAttemptRoute.source
-                                          ? ` · ${assignment.frozenAttemptRoute.source}`
-                                          : ""}
-                                      </span>
-                                      <For each={assessmentsFor(assignment.attemptID)}>
-                                        {(assessment) => (
-                                          <span>
-                                            Observed {assessment.scope} route · {assessment.status}{" "}
-                                            ·{" "}
-                                            {assessment.observedRoute
-                                              ? `${routeLabel(assessment.observedRoute)}${exactRouteMatch(assessment.observedRoute, candidate()) ? " · selected candidate observed" : " · different from selected candidate"}`
-                                              : "Unknown"}{" "}
-                                            · {assessment.source} / {assessment.sourceType}
-                                          </span>
-                                        )}
-                                      </For>
-                                      <Show when={!assessmentsFor(assignment.attemptID).length}>
-                                        <span>Observed route unavailable for this attempt.</span>
-                                      </Show>
-                                    </article>
-                                  )}
-                                </For>
-                                <Show when={routeAssignments().length > 20}>
-                                  <p>
-                                    {routeAssignments().length - 20} additional route records are
-                                    not shown.
-                                  </p>
-                                </Show>
-                              </Show>
-                            </section>
-                          </div>
-                        </details>
-                      )}
-                    </Show>
-                  </Show>
-                </section>
-
-                <details class="lazers-models-evidence-details">
-                  <summary>Model evidence, dates and assumptions</summary>
-                  <div class="lazers-models-evidence-content">
-                    <h3>Candidate evidence</h3>
-                    <dl class="lazers-models-evidence-summary">
-                      <dt>Native catalog</dt>
-                      <dd>
-                        {candidate().native.enabled === null
-                          ? "Availability unknown"
-                          : candidate().native.enabled
-                            ? "Available"
-                            : "Disabled"}{" "}
-                        · {candidate().native.evidence.recordCount} record(s)
-                      </dd>
-                      <dt>OpenRouter model</dt>
-                      <dd>
-                        {candidate().correspondence.status} ·{" "}
-                        {candidate().externalModel?.name ??
-                          candidate().externalModel?.id ??
-                          "No exact record"}
-                      </dd>
-                      <dt>External benchmark</dt>
-                      <dd>
-                        {candidate().externalBenchmark
-                          ? `Artificial Analysis coding · ${benchmarkLabel(candidate())}`
-                          : `${candidate().benchmarkCorrespondence.status} · unavailable`}
-                      </dd>
-                      <dt>Effort applicability</dt>
-                      <dd>
-                        {candidate().effortApplicability.status === "exact"
-                          ? "Exact source effort match"
-                          : "Unknown"}
-                      </dd>
-                    </dl>
-                    <Show when={candidate().externalBenchmark}>
-                      {(benchmark) => (
-                        <div class="lazers-models-benchmark-details">
-                          <h4>External benchmark · Artificial Analysis</h4>
-                          <p>Coding index: {numericValue(benchmark().codingIndex)}</p>
-                          <p>Agentic index: {numericValue(benchmark().agenticIndex)}</p>
-                          <p>Intelligence index: {numericValue(benchmark().intelligenceIndex)}</p>
-                          <p>Effort: {benchmark().effort ?? "Not reported"}</p>
-                          <p class="lazers-models-source-meta">
-                            External benchmark evidence is shown separately from LAZERS outcomes; it
-                            is not a task-fit score or rank.
-                          </p>
-                        </div>
-                      )}
-                    </Show>
-                    <p>Selected route variant: {candidate().identity.variant ?? "Not specified"}</p>
-                    <p>
-                      Native catalog metadata · type {candidate().native.type ?? "Not reported"} ·
-                      context {numericValue(candidate().native.contextTokens)} tokens · tools{" "}
-                      {candidate().native.capabilities.tools === null
-                        ? "Unknown"
-                        : candidate().native.capabilities.tools
-                          ? "supported"
-                          : "not supported"}{" "}
-                      · input {candidate().native.capabilities.input?.join(", ") ?? "Not reported"}{" "}
-                      · output{" "}
-                      {candidate().native.capabilities.output?.join(", ") ?? "Not reported"} ·
-                      {variantCoverageLabel(candidate())}
-                    </p>
-                    <Show when={candidate().externalModel}>
-                      {(model) => (
-                        <p>
-                          OpenRouter metadata · context {numericValue(model().contextLength)} tokens
-                          · modality {model().architecture.modality ?? "Not reported"} · input{" "}
-                          {model().architecture.inputModalities?.join(", ") ?? "Not reported"} ·
-                          output{" "}
-                          {model().architecture.outputModalities?.join(", ") ?? "Not reported"} ·
-                          tokenizer {model().architecture.tokenizer ?? "Not reported"} · supported
-                          parameters {model().supportedParameters?.join(", ") ?? "Not reported"}
-                        </p>
-                      )}
-                    </Show>
-                    <p>Native record references ({candidate().native.evidence.recordCount})</p>
-                    <For each={candidate().native.evidence.records}>
-                      {(reference) => <code>{recordReferenceLabel(reference)}</code>}
-                    </For>
-                    <p>
-                      OpenRouter model references ({candidate().externalModelEvidence.recordCount})
-                    </p>
-                    <For each={candidate().externalModelEvidence.records}>
-                      {(reference) => <code>{recordReferenceLabel(reference)}</code>}
-                    </For>
-                    <p>
-                      External benchmark references (
-                      {candidate().externalBenchmarkEvidence.recordCount})
-                    </p>
-                    <For each={candidate().externalBenchmarkEvidence.records}>
-                      {(reference) => <code>{recordReferenceLabel(reference)}</code>}
-                    </For>
-                    <Show when={candidate().native.ambiguousIdentity}>
-                      <p>
-                        Native candidate metadata differs across source records; identity details
-                        may be ambiguous.
-                      </p>
-                    </Show>
-                    <Show when={candidate().externalModel?.prices}>
-                      {(prices) => (
-                        <p>
-                          OpenRouter published price ({prices().unit}):{" "}
-                          {prices()
-                            .tiers.map(
-                              (tier) =>
-                                `prompt ${tier.prompt ?? "not reported"}, completion ${tier.completion ?? "not reported"}, cache read ${tier.inputCacheRead ?? "not reported"}, cache write ${tier.inputCacheWrite ?? "not reported"}`,
-                            )
-                            .join("; ") || "no price tiers"}
-                        </p>
-                      )}
-                    </Show>
-                    <Show when={candidate().externalBenchmark?.prices}>
-                      {(prices) => (
-                        <p>
-                          External benchmark published price ({prices().unit}): prompt{" "}
-                          {prices().prompt ?? "not reported"}, completion{" "}
-                          {prices().completion ?? "not reported"}
-                        </p>
-                      )}
-                    </Show>
-                    <Show when={candidate().native.prices}>
-                      {(prices) => (
-                        <p>
-                          Native catalog price ({prices().unit}):{" "}
-                          {prices()
-                            .tiers.map(
-                              (tier) =>
-                                `input ${numericValue(tier.input)}, output ${numericValue(tier.output)}, cache read ${numericValue(tier.cacheRead)}, cache write ${numericValue(tier.cacheWrite)}`,
-                            )
-                            .join("; ") || "no price tiers"}
-                        </p>
-                      )}
-                    </Show>
-                    <p>
-                      External model correspondence: {candidate().correspondence.status} ·{" "}
-                      {candidate().correspondence.basis ?? "no exact mapping basis"}
-                    </p>
-                    <p>
-                      Benchmark correspondence: {candidate().benchmarkCorrespondence.status} ·{" "}
-                      {candidate().benchmarkCorrespondence.basis ?? "no exact mapping basis"}
-                    </p>
-                    <Show when={visible()?.comparison?.sources}>
-                      <For each={visible()?.comparison?.sources ?? []}>
-                        {(source) => (
+                          <h3>Exact route</h3>
+                          <p>{routeLabel(inspection().configuration.route)}</p>
                           <p>
-                            {sourceTitle(source.source)} ·{" "}
-                            {source.snapshot
-                              ? `as of ${formatDate(source.snapshot.asOf)} · retrieved ${formatDate(source.snapshot.retrievedAt)} · ${source.snapshot.sourceURL}`
-                              : "No snapshot date"}{" "}
-                            · {sourceState(source)}
+                            Effort · {inspection().configuration.route.variant ?? "Not specified"}
                           </p>
-                        )}
-                      </For>
-                    </Show>
-                    <p>
-                      Missing source correspondence and pricing remain unknown; external benchmarks
-                      are not task-fit estimates.
+                          <h3>Failure-inclusive cohort</h3>
+                          <p>
+                            {inspection().cohort.acceptedTaskCount} accepted /{" "}
+                            {inspection().cohort.terminalTaskCount} terminal logical tasks ·{" "}
+                            {inspection().cohort.failedAttemptCount} failed attempts ·{" "}
+                            {inspection().cohort.retryAttemptCount} retries ·{" "}
+                            {inspection().cohort.attemptCount} total attempts
+                          </p>
+                          <p>{efficiencyLabel(inspection())}</p>
+                          <p>
+                            Native reported charges · {inspection().nativeReportedCost.source} ·{" "}
+                            {inspection().nativeReportedCost.status} ·{" "}
+                            {formatMoney(inspection().nativeReportedCost.totalUSD)} ·{" "}
+                            {inspection().nativeReportedCost.note}
+                          </p>
+                          <p class="lazers-models-source-meta">
+                            Current price ·{" "}
+                            {inspection().configuration.currentPrice.source ?? "unavailable"} ·{" "}
+                            {inspection().configuration.currentPrice.semantics} ·{" "}
+                            {inspection().configuration.currentPrice.freshness}
+                            {inspection().configuration.currentPrice.retrievedAt
+                              ? ` · retrieved ${formatDate(inspection().configuration.currentPrice.retrievedAt)}`
+                              : " · retrieval date unavailable"}
+                            {inspection().configuration.currentPrice.sourceRecordID
+                              ? ` · source record ${inspection().configuration.currentPrice.sourceRecordID}`
+                              : ""}
+                          </p>
+                          <p class="lazers-models-source-meta">
+                            Price index · {inspection().context.priceIndex.source} ·{" "}
+                            {inspection().context.priceIndex.freshness} ·{" "}
+                            {inspection().context.priceIndex.semantics} ·{" "}
+                            {inspection().context.priceIndex.note}
+                          </p>
+                        </section>
+                        <details class="lazers-models-contributor-details">
+                          <summary>
+                            Contributors · {inspection().contributorPage.totalCount}
+                          </summary>
+                          <section
+                            class="lazers-models-contributors"
+                            aria-label="Empirical contributors"
+                          >
+                            <For each={inspection().contributorPage.contributors}>
+                              {(contributor) => (
+                                <article class="lazers-models-contributor">
+                                  <div>
+                                    <strong>
+                                      {contributor.taskReference} · {contributor.contribution}
+                                    </strong>
+                                    <p>
+                                      {contributor.tokens === null
+                                        ? "Tokens unknown"
+                                        : `${formatNumber(contributor.tokens)} tokens`}{" "}
+                                      ·{" "}
+                                      {contributor.currentMarketUSD === null
+                                        ? "Current market cost unknown"
+                                        : formatMoney(contributor.currentMarketUSD)}{" "}
+                                      · native reported {formatMoney(contributor.nativeReportedUSD)}
+                                    </p>
+                                    <p class="lazers-models-source-meta">
+                                      Attempt · {contributor.attemptID ?? "not attributed"} ·
+                                      session · {contributor.sessionID || "not attributed"} ·
+                                      observed {formatDate(contributor.observedAt)}
+                                    </p>
+                                  </div>
+                                  <Ui.Button
+                                    size="small"
+                                    variant="ghost-muted"
+                                    aria-label={`Open trajectory for ${contributor.taskReference}`}
+                                    onClick={() => openContributorTrajectory(contributor)}
+                                  >
+                                    Open trajectory
+                                  </Ui.Button>
+                                </article>
+                              )}
+                            </For>
+                            <Show when={!inspection().contributorPage.contributors.length}>
+                              <p class="lazers-models-note">
+                                No contributor records are available.
+                              </p>
+                            </Show>
+                            <Show when={inspection().contributorPage.nextCursor}>
+                              <Ui.Button
+                                size="small"
+                                variant="ghost"
+                                busy={visible()?.decisionContributorsLoading}
+                                onClick={() => void state.moreDecisionContributors()}
+                              >
+                                Load more contributors
+                              </Ui.Button>
+                            </Show>
+                          </section>
+                        </details>
+                      </div>
+                    </details>
+                  </>
+                )}
+              </Show>
+            </>
+          )}
+        </Show>
+
+        <section class="lazers-models-inspector-block" aria-label="Selected task execution">
+          <h3>Selected task</h3>
+          <Show
+            when={visible()?.selectedTaskID}
+            fallback={
+              <p class="lazers-models-note">
+                Choose a project task to inspect its execution and categorized effort.
+              </p>
+            }
+          >
+            <Show when={visible()?.taskLoading || visible()?.effortLoading}>
+              <p class="lazers-models-note">
+                <Ui.Loader size="small" /> Loading selected task evidence…
+              </p>
+            </Show>
+            <Show when={visible()?.taskError}>
+              <p class="lazers-models-error" role="alert">
+                Task detail unavailable: {visible()?.taskError}
+              </p>
+            </Show>
+            <Show when={visible()?.effortError}>
+              <p class="lazers-models-note" role="status">
+                Categorized effort unavailable: {visible()?.effortError}
+              </p>
+            </Show>
+            <Show when={selectedTask()}>
+              <div class="lazers-models-task-summary">
+                <p class="lazers-models-task-reference">
+                  {selectedTask()?.reference} · execution{" "}
+                  {selectedTask()?.execution?.state ?? "not started"}
+                </p>
+                <Ui.Button
+                  size="small"
+                  variant="ghost-muted"
+                  aria-label={`Open trajectory for ${selectedTask()?.reference ?? "selected task"}`}
+                  onClick={openSelectedTrajectory}
+                >
+                  Open trajectory
+                </Ui.Button>
+              </div>
+              <p class="lazers-models-task-objective">{selectedTask()?.task.proposal.objective}</p>
+            </Show>
+            <Show when={visible()?.effortBasis}>
+              {(basis) => (
+                <details class="lazers-models-task-effort-details">
+                  <summary>{effortDetailsSummary()}</summary>
+                  <div class="lazers-models-evidence-content">
+                    <p class="lazers-models-coverage">
+                      {basis().attempts.count} recorded attempts ·{" "}
+                      {basis().usage.coverage.totalUniqueSessions} unique worker sessions
+                    </p>
+                    <For each={categoryRows}>
+                      {([label, key]) => {
+                        const measure = () => basis().usage.categories[key]
+                        return (
+                          <div class="lazers-models-category-row">
+                            <span>{label}</span>
+                            <span data-status={measure().status}>
+                              {measure().value === null
+                                ? statusText(measure().status)
+                                : `${formatNumber(measure().value)} tokens${measure().status === "partial" ? " · observed subtotal" : ""}`}
+                            </span>
+                          </div>
+                        )
+                      }}
+                    </For>
+                    <p class="lazers-models-source-meta">
+                      Session-deduplicated task effort ·{" "}
+                      {basis().usage.coverage.nativeCumulativeSnapshots} native snapshots ·{" "}
+                      {basis().usage.coverage.retainedCumulativeSnapshots} retained snapshots ·{" "}
+                      {basis().usage.coverage.additiveStepSubtotals} additive subtotals ·{" "}
+                      {basis().usage.coverage.missingSessions.length} missing sessions ·{" "}
+                      {basis().usage.coverage.unavailableSessions.length} unavailable sessions
+                      {basis().usage.coverage.progressTruncated
+                        ? " · progress evidence truncated"
+                        : ""}
+                    </p>
+                    <p class="lazers-models-source-meta">
+                      Full task cost:{" "}
+                      {basis().cost.fullTaskCostUSD.valueUSD === null
+                        ? "Unknown"
+                        : formatMoney(basis().cost.fullTaskCostUSD.valueUSD)}{" "}
+                      · market-equivalent cost:{" "}
+                      {basis().cost.marketEquivalentCostUSD.valueUSD === null
+                        ? "Unknown"
+                        : formatMoney(basis().cost.marketEquivalentCostUSD.valueUSD)}{" "}
+                      · quality: {basis().quality.status} · task class:{" "}
+                      {selectedTask()?.classification.classification?.primaryKind ?? "Not recorded"}
                     </p>
                   </div>
                 </details>
+              )}
+            </Show>
+          </Show>
+        </section>
+
+        <Show when={selectedCandidate()}>
+          {(candidate) => (
+            <details class="lazers-models-evidence-details">
+              <summary>Native and external model evidence</summary>
+              <div class="lazers-models-evidence-content">
+                <p>
+                  Native catalog ·{" "}
+                  {candidate().native.enabled === null
+                    ? "availability unknown"
+                    : candidate().native.enabled
+                      ? "available"
+                      : "disabled"}{" "}
+                  · {candidate().native.evidence.recordCount} record(s) ·{" "}
+                  {candidate().native.type ?? "type not reported"} ·{" "}
+                  {numericValue(candidate().native.contextTokens)} context tokens ·{" "}
+                  {variantCoverageLabel(candidate())}
+                </p>
+                <p>
+                  OpenRouter model · {candidate().correspondence.status} ·{" "}
+                  {candidate().externalModel?.name ??
+                    candidate().externalModel?.id ??
+                    "no exact record"}{" "}
+                  · benchmark {candidate().benchmarkCorrespondence.status} ·{" "}
+                  {candidate().externalBenchmark ? benchmarkLabel(candidate()) : "unavailable"}
+                </p>
+                <p>Selected route variant · {candidate().identity.variant ?? "Not specified"}</p>
+                <For each={candidate().native.evidence.records}>
+                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
+                </For>
+                <For each={candidate().externalModelEvidence.records}>
+                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
+                </For>
+                <For each={candidate().externalBenchmarkEvidence.records}>
+                  {(reference) => <code>{recordReferenceLabel(reference)}</code>}
+                </For>
+                <Show when={candidate().externalBenchmark}>
+                  {(benchmark) => (
+                    <p>
+                      External coding benchmark · index {numericValue(benchmark().codingIndex)} ·
+                      effort {benchmark().effort ?? "Not reported"}; not a task-fit estimate.
+                    </p>
+                  )}
+                </Show>
+                <Show when={visible()?.comparison?.sources}>
+                  <For each={visible()?.comparison?.sources ?? []}>
+                    {(source) => (
+                      <p>
+                        {sourceTitle(source.source)} ·{" "}
+                        {source.snapshot
+                          ? `retrieved ${formatDate(source.snapshot.retrievedAt)} · ${source.snapshot.sourceURL}`
+                          : "No snapshot date"}{" "}
+                        · {sourceState(source)}
+                      </p>
+                    )}
+                  </For>
+                </Show>
+                <p>
+                  External benchmarks and model metadata are separate from LAZERS producer outcomes.
+                  Missing correspondence and price remain unknown.
+                </p>
               </div>
-            </>
+            </details>
           )}
         </Show>
       </div>

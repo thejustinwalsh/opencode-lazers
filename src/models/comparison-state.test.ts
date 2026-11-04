@@ -15,8 +15,23 @@ import type { ModelComparisonOutput } from "./comparison-schema.ts"
 import { ModelSettingsOutputSchema } from "./contract.ts"
 import type { ModelSettingsOutput } from "./contract.ts"
 import { TaskEffortBasisSchema } from "./comparison-presentation.ts"
+import {
+  ModelDecisionConfigurationsOutputSchema,
+  ModelDecisionInspectOutputSchema,
+  ModelDecisionOverviewOutputSchema,
+  ModelDecisionRowsOutputSchema,
+} from "./decision-contract.ts"
+import type { ModelDecisionContext, ModelDecisionFilters } from "./decision-contract.ts"
 import type { ModelComparisonTransport } from "./comparison-state.ts"
 import { ModelComparisonPanelState } from "./comparison-state.ts"
+import {
+  decisionConfigurations,
+  decisionContext,
+  decisionInspect,
+  decisionOverview,
+  decisionRead,
+  decisionRows,
+} from "../../test/models-decision/fixtures/decision.ts"
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
@@ -345,6 +360,398 @@ const snapshots = (prefix: string) => ({
   "native-catalog": `${prefix[0] ?? "1"}1111111-1111-4111-8111-111111111111`,
   "openrouter-models": `${prefix[0] ?? "1"}2222222-2222-4222-8222-222222222222`,
   "openrouter-benchmarks": `${prefix[0] ?? "1"}3333333-3333-4333-8333-333333333333`,
+})
+
+function decisionSnapshotContext(
+  projectDirectory: string,
+  filters: ModelDecisionFilters,
+  snapshotID: string,
+): ModelDecisionContext {
+  return decisionContext({ scope: { projectDirectory }, filters, snapshotID })
+}
+
+function coherentDecisionPage(
+  projectDirectory: string,
+  filters: ModelDecisionFilters,
+  snapshotID: string,
+) {
+  const context = decisionSnapshotContext(projectDirectory, filters, snapshotID)
+  const sourceRows = decisionRows().rows.map((row) =>
+    row.efficiency.status === "available" || row.efficiency.status === "single-observation"
+      ? {
+          ...row,
+          cohort: { ...row.cohort, acceptedTaskCount: row.efficiency.observationCount },
+        }
+      : row,
+  )
+  const acceptedByConfiguration = new Map(
+    sourceRows.map((row) => [row.configuration.configurationID, row.cohort.acceptedTaskCount]),
+  )
+  const sourceOverview = decisionOverview()
+  return {
+    overview: ModelDecisionOverviewOutputSchema.parse({
+      ...sourceOverview,
+      context,
+      graph: {
+        ...sourceOverview.graph,
+        points: sourceOverview.graph.points.map((point) => ({
+          ...point,
+          acceptedTaskCount:
+            acceptedByConfiguration.get(point.configurationID) ?? point.acceptedTaskCount,
+        })),
+      },
+    }),
+    rows: ModelDecisionRowsOutputSchema.parse({ ...decisionRows(), context, rows: sourceRows }),
+    configurations: ModelDecisionConfigurationsOutputSchema.parse({
+      ...decisionConfigurations(),
+      context,
+    }),
+  }
+}
+
+test("decision controller rejects mismatched snapshot, scope, and filters without publishing mixed pages", async () => {
+  const filters = decisionRead.filters
+  const good = coherentDecisionPage("/repo", filters, "snapshot:coherent")
+  for (const mismatch of ["snapshot", "scope", "filters"] as const) {
+    const wrongContext = { ...good.rows.context }
+    if (mismatch === "snapshot") wrongContext.snapshotID = "snapshot:other"
+    if (mismatch === "scope") wrongContext.scope = { projectDirectory: "/other" }
+    if (mismatch === "filters") wrongContext.filters = { ...filters, persona: "systems" }
+    const wrongRows = ModelDecisionRowsOutputSchema.parse({ ...good.rows, context: wrongContext })
+    const state = new ModelComparisonPanelState(() => {})
+    state.connect(
+      `mismatch-${mismatch}`,
+      "project-a",
+      "/repo",
+      transport({
+        queryTasks: async () => tasks([]),
+        decisionOverview: async () => good.overview,
+        decisionRows: async () => wrongRows,
+        decisionConfigurations: async () => good.configurations,
+      }),
+      { selectedTaskID: null, selectedCandidateID: null },
+      filters,
+    )
+    try {
+      await until(() => state.data.decisionStatus === "error" && !state.data.decisionRowsLoading)
+      expect(state.data.decisionError).toContain("disagree on project, filters, or snapshot")
+      expect(state.data.decisionOverview).toBeUndefined()
+      expect(state.data.decisionRows).toEqual([])
+      expect(state.data.decisionConfigurations).toEqual([])
+    } finally {
+      state.close()
+    }
+  }
+})
+
+test("late decision overview from old filters cannot replace the current filtered snapshot", async () => {
+  const filters = decisionRead.filters
+  const nextFilters: ModelDecisionFilters = { ...filters, persona: "systems" }
+  const oldPage = coherentDecisionPage("/repo", filters, "snapshot:old-filter")
+  const newPage = coherentDecisionPage("/repo", nextFilters, "snapshot:new-filter")
+  const pendingOldOverview = deferred<typeof oldPage.overview>()
+  let overviewCalls = 0
+  let oldSignal: AbortSignal | undefined
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "decision-filter-race",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async (_filters, signal) => {
+        overviewCalls++
+        if (overviewCalls === 1) {
+          oldSignal = signal
+          return pendingOldOverview.promise
+        }
+        return newPage.overview
+      },
+      decisionRows: async (actualFilters) =>
+        actualFilters.persona === "systems" ? newPage.rows : oldPage.rows,
+      decisionConfigurations: async (actualFilters) =>
+        actualFilters.persona === "systems" ? newPage.configurations : oldPage.configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => overviewCalls === 1 && oldSignal !== undefined)
+    state.setDecisionFilters(nextFilters)
+    await until(
+      () =>
+        state.data.decisionStatus === "ready" &&
+        state.data.decisionContext?.snapshotID === "snapshot:new-filter",
+    )
+    expect(oldSignal?.aborted).toBe(true)
+    const currentData = state.data
+    pendingOldOverview.resolve(oldPage.overview)
+    await tick()
+    expect(state.data).toBe(currentData)
+    expect(state.data.decisionFilters).toEqual(nextFilters)
+    expect(state.data.decisionOverview?.context.snapshotID).toBe("snapshot:new-filter")
+  } finally {
+    state.close()
+  }
+})
+
+test("a stale inspection completion is ignored after its decision snapshot is refreshed", async () => {
+  const filters = decisionRead.filters
+  const oldPage = coherentDecisionPage("/repo", filters, "snapshot:before-refresh")
+  const newPage = coherentDecisionPage("/repo", filters, "snapshot:after-refresh")
+  const pendingOldInspection = deferred<ReturnType<typeof ModelDecisionInspectOutputSchema.parse>>()
+  let snapshotReads = 0
+  let inspectionCalls = 0
+  let oldInspectionSignal: AbortSignal | undefined
+  const state = new ModelComparisonPanelState(() => {})
+  const inspectionFor = (page: typeof oldPage, selectedTaskID: string | null) => {
+    const row = page.rows.rows[0]!
+    return ModelDecisionInspectOutputSchema.parse({
+      ...decisionInspect(),
+      context: page.overview.context,
+      configuration: row.configuration,
+      cohort: row.cohort,
+      efficiency: row.efficiency,
+      nativeReportedCost: row.nativeReportedCost,
+      selectedTaskID,
+    })
+  }
+  state.connect(
+    "decision-inspection-race",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async () => (++snapshotReads === 1 ? oldPage.overview : newPage.overview),
+      decisionRows: async () => (snapshotReads <= 1 ? oldPage.rows : newPage.rows),
+      decisionConfigurations: async () =>
+        snapshotReads <= 1 ? oldPage.configurations : newPage.configurations,
+      decisionInspect: async (
+        _filters,
+        snapshotID,
+        _configurationID,
+        selectedTaskID,
+        _cursor,
+        signal,
+      ) => {
+        inspectionCalls++
+        if (snapshotID === "snapshot:before-refresh") {
+          oldInspectionSignal = signal
+          return pendingOldInspection.promise
+        }
+        return inspectionFor(newPage, selectedTaskID)
+      },
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => inspectionCalls === 1 && oldInspectionSignal !== undefined)
+    await state.refreshDecisionSnapshot()
+    await until(
+      () =>
+        !state.data.decisionInspectLoading &&
+        state.data.decisionInspection?.context.snapshotID === "snapshot:after-refresh",
+    )
+    expect(oldInspectionSignal?.aborted).toBe(true)
+    const currentInspection = state.data.decisionInspection
+    pendingOldInspection.resolve(inspectionFor(oldPage, null))
+    await tick()
+    expect(state.data.decisionInspection).toBe(currentInspection)
+    expect(state.data.decisionInspection?.context.snapshotID).toBe("snapshot:after-refresh")
+  } finally {
+    state.close()
+  }
+})
+
+test("reconnect cancels pending decision reads and ignores their late responses", async () => {
+  const filters = decisionRead.filters
+  const oldPage = coherentDecisionPage("/repo", filters, "snapshot:old-session")
+  const newPage = coherentDecisionPage("/repo", filters, "snapshot:new-session")
+  const pendingOldOverview = deferred<typeof oldPage.overview>()
+  let oldSignal: AbortSignal | undefined
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "old-session",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async (_filters, signal) => {
+        oldSignal = signal
+        return pendingOldOverview.promise
+      },
+      decisionRows: async () => oldPage.rows,
+      decisionConfigurations: async () => oldPage.configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => oldSignal !== undefined)
+    state.connect(
+      "new-session",
+      "project-a",
+      "/repo",
+      transport({
+        queryTasks: async () => tasks([]),
+        decisionOverview: async () => newPage.overview,
+        decisionRows: async () => newPage.rows,
+        decisionConfigurations: async () => newPage.configurations,
+      }),
+      { selectedTaskID: null, selectedCandidateID: null },
+      filters,
+    )
+    await until(
+      () =>
+        state.data.key === "new-session" &&
+        state.data.decisionStatus === "ready" &&
+        state.data.decisionContext?.snapshotID === "snapshot:new-session",
+    )
+    expect(oldSignal?.aborted).toBe(true)
+    const newData = state.data
+    pendingOldOverview.resolve(oldPage.overview)
+    await tick()
+    expect(state.data).toBe(newData)
+    expect(state.data.key).toBe("new-session")
+    expect(state.data.decisionContext?.snapshotID).toBe("snapshot:new-session")
+  } finally {
+    state.close()
+  }
+})
+
+test("decision controller keeps missing RPC and backend-not-ready distinct without inventing rows", async () => {
+  const filters = decisionRead.filters
+  const missingRPC = new ModelComparisonPanelState(() => {})
+  missingRPC.connect(
+    "missing-decision-rpc",
+    "project-a",
+    "/repo",
+    transport({ queryTasks: async () => tasks([]) }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => missingRPC.data.decisionStatus === "missing-rpc")
+    expect(missingRPC.data.decisionOverview).toBeUndefined()
+    expect(missingRPC.data.decisionRows).toEqual([])
+    expect(missingRPC.data.decisionConfigurations).toEqual([])
+    expect(missingRPC.data.selectedConfigurationID).toBeNull()
+  } finally {
+    missingRPC.close()
+  }
+
+  const available = coherentDecisionPage("/repo", filters, "snapshot:backend-not-ready")
+  const context = decisionContext({
+    scope: { projectDirectory: "/repo" },
+    filters,
+    snapshotID: "snapshot:backend-not-ready",
+    availability: "backend-not-ready",
+    unavailableReason: "The producer has not been installed.",
+  })
+  const overview = ModelDecisionOverviewOutputSchema.parse({
+    ...available.overview,
+    context,
+    graph: { scope: "global-filtered-snapshot", points: [], frontierConfigurationIDs: [] },
+    configurationCount: 0,
+    groupCount: 0,
+  })
+  const rows = ModelDecisionRowsOutputSchema.parse({
+    ...available.rows,
+    context,
+    rows: [],
+    totalCount: 0,
+    nextCursor: null,
+  })
+  const configurations = ModelDecisionConfigurationsOutputSchema.parse({
+    ...available.configurations,
+    context,
+    configurations: [],
+    totalCount: 0,
+    nextCursor: null,
+  })
+  const backendNotReady = new ModelComparisonPanelState(() => {})
+  backendNotReady.connect(
+    "backend-not-ready",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async () => overview,
+      decisionRows: async () => rows,
+      decisionConfigurations: async () => configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => backendNotReady.data.decisionStatus === "backend-not-ready")
+    expect(backendNotReady.data.decisionError).toBe("The producer has not been installed.")
+    expect(backendNotReady.data.decisionOverview?.graph.points).toEqual([])
+    expect(backendNotReady.data.decisionRows).toEqual([])
+    expect(backendNotReady.data.selectedConfigurationID).toBeNull()
+  } finally {
+    backendNotReady.close()
+  }
+})
+
+test("not-found inspection has no estimate and recovers after a later matching inspection", async () => {
+  const filters = decisionRead.filters
+  const page = coherentDecisionPage("/repo", filters, "snapshot:not-found-recovery")
+  let inspectionCalls = 0
+  const inspectionFor = (selectedTaskID: string | null) => {
+    const row = page.rows.rows[0]!
+    return ModelDecisionInspectOutputSchema.parse({
+      ...decisionInspect(),
+      context: page.overview.context,
+      configuration: row.configuration,
+      cohort: row.cohort,
+      efficiency: row.efficiency,
+      nativeReportedCost: row.nativeReportedCost,
+      selectedTaskID,
+    })
+  }
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "not-found-recovery",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async () => page.overview,
+      decisionRows: async () => page.rows,
+      decisionConfigurations: async () => page.configurations,
+      decisionInspect: async (_filters, _snapshotID, configurationID) => {
+        inspectionCalls++
+        return inspectionCalls === 1
+          ? ModelDecisionInspectOutputSchema.parse({
+              status: "not-found",
+              context: page.overview.context,
+              configurationID,
+            })
+          : inspectionFor(null)
+      },
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => state.data.decisionNotFound && !state.data.decisionInspectLoading)
+    expect(state.data.decisionInspection).toBeUndefined()
+    expect(state.data.decisionNotFound).toBe(true)
+
+    await state.refreshDecisionSnapshot()
+    await until(
+      () =>
+        state.data.decisionInspection?.context.snapshotID === "snapshot:not-found-recovery" &&
+        !state.data.decisionInspectLoading,
+    )
+    expect(inspectionCalls).toBe(2)
+    expect(state.data.decisionNotFound).toBe(false)
+    expect(state.data.decisionInspection?.estimate.observationCount).toBe(9)
+  } finally {
+    state.close()
+  }
 })
 
 test("cached comparison rows publish while the one bounded source refresh is pending", async () => {
