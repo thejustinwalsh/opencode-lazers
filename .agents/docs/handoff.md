@@ -8,6 +8,152 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Original129 now executing; residual performance stays in existing lanes:**
+  research confirms Astra did not fulfill bounded-live129. Native isolated plan
+  `243f8093-7c3c-44e3-bda5-e06870e4f680` runs the original129/attempt58d8d699,
+  inherited LunaMax/Systems, baselinef06a65e containing8aed4ea. Newest snapshot
+  2444bdbb as-of1793832975691. [Execution/guidance/check boundaries](evidence/radar129-execution-20261104.md).
+  Exact worker instructions put/readback1793833267131; no new turn/permission change.
+  Original task checks unchanged; extra compatibility plan has two mistaken
+  test/radar paths, so real src/radar transport/state checks are explicitly required
+  before integration—never count skipped paths as proof. Both research agents done.
+  Tasks A now includes a small proof-preserving evaluator/fact seam: durable evidence
+  before unchanged Git, both dispatch/finalization gates, decision-local reuse only;
+  no cross-tick cache or skipped proof. No duplicate performance/bootstrap work.
+- **Performance integrated8aed4ea; quiet hold RELEASED:** read
+  [Astra's final report](../../design/reviews/astra-performance-repair-20261104.md).
+  Actual same-PID warm serviceCPU46.36→17.61% (~62% lower bounded window), exact
+  outboxquery390.34→4.74ms/identical98rows, liveoutboxsample2853→37. Root independent
+  checks/quality passed; temporary JSC API/helper/tests removed, all6true/Never
+  unchanged/noexplicitrestart. Clean fully merged Astra tree removed natively
+  force:false; raw captures retained privately. [Roadmap current delivery front](../../design/roadmap.md)
+  now keeps Tasks/Radar/Models/recovery/live-verification and proportional residual
+  Git/session/attempt reads visible. Never skip prerequisite proof merely because
+  no task is queued: proof also gates finalization. Root still owns offline79ceb78
+  lifecycle repair; no edit/activation/duplicate writer. Nonoverlapping authoring
+  and native execution may resume; research is reconciling original129 against
+  landed optimizations before its execution plan, not creating a duplicate task.
+- **Performance-only landed; quiet hold extends to Astra idle-JSC profile:** source
+  merge744d9a9 (Astra9edc37f) plus focused472→d2d31a3 are integrated. Root reports
+  independent33tests/364assertions query/privacy and14tests/62assertions transport,
+  GUI build/smoke passing. Actual native same-scope reads before1401/1049/1260ms,
+  after1534/1086/751ms, identical9638edges/1908routes—mixed observations, no battery
+  fix claimed. [Rollout evidence and verbatim CPU report](evidence/performance-only-rollout-20261104.md).
+  No new dispatch/build/reload/activation/local GPU review during upcoming bounded
+  in-process idle-JSC profile. Six true/Never unload unchanged; bootstrap offline.
+  Astra owns **both landed Radar and Trajectory event-directory filters**, separate
+  from131 backend. User proxy resolved held Radar choices: actual registered-tool
+  identity/schema facts, no builtin-origin claim or origin ceremony; lexical
+  workspace relativization of native absolute paths allowed, never approval/symlink
+  proof. Preserve requested/proposed/executed distinctions, privacy bounds and
+  existing permission outcomes. No authoring clarification remains for those choices.
+- **Quiet performance-only rollout boundary reserved ahead of bootstrap:** both
+  bootstrap reviews and the single independent check job are complete. Root now
+  owns exact Astra-candidate review, actual native Radar latency and same-PID CPU
+  before/after capture, then coordinated source landing/GUI activation and repeat.
+  No Architect-initiated build, reload, activation, dispatch, local GPU authoring
+  review or competing performance measurement during those captures; await Root's
+  coordinated release. Do not cancel/interfere with existing work or change runtime
+  state to manufacture quiet. Astra may finish its already-owned event-rate/build/
+  isolated commit handoff; do not duplicate it. Reported repair retains identical
+  8.55MB output and passes33tests/364assertions plus quality; exact candidate and
+  native before/after evidence remain pending, not inferred from replay results.
+  Six inference switches/Never unload unchanged. Bootstrap79ceb78 stays offline
+  with its lifecycle P1 regardless of performance rollout. Independent read-only
+  authoring may continue; held Radar producer review is complete, not dispatched.
+- **Both original79ceb78 reviews complete:** all three original P1 repair areas
+  source-addressed, with the same remaining guard-lifecycle P1 confirmed by both.
+  [Corrected-candidate review](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  189/2974 plus quality are genuine passing checks, not whole-route proof. Root owns
+  the focused exact-location current-runtime enforcement repair; no activation,
+  replacement worker/engine, source fencing waiver or old resource-hold release.
+- **79ceb78 independent checks complete; lifecycle P1 remains:** the single exact
+  candidate run passed **189tests/2974assertions**, formatter/lint/typecheck/diff,
+  unchanged/clean. Original native reviewer confirms authoritative clear controls
+  and dedicated request-bound worker archive repairs, but initial/pending guard
+  preconditions and pending-only recovery still strand missing old registrations
+  after restart/replacement; sealed exclusion cannot self-recover. The reopen test
+  manually reinstalls its guard. [Exact current-candidate references and minimal fix](../../design/reviews/retained-source-guard-lifecycle-20261104.md).
+  Second original review is pending. **Not source-clear; no activation.**
+- **Corrected bootstrap79ceb78 under original independent review; still offline:**
+  Root supplied clean `79ceb78c063b49381c5a61c56029c3c2b6758295` in its isolated
+  tree, including cb6. Root reports authoritative clear controls, dedicated
+  durable-request-bound native worker archive/readback and hard physical alias/
+  unknown denial for disjoint scopes repaired. Original reviewers
+  `ses_e576d7ecfffeHyxWcUXLddebyV` / `ses_e576d378affeuXd3g4C12KTaRQ` are reused;
+  one six-suite/quality check runs as `sh_1a8a837b40011SvdNmye6tnPnY`—await, do not
+  poll/repeat. [Lifecycle proposal](../../design/reviews/retained-source-guard-lifecycle-20261104.md):
+  archive itself does not unload; restart/explicit replacement can strand old guard
+  registration. Recover exact-location **current-runtime** before-hook capability,
+  not a persisted bit/root-only token, preserving all old holds and native fencing.
+  No Root edits or activation. Astra's actual same-DB Radar replay775–803ms/8.55MB,
+  progressSQL536ms follows its7456s initial CUA attach hang; isolated observability
+  repair remains Astra-owned. Held Radar privacy-check authoring continues separately.
+- **Actual130Desktop timing confirmed; one110native review explicitly failed:** Root
+  observed1308.422s/470ms with Unix-ms endpoints and all four original112**PLAN**
+  checks288/1076/240/2172ms with correct mode/endpoints/provenance/history navigation.
+  [Desktop evidence](evidence/trajectory-live-check-durations-20261104.md). Unknown
+  attempt ends stay for131; raw-ID picker/subpixel readability are UX follow-ups,
+  **not new gates**. Root then authorized one genuine pending full-state review:
+  original131chain continued normally, unchanged full task/request/evidence. One
+  16-question broker job packed**2765/8192tokens**, entered run7861ms, device-lost15573ms,
+  terminal error15577ms; no answers/semantic pass, no replay. Same95968/2.2.5/sixtrue
+  settings/demandfalse before+after. [Native failed observation](evidence/native-fullstate-review110-20261104.md)
+  retains trace/job/usage distinctions;110human gate is not silently closed.
+- **Bootstrap cb6d447 is NOT source-clear; do not activate:** independent same-candidate
+  **187tests/2889assertions** plus quality passed, but review found three P1 production
+  gaps: native clear pending-input/permissions/forms are omitted; worker archive calls
+  Architect-only adapter validation; physical same/symlink/unknown checkout denial
+  falls through for disjoint scopes. [Exact findings and focused fixes](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  Root keeps implementation ownership, including necessary focused native/host
+  adapter repair; no duplicate writer or new recovery task. Await corrected clean
+  candidate/regressions before activation. Old72effects/holds/legitimate tests and
+  88prerequisite remain unchanged. Both reviewers and independent check job completed.
+- **Bootstrap exact candidate in independent review — no activation:** Root committed
+  clean **cb6d447b9830184da6425439fe75fc7ea014048f** at its native bootstrap worktree.
+  Root reports187tests/2889assertions across six runner suites plus quality passing.
+  Two read-only reviewers separately examine native source fencing and durable
+  command/admission/replay safety for the named72→57/58 route, not universal child
+  containment. Independent same-candidate suites/quality are running in shell
+  `sh_1a8937383001OXRaspAC58jLKu`; await completion, do not repeat/poll it.
+  Reviewers`ses_e576d7ecfffeHyxWcUXLddebyV`/`ses_e576d378affeuXd3g4C12KTaRQ` must
+  clear before any activation. New quarantine command/source exclusion is **not yet
+  installed**; no72old-effect settlement,88edge change or independent58verification
+  follows from source tests. Root is verifying newly landed110/130in Desktop.
+- **Root bootstrap implementation is active; reserve its paths:** native worktree
+  `/private/tmp/lazers-retained-bootstrap`, branch`feat/retained-source-bootstrap`,
+  base7828387. Root reports first native before-tool guard/additive storage present,
+  32role/native tests and typecheck passing; command/admission wiring is **unfinished**,
+  so no control is installed or usable yet. Current edits cover runner inspection,
+  native tests, roles/tests, runtime/tests, schema, store, tools and the new
+  `source-quarantine.ts`, plus Root's untracked design plan. Do not edit/duplicate,
+  stash, overwrite or certify this in-flight tree. No observability edits or live
+  activation are assigned. Reconcile held Tasks/Radar specs against the final handoff;
+  preserve existing57→58,72effects/holds and88integration prerequisite meanwhile.
+- **Reviewed110/130 task sources landed and built:** Root cleared the quiet window;
+  main **a2182239423f533603d7b40ddcd1bd4e3888e73d** preserves both accepted candidate
+  ancestries. Merged **36tests/344assertions** and quality passed. Task-only native
+  integration is recorded130planv9/110planv26; **no plan finalization or cleanup**.
+  GUI build/process-free smoke passed; postbuild1793829039412 retains PID95968/2.2.5,
+  only Architect active, six flags true, canonical plugin active and new server module
+  generation647b3e32. No explicit reload/restart/inference/settings change occurred.
+  [Exact landing evidence](evidence/quiet-landing-110-130-20261104.md) retains source
+  review, quiet preflight, build warnings and hashes. Do not repeat completed jobs.
+  Root still owes actual Desktop check-duration observations and the separately
+  coordinated110full-state measured review; no GPU-recovery or whole-plan claim.
+- **Astra profiling is explicitly authorized now:** the user assigns Root's Astra
+  agent hands-on launch/test/profile/fix of live performance with isolated repairs.
+  Initial service/renderer/GPU OS captures are complete; meaningful JS profiling is
+  next. Earlier no-profiler notes are historical and **do not block this assigned
+  work**. Avoid duplicate diagnosis/implementation; keep128lease repair queued until
+  ownership coordinates. Preserve running work and coordinate any restart, live build
+  or activation with Root/Astra while captures run.
+  Root's separate timing investigation matches existing130/131; do not create another
+  timestamp/render repair. Native timing planv6 currently has130running/99tools and
+  131queued/zeroattempts.130owns panel/projection/CSS/focusedtests;131backend timing
+  excludes observability readers. Coordinate Root's investigation and Astra's actual
+  read-performance paths before consumer wiring. Completed receipt endpoints exist;
+  attempt-end persistence/projection and check interval rendering are distinct gaps.
 - **Original110 source/task accepted, live gate still open:** exact clean
   `028c53ec923eb51fcf08b310c963fcee6551f5ac` includes6a9d45c and is Root-reviewed
   with **35tests/389assertions** plus quality; no broader repeat without change or

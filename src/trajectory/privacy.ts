@@ -165,6 +165,8 @@ export function safeText(
       return `${prefix}[REDACTED]${match.endsWith(".") ? "." : ""}`
     })
   }
+  // UTF-16 length bounds the code-point count, so short strings need no array.
+  if (output.length <= maximum) return output
   const points = Array.from(output)
   if (points.length > maximum) {
     stats.truncated++

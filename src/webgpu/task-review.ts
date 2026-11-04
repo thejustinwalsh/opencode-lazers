@@ -49,7 +49,7 @@ interface ReviewResult {
   findings: Finding[]
   focus: Finding | null
   errors: string[]
-  usage: SystemOneOutput["usage"]
+  usage: { input_tokens: number | null; output_tokens: 0 }
   next: { action: "revise_or_clarify" | "retry" | "submit"; tool: string; instruction: string }
 }
 interface RecordState extends ReviewProgressionRecord<Finding> {
@@ -187,7 +187,7 @@ export class TaskReviewer {
           })),
           focus: null,
           errors: ["The last verification call was interrupted; the round budget is exhausted."],
-          usage: { input_tokens: 0, output_tokens: 0 },
+          usage: { input_tokens: null, output_tokens: 0 },
           next: {
             action: "submit",
             tool: "lz-submit-task",
@@ -225,7 +225,7 @@ export class TaskReviewer {
             return {
               status: "invalid",
               error:
-                "Task/evidence exceeds the local model request limit. Supply a smaller task; no text was truncated.",
+                "Task/evidence exceeds the System One serialized transport envelope. Supply a smaller task; no text was truncated.",
             }
           batches.push(single.data)
         }
@@ -235,22 +235,30 @@ export class TaskReviewer {
       record.busyUntil = this.now() + 120_000
       await this.store.set(key, record)
       const answers: SystemOneOutput["answers"] = {}
-      const usage = { input_tokens: 0, output_tokens: 0 as const }
+      const usage = { input_tokens: 0 as number | null, output_tokens: 0 as const }
       const errors: string[] = []
       const deadline = this.now() + 60_000
       const bounded = AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+      const assertWithinDeadline = () => {
+        bounded.throwIfAborted()
+        if (this.now() >= deadline) throw new Error("Task review deadline exceeded")
+      }
       try {
         const client = systemOneClient(this.transport)
         for (const batch of batches) {
-          bounded.throwIfAborted()
+          assertWithinDeadline()
           const remaining = Math.floor(deadline - this.now())
           if (remaining < 1_000) throw new Error("Task review deadline exceeded")
-          const result = await client.systemOne(
-            { ...batch, timeoutMs: remaining },
-            { signal: bounded },
-          )
+          let result: Awaited<ReturnType<typeof client.systemOne>>
+          try {
+            result = await client.systemOne({ ...batch, timeoutMs: remaining }, { signal: bounded })
+          } catch (error) {
+            usage.input_tokens = null
+            throw error
+          }
+          if (usage.input_tokens !== null) usage.input_tokens += result.usage.input_tokens
+          assertWithinDeadline()
           Object.assign(answers, result.answers)
-          usage.input_tokens += result.usage.input_tokens
         }
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error))

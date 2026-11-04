@@ -74,3 +74,20 @@ test("structured JSON strings at the nesting limit fail closed without hiding sa
   expect(serialized).toContain("visible safe summary")
   expect(stats.unknown).toBeGreaterThan(0)
 })
+
+test("text bounds count Unicode code points after redaction", () => {
+  for (const [input, maximum, output, truncated] of [
+    ["short", 5, "short", 0],
+    ["shorter", 5, "short…[truncated]", 1],
+    ["😀😀", 2, "😀😀", 0],
+    ["a😀b", 2, "a😀…[truncated]", 1],
+    ["", 0, "", 0],
+  ] as const) {
+    const stats = privacyStats()
+    expect(safeText(input, stats, maximum)).toBe(output)
+    expect(stats.truncated).toBe(truncated)
+  }
+  const stats = privacyStats()
+  expect(safeText("password=hidden", stats, 100)).toBe("password=[REDACTED]")
+  expect(stats.redacted).toBe(1)
+})

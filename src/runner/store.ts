@@ -2116,14 +2116,18 @@ export class RunnerStore {
     return this.atomic((db) =>
       db
         .query<OutboxRow, [string]>(
-          `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence FROM runner_outbox o
-           JOIN runner_plans p ON p.id=o.plan_id
-           WHERE p.project_directory=?
-              AND (o.state IN ('pending','sending','uncertain','admitted','delivered')
-               OR o.rowid=(SELECT latest.rowid FROM runner_outbox latest
-                 WHERE latest.plan_id=o.plan_id
-                 ORDER BY CAST(json_extract(latest.payload,'$.version') AS INTEGER) DESC,latest.rowid DESC
-                 LIMIT 1))
+          // Rank the narrow keys once, rather than parsing and sorting a plan's
+          // entire history again for every terminal row on every scheduler tick.
+          `WITH candidates AS MATERIALIZED (
+             SELECT o.rowid AS sequence,
+               row_number() OVER (PARTITION BY o.plan_id
+                 ORDER BY CAST(json_extract(o.payload,'$.version') AS INTEGER) DESC,o.rowid DESC) AS position
+             FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+             WHERE p.project_directory=?
+           )
+           SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence
+           FROM candidates c JOIN runner_outbox o ON o.rowid=c.sequence
+           WHERE o.state IN ('pending','sending','uncertain','admitted','delivered') OR c.position=1
            ORDER BY o.rowid`,
         )
         .all(projectDirectory),

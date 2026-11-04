@@ -70,6 +70,10 @@ test("agent tools enforce permissions before RPC and apply bounded defaults", as
       .execute({ question: "q", context: "evidence", decision: { kind: "boolean" } }, context),
   )
   expect(JSON.parse(String(decision.content))).toEqual({ ok: true, kind: "boolean", value: true })
+  const systemOne = tools.get("lz-local-system-one")!
+  expect(systemOne.description).toContain("64,000-character serialized transport envelope")
+  expect(systemOne.description).toContain("8,192-token context")
+  expect(systemOne.description).not.toContain("8,000 serialized characters")
   denied = true
   await expect(
     Effect.runPromise(tools.get("lz-local-ask")!.execute({ prompt: "denied" }, context)),
