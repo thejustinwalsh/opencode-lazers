@@ -12,10 +12,10 @@ passed. No duplicate build or test run was started by Architect.
 Actual same-scope native Radar reads reported by Root:
 
 | Sample | Before ms | After ms |
-| --- | ---: | ---: |
-| 1 | 1401 | 1534 |
-| 2 | 1049 | 1086 |
-| 3 | 1260 | 751 |
+| ------ | --------: | -------: |
+| 1      |      1401 |     1534 |
+| 2      |      1049 |     1086 |
+| 3      |      1260 |      751 |
 
 Both sides retained **9,638 edges / 1,908 routes**. Results are mixed; these samples
 do not establish a uniform latency improvement or a battery fix. Root's quiet

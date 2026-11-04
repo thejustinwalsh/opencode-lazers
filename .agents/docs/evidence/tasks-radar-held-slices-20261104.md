@@ -197,16 +197,16 @@ production/tests. No tests, local GPU review, submission or implementation ran.
 
 Proposed, unexecuted ingestion→durable facts→projectProgressFact checks:
 
-| Case | Discriminating assertion |
-| --- | --- |
-| Registered hook adapters | Real fixture in progress/native.test.ts310; pinned names/schema only, unknown/malformed coverage rather than inferred file activity. |
-| Identity collisions | Same call in two assigned sessions, conflicting message/tool/agent/assignment and shared long identity prefixes cannot cross-enrich. |
-| Privacy decoys | Credentials/URLs/private tags/JSON depth/multipart/data URI/base64/read bodies/directory entries/write content absent from new stored and exported observations; safe permitted siblings survive. |
-| Bounded parsing | Declared cap and cap+1, huge lines/operation counts/malformed envelopes; parser/visited counters and serialized bounds prove bounded work with zero filesystem/native-context calls, not invented latency targets. |
-| Patch scope | Add/update/delete/move and both endpoints, traversal/absolute/external/URI/malformed paths; no guessed target or claim that lexical containment proves symlink resolution. |
-| Event permutation | Terminal-before-called/replay and late proposals cannot downgrade terminal/executed facts; partial failure stays potentially partial, no arbitrary error-prose applied-file list. |
-| Reopen/no churn | Two real DB connections, reopen and duplicate replay leave sequence/payload/recorded_at unchanged; genuine enrichment updates once. |
-| Legacy/denied | Unsupported/malformed/legacy stays unknown; permission denial never becomes approval/execution/mutation proof. |
+| Case                     | Discriminating assertion                                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Registered hook adapters | Real fixture in progress/native.test.ts310; pinned names/schema only, unknown/malformed coverage rather than inferred file activity.                                                                               |
+| Identity collisions      | Same call in two assigned sessions, conflicting message/tool/agent/assignment and shared long identity prefixes cannot cross-enrich.                                                                               |
+| Privacy decoys           | Credentials/URLs/private tags/JSON depth/multipart/data URI/base64/read bodies/directory entries/write content absent from new stored and exported observations; safe permitted siblings survive.                  |
+| Bounded parsing          | Declared cap and cap+1, huge lines/operation counts/malformed envelopes; parser/visited counters and serialized bounds prove bounded work with zero filesystem/native-context calls, not invented latency targets. |
+| Patch scope              | Add/update/delete/move and both endpoints, traversal/absolute/external/URI/malformed paths; no guessed target or claim that lexical containment proves symlink resolution.                                         |
+| Event permutation        | Terminal-before-called/replay and late proposals cannot downgrade terminal/executed facts; partial failure stays potentially partial, no arbitrary error-prose applied-file list.                                  |
+| Reopen/no churn          | Two real DB connections, reopen and duplicate replay leave sequence/payload/recorded_at unchanged; genuine enrichment updates once.                                                                                |
+| Legacy/denied            | Unsupported/malformed/legacy stays unknown; permission denial never becomes approval/execution/mutation proof.                                                                                                     |
 
 Existing precedents: progress/recorder.test.ts90 coalescence/reopen and
 trajectory/read.test.ts1015 multipart/depth are reuse points, not proofs of these

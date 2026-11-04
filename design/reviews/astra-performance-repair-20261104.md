@@ -127,3 +127,20 @@ Root source-reviewed and landed the outbox repair as `37b30aa`. All four loaded 
 The single post-repair service capture, `/private/tmp/lazers-service-idle-after-outbox-20261104.json`, ran on the same PID 95968 from 1793832358536 to 1793832368566 (10.030 seconds). Total samples fell from 3,677 to 916. Outbox-delivery SQLite samples fell from 2,853 to 37 (98.7% lower), confirming the measured hot path was removed from live execution. Remaining sampled work includes synchronous Git prerequisite checks (202 samples), native session reads (120 inclusive samples), scheduler attempts/transition queries, and progress reconstruction. These overlapping groups must not be summed as independent CPU shares.
 
 Residual idle service CPU is still about 18.6% in that window. Prerequisite proof currently protects both dispatch and finalization; omitting it simply because no task is ready would require a separate lifecycle-preserving design. No such behavior change or unmeasured cache is included here. The temporary profiler RPC, helper, and its tests are removed after the two authorized captures; the evidence remains. The independent WebGPU device-loss issue is unresolved by these CPU repairs.
+
+## Final warm observation and integration
+
+Root integrated the permanent repairs, then removed the temporary diagnostic at
+`09c21a9`. A final clean12.039s window at Unix ms1793832601640–1793832613680,
+with the same PIDs and Radar Timeline current, measured service17.61%, renderer
+0.66% and GPU-process1.08% CPU. No profiler, diagnostic RPC, model, test or build
+ran during this window. This is about62% less service CPU than the46.36% baseline;
+residual idle cost remains. GPU-process CPU is not GPU utilization or a battery
+measurement. Six inference settings read back true; Never unload was not changed.
+
+Root independently reviewed the source and passed33observability/privacy tests,
+14transport/event/projection tests,9store tests and the temporary7diagnostic tests
+before its removal. Final formatter/lint/type checks pass. Two Architect-written
+Markdown files were autoformatted; their content was preserved. The native
+Architect quiet boundary is released for roadmap work and residual-performance
+planning. Bootstrap guard-lifecycle work remains offline and separately owned.
