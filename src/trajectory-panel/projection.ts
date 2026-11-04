@@ -5,7 +5,8 @@ import type {
   TrajectoryHistoryResponse,
   TrajectoryResponse,
 } from "../observability/contract.ts"
-import type { ObservationChange } from "../observability/contract.ts"
+import { trajectoryChanges } from "./events.ts"
+import type { TrajectoryChange, TrajectoryEventSource } from "./events.ts"
 import { z } from "zod"
 
 export type ObservationRpc = {
@@ -25,12 +26,6 @@ export type ObservationRpc = {
     input: { scope: ObservationScope; taskID: string },
     options: { location: { directory: string }; signal: AbortSignal },
   ): Promise<TrajectoryResponse>
-  events: {
-    subscribe(
-      name: "changed",
-      options: { signal: AbortSignal },
-    ): AsyncIterable<{ data: ObservationChange }>
-  }
 }
 
 export type TrajectoryTransport = {
@@ -49,7 +44,7 @@ export type TrajectoryTransport = {
     limit?: number,
   ): Promise<TrajectoryHistoryResponse>
   status(scope: ObservationScope, taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
-  changes(signal: AbortSignal): AsyncIterable<ObservationChange>
+  changes(signal: AbortSignal): AsyncIterable<TrajectoryChange>
   online(): boolean
 }
 
@@ -57,6 +52,8 @@ export function createTrajectoryTransport(
   rpc: ObservationRpc,
   directory: string,
   online: () => boolean,
+  events: TrajectoryEventSource,
+  projectID: string,
 ): TrajectoryTransport {
   return {
     snapshot: (scope, signal) => rpc.snapshot({ scope }, { location: { directory }, signal }),
@@ -72,10 +69,7 @@ export function createTrajectoryTransport(
       ),
     status: (scope, taskID, signal) =>
       rpc.trajectoryStatus({ scope, taskID }, { location: { directory }, signal }),
-    changes: (signal) =>
-      (async function* () {
-        for await (const event of rpc.events.subscribe("changed", { signal })) yield event.data
-      })(),
+    changes: (signal) => trajectoryChanges(events, projectID, signal),
     online,
   }
 }

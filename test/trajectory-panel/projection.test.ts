@@ -181,10 +181,11 @@ test("transport adapts scoped observation RPC calls without widening task trajec
       calls.push(["trajectory", input, options])
       return {} as never
     },
-    events: {
+    event: {
       subscribe: () =>
         (async function* () {
           yield {
+            type: "rpc.lazers.observability.changed",
             data: {
               projectID: "project",
               sequence: 1,
@@ -198,7 +199,13 @@ test("transport adapts scoped observation RPC calls without widening task trajec
         })(),
     },
   }
-  const transport = createTrajectoryTransport(rpc as never, "/workspace", () => true)
+  const transport = createTrajectoryTransport(
+    rpc as never,
+    "/workspace",
+    () => true,
+    rpc.event,
+    "project",
+  )
   const scope = { kind: "session", sessionID: "session-a" } as const
   await transport.snapshot(scope, signal)
   await transport.trajectory(scope, taskA, signal)
