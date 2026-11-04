@@ -20,6 +20,7 @@ function summarize(
   search: string,
   scopePath: string | undefined,
   disposition: TaskSummary["disposition"],
+  classification: TaskSummary["classification"],
 ): TaskSummary {
   const matches: TaskSummary["matches"] = []
   const needle = search.toLowerCase()
@@ -56,6 +57,7 @@ function summarize(
     status: task.status,
     reason: null,
     ...(disposition ? { disposition } : {}),
+    classification,
     title: taskTitle(task.proposal.objective),
     objective: task.proposal.objective.slice(0, 400),
     createdAt: task.createdAt,
@@ -113,11 +115,11 @@ export class TaskReads {
       projectDirectory: this.repository.projectDirectory,
       snapshot: page.version,
       count: page.count,
-      tasks: visible.map(({ task, reference }) => {
+      tasks: visible.map(({ task, reference, classification }) => {
         const execution = this.effectiveExecution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
         return {
-          ...summarize(task, reference, query.search, query.scopePath, disposition),
+          ...summarize(task, reference, query.search, query.scopePath, disposition, classification),
           status: execution?.state ?? task.status,
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
@@ -137,6 +139,8 @@ export class TaskReads {
       return GetOutput.parse({ status: "revision_unavailable", revision: task.revision })
     }
     const disposition = this.repository.taskDisposition(task.id)
+    const classifications = this.repository.taskClassification(task.id)
+    if (!classifications) throw new Error("Task classification is missing from this repository")
     const reference = this.repository.referenceFor(task.id)
     if (!reference) throw new Error("Task reference is missing from this repository")
     const execution = this.effectiveExecution(task.id)
@@ -144,6 +148,16 @@ export class TaskReads {
       return GetOutput.parse({
         status: "found",
         task,
+        classification: classifications.current,
+        classificationHistory: classifications.history,
+        ...(query.classificationRevision !== undefined
+          ? {
+              classificationAtRevision:
+                classifications.history.find(
+                  (item) => item.revision === query.classificationRevision,
+                ) ?? null,
+            }
+          : {}),
         reference,
         ...(disposition ? { disposition } : {}),
       })
@@ -169,6 +183,16 @@ export class TaskReads {
     return GetOutput.parse({
       status: "found",
       task,
+      classification: classifications.current,
+      classificationHistory: classifications.history,
+      ...(query.classificationRevision !== undefined
+        ? {
+            classificationAtRevision:
+              classifications.history.find(
+                (item) => item.revision === query.classificationRevision,
+              ) ?? null,
+          }
+        : {}),
       reference,
       ...(disposition ? { disposition } : {}),
       execution,

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { TaskClassification } from "./task-classification.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
 const identifier = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
@@ -17,6 +18,9 @@ const writePath = z
 export const TaskProposalSchema = z
   .strictObject({
     objective: text.describe("The observable change and its purpose, stated directly."),
+    // Optional for compatible historical replay and reads. Fresh-key admission
+    // requires this explicit, versioned value after checking the replay key.
+    classification: TaskClassification.optional(),
     exclusions: texts.describe("Only material work excluded from this increment; may be empty."),
     constraints: texts.describe(
       "Necessary compatibility or design requirements. Do not repeat repository policy or prescribe routine implementation choices.",

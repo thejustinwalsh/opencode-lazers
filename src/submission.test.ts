@@ -9,6 +9,7 @@ import type { RetryProcessOptions } from "../test/retry-process.ts"
 import { TaskRepository } from "./storage.ts"
 import { submitTask } from "./submission.ts"
 import type { TaskSpec } from "./task.ts"
+import { fingerprint } from "./identity.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -84,6 +85,7 @@ test("changed values and array order conflict; distinct exact keys and canonical
   const original = repository.get(first.taskID)
   for (const change of [
     { objective: "Different intent" },
+    { classification: { taxonomy: "task-kind/v1", primaryKind: "testing" } },
     { writeScope: [...validProposal().writeScope].reverse() },
     { requirements: { ...validProposal().requirements, risk: "high" } },
   ]) {
@@ -131,6 +133,74 @@ test("invalid keys/proposals and provenance failures never reserve a key", () =>
   expect(() => submitTask(repository, keyedProposal(), noProvenance)).toThrow("provenance")
   expect(counts(path)).toEqual({ tasks: 0, keys: 0 })
   expect(submitTask(repository, keyedProposal(), provenance).status).toBe("submitted")
+})
+
+test("fresh requests require an explicit kind while exact unclassified historical replay stays unchanged", () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const { classification: _classification, idempotencyKey, ...legacyProposal } = keyedProposal()
+  const legacySubmission = { ...legacyProposal, idempotencyKey }
+  const freshMissing = submitTask(repository, legacySubmission, noProvenance)
+  expect(freshMissing).toEqual({
+    status: "invalid",
+    errors: [
+      {
+        path: "classification",
+        message: "Choose one explicit task-kind/v1 primaryKind for a new task",
+      },
+    ],
+  })
+  expect(counts(path)).toEqual({ tasks: 0, keys: 0 })
+
+  const task: TaskSpec = {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: "2026-11-03T00:00:00.000Z",
+    provenance: provenance(),
+    proposal: legacyProposal,
+  }
+  repository.insert(task)
+  repository.atomic((db) => {
+    db.query(
+      "INSERT INTO submission_requests(project_directory,request_id,fingerprint,task_id) VALUES (?,?,?,?)",
+    ).run("/repo", idempotencyKey, fingerprint(legacyProposal), task.id)
+  })
+  expect(
+    repository.recordTaskClassification(
+      {
+        taskID: task.id,
+        requestID: "annotate-before-legacy-replay",
+        expectedRevision: 0,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "maintenance" },
+        reason: "Reviewed historical task classification.",
+      },
+      { sessionID: "architect", agent: "architect" },
+    ).status,
+  ).toBe("recorded")
+
+  expect(submitTask(repository, legacySubmission, noProvenance)).toEqual({
+    status: "submitted",
+    taskID: task.id,
+    reference: repository.referenceFor(task.id)!,
+    revision: task.revision,
+  })
+  expect(
+    submitTask(
+      repository,
+      {
+        ...legacySubmission,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+      },
+      noProvenance,
+    ),
+  ).toEqual({
+    status: "conflict",
+    message: "idempotencyKey already identifies different validated content",
+  })
+  expect(repository.get(task.id)).toEqual(task)
+  expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
 })
 
 test("a failed association write rolls back task, key and change stream; retry succeeds", () => {
@@ -258,6 +328,34 @@ async function race(options: RetryProcessOptions[], path: string, expectedCount 
   }
 }
 
+async function contend(options: RetryProcessOptions[]) {
+  const children: ReturnType<typeof child>[] = []
+  const ready = options.map(
+    (option) =>
+      new Promise<void>((resolve, reject) => {
+        let reached = false
+        const contender = child({ ...option, gate: true }, () => {
+          reached = true
+          resolve()
+        })
+        children.push(contender)
+        void contender.exited.then(async () => {
+          if (reached) return
+          const error = await new Response(contender.stderr).text()
+          reject(new Error(`Contender exited before release: ${error}`))
+        })
+      }),
+  )
+  try {
+    await Promise.all(ready)
+    for (const contender of children) contender.send("go")
+    return await Promise.all(children.map(async (contender) => JSON.parse(await output(contender))))
+  } finally {
+    for (const contender of children) contender.kill()
+    await Promise.all(children.map((contender) => contender.exited))
+  }
+}
+
 test("independent native-tool connections racing the same content commit one task and association", async () => {
   const { path, directory } = fixture()
   expect(spawnSync("git", ["init", "--initial-branch=main", directory]).status).toBe(0)
@@ -331,6 +429,70 @@ test("concurrent distinct submissions allocate unique project-local references",
   )
 }, 30_000)
 
+test("concurrent stale classification corrections serialize to one commit and one conflict", async () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const { classification: _classification, ...legacyProposal } = validProposal()
+  const task: TaskSpec = {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: "2026-11-03T00:00:00.000Z",
+    provenance: provenance(),
+    proposal: legacyProposal,
+  }
+  repository.insert(task)
+  const base = {
+    path,
+    project: "/repo",
+    workspace: "/repo",
+    action: "classify" as const,
+  }
+  const results = await contend([
+    {
+      ...base,
+      session: "correction-a",
+      input: {
+        taskID: task.id,
+        requestID: "concurrent-classification-a",
+        expectedRevision: 0,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "bug-repair" },
+        reason: "Existing defect is the primary outcome.",
+      },
+    },
+    {
+      ...base,
+      session: "correction-b",
+      input: {
+        taskID: task.id,
+        requestID: "concurrent-classification-b",
+        expectedRevision: 0,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "testing" },
+        reason: "Tests are the primary outcome.",
+      },
+    },
+  ])
+  expect(results.map((result) => result.status).sort()).toEqual(["conflict", "recorded"])
+  expect(results.find((result) => result.status === "conflict")).toMatchObject({
+    expectedRevision: 0,
+    currentRevision: 1,
+  })
+  expect(repository.taskClassification(task.id)?.history.map((item) => item.revision)).toEqual([
+    0, 1,
+  ])
+  expect(
+    repository.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string, string]>(
+            "SELECT count(*) AS count FROM task_classifications WHERE project_directory=? AND task_id=?",
+          )
+          .get("/repo", task.id)!.count,
+    ),
+  ).toBe(1)
+}, 30_000)
+
 test("genuine v1 data migrates transactionally and mappings survive repeated reopening", () => {
   const { path, provenance } = fixture()
   const task: TaskSpec = {
@@ -340,7 +502,7 @@ test("genuine v1 data migrates transactionally and mappings survive repeated reo
     status: "submitted",
     createdAt: "2026-01-01T00:00:00.000Z",
     provenance: provenance(),
-    proposal: validProposal(),
+    proposal: (({ classification: _classification, ...legacy }) => legacy)(validProposal()),
   }
   const body = JSON.stringify(task, null, 2)
   const legacy = new Database(path)
@@ -362,7 +524,7 @@ test("genuine v1 data migrates transactionally and mappings survive repeated reo
     const db = new Database(path)
     try {
       expect(db.query("SELECT body FROM tasks WHERE id=?").get(task.id)).toEqual({ body })
-      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 5 })
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
     } finally {
       db.close()
     }

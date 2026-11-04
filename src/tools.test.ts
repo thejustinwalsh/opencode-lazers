@@ -57,7 +57,10 @@ const context = {
   progress: () => Effect.void,
 } satisfies Parameters<RegisteredTool["execute"]>[1]
 const cleanup: (() => void)[] = []
-const keyedProposal = () => ({ ...validProposal(), idempotencyKey: "test-submission" })
+const keyedProposal = (idempotencyKey = "test-submission") => ({
+  ...validProposal(),
+  idempotencyKey,
+})
 afterEach(() => {
   for (const clean of cleanup.splice(0)) clean()
 })
@@ -157,6 +160,105 @@ test("registered tools submit, retrieve, and list the same durable task", async 
   expect(assertions).toEqual(["lz-submit-task", "lz-get-task", "lz-get-task", "lz-list-tasks"])
 })
 
+test("native task submission round-trips all task-kind/v1 values through effective reads", async () => {
+  const { tools } = await setup()
+  const kinds = [
+    "bug-repair",
+    "feature-implementation",
+    "refactoring",
+    "testing",
+    "documentation",
+    "maintenance",
+  ] as const
+  for (const primaryKind of kinds) {
+    const input = {
+      ...keyedProposal(`native-kind-${primaryKind}`),
+      classification: { taxonomy: "task-kind/v1", primaryKind },
+    }
+    const submitted = JSON.parse(
+      String(
+        await Effect.runPromise(tools.get("lz-submit-task")!.execute(input, context)).then(
+          (r) => r.content,
+        ),
+      ),
+    )
+    expect(submitted.status).toBe("submitted")
+    const detail = await Effect.runPromise(
+      tools.get("lz-get-task")!.execute({ taskID: submitted.taskID }, context),
+    )
+    expect(detail.output).toMatchObject({
+      status: "found",
+      task: { proposal: { classification: input.classification } },
+      classification: {
+        revision: 1,
+        classification: input.classification,
+        provenance: { kind: "embedded", sessionID: "session" },
+      },
+      classificationHistory: [{ revision: 1, classification: input.classification }],
+    })
+    const page = await Effect.runPromise(
+      tools.get("lz-query-tasks")!.execute({ search: submitted.taskID }, context),
+    )
+    expect(page.output).toMatchObject({
+      tasks: [
+        {
+          taskID: submitted.taskID,
+          classification: { revision: 1, classification: input.classification },
+        },
+      ],
+    })
+  }
+})
+
+test("Architect classification tool appends, exactly replays, and returns conflict on changed content", async () => {
+  const { tools } = await setup()
+  const submitted = JSON.parse(
+    String(
+      await Effect.runPromise(tools.get("lz-submit-task")!.execute(keyedProposal(), context)).then(
+        (r) => r.content,
+      ),
+    ),
+  )
+  const classification = tools.get("lz-classify-task")!
+  const input = {
+    taskID: submitted.taskID,
+    requestID: "tool-classification-1",
+    expectedRevision: 1,
+    classification: { taxonomy: "task-kind/v1", primaryKind: "maintenance" },
+    reason: "The requested outcome is repository tooling upkeep.",
+  }
+  expect(classification.options?.permission).toBe("lz-classify-task")
+  const recorded = JSON.parse(
+    String(await Effect.runPromise(classification.execute(input, context)).then((r) => r.content)),
+  )
+  expect(recorded).toMatchObject({
+    status: "recorded",
+    annotation: { revision: 2, agent: "architect" },
+  })
+  const replayed = JSON.parse(
+    String(await Effect.runPromise(classification.execute(input, context)).then((r) => r.content)),
+  )
+  expect(replayed).toMatchObject({ status: "replayed", annotation: recorded.annotation })
+  const conflict = JSON.parse(
+    String(
+      await Effect.runPromise(
+        classification.execute({ ...input, reason: "Different content." }, context),
+      ).then((r) => r.content),
+    ),
+  )
+  expect(conflict).toMatchObject({ status: "conflict" })
+  const detail = await Effect.runPromise(
+    tools.get("lz-get-task")!.execute({ taskID: submitted.taskID }, context),
+  )
+  expect(detail.output).toMatchObject({
+    classification: { revision: 2, classification: input.classification },
+    classificationHistory: [
+      { revision: 1, classification: validProposal().classification },
+      { revision: 2, classification: input.classification },
+    ],
+  })
+})
+
 test("a replayed submission receipt reports current queued state without claiming execution", async () => {
   const { tools, repository } = await setup()
   const input = keyedProposal()
@@ -242,6 +344,33 @@ test("task disposition is Architect-only even when native permission allows the 
       ),
     ),
   ).rejects.toThrow("restricted to Architect")
+})
+
+test("non-Architect classification denial precedes database access", async () => {
+  const { tools } = await setup()
+  const query = spyOn(Database.prototype, "query")
+  const exec = spyOn(Database.prototype, "exec")
+  try {
+    await expect(
+      Effect.runPromise(
+        tools.get("lz-classify-task")!.execute(
+          {
+            taskID: crypto.randomUUID(),
+            requestID: "non-architect-classification",
+            expectedRevision: 0,
+            classification: { taxonomy: "task-kind/v1", primaryKind: "testing" },
+            reason: "Test.",
+          },
+          { ...context, agent: Agent.ID.make("lazers-implementor") },
+        ),
+      ),
+    ).rejects.toThrow("restricted to Architect")
+    expect(query).not.toHaveBeenCalled()
+    expect(exec).not.toHaveBeenCalled()
+  } finally {
+    query.mockRestore()
+    exec.mockRestore()
+  }
 })
 
 test("permission denial prevents task writes", async () => {
@@ -433,6 +562,16 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
     ["lz-get-task-instructions", { taskID: receipt.taskID }],
     ["lz-list-tasks", { limit: 20 }],
     ["lz-query-tasks", {}],
+    [
+      "lz-classify-task",
+      {
+        taskID: receipt.taskID,
+        requestID: "permission-denied-classification",
+        expectedRevision: 1,
+        classification: { taxonomy: "task-kind/v1", primaryKind: "maintenance" },
+        reason: "Denied calls must not query project metadata.",
+      },
+    ],
   ] as const
   try {
     for (const [name, input] of calls) {

@@ -9,6 +9,7 @@ import type { TaskPage, TaskSummary } from "../tasks/contract.ts"
 import { TaskReads } from "../tasks/read.ts"
 import { sessionAssociations } from "./associations.ts"
 import { effectiveTaskStateFilter, taskStatePredicate } from "../tasks/state-filter.ts"
+import { taskClassificationFor } from "../tasks/classification.ts"
 
 const Cursor = z.strictObject({
   filter: z.string(),
@@ -21,6 +22,7 @@ function summarize(
   reference: string,
   search: string,
   scopePath: string | undefined,
+  classification: TaskSummary["classification"],
 ): TaskSummary {
   const matches: TaskSummary["matches"] = []
   const needle = search.toLowerCase()
@@ -53,6 +55,7 @@ function summarize(
     revision: task.revision,
     status: task.status,
     reason: null,
+    classification,
     title: taskTitle(task.proposal.objective),
     objective: task.proposal.objective.slice(0, 400),
     createdAt: task.createdAt,
@@ -176,11 +179,16 @@ export class AssociationTaskReads extends TaskReads {
       return {
         version: snapshot,
         count,
-        rows: rows.map((row) => ({
-          position: row.position,
-          task: TaskSpecSchema.parse(JSON.parse(row.body)),
-          reference: row.reference,
-        })),
+        rows: rows.map((row) => {
+          const task = TaskSpecSchema.parse(JSON.parse(row.body))
+          return {
+            position: row.position,
+            task,
+            reference: row.reference,
+            classification: taskClassificationFor(db, this.repository.projectDirectory, task)
+              .current,
+          }
+        }),
       }
     })
 
@@ -196,11 +204,11 @@ export class AssociationTaskReads extends TaskReads {
       projectDirectory: this.repository.projectDirectory,
       snapshot: page.version,
       count: page.count,
-      tasks: visible.map(({ task, reference }) => {
+      tasks: visible.map(({ task, reference, classification }) => {
         const execution = this.effectiveExecution(task.id)
         const disposition = this.repository.taskDisposition(task.id)
         return {
-          ...summarize(task, reference, query.search, query.scopePath),
+          ...summarize(task, reference, query.search, query.scopePath, classification),
           ...(disposition ? { disposition } : {}),
           status: execution?.state ?? task.status,
           reason: execution?.reason ?? disposition?.reason ?? null,
@@ -225,6 +233,9 @@ export class AssociationTaskReads extends TaskReads {
     return super.get({
       taskID: query.taskID,
       ...(query.revision ? { revision: query.revision } : {}),
+      ...(query.classificationRevision !== undefined
+        ? { classificationRevision: query.classificationRevision }
+        : {}),
     })
   }
 }

@@ -176,6 +176,143 @@ test("task dispositions are project-local, durable, idempotent, and hide retired
   expect(reopened.list()).toHaveLength(1)
 })
 
+test("classification annotations use exact CAS replay and preserve every immutable or execution record", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const submitted = submitTask(repository, keyedProposal(), provenance)
+  if (submitted.status !== "submitted") throw new Error("Expected submitted task")
+  const task = repository.get(submitted.taskID)!
+  const runner = new RunnerStore(repository)
+  const plan = runner.submit(
+    {
+      requestID: "classification-preserve-execution",
+      objective: task.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: task.id, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [task.id],
+      verification: task.proposal.verification,
+      acceptance: task.proposal.acceptance,
+    },
+    "architect",
+  )
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='accepted' WHERE id=?").run(plan.planID)
+    db.query("UPDATE runner_nodes SET state='accepted' WHERE plan_id=?").run(plan.planID)
+  })
+  const disposition = repository.recordDisposition(
+    {
+      taskID: task.id,
+      requestID: "classification-preserve-disposition",
+      disposition: "fulfilled",
+      reason: "The accepted implementation was reviewed.",
+      evidence: [{ kind: "verification", reference: "bun test" }],
+    },
+    { sessionID: "architect", agent: "architect" },
+  )
+  expect(disposition.status).toBe("recorded")
+  const immutableBefore = repository.atomic((db) => ({
+    body: db.query<{ body: string }, [string]>("SELECT body FROM tasks WHERE id=?").get(task.id)!
+      .body,
+    fingerprint: db
+      .query<{ fingerprint: string }, [string, string]>(
+        "SELECT fingerprint FROM submission_requests WHERE project_directory=? AND request_id=?",
+      )
+      .get("/repo", "test-submission")!.fingerprint,
+  }))
+  const before = {
+    ...immutableBefore,
+    execution: runner.execution(task.id),
+    disposition: repository.taskDisposition(task.id),
+  }
+  let notifications = 0
+  const unsubscribe = repository.subscribe(() => notifications++)
+  const request = {
+    taskID: task.id,
+    requestID: "classification-correction-1",
+    expectedRevision: 1,
+    classification: { taxonomy: "task-kind/v1", primaryKind: "refactoring" },
+    reason: "Review confirms behavior-preserving restructuring is the deliverable.",
+  }
+  const first = repository.recordTaskClassification(request, {
+    sessionID: "trusted-session",
+    agent: "architect",
+  })
+  expect(first.status).toBe("recorded")
+  if (first.status !== "recorded") throw new Error("Expected recorded classification")
+  expect(first.annotation).toMatchObject({
+    revision: 2,
+    sessionID: "trusted-session",
+    agent: "architect",
+  })
+  expect(notifications).toBe(1)
+  const version = repository.version()
+  expect(
+    repository.recordTaskClassification(request, { sessionID: "other", agent: "architect" }),
+  ).toMatchObject({
+    status: "replayed",
+    annotation: first.annotation,
+  })
+  expect(notifications).toBe(1)
+  expect(repository.version()).toBe(version)
+  expect(
+    repository.recordTaskClassification(
+      { ...request, reason: "Different request content." },
+      { sessionID: "trusted-session", agent: "architect" },
+    ),
+  ).toMatchObject({
+    status: "conflict",
+    message: "requestID already identifies different classification content",
+  })
+  expect(
+    repository.recordTaskClassification(
+      {
+        ...request,
+        requestID: "stale-classification",
+        classification: { taxonomy: "task-kind/v1", primaryKind: "maintenance" },
+      },
+      { sessionID: "trusted-session", agent: "architect" },
+    ),
+  ).toMatchObject({ status: "conflict", expectedRevision: 1, currentRevision: 2 })
+  expect(notifications).toBe(1)
+  expect(repository.version()).toBe(version)
+
+  const immutableAfter = repository.atomic((db) => ({
+    body: db.query<{ body: string }, [string]>("SELECT body FROM tasks WHERE id=?").get(task.id)!
+      .body,
+    fingerprint: db
+      .query<{ fingerprint: string }, [string, string]>(
+        "SELECT fingerprint FROM submission_requests WHERE project_directory=? AND request_id=?",
+      )
+      .get("/repo", "test-submission")!.fingerprint,
+  }))
+  const after = {
+    ...immutableAfter,
+    execution: runner.execution(task.id),
+    disposition: repository.taskDisposition(task.id),
+  }
+  expect(after).toEqual(before)
+  expect(repository.get(task.id)).toEqual(task)
+  expect(repository.taskClassification(task.id)?.current).toMatchObject({
+    revision: 2,
+    classification: request.classification,
+  })
+  unsubscribe()
+
+  expect(() =>
+    repository.atomic((db) =>
+      db
+        .query("UPDATE task_classifications SET reason='mutated' WHERE request_id=?")
+        .run(request.requestID),
+    ),
+  ).toThrow("append-only")
+  expect(() =>
+    repository.atomic((db) =>
+      db.query("DELETE FROM task_classifications WHERE request_id=?").run(request.requestID),
+    ),
+  ).toThrow("append-only")
+})
+
 test("repository pages filter execution state before counting while legacy history includes all states", () => {
   const repository = open(join(directory(), "tasks.sqlite"))
   const completed = submitTask(repository, keyedProposal(), provenance)

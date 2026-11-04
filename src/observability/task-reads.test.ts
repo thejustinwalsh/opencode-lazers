@@ -229,6 +229,26 @@ test("state filters paginate exact effective task states in project and associat
   expect(projectAll.tasks.map((task) => task.taskID)).toContain(unplannedB.id)
   expect(projectAll.tasks.map((task) => task.taskID)).not.toContain(retired.id)
 
+  const associatedTask = associationReads
+    .query({ sessionID: "session-a", state: "all" })
+    .tasks.find((task) => task.taskID === unplannedA.id)
+  expect(associatedTask?.classification).toMatchObject({
+    revision: 1,
+    classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+    provenance: { kind: "embedded", sessionID: "session-a" },
+  })
+  expect(
+    associationReads.get({
+      taskID: unplannedA.id,
+      sessionID: "session-a",
+      classificationRevision: 1,
+    }),
+  ).toMatchObject({
+    status: "found",
+    classification: { revision: 1 },
+    classificationAtRevision: { revision: 1 },
+  })
+
   const legacyHistory = associationReads.query({ sessionID: "session-a", includeCompleted: true })
   expect(new Set(legacyHistory.tasks.map((task) => task.taskID))).toEqual(
     new Set(sessionAll.tasks.map((task) => task.taskID)),

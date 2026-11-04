@@ -66,6 +66,15 @@ function summaries(ids: string[]): TaskSummary[] {
     revision: 1,
     status: "ready",
     reason: null,
+    classification: {
+      revision: 1,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
+      provenance: {
+        kind: "embedded",
+        sessionID: "session",
+        createdAt: "2026-10-31T00:00:00.000Z",
+      },
+    },
     title: `Task ${ordinal}`,
     objective: `Task ${ordinal}`,
     createdAt: "2026-10-31T00:00:00.000Z",

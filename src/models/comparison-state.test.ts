@@ -71,6 +71,11 @@ const candidate = (modelID: string) => ({
 })
 
 const sources = ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const
+const legacyClassification = {
+  revision: 0,
+  classification: null,
+  provenance: { kind: "legacy" },
+} as const
 
 function comparison(
   models: string[],
@@ -127,6 +132,7 @@ function tasks(taskIDs: string[], projectDirectory = "/repo"): TaskPage {
       revision: 1,
       status: "accepted",
       reason: null,
+      classification: legacyClassification,
       title: `Task ${index + 1}`,
       objective: `Objective ${index + 1}`,
       createdAt: "2026-11-03T00:00:00.000Z",
@@ -238,7 +244,13 @@ function detail(
       verification: [],
     },
   })
-  return GetOutput.parse({ status: "found", task, reference: "LZ-1" })
+  return GetOutput.parse({
+    status: "found",
+    task,
+    reference: "LZ-1",
+    classification: legacyClassification,
+    classificationHistory: [legacyClassification],
+  })
 }
 
 function effortBasis(inputTokens: number) {

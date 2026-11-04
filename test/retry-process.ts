@@ -78,6 +78,7 @@ export type RetryProcessOptions = {
   workspace: string
   session: string
   input: unknown
+  action?: "submit" | "classify"
   discard?: boolean
   inspect?: boolean
   gate?: boolean
@@ -96,7 +97,10 @@ if (import.meta.main) {
       })
       process.disconnect!()
     }
-    const receipt = await call("lz-submit-task", options.input)
+    const receipt = await call(
+      options.action === "classify" ? "lz-classify-task" : "lz-submit-task",
+      options.input,
+    )
     if (!options.discard) {
       console.log(
         JSON.stringify(
