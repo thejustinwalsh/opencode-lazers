@@ -28,3 +28,11 @@ Do not claim a battery fix from one shared timer, a passing build or these windo
 Normalized records calculated from the retained CPU-second counters:
 `/private/tmp/lazers-panel-cpu-windows-normalized-20261104.jsonl`.
 Read costs and source candidates: [Astra review](astra-radar-perf-20261104.md).
+
+Before activation, Unix 1793822281376–1793822293417 (12,040ms): service
+46.26% / renderer21.51% / GPU-process28.32%. Native active inventory before
+and after this window contained only Architect; the original LZ127 worker had
+finished. Radar remained visible and local inference showed a lease-ownership
+error, with six switches enabled and timeout Never. No profiler, reload or setting
+change. This is another workload-labelled baseline, not an idle/causal comparison
+or an activated-candidate measurement. Raw counters are in the same JSONL above.
