@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs"
 export default defineConfig({
   plugins: [gui()],
   define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
     __LAZERS_RADAR_WORKER_SOURCE__: JSON.stringify(
       readFileSync(new URL("./dist/radar-layout-worker.cjs", import.meta.url), "utf8"),
     ),

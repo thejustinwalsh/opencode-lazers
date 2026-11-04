@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "verify": "bun fmt && bun lint && bun check",
-    "build:gui": "bun scripts/prepare-engine.ts && bun scripts/build-radar-layout.ts && vite build"
+    "build:gui": "bun scripts/prepare-engine.ts && bun scripts/build-radar-layout.ts && vite build && bun scripts/verify-gui-bundle.ts"
   },
   "peerDependencies": {
     "@opencode/plugin": "2.2.5",
