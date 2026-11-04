@@ -23,6 +23,7 @@ import { taskClassificationFor } from "./tasks/classification.ts"
 import { effectiveTaskStateFilter, taskStatePredicate } from "./tasks/state-filter.ts"
 import type { TaskQueryState } from "./tasks/state-filter.ts"
 import { canonical, fingerprint } from "./identity.ts"
+import { databaseChanges } from "./database-events.ts"
 import {
   dispositionPayload,
   TaskDispositionInput,
@@ -199,6 +200,7 @@ export class TaskRepository {
             PRAGMA user_version=6;
           `)
       }).immediate()
+      databaseChanges.track(db, this.path)
       return db
     } catch (error) {
       db.close()

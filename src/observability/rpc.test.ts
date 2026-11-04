@@ -3,7 +3,68 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
 import { ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
-import { makeFixture, taskID } from "../../test/trajectory/fixture.ts"
+import { makeFixture, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
+
+test("durable runner writes publish changes through subscription without idle source scans", async () => {
+  const fixture = makeFixture()
+  const changes: Array<{ cause: string }> = []
+  const reads = new ObservationReads(
+    fixture.store,
+    { session: async (id) => fixture.host.session(id) },
+    "project",
+    new Uint8Array(32).fill(12),
+  )
+  const ctx = {
+    rpc: {
+      register: () =>
+        Effect.succeed({
+          dispose: Effect.void,
+          events: {
+            emit: (_name: string, change: { cause: string }) =>
+              Effect.sync(() => {
+                changes.push(change)
+              }),
+          },
+        }),
+    },
+    event: { subscribe: () => Stream.never },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerObservability(ctx, reads, "project")
+          yield* Effect.sleep(20)
+          expect(changes).toEqual([])
+          expect(() =>
+            fixture.store.atomic((db) => {
+              db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(
+                firstAttemptID,
+              )
+              throw new Error("rollback")
+            }),
+          ).toThrow("rollback")
+          yield* Effect.sleep(20)
+          expect(changes).toEqual([])
+          fixture.store.atomic((db) =>
+            db
+              .query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?")
+              .run(firstAttemptID),
+          )
+          yield* Effect.promise(async () => {
+            for (let i = 0; i < 100 && !changes.some((c) => c.cause === "runner"); i++)
+              await Bun.sleep(5)
+          })
+          expect(changes.filter((c) => c.cause === "runner")).toHaveLength(1)
+          yield* Effect.sleep(1_050)
+          expect(changes).toHaveLength(1)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
 
 test("history cache hits remain permission-first and continuation data stays scoped", async () => {
   const fixture = makeFixture()

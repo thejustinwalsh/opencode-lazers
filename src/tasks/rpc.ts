@@ -5,6 +5,7 @@ import { Effect } from "effect"
 import type { TaskReads } from "./read.ts"
 import { Tasks } from "./contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
+import { databaseChanges } from "../database-events.ts"
 
 export function registerTaskReads(
   ctx: Pick<Plugin.Context, "rpc" | "permission">,
@@ -39,8 +40,14 @@ export function registerTaskReads(
         let published = reads.repository.version()
         let publishing = false
         let closed = false
+        let pending = false
+        let retry: ReturnType<typeof setTimeout> | undefined
         const publish = () => {
-          if (closed || publishing) return
+          if (closed) return
+          if (publishing) {
+            pending = true
+            return
+          }
           const version = reads.repository.version()
           if (version === published) return
           publishing = true
@@ -54,20 +61,28 @@ export function registerTaskReads(
               () => {
                 published = version
               },
-              () => {},
+              () => {
+                if (closed || retry) return
+                retry = setTimeout(() => {
+                  retry = undefined
+                  publish()
+                }, 1_000)
+                retry.unref()
+              },
             )
             .finally(() => {
               publishing = false
+              if (pending) {
+                pending = false
+                publish()
+              }
             })
         }
-        const unsubscribe = reads.repository.subscribe(publish)
-        // Each location owns a SQLite connection. A durable watermark catches other
-        // instances/processes and repairs missed best-effort notifications.
-        const timer = setInterval(publish, 1_000)
+        const unwatch = databaseChanges.subscribe(reads.repository.path, publish, () => {})
         return () => {
           closed = true
-          clearInterval(timer)
-          unsubscribe()
+          if (retry) clearTimeout(retry)
+          unwatch()
         }
       }),
       (close) => Effect.sync(close),

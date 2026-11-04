@@ -7,6 +7,7 @@ import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { Observability } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
+import { databaseChanges } from "../database-events.ts"
 
 type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
 
@@ -180,7 +181,7 @@ export function registerObservability(
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         let closed = false
-        const poll = () => {
+        const refresh = () => {
           if (closed) return
           try {
             tracker.refreshSource()
@@ -188,11 +189,11 @@ export function registerObservability(
             tracker.streamGap()
           }
         }
-        const unsubscribe = reads.store.repository.subscribe(poll)
-        const timer = setInterval(poll, 1_000)
+        const unsubscribe = databaseChanges.subscribe(reads.store.repository.path, refresh, () =>
+          tracker.streamGap(),
+        )
         return () => {
           closed = true
-          clearInterval(timer)
           unsubscribe()
         }
       }),
