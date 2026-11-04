@@ -19,6 +19,8 @@ import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
+import { NativeIdleStore } from "./native-idle.ts"
+import type { NativeIdleTerminal } from "./native-idle.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -30,6 +32,7 @@ export type NativeInboxClient = {
     "active" | "get" | "synthetic" | "inbox" | "update"
   >
   message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
+  shell: Pick<ReturnType<typeof OpenCode.make>["shell"], "list">
 }
 export type NativeInboxDependencies = {
   discover: typeof Service.discover
@@ -43,218 +46,42 @@ const nativeInboxDependencies: NativeInboxDependencies = {
   processID: () => process.pid,
 }
 
-type NativeIdleBackgroundWork = { kind: "shell" | "subagent" | "image" }
-type NativeIdleBackgroundLineage = {
-  inputID: string
-  executionStartSequence: number
-  eventSequence: number
-}
-type NativeIdleRegistry = {
-  observations: Map<string, HostBackgroundObservation>
-  owners: Map<string, symbol>
-  events: Map<string, { sequence?: number; observers: Set<symbol> }>
-  executions?: Map<string, { executionStartSequence: number; lastSequence: number }>
+function unknownNativeIdle(reason: string): HostBackgroundObservation {
+  return { state: "unknown", source: "experimental.idle", reason }
 }
 
-// OpenCode reevaluates local modules per location; these observations belong to the host process.
-const nativeIdleRegistryKey = Symbol.for("opencode-lazers.native-idle.v1")
-const idleHost = globalThis as typeof globalThis & {
-  [nativeIdleRegistryKey]?: NativeIdleRegistry
-}
-const idleRegistry: NativeIdleRegistry = (idleHost[nativeIdleRegistryKey] ??= {
-  observations: new Map(),
-  owners: new Map(),
-  events: new Map(),
-})
-const idleBackground = idleRegistry.observations
-const idleBackgroundOwners = idleRegistry.owners
-const idleEventStates = idleRegistry.events
-const executionCursors = (idleRegistry.executions ??= new Map())
-
-const executionKey = (projectDirectory: string, sessionID: string) =>
-  `${projectDirectory}\0${sessionID}`
-
-/** An observed busy period survives local module replacement, unlike its idle report. */
-export function rememberNativeExecution(
-  projectDirectory: string,
-  sessionID: string,
-  type: string,
-  sequence: number,
+function hasLatestSuccessfulIdleMarker(
+  messages: readonly SessionMessage.Info[],
+  inputID: string | undefined,
+  terminal: NativeIdleTerminal,
 ) {
-  const key = executionKey(projectDirectory, sessionID)
-  const current = executionCursors.get(key)
-  if (current && sequence < current.lastSequence) return
-  if (type === "session.execution.started") {
-    executionCursors.set(key, { executionStartSequence: sequence, lastSequence: sequence })
-  } else if (type.startsWith("session.execution.")) {
-    executionCursors.delete(key)
-  } else if (current) {
-    current.lastSequence = sequence
+  let expectedID: string
+  try {
+    expectedID = SessionMessage.ID.fromEvent(terminal.eventID)
+  } catch {
+    return false
   }
-}
-
-export function nativeExecutionCursor(projectDirectory: string, sessionID: string) {
-  const cursor = executionCursors.get(executionKey(projectDirectory, sessionID))
-  return cursor ? { ...cursor } : undefined
-}
-
-export function nativeExecutionCursors(projectDirectory: string) {
-  const prefix = `${projectDirectory}\0`
-  return new Map(
-    [...executionCursors].flatMap(([key, cursor]) =>
-      key.startsWith(prefix) ? [[key.slice(prefix.length), { ...cursor }] as const] : [],
-    ),
-  )
-}
-
-/** A real event-stream gap cannot supply continuity to a replacement listener. */
-export function forgetNativeExecution(
-  projectDirectory: string,
-  sessionID: string,
-  through?: number,
-) {
-  const key = executionKey(projectDirectory, sessionID)
-  const cursor = executionCursors.get(key)
-  if (cursor && (through === undefined || cursor.lastSequence <= through))
-    executionCursors.delete(key)
-}
-
-function idleEventState(sessionID: string, observer: symbol) {
-  let state = idleEventStates.get(sessionID)
-  if (!state) {
-    state = { observers: new Set() }
-    idleEventStates.set(sessionID, state)
-  }
-  state.observers.add(observer)
-  return state
-}
-
-export function advanceNativeIdleSequence(
-  sessionID: string,
-  sequence: number,
-  observer: symbol,
-): "newer" | "seen" | "stale" {
-  const state = idleEventState(sessionID, observer)
-  if (state.sequence !== undefined && sequence < state.sequence) return "stale"
-  if (sequence === state.sequence) return "seen"
-  state.sequence = sequence
-  return "newer"
-}
-
-/** An asynchronous read may update only the observation it started from. */
-export function nativeIdleObservationFence(sessionID: string, observer?: symbol): () => boolean {
-  const observation = idleBackground.get(sessionID)
-  const owner = idleBackgroundOwners.get(sessionID)
-  const sequence = idleEventStates.get(sessionID)?.sequence
-  return () =>
-    idleEventStates.get(sessionID)?.sequence === sequence &&
-    idleBackground.get(sessionID) === observation &&
-    idleBackgroundOwners.get(sessionID) === owner &&
-    (observer === undefined || observer === owner)
-}
-
-/** Stores only the public experimental idle-hook report, not a complete resource inventory. */
-export function observeNativeIdleBackground(
-  sessionID: string,
-  background: readonly NativeIdleBackgroundWork[],
-  lineage: NativeIdleBackgroundLineage,
-  observedAt = Date.now(),
-  observer?: symbol,
-) {
-  if (observer) {
-    const state = idleEventState(sessionID, observer)
-    if (state.sequence !== undefined && lineage.eventSequence < state.sequence) return false
-    state.sequence = lineage.eventSequence
-    idleBackgroundOwners.set(sessionID, observer)
-  } else idleBackgroundOwners.delete(sessionID)
-  const kinds = { shell: 0, subagent: 0, image: 0 }
-  for (const work of background) kinds[work.kind]++
-  idleBackground.set(sessionID, {
-    state: "observed",
-    source: "experimental.idle",
-    observedAt,
-    ...lineage,
-    count: background.length,
-    kinds,
-  })
-  return true
-}
-
-export function markNativeIdleBackgroundUnknown(
-  sessionID: string,
-  reason: string,
-  observer?: symbol,
-  replaceOwner = false,
-) {
-  const owner = idleBackgroundOwners.get(sessionID)
-  if (observer && owner && owner !== observer && !replaceOwner) return false
-  if (observer) {
-    idleEventState(sessionID, observer)
-    idleBackgroundOwners.set(sessionID, observer)
-  } else idleBackgroundOwners.delete(sessionID)
-  idleBackground.set(sessionID, {
-    state: "unknown",
-    source: "experimental.idle",
-    reason,
-    observedAt: Date.now(),
-  })
-  return true
-}
-
-export function confirmNativeIdleBackgroundSuccess(
-  sessionID: string,
-  lineage: NativeIdleBackgroundLineage,
-  terminalSequence: number,
-  observer?: symbol,
-) {
-  const current = idleBackground.get(sessionID)
+  if (expectedID !== terminal.messageID) return false
+  const latestIdleIndex = messages.findLastIndex((message) => message.type === "idle")
+  if (latestIdleIndex < 0) return false
+  const marker = messages[latestIdleIndex]
   if (
-    (observer !== undefined && idleBackgroundOwners.get(sessionID) !== observer) ||
-    current?.state !== "observed" ||
-    current.inputID !== lineage.inputID ||
-    current.executionStartSequence !== lineage.executionStartSequence ||
-    current.eventSequence !== lineage.eventSequence ||
-    terminalSequence <= current.eventSequence
+    marker?.type !== "idle" ||
+    marker.outcome !== "succeeded" ||
+    !DateTime.isDateTime(marker.time.created) ||
+    !Number.isFinite(DateTime.toEpochMillis(marker.time.created))
   )
     return false
-  idleBackground.set(sessionID, { ...current, terminalSequence })
-  return true
-}
-
-export function noteStaleNativeIdleBackgroundEvent(
-  sessionID: string,
-  sequence: number,
-  observer?: symbol,
-) {
-  if (observer !== undefined && idleBackgroundOwners.get(sessionID) !== observer) return
-  const current = idleBackground.get(sessionID)
-  if (current?.state !== "observed") return
-  idleBackground.set(sessionID, { ...current, staleEventSequence: sequence })
-}
-
-export function invalidateNativeIdleObserver(observer: symbol, reason: string) {
-  for (const [sessionID, owner] of idleBackgroundOwners) {
-    if (owner !== observer) continue
-    markNativeIdleBackgroundUnknown(sessionID, reason, observer)
-    idleBackgroundOwners.delete(sessionID)
-  }
-}
-
-export function releaseNativeIdleObserver(observer: symbol) {
-  invalidateNativeIdleObserver(observer, "Native idle hook listener was disposed")
-  for (const [sessionID, state] of idleEventStates) {
-    state.observers.delete(observer)
-    if (state.observers.size === 0) idleEventStates.delete(sessionID)
-  }
-}
-
-function nativeIdleBackgroundObservation(sessionID: string): HostBackgroundObservation {
+  const currentInputIndex = inputID
+    ? messages.findLastIndex(
+        (message) =>
+          message.id === inputID && (message.type === "user" || message.type === "synthetic"),
+      )
+    : -1
   return (
-    idleBackground.get(sessionID) ?? {
-      state: "unknown",
-      source: "experimental.idle",
-      reason: "No experimental.idle background report was observed in this host process",
-    }
+    currentInputIndex >= 0 &&
+    currentInputIndex < latestIdleIndex &&
+    !messages.slice(latestIdleIndex + 1).some((message) => message.type === "assistant")
   )
 }
 
@@ -280,20 +107,28 @@ type NativeWorkerObservation = {
   permissionRequests: string
   pendingForms: number
   forms: string
+  shells: string
+  runningShells: number
 }
 
 async function workerObservation(
   client: NativeInboxClient,
   sessionID: string,
   directory?: string,
+  requireLocationShells = true,
 ): Promise<NativeWorkerObservation> {
-  const [active, inbox, permissions, forms] = await Promise.all([
+  if (directory && requireLocationShells && typeof client.shell?.list !== "function")
+    throw new Error("Native worker location shell inventory is unavailable")
+  const [active, inbox, permissions, forms, shells] = await Promise.all([
     client.session.active(),
     client.session.inbox.list({ sessionID }),
     directory
       ? client.permission.request.list({ location: { directory } })
       : Promise.resolve(undefined),
     directory ? client.form.list({ location: { directory } }) : Promise.resolve(undefined),
+    directory && typeof client.shell?.list === "function"
+      ? client.shell.list({ location: { directory } })
+      : Promise.resolve(undefined),
   ])
   if (
     !active ||
@@ -301,7 +136,8 @@ async function workerObservation(
     Array.isArray(active) ||
     !Array.isArray(inbox) ||
     (permissions !== undefined && !Array.isArray(permissions.data)) ||
-    (forms !== undefined && !Array.isArray(forms.data))
+    (forms !== undefined && !Array.isArray(forms.data)) ||
+    (shells !== undefined && !Array.isArray(shells.data))
   )
     throw new Error("Native worker execution inventory is unavailable")
   if (
@@ -309,7 +145,8 @@ async function workerObservation(
     (!permissions ||
       !forms ||
       permissions.location.directory !== directory ||
-      forms.location.directory !== directory)
+      forms.location.directory !== directory ||
+      (requireLocationShells && (!shells || shells.location.directory !== directory)))
   )
     throw new Error("Native worker approval inventory did not match its assigned location")
   const permissionIDs = (permissions?.data ?? [])
@@ -320,6 +157,17 @@ async function workerObservation(
     .filter((entry) => entry.sessionID === sessionID)
     .map((entry) => entry.id)
     .sort()
+  const shellEntries = (shells?.data ?? []).map((entry) => {
+    if (
+      typeof entry.id !== "string" ||
+      typeof entry.status !== "string" ||
+      typeof entry.cwd !== "string" ||
+      typeof entry.time?.started !== "number"
+    )
+      throw new Error("Native worker shell inventory is unavailable")
+    return `${entry.id}:${entry.status}:${entry.cwd}:${entry.time.started}:${entry.time.completed ?? ""}`
+  })
+  const runningShells = (shells?.data ?? []).filter((entry) => entry.status === "running").length
   return {
     active: Object.prototype.hasOwnProperty.call(active, sessionID),
     pendingInput: inbox.length > 0,
@@ -331,6 +179,8 @@ async function workerObservation(
     permissionRequests: permissionIDs.join("\n"),
     pendingForms: formIDs.length,
     forms: formIDs.join("\n"),
+    shells: shellEntries.sort().join("\n"),
+    runningShells,
   }
 }
 
@@ -396,6 +246,10 @@ export function nativeHost(
   repository: TaskRepository,
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost & { retainedInputID(sessionID: string): Promise<string | undefined> } {
+  const idleStore =
+    typeof (repository as TaskRepository | undefined)?.atomic === "function"
+      ? new NativeIdleStore(repository)
+      : undefined
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
   const invalidate = (client: NativeInboxClient) => {
@@ -428,7 +282,7 @@ export function nativeHost(
     }
   }
   const observeWorker = (client: NativeInboxClient, sessionID: string, directory?: string) =>
-    runNative(client, () => workerObservation(client, sessionID, directory))
+    runNative(client, () => workerObservation(client, sessionID, directory, Boolean(idleStore)))
   const retainedInputID = async (sessionID: string) => {
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
@@ -470,6 +324,8 @@ export function nativeHost(
     },
     async session(id, options) {
       const client = await connectedClient()
+      const detailed = options?.messages === true
+      if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       const readSession = () =>
         runNative(client, () =>
           Effect.runPromise(
@@ -490,31 +346,62 @@ export function nativeHost(
       const session = await readSession()
       if (!session) {
         const before = await observeWorker(client, id)
+        if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
         if (before.active || before.pendingInput)
           throw new Error("Native worker session is absent while execution or input is observed")
         return null
       }
-      const backgroundBefore = nativeIdleBackgroundObservation(id)
+
+      const binding = idleStore?.assignmentForSession(id)
+      const idleBefore = binding ? idleStore?.read(binding) : undefined
+      const backgroundBefore =
+        binding && idleStore
+          ? idleStore.background(binding, idleBefore)
+          : unknownNativeIdle("Durable native idle observation is unavailable")
       const before = await observeWorker(client, id, session.location.directory)
-      const messages = options?.messages
-        ? await runNative(client, () =>
-            Effect.runPromise(ctx.session.context({ sessionID: session.id })),
-          )
-        : []
-      const currentInputID = options?.messages
+      const readMessages = () =>
+        runNative(client, () =>
+          Effect.runPromise(ctx.session.context({ sessionID: Session.ID.make(id) })),
+        )
+      const messagesBefore = detailed ? await readMessages() : []
+      const inputBefore = detailed
+        ? await resolveNativeInputID(messagesBefore, () => retainedInputID(id))
+        : undefined
+      const middle = detailed ? await readSession() : session
+      if (!middle) {
+        const after = await observeWorker(client, id, session.location.directory)
+        if (before.active || after.active || before.pendingInput || after.pendingInput)
+          throw new Error("Native worker session disappeared during execution observation")
+        return null
+      }
+      const after = detailed ? await observeWorker(client, id, middle.location.directory) : before
+      const messages = detailed ? await readMessages() : []
+      const currentInputID = detailed
         ? await resolveNativeInputID(messages, () => retainedInputID(id))
         : undefined
-      const latest = options?.messages ? await readSession() : session
-      const after = options?.messages
-        ? await observeWorker(client, id, latest?.location.directory ?? session.location.directory)
-        : before
-      const backgroundAfter = nativeIdleBackgroundObservation(id)
+      const latest = detailed ? await readSession() : session
+      if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      const idleAfter = binding ? idleStore?.read(binding) : undefined
+      const backgroundAfter =
+        binding && idleStore
+          ? idleStore.background(binding, idleAfter)
+          : unknownNativeIdle("Durable native idle observation is unavailable")
       if (!latest) {
         if (before.active || after.active || before.pendingInput || after.pendingInput)
           throw new Error("Native worker session disappeared during execution observation")
         return null
       }
 
+      const sessionIdentity = (value: NonNullable<typeof session>) =>
+        JSON.stringify({
+          id: value.id,
+          parentID: value.parentID,
+          projectID: value.projectID,
+          agent: value.agent,
+          attemptID: value.metadata?.lazersAttemptID,
+          directory: value.location.directory,
+          archived: value.time.archived !== undefined,
+        })
       const sessionExecutionState = (value: NonNullable<typeof session>) =>
         JSON.stringify({
           busy: value.time.busy ? DateTime.toEpochMillis(value.time.busy) : 0,
@@ -525,24 +412,31 @@ export function nativeHost(
       const beforeState = sessionExecutionState(session)
       const afterState = sessionExecutionState(latest)
       const observationUnstable =
-        options?.messages === true &&
+        detailed &&
         (before.active !== after.active ||
           before.inbox !== after.inbox ||
           before.permissionRequests !== after.permissionRequests ||
           before.forms !== after.forms ||
+          before.shells !== after.shells ||
           JSON.stringify(backgroundBefore) !== JSON.stringify(backgroundAfter) ||
-          session.location.directory !== latest.location.directory ||
-          beforeState !== afterState)
+          idleBefore?.revision !== idleAfter?.revision ||
+          sessionIdentity(session) !== sessionIdentity(middle) ||
+          sessionIdentity(middle) !== sessionIdentity(latest) ||
+          beforeState !== sessionExecutionState(middle) ||
+          sessionExecutionState(middle) !== afterState)
       const active = before.active || after.active
       const pendingInput = before.pendingInput || after.pendingInput
       const pendingPermissions = Math.max(before.pendingPermissions, after.pendingPermissions)
       const pendingForms = Math.max(before.pendingForms, after.pendingForms)
       const busyAt = latest.time.busy ? DateTime.toEpochMillis(latest.time.busy) : 0
       const idleAt = latest.time.idle ? DateTime.toEpochMillis(latest.time.idle) : 0
-      const lastInputIndex = options?.messages
+      const lastInputIndex = detailed
         ? messages.reduce(
             (index, message, current) =>
-              message.type === "user" || message.type === "synthetic" ? current : index,
+              message.id === currentInputID &&
+              (message.type === "user" || message.type === "synthetic")
+                ? current
+                : index,
             -1,
           )
         : -1
@@ -581,6 +475,55 @@ export function nativeHost(
                     : "completed") as "pending" | "completed" | "interrupted" | "unknown",
           }
         : undefined
+      let freshBackground = backgroundAfter
+      const matchesAssignedSession =
+        binding !== undefined &&
+        binding.projectDirectory === repository.projectDirectory &&
+        binding.projectID === ctx.location.project.id &&
+        binding.sessionID === latest.id &&
+        binding.workspace === latest.location.directory &&
+        binding.attemptID === latest.metadata?.lazersAttemptID &&
+        latest.projectID === binding.projectID &&
+        latest.agent === "lazers-implementor"
+      if (detailed && binding && idleStore && backgroundAfter.state === "observed") {
+        const report = idleAfter?.report
+        const terminal = idleAfter?.terminal
+        const terminalMessageExact =
+          report !== null &&
+          report !== undefined &&
+          report.count === 0 &&
+          terminal !== null &&
+          terminal !== undefined &&
+          hasLatestSuccessfulIdleMarker(messages, currentInputID, terminal) &&
+          terminal.sequence > report.eventSequence
+        const assignmentOrInputChanged =
+          !matchesAssignedSession ||
+          observationUnstable ||
+          inputBefore !== currentInputID ||
+          currentInputID === undefined ||
+          currentInputID !== report?.inputID ||
+          active ||
+          pendingInput ||
+          pendingInteraction
+        if (assignmentOrInputChanged)
+          freshBackground = unknownNativeIdle(
+            "Native idle evidence did not match fresh stable assignment, current input, and location observations",
+          )
+        else if (
+          backgroundAfter.count === 0 &&
+          (!terminalMessageExact || latest.outcome !== "succeeded")
+        )
+          freshBackground = unknownNativeIdle(
+            "Native zero-background idle evidence lacked the exact current successful idle marker",
+          )
+        else if (
+          backgroundAfter.count === 0 &&
+          (before.runningShells > 0 || after.runningShells > 0)
+        )
+          freshBackground = unknownNativeIdle("Native assigned location has a running shell")
+      } else if (detailed && backgroundAfter.state === "observed") {
+        freshBackground = unknownNativeIdle("Native idle assignment could not be revalidated")
+      }
       const outcome =
         active || pendingInput || pendingInteraction || observationUnstable
           ? undefined
@@ -601,7 +544,7 @@ export function nativeHost(
         ...(pendingForms ? { pendingForms } : {}),
         ...(observationUnstable ? { observationUnstable: true } : {}),
         ...(turn ? { turn } : {}),
-        background: backgroundAfter,
+        background: freshBackground,
         ...(idleAt ? { idleAt } : {}),
         outcome,
         model: latest.model,

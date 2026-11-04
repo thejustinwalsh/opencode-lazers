@@ -5,9 +5,10 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { Effect, Fiber, Queue, Stream } from "effect"
+import { DateTime, Effect, Fiber, Queue, Stream } from "effect"
 import { firstAttemptID, makeFixture, secondAttemptID } from "../../test/trajectory/fixture.ts"
-import { nativeLivenessFixture } from "../../test/runner-native-liveness/fixture.ts"
+import { nativeLivenessFixture as makeNativeLivenessFixture } from "../../test/runner-native-liveness/fixture.ts"
+import { NativeIdleStore } from "../runner/native-idle.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { ProgressRecorder } from "./recorder.ts"
@@ -15,6 +16,12 @@ import { progressReconstructionDiagnostics } from "./reconstruction.ts"
 import { registerProgress } from "./native.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
+
+function testObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
 
 function callContext(sessionID: string, callID: string): Parameters<RegisteredTool["execute"]>[1] {
   return {
@@ -55,6 +62,38 @@ function makeContext(
   const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
   const streamFailure = Symbol("fixture-stream-failure")
   const syntheticInputs: unknown[] = []
+  const sessionAssignments = new Map<
+    string,
+    {
+      projectID: string
+      attemptID: string
+      sessionID: string
+      assignedMessageID: string
+      workspace: string
+    }
+  >([
+    [
+      "ses-failed",
+      {
+        projectID: "project",
+        attemptID: firstAttemptID,
+        sessionID: "ses-failed",
+        assignedMessageID: "msg-first",
+        workspace: fixture.directory,
+      },
+    ],
+    [
+      "ses-accepted",
+      {
+        projectID: "project",
+        attemptID: secondAttemptID,
+        sessionID: "ses-accepted",
+        assignedMessageID: "msg-second",
+        workspace: fixture.directory,
+      },
+    ],
+  ] as const)
+  const messages: unknown[] = options.messages ?? [{ id: "msg-second", type: "user" }]
   const context = {
     permission: {
       assert: () => (options.denied ? Effect.fail(new Error("permission denied")) : Effect.void),
@@ -75,16 +114,24 @@ function makeContext(
         if (name === "experimental.idle") idleHook = callback
         return Effect.succeed({ dispose: Effect.void })
       },
-      get: ({ sessionID }: { sessionID: string }) =>
-        options.readSession?.(sessionID) ??
-        Effect.succeed({
-          id: sessionID,
-          projectID: "project",
-          agent: "lazers-implementor",
-          location: { directory: fixture.directory },
-        }),
+      get: ({ sessionID }: { sessionID: string }) => {
+        const sessionAssignment = sessionAssignments.get(sessionID)
+        return (
+          options.readSession?.(sessionID) ??
+          Effect.succeed({
+            id: sessionID,
+            projectID: "project",
+            agent: "lazers-implementor",
+            location: { directory: fixture.directory },
+            ...(sessionAssignment
+              ? { metadata: { lazersAttemptID: sessionAssignment.attemptID } }
+              : {}),
+            outcome: "succeeded",
+          })
+        )
+      },
       context: ({ sessionID }: { sessionID: string }) =>
-        options.readContext?.(sessionID) ?? Effect.succeed(options.messages ?? []),
+        options.readContext?.(sessionID) ?? Effect.succeed(messages),
       synthetic: (input: unknown) => {
         syntheticCalls++
         syntheticInputs.push(input)
@@ -115,19 +162,108 @@ function makeContext(
     idle: () => idleHook,
     syntheticCalls: () => syntheticCalls,
     syntheticInputs: () => syntheticInputs,
-    emitEvent: (event: unknown) => Effect.runPromise(Queue.offer(eventQueue, event)),
+    emitEvent: (event: unknown) => {
+      const value = testObject(event)
+      if (value?.type === "session.execution.succeeded" && typeof value.id === "string") {
+        try {
+          const idleID = SessionMessage.ID.fromEvent(value.id)
+          const now = DateTime.nowUnsafe()
+          const responseID = `msg_response_${value.id.slice("evt_".length)}`
+          if (!messages.some((message) => testObject(message)?.id === responseID))
+            messages.push({
+              id: responseID,
+              type: "assistant",
+              time: { created: now, completed: now },
+              finish: "stop",
+              content: [],
+            })
+          if (!messages.some((message) => testObject(message)?.id === idleID))
+            messages.push({
+              id: idleID,
+              type: "idle",
+              outcome: "succeeded",
+              time: { created: now },
+            })
+        } catch {
+          // Invalid native event IDs are intentionally not repaired by the fixture.
+        }
+      }
+      return Effect.runPromise(Queue.offer(eventQueue, event))
+    },
     failEvents: () => Effect.runPromise(Queue.offer(eventQueue, streamFailure)),
   }
 }
 
+function nativeLivenessFixture(
+  fixture: ReturnType<typeof makeFixture>,
+  options: Parameters<typeof makeNativeLivenessFixture>[0] = {},
+) {
+  const native = makeNativeLivenessFixture(options)
+  const originalSession = native.host.session.bind(native.host)
+  const host = {
+    ...native.host,
+    session: async (sessionID: string, sessionOptions?: { messages?: boolean }) => {
+      const session = await originalSession(sessionID, sessionOptions)
+      if (!session) return null
+      return { ...session, background: nativeIdleBackground(fixture, sessionID) }
+    },
+  }
+  return { ...native, host }
+}
+
 function executionEvent(type: string, sessionID: string, sequence: number) {
   return {
-    id: `event-${sequence}`,
+    id: `evt_${sequence}`,
     created: sequence,
     type,
     durable: { aggregateID: sessionID, seq: sequence, version: 1 },
     data: { sessionID },
   }
+}
+
+function inboxEvent(type: string, sessionID: string, sequence: number, inboxID: string) {
+  return {
+    id: `evt_${sequence}`,
+    created: sequence,
+    type,
+    durable: { aggregateID: sessionID, seq: sequence, version: 1 },
+    data: { sessionID, inboxID },
+  }
+}
+
+function syntheticEvent(sessionID: string, sequence: number) {
+  return {
+    id: `evt_${sequence}`,
+    created: sequence,
+    type: "session.synthetic",
+    durable: { aggregateID: sessionID, seq: sequence, version: 1 },
+    data: { sessionID, text: "Continue after queued input" },
+  }
+}
+
+function nativeIdleBinding(fixture: ReturnType<typeof makeFixture>, sessionID: string) {
+  const assignment = new ProgressRecorder(fixture.store, "project").assignmentForSession(sessionID)
+  if (!assignment) return undefined
+  return {
+    projectDirectory: fixture.repository.projectDirectory,
+    projectID: assignment.projectID,
+    attemptID: assignment.attemptID,
+    sessionID: assignment.sessionID,
+    workspace: assignment.workspace,
+    assignedMessageID: assignment.assignedMessageID,
+  }
+}
+
+function nativeIdleBackground(fixture: ReturnType<typeof makeFixture>, sessionID = "ses-accepted") {
+  const store = new NativeIdleStore(fixture.repository)
+  const binding = nativeIdleBinding(fixture, sessionID)
+  return binding
+    ? store.background(binding)
+    : {
+        state: "unknown" as const,
+        source: "experimental.idle" as const,
+        reason: "No assigned native attempt",
+      }
 }
 
 async function waitForNativeState(predicate: () => Promise<boolean>, timeoutMs = 2_000) {
@@ -403,11 +539,14 @@ test("idle handoff reminder is concise, persisted, and sent at most once per att
       db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(secondAttemptID),
     )
     const recorder = new ProgressRecorder(fixture.store, "project")
-    const ctx = makeContext(fixture)
+    const ctx = makeContext(fixture, {
+      events: [executionEvent("session.execution.started", "ses-accepted", 10)],
+    })
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.sleep(5)
           const idle = ctx.idle()!
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
@@ -435,7 +574,226 @@ test("idle handoff reminder is concise, persisted, and sent at most once per att
   }
 })
 
-test("independent listeners preserve each other while own loss and disposal invalidate observations", async () => {
+test("genuine zero-background hook and exact success survive listener disposal and SQLite reopen", async () => {
+  const fixture = makeFixture()
+  let reopenedRepository: TaskRepository | undefined
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      messages: [{ id: binding.assignedMessageID, type: "user" }],
+    })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 700)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const state = new NativeIdleStore(fixture.repository).read(binding)
+              return state?.executionStartSequence === 700
+            }),
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent(inboxEvent("session.inbox.delivered", sessionID, 701, "msg-inbox")),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                new NativeIdleStore(fixture.repository).read(binding)?.lastEventSequence === 701,
+            ),
+          )
+          yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 702)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () => nativeIdleBackground(fixture, sessionID).state === "observed",
+            ),
+          )
+        }),
+      ),
+    )
+
+    const retained = nativeIdleBackground(fixture, sessionID)
+    expect(retained).toMatchObject({
+      state: "observed",
+      inputID: binding.assignedMessageID,
+      executionStartSequence: 700,
+      eventSequence: 701,
+      observedAt: expect.any(Number),
+      terminalSequence: 702,
+      terminalEventID: "evt_702",
+      terminalMessageID: "msg_702",
+      attemptID: binding.attemptID,
+      workspace: binding.workspace,
+    })
+    expect(ctx.syntheticCalls()).toBe(0)
+
+    fixture.repository.close()
+    reopenedRepository = new TaskRepository(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    expect(new NativeIdleStore(reopenedRepository).background(binding)).toEqual(retained)
+  } finally {
+    reopenedRepository?.close()
+    fixture.close()
+  }
+})
+
+test("fresh same-execution idle hook restores convergence after queued and synthetic input", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const ctx = makeContext(fixture, { liveEvents: true, messages })
+    const store = new NativeIdleStore(fixture.repository)
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 900)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.executionStartSequence === 900),
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent(inboxEvent("session.inbox.delivered", sessionID, 901, "msg-current")),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.lastEventSequence === 901),
+          )
+          yield* ctx.idle()!({
+            sessionID: Session.ID.make(sessionID),
+            background: [{ kind: "shell" }],
+          } as never)
+          expect(store.read(binding)?.report).toMatchObject({
+            inputID: binding.assignedMessageID,
+            executionStartSequence: 900,
+            eventSequence: 901,
+            count: 1,
+          })
+
+          yield* Effect.promise(() =>
+            ctx.emitEvent(inboxEvent("session.inbox.enqueued", sessionID, 902, "msg-next")),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.lastEventSequence === 902),
+          )
+          expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+          yield* Effect.promise(() => ctx.emitEvent(syntheticEvent(sessionID, 903)))
+          messages.push({ id: "msg-next", type: "synthetic", text: "Continue after queued input" })
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.lastEventSequence === 903),
+          )
+          yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          expect(store.read(binding)?.report).toMatchObject({
+            inputID: "msg-next",
+            executionStartSequence: 900,
+            eventSequence: 903,
+            count: 0,
+          })
+
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 904)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () => nativeIdleBackground(fixture, sessionID).state === "observed",
+            ),
+          )
+        }),
+      ),
+    )
+    expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
+      state: "observed",
+      inputID: "msg-next",
+      executionStartSequence: 900,
+      eventSequence: 903,
+      terminalSequence: 904,
+      count: 0,
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("a same-input newer execution and delayed older success cannot resurrect zero background", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      messages: [{ id: binding.assignedMessageID, type: "user" }],
+    })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 800)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                new NativeIdleStore(fixture.repository).read(binding)?.executionStartSequence ===
+                800,
+            ),
+          )
+          yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 801)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () => nativeIdleBackground(fixture, sessionID).state === "observed",
+            ),
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 802)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const current = nativeIdleBackground(fixture, sessionID)
+              return (
+                current.state === "unknown" &&
+                current.reason.includes("foreground execution started")
+              )
+            }),
+          )
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 801)),
+          )
+          yield* Effect.sleep(5)
+          expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
+            state: "unknown",
+            reason:
+              "A newer native foreground execution started after the last experimental.idle report",
+          })
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test("independent listeners and disposal preserve only confirmed durable idle evidence", async () => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -450,12 +808,12 @@ test("independent listeners preserve each other while own loss and disposal inva
     ]
     const first = makeContext(fixture, { liveEvents: true, messages })
     const second = makeContext(fixture, { liveEvents: true, messages })
-    const firstNative = nativeLivenessFixture({
+    const firstNative = nativeLivenessFixture(fixture, {
       sessionID: "ses-accepted",
       directory: fixture.directory,
     })
-    const secondNative = nativeLivenessFixture({
-      sessionID: "ses_other_location",
+    const secondNative = nativeLivenessFixture(fixture, {
+      sessionID: "ses-accepted",
       directory: fixture.directory,
     })
     await Effect.runPromise(
@@ -473,32 +831,30 @@ test("independent listeners preserve each other while own loss and disposal inva
           )
           yield* Effect.sleep(5)
           yield* first.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          expect(nativeIdleBackground(fixture)).toMatchObject({
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          yield* Effect.promise(() =>
+            first.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 11)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => nativeIdleBackground(fixture).state === "observed"),
+          )
           yield* Effect.scoped(
             Effect.gen(function* () {
-              yield* registerProgress(second.context, recorder, "other-project")
+              yield* registerProgress(second.context, recorder, "project")
               expect(
                 (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
                   ?.state,
               ).toBe("observed")
-              yield* Effect.promise(() =>
-                second.emitEvent(
-                  executionEvent("session.execution.started", "ses_other_location", 20),
-                ),
-              )
-              yield* Effect.sleep(5)
-              yield* second.idle()!({ sessionID: "ses_other_location", background: [] } as never)
+              yield* second.idle()!({ sessionID: "ses-accepted", background: [] } as never)
               expect(
-                (yield* Effect.promise(() => secondNative.host.session("ses_other_location")))
-                  ?.background?.state,
-              ).toBe("observed")
+                (yield* Effect.promise(() => secondNative.host.session("ses-accepted")))
+                  ?.background,
+              ).toMatchObject({ state: "observed", terminalSequence: 11 })
+              expect(second.syntheticCalls()).toBe(0)
               yield* Effect.promise(() => second.failEvents())
-              yield* Effect.promise(() =>
-                waitForNativeState(
-                  async () =>
-                    (await secondNative.host.session("ses_other_location"))?.background?.state ===
-                    "unknown",
-                ),
-              )
               expect(
                 (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
                   ?.state,
@@ -511,27 +867,9 @@ test("independent listeners preserve each other while own loss and disposal inva
           ).toBe("observed")
           yield* Effect.promise(() => first.failEvents())
           yield* Effect.promise(() =>
-            waitForNativeState(
-              async () =>
-                (await firstNative.host.session("ses-accepted"))?.background?.state === "unknown",
+            waitForNativeState(async () =>
+              fixture.store.progressFacts([secondAttemptID]).some((row) => row.kind === "gap"),
             ),
-          )
-          yield* first.idle()!({ sessionID: "ses-accepted", background: [] } as never)
-          expect(
-            (yield* Effect.promise(() => firstNative.host.session("ses-accepted")))?.background
-              ?.state,
-          ).toBe("unknown")
-          yield* Effect.promise(() =>
-            first.emitEvent(executionEvent("session.execution.started", "ses-accepted", 30)),
-          )
-          yield* Effect.promise(() =>
-            waitForNativeState(async () => {
-              const background = (await firstNative.host.session("ses-accepted"))?.background
-              return (
-                background?.state === "unknown" &&
-                background.reason.includes("foreground execution started")
-              )
-            }),
           )
           yield* first.idle()!({ sessionID: "ses-accepted", background: [] } as never)
           expect(
@@ -542,8 +880,8 @@ test("independent listeners preserve each other while own loss and disposal inva
       ),
     )
     expect((await firstNative.host.session("ses-accepted"))?.background).toMatchObject({
-      state: "unknown",
-      reason: "Native idle hook listener was disposed",
+      state: "observed",
+      terminalSequence: 11,
     })
   } finally {
     fixture.close()
@@ -551,7 +889,7 @@ test("independent listeners preserve each other while own loss and disposal inva
 })
 
 test.each(["msg_initial", "msg_resumed"])(
-  "same-process listener replacement accepts only a fresh idle report for %s",
+  "same-process listener replacement cannot invent current execution lineage for %s",
   async (inputID) => {
     const fixture = makeFixture()
     try {
@@ -562,7 +900,7 @@ test.each(["msg_initial", "msg_resumed"])(
       ]
       const old = makeContext(fixture, { liveEvents: true, messages })
       const next = makeContext(fixture, { liveEvents: true, messages })
-      const native = nativeLivenessFixture({
+      const native = nativeLivenessFixture(fixture, {
         sessionID: "ses-accepted",
         directory: fixture.directory,
       })
@@ -592,20 +930,14 @@ test.each(["msg_initial", "msg_resumed"])(
             yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
             expect(
               (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
-            ).toMatchObject({
-              state: "observed",
-              inputID,
-              executionStartSequence: 20,
-            })
+            ).toMatchObject({ state: "unknown" })
             yield* Effect.promise(() =>
               next.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 21)),
             )
-            yield* Effect.promise(() =>
-              waitForNativeState(async () => {
-                const background = (await native.host.session("ses-accepted"))?.background
-                return background?.state === "observed" && background.terminalSequence === 21
-              }),
-            )
+            yield* Effect.sleep(5)
+            expect(
+              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+            ).toMatchObject({ state: "unknown" })
           }),
         ),
       )
@@ -626,7 +958,7 @@ test("a replacement stream gap before its first event invalidates inherited exec
     ]
     const old = makeContext(fixture, { liveEvents: true, messages })
     const next = makeContext(fixture, { liveEvents: true, messages })
-    const native = nativeLivenessFixture({
+    const native = nativeLivenessFixture(fixture, {
       sessionID: "ses-accepted",
       directory: fixture.directory,
     })
@@ -672,150 +1004,116 @@ test("a replacement stream gap before its first event invalidates inherited exec
   }
 })
 
-test.each(["idle", "success-input-changed", "success-owned"])(
-  "a suspended %s callback and old observer disposal preserve a newer same-session report",
-  async (stage) => {
-    const fixture = makeFixture()
-    try {
-      const recorder = new ProgressRecorder(fixture.store, "project")
-      const oldMessages: unknown[] = [
-        { id: "msg_old_input", type: "user" },
-        {
-          id: "msg_old_reply",
-          type: "assistant",
-          finish: "stop",
-          content: [{ type: "text", text: "Completed." }],
-        },
-      ]
-      const newMessages: unknown[] = [
-        { id: "msg_new_input", type: "user" },
-        {
-          id: "msg_new_reply",
-          type: "assistant",
-          finish: "stop",
-          content: [{ type: "text", text: "Completed." }],
-        },
-      ]
-      const entered = Promise.withResolvers<void>()
-      const released = Promise.withResolvers<unknown[]>()
-      const ready = Promise.withResolvers<void>()
-      const terminalProcessed = Promise.withResolvers<void>()
-      let suspend = false
-      const old = makeContext(fixture, {
-        liveEvents: true,
-        messages: oldMessages,
-        readContext: () => {
-          if (!suspend) return Effect.succeed(oldMessages)
-          suspend = false
-          return Effect.promise(() => {
-            entered.resolve()
-            return released.promise
-          })
-        },
-      })
-      const next = makeContext(fixture, { liveEvents: true, messages: newMessages })
-      const native = nativeLivenessFixture({
-        sessionID: "ses-accepted",
-        directory: fixture.directory,
-      })
-      const record = recorder.recordNativeEvent.bind(recorder)
-      recorder.recordNativeEvent = (event) => {
-        const result = record(event)
-        if ((event as { id?: string }).id === "event-21") terminalProcessed.resolve()
-        return result
-      }
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const oldFiber = yield* Effect.forkScoped(
-              Effect.scoped(
-                Effect.gen(function* () {
-                  yield* registerProgress(old.context, recorder, "project")
-                  ready.resolve()
-                  yield* Effect.never
-                }),
-              ),
-            )
-            yield* Effect.promise(() => ready.promise)
-            yield* Effect.promise(() =>
-              old.emitEvent(executionEvent("session.execution.started", "ses-accepted", 20)),
-            )
-            yield* Effect.promise(() =>
-              waitForNativeState(async () => {
-                const background = (await native.host.session("ses-accepted"))?.background
-                return (
-                  background?.state === "unknown" &&
-                  background.reason.includes("foreground execution started")
-                )
+test("a delayed old idle callback cannot overwrite a newer confirmed same-session report", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const oldMessages: unknown[] = [{ id: "msg_old_input", type: "user" }]
+    const newMessages: unknown[] = [{ id: "msg_new_input", type: "user" }]
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<unknown[]>()
+    let suspend = false
+    const old = makeContext(fixture, {
+      liveEvents: true,
+      messages: oldMessages,
+      readContext: () => {
+        if (!suspend) return Effect.succeed(oldMessages)
+        suspend = false
+        return Effect.promise(() => {
+          entered.resolve()
+          return released.promise
+        })
+      },
+    })
+    const next = makeContext(fixture, { liveEvents: true, messages: newMessages })
+    const ready = Promise.withResolvers<void>()
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const oldFiber = yield* Effect.forkScoped(
+            Effect.scoped(
+              Effect.gen(function* () {
+                yield* registerProgress(old.context, recorder, "project")
+                ready.resolve()
+                yield* Effect.never
               }),
-            )
-            if (stage !== "idle")
-              yield* old.idle()!({ sessionID: "ses-accepted", background: [] } as never)
-            suspend = true
-            const idleFiber =
-              stage === "idle"
-                ? yield* Effect.forkScoped(
-                    old.idle()!({ sessionID: "ses-accepted", background: [] } as never),
-                  )
-                : undefined
-            if (stage !== "idle")
-              yield* Effect.promise(() =>
-                old.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 21)),
+            ),
+          )
+          yield* Effect.promise(() => ready.promise)
+          yield* Effect.promise(() =>
+            old.emitEvent(executionEvent("session.execution.started", "ses-accepted", 20)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const state = new NativeIdleStore(fixture.repository).read(
+                nativeIdleBinding(fixture, "ses-accepted")!,
               )
-            yield* Effect.promise(() => entered.promise)
-            yield* registerProgress(next.context, recorder, "project")
-            yield* Effect.promise(() =>
-              next.emitEvent(executionEvent("session.execution.started", "ses-accepted", 40)),
-            )
-            yield* Effect.sleep(5)
-            yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
-            expect(
-              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
-            ).toMatchObject({
-              state: "observed",
-              inputID: "msg_new_input",
-              executionStartSequence: 40,
-            })
-            released.resolve(stage === "success-input-changed" ? newMessages : oldMessages)
-            if (idleFiber) yield* Fiber.join(idleFiber)
-            else yield* Effect.promise(() => terminalProcessed.promise)
-            expect(
-              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
-            ).toMatchObject({
-              state: "observed",
-              inputID: "msg_new_input",
-              executionStartSequence: 40,
-            })
-            yield* Fiber.interrupt(oldFiber)
-            expect(
-              (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
-            ).toMatchObject({
-              state: "observed",
-              inputID: "msg_new_input",
-              executionStartSequence: 40,
-            })
-            yield* Effect.promise(() => next.failEvents())
-            yield* Effect.promise(() =>
-              waitForNativeState(
-                async () =>
-                  (await native.host.session("ses-accepted"))?.background?.state === "unknown",
-              ),
-            )
-          }),
-        ),
-      )
-    } finally {
-      fixture.close()
-    }
-  },
-)
+              return state?.executionStartSequence === 20
+            }),
+          )
+
+          suspend = true
+          const delayedIdle = yield* Effect.forkScoped(
+            old.idle()!({ sessionID: "ses-accepted", background: [] } as never),
+          )
+          yield* Effect.promise(() => entered.promise)
+          yield* registerProgress(next.context, recorder, "project")
+          yield* Effect.promise(() =>
+            next.emitEvent(executionEvent("session.execution.started", "ses-accepted", 40)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const state = new NativeIdleStore(fixture.repository).read(
+                nativeIdleBinding(fixture, "ses-accepted")!,
+              )
+              return state?.executionStartSequence === 40
+            }),
+          )
+          yield* next.idle()!({ sessionID: "ses-accepted", background: [] } as never)
+          expect(nativeIdleBackground(fixture)).toMatchObject({
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          expect(
+            new NativeIdleStore(fixture.repository).read(
+              nativeIdleBinding(fixture, "ses-accepted")!,
+            )?.report,
+          ).toMatchObject({ inputID: "msg_new_input", executionStartSequence: 40 })
+          yield* Effect.promise(() =>
+            next.emitEvent(executionEvent("session.execution.succeeded", "ses-accepted", 41)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => {
+              const background = nativeIdleBackground(fixture)
+              return background.state === "observed" && background.terminalSequence === 41
+            }),
+          )
+
+          released.resolve(oldMessages)
+          yield* Fiber.join(delayedIdle)
+          const confirmed = nativeIdleBackground(fixture)
+          expect(confirmed).toMatchObject({
+            state: "observed",
+            inputID: "msg_new_input",
+            executionStartSequence: 40,
+            terminalSequence: 41,
+            terminalMessageID: "msg_41",
+          })
+          yield* Fiber.interrupt(oldFiber)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
 
 test.each([
   "session.shell.started",
   "session.execution.started",
   "session.inbox.enqueued",
   "session.execution.failed",
-])("queued older %s cannot replace another listener's newer report", async (type) => {
+])("queued older %s cannot regress the latest durable idle report", async (type) => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -830,7 +1128,7 @@ test.each([
     ]
     const old = makeContext(fixture, { liveEvents: true, messages })
     const next = makeContext(fixture, { liveEvents: true, messages })
-    const native = nativeLivenessFixture({
+    const native = nativeLivenessFixture(fixture, {
       sessionID: "ses-accepted",
       directory: fixture.directory,
     })
@@ -861,16 +1159,26 @@ test.each([
             yield* Effect.promise(() => done.promise)
             yield* context.idle()!({ sessionID: "ses-accepted", background: [] } as never)
           }
-          expect(
-            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
-          ).toMatchObject({ state: "observed", executionStartSequence: 40 })
+          expect(nativeIdleBackground(fixture)).toMatchObject({
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          const binding = nativeIdleBinding(fixture, "ses-accepted")!
+          expect(new NativeIdleStore(fixture.repository).read(binding)?.report).toMatchObject({
+            executionStartSequence: 40,
+          })
           const stale = Promise.withResolvers<void>()
           processed.set(22, stale)
           yield* Effect.promise(() => old.emitEvent(executionEvent(type, "ses-accepted", 22)))
           yield* Effect.promise(() => stale.promise)
-          expect(
-            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
-          ).toMatchObject({ state: "observed", executionStartSequence: 40 })
+          expect(nativeIdleBackground(fixture)).toMatchObject({
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          expect(new NativeIdleStore(fixture.repository).read(binding)).toMatchObject({
+            report: { executionStartSequence: 40 },
+            staleEventSequence: 22,
+          })
           const fresh = Promise.withResolvers<void>()
           processed.set(42, fresh)
           yield* Effect.promise(() =>
@@ -878,8 +1186,12 @@ test.each([
           )
           yield* Effect.promise(() => fresh.promise)
           expect(
-            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background?.state,
-          ).toBe("unknown")
+            (yield* Effect.promise(() => native.host.session("ses-accepted")))?.background,
+          ).toMatchObject({
+            state: "unknown",
+            reason:
+              "A newer native foreground execution started after the last experimental.idle report",
+          })
         }),
       ),
     )
@@ -888,7 +1200,7 @@ test.each([
   }
 })
 
-test("idle producer failures retain timestamped safe diagnostics before terminal mismatch", async () => {
+test("idle producer failures retain safe diagnostics and never become terminal evidence", async () => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -921,21 +1233,22 @@ test("idle producer failures retain timestamped safe diagnostics before terminal
           )
           yield* Effect.promise(() =>
             waitForNativeState(async () =>
-              readTrace().some((row) => JSON.parse(row.payload).phase === "execution-success"),
+              readTrace().some((row) => JSON.parse(row.payload).phase === "event-changed"),
             ),
           )
           const rows = readTrace()
           expect(rows.map((row) => JSON.parse(row.payload).phase)).toEqual([
+            "event-changed",
             "idle-entered",
-            "idle-input-failed",
-            "execution-success",
+            "idle-observation-failed",
+            "event-changed",
           ])
           expect(rows.every((row) => Number.isSafeInteger(row.at) && row.at > 0)).toBe(true)
           expect(JSON.stringify(rows)).not.toContain("diagnostic-secret")
-          expect(JSON.parse(rows[1]!.payload).error).toContain("Input transport failed")
-          expect(JSON.parse(rows[0]!.payload)).toMatchObject({ executionStartSequence: 600 })
-          expect(JSON.parse(rows[2]!.payload)).toMatchObject({ eventSequence: 601 })
-          expect(JSON.parse(rows[2]!.payload).idleSequence).toBeUndefined()
+          expect(JSON.parse(rows[2]!.payload).error).toContain("Input transport failed")
+          expect(JSON.parse(rows[1]!.payload)).toMatchObject({ executionStartSequence: 600 })
+          expect(JSON.parse(rows[3]!.payload)).toMatchObject({ eventSequence: 601 })
+          expect(JSON.parse(rows[3]!.payload).idleSequence).toBeUndefined()
         }),
       ),
     )
@@ -954,7 +1267,7 @@ test("registered idle and success retain compacted input identity and reject a c
         liveEvents: true,
         messages: [{ id: "msg_compacted", type: "compaction", status: "completed" }],
       })
-      const native = nativeLivenessFixture({ sessionID, directory: fixture.directory })
+      const native = nativeLivenessFixture(fixture, { sessionID, directory: fixture.directory })
       let inputID = "msg_retained_assignment"
       await Effect.runPromise(
         Effect.scoped(
@@ -967,7 +1280,14 @@ test("registered idle and success retain compacted input identity and reject a c
             yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
             expect(
               (yield* Effect.promise(() => native.host.session(sessionID)))?.background,
-            ).toMatchObject({ state: "observed", inputID, count: 0 })
+            ).toMatchObject({
+              state: "unknown",
+              reason: "Zero-background idle report has no matching confirmed native success",
+            })
+            expect(
+              new NativeIdleStore(fixture.repository).read(nativeIdleBinding(fixture, sessionID)!)
+                ?.report,
+            ).toMatchObject({ inputID, count: 0 })
             if (changedInput) inputID = "msg_foreign_new_input"
             yield* Effect.promise(() =>
               ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 201)),
@@ -1007,7 +1327,7 @@ test("registered native idle order preserves matching success and ignores delaye
       },
     ]
     const ctx = makeContext(fixture, { liveEvents: true, messages })
-    const native = nativeLivenessFixture({ sessionID, directory: fixture.directory })
+    const native = nativeLivenessFixture(fixture, { sessionID, directory: fixture.directory })
 
     await Effect.runPromise(
       Effect.scoped(
@@ -1032,7 +1352,13 @@ test("registered native idle order preserves matching success and ignores delaye
           yield* Effect.sleep(5)
           const firstIdle = yield* Effect.promise(() => native.host.session(sessionID))
           expect(firstIdle?.background).toMatchObject({
-            state: "observed",
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          expect(
+            new NativeIdleStore(fixture.repository).read(nativeIdleBinding(fixture, sessionID)!)
+              ?.report,
+          ).toMatchObject({
             inputID: "msg_turn_old",
             executionStartSequence: 20,
             eventSequence: 20,
@@ -1081,7 +1407,13 @@ test("registered native idle order preserves matching success and ignores delaye
           yield* Effect.sleep(5)
           const secondIdle = yield* Effect.promise(() => native.host.session(sessionID))
           expect(secondIdle?.background).toMatchObject({
-            state: "observed",
+            state: "unknown",
+            reason: "Zero-background idle report has no matching confirmed native success",
+          })
+          expect(
+            new NativeIdleStore(fixture.repository).read(nativeIdleBinding(fixture, sessionID)!)
+              ?.report,
+          ).toMatchObject({
             inputID: "msg_turn_new",
             executionStartSequence: 22,
             eventSequence: 22,
@@ -1094,17 +1426,23 @@ test("registered native idle order preserves matching success and ignores delaye
           )
           yield* Effect.promise(() =>
             waitForNativeState(async () => {
-              const background = (await native.host.session(sessionID))?.background
-              return background?.state === "observed" && background.staleEventSequence === 21
+              return (
+                new NativeIdleStore(fixture.repository).read(nativeIdleBinding(fixture, sessionID)!)
+                  ?.staleEventSequence === 21
+              )
             }),
           )
           const afterDelayedSuccess = yield* Effect.promise(() => native.host.session(sessionID))
-          expect(afterDelayedSuccess?.background).toMatchObject({
-            state: "observed",
-            inputID: "msg_turn_new",
-            executionStartSequence: 22,
-            eventSequence: 22,
-            count: 0,
+          expect(afterDelayedSuccess?.background).toMatchObject({ state: "unknown" })
+          expect(
+            new NativeIdleStore(fixture.repository).read(nativeIdleBinding(fixture, sessionID)!),
+          ).toMatchObject({
+            report: {
+              inputID: "msg_turn_new",
+              executionStartSequence: 22,
+              eventSequence: 22,
+            },
+            staleEventSequence: 21,
           })
 
           yield* Effect.promise(() =>
@@ -1166,6 +1504,7 @@ test("early assistant commentary followed by tools is not a final handoff", asyn
       message: "The first change is underway; more work remains.",
     })
     const ctx = makeContext(fixture, {
+      liveEvents: true,
       messages: [
         { id: "prompt", type: "user", text: "Implement the task." },
         {
@@ -1187,6 +1526,10 @@ test("early assistant commentary followed by tools is not a final handoff", asyn
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", "ses-accepted", 10)),
+          )
+          yield* Effect.sleep(5)
           const idle = ctx.idle()!
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
@@ -1210,6 +1553,7 @@ test("final handoff after later tools suppresses reminder; non-final tool commen
     )
     const recorder = new ProgressRecorder(fixture.store, "project")
     const ctx = makeContext(fixture, {
+      liveEvents: true,
       messages: [
         { id: "prompt", type: "user", text: "Implement the task." },
         {
@@ -1236,6 +1580,10 @@ test("final handoff after later tools suppresses reminder; non-final tool commen
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", "ses-accepted", 11)),
+          )
+          yield* Effect.sleep(5)
           const idle = ctx.idle()!
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
@@ -1260,6 +1608,7 @@ test("same-execution reentrant idle cannot recursively admit more than one synth
     const recorder = new ProgressRecorder(fixture.store, "project")
     let reenter: ((idle: never) => Effect.Effect<void>) | undefined
     const context = makeContext(fixture, {
+      liveEvents: true,
       synthetic: (input) =>
         Effect.tryPromise({
           try: async () => {
@@ -1279,6 +1628,10 @@ test("same-execution reentrant idle cannot recursively admit more than one synth
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(context.context, recorder, "project")
+          yield* Effect.promise(() =>
+            context.emitEvent(executionEvent("session.execution.started", "ses-accepted", 12)),
+          )
+          yield* Effect.sleep(5)
           reenter = context.idle()
           yield* reenter!({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
         }),
@@ -1300,11 +1653,15 @@ test("concurrent idle hooks claim and admit only one bounded reminder", async ()
       db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(secondAttemptID),
     )
     const recorder = new ProgressRecorder(fixture.store, "project")
-    const ctx = makeContext(fixture)
+    const ctx = makeContext(fixture, { liveEvents: true })
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", "ses-accepted", 13)),
+          )
+          yield* Effect.sleep(5)
           const idle = ctx.idle()!
           yield* Effect.all(
             [
@@ -1336,12 +1693,17 @@ test("unknown synthetic admission is reconciled by exact stable native identity 
     )
     const recorder = new ProgressRecorder(fixture.store, "project")
     const ctx = makeContext(fixture, {
+      liveEvents: true,
       synthetic: () => Effect.fail(new Error("response lost after admission")),
     })
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", "ses-accepted", 14)),
+          )
+          yield* Effect.sleep(5)
           const idle = ctx.idle()!
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
@@ -1383,6 +1745,7 @@ test("confirmed rejection can retry once with the same native ID; then it is bou
     const recorder = new ProgressRecorder(fixture.store, "project")
     let reject = true
     const ctx = makeContext(fixture, {
+      liveEvents: true,
       synthetic: (input) => {
         if (reject) {
           reject = false
@@ -1395,6 +1758,10 @@ test("confirmed rejection can retry once with the same native ID; then it is bou
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", "ses-accepted", 15)),
+          )
+          yield* Effect.sleep(5)
           const idle = ctx.idle()!
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)
           yield* idle({ sessionID: Session.ID.make("ses-accepted"), background: [] } as never)

@@ -2,22 +2,10 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { Effect, Stream } from "effect"
+import { DateTime, Effect, Stream } from "effect"
 import { z } from "zod"
-import {
-  advanceNativeIdleSequence,
-  confirmNativeIdleBackgroundSuccess,
-  invalidateNativeIdleObserver,
-  nativeIdleObservationFence,
-  markNativeIdleBackgroundUnknown,
-  noteStaleNativeIdleBackgroundEvent,
-  observeNativeIdleBackground,
-  releaseNativeIdleObserver,
-  rememberNativeExecution,
-  nativeExecutionCursor,
-  nativeExecutionCursors,
-  forgetNativeExecution,
-} from "../runner/native.ts"
+import { NativeIdleStore } from "../runner/native-idle.ts"
+import type { NativeIdleBinding, NativeIdleTerminal } from "../runner/native-idle.ts"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
 import { resolveNativeInputID } from "../runner/native-input.ts"
@@ -77,20 +65,11 @@ const BACKGROUND_INVALIDATING_EVENTS = new Set<string>([
   "session.shell.ended",
 ])
 
-type IdleLineage = {
-  inputID: string
-  executionStartSequence: number
-  eventSequence: number
-}
-
-type SessionEventCursor = {
-  lastSequence?: number
-  executionStartSequence?: number
-  idle?: IdleLineage
-}
-
 const HANDOFF_REMINDER =
   "Provide only any remaining concise handoff: changes, checks/artifact/commit, blockers, or judgment needed from the plan owner. Do not repeat recorded facts, claim acceptance, or alter task state."
+
+type NativeIdleWork = { kind: "shell" | "subagent" | "image" }
+type NativeIdleHook = { sessionID: Session.ID; background: readonly NativeIdleWork[] }
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -108,6 +87,55 @@ function eventSequence(event: unknown, sessionID: string): number | undefined {
   )
     return undefined
   return durable.seq
+}
+
+function idleBinding(
+  assignment: ReturnType<ProgressRecorder["assignmentForSession"]>,
+  projectDirectory: string,
+): NativeIdleBinding | undefined {
+  if (!assignment) return undefined
+  return {
+    projectDirectory,
+    projectID: assignment.projectID,
+    attemptID: assignment.attemptID,
+    sessionID: assignment.sessionID,
+    workspace: assignment.workspace,
+    assignedMessageID: assignment.assignedMessageID,
+  }
+}
+
+function sameIdleBinding(a: NativeIdleBinding | undefined, b: NativeIdleBinding | undefined) {
+  return (
+    a?.projectDirectory === b?.projectDirectory &&
+    a?.projectID === b?.projectID &&
+    a?.attemptID === b?.attemptID &&
+    a?.sessionID === b?.sessionID &&
+    a?.workspace === b?.workspace &&
+    a?.assignedMessageID === b?.assignedMessageID
+  )
+}
+
+function hasExactSuccessfulIdleMarker(messages: readonly unknown[], terminal: NativeIdleTerminal) {
+  let expectedID: string
+  try {
+    expectedID = SessionMessage.ID.fromEvent(terminal.eventID)
+  } catch {
+    return false
+  }
+  if (expectedID !== terminal.messageID) return false
+  return messages.some((raw) => {
+    const message = object(raw)
+    if (
+      message?.type !== "idle" ||
+      message.id !== terminal.messageID ||
+      message.outcome !== "succeeded"
+    )
+      return false
+    const time = object(message.time)
+    return (
+      DateTime.isDateTime(time?.created) && Number.isFinite(DateTime.toEpochMillis(time.created))
+    )
+  })
 }
 
 function hasVisibleHandoff(messages: readonly unknown[]): boolean {
@@ -278,10 +306,13 @@ export function registerProgress(
           }),
         ),
       )
-    const observer = Symbol("native-idle-observer")
+    const idleStore = new NativeIdleStore(recorder.store.repository)
     const listenerID = crypto.randomUUID()
     let observing = true
+    const observedExecutionStarts = new Map<string, number>()
     const projectDirectory = recorder.store.repository.projectDirectory
+    const bindingFor = (sessionID: string) =>
+      idleBinding(recorder.assignmentForSession(sessionID), projectDirectory)
     const trace = (
       sessionID: string,
       phase: string,
@@ -299,16 +330,7 @@ export function registerProgress(
         // Diagnostic storage cannot change the native observation or worker execution.
       }
     }
-    const sessionEventCursors = new Map<string, SessionEventCursor>(
-      nativeExecutionCursors(projectDirectory),
-    )
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        for (const sessionID of sessionEventCursors.keys()) trace(sessionID, "listener-disposed")
-        observing = false
-        releaseNativeIdleObserver(observer)
-      }),
-    )
+    yield* Effect.addFinalizer(() => Effect.sync(() => (observing = false)))
     yield* ctx.tool.transform((editor) =>
       editor.add({
         name: "lz-report-progress",
@@ -370,90 +392,144 @@ export function registerProgress(
       }),
     )
 
-    yield* ctx.session.hook("experimental.idle", (idle) =>
-      Effect.gen(function* () {
-        const stillCurrent = nativeIdleObservationFence(idle.sessionID)
-        const enteredCursor = sessionEventCursors.get(idle.sessionID)
-        trace(idle.sessionID, "idle-entered", {
-          executionStartSequence: enteredCursor?.executionStartSequence,
-          eventSequence: enteredCursor?.lastSequence,
+    const readNativeSession = (sessionID: string) =>
+      Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) }))
+    const matchesBinding = (session: Session.Info, binding: NativeIdleBinding) =>
+      session.id === binding.sessionID &&
+      session.projectID === binding.projectID &&
+      session.agent === "lazers-implementor" &&
+      session.location.directory === binding.workspace &&
+      session.metadata?.lazersAttemptID === binding.attemptID
+
+    const observeIdleHook = async (idle: NativeIdleHook) => {
+      const sessionID = idle.sessionID
+      if (!observing) return
+      const binding = bindingFor(sessionID)
+      if (!binding) {
+        trace(sessionID, "idle-unassigned", { backgroundCount: idle.background.length })
+        return
+      }
+      const remindIfEmpty = async () => {
+        if (idle.background.length === 0 && observing)
+          await Effect.runPromise(reminderEffect(ctx, recorder, sessionID, 0))
+      }
+      const initial = idleStore.read(binding)
+      if (initial?.pendingTerminal || initial?.terminal) {
+        trace(sessionID, "idle-after-terminal", {
+          eventSequence: initial.lastEventSequence ?? undefined,
+        })
+        return
+      }
+      const expectedRevision = initial?.revision ?? 0
+      trace(sessionID, "idle-entered", {
+        executionStartSequence: initial?.executionStartSequence ?? undefined,
+        eventSequence: initial?.lastEventSequence ?? undefined,
+        backgroundCount: idle.background.length,
+      })
+      try {
+        const before = await readNativeSession(sessionID)
+        const inputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
+        const after = await readNativeSession(sessionID)
+        const latest = idleStore.read(binding)
+        if (
+          !observing ||
+          !sameIdleBinding(binding, bindingFor(sessionID)) ||
+          (latest?.revision ?? 0) !== expectedRevision
+        ) {
+          trace(sessionID, "idle-stale", {
+            inputID,
+            eventSequence: latest?.lastEventSequence ?? undefined,
+          })
+          return
+        }
+        if (!matchesBinding(before, binding) || !matchesBinding(after, binding)) {
+          idleStore.invalidate(
+            binding,
+            "Experimental idle hook did not match the assigned native session identity",
+            expectedRevision,
+          )
+          return
+        }
+        const executionStartSequence = latest?.executionStartSequence
+        const eventSequence = latest?.lastEventSequence
+        if (
+          executionStartSequence === null ||
+          executionStartSequence === undefined ||
+          observedExecutionStarts.get(sessionID) !== executionStartSequence
+        ) {
+          trace(sessionID, "idle-lineage-unavailable", {
+            inputID,
+            executionStartSequence: executionStartSequence ?? undefined,
+            eventSequence: eventSequence ?? undefined,
+          })
+          await remindIfEmpty()
+          return
+        }
+        if (
+          !inputID ||
+          executionStartSequence === null ||
+          executionStartSequence === undefined ||
+          eventSequence === null ||
+          eventSequence === undefined
+        ) {
+          idleStore.invalidate(
+            binding,
+            "Experimental idle report could not be tied to the current execution and input",
+            expectedRevision,
+          )
+          await remindIfEmpty()
+          return
+        }
+        const kinds = { shell: 0, subagent: 0, image: 0 }
+        for (const work of idle.background) kinds[work.kind]++
+        const recorded = idleStore.recordIdle(
+          binding,
+          {
+            observedAt: Date.now(),
+            inputID,
+            executionStartSequence,
+            eventSequence,
+            count: idle.background.length,
+            kinds,
+          },
+          expectedRevision,
+        )
+        trace(sessionID, recorded ? "idle-report" : "idle-stale", {
+          inputID,
+          executionStartSequence,
+          eventSequence,
           backgroundCount: idle.background.length,
         })
-        let stale = false
-        yield* readInputID(idle.sessionID).pipe(
-          Effect.match({
-            onSuccess: (inputID) => {
-              trace(idle.sessionID, "idle-input-read", {
-                inputID,
-                current: observing && stillCurrent(),
-              })
-              if (!observing || !stillCurrent()) {
-                stale = true
-                return
-              }
-              let cursor = sessionEventCursors.get(idle.sessionID)
-              if (cursor?.executionStartSequence === undefined) {
-                const inherited = nativeExecutionCursor(projectDirectory, idle.sessionID)
-                if (inherited) {
-                  cursor = inherited
-                  sessionEventCursors.set(idle.sessionID, inherited)
-                }
-              }
-              if (
-                !inputID ||
-                cursor?.executionStartSequence === undefined ||
-                cursor.lastSequence === undefined
-              ) {
-                sessionEventCursors.delete(idle.sessionID)
-                markNativeIdleBackgroundUnknown(
-                  idle.sessionID,
-                  "Experimental idle report could not be tied to the current execution and input",
-                  observer,
-                )
-                return
-              }
-              const lineage: IdleLineage = {
-                inputID,
-                executionStartSequence: cursor.executionStartSequence,
-                eventSequence: cursor.lastSequence,
-              }
-              trace(idle.sessionID, "idle-report", lineage)
-              if (
-                observeNativeIdleBackground(
-                  idle.sessionID,
-                  idle.background,
-                  lineage,
-                  Date.now(),
-                  observer,
-                )
-              )
-                cursor.idle = lineage
-              else {
-                stale = true
-                cursor.idle = undefined
-              }
-            },
-            onFailure: (error) => {
-              trace(idle.sessionID, "idle-input-failed", {
-                error,
-                current: observing && stillCurrent(),
-              })
-              if (!observing || !stillCurrent()) {
-                stale = true
-                return
-              }
-              sessionEventCursors.delete(idle.sessionID)
-              markNativeIdleBackgroundUnknown(
-                idle.sessionID,
-                "Native input lineage was unavailable at experimental.idle",
-                observer,
-              )
-            },
-          }),
-        )
-        if (!stale && observing)
-          yield* reminderEffect(ctx, recorder, idle.sessionID, idle.background.length)
-      }),
+        const current = idleStore.read(binding)
+        const sameExecutionReport =
+          !recorded &&
+          current !== undefined &&
+          current.pendingTerminal === null &&
+          current.terminal === null &&
+          current?.executionStartSequence === executionStartSequence &&
+          current.report?.executionStartSequence === executionStartSequence &&
+          current.report.eventSequence === eventSequence &&
+          current.report.inputID === inputID
+        if (recorded || sameExecutionReport) await remindIfEmpty()
+      } catch (error) {
+        trace(sessionID, "idle-observation-failed", { error })
+        try {
+          idleStore.invalidate(
+            binding,
+            "Native idle persistence or lineage read failed",
+            expectedRevision,
+          )
+        } catch {
+          // A failed durable write remains unknown when cleanup reopens the store.
+        }
+        await remindIfEmpty()
+      }
+    }
+    yield* ctx.session.hook("experimental.idle", (idle) =>
+      Effect.tryPromise({
+        try: () => observeIdleHook(idle),
+        catch: (error) => new Error(safeError(error, privacyStats())),
+      }).pipe(Effect.catch(() => Effect.void)),
     )
 
     const reconstruction = registerProgressReconstruction({
@@ -470,137 +546,122 @@ export function registerProgress(
     })
     yield* Effect.addFinalizer(() => Effect.sync(() => reconstruction.dispose()))
 
+    const observeExecutionSuccess = async (
+      binding: NativeIdleBinding,
+      terminal: NativeIdleTerminal,
+      expectedRevision: number,
+    ) => {
+      const state = idleStore.read(binding)
+      if (
+        !state ||
+        state.revision !== expectedRevision ||
+        state.pendingTerminal?.sequence !== terminal.sequence
+      )
+        return
+      const before = await readNativeSession(binding.sessionID)
+      const messages = await Effect.runPromise(
+        ctx.session.context({ sessionID: Session.ID.make(binding.sessionID) }),
+      )
+      const inputID = await resolveNativeInputID(messages, () => retainedInputID(binding.sessionID))
+      const after = await readNativeSession(binding.sessionID)
+      const exact =
+        observing &&
+        sameIdleBinding(binding, bindingFor(binding.sessionID)) &&
+        matchesBinding(before, binding) &&
+        matchesBinding(after, binding) &&
+        after.outcome === "succeeded" &&
+        hasExactSuccessfulIdleMarker(messages, terminal) &&
+        inputID === state.report?.inputID
+      if (exact && idleStore.confirmSuccess(binding, inputID, terminal, expectedRevision)) {
+        trace(binding.sessionID, "execution-success-confirmed", {
+          eventSequence: terminal.sequence,
+          inputID,
+        })
+        return
+      }
+      idleStore.invalidate(
+        binding,
+        "Native execution success could not confirm the current idle input lineage and terminal marker",
+        expectedRevision,
+        terminal.sequence,
+      )
+    }
+
+    const observeNativeEvent = async (event: unknown) => {
+      const rawType = object(event)?.type
+      const rawSessionID = object(object(event)?.data)?.sessionID
+      const type = typeof rawType === "string" ? rawType : undefined
+      const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
+      if (sessionID) reconstruction.changed(sessionID)
+      if (
+        observing &&
+        type &&
+        sessionID &&
+        (BACKGROUND_INVALIDATING_EVENTS.has(type) || type === "session.execution.succeeded")
+      ) {
+        const binding = bindingFor(sessionID)
+        if (binding) {
+          const sequence = eventSequence(event, sessionID)
+          const rawEventID = object(event)?.id
+          const eventID = typeof rawEventID === "string" ? rawEventID : undefined
+          let terminalMessageID: string | undefined
+          if (type === "session.execution.succeeded" && eventID) {
+            try {
+              terminalMessageID = SessionMessage.ID.fromEvent(eventID)
+            } catch {
+              terminalMessageID = undefined
+            }
+          }
+          const result = idleStore.observeEvent(binding, type, sequence, eventID, terminalMessageID)
+          trace(sessionID, `event-${result.status}`, {
+            eventSequence: sequence,
+            executionStartSequence: idleStore.read(binding)?.executionStartSequence ?? undefined,
+          })
+          if (
+            type === "session.execution.started" &&
+            result.status === "changed" &&
+            sequence !== undefined
+          )
+            observedExecutionStarts.set(sessionID, sequence)
+          else if (
+            sequence === undefined ||
+            type === "session.execution.failed" ||
+            type === "session.execution.interrupted"
+          )
+            observedExecutionStarts.delete(sessionID)
+          if (type === "session.execution.succeeded" && sequence !== undefined) {
+            const current = idleStore.read(binding)
+            const pending = current?.pendingTerminal
+            if (
+              current &&
+              pending &&
+              pending.sequence === sequence &&
+              current.lastEventSequence === sequence
+            )
+              await observeExecutionSuccess(binding, pending, current.revision)
+          }
+          if (result.status === "changed" && sequence === undefined)
+            trace(sessionID, "event-order-unknown")
+        }
+      }
+      try {
+        recorder.recordNativeEvent(event)
+      } catch {
+        // A later retained-session reconciliation can recover public event facts.
+      }
+    }
+
     const listen = Effect.forever(
       Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
-        Effect.gen(function* () {
-          try {
-            const rawType = object(event)?.type
-            const rawSessionID = object(object(event)?.data)?.sessionID
-            const type = typeof rawType === "string" ? rawType : undefined
-            const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
-            if (sessionID) reconstruction.changed(sessionID)
-            if (
-              observing &&
-              type &&
-              sessionID &&
-              (BACKGROUND_INVALIDATING_EVENTS.has(type) || type === "session.execution.succeeded")
-            ) {
-              const cursor = sessionEventCursors.get(sessionID) ?? {}
-              sessionEventCursors.set(sessionID, cursor)
-              const sequence = eventSequence(event, sessionID)
-              const ordering =
-                sequence === undefined
-                  ? undefined
-                  : advanceNativeIdleSequence(sessionID, sequence, observer)
-              if (sequence === undefined) {
-                forgetNativeExecution(projectDirectory, sessionID)
-                cursor.executionStartSequence = undefined
-                cursor.idle = undefined
-                markNativeIdleBackgroundUnknown(
-                  sessionID,
-                  `Native ${type} had no trustworthy durable session sequence`,
-                  observer,
-                )
-              } else if (ordering === "stale") {
-                noteStaleNativeIdleBackgroundEvent(sessionID, sequence, observer)
-              } else if (cursor.lastSequence !== undefined && sequence <= cursor.lastSequence) {
-                if (cursor.idle && sequence < cursor.idle.eventSequence)
-                  noteStaleNativeIdleBackgroundEvent(sessionID, sequence, observer)
-              } else {
-                rememberNativeExecution(projectDirectory, sessionID, type, sequence)
-                cursor.lastSequence = sequence
-                if (type === "session.execution.started") {
-                  cursor.executionStartSequence = sequence
-                  cursor.idle = undefined
-                  if (ordering === "newer")
-                    markNativeIdleBackgroundUnknown(
-                      sessionID,
-                      "A newer native foreground execution started after the last experimental.idle report",
-                      observer,
-                      true,
-                    )
-                } else if (type === "session.execution.succeeded") {
-                  const idle = cursor.idle
-                  trace(sessionID, "execution-success", {
-                    executionStartSequence: cursor.executionStartSequence,
-                    eventSequence: sequence,
-                    idleSequence: idle?.eventSequence,
-                    inputID: idle?.inputID,
-                  })
-                  if (
-                    !idle ||
-                    idle.executionStartSequence !== cursor.executionStartSequence ||
-                    sequence <= idle.eventSequence
-                  ) {
-                    cursor.idle = undefined
-                    markNativeIdleBackgroundUnknown(
-                      sessionID,
-                      "Native execution success did not match the current experimental.idle execution",
-                      observer,
-                    )
-                  } else {
-                    const stillCurrent = nativeIdleObservationFence(sessionID, observer)
-                    const inputID = yield* readInputID(Session.ID.make(sessionID)).pipe(
-                      Effect.match({
-                        onSuccess: (value) => value,
-                        onFailure: () => undefined,
-                      }),
-                    )
-                    if (observing && stillCurrent()) {
-                      if (inputID !== idle.inputID) {
-                        cursor.idle = undefined
-                        markNativeIdleBackgroundUnknown(
-                          sessionID,
-                          "Native execution success no longer matched the idle report input lineage",
-                          observer,
-                        )
-                      } else if (
-                        !confirmNativeIdleBackgroundSuccess(sessionID, idle, sequence, observer)
-                      ) {
-                        cursor.idle = undefined
-                        markNativeIdleBackgroundUnknown(
-                          sessionID,
-                          "Native execution success could not confirm the current idle report",
-                          observer,
-                        )
-                      }
-                    }
-                  }
-                } else {
-                  cursor.idle = undefined
-                  if (ordering === "newer")
-                    markNativeIdleBackgroundUnknown(
-                      sessionID,
-                      `Native ${type} was observed after the last experimental.idle background report`,
-                      observer,
-                      true,
-                    )
-                }
-              }
-            }
-            recorder.recordNativeEvent(event)
-          } catch {
-            const sessionID = object(object(event)?.data)?.sessionID
-            if (
-              typeof sessionID === "string" &&
-              observing &&
-              nativeIdleObservationFence(sessionID, observer)()
-            )
-              markNativeIdleBackgroundUnknown(
-                sessionID,
-                "Native event observation failed; experimental.idle lineage is unknown",
-                observer,
-              )
-          }
-        }),
+        Effect.tryPromise({
+          try: () => observeNativeEvent(event),
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.catch(() => Effect.void)),
       ).pipe(
         Effect.match({
           onFailure: (error) => {
-            for (const id of sessionEventCursors.keys()) trace(id, "stream-failed", { error })
-            for (const [id, cursor] of sessionEventCursors)
-              forgetNativeExecution(projectDirectory, id, cursor.lastSequence)
-            invalidateNativeIdleObserver(observer, "Native event stream disconnected")
-            sessionEventCursors.clear()
+            trace("unknown", "stream-failed", { error })
+            observedExecutionStarts.clear()
             for (const assignment of recorder.assignments())
               recorder.markRecoveryGap(
                 assignment.sessionID,
@@ -609,11 +670,8 @@ export function registerProgress(
               )
           },
           onSuccess: () => {
-            for (const id of sessionEventCursors.keys()) trace(id, "stream-ended")
-            for (const [id, cursor] of sessionEventCursors)
-              forgetNativeExecution(projectDirectory, id, cursor.lastSequence)
-            invalidateNativeIdleObserver(observer, "Native event stream ended")
-            sessionEventCursors.clear()
+            trace("unknown", "stream-ended")
+            observedExecutionStarts.clear()
             for (const assignment of recorder.assignments())
               recorder.markRecoveryGap(
                 assignment.sessionID,
