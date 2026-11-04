@@ -1,5 +1,23 @@
 # Retained source fence: lifecycle recovery boundary
 
+## Lifecycle candidate e699793: runtime review complete
+
+The original runtime reviewer clears the bounded runtime boundary of exact clean
+`e699793a3c04ff733c81ac7b5b0d3a456ac5b3f2`, finding no P1/P2 blocker. Initial
+admission activates the guard; pending/sealed recovery restores it after scheduler
+lease acquisition, revalidating request/assignment and installed enforcement after
+awaits. Healthy sealed rows skip recurring native probes. Sealed restoration does
+not replay archival; failed observations retain old holds. The original three
+boundary repairs remain present. Architect independently read the frozen admission
+and recovery paths at `runtime.ts:530–575,2222–2346`.
+
+Deep native RPC/current-generation token review is still running. Root's merged
+seven-suite result is pending; no tests were duplicated. This partial source
+clearance is not native qualification, resource settlement, or authorization to
+activate while original LZ129 runs. Root retains installation ownership.
+
+## Earlier lifecycle assessment and proposal
+
 Read-only follow-up to the independent cb6d447 review. Root owns implementation;
 no edits to its tree, native calls, activation or resource release were performed.
 Corrected clean candidate `79ceb78c063b49381c5a61c56029c3c2b6758295` is now under
