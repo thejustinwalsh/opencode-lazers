@@ -8,6 +8,18 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Exact early-setup correction5d485d1 under native follow-up review:** Root supplied
+  clean `5d485d13d4e2a6dc7cdc57627a1cf372e66cc3b0`; original native reviewer
+  `ses_e576d7ecfffeHyxWcUXLddebyV` is checking only the early-generation correction
+  and affected native capability lifetime. Preserve prior bounded runtime clearance
+  unless a new delta concern appears. Candidate reserves location generation as
+  first effect before option/repository/ProjectIndex, binds DB only on hook install,
+  invalidates before hook removal. Completed logs inspected: old late-order fault
+  injection fails expectedfalse/receivedtrue; corrected focused3tests/30assertions
+  pass; full195tests/3102assertions/7files/64.86s/zero failures. Root reports quality
+  pass/unchanged clean. No test duplicated, Root-tree edit or activation;129continues.
+  Cached pinned RPC/core activation/identifier evidence remains available; no live
+  capability probe is needed for this source follow-up. Await reviewer notification.
 - **129 concise guidance actually delivered/read back:** original session key
   `lazers.architect.radar129.source-findings.20261104.v2`,1243characters,
   1793834273290; exact binding before/after. Older1854-character v1 superseded only
