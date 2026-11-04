@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test"
+import type { RpcHandlers } from "@opencode/plugin/effect/rpc"
+import type { RpcClient } from "@opencode/client"
+import { Effect } from "effect"
 import { InferenceBroker } from "./broker.ts"
-import type { InferenceResult } from "./rpc.ts"
+import { registerLocalInference } from "./server.ts"
+import { LocalInference, RendererInference } from "./rpc.ts"
+import type { InferenceJob, InferenceResult } from "./rpc.ts"
+import { defaultFeatures } from "./features.ts"
+import { SystemOneRequest } from "./system-one.ts"
+import type { SystemOneOutput } from "./system-one.ts"
 
 const request = (prompt: string) => ({ prompt, maxTokens: 16, timeoutMs: 1_000 })
 const result = (text: string): InferenceResult => ({
@@ -153,4 +161,123 @@ test("System One uses its bounded transport envelope without widening ordinary c
   )
   expect(oversizedChat.error).toContain("experiment limits")
   broker.close()
+})
+
+test("typed LocalInference.review forwards a measured request through the renderer mailbox", async () => {
+  const stored = new Map<string, unknown>([["webgpu.features", defaultFeatures(true)]])
+  let local!: RpcHandlers<typeof LocalInference>
+  let renderer!: RpcHandlers<typeof RendererInference>
+  const ctx = {
+    options: {},
+    location: { project: { canonical: "/synthetic" } },
+    storage: {
+      get: (key: string) => Effect.succeed(stored.get(key)),
+      set: (key: string, value: unknown) =>
+        Effect.sync(() => {
+          stored.set(key, value)
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    tool: {
+      transform: () => Effect.succeed({ dispose: Effect.void }),
+      reload: () => Effect.void,
+    },
+    agent: {
+      transform: () => Effect.succeed({ dispose: Effect.void }),
+      reload: () => Effect.void,
+    },
+    rpc: {
+      register: (definition: { id: string }, handlers: unknown) =>
+        Effect.sync(() => {
+          if (definition.id === RendererInference.id) renderer = handlers as typeof renderer
+          else local = handlers as typeof local
+          return { dispose: Effect.void, events: { emit: () => Effect.void } }
+        }),
+    },
+  } as unknown as Parameters<typeof registerLocalInference>[0]
+  const client = new Proxy(
+    {},
+    {
+      get: (_, key) =>
+        key === "then"
+          ? undefined
+          : (input: unknown, options?: { signal?: AbortSignal }) => {
+              const handler = renderer[key as keyof typeof renderer] as (
+                input: unknown,
+                context: never,
+              ) => Effect.Effect<unknown>
+              return Effect.runPromise(handler(input, {} as never), {
+                signal: options?.signal,
+              })
+            },
+    },
+  ) as RpcClient<typeof RendererInference>
+
+  const stateTextLength = 7_026 - JSON.stringify({ shared: "" }).length
+  const input = SystemOneRequest.parse({
+    model: "d1-omni-2b",
+    state: { shared: "x".repeat(stateTextLength) },
+    questions: Object.fromEntries(
+      Array.from({ length: 14 }, (_, index) => [
+        `check-${index}`,
+        { type: "noul", instructions: `Question ${index}: Does the behavior remain preserved?` },
+      ]),
+    ),
+    timeoutMs: 60_000,
+  })
+  expect(JSON.stringify(input.state)).toHaveLength(7_026)
+  expect(JSON.stringify(input).length).toBeGreaterThan(8_000)
+  expect(Object.keys(input.questions)).toHaveLength(14)
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerLocalInference(ctx, async () => client)
+        yield* Effect.promise(async () => {
+          await Effect.runPromise(renderer.attach({ owner: "renderer" }, {} as never))
+          const review = Effect.runPromise(local.review(input, {} as never))
+          let job: InferenceJob | null = null
+          for (let attempt = 0; attempt < 20 && !job; attempt++) {
+            job = (
+              await Effect.runPromise(
+                renderer.poll({ owner: "renderer", available: true }, {} as never),
+              )
+            ).job
+            if (!job) await Promise.resolve()
+          }
+          expect(job).not.toBeNull()
+          expect(job!.mode).toBe("systemone")
+          expect(job!.feature).toBe("review")
+          expect(job!.prompt).toBe(JSON.stringify(input))
+          const output: SystemOneOutput = {
+            model: "d1-omni-2b" as const,
+            answers: Object.fromEntries(
+              Object.keys(input.questions).map((name) => [
+                name,
+                { type: "noul" as const, noul: 0.95 },
+              ]),
+            ),
+            usage: { input_tokens: 8_192, output_tokens: 0 as const },
+          }
+          await Effect.runPromise(
+            renderer.complete(
+              {
+                owner: "renderer",
+                id: job!.id,
+                result: {
+                  ok: true,
+                  text: JSON.stringify(output),
+                  error: "",
+                  promptTokens: 8_192,
+                  completionTokens: 0,
+                },
+              },
+              {} as never,
+            ),
+          )
+          expect(await review).toEqual(output)
+        })
+      }),
+    ),
+  )
 })

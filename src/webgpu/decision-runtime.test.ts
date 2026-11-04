@@ -13,7 +13,9 @@ test("actual decision adapter preserves cleanup ownership through failed and can
   ])
   expect(error).toBe("")
   expect(code).toBe(0)
-  expect(output).toContain("decision cleanup fault injection and context capacity checks passed")
+  expect(output).toContain(
+    "decision cleanup, context capacity, and pre-dispatch cancellation checks passed",
+  )
 }, 20_000)
 
 test("actual decision adapter and renderer retire only positively identified lost sessions", async () => {

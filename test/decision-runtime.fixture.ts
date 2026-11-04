@@ -62,6 +62,7 @@ const counts = {
   creates: 0,
   releases: 0,
   tensorCreates: 0,
+  tensorDisposals: 0,
   runs: 0,
 }
 const reset = () => {
@@ -72,6 +73,7 @@ const reset = () => {
   counts.creates = 0
   counts.releases = 0
   counts.tensorCreates = 0
+  counts.tensorDisposals = 0
   counts.runs = 0
 }
 
@@ -84,7 +86,9 @@ class TestTensor {
     counts.tensorCreates++
   }
 
-  dispose() {}
+  dispose() {
+    counts.tensorDisposals++
+  }
 }
 
 mock.module("onnxruntime-web/webgpu", () => ({
@@ -439,10 +443,55 @@ const actualTokenCapacityGuardsBeforeTensorAllocationAndRun = async () => {
   targetQuestionCount = 1
 }
 
+const cancellationAtEachAsyncDispatchBoundaryPreventsSessionRun = async () => {
+  reset()
+  targetQuestionCount = 1
+  targetInputTokens = 16
+  const decision = await load(new AbortController().signal)
+  const input: SystemOneInput = {
+    model: "d1-omni-2b",
+    state: { evidence: "dispatch-boundary" },
+    questions: { check: { type: "noul", instructions: "Is dispatch safe?" } },
+    timeoutMs: 60_000,
+  }
+
+  for (const boundary of ["tokenize", "inputs-ready", "run"] as const) {
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => (entered = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const controller = new AbortController()
+    const allocationsBefore = counts.tensorCreates
+    const disposalsBefore = counts.tensorDisposals
+    const pending = decision.systemOne(input, controller.signal, async (stage) => {
+      if (stage !== boundary) return
+      entered()
+      await gate
+    })
+
+    await started
+    controller.abort(new Error(`cancelled during ${boundary}`))
+    release()
+    await assert.rejects(pending, new RegExp(`cancelled during ${boundary}`))
+    assert.equal(counts.runs, 0, `${boundary} cancellation must prevent session.run`)
+    if (boundary === "run") {
+      assert.equal(counts.tensorCreates - allocationsBefore, 8)
+      assert.equal(counts.tensorDisposals - disposalsBefore, 8)
+    } else {
+      assert.equal(counts.tensorCreates, allocationsBefore)
+      assert.equal(counts.tensorDisposals, disposalsBefore)
+    }
+  }
+  await decision.dispose()
+  targetInputTokens = 1
+  targetQuestionCount = 1
+}
+
 await residentReleaseBarrier()
 await failedLoadBarrier(true)
 await failedLoadBarrier(false)
 await healthyCancellationAllowsExplicitReload()
 await failedRuntimeLoadRetainsTheMainOwnershipLease()
 await actualTokenCapacityGuardsBeforeTensorAllocationAndRun()
-console.log("decision cleanup fault injection and context capacity checks passed")
+await cancellationAtEachAsyncDispatchBoundaryPreventsSessionRun()
+console.log("decision cleanup, context capacity, and pre-dispatch cancellation checks passed")

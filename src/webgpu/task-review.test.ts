@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskReviewer } from "./task-review.ts"
 import type { ReviewInput, ReviewStore } from "./task-review.ts"
-import { reviewChecks } from "./review-questions.ts"
+import { reviewChecks, reviewQuestions } from "./review-questions.ts"
 import { SYSTEM_ONE_TRANSPORT_MAX_CHARS, SystemOneRequest } from "./system-one.ts"
 import type { SystemOneInput, SystemOneOutput } from "./system-one.ts"
 
@@ -340,13 +340,24 @@ test("one review round splits a larger question collection into bounded complete
     assertion: `Reopening retrieves task example ${index}`,
     evidence: [{ kind: "verification" as const, verificationID: "tests" }],
   }))
+  const expectedState = {
+    task: input.task,
+    intent: { request: input.request },
+    evidence: input.evidence ?? [],
+  }
+  const expectedQuestions = reviewQuestions(reviewChecks(input.task))
+  const seenQuestions: Record<string, (typeof expectedQuestions)[string]> = {}
   let calls = 0
   const reviewer = new TaskReviewer(memory(), {
     systemOne: async (request) => {
       calls++
       expect(Object.keys(request.questions).length).toBeLessThanOrEqual(16)
       expect(JSON.stringify(request).length).toBeLessThanOrEqual(SYSTEM_ONE_TRANSPORT_MAX_CHARS)
-      expect((request.state as { task: unknown }).task).toEqual(input.task)
+      expect(request.state).toEqual(expectedState)
+      for (const [name, question] of Object.entries(request.questions)) {
+        expect(Object.hasOwn(seenQuestions, name)).toBe(false)
+        seenQuestions[name] = question
+      }
       return reply(request)
     },
   })
@@ -355,6 +366,8 @@ test("one review round splits a larger question collection into bounded complete
   expect(result.status).toBe("completed")
   if (!("findings" in result)) throw Error("Expected findings")
   expect(result.findings).toHaveLength(reviewChecks(input.task).length)
+  expect(seenQuestions).toEqual(expectedQuestions)
+  expect(Object.keys(seenQuestions)).toHaveLength(Object.keys(expectedQuestions).length)
   expect(result.round).toBe(1)
 })
 
@@ -397,6 +410,7 @@ test("a 7,026-character shared state and 14 checks stay intact in one transport 
   expect(JSON.stringify(request).length).toBeGreaterThan(8_000)
   expect(JSON.stringify(request).length).toBeLessThanOrEqual(SYSTEM_ONE_TRANSPORT_MAX_CHARS)
   expect(request.state).toEqual(expectedState)
+  expect(request.questions).toEqual(reviewQuestions(reviewChecks(input.task)))
   expect(Object.keys(request.questions)).toHaveLength(14)
   expect(Object.keys(result.answers)).toEqual(Object.keys(request.questions))
   expect(result.status).toBe("completed")

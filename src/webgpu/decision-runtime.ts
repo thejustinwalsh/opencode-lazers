@@ -139,6 +139,7 @@ export async function loadDecisionRuntime(
       const request = SystemOneRequest.parse(input)
       const entries = Object.entries(request.questions)
       await trace?.("tokenize", { questionCount: entries.length })
+      signal.throwIfAborted()
       const groups: number[][][] = []
       const suffixes = entries.map(([, question]) => {
         const labels = question.type === "choice" ? Object.keys(question.criteria) : []
@@ -178,6 +179,7 @@ export async function loadDecisionRuntime(
         inputShape: [1, ids.length],
         questionCount: entries.length,
       })
+      signal.throwIfAborted()
       if (ids.length > DECISION_CONTEXT_CAPACITY_TOKENS)
         throw Object.assign(
           new Error(
@@ -210,6 +212,7 @@ export async function loadDecisionRuntime(
         }
         signal.throwIfAborted()
         await trace?.("run", { actualInputTokens: ids.length, inputShape: [1, ids.length] })
+        signal.throwIfAborted()
         let outputs: Awaited<ReturnType<ort.InferenceSession["run"]>>
         try {
           outputs = await session!.run(feeds, ["logits"])
