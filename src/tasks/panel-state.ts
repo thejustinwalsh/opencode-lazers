@@ -8,12 +8,18 @@ import type {
 } from "./contract.ts"
 import type { SnapshotResponse } from "../observability/contract.ts"
 
+export type TaskPanelChange = {
+  projectDirectory: string
+  version: number
+  resnapshotRequired?: boolean
+}
+
 export interface TaskTransport {
   query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
   snapshot?(signal: AbortSignal): Promise<SnapshotResponse>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
-  changes(signal: AbortSignal): AsyncIterable<{ projectDirectory: string; version: number }>
+  changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
   online(): boolean
 }
 export interface PanelData {
@@ -49,7 +55,9 @@ export class TaskPanelState {
   private transport?: TaskTransport
   private query: TaskQuery = {}
   private project = ""
-  private timer?: ReturnType<typeof setInterval>
+  private retry?: ReturnType<typeof setTimeout>
+  private retryDelayMs = 1_000
+  private refreshPending = false
   private pendingVersion = 0
   private refreshing = false
   private starts = new Map<string, Promise<StartTaskResult>>()
@@ -66,6 +74,15 @@ export class TaskPanelState {
   private update(change: Partial<PanelData>) {
     this.data = { ...this.data, ...change }
     this.changed(this.data)
+  }
+
+  private retryRead(generation: number) {
+    if (this.retry || generation !== this.generation || this.controller.signal.aborted) return
+    this.retry = setTimeout(() => {
+      this.retry = undefined
+      if (generation === this.generation) void this.refresh()
+    }, this.retryDelayMs)
+    this.retryDelayMs = Math.min(this.retryDelayMs * 2, 30_000)
   }
 
   connect(
@@ -88,14 +105,15 @@ export class TaskPanelState {
     // Restored/native-link detail is independent of optional topology or list failures.
     if (selectedID) void this.select(selectedID)
     void this.refresh()
-    this.timer = setInterval(() => {
-      void this.refresh()
-    }, 3_000)
   }
 
   async refresh() {
     const transport = this.transport
-    if (!transport || this.controller.signal.aborted || this.refreshing) return
+    if (!transport || this.controller.signal.aborted) return
+    if (this.refreshing) {
+      this.refreshPending = true
+      return
+    }
     this.refreshing = true
     const generation = this.generation
     const request = ++this.listRequest
@@ -172,9 +190,19 @@ export class TaskPanelState {
     } finally {
       if (generation === this.generation) {
         this.refreshing = false
-        if (this.pendingVersion > (this.data.page?.snapshot ?? 0) && !this.data.error) {
+        if (
+          this.refreshPending ||
+          (this.pendingVersion > (this.data.page?.snapshot ?? 0) && !this.data.error)
+        ) {
+          this.refreshPending = false
           this.pendingVersion = 0
           void this.refresh()
+        } else if (this.data.error || this.data.topologyError) {
+          this.retryRead(generation)
+        } else {
+          if (this.retry) clearTimeout(this.retry)
+          this.retry = undefined
+          this.retryDelayMs = 1_000
         }
       }
     }
@@ -201,7 +229,14 @@ export class TaskPanelState {
       if (generation === this.generation && !this.controller.signal.aborted)
         this.update({ stale: true, error: String(error) })
     } finally {
-      if (generation === this.generation) this.refreshing = false
+      if (generation === this.generation) {
+        this.refreshing = false
+        if (this.refreshPending || this.pendingVersion > (this.data.page?.snapshot ?? 0)) {
+          this.refreshPending = false
+          this.pendingVersion = 0
+          void this.refresh()
+        } else if (this.data.error) this.retryRead(generation)
+      }
     }
   }
 
@@ -225,6 +260,7 @@ export class TaskPanelState {
     } catch (error) {
       if (generation === this.generation && request === this.detailRequest && !signal.aborted) {
         this.update({ error: String(error), stale: true })
+        this.retryRead(generation)
       }
     }
   }
@@ -280,13 +316,14 @@ export class TaskPanelState {
       try {
         for await (const event of transport.changes(signal)) {
           if (generation !== this.generation || signal.aborted) return
-          if (
-            event.projectDirectory !== this.project ||
-            event.version <= (this.data.page?.snapshot ?? 0)
-          )
+          if (event.projectDirectory !== this.project) continue
+          if (event.resnapshotRequired) {
+            void this.refresh()
             continue
+          }
+          if (event.version <= (this.data.page?.snapshot ?? 0)) continue
           this.pendingVersion = Math.max(this.pendingVersion, event.version)
-          void this.refresh()
+          if (!this.refreshing) void this.refresh()
         }
         if (!signal.aborted) throw new Error("Task update connection closed")
       } catch (error) {
@@ -313,7 +350,10 @@ export class TaskPanelState {
     this.detailController.abort()
     this.starts.clear()
     this.linkedRequests.clear()
-    if (this.timer) clearInterval(this.timer)
+    if (this.retry) clearTimeout(this.retry)
+    this.retry = undefined
+    this.retryDelayMs = 1_000
+    this.refreshPending = false
     this.transport = undefined
     this.refreshing = false
     this.pendingVersion = 0

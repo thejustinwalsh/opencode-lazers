@@ -17,6 +17,7 @@ import type { Accessor, JSX } from "solid-js"
 import { Tasks } from "./contract.ts"
 import { Observability } from "../observability/contract.ts"
 import { TaskPanelState } from "./panel-state.ts"
+import { taskChanges } from "./events.ts"
 import type { PanelData } from "./panel-state.ts"
 import { clampSplit, splitFromPointer } from "./panel-layout.ts"
 import { taskTitle } from "./presentation.ts"
@@ -198,11 +199,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             ),
           start: (input, signal) =>
             rpc().start(input, { location: { directory: value.directory }, signal }),
-          changes: (signal) =>
-            (async function* () {
-              for await (const event of rpc().events.subscribe("changed", { signal }))
-                yield event.data
-            })(),
+          changes: (signal) => taskChanges(value.client.event, value.project, signal),
           online: () => props.session.server.connected,
         },
         {
