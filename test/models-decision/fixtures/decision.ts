@@ -29,10 +29,16 @@ export const decisionRead: ModelDecisionReadInput = {
 
 export function decisionContext(change: Partial<ModelDecisionContext> = {}): ModelDecisionContext {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     snapshotID: "snapshot:producer-owned/42",
     producedAt: "2026-11-03T12:00:00.000Z",
     ...decisionRead,
+    priceSourcePolicy: {
+      schemaVersion: 1,
+      revision: 0,
+      sources: ["openrouter", "opencode"],
+      fallback: "whole-model",
+    },
     availability: "ready",
     freshness: "current",
     unavailableReason: null,
@@ -42,7 +48,7 @@ export function decisionContext(change: Partial<ModelDecisionContext> = {}): Mod
       denominator: "accepted-logical-tasks",
       acceptanceThreshold: null,
       sampleSizeThreshold: null,
-      valuation: "current-common-openrouter-price-pins",
+      valuation: "current-ordered-whole-model-price-source-pins",
       nativeReportedCosts: "retained-separately-not-market-equivalent",
     },
     taskKindCatalog: {
@@ -65,8 +71,16 @@ export function decisionContext(change: Partial<ModelDecisionContext> = {}): Mod
     },
     priceIndex: {
       source: "openrouter",
-      snapshotID: "openrouter:2026-11-03/current",
-      retrievedAt: "2026-11-03T11:55:00.000Z",
+      sourcePolicyRevision: 0,
+      pins: [
+        {
+          source: "openrouter",
+          snapshotID: "openrouter:2026-11-03/current",
+          retrievedAt: "2026-11-03T11:55:00.000Z",
+          freshness: "current",
+          semantics: "exact-published-route-quotes",
+        },
+      ],
       freshness: "current",
       semantics: "exact-published-route-quotes",
       note: "Current prices revalue the unchanged recorded token history.",
@@ -126,6 +140,7 @@ export function decisionRow(
       },
       currentPrice: {
         source: "openrouter",
+        sourcePolicyRevision: 0,
         sourceRecordID: zero ? "anthropic/sonnet" : "openai/gpt-6",
         snapshotID: "openrouter:2026-11-03/current",
         retrievedAt: "2026-11-03T11:55:00.000Z",

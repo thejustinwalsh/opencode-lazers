@@ -18,6 +18,7 @@ import {
   MODELS_DECISION_RPC_ID,
   ModelDecisionConfigurationsOutputSchema,
   ModelDecisionContextSchema,
+  ModelDecisionConfigurationSchema,
   ModelDecisionEstimateSchema,
   ModelDecisionInspectInputSchema,
   ModelDecisionInspectOutputSchema,
@@ -36,7 +37,7 @@ test("versioned reads share producer context while the global graph stays indepe
   const inspect = ModelDecisionInspectOutputSchema.parse(decisionInspect())
 
   expect(ModelsDecision.id).toBe(MODELS_DECISION_RPC_ID)
-  expect(ModelsDecision.id).toBe("lazers.models.decision.v1")
+  expect(ModelsDecision.id).toBe("lazers.models.decision.v2")
   for (const output of [overview, rows, configurations]) {
     expect(output.context.snapshotID).toBe("snapshot:producer-owned/42")
     expect(output.context.filters).toEqual(decisionRead.filters)
@@ -58,6 +59,7 @@ test("versioned reads share producer context while the global graph stays indepe
     modelID: "gpt-6",
     variant: "high",
   })
+  expect(rows.rows[0]?.configuration.currentPrice.source).toBe("openrouter")
   expect(configurations.configurations[0]?.configurationID).toBe(CONFIG_ONE)
 
   if (inspect.status !== "found") throw new Error("Expected a found inspection fixture")
@@ -78,6 +80,202 @@ test("versioned reads share producer context while the global graph stays indepe
   expect(inspect.configuration.currentPrice.semantics).toBe("exact-route-quote")
   expect(inspect.estimate.status).toBe("available")
   expect(inspect.estimate.confidenceInterval).toBeNull()
+})
+
+test("source-aware decision context preserves whole-model policy, mixed source pins, and unavailable prices", () => {
+  const mixed = ModelDecisionContextSchema.parse(
+    decisionContext({
+      priceSourcePolicy: {
+        schemaVersion: 1,
+        revision: 7,
+        sources: ["opencode", "openrouter"],
+        fallback: "whole-model",
+      },
+      priceIndex: {
+        source: "mixed",
+        sourcePolicyRevision: 7,
+        pins: [
+          {
+            source: "openrouter",
+            snapshotID: "openrouter:real-source-snapshot/17",
+            retrievedAt: "2026-11-03T11:55:00.000Z",
+            freshness: "current",
+            semantics: "exact-published-route-quotes",
+          },
+          {
+            source: "opencode",
+            snapshotID: "native-catalog:real-source-snapshot/18",
+            retrievedAt: "2026-11-03T11:56:00.000Z",
+            freshness: "stale",
+            semantics: "exact-native-model-quotes",
+          },
+        ],
+        freshness: "stale",
+        semantics: "mixed",
+        note: "Different configurations use complete quotes from their selected source.",
+      },
+    }),
+  )
+  expect(mixed.priceSourcePolicy).toMatchObject({
+    revision: 7,
+    sources: ["opencode", "openrouter"],
+    fallback: "whole-model",
+  })
+  expect(mixed.priceIndex).toMatchObject({
+    source: "mixed",
+    sourcePolicyRevision: 7,
+    pins: [
+      { source: "openrouter", snapshotID: "openrouter:real-source-snapshot/17" },
+      { source: "opencode", snapshotID: "native-catalog:real-source-snapshot/18" },
+    ],
+  })
+  expect(
+    ModelDecisionOverviewOutputSchema.parse({ ...decisionOverview(), context: mixed }).context
+      .priceIndex.pins,
+  ).toHaveLength(2)
+
+  const noSources = {
+    schemaVersion: 1 as const,
+    revision: 8,
+    sources: [] as Array<"openrouter" | "opencode">,
+    fallback: "whole-model" as const,
+  }
+  const unavailable = ModelDecisionContextSchema.parse(
+    decisionContext({
+      priceSourcePolicy: noSources,
+      priceIndex: {
+        source: "unavailable",
+        sourcePolicyRevision: 8,
+        pins: [],
+        freshness: "unavailable",
+        semantics: "unknown",
+        note: "No price sources are enabled.",
+      },
+    }),
+  )
+  expect(unavailable.priceIndex).toMatchObject({
+    source: "unavailable",
+    pins: [],
+    freshness: "unavailable",
+  })
+
+  const noQuote = ModelDecisionConfigurationSchema.parse({
+    ...decisionRow({
+      status: "unknown",
+      tokensPerAcceptedTask: null,
+      currentMarketUSDPerAcceptedTask: null,
+      observationCount: 0,
+      reason: "No attributable cohort.",
+    }).configuration,
+    currentPrice: {
+      source: null,
+      sourcePolicyRevision: 8,
+      sourceRecordID: null,
+      snapshotID: null,
+      retrievedAt: null,
+      semantics: "unknown",
+      freshness: "unavailable",
+    },
+  })
+  expect(noQuote.currentPrice).toMatchObject({ source: null, freshness: "unavailable" })
+  expect(
+    ModelDecisionConfigurationsOutputSchema.parse({
+      ...decisionConfigurations(),
+      context: unavailable,
+      configurations: [noQuote],
+    }).configurations[0]?.currentPrice,
+  ).toMatchObject({ source: null, sourcePolicyRevision: 8, freshness: "unavailable" })
+
+  expect(
+    ModelDecisionContextSchema.safeParse(
+      decisionContext({
+        priceIndex: {
+          ...decisionContext().priceIndex,
+          source: "mixed",
+        },
+      }),
+    ).success,
+  ).toBe(false)
+  expect(
+    ModelDecisionContextSchema.safeParse(
+      decisionContext({
+        priceSourcePolicy: { ...noSources, sources: ["opencode"] },
+        priceIndex: {
+          ...decisionContext().priceIndex,
+          sourcePolicyRevision: 8,
+        },
+      }),
+    ).success,
+  ).toBe(false)
+  expect(
+    ModelDecisionContextSchema.safeParse(
+      decisionContext({
+        priceSourcePolicy: { ...decisionContext().priceSourcePolicy, revision: 4 },
+      }),
+    ).success,
+  ).toBe(false)
+  expect(
+    ModelDecisionContextSchema.safeParse(
+      decisionContext({
+        priceSourcePolicy: { ...noSources, fallback: "category-blending" } as never,
+      }),
+    ).success,
+  ).toBe(false)
+})
+
+test("native-reported zero and execution route do not imply an available price source", () => {
+  const base = decisionRow({
+    status: "unknown",
+    tokensPerAcceptedTask: null,
+    currentMarketUSDPerAcceptedTask: null,
+    observationCount: 0,
+    reason: "No attributable cohort.",
+  })
+  const row = {
+    ...base,
+    configuration: {
+      ...base.configuration,
+      currentPrice: {
+        source: null,
+        sourcePolicyRevision: 0,
+        sourceRecordID: null,
+        snapshotID: null,
+        retrievedAt: null,
+        semantics: "unknown" as const,
+        freshness: "unavailable" as const,
+      },
+    },
+    nativeReportedCost: {
+      status: "available" as const,
+      totalUSD: 0,
+      source: "native-reported" as const,
+      note: "A subscription-reported zero is not a market quote.",
+    },
+  }
+  const parsed = ModelDecisionRowsOutputSchema.parse({ ...decisionRows(), rows: [row] }).rows[0]!
+  expect(parsed.configuration.route.providerID).toBe("openai")
+  expect(parsed.configuration.currentPrice).toMatchObject({
+    source: null,
+    freshness: "unavailable",
+  })
+  expect(parsed.nativeReportedCost.totalUSD).toBe(0)
+
+  const stalePin = {
+    ...decisionRow({
+      status: "unknown",
+      tokensPerAcceptedTask: null,
+      currentMarketUSDPerAcceptedTask: null,
+      observationCount: 0,
+      reason: "No attributable cohort.",
+    }),
+    configuration: {
+      ...base.configuration,
+      currentPrice: { ...base.configuration.currentPrice, sourcePolicyRevision: 1 },
+    },
+  }
+  expect(
+    ModelDecisionRowsOutputSchema.safeParse({ ...decisionRows(), rows: [stalePin] }).success,
+  ).toBe(false)
 })
 
 test("zero accepted, one observation, partial, unknown, stale and backend-not-ready remain distinct", () => {
@@ -318,6 +516,6 @@ test("contract import is schema/RPC-only and has no DOM, database, chart or scor
   expect(source).not.toMatch(/from ["'](?:echarts|node:sqlite|.*storage|.*comparison-chart)/)
   expect(source).not.toMatch(/\b(?:document|window|echarts|score|rank)\s*\(/)
   const contract = await import("./decision-contract.ts")
-  expect(contract.MODELS_DECISION_CONTRACT_VERSION).toBe(1)
+  expect(contract.MODELS_DECISION_CONTRACT_VERSION).toBe(2)
   expect(globalThis.document).toBeUndefined()
 })

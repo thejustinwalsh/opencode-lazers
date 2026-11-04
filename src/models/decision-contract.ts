@@ -2,10 +2,11 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { TaskReferenceSchema } from "../task.ts"
+import { ModelPriceSourcePolicySchema, ModelPriceSourceSchema } from "./price-source-settings.ts"
 
-/** Additive, producer-owned read contract for the Models decision view. */
-export const MODELS_DECISION_RPC_ID = "lazers.models.decision.v1"
-export const MODELS_DECISION_CONTRACT_VERSION = 1
+/** Versioned, producer-owned read contract for the Models decision view. */
+export const MODELS_DECISION_RPC_ID = "lazers.models.decision.v2"
+export const MODELS_DECISION_CONTRACT_VERSION = 2
 export const MODELS_DECISION_ACCOUNTING_BASIS =
   "attributable-cohort-effort-per-accepted-logical-task-v1"
 export const MODELS_DECISION_TASK_KIND_CATALOG = "task-kind/v1"
@@ -53,7 +54,9 @@ export const ModelDecisionFiltersSchema = z.strictObject({
 export type ModelDecisionFilters = z.infer<typeof ModelDecisionFiltersSchema>
 
 const ReadShape = {
-  schemaVersion: z.literal(MODELS_DECISION_CONTRACT_VERSION).default(1),
+  schemaVersion: z
+    .literal(MODELS_DECISION_CONTRACT_VERSION)
+    .default(MODELS_DECISION_CONTRACT_VERSION),
   scope: ModelDecisionScopeSchema,
   filters: ModelDecisionFiltersSchema,
 }
@@ -105,7 +108,7 @@ export const ModelDecisionAccountingSchema = z.strictObject({
   denominator: z.literal("accepted-logical-tasks"),
   acceptanceThreshold: z.null(),
   sampleSizeThreshold: z.null(),
-  valuation: z.literal("current-common-openrouter-price-pins"),
+  valuation: z.literal("current-ordered-whole-model-price-source-pins"),
   nativeReportedCosts: z.literal("retained-separately-not-market-equivalent"),
 })
 
@@ -122,38 +125,115 @@ export const ModelDecisionClassificationCoverageSchema = z.strictObject({
   totalTaskCount: Count,
 })
 
-export const ModelDecisionPriceIndexSchema = z.strictObject({
-  source: z.literal("openrouter"),
-  snapshotID: OpaqueID.nullable(),
-  retrievedAt: z.iso.datetime().nullable(),
-  freshness: z.enum(["current", "stale", "unavailable"]),
-  semantics: z.enum([
-    "exact-published-route-quotes",
-    "observed-endpoint-averages",
-    "mixed",
-    "unknown",
-  ]),
-  note: z.string().max(2000),
-})
+export const ModelDecisionPriceIndexSchema = z
+  .strictObject({
+    source: z.enum(["openrouter", "opencode", "mixed", "unavailable"]),
+    sourcePolicyRevision: Count,
+    pins: z
+      .array(
+        z.strictObject({
+          source: ModelPriceSourceSchema,
+          snapshotID: OpaqueID,
+          retrievedAt: z.iso.datetime(),
+          freshness: z.enum(["current", "stale"]),
+          semantics: z.enum([
+            "exact-published-route-quotes",
+            "exact-native-model-quotes",
+            "observed-endpoint-averages",
+            "mixed",
+            "unknown",
+          ]),
+        }),
+      )
+      .max(2),
+    freshness: z.enum(["current", "stale", "unavailable"]),
+    semantics: z.enum([
+      "exact-published-route-quotes",
+      "exact-native-model-quotes",
+      "observed-endpoint-averages",
+      "mixed",
+      "unknown",
+    ]),
+    note: z.string().max(2000),
+  })
+  .superRefine((index, context) => {
+    const sources = new Set(index.pins.map((pin) => pin.source))
+    const expectedSource =
+      sources.size === 0 ? "unavailable" : sources.size === 1 ? index.pins[0]!.source : "mixed"
+    if (index.source !== expectedSource)
+      context.addIssue({
+        code: "custom",
+        path: ["source"],
+        message: "The overview source must reflect its actual source pins",
+      })
+    if (sources.size !== index.pins.length)
+      context.addIssue({
+        code: "custom",
+        path: ["pins"],
+        message: "An overview can contain only one pin per supported price source",
+      })
+
+    const expectedFreshness =
+      index.pins.length === 0
+        ? "unavailable"
+        : index.pins.some((pin) => pin.freshness === "stale")
+          ? "stale"
+          : "current"
+    if (index.freshness !== expectedFreshness)
+      context.addIssue({
+        code: "custom",
+        path: ["freshness"],
+        message: "Overview freshness must summarize its source pins",
+      })
+
+    const semantics = new Set(index.pins.map((pin) => pin.semantics))
+    const expectedSemantics =
+      semantics.size === 0 ? "unknown" : semantics.size === 1 ? index.pins[0]!.semantics : "mixed"
+    if (index.semantics !== expectedSemantics)
+      context.addIssue({
+        code: "custom",
+        path: ["semantics"],
+        message: "Overview semantics must summarize its source pins",
+      })
+  })
 
 /**
  * All four reads repeat this exact producer context. A row page never changes the
  * graph's global filtered snapshot or the accounting used for its coordinates.
  */
-export const ModelDecisionContextSchema = z.strictObject({
-  schemaVersion: z.literal(MODELS_DECISION_CONTRACT_VERSION),
-  snapshotID: OpaqueID,
-  producedAt: z.iso.datetime(),
-  scope: ModelDecisionScopeSchema,
-  filters: ModelDecisionFiltersSchema,
-  availability: z.enum(["ready", "partial", "backend-not-ready"]),
-  freshness: z.enum(["current", "stale", "unknown"]),
-  unavailableReason: z.string().max(2000).nullable(),
-  accounting: ModelDecisionAccountingSchema,
-  taskKindCatalog: ModelDecisionTaskKindCatalogSchema,
-  classification: ModelDecisionClassificationCoverageSchema,
-  priceIndex: ModelDecisionPriceIndexSchema,
-})
+export const ModelDecisionContextSchema = z
+  .strictObject({
+    schemaVersion: z.literal(MODELS_DECISION_CONTRACT_VERSION),
+    snapshotID: OpaqueID,
+    producedAt: z.iso.datetime(),
+    scope: ModelDecisionScopeSchema,
+    filters: ModelDecisionFiltersSchema,
+    priceSourcePolicy: ModelPriceSourcePolicySchema,
+    availability: z.enum(["ready", "partial", "backend-not-ready"]),
+    freshness: z.enum(["current", "stale", "unknown"]),
+    unavailableReason: z.string().max(2000).nullable(),
+    accounting: ModelDecisionAccountingSchema,
+    taskKindCatalog: ModelDecisionTaskKindCatalogSchema,
+    classification: ModelDecisionClassificationCoverageSchema,
+    priceIndex: ModelDecisionPriceIndexSchema,
+  })
+  .superRefine((producerContext, context) => {
+    if (
+      producerContext.priceIndex.sourcePolicyRevision !== producerContext.priceSourcePolicy.revision
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["priceIndex", "sourcePolicyRevision"],
+        message: "Price index and source policy revisions must match",
+      })
+    for (const [index, pin] of producerContext.priceIndex.pins.entries())
+      if (!producerContext.priceSourcePolicy.sources.includes(pin.source))
+        context.addIssue({
+          code: "custom",
+          path: ["priceIndex", "pins", index, "source"],
+          message: "A source pin must use an enabled policy source",
+        })
+  })
 export type ModelDecisionContext = z.infer<typeof ModelDecisionContextSchema>
 
 export const ModelDecisionCohortCountsSchema = z.strictObject({
@@ -168,14 +248,45 @@ export const ModelDecisionCohortCountsSchema = z.strictObject({
 })
 export type ModelDecisionCohortCounts = z.infer<typeof ModelDecisionCohortCountsSchema>
 
-export const ModelDecisionPricePinSchema = z.strictObject({
-  source: z.literal("openrouter"),
-  sourceRecordID: OpaqueID.nullable(),
-  snapshotID: OpaqueID.nullable(),
-  retrievedAt: z.iso.datetime().nullable(),
-  semantics: z.enum(["exact-route-quote", "observed-endpoint-average", "unknown"]),
-  freshness: z.enum(["current", "stale", "unavailable"]),
-})
+export const ModelDecisionPricePinSchema = z
+  .strictObject({
+    source: ModelPriceSourceSchema.nullable(),
+    sourcePolicyRevision: Count,
+    sourceRecordID: OpaqueID.nullable(),
+    snapshotID: OpaqueID.nullable(),
+    retrievedAt: z.iso.datetime().nullable(),
+    semantics: z.enum([
+      "exact-route-quote",
+      "exact-native-model-quote",
+      "observed-endpoint-average",
+      "unknown",
+    ]),
+    freshness: z.enum(["current", "stale", "unavailable"]),
+  })
+  .superRefine((pin, context) => {
+    if (pin.source === null) {
+      if (
+        pin.sourceRecordID !== null ||
+        pin.snapshotID !== null ||
+        pin.retrievedAt !== null ||
+        pin.semantics !== "unknown" ||
+        pin.freshness !== "unavailable"
+      )
+        context.addIssue({
+          code: "custom",
+          message: "An unavailable price cannot claim a source pin or quote",
+        })
+    } else if (
+      pin.snapshotID === null ||
+      pin.retrievedAt === null ||
+      pin.semantics === "unknown" ||
+      pin.freshness === "unavailable"
+    )
+      context.addIssue({
+        code: "custom",
+        message: "A selected price source requires an authentic available quote pin",
+      })
+  })
 export type ModelDecisionPricePin = z.infer<typeof ModelDecisionPricePinSchema>
 
 export const ModelDecisionNativeCostSchema = z.strictObject({
@@ -251,6 +362,29 @@ export const ModelDecisionConfigurationSchema = z.strictObject({
 })
 export type ModelDecisionConfiguration = z.infer<typeof ModelDecisionConfigurationSchema>
 
+function refineConfigurationPricePolicy(
+  configuration: ModelDecisionConfiguration,
+  policy: ModelDecisionContext["priceSourcePolicy"],
+  path: Array<string | number>,
+  context: z.RefinementCtx,
+) {
+  if (configuration.currentPrice.sourcePolicyRevision !== policy.revision)
+    context.addIssue({
+      code: "custom",
+      path: [...path, "currentPrice", "sourcePolicyRevision"],
+      message: "Configuration price and source policy revisions must match",
+    })
+  if (
+    configuration.currentPrice.source !== null &&
+    !policy.sources.includes(configuration.currentPrice.source)
+  )
+    context.addIssue({
+      code: "custom",
+      path: [...path, "currentPrice", "source"],
+      message: "A configuration price must use an enabled policy source",
+    })
+}
+
 export const ModelDecisionRowSchema = z
   .strictObject({
     configuration: ModelDecisionConfigurationSchema,
@@ -301,18 +435,40 @@ export const ModelDecisionOverviewOutputSchema = z.strictObject({
 })
 export type ModelDecisionOverview = z.infer<typeof ModelDecisionOverviewOutputSchema>
 
-export const ModelDecisionRowsOutputSchema = z.strictObject({
-  context: ModelDecisionContextSchema,
-  rows: z.array(ModelDecisionRowSchema).max(100),
-  ...Page,
-})
+export const ModelDecisionRowsOutputSchema = z
+  .strictObject({
+    context: ModelDecisionContextSchema,
+    rows: z.array(ModelDecisionRowSchema).max(100),
+    ...Page,
+  })
+  .superRefine((output, context) => {
+    output.rows.forEach((row, index) =>
+      refineConfigurationPricePolicy(
+        row.configuration,
+        output.context.priceSourcePolicy,
+        ["rows", index, "configuration"],
+        context,
+      ),
+    )
+  })
 export type ModelDecisionRows = z.infer<typeof ModelDecisionRowsOutputSchema>
 
-export const ModelDecisionConfigurationsOutputSchema = z.strictObject({
-  context: ModelDecisionContextSchema,
-  configurations: z.array(ModelDecisionConfigurationSchema).max(100),
-  ...Page,
-})
+export const ModelDecisionConfigurationsOutputSchema = z
+  .strictObject({
+    context: ModelDecisionContextSchema,
+    configurations: z.array(ModelDecisionConfigurationSchema).max(100),
+    ...Page,
+  })
+  .superRefine((output, context) => {
+    output.configurations.forEach((configuration, index) =>
+      refineConfigurationPricePolicy(
+        configuration,
+        output.context.priceSourcePolicy,
+        ["configurations", index],
+        context,
+      ),
+    )
+  })
 export type ModelDecisionConfigurations = z.infer<typeof ModelDecisionConfigurationsOutputSchema>
 
 const EmpiricalRange = z.strictObject({
@@ -424,6 +580,13 @@ export const ModelDecisionInspectOutputSchema = z
       refineZeroAcceptedEfficiency(
         inspection.cohort.acceptedTaskCount,
         inspection.efficiency,
+        context,
+      )
+    if (inspection.status === "found")
+      refineConfigurationPricePolicy(
+        inspection.configuration,
+        inspection.context.priceSourcePolicy,
+        ["configuration"],
         context,
       )
   })

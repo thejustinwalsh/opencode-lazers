@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
+import { Integration } from "@opencode/schema/integration"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import { nativeWorkerOptions } from "../runner/catalog.ts"
@@ -9,6 +10,8 @@ import {
   ModelComparisonRPCInputSchema,
   ModelConfigureRPCInputSchema,
   ModelEvidenceRPCInputSchema,
+  ModelPriceSourceConfigureRPCInputSchema,
+  ModelPriceSourceSettingsRPCInputSchema,
   ModelMappingWriteOutputSchema,
   ModelSourceRefreshRPCInputSchema,
   ModelSettingsOutputSchema,
@@ -27,10 +30,16 @@ import { readModelComparison } from "./comparison-read.ts"
 import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelSettingsService } from "./service.ts"
+import {
+  ModelPriceSourceSettingsSchema,
+  ModelPriceSourceSettingsStore,
+  ModelPriceSourceWriteOutputSchema,
+} from "./price-source-settings.ts"
+import type { ModelPriceSource } from "./price-source-settings.ts"
 
 type ModelsContext = Pick<
   Plugin.Context,
-  "agent" | "integration" | "location" | "model" | "permission" | "rpc" | "session"
+  "agent" | "integration" | "location" | "model" | "permission" | "rpc" | "session" | "storage"
 >
 type EvidenceReadStore = Pick<
   ModelEvidenceReadStore,
@@ -95,6 +104,23 @@ async function authorize(
   return currentSession.session
 }
 
+async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, signal: AbortSignal) {
+  try {
+    const connection = await Effect.runPromise(
+      ctx.integration.connection.active(Integration.ID.make(source)),
+      { signal },
+    )
+    signal.throwIfAborted()
+    if (!connection) return "not-configured" as const
+    return connection.status?.status === "needs_auth"
+      ? ("reauthentication-required" as const)
+      : ("configured" as const)
+  } catch {
+    signal.throwIfAborted()
+    return "unknown" as const
+  }
+}
+
 /** Desktop RPC and Code Mode tools share the same project-scoped SQLite mappings. */
 export function registerModelsServer(
   ctx: ModelsContext,
@@ -106,6 +132,15 @@ export function registerModelsServer(
   const path = repository.path
   const projectDirectory = repository.projectDirectory
   const projectID = ctx.location.project.id
+  const priceSourceSettings = new ModelPriceSourceSettingsStore(
+    {
+      get: (key, signal) =>
+        Effect.runPromise(ctx.storage.get(key), signal ? { signal } : undefined),
+      set: (key, value, signal) =>
+        Effect.runPromise(ctx.storage.set(key, value), signal ? { signal } : undefined),
+    },
+    projectDirectory,
+  )
   const withService = <T>(run: (service: ModelSettingsService) => T): T => {
     const connection = new TaskRepository(path, projectDirectory)
     try {
@@ -186,6 +221,53 @@ export function registerModelsServer(
             return ModelMappingWriteOutputSchema.parse(
               withService((service) => service.configure(update)),
             )
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      priceSources: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelPriceSourceSettingsRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-get-model-settings",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const policy = await priceSourceSettings.read(signal)
+            const [openrouter, opencode] = await Promise.all([
+              configuredAccess(ctx, "openrouter", signal),
+              configuredAccess(ctx, "opencode", signal),
+            ])
+            signal.throwIfAborted()
+            return ModelPriceSourceSettingsSchema.parse({
+              policy,
+              access: { openrouter, opencode },
+            })
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      configurePriceSources: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelPriceSourceConfigureRPCInputSchema.parse(input)
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-configure-models",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const result = await priceSourceSettings.configure(
+              { expectedRevision: request.expectedRevision, sources: request.sources },
+              signal,
+            )
+            return ModelPriceSourceWriteOutputSchema.parse(result)
           },
           catch: failure,
         }).pipe(Effect.orDie),
