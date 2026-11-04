@@ -820,12 +820,30 @@ test("PID reuse, start-time mismatch, live identity and absence all leave contai
 })
 
 function git(cwd: string, args: string[]): string {
-  const result = spawnSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
-  })
+  const result = spawnSync(
+    "git",
+    [
+      "--no-optional-locks",
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "core.hooksPath=/dev/null",
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_ALLOW_PROTOCOL: "file",
+        GIT_OPTIONAL_LOCKS: "0",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    },
+  )
   if (result.error || result.status !== 0)
     throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.error?.message}`)
   return result.stdout
@@ -873,18 +891,9 @@ function byteManifest(directory: string): string[] {
 function createE6Fixture(root: string): string {
   const source = realpathSync(resolve(new URL("../", import.meta.url).pathname))
   const worktree = join(root, "candidate")
-  const cloned = spawnSync(
-    "git",
-    ["clone", "--quiet", "--shared", "--no-checkout", source, worktree],
-    {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 30_000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    },
-  )
-  if (cloned.error || cloned.status !== 0)
-    throw new Error(`local fixture clone failed: ${cloned.stderr || cloned.error?.message}`)
+  git(root, ["clone", "--quiet", "--shared", "--no-checkout", source, worktree])
+  // Exercise the real captured commit without materializing unrelated product artifacts.
+  git(worktree, ["sparse-checkout", "set", "--no-cone", "/src/task.ts"])
   git(root, ["-C", worktree, "checkout", "--quiet", "--detach", artifact])
   return worktree
 }
@@ -893,6 +902,7 @@ test("spawned offline CLI accepts production bindings and leaves candidate and r
   const root = mkdtempSync(join(tmpdir(), "lazers-maintenance-preflight-"))
   try {
     const candidate = createE6Fixture(root)
+    expect(readFileSync(join(candidate, "src/task.ts"), "utf8").length).toBeGreaterThan(0)
     const fixtureData = fixture()
     const projectPath = realpathSync(dirname(candidate))
     const workspacePath = realpathSync(candidate)
