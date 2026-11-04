@@ -4,12 +4,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { observeProcess, type ProcessObservation } from "../opencode/owned-launch.ts"
 import { evaluateMaintenancePreflight } from "./preflight.ts"
-import type {
-  GitWorkspaceObservation,
-  ManifestEntry,
-  ManifestObservation,
-  ReceiptObservation,
-} from "./contract.ts"
+import type { GitWorkspaceObservation, ReceiptObservation } from "./contract.ts"
 
 type Arguments = { request: string; inspection: string }
 
@@ -58,37 +53,6 @@ function observeGit(workspace: string): GitWorkspaceObservation {
       clean: canonicalWorkspace === root && status.length === 0,
       unmerged: unmerged.length > 0,
     }
-  } catch {
-    return { kind: "unavailable" }
-  }
-}
-
-function readManifest(workspace: string, artifact: string): ManifestObservation {
-  try {
-    const output = runGit(workspace, ["ls-tree", "-r", "-z", "--full-tree", artifact])
-    const entries: ManifestEntry[] = []
-    for (const record of output.split("\0")) {
-      if (record.length === 0) continue
-      const separator = record.indexOf("\t")
-      if (separator < 0) return { kind: "unavailable" }
-      const metadata = record.slice(0, separator).split(" ")
-      const file = record.slice(separator + 1)
-      if (
-        metadata.length !== 3 ||
-        !/^[0-7]{6}$/.test(metadata[0] ?? "") ||
-        (metadata[1] !== "blob" && metadata[1] !== "commit") ||
-        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(metadata[2] ?? "") ||
-        file.length === 0
-      )
-        return { kind: "unavailable" }
-      entries.push({
-        mode: metadata[0]!,
-        type: metadata[1] as "blob" | "commit",
-        objectID: metadata[2]!,
-        path: file,
-      })
-    }
-    return { kind: "observed", entries }
   } catch {
     return { kind: "unavailable" }
   }
@@ -169,7 +133,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 
   const result = await evaluateMaintenancePreflight(request, inspection, {
     git: (workspace) => observeGit(workspace),
-    manifest: (workspace, artifact) => readManifest(workspace, artifact),
     receipt: (path) => readReceipt(path),
     process: (identity): ProcessObservation => observeProcess(identity.pid),
   })

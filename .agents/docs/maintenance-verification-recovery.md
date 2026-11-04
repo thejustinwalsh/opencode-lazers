@@ -12,14 +12,16 @@ that the snapshot is current.
 
 The CLI re-reads only local candidate and evidence state. Git establishes the
 workspace root, `HEAD`, tracked/untracked working-tree cleanliness, unmerged
-index state and the artifact's tree manifest. The runner receipt is read at its
-bound path and validated against the existing `CheckReceipt` contract. If an
-original child process identity was captured, the preflight uses the existing
-owned-process identity comparison against a read-only process observation. A
-missing or inaccessible reader, a changed candidate or receipt, any binding
-mismatch, and a reused PID with a different start time fail closed with stable
-reason codes. There is no age-based snapshot TTL; mismatched source versions or
-changed evidence are blockers, while age alone is not proof either way.
+index state. No per-file inventory is needed; a legacy `candidate.manifest`
+field is ignored regardless of its contents. Git state is sampled on both
+sides of the bound runner receipt read, which is validated against the existing
+`CheckReceipt` contract. If an original child process identity was captured,
+the preflight uses the existing owned-process identity comparison against a
+read-only process observation. A missing or inaccessible reader, a changed
+candidate or receipt, any binding mismatch, and a reused PID with a different
+start time fail closed with stable reason codes. There is no age-based snapshot
+TTL; mismatched source versions or changed evidence are blockers, while age
+alone is not proof either way.
 
 The result labels source data: project/plan/task/attempt/effect facts remain
 `suppliedSnapshot`; candidate files and receipt are `revalidated`. Claims such
@@ -35,8 +37,8 @@ Even a matching clean artifact and a passing receipt cannot establish that an
 old uncertain check and its descendants are contained. A matching PID, an
 absent PID, elapsed time, an idle worker, or a stopped service is not a
 containment proof. Missing original child identity is reported explicitly; it
-must not be reconstructed or fabricated. No Desktop launch manifest is
-invented for this runner check.
+must not be reconstructed or fabricated. This runner check has no separate
+Desktop launch artifact.
 
 The JSON handoff always identifies the next distinct operations:
 

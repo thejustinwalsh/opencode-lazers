@@ -18,7 +18,6 @@ import { verificationEnvironmentIdentity } from "../src/runner/artifacts.ts"
 import type { ProcessObservation } from "../src/verification/opencode/owned-launch.ts"
 import type {
   MaintenanceInspection,
-  ManifestEntry,
   MaintenanceRequest,
 } from "../src/verification/maintenance/contract.ts"
 import {
@@ -94,10 +93,6 @@ function fixture(): Fixture {
     inputIdentity: artifact,
     receiptPath,
   }
-  const manifest: ManifestEntry[] = [
-    { path: "README.md", mode: "100644", type: "blob", objectID: "a".repeat(40) },
-    { path: "src/main.ts", mode: "100644", type: "blob", objectID: "b".repeat(40) },
-  ]
   return {
     request: {
       schemaVersion: 1,
@@ -149,7 +144,7 @@ function fixture(): Fixture {
           receipt: null,
         },
       ],
-      candidate: { workspace, head: artifact, clean: true, unmerged: false, manifest },
+      candidate: { workspace, head: artifact, clean: true, unmerged: false },
       receipt: { status: "missing" },
       claims: { ready: true, containmentProven: true, executionPermitted: true },
     },
@@ -165,7 +160,6 @@ function readers(overrides: Partial<MaintenanceReaders> = {}): MaintenanceReader
       clean: true,
       unmerged: false,
     }),
-    manifest: () => ({ kind: "observed", entries: fixture().inspection.candidate.manifest }),
     receipt: () => ({ kind: "missing" }),
     process: () => ({ kind: "authoritatively-absent" }),
   }
@@ -318,16 +312,12 @@ test("production effect and environment identities are preserved and foreign bin
 
 test("the evaluator is deterministic and calls only injected read-only evidence readers", async () => {
   const value = fixture()
-  const calls = { git: 0, manifest: 0, receipt: 0, process: 0 }
+  const calls = { git: 0, receipt: 0, process: 0 }
   const forbidden: string[] = []
   const base = readers({
     git: () => {
       calls.git += 1
       return { kind: "observed", root: workspace, head: artifact, clean: true, unmerged: false }
-    },
-    manifest: () => {
-      calls.manifest += 1
-      return { kind: "observed", entries: value.inspection.candidate.manifest }
     },
     receipt: () => {
       calls.receipt += 1
@@ -340,8 +330,7 @@ test("the evaluator is deterministic and calls only injected read-only evidence 
   })
   const monitored = new Proxy(base, {
     get(target, key, receiver) {
-      if (!new Set(["git", "manifest", "receipt", "process"]).has(String(key)))
-        forbidden.push(String(key))
+      if (!new Set(["git", "receipt", "process"]).has(String(key))) forbidden.push(String(key))
       return Reflect.get(target, key, receiver) as unknown
     },
   })
@@ -350,7 +339,7 @@ test("the evaluator is deterministic and calls only injected read-only evidence 
   const second = await evaluateMaintenancePreflight(value.request, value.inspection, monitored)
 
   expect(second).toEqual(first)
-  expect(calls).toEqual({ git: 4, manifest: 2, receipt: 2, process: 0 })
+  expect(calls).toEqual({ git: 4, receipt: 2, process: 0 })
   expect(forbidden).toEqual([])
   expect({ request: value.request, inspection: value.inspection }).toEqual(beforeRows)
   expect(first.executionPermitted).toBe(false)
@@ -439,14 +428,6 @@ test("dirty, wrong, changed, unmerged and snapshot-mismatched candidates fail cl
       expected: "candidate-changed-during-inspection",
     },
     {
-      name: "stale supplied files",
-      make: () => readers(),
-      snapshot: (value) => {
-        value.inspection.candidate.manifest[0]!.objectID = "d".repeat(40)
-      },
-      expected: "candidate-manifest-mismatch",
-    },
-    {
       name: "contradictory candidate snapshot",
       make: () => readers(),
       snapshot: (value) => {
@@ -469,13 +450,53 @@ test("dirty, wrong, changed, unmerged and snapshot-mismatched candidates fail cl
   }
 })
 
-test("candidate samples bracket manifest and receipt reads, including failed reads", async () => {
-  const cases = [
-    { name: "manifest", fail: false },
-    { name: "manifest", fail: true },
-    { name: "receipt", fail: false },
-    { name: "receipt", fail: true },
-  ] as const
+test("manifest-free and legacy-manifest inspections reach candidate and receipt evaluation", async () => {
+  const cases: Array<{ name: string; manifest?: unknown }> = [
+    { name: "without manifest" },
+    {
+      name: "stale manifest entries",
+      manifest: [{ path: "deleted.ts", mode: "100644", type: "blob", objectID: "d".repeat(40) }],
+    },
+    { name: "malformed manifest entries", manifest: [{ path: null, unexpected: true }] },
+  ]
+
+  for (const example of cases) {
+    const value = fixture()
+    if ("manifest" in example) value.inspection.candidate.manifest = example.manifest
+    const receipt = receiptSnapshot()
+    value.inspection.receipt = { status: "present", receipt }
+    let receiptReads = 0
+    const result = await evaluateMaintenancePreflight(
+      value.request,
+      value.inspection,
+      readers({
+        receipt: () => {
+          receiptReads += 1
+          return { kind: "present", receipt }
+        },
+      }),
+    )
+
+    expect(result.suppliedSnapshot.bindingMatched).toBe(true)
+    expect(result.candidate.status).toBe("matches")
+    expect(result.receipt.status).toBe("matches")
+    expect(receiptReads).toBe(1)
+    expect(result.executionPermitted).toBe(false)
+    expect(codes(result)).not.toContain("invalid-inspection")
+  }
+
+  const unknownField = fixture()
+  ;(unknownField.inspection.candidate as unknown as Record<string, unknown>).fileInventory = []
+  const rejected = await evaluateMaintenancePreflight(
+    unknownField.request,
+    unknownField.inspection,
+    readers(),
+  )
+  expect(codes(rejected)).toContain("invalid-inspection")
+})
+
+test("candidate Git observations bracket successful and throwing receipt reads", async () => {
+  const cases = [{ fail: false }, { fail: true }] as const
 
   for (const example of cases) {
     const value = fixture()
@@ -492,31 +513,20 @@ test("candidate samples bracket manifest and receipt reads, including failed rea
           unmerged: false,
         }
       },
-      manifest: () => {
-        events.push("manifest")
-        if (example.name === "manifest") {
-          currentHead = "c".repeat(40)
-          if (example.fail) throw new Error("manifest read failed after mutation")
-        }
-        return { kind: "observed", entries: value.inspection.candidate.manifest }
-      },
       receipt: () => {
         events.push("receipt")
-        if (example.name === "receipt") {
-          currentHead = "c".repeat(40)
-          if (example.fail) throw new Error("receipt read failed after mutation")
-        }
+        currentHead = "c".repeat(40)
+        if (example.fail) throw new Error("receipt read failed after mutation")
         return { kind: "missing" }
       },
       process: () => ({ kind: "authoritatively-absent" }),
     }
 
     const result = await evaluateMaintenancePreflight(value.request, value.inspection, mutation)
-    expect(events).toEqual(["git", "manifest", "receipt", "git"])
+    expect(events).toEqual(["git", "receipt", "git"])
     expect(codes(result)).toContain("candidate-changed-during-inspection")
-    expect(result.candidate.status).toBe(
-      example.name === "manifest" && example.fail ? "unavailable" : "mismatch",
-    )
+    expect(result.candidate.status).toBe("mismatch")
+    expect(result.receipt.status).toBe(example.fail ? "unavailable" : "missing")
     expect(result.executionPermitted).toBe(false)
   }
 })
@@ -528,7 +538,6 @@ test("unavailable readers and stale or contradictory durable snapshots have stab
     unavailable.inspection,
     readers({
       git: () => ({ kind: "unavailable" }),
-      manifest: () => ({ kind: "unavailable" }),
       receipt: () => ({ kind: "unavailable" }),
     }),
   )
@@ -558,14 +567,6 @@ test("unavailable readers and stale or contradictory durable snapshots have stab
     readers(),
   )
   expect(codes(contradictoryResult)).toContain("snapshot-contradictory")
-
-  const unavailableManifest = fixture()
-  const unavailableManifestResult = await evaluateMaintenancePreflight(
-    unavailableManifest.request,
-    unavailableManifest.inspection,
-    readers({ manifest: () => ({ kind: "unavailable" }) }),
-  )
-  expect(codes(unavailableManifestResult)).toContain("manifest-reader-unavailable")
 
   const unavailableProcess = fixture()
   unavailableProcess.request.originalChild = {
@@ -816,7 +817,12 @@ test("PID reuse, start-time mismatch, live identity and absence all leave contai
     }),
   )
   expect(codes(absentResult)).toContain("original-check-absent")
-  expect(codes(absentResult)).toContain("old-check-containment-unproven")
+
+  for (const result of [reusedResult, liveResult, absentResult]) {
+    expect(result.containment).toBe("unproven")
+    expect(result.executionPermitted).toBe(false)
+    expect(codes(result)).toContain("old-check-containment-unproven")
+  }
 })
 
 function git(cwd: string, args: string[]): string {
@@ -847,23 +853,6 @@ function git(cwd: string, args: string[]): string {
   if (result.error || result.status !== 0)
     throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.error?.message}`)
   return result.stdout
-}
-
-function treeManifest(worktree: string): ManifestEntry[] {
-  const output = git(worktree, ["ls-tree", "-r", "-z", "--full-tree", artifact])
-  return output
-    .split("\0")
-    .filter(Boolean)
-    .map((record) => {
-      const tab = record.indexOf("\t")
-      const [mode, type, objectID] = record.slice(0, tab).split(" ")
-      return {
-        mode: mode!,
-        type: type as "blob" | "commit",
-        objectID: objectID!,
-        path: record.slice(tab + 1),
-      }
-    })
 }
 
 function byteManifest(directory: string): string[] {
@@ -932,7 +921,7 @@ test("spawned offline CLI accepts production bindings and leaves candidate and r
     fixtureData.inspection.plan.projectDirectory = projectPath
     fixtureData.inspection.attempts[0]!.workspace = workspacePath
     fixtureData.inspection.candidate.workspace = workspacePath
-    fixtureData.inspection.candidate.manifest = treeManifest(candidate)
+    expect(fixtureData.inspection.candidate).not.toHaveProperty("manifest")
 
     const requestFile = join(root, "request.json")
     const inspectionFile = join(root, "inspection.json")

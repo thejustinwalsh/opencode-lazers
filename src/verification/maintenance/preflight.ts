@@ -13,8 +13,6 @@ import {
   type MaintenanceInspection,
   type MaintenanceProcessIdentity,
   type MaintenanceRequest,
-  type ManifestEntry,
-  type ManifestObservation,
   type ReceiptObservation,
 } from "./contract.ts"
 
@@ -23,7 +21,6 @@ export type MaintenanceReaders = {
     workspace: string,
     artifact: string,
   ): GitWorkspaceObservation | Promise<GitWorkspaceObservation>
-  manifest(workspace: string, artifact: string): ManifestObservation | Promise<ManifestObservation>
   receipt(path: string): ReceiptObservation | Promise<ReceiptObservation>
   process(identity: MaintenanceProcessIdentity): ProcessObservation | Promise<ProcessObservation>
 }
@@ -48,8 +45,6 @@ export type MaintenanceReasonCode =
   | "candidate-unmerged"
   | "candidate-changed-during-inspection"
   | "candidate-snapshot-mismatch"
-  | "manifest-reader-unavailable"
-  | "candidate-manifest-mismatch"
   | "receipt-reader-unavailable"
   | "receipt-snapshot-unavailable"
   | "receipt-snapshot-changed"
@@ -170,14 +165,6 @@ function resultBase(input?: {
     blockers: [],
     missingEvidence: [],
   }
-}
-
-function manifestKey(entries: ReadonlyArray<ManifestEntry>): string {
-  return JSON.stringify(
-    [...entries]
-      .map(({ path, mode, type, objectID }) => ({ path, mode, type, objectID }))
-      .sort((left, right) => left.path.localeCompare(right.path)),
-  )
 }
 
 function sameGitObservation(
@@ -325,7 +312,7 @@ function receiptMatches(receipt: CheckReceipt, binding: MaintenanceBinding): boo
 
 /**
  * Evaluate a supplied offline inspection and revalidate only read-only candidate,
- * manifest, receipt, and optional process identity evidence. This function has
+ * receipt, and optional process identity evidence. This function has
  * no runtime/database handle and never grants execution authority.
  */
 export async function evaluateMaintenancePreflight(
@@ -369,12 +356,6 @@ export async function evaluateMaintenancePreflight(
   } catch {
     before = { kind: "unavailable" }
   }
-  let manifest: ManifestObservation
-  try {
-    manifest = await readers.manifest(request.binding.workspace, request.binding.artifact)
-  } catch {
-    manifest = { kind: "unavailable" }
-  }
   let receiptObservation: ReceiptObservation
   try {
     receiptObservation = await readers.receipt(request.binding.receiptPath)
@@ -399,23 +380,14 @@ export async function evaluateMaintenancePreflight(
     if (after.head !== request.binding.artifact) add("candidate-head-mismatch")
     if (!after.clean) add("candidate-dirty")
     if (after.unmerged) add("candidate-unmerged")
-    if (manifest.kind === "unavailable") {
-      result.candidate.status = "unavailable"
-      add("manifest-reader-unavailable")
-    } else {
-      const sameManifest =
-        manifestKey(manifest.entries) === manifestKey(inspection.candidate.manifest)
-      if (!sameManifest) add("candidate-manifest-mismatch")
-      result.candidate.status =
-        after.root === request.binding.workspace &&
-        after.head === request.binding.artifact &&
-        after.clean &&
-        !after.unmerged &&
-        sameManifest &&
-        sameGitObservation(before, after)
-          ? "matches"
-          : "mismatch"
-    }
+    result.candidate.status =
+      after.root === request.binding.workspace &&
+      after.head === request.binding.artifact &&
+      after.clean &&
+      !after.unmerged &&
+      sameGitObservation(before, after)
+        ? "matches"
+        : "mismatch"
   }
 
   if (receiptObservation.kind === "unavailable") {
