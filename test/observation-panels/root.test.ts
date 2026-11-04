@@ -146,6 +146,84 @@ const zeroDecisionRow: ModelDecisionRow = {
   ),
   configuration: zeroConfiguration,
 }
+const CONFIG_CROSS_ROUTE = "configuration:provider-b/model-b:50:opaque/cross-route"
+const crossRouteConfiguration: ModelDecisionConfiguration = {
+  ...highConfiguration,
+  configurationID: CONFIG_CROSS_ROUTE,
+  groupID: "group:provider-b/model-b",
+  label: "Model B · 50",
+  route: { providerID: "provider-b", modelID: "model-b", variant: "50" },
+  currentPrice: {
+    ...highConfiguration.currentPrice,
+    sourceRecordID: "provider-b/model-b",
+  },
+}
+const crossRouteDecisionRow: ModelDecisionRow = {
+  ...highDecisionRow,
+  configuration: crossRouteConfiguration,
+  cohort: {
+    logicalTaskCount: 1,
+    classifiedTaskCount: 1,
+    unclassifiedTaskCount: 0,
+    acceptedTaskCount: 1,
+    terminalTaskCount: 1,
+    attemptCount: 1,
+    failedAttemptCount: 0,
+    retryAttemptCount: 0,
+  },
+  efficiency: {
+    status: "single-observation",
+    tokensPerAcceptedTask: 50,
+    currentMarketUSDPerAcceptedTask: 0.00005,
+    observationCount: 1,
+  },
+  nativeReportedCost: {
+    status: "unknown",
+    totalUSD: null,
+    source: "native-reported",
+    note: "No native-reported charge is available for this exact cohort.",
+  },
+}
+const crossRouteEstimate: ModelDecisionEstimate = {
+  status: "single-observation",
+  basis: "empirical-observed-spread",
+  observationCount: 1,
+  range: {
+    tokens: { minimum: 150, maximum: 150 },
+    currentMarketUSD: { minimum: 0.00015, maximum: 0.00015 },
+  },
+  confidenceInterval: null,
+  historyScope: {
+    completeness: "complete-accepted-logical-task-retry-history",
+    routeScope: "cross-route",
+  },
+}
+const crossRouteAContributor = {
+  taskID: TASK_A,
+  taskReference: "LZ-100",
+  attemptID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  sessionID: "ses-route-a",
+  contribution: "retry" as const,
+  route: { providerID: "provider-a", modelID: "model-a", variant: "100" },
+  membership: "empirical-history" as const,
+  tokens: 100,
+  currentMarketUSD: 0.0001,
+  nativeReportedUSD: null,
+  observedAt: "2026-11-03T10:00:00.000Z",
+}
+const crossRouteBContributor = {
+  taskID: TASK_A,
+  taskReference: "LZ-100",
+  attemptID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  sessionID: "ses-route-b",
+  contribution: "accepted" as const,
+  route: { providerID: "provider-b", modelID: "model-b", variant: "50" },
+  membership: "both" as const,
+  tokens: 50,
+  currentMarketUSD: 0.00005,
+  nativeReportedUSD: null,
+  observedAt: "2026-11-03T10:05:00.000Z",
+}
 
 function decisionContextFor(
   filters: ModelDecisionFilters,
@@ -430,19 +508,22 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       [lowConfiguration.configurationID, lowConfiguration],
       [CONFIG_SINGLE, qwenConfiguration],
       [CONFIG_ZERO, zeroConfiguration],
+      [CONFIG_CROSS_ROUTE, crossRouteConfiguration],
     ])
     const decisionRowsByID = new Map<string, ModelDecisionRow>([
       [CONFIG_ONE, highDecisionRow],
       [lowConfiguration.configurationID, lowDecisionRow],
       [CONFIG_SINGLE, qwenDecisionRow],
       [CONFIG_ZERO, zeroDecisionRow],
+      [CONFIG_CROSS_ROUTE, crossRouteDecisionRow],
     ])
     const deltaForSnapshot = (snapshotID: string) => decisionDeltas.get(snapshotID) ?? 0
-    const decisionRowForSnapshot = (configurationID: string, snapshotID: string) =>
-      shiftDecisionRow(
-        decisionRowsByID.get(configurationID) ?? highDecisionRow,
-        deltaForSnapshot(snapshotID),
-      )
+    const decisionRowForSnapshot = (configurationID: string, snapshotID: string) => {
+      const row = decisionRowsByID.get(configurationID) ?? highDecisionRow
+      return configurationID === CONFIG_CROSS_ROUTE
+        ? row
+        : shiftDecisionRow(row, deltaForSnapshot(snapshotID))
+    }
     const client = {
       location: {
         get: async (
@@ -544,15 +625,28 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                   acceptedTaskCount: row.cohort.acceptedTaskCount,
                 }
               })
+              points.push({
+                configurationID: CONFIG_CROSS_ROUTE,
+                groupID: crossRouteConfiguration.groupID,
+                label: crossRouteConfiguration.label,
+                tokensPerAcceptedTask: 50,
+                currentMarketUSDPerAcceptedTask: 0.00005,
+                observationCount: 1,
+                acceptedTaskCount: 1,
+                partial: false,
+              })
               return ModelDecisionOverviewOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID, revision),
                 graph: {
                   scope: "global-filtered-snapshot",
                   points,
-                  frontierConfigurationIDs: base.graph.frontierConfigurationIDs,
+                  frontierConfigurationIDs: [
+                    ...base.graph.frontierConfigurationIDs,
+                    CONFIG_CROSS_ROUTE,
+                  ],
                 },
                 configurationCount: decisionConfigs.size,
-                groupCount: 3,
+                groupCount: 4,
               })
             },
             rows: async (
@@ -571,12 +665,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               return ModelDecisionRowsOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID),
                 rows: (input.cursor
-                  ? [qwenDecisionRow, zeroDecisionRow]
+                  ? [qwenDecisionRow, zeroDecisionRow, crossRouteDecisionRow]
                   : [highDecisionRow, lowDecisionRow]
                 ).map((row) =>
                   decisionRowForSnapshot(row.configuration.configurationID, snapshotID),
                 ),
-                totalCount: 4,
+                totalCount: decisionConfigs.size,
                 nextCursor: input.cursor ? null : "rows-next",
               })
             },
@@ -602,7 +696,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               return ModelDecisionConfigurationsOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID),
                 configurations: input.cursor
-                  ? [qwenConfiguration, zeroConfiguration]
+                  ? [qwenConfiguration, zeroConfiguration, crossRouteConfiguration]
                   : [highConfiguration, lowConfiguration],
                 totalCount: decisionConfigs.size,
                 nextCursor: input.cursor ? null : "configurations-next",
@@ -632,8 +726,20 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const template = fixtureDecisionInspect()
               if (template.status !== "found") throw new Error("Expected fixture inspection")
               const contributor = template.contributorPage.contributors[0]!
-              const estimate =
-                input.configurationID === CONFIG_ZERO
+              const defaultContributor =
+                input.configurationID === CONFIG_SINGLE
+                  ? { ...contributor, route: null }
+                  : input.configurationID === lowConfiguration.configurationID
+                    ? {
+                        ...contributor,
+                        route: lowConfiguration.route,
+                        membership: "cohort-effort" as const,
+                      }
+                    : contributor
+              const isCrossRoute = input.configurationID === CONFIG_CROSS_ROUTE
+              const estimate = isCrossRoute
+                ? crossRouteEstimate
+                : input.configurationID === CONFIG_ZERO
                   ? {
                       status: "zero-accepted" as const,
                       basis: "no-successful-task-efficiency" as const,
@@ -644,6 +750,21 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                   : input.configurationID === CONFIG_SINGLE
                     ? singleEstimate
                     : template.estimate
+              const historyScope =
+                input.configurationID === CONFIG_ONE
+                  ? {
+                      completeness: "complete-accepted-logical-task-retry-history" as const,
+                      routeScope: "same-route" as const,
+                    }
+                  : input.configurationID === lowConfiguration.configurationID
+                    ? {
+                        completeness: "complete-accepted-logical-task-retry-history" as const,
+                        routeScope: "mixed" as const,
+                      }
+                    : input.configurationID === CONFIG_SINGLE ||
+                        input.configurationID === CONFIG_ZERO
+                      ? null
+                      : undefined
               const output = ModelDecisionInspectOutputSchema.parse({
                 ...template,
                 context: decisionContext(
@@ -657,26 +778,41 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                 efficiency: row.efficiency,
                 nativeReportedCost: row.nativeReportedCost,
                 selectedTaskID: input.selectedTaskID,
-                estimate: shiftEstimate(estimate, deltaForSnapshot(input.snapshotID)),
-                contributorPage: input.contributorCursor
+                estimate: isCrossRoute
+                  ? input.contributorCursor
+                    ? { ...crossRouteEstimate, historyScope: undefined }
+                    : crossRouteEstimate
+                  : shiftEstimate(
+                      { ...estimate, historyScope },
+                      deltaForSnapshot(input.snapshotID),
+                    ),
+                contributorPage: isCrossRoute
                   ? {
                       contributors: [
-                        {
-                          ...contributor,
-                          taskID: TASK_A,
-                          taskReference: "LZ-17",
-                          attemptID: null,
-                          contribution: "accepted" as const,
-                        },
+                        input.contributorCursor ? crossRouteBContributor : crossRouteAContributor,
                       ],
                       totalCount: 2,
-                      nextCursor: null,
+                      nextCursor: input.contributorCursor ? null : "contributors-cross-route-next",
                     }
-                  : {
-                      contributors: [contributor],
-                      totalCount: 2,
-                      nextCursor: "contributors-next",
-                    },
+                  : input.contributorCursor
+                    ? {
+                        contributors: [
+                          {
+                            ...defaultContributor,
+                            taskID: TASK_A,
+                            taskReference: "LZ-17",
+                            attemptID: null,
+                            contribution: "accepted" as const,
+                          },
+                        ],
+                        totalCount: 2,
+                        nextCursor: null,
+                      }
+                    : {
+                        contributors: [defaultContributor],
+                        totalCount: 2,
+                        nextCursor: "contributors-next",
+                      },
               })
               if (suspendedInspection?.configurationID === input.configurationID) {
                 suspendedInspection.output = output
@@ -911,6 +1047,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6",
     )
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-history-scope")
+          ?.textContent?.includes("Route scope · same-route") === true,
+    )
 
     const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
     const sourceDetails = topPaneA.querySelector<HTMLDetailsElement>(
@@ -1054,6 +1196,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(initialChartButtons.map((button) => button.dataset.configurationId)).toEqual([
       CONFIG_ONE,
       CONFIG_SINGLE,
+      CONFIG_CROSS_ROUTE,
     ])
     expect(
       initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
@@ -1132,6 +1275,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
     ).toContain("one observed value, no interval")
+    const unknownHistoryLabel =
+      containerA.querySelector(".lazers-models-history-scope")?.textContent ?? ""
+    expect(unknownHistoryLabel).toContain("Accepted-task retry-history completeness unknown")
+    expect(unknownHistoryLabel).toContain("Route scope · unknown")
+    expect(unknownHistoryLabel).not.toContain("same-route")
+    expect(
+      containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
+    ).toContain("Accepted-task retry-history completeness is unknown")
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "Current price",
     )
@@ -1147,6 +1298,16 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     routeEvidence.open = true
     routeEvidence.dispatchEvent(new Event("toggle"))
     expect(routeEvidence.open).toBe(true)
+    const unknownContributorDetails = routeEvidence.querySelector<HTMLDetailsElement>(
+      ".lazers-models-contributor-details",
+    )!
+    unknownContributorDetails.open = true
+    const unknownContributorMetadata =
+      routeEvidence.querySelector(".lazers-models-contributor")?.textContent ?? ""
+    expect(unknownContributorMetadata).toContain("Unknown route")
+    expect(unknownContributorMetadata).toContain("Membership · unknown")
+    expect(unknownContributorMetadata).not.toContain("same-route")
+    unknownContributorDetails.open = false
 
     expect(containerA.querySelector(`[data-group-id="group:qwen/qwen-7"]`)).toBeNull()
     const moreRows = buttonWithText(containerA, "Load more model groups")
@@ -1250,6 +1411,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(highRow.closest("tr")).toBe(highRowParent)
     expect(browserDocument.activeElement).toBe(highRow)
     expect(highRow.getAttribute("aria-pressed")).toBe("true")
+    expect(containerA.querySelector(".lazers-models-history-scope")).toBeNull()
     await until(() => suspendedInspection?.output !== undefined)
     pendingHighInspection.resolve(suspendedInspection!.output!)
     await until(
@@ -1262,6 +1424,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(highRow.closest("tr")).toBe(highRowParent)
     expect(browserDocument.activeElement).toBe(highRow)
     expect(highRow.getAttribute("aria-pressed")).toBe("true")
+    expect(containerA.querySelector(".lazers-models-history-scope")?.textContent).toContain(
+      "Route scope · same-route",
+    )
     expect(
       containerA.querySelector<HTMLDetailsElement>(
         ".lazers-models-inspector .lazers-models-evidence-details",
@@ -1292,6 +1457,20 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(
       lowConfiguration.configurationID,
     )
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-history-scope")
+          ?.textContent?.includes("Route scope · mixed") === true,
+    )
+    const lowContributorDetails = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-contributor-details",
+    )!
+    lowContributorDetails.open = true
+    const lowContributorMetadata =
+      containerA.querySelector(".lazers-models-contributor")?.textContent ?? ""
+    expect(lowContributorMetadata).toContain("Exact route · openai / gpt-6 · low")
+    expect(lowContributorMetadata).toContain("Membership · cohort-effort")
     expect(calls.filter((call) => call.method === "inspect").at(-1)?.input).toMatchObject({
       configurationID: lowConfiguration.configurationID,
       selectedTaskID: TASK_A,
@@ -1322,6 +1501,62 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "Empirical observed spread · n=7",
     )
     expect(chartDescription()).toBe(globalGraphDescription)
+
+    const crossRouteProviderTrigger = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+    ].find((button) => button.textContent?.includes("Provider"))!
+    crossRouteProviderTrigger.click()
+    const crossRouteOption = menuItemWithText(containerA, "provider-b / model-b")
+    if (!crossRouteOption) throw new Error("Missing the B50 exact route option")
+    crossRouteOption.click()
+    await until(
+      () =>
+        modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_CROSS_ROUTE,
+    )
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-history-scope")
+          ?.textContent?.includes("Route scope · cross-route") === true,
+    )
+    const crossRouteEstimateText =
+      containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent ??
+      ""
+    expect(crossRouteEstimateText).toContain("n=1 accepted logical-task history")
+    expect(crossRouteEstimateText).toContain("one observed value, no interval")
+    expect(crossRouteEstimateText).toContain("150 tokens")
+    expect(crossRouteEstimateText).toContain("Complete accepted-task retry history")
+    expect(crossRouteEstimateText).toContain(
+      "The producer reports complete accepted-task histories, including retries.",
+    )
+    const crossRouteInspection = containerA.querySelector<HTMLElement>(
+      ".lazers-models-decision-inspection",
+    )!
+    expect(crossRouteInspection.textContent).toContain("Configuration cohort")
+    expect(crossRouteInspection.textContent).toContain("1 accepted / 1 terminal logical tasks")
+    expect(crossRouteInspection.textContent).toContain("50 tokens")
+    expect(crossRouteInspection.textContent).not.toContain("150 tokens")
+    const crossRouteEvidence = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-inspector .lazers-models-evidence-details",
+    )!
+    crossRouteEvidence.open = true
+    const crossRouteContributorDetails = crossRouteEvidence.querySelector<HTMLDetailsElement>(
+      ".lazers-models-contributor-details",
+    )!
+    crossRouteContributorDetails.open = true
+    const crossRouteContributors = crossRouteEvidence.querySelector(".lazers-models-contributors")!
+    expect(crossRouteContributors.textContent).toContain("provider-a / model-a · 100")
+    expect(crossRouteContributors.textContent).toContain("Membership · history-only")
+    const crossRouteMore = buttonWithText(crossRouteContributors, "Load more contributors")
+    if (!crossRouteMore) throw new Error("Missing the cross-route contributor page")
+    crossRouteMore.click()
+    await until(
+      () => crossRouteContributors.textContent?.includes("provider-b / model-b · 50") === true,
+    )
+    expect(crossRouteContributors.textContent).toContain("Membership · both")
+    expect(containerA.querySelector(".lazers-models-history-scope")?.textContent).toContain(
+      "Route scope · cross-route",
+    )
 
     const personaFilter = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),

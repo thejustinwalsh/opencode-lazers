@@ -553,6 +553,12 @@
   color: var(--text-weak);
   font-size: 11px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-estimate .lazers-models-history-scope {
+  padding-top: 4px;
+  border-top: 1px solid var(--border-weak-base);
 }
 
 .lazers-models-task-summary {

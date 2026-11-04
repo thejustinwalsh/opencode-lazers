@@ -804,7 +804,7 @@ export class ModelComparisonPanelState {
             throw new Error("Contributor page has no matching inspection to extend.")
           this.update({
             decisionInspection: {
-              ...inspection,
+              ...currentInspection,
               contributorPage: {
                 ...inspection.contributorPage,
                 contributors: [
