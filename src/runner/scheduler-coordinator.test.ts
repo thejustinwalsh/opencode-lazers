@@ -356,6 +356,40 @@ test("disposal rejects queued explicit requests instead of leaving their callers
   expect(clock.timers.size).toBe(0)
 })
 
+test("disposing a follower rejects captured Start waits without resuming its closed store", async () => {
+  const clock = new Clock()
+  const scheduler = new SchedulerCoordinator(clock)
+  const pending = deferred()
+  let closed = false,
+    postCloseReads = 0,
+    survivorFinished = false
+  const leader = scheduler.register("project", { intervalMs: 2000, run: () => pending.promise })
+  const follower = scheduler.register("project", { intervalMs: 2000, run: () => {} })
+  const survivor = scheduler.register("project", { intervalMs: 2000, run: () => {} })
+  const start = follower.runNow().then(
+    () => {
+      if (closed) postCloseReads++
+      return "returned"
+    },
+    (error: Error) => error.message,
+  )
+  const survivingStart = survivor.runNow().then(() => {
+    survivorFinished = true
+  })
+  await clock.advance(0)
+  await follower.dispose()
+  closed = true
+  pending.resolve()
+  await settle()
+  expect(await start).toBe("Scheduler registration was disposed")
+  expect(postCloseReads).toBe(0)
+  await survivingStart
+  expect(survivorFinished).toBe(true)
+  await leader.dispose()
+  await survivor.dispose()
+  expect(scheduler.snapshot()).toMatchObject({ running: 0, groups: 0, errors: 0 })
+})
+
 test("invalid intervals and deadlines cannot create an unbounded timer loop", async () => {
   const scheduler = new SchedulerCoordinator(new Clock())
   for (const intervalMs of [0, -1, NaN, Infinity])

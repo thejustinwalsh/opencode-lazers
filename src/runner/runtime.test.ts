@@ -986,6 +986,73 @@ test("scheduler retries after a failed lease claim instead of remaining permanen
   expect(calls).toBe(2)
 })
 
+test("a disposed follower Start cannot read or reopen its store after the elected drain finishes", async () => {
+  const f = fixture({ shared: true, startOnly: true, delayed: true })
+  const followerRepository = new TaskRepository(f.repository.path, f.root)
+  const followerStore = new RunnerStore(followerRepository)
+  const leader = new TaskRuntime(f.store, f.host, "project")
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const running = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const key = schedulerProjectKey(f.repository.path, f.root, "project")
+  const leaderRegistration = sharedScheduler.register(key, {
+    intervalMs: 2000,
+    run: async () => {
+      entered()
+      await gate
+      await leader.tick()
+    },
+  })
+  const followerRegistration = sharedScheduler.register(key, {
+    intervalMs: 2000,
+    run: () => follower.tick(),
+  })
+  const follower = new TaskRuntime(followerStore, f.host, "project", undefined, {
+    requestTick: () => followerRegistration.runNow(),
+  })
+  let closed = false,
+    postCloseReads = 0
+  const execution = followerStore.execution.bind(followerStore)
+  followerStore.execution = (...args) => {
+    if (closed) {
+      postCloseReads++
+      throw new Error("post-close execution read")
+    }
+    return execution(...args)
+  }
+  const start = follower
+    .startTask({ taskID: f.tasks[0]!.id, revision: 1, sessionID: "owner" })
+    .then(
+      () => "returned",
+      (error: Error) => error.message,
+    )
+  try {
+    await running
+    await followerRegistration.dispose()
+    await follower.stop()
+    followerRepository.close()
+    closed = true
+    expect(await start).toBe("Scheduler registration was disposed")
+    release()
+    await leaderRegistration.dispose()
+    expect(postCloseReads).toBe(0)
+    expect((followerRepository as unknown as { connection?: unknown }).connection).toBeUndefined()
+    expect(f.store.attempts(f.store.execution(f.tasks[0]!.id)!.planID)).toHaveLength(1)
+    expect(f.events.filter((event) => event.startsWith("start:"))).toHaveLength(1)
+  } finally {
+    release()
+    await followerRegistration.dispose()
+    await leaderRegistration.dispose()
+    await follower.stop()
+    await leader.stop()
+    followerRepository.close()
+  }
+})
+
 test("inspector Start admits one real runtime plan and returns record-backed task state", async () => {
   const f = fixture({ shared: true, commit: true, startOnly: true })
   const task = f.tasks[0]!

@@ -13,11 +13,12 @@ type Participant = {
   onError?(error: unknown): Promise<void> | void
 }
 
+type Waiter = { owner: symbol; resolve(): void; reject(error: unknown): void }
 type Group = {
   participants: Map<symbol, Participant>
   dueAt: number
-  waiters: Array<{ owner: symbol; resolve(): void; reject(error: unknown): void }>
-  running?: { owner: symbol; done: Promise<void> }
+  waiters: Waiter[]
+  running?: { owner: symbol; done: Promise<void>; waiters: Waiter[] }
 }
 
 const systemClock: Clock = {
@@ -28,6 +29,7 @@ const systemClock: Clock = {
 
 /** One process timer; one non-overlapping drain per shared job. */
 export class SchedulerCoordinator {
+  private readonly generation = crypto.randomUUID()
   private groups = new Map<string, Group>()
   private timer: { handle: unknown; dueAt: number } | undefined
   private runs = 0
@@ -73,9 +75,8 @@ export class SchedulerCoordinator {
       dispose: () => {
         if (disposed) return disposed
         group.participants.delete(owner)
-        for (const waiter of group.waiters.filter((waiter) => waiter.owner === owner))
-          waiter.reject(new Error("Scheduler registration was disposed"))
-        group.waiters = group.waiters.filter((waiter) => waiter.owner !== owner)
+        this.rejectOwnedWaiters(group.waiters, owner)
+        if (group.running) this.rejectOwnedWaiters(group.running.waiters, owner)
         const running = group.running
         if (!running && !group.participants.size) this.groups.delete(key)
         else if (running?.owner === owner && group.participants.size)
@@ -89,6 +90,8 @@ export class SchedulerCoordinator {
 
   snapshot() {
     return {
+      implementation: "scheduler/v2" as const,
+      generation: this.generation,
       timerCount: this.timer ? 1 : 0,
       groups: this.groups.size,
       participants: [...this.groups.values()].reduce((n, group) => n + group.participants.size, 0),
@@ -102,6 +105,15 @@ export class SchedulerCoordinator {
   private delay(value: number) {
     if (!Number.isFinite(value) || value < 0)
       throw new Error("Scheduler delay must be nonnegative and finite")
+  }
+
+  private rejectOwnedWaiters(waiters: Waiter[], owner: symbol) {
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const waiter = waiters[i]!
+      if (waiter.owner !== owner) continue
+      waiters.splice(i, 1)
+      waiter.reject(new Error("Scheduler registration was disposed"))
+    }
   }
 
   private arm() {
@@ -153,7 +165,7 @@ export class SchedulerCoordinator {
           }
           this.arm()
         })
-      group.running = { owner, done }
+      group.running = { owner, done, waiters }
     }
     this.arm()
   }
@@ -171,7 +183,7 @@ export function schedulerProjectKey(database: string, directory: string, project
   return JSON.stringify(["project", canonical(database), canonical(directory), projectID])
 }
 
-const registryKey = Symbol.for("opencode-lazers.scheduler-coordinator.v1")
+const registryKey = Symbol.for("opencode-lazers.scheduler-coordinator.v2")
 const registryHost = globalThis as typeof globalThis & {
   [registryKey]?: SchedulerCoordinator
 }
