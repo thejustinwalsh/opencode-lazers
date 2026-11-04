@@ -30,7 +30,6 @@ failed model disposal and genuinely active other owners remain relevant.
 Verify actual inference after coordinated activation, rather than inferring it
 from bundle success. Root queued this finding to the native Architect.
 
-Timestamped inspection record: Unix 1793821417393 approximately; authoritative
-driver row carries its precise `at` in
+Timestamped inspection record: Unix **1793821413563**, retained in
 `/private/tmp/lazers-driver-observations-20261104.jsonl` under
 `desktop-local-inference-status`. The native UI read occurred before that row.
