@@ -313,24 +313,39 @@ export function registerProgress(
       string,
       { binding: NativeIdleBinding; sequence: number }
     >()
-    const startsRequiringNewerObservation = new Map<string, number>()
-    const requireNewerStart = (sessionID: string, afterSequence: number) => {
+    const startsRequiringNewerObservation = new Map<string, number | null>()
+    const requireNewerStart = (sessionID: string, afterSequence: number | null) => {
+      const current = startsRequiringNewerObservation.get(sessionID)
       startsRequiringNewerObservation.set(
         sessionID,
-        Math.max(startsRequiringNewerObservation.get(sessionID) ?? -1, afterSequence),
+        current === null || afterSequence === null ? null : Math.max(current ?? -1, afterSequence),
       )
+    }
+    const refreshUnknownStartFences = () => {
+      // A readable recovery watermark is only a stale-event cutoff, never local start lineage.
+      for (const [sessionID, afterSequence] of startsRequiringNewerObservation) {
+        if (afterSequence !== null) continue
+        try {
+          const binding = bindingFor(sessionID)
+          if (!binding) continue
+          startsRequiringNewerObservation.set(
+            sessionID,
+            idleStore.read(binding)?.lastEventSequence ?? -1,
+          )
+        } catch {
+          // Keep the unknown fence until a later stream boundary has a readable row.
+        }
+      }
     }
     const invalidateListenerStarts = () => {
       observedExecutionStarts.clear()
       for (const assignment of recorder.assignments()) {
         const binding = bindingFor(assignment.sessionID)
-        let lastEventSequence: number
+        let lastEventSequence: number | null
         try {
-          lastEventSequence = binding
-            ? (idleStore.read(binding)?.lastEventSequence ?? -1)
-            : Number.MAX_SAFE_INTEGER
+          lastEventSequence = binding ? (idleStore.read(binding)?.lastEventSequence ?? -1) : null
         } catch {
-          lastEventSequence = Number.MAX_SAFE_INTEGER
+          lastEventSequence = null
         }
         requireNewerStart(assignment.sessionID, lastEventSequence)
       }
@@ -585,6 +600,19 @@ export function registerProgress(
         state.pendingTerminal?.sequence !== terminal.sequence
       )
         return
+      const observedStart = observedExecutionStarts.get(binding.sessionID)
+      const requiredAfterSequence = startsRequiringNewerObservation.get(binding.sessionID)
+      if (
+        state.executionStartSequence === null ||
+        state.executionStartSequence === undefined ||
+        observedStart?.sequence !== state.executionStartSequence ||
+        !sameIdleBinding(observedStart.binding, binding) ||
+        requiredAfterSequence === null ||
+        (requiredAfterSequence !== undefined &&
+          state.executionStartSequence <= requiredAfterSequence)
+      )
+        // Another listener may still own the exact live start needed to confirm this terminal.
+        return
       const before = await readNativeSession(binding.sessionID)
       const messages = await Effect.runPromise(
         ctx.session.context({ sessionID: Session.ID.make(binding.sessionID) }),
@@ -648,6 +676,7 @@ export function registerProgress(
               terminalMessageID,
             )
             const current = idleStore.read(binding)
+            const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
             trace(sessionID, `event-${result.status}`, {
               eventSequence: sequence,
               executionStartSequence: current?.executionStartSequence ?? undefined,
@@ -658,7 +687,8 @@ export function registerProgress(
                   current?.lastEventSequence === sequence &&
                   current.executionStartSequence === sequence &&
                   sameIdleBinding(current.binding, binding) &&
-                  sequence > (startsRequiringNewerObservation.get(sessionID) ?? -1)
+                  (requiredAfterSequence === undefined ||
+                    (requiredAfterSequence !== null && sequence > requiredAfterSequence))
                 ) {
                   observedExecutionStarts.set(sessionID, { binding, sequence })
                   startsRequiringNewerObservation.delete(sessionID)
@@ -685,7 +715,7 @@ export function registerProgress(
               trace(sessionID, "event-order-unknown")
           } catch (error) {
             observedExecutionStarts.delete(sessionID)
-            requireNewerStart(sessionID, sequence ?? Number.MAX_SAFE_INTEGER)
+            requireNewerStart(sessionID, sequence ?? null)
             throw error
           }
         }
@@ -698,38 +728,41 @@ export function registerProgress(
     }
 
     const listen = Effect.forever(
-      Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
-        Effect.tryPromise({
-          try: () => observeNativeEvent(event),
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.catch(() => Effect.void)),
-      ).pipe(
-        Effect.match({
-          onFailure: (error) => {
-            trace("unknown", "stream-failed", { error })
-            invalidateListenerStarts()
-            for (const assignment of recorder.assignments()) {
-              recorder.markRecoveryGap(
-                assignment.sessionID,
-                "Native event stream disconnected; retained public session facts are reconciled at startup.",
-                "event-stream",
-              )
-            }
-          },
-          onSuccess: () => {
-            trace("unknown", "stream-ended")
-            invalidateListenerStarts()
-            for (const assignment of recorder.assignments()) {
-              recorder.markRecoveryGap(
-                assignment.sessionID,
-                "Native event stream ended; retained public session facts are reconciled at startup.",
-                "event-stream",
-              )
-            }
-          },
-        }),
-        Effect.andThen(Effect.sleep(1_000)),
-      ),
+      Effect.suspend(() => {
+        refreshUnknownStartFences()
+        return Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
+          Effect.tryPromise({
+            try: () => observeNativeEvent(event),
+            catch: (error) => new Error(safeError(error, privacyStats())),
+          }).pipe(Effect.catch(() => Effect.void)),
+        ).pipe(
+          Effect.match({
+            onFailure: (error) => {
+              trace("unknown", "stream-failed", { error })
+              invalidateListenerStarts()
+              for (const assignment of recorder.assignments()) {
+                recorder.markRecoveryGap(
+                  assignment.sessionID,
+                  "Native event stream disconnected; retained public session facts are reconciled at startup.",
+                  "event-stream",
+                )
+              }
+            },
+            onSuccess: () => {
+              trace("unknown", "stream-ended")
+              invalidateListenerStarts()
+              for (const assignment of recorder.assignments()) {
+                recorder.markRecoveryGap(
+                  assignment.sessionID,
+                  "Native event stream ended; retained public session facts are reconciled at startup.",
+                  "event-stream",
+                )
+              }
+            },
+          }),
+          Effect.andThen(Effect.sleep(1_000)),
+        )
+      }),
     )
     yield* Effect.forkScoped(listen)
   })

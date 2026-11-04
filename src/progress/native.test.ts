@@ -59,6 +59,7 @@ function makeContext(
   let afterHook: ((call: never) => Effect.Effect<void>) | undefined
   let idleHook: ((idle: never) => Effect.Effect<void>) | undefined
   let syntheticCalls = 0
+  let subscriptionCount = 0
   const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
   const streamFailure = Symbol("fixture-stream-failure")
   const syntheticInputs: unknown[] = []
@@ -139,8 +140,9 @@ function makeContext(
       },
     },
     event: {
-      subscribe: () =>
-        options.eventFailure
+      subscribe: () => {
+        subscriptionCount++
+        return options.eventFailure
           ? Stream.fail(new Error("fixture event stream unavailable"))
           : options.liveEvents
             ? Stream.fromQueue(eventQueue).pipe(
@@ -152,7 +154,8 @@ function makeContext(
               )
             : options.holdEvents
               ? Stream.never
-              : Stream.fromIterable(options.events ?? []),
+              : Stream.fromIterable(options.events ?? [])
+      },
     },
   } as unknown as Plugin.Context
   return {
@@ -161,6 +164,7 @@ function makeContext(
     after: () => afterHook,
     idle: () => idleHook,
     syntheticCalls: () => syntheticCalls,
+    subscriptions: () => subscriptionCount,
     syntheticInputs: () => syntheticInputs,
     emitEvent: (event: unknown) => {
       const value = testObject(event)
@@ -1235,6 +1239,298 @@ test("failed durable event observation prevents late idle input from confirming 
     fixture.close()
   }
 })
+
+test("failed newer start persistence cannot confirm an earlier zero report with later success", async () => {
+  const fixture = makeFixture()
+  let reopenedRepository: TaskRepository | undefined
+  const originalObserveEvent = NativeIdleStore.prototype.observeEvent
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      messages: [{ id: binding.assignedMessageID, type: "user" }],
+    })
+    const failedStart = Promise.withResolvers<void>()
+    const terminalProcessed = Promise.withResolvers<void>()
+    const recordNativeEvent = recorder.recordNativeEvent.bind(recorder)
+    recorder.recordNativeEvent = (event) => {
+      const saved = recordNativeEvent(event)
+      if (testObject(event)?.id === "evt_812") terminalProcessed.resolve()
+      return saved
+    }
+    let failNextStart = false
+    NativeIdleStore.prototype.observeEvent = function (
+      currentBinding,
+      type,
+      sequence,
+      eventID,
+      messageID,
+    ) {
+      if (failNextStart && type === "session.execution.started") {
+        failNextStart = false
+        failedStart.resolve()
+        throw new Error("Injected newer-start persistence failure")
+      }
+      return originalObserveEvent.call(this, currentBinding, type, sequence, eventID, messageID)
+    }
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 810)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                new NativeIdleStore(fixture.repository).read(binding)?.executionStartSequence ===
+                810,
+            ),
+          )
+          yield* ctx.idle()!({ sessionID: Session.ID.make(sessionID), background: [] } as never)
+          expect(new NativeIdleStore(fixture.repository).read(binding)?.report).toMatchObject({
+            inputID: binding.assignedMessageID,
+            executionStartSequence: 810,
+            eventSequence: 810,
+            count: 0,
+          })
+
+          failNextStart = true
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.started", sessionID, 811)),
+          )
+          yield* Effect.promise(() => failedStart.promise)
+          yield* Effect.promise(() =>
+            ctx.emitEvent(executionEvent("session.execution.succeeded", sessionID, 812)),
+          )
+          yield* Effect.promise(() => terminalProcessed.promise)
+
+          const state = new NativeIdleStore(fixture.repository).read(binding)
+          expect(state?.report).toMatchObject({ executionStartSequence: 810, eventSequence: 810 })
+          expect(state?.pendingTerminal).toEqual({
+            sequence: 812,
+            eventID: "evt_812",
+            messageID: "msg_812",
+          })
+          expect(state?.terminal).toBeNull()
+          expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({ state: "unknown" })
+        }),
+      ),
+    )
+
+    fixture.repository.close()
+    reopenedRepository = new TaskRepository(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    expect(new NativeIdleStore(reopenedRepository).background(binding)).toMatchObject({
+      state: "unknown",
+    })
+  } finally {
+    NativeIdleStore.prototype.observeEvent = originalObserveEvent
+    reopenedRepository?.close()
+    fixture.close()
+  }
+})
+
+test.each(["stream-loss-read", "unsequenced-event-write"] as const)(
+  "%s recovers from an unknown lineage barrier only at a finite live-start boundary",
+  async (failureMode) => {
+    const fixture = makeFixture()
+    let reopenedRepository: TaskRepository | undefined
+    const originalRead = NativeIdleStore.prototype.read
+    const originalObserveEvent = NativeIdleStore.prototype.observeEvent
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const sessionID = "ses-accepted"
+      const binding = nativeIdleBinding(fixture, sessionID)!
+      const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+      const persisting = makeContext(fixture, { liveEvents: true, messages })
+      const owning = makeContext(fixture, { liveEvents: true, messages })
+      const store = new NativeIdleStore(fixture.repository)
+      const streamGap = Promise.withResolvers<void>()
+      const failureInjected = Promise.withResolvers<void>()
+      const originalMarkRecoveryGap = recorder.markRecoveryGap.bind(recorder)
+      let failNextGapRead = false
+      let failNextUnsequencedWrite = false
+      recorder.markRecoveryGap = (...args) => {
+        const result = originalMarkRecoveryGap(...args)
+        if (args[2] === "event-stream") streamGap.resolve()
+        return result
+      }
+      NativeIdleStore.prototype.read = function (currentBinding) {
+        if (failNextGapRead && currentBinding.sessionID === sessionID) {
+          failNextGapRead = false
+          failureInjected.resolve()
+          throw new Error("Injected idle-row read failure at stream loss")
+        }
+        return originalRead.call(this, currentBinding)
+      }
+      NativeIdleStore.prototype.observeEvent = function (
+        currentBinding,
+        type,
+        sequence,
+        eventID,
+        messageID,
+      ) {
+        if (
+          failNextUnsequencedWrite &&
+          type === "session.inbox.delivered" &&
+          sequence === undefined
+        ) {
+          failNextUnsequencedWrite = false
+          failureInjected.resolve()
+          throw new Error("Injected unsequenced idle-event persistence failure")
+        }
+        return originalObserveEvent.call(this, currentBinding, type, sequence, eventID, messageID)
+      }
+
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(persisting.context, recorder, "project")
+            yield* registerProgress(owning.context, recorder, "project")
+            yield* Effect.promise(() =>
+              persisting.emitEvent(executionEvent("session.execution.started", sessionID, 20)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(
+                async () =>
+                  nativeObservations(fixture, sessionID).some(
+                    (row) => row.phase === "event-changed" && row.eventSequence === 20,
+                  ) && store.read(binding)?.executionStartSequence === 20,
+              ),
+            )
+            yield* Effect.promise(() =>
+              owning.emitEvent(executionEvent("session.execution.started", sessionID, 20)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () =>
+                nativeObservations(fixture, sessionID).some(
+                  (row) => row.phase === "event-seen" && row.eventSequence === 20,
+                ),
+              ),
+            )
+            yield* owning.idle()!({
+              sessionID: Session.ID.make(sessionID),
+              background: [],
+            } as never)
+            expect(store.read(binding)?.report).toMatchObject({
+              executionStartSequence: 20,
+              eventSequence: 20,
+              inputID: binding.assignedMessageID,
+              count: 0,
+            })
+
+            if (failureMode === "stream-loss-read") {
+              failNextGapRead = true
+            } else {
+              failNextUnsequencedWrite = true
+              yield* Effect.promise(() =>
+                owning.emitEvent({
+                  id: "evt_unsequenced",
+                  type: "session.inbox.delivered",
+                  durable: { aggregateID: sessionID, seq: "unavailable", version: 1 },
+                  data: { sessionID, inboxID: "msg-next" },
+                }),
+              )
+              yield* Effect.promise(() => failureInjected.promise)
+            }
+            yield* Effect.promise(() => owning.failEvents())
+            yield* Effect.promise(() => streamGap.promise)
+            if (failureMode === "stream-loss-read")
+              yield* Effect.promise(() => failureInjected.promise)
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => owning.subscriptions() >= 2, 5_000),
+            )
+
+            const reportBeforeOldStart = store.read(binding)?.report
+            const oldStartSeenCount = nativeObservations(fixture, sessionID).filter(
+              (row) => row.phase === "event-seen" && row.eventSequence === 20,
+            ).length
+            yield* Effect.promise(() =>
+              owning.emitEvent(executionEvent("session.execution.started", sessionID, 20)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(
+                async () =>
+                  nativeObservations(fixture, sessionID).filter(
+                    (row) => row.phase === "event-seen" && row.eventSequence === 20,
+                  ).length > oldStartSeenCount,
+              ),
+            )
+            yield* owning.idle()!({
+              sessionID: Session.ID.make(sessionID),
+              background: [],
+            } as never)
+            expect(store.read(binding)?.report).toEqual(reportBeforeOldStart)
+
+            // A different listener persists the fresh start first; the owner then sees it as `seen`.
+            yield* Effect.promise(() =>
+              persisting.emitEvent(executionEvent("session.execution.started", sessionID, 22)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => store.read(binding)?.executionStartSequence === 22),
+            )
+            yield* Effect.promise(() =>
+              owning.emitEvent(executionEvent("session.execution.started", sessionID, 22)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () =>
+                nativeObservations(fixture, sessionID).some(
+                  (row) => row.phase === "event-seen" && row.eventSequence === 22,
+                ),
+              ),
+            )
+            yield* owning.idle()!({
+              sessionID: Session.ID.make(sessionID),
+              background: [],
+            } as never)
+            expect(store.read(binding)?.report).toMatchObject({
+              executionStartSequence: 22,
+              eventSequence: 22,
+              inputID: binding.assignedMessageID,
+              count: 0,
+            })
+            yield* Effect.promise(() =>
+              owning.emitEvent(executionEvent("session.execution.succeeded", sessionID, 23)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => {
+                const state = store.read(binding)
+                return state?.terminal?.sequence === 23
+              }),
+            )
+          }),
+        ),
+      )
+
+      const retained = nativeIdleBackground(fixture, sessionID)
+      expect(retained).toMatchObject({
+        state: "observed",
+        executionStartSequence: 22,
+        eventSequence: 22,
+        inputID: binding.assignedMessageID,
+        terminalSequence: 23,
+        count: 0,
+      })
+      fixture.repository.close()
+      reopenedRepository = new TaskRepository(
+        fixture.repository.path,
+        fixture.repository.projectDirectory,
+      )
+      expect(new NativeIdleStore(reopenedRepository).background(binding)).toEqual(retained)
+    } finally {
+      NativeIdleStore.prototype.read = originalRead
+      NativeIdleStore.prototype.observeEvent = originalObserveEvent
+      reopenedRepository?.close()
+      fixture.close()
+    }
+  },
+)
 
 test("a delayed old idle callback cannot overwrite a newer confirmed same-session report", async () => {
   const fixture = makeFixture()
