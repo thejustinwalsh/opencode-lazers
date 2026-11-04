@@ -47,22 +47,30 @@ focused identity-binding regression also passes. Formatter, lint and typecheck
 pass. Logs remain under `/private/tmp/lazers-bootstrap-*20261104.log`.
 
 The corrected lifecycle uses a read-only native location RPC to demand-load and
-confirm that location's own current before-tool registration. Registration begins
-before hook setup, becomes active after setup and disposes with the scope. A known
+confirm that location's own current before-tool registration. Registration begins as the first plugin effect, before option validation,
+repository opening or ProjectIndex setup. The database binding is attached only
+when its actual before-tool hooks install; capability invalidates before hook
+removal. Location generation replacement invalidates old bindings even when the
+replacement fails before opening its database. A known
 unguarded predecessor or disposed/replaced registration cannot confer capability.
 Initial admission and pending recovery use the routed check; sealed recovery calls
 it only after registration loss or a recorded problem. No new timer or healthy
 sealed polling RPC is added. Failed observations retain source/resource holds;
 sealed recovery survives an Architect owner continuation without replaying archive.
 
-Lifecycle suites pass **193 tests / 3,077 assertions** across seven runner suites,
+Lifecycle suites pass **195 tests / 3,102 assertions** across seven runner suites,
 plus formatter/lint/typecheck/diff checks. Reopen regressions start with an empty
 old-location registry, respect the previous scheduler lease, restore pending and
 sealed guards through the actual native adapter shape, retain the uncertain effect
 and then dispatch independent work. Foreign database/project/location/process,
 failed activation, disposal and superseded replies fail without releasing holds.
 Registered-hook scope tests cover current-generation capability and a known live
-unguarded predecessor. The source remains offline pending independent review.
+unguarded predecessor. Full-plugin tests hold a borrowed predecessor alive while
+replacement fails in option validation, repository opening or actual ProjectIndex
+cache creation. Reinstating the old late-reservation order reproduces the false
+live-guard result; the corrected order passes. No mocks replace ProjectIndex and
+no running production location is altered by that test. The source remains offline
+pending independent review.
 
 Coordinate first installation, observe actual72 control and ordinary57→58 dispatch.
 Existing58 still must demonstrate independent verification contexts and distinct

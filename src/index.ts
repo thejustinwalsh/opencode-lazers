@@ -11,6 +11,7 @@ import { schedulerProjectKey, sharedScheduler } from "./runner/scheduler-coordin
 import { nativeHost } from "./runner/native.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
+import { beginSourceGuard } from "./runner/source-quarantine.ts"
 import { registerSourceFence } from "./runner/source-fence-rpc.ts"
 import { ProjectIndex } from "./context/index.ts"
 import type { ContextHost } from "./context/index.ts"
@@ -33,6 +34,15 @@ export default Plugin.define({
   id: "lazers",
   effect: (ctx) =>
     Effect.gen(function* () {
+      const sourceGuard = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          beginSourceGuard({
+            directory: ctx.location.directory,
+            projectDirectory: ctx.location.project.canonical,
+          }),
+        ),
+        (guard) => Effect.sync(() => guard.dispose()),
+      )
       const dataDirectory = ctx.options.dataDirectory
       if (dataDirectory !== undefined && typeof dataDirectory !== "string") {
         return yield* Effect.die(new Error("LAZERS dataDirectory must be an absolute path string"))
@@ -102,7 +112,7 @@ export default Plugin.define({
       yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(
         Effect.orDie,
       )
-      const sourceGuard = yield* registerWorker(ctx, runtime.store)
+      yield* registerWorker(ctx, runtime.store, sourceGuard)
       yield* registerSourceFence(ctx, runtime.store, sourceGuard).pipe(Effect.orDie)
       yield* registerRunnerTools(ctx, runtime)
       yield* registerProgress(ctx, progress, ctx.location.project.id, host.retainedInputID)

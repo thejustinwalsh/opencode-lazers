@@ -17,8 +17,9 @@ export type SourceQuarantine = {
   updated_at: number
 }
 
-type GuardState = { current: string; registrations: Map<string, boolean> }
-const registryKey = Symbol.for("lazers.runner.source-quarantine.guards.v2")
+type GuardEntry = { installed: boolean; databasePath?: string; projectDirectory: string }
+type GuardState = { current: string; registrations: Map<string, GuardEntry> }
+const registryKey = Symbol.for("lazers.runner.source-quarantine.guards.v3")
 const shared = globalThis as unknown as Record<symbol, Map<string, GuardState> | undefined>
 const guards = (shared[registryKey] ??= new Map())
 export const samePhysicalWorkspace = (left: string, right: string) => {
@@ -29,27 +30,38 @@ export const samePhysicalWorkspace = (left: string, right: string) => {
   }
 }
 type GuardStore = Pick<RunnerStore, "repository">
-const key = (store: GuardStore, workspace: string) =>
-  JSON.stringify([resolve(store.repository.path), resolve(workspace)])
+const key = (workspace: string) => resolve(workspace)
 
 export type SourceGuardRegistration = {
   registrationID: string
-  install(): void
+  install(store: GuardStore): void
   dispose(): void
 }
 
 /** A replacement reserves its identity before hooks install; old scopes cannot bless it. */
-export function beginSourceGuard(store: GuardStore, workspace: string): SourceGuardRegistration {
-  const identity = key(store, workspace)
+export function beginSourceGuard(location: {
+  directory: string
+  projectDirectory: string
+}): SourceGuardRegistration {
+  const identity = key(location.directory)
   const registrationID = crypto.randomUUID()
   let state = guards.get(identity)
   if (!state) guards.set(identity, (state = { current: registrationID, registrations: new Map() }))
   state.current = registrationID
-  state.registrations.set(registrationID, false)
+  const entry: GuardEntry = {
+    installed: false,
+    projectDirectory: resolve(location.projectDirectory),
+  }
+  state.registrations.set(registrationID, entry)
   return {
     registrationID,
-    install() {
-      if (state.registrations.has(registrationID)) state.registrations.set(registrationID, true)
+    install(store) {
+      if (entry.projectDirectory !== resolve(store.repository.projectDirectory))
+        throw new Error("Source guard project binding changed")
+      if (state.registrations.has(registrationID)) {
+        entry.databasePath = resolve(store.repository.path)
+        entry.installed = true
+      }
     },
     dispose() {
       state.registrations.delete(registrationID)
@@ -60,24 +72,30 @@ export function beginSourceGuard(store: GuardStore, workspace: string): SourceGu
 
 /** Useful when a caller already owns the installed hook's lifetime. */
 export function registerSourceGuard(store: GuardStore, workspace: string) {
-  const registration = beginSourceGuard(store, workspace)
-  registration.install()
+  const registration = beginSourceGuard({
+    directory: workspace,
+    projectDirectory: store.repository.projectDirectory,
+  })
+  registration.install(store)
   return Object.assign(() => registration.dispose(), {
     registrationID: registration.registrationID,
   })
 }
 
 export function sourceGuardInstalled(store: GuardStore, workspace: string) {
-  const state = guards.get(key(store, workspace))
+  const state = guards.get(key(workspace))
+  const entry = state?.registrations.get(state.current)
   return Boolean(
-    state?.registrations.get(state.current) && [...state.registrations.values()].every(Boolean),
+    entry?.installed &&
+    entry.databasePath === resolve(store.repository.path) &&
+    entry.projectDirectory === resolve(store.repository.projectDirectory) &&
+    [...state!.registrations.values()].every((value) => value.installed),
   )
 }
 
 export function sourceGuardMatches(store: GuardStore, workspace: string, registrationID: string) {
   return (
-    guards.get(key(store, workspace))?.current === registrationID &&
-    sourceGuardInstalled(store, workspace)
+    guards.get(key(workspace))?.current === registrationID && sourceGuardInstalled(store, workspace)
   )
 }
 

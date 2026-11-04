@@ -15,7 +15,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   let quarantined = false
   let activeAssignment = true
   const store = {
-    repository: { path: "/synthetic/roles.sqlite" },
+    repository: { path: "/synthetic/roles.sqlite", projectDirectory: "/work" },
     atomic: (run: (db: never) => unknown) =>
       run({
         query: (sql: string) => ({

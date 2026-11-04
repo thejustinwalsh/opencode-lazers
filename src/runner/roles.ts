@@ -8,18 +8,30 @@ import {
   quarantinedSession,
   beginSourceGuard,
   sourceQuarantineToolError,
+  type SourceGuardRegistration,
 } from "./source-quarantine.ts"
 
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
   ["lz-research", "lz-submit-plan", "lz-plan-command", "lz-submit-task"].includes(tool)
 
-export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
+export function registerWorker(
+  ctx: Plugin.Context,
+  store: RunnerStore,
+  reserved?: SourceGuardRegistration,
+) {
   return Effect.gen(function* () {
-    const guard = yield* Effect.acquireRelease(
-      Effect.sync(() => beginSourceGuard(store, ctx.location.directory)),
-      (registration) => Effect.sync(() => registration.dispose()),
-    )
+    const guard =
+      reserved ??
+      (yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          beginSourceGuard({
+            directory: ctx.location.directory,
+            projectDirectory: store.repository.projectDirectory,
+          }),
+        ),
+        (registration) => Effect.sync(() => registration.dispose()),
+      ))
     yield* ctx.agent.transform((editor) =>
       editor.update(Agent.ID.make("lazers-implementor"), (agent) => {
         agent.name = Agent.Name.make("LAZERS implementor")
@@ -88,7 +100,14 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
         )
       }),
     )
-    guard.install()
+    // The installed capability releases before the hook registrations above.
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        guard.install(store)
+        return guard
+      }),
+      (registration) => Effect.sync(() => registration.dispose()),
+    )
     return guard
   })
 }

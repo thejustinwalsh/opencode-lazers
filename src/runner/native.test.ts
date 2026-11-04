@@ -590,7 +590,7 @@ test("native worker selection survives role registration and reaches native crea
   await Effect.runPromise(
     Effect.scoped(
       registerWorker(ctx, {
-        repository: { path: "/synthetic/native-roles.sqlite" },
+        repository: { path: "/synthetic/native-roles.sqlite", projectDirectory: "/work" },
       } as RunnerStore),
     ),
   )
