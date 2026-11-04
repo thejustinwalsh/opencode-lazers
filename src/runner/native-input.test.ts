@@ -10,6 +10,29 @@ const instructions = {
   metadata: { instruction: { paths: ["/project/AGENTS.md"] } },
 }
 
+const continuations = [
+  "The previous response was interrupted. Continue from where you left off without repeating completed content.",
+  "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.",
+].map((text, index) => ({ type: "synthetic", id: `msg_continue_${index}`, text }))
+
+test("pinned native continuation notes preserve the logical input in visible context", async () => {
+  for (const note of continuations) {
+    expect(await resolveNativeInputID([user, note], async () => undefined)).toBe(user.id)
+    expect(await resolveNativeInputID([user, steering, note], async () => undefined)).toBe(
+      steering.id,
+    )
+    for (const explicitInput of [
+      { ...note, type: "user" },
+      { ...note, text: `${note.text} Also change the goal.` },
+      { ...note, metadata: { source: "another-plugin" } },
+    ]) {
+      expect(await resolveNativeInputID([user, explicitInput], async () => undefined)).toBe(
+        explicitInput.id,
+      )
+    }
+  }
+})
+
 test("instruction context does not replace user input or genuine synthetic steering", async () => {
   const retained = async () => {
     throw new Error("Visible input should not need history")
@@ -99,6 +122,17 @@ test("retained input skips all native instruction pages and falls back to the as
     cursor: "older",
     limit: 1,
   })
+})
+
+test("retained provider continuation notes do not replace the original assigned input", async () => {
+  const { client, queries } = clientFor({
+    user: { data: [user], cursor: {} },
+    synthetic: { data: [continuations[1]], cursor: { next: "previous-continuation" } },
+    "previous-continuation": { data: [continuations[0]], cursor: { next: "instructions" } },
+    instructions: { data: [instructions], cursor: {} },
+  })
+  expect(await retainedNativeInputID(client, "ses_worker")).toBe(user.id)
+  expect(queries).toHaveLength(4)
 })
 
 test("retained steering uses its own host-order cursor after instruction context is skipped", async () => {

@@ -1,10 +1,24 @@
 import type { OpenCode } from "@opencode/client"
 
+// Pinned session/runner/llm.ts emits these bare notes within the same logical step.
+const nativeContinuations = new Set([
+  "The previous response was interrupted. Continue from where you left off without repeating completed content.",
+  "Your last response hit the output token limit (stop reason: length). Do not apologize, recap, or repeat yourself. Break the remaining work into smaller pieces.",
+])
+
 function isNativeInput(message: unknown): message is { id?: string } {
   const value = message as
-    { type?: string; metadata?: { instruction?: { paths?: unknown } } } | undefined | null
+    | { type?: string; text?: unknown; metadata?: { instruction?: { paths?: unknown } } }
+    | undefined
+    | null
   if (value?.type === "user") return true
   if (value?.type !== "synthetic") return false
+  if (
+    value.metadata === undefined &&
+    typeof value.text === "string" &&
+    nativeContinuations.has(value.text)
+  )
+    return false
   // OpenCode publishes loaded instruction files as context, not a new turn input.
   const paths = value.metadata?.instruction?.paths
   return !(
