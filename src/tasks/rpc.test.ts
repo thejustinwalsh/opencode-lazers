@@ -12,13 +12,24 @@ import type { StartTaskInput, StartTaskResult } from "./contract.ts"
 import { TaskReads } from "./read.ts"
 import { registerTaskReads } from "./rpc.ts"
 
-test("RPC invalidations catch independent connections and survive a failed delivery after commit", async () => {
+test("RPC invalidations catch independent connections and retry transient read and delivery failures", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-read-rpc-"))
   const path = join(directory, "tasks.sqlite")
   const repository = new TaskRepository(path, "/project")
   const other = new TaskRepository(path, "/project")
   const versions: number[] = []
   let attempts = 0
+  let failRead = false,
+    failedReads = 0
+  const version = repository.version.bind(repository)
+  repository.version = () => {
+    if (failRead) {
+      failRead = false
+      failedReads++
+      throw new Error("temporary read failure")
+    }
+    return version()
+  }
   const runtime = {
     host: { session: async () => null },
     projectID: "project",
@@ -50,6 +61,7 @@ test("RPC invalidations catch independent connections and survive a failed deliv
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerTaskReads(ctx, new TaskReads(repository), runtime)
+          failRead = true
           other.insert({
             schemaVersion: 1,
             id: crypto.randomUUID(),
@@ -67,6 +79,7 @@ test("RPC invalidations catch independent connections and survive a failed deliv
           })
           yield* Effect.sleep(2_250)
           expect(attempts).toBeGreaterThanOrEqual(2)
+          expect(failedReads).toBe(1)
           expect(versions).toEqual([other.version()])
           expect(() => other.insert({})).toThrow()
         }),
