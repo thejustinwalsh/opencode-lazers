@@ -1,5 +1,34 @@
 # Independent bootstrap review — cb6d447
 
+## Current candidate 5d485d13 — bounded source clearance
+
+Exact clean `5d485d13d4e2a6dc7cdc57627a1cf372e66cc3b0` is source-clear for the
+named LZ72 → original LZ57/58 independent native source-work route. The original
+native reviewer clears the early-setup repair and preserves the prior bounded
+runtime review. Architect independently read the frozen first-effect reservation,
+late database/project binding and capability-before-hook-teardown paths.
+
+Generation reservation now precedes option validation/repository/ProjectIndex
+(`index.ts:37–45`), hook installation attaches binding (`source-quarantine.ts:58–64`),
+and capability invalidates before hook release (`roles.ts:103–110`). Failed
+replacements cannot restore borrowed predecessors; current generation/database/
+project checks remain fail-closed (`source-quarantine.ts:85–99`). Full-plugin early
+failure regression covers the previously missed branch (`source-fence-rpc.test.ts:97–172`).
+Real pinned V2 location RPC/activation, original three repairs and session-bound/
+nested Code Mode fencing remain intact.
+
+Completed Root receipts: late-order fault injection fails expectedfalse/receivedtrue;
+corrected focused3tests/30assertions pass; seven suites **195 tests / 3,102 assertions,
+64.86s, zero failures**, plus reported fmt/lint/types/diff pass and unchanged clean
+candidate. Logs inspected, not rerun. Different database bindings do not migrate
+quarantine authority. This is not live-native qualification or activation permission.
+
+**No activation while LZ129 or other workers are active.** Root owns installation
+after actual quiet coordination, then observation of the named control and ordinary
+original dispatch. Preserve LZ72 uncertain effects/resources/unknown-child uncertainty,
+LZ88 integration prerequisite and LZ58's independent-verification acceptance. No
+Root-tree edit, live action or resource release occurred during this review.
+
 ## Lifecycle candidate e699793 — one remaining P1
 
 Original runtime reviewer clears the bounded runtime recovery boundary, but original

@@ -1,5 +1,22 @@
 # Retained source fence: lifecycle recovery boundary
 
+## Current follow-up 5d485d13 — early-generation P1 repaired
+
+Original native reviewer clears exact
+`5d485d13d4e2a6dc7cdc57627a1cf372e66cc3b0`, retaining prior bounded runtime
+clearance. Reservation is first plugin effect before options/database/ProjectIndex,
+binding attaches only with actual hook installation, and installed capability
+invalidates before hook teardown. Failed replacements cannot bless/resurrect a
+borrowed predecessor; current generation, database and project checks fail closed.
+Architect independently read the frozen paths. The full-plugin regression covers
+borrowed A and early-failed B, with the demonstrated old-order red result retained.
+
+[Combined bounded source assessment](retained-source-bootstrap-independent-20261104.md)
+records the195/3102 passing completed receipts without a rerun. Real V2 routed
+activation semantics remain confirmed. This clears the source P1, not old-child
+containment, resource uncertainty, LZ88's prerequisite or live-native qualification.
+Root retains installation ownership; no activation while workers are active.
+
 ## Final e699793 assessment: NOT source-clear, one generation P1
 
 Both original reviewers completed. The runtime boundary below is clear, but native

@@ -8,6 +8,16 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **5d485d13 SOURCE-CLEAR for the named72→original57/58 route:** original native
+  follow-up completed; prior bounded runtime clearance preserved. First-effect
+  location reservation, binding only on hook install, invalidation before hook
+  teardown and full-plugin borrowed-A/early-failed-B regression repair the last P1.
+  Architect read frozen repair paths. [Current combined assessment](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  Completed195tests/3102assertions/7suites/64.86s plus quality retained; no duplicate
+  tests. Source clearance is NOT native proof or activation permission. Root owns
+  eventual installation after actual quiet coordination; **no activation while129
+  or other workers active**. Preserve72uncertain effects/resources/unknown-child,
+  88integrationedge and58independentverification. All review agents now complete.
 - **Exact early-setup correction5d485d1 under native follow-up review:** Root supplied
   clean `5d485d13d4e2a6dc7cdc57627a1cf372e66cc3b0`; original native reviewer
   `ses_e576d7ecfffeHyxWcUXLddebyV` is checking only the early-generation correction
