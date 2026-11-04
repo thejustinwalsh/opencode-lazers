@@ -264,6 +264,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         rpc,
         value.directory,
         () => props.session.server.connected,
+        value.client.event,
+        value.projectID,
       )
       handledTargetRequestID = view.target?.requestID ?? ""
       state.connect(key, value.projectID, value.project, scope, transport, {

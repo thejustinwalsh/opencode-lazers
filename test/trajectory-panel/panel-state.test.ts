@@ -926,3 +926,297 @@ test("live status and progress do not cancel page-size-two history or rewrite it
     fixture.close()
   }
 })
+
+function recoveryClock() {
+  const jobs: { run: () => void; delay: number; cancelled: boolean }[] = []
+  return {
+    jobs,
+    schedule: (run: () => void, delay: number) => {
+      const job = { run, delay, cancelled: false }
+      jobs.push(job)
+      return () => {
+        job.cancelled = true
+      }
+    },
+  }
+}
+
+test("healthy trajectory stays quiet past the old poll interval and reconnect preserves captured history", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport, snapshotCount, publish } = transportFor(fixture, tracker)
+  const originalHistory = transport.history
+  let historyCalls = 0
+  transport.history = (...args) => {
+    historyCalls++
+    return originalHistory(...args)
+  }
+  const clock = recoveryClock()
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    clock.schedule,
+  )
+  try {
+    state.connect(
+      "quiet",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    state.selectAttempt(firstAttemptID)
+    const captured = state.data.historyCapturedAt
+    const events = [...state.data.capturedEventIDs]
+    const reads = snapshotCount()
+    await new Promise<void>((resolve) => setTimeout(resolve, 4_100))
+    expect(snapshotCount()).toBe(reads)
+    expect(clock.jobs).toHaveLength(0)
+    publish({
+      projectID: "project",
+      sequence: 1,
+      repositoryVersion: 0,
+      sourceRevision: 0,
+      nativeRevision: 0,
+      cause: "gap",
+      resnapshotRequired: true,
+    })
+    await waitFor(state, () => snapshotCount() === reads + 1)
+    await tick()
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+    expect(state.data.historyCapturedAt).toBe(captured)
+    expect(state.data.capturedEventIDs).toEqual(events)
+    expect(historyCalls).toBe(1)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("failed snapshot reads back off, recover without a new event, reset and cancel on close", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const original = transport.snapshot
+  let failures = 2
+  transport.snapshot = (...args) => {
+    if (failures-- > 0) return Promise.reject(new Error("temporary read failure"))
+    return original(...args)
+  }
+  const clock = recoveryClock()
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    clock.schedule,
+  )
+  try {
+    state.connect(
+      "recovery",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => clock.jobs.length === 1)
+    expect(clock.jobs[0]!.delay).toBe(1_000)
+    clock.jobs[0]!.run()
+    await waitFor(state, () => clock.jobs.length === 2)
+    expect(clock.jobs[1]!.delay).toBe(2_000)
+    clock.jobs[1]!.run()
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    expect(state.data.error).toBe("")
+    expect(state.data.stale).toBe(false)
+    expect(clock.jobs).toHaveLength(2)
+    failures = 1
+    await state.refresh()
+    expect(clock.jobs[2]!.delay).toBe(1_000)
+    state.close()
+    expect(clock.jobs[2]!.cancelled).toBe(true)
+    const before = clock.jobs.length
+    clock.jobs[2]!.run()
+    await tick()
+    expect(clock.jobs).toHaveLength(before)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a failed live status read recovers without recapturing selected historical activity", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  const clock = recoveryClock()
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    clock.schedule,
+  )
+  try {
+    state.connect(
+      "status",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    state.selectAttempt(firstAttemptID)
+    const captured = state.data.historyCapturedAt
+    const events = [...state.data.capturedEventIDs]
+    const original = transport.status
+    let fail = true
+    transport.status = (...args) => {
+      if (fail) {
+        fail = false
+        return Promise.reject(new Error("temporary status failure"))
+      }
+      return original(...args)
+    }
+    await state.refresh()
+    expect(state.data.stale).toBe(true)
+    expect(clock.jobs).toHaveLength(1)
+    clock.jobs[0]!.run()
+    await waitFor(state, () => !state.data.error && !state.data.stale)
+    expect(state.data.historyCapturedAt).toBe(captured)
+    expect(state.data.capturedEventIDs).toEqual(events)
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+    expect(clock.jobs).toHaveLength(1)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("reconnect arriving during a snapshot forces one catch-up even at the same sequence", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport, publish } = transportFor(fixture, tracker)
+  const original = transport.snapshot
+  const waiting = deferred<void>()
+  let calls = 0
+  transport.snapshot = async (...args) => {
+    const result = await original(...args)
+    if (++calls === 1) await waiting.promise
+    return result
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "inflight",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => calls === 1)
+    publish({
+      projectID: "project",
+      sequence: 1,
+      repositoryVersion: 0,
+      sourceRevision: 0,
+      nativeRevision: 0,
+      cause: "gap",
+      resnapshotRequired: true,
+    })
+    await tick()
+    waiting.resolve()
+    await waitFor(state, () => calls === 2 && Boolean(state.data.report) && !state.data.loading)
+    await tick()
+    expect(calls).toBe(2)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+for (const newerThanSnapshot of [false, true]) {
+  test(`an in-flight event ${newerThanSnapshot ? "newer than" : "covered by"} the snapshot ${newerThanSnapshot ? "gets" : "avoids"} a catch-up read`, async () => {
+    const fixture = makeFixture()
+    const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+    tracker.initialize()
+    const { transport, publish } = transportFor(fixture, tracker)
+    const original = transport.snapshot
+    const waiting = deferred<void>()
+    let calls = 0
+    transport.snapshot = async (...args) => {
+      const result = await original(...args)
+      if (++calls === 1) await waiting.promise
+      return { ...result, boundary: { ...result.boundary, eventSequence: calls === 1 ? 10 : 11 } }
+    }
+    const state = new TrajectoryPanelState(() => {})
+    try {
+      state.connect(
+        "sequence",
+        "project",
+        fixture.directory,
+        { kind: "project", sessionID: "ses-owner" },
+        transport,
+        { taskID, selection: null },
+      )
+      await waitFor(state, () => calls === 1)
+      publish({
+        projectID: "project",
+        sequence: newerThanSnapshot ? 11 : 10,
+        repositoryVersion: 0,
+        sourceRevision: 0,
+        nativeRevision: 0,
+        cause: "native",
+        resnapshotRequired: false,
+      })
+      await tick()
+      waiting.resolve()
+      await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+      await tick()
+      expect(calls).toBe(newerThanSnapshot ? 2 : 1)
+    } finally {
+      state.close()
+      fixture.close()
+    }
+  })
+}
+
+test("a retired retry callback cannot disown the current view's recovery timer", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  transport.snapshot = () => Promise.reject(new Error("temporary read failure"))
+  const clock = recoveryClock()
+  const state = new TrajectoryPanelState(
+    () => {},
+    () => {},
+    clock.schedule,
+  )
+  const connect = (key: string) =>
+    state.connect(
+      key,
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+  try {
+    connect("old")
+    await waitFor(state, () => clock.jobs.length === 1)
+    connect("new")
+    await waitFor(state, () => clock.jobs.length === 2)
+    expect(clock.jobs[0]!.cancelled).toBe(true)
+    clock.jobs[0]!.run()
+    state.close()
+    expect(clock.jobs[1]!.cancelled).toBe(true)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
