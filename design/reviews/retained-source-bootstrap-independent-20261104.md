@@ -1,5 +1,15 @@
 # Independent bootstrap review — cb6d447
 
+## Lifecycle candidate e699793 — one remaining P1
+
+Original runtime reviewer clears the bounded runtime recovery boundary, but original
+native reviewer finds early replacement failure before generation reservation:
+`index.ts:40–104` may fail before registerWorker/beginSourceGuard at105, leaving
+borrowed predecessor A's token current while routed B has no hook. Healthy sealed
+exclusion can then succeed. **NOT source-clear; no activation.** Root's merged
+194tests/3081assertions/68.40s plus quality are retained, not evidence against this
+uncovered case. [Exact paths and minimal correction](retained-source-guard-lifecycle-20261104.md).
+
 ## Corrected candidate follow-up — 79ceb78
 
 Both original reviewers independently rechecked exact clean

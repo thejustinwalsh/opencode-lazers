@@ -8,6 +8,18 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **e699793 final review NOT source-clear: one early-generation P1:** both original
+  reviews complete. Runtime recovery is clear, real V2 location RPC activation and
+  own-token binding confirmed, but beginSourceGuard occurs only in registerWorker
+  atindex105 after fallible setup40–104. Borrowed guarded A survives; routed B can
+  fail in ProjectIndex before reserving, leaving A falsely current and healthy
+  sealed exclusion enabled. Root should reserve before fallible setup and cover
+  full-plugin borrowed-A/early-failed-B; no new controller/certificate. [Exact review](../../design/reviews/retained-source-guard-lifecycle-20261104.md).
+  Root's merged194tests/3081assertions/7suites/68.40s/zero failures confirmed in log;
+  quality passes reported/candidate unchanged. No duplicate tests, Root edits or
+  activation. Actual Desktop129Running/noStart, correct trajectory1attempt/55tools/
+  updatesconnected and native SolHigh/LunaMax routes retained; attempt ends stay
+  unknown pending131. Keep129 cooking; no activation while workers active.
 - **e699793 runtime boundary source-clear; deep native review still pending:**
   Original runtime reviewer found no P1/P2 in initial/pending/sealed recovery,
   scheduler lease order, after-await authority/enforcement, no healthy sealed
@@ -24,7 +36,7 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   main reconciliation; its merged seven-suite run is underway and Root will supply
   the result. **Do not duplicate it**, edit Root's tree or activate while129runs.
   Candidate source/plan read only; no native capability probe was invoked here.
- 129plan remainsv13running/reasonnull/same58d8d699 with all3effectscomplete. Root
+  129plan remainsv13running/reasonnull/same58d8d699 with all3effectscomplete. Root
   independently confirmed Main SolHigh and129 OpenAI LunaMax routes. Continue
   nonoverlapping authoring; source clearance is not permission for mid-worker rollout.
 - **129 approval-only outcome resolved via allowed audit/reconcile:** v10reported

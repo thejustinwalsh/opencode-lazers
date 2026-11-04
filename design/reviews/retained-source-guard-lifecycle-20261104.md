@@ -1,5 +1,43 @@
 # Retained source fence: lifecycle recovery boundary
 
+## Final e699793 assessment: NOT source-clear, one generation P1
+
+Both original reviewers completed. The runtime boundary below is clear, but native
+review found a concrete full-plugin setup hole at exact
+`e699793a3c04ff733c81ac7b5b0d3a456ac5b3f2`:
+
+- `beginSourceGuard` reserves a generation only inside `registerWorker`
+  (`roles.ts:19–22`). The plugin reaches it at `index.ts:105`, after repository/
+  ProjectIndex creation and many fallible registrations (`40–104`).
+- Pinned V2 permits a running step to retain predecessor A's borrowed graph while
+  replacement B becomes routed. If B fails during ProjectIndex construction before
+  reaching registerWorker, B never reserves a generation. A remains registry-current
+  and installed (`source-quarantine.ts:70–80`).
+- Healthy sealed recovery skips probing (`runtime.ts:2235–2240`) and exclusion can
+  still succeed (`source-quarantine.ts:120`), despite replacement routing lacking
+  the quarantine hook. Existing tests reserve B explicitly; they miss failure
+  **before** reservation. Architect independently read these frozen source paths.
+
+Root's minimal correction: reserve the location generation before preceding
+fallible plugin setup, keeping reservation separate from actual hook lifetime and
+invalidating capability before hook removal. Add the full-plugin borrowed-A /
+early-failed-B regression: sealed exclusion must remain false. No new controller,
+certificate, old-child containment claim or resource-release mechanism is required.
+Root owns this fix; no edits or activation were performed in its tree.
+
+Native review confirms the real V2 client forwards location, server middleware
+demand-loads it and RPC awaits plugin activation. The callback attests its own
+registration (`source-fence-rpc.ts:34–43`); native705–727 validates process/project/
+location/database/token. Reachable initial/pending/sealed recovery and post-
+reservation disposal/supersession protections are improvements, not a cure for
+the earlier setup boundary above.
+
+Root's exact merged run completed **194 tests / 3,081 assertions across seven
+suites, 68.40s**, zero failures; log
+`/private/tmp/lazers-bootstrap-lifecycle-merged-20261104.log` inspected for totals.
+Root reports formatter/lint/types/diff pass and unchanged clean candidate. No
+duplicate run occurred. These legitimate passes do not cover the new counterexample.
+
 ## Lifecycle candidate e699793: runtime review complete
 
 The original runtime reviewer clears the bounded runtime boundary of exact clean
@@ -11,10 +49,10 @@ not replay archival; failed observations retain old holds. The original three
 boundary repairs remain present. Architect independently read the frozen admission
 and recovery paths at `runtime.ts:530–575,2222–2346`.
 
-Deep native RPC/current-generation token review is still running. Root's merged
-seven-suite result is pending; no tests were duplicated. This partial source
-clearance is not native qualification, resource settlement, or authorization to
-activate while original LZ129 runs. Root retains installation ownership.
+Deep native review is now complete with the P1 above; this runtime-only clearance
+is retained without promotion to overall clearance. It is not native qualification,
+resource settlement, or authority to activate while original LZ129 runs. Root
+retains installation ownership.
 
 ## Earlier lifecycle assessment and proposal
 

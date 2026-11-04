@@ -85,3 +85,14 @@ reason null**, same58d8d699 attempt/session/worktree and three completed effects
 No retry, cancel, replacement, source mutation, effect replay or acceptance override
 was used. This resolves that recorded hold, not implementation acceptance or proof
 that future permission observations cannot recur.
+
+## Root's actual connected Desktop observation
+
+Root observed Project Open show129 **Running without Start**. Open trajectory
+selected original LZ129 correctly, with **one attempt / 55 tool calls / updates
+connected**. Actual native API routes were Architect
+`openai/gpt-6.1-sol#high` and implementor `openai/gpt-6-luna#max` in its correct
+owned native worktree. This is Root's live observation, not an inference from
+fixtures, usage or task state. No backend attempt end is supplied or invented;
+131 retains that boundary. Keep original129 cooking. Root candidate stays offline
+while workers are active, independently of its remaining source-review blocker.
