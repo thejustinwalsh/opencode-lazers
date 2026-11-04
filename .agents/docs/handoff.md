@@ -8,6 +8,26 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Bootstrap cb6d447 is NOT source-clear; do not activate:** independent same-candidate
+  **187tests/2889assertions** plus quality passed, but review found three P1 production
+  gaps: native clear pending-input/permissions/forms are omitted; worker archive calls
+  Architect-only adapter validation; physical same/symlink/unknown checkout denial
+  falls through for disjoint scopes. [Exact findings and focused fixes](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  Root keeps implementation ownership, including necessary focused native/host
+  adapter repair; no duplicate writer or new recovery task. Await corrected clean
+  candidate/regressions before activation. Old72effects/holds/legitimate tests and
+  88prerequisite remain unchanged. Both reviewers and independent check job completed.
+- **Bootstrap exact candidate in independent review — no activation:** Root committed
+  clean **cb6d447b9830184da6425439fe75fc7ea014048f** at its native bootstrap worktree.
+  Root reports187tests/2889assertions across six runner suites plus quality passing.
+  Two read-only reviewers separately examine native source fencing and durable
+  command/admission/replay safety for the named72→57/58 route, not universal child
+  containment. Independent same-candidate suites/quality are running in shell
+  `sh_1a8937383001OXRaspAC58jLKu`; await completion, do not repeat/poll it.
+  Reviewers`ses_e576d7ecfffeHyxWcUXLddebyV`/`ses_e576d378affeuXd3g4C12KTaRQ` must
+  clear before any activation. New quarantine command/source exclusion is **not yet
+  installed**; no72old-effect settlement,88edge change or independent58verification
+  follows from source tests. Root is verifying newly landed110/130in Desktop.
 - **Root bootstrap implementation is active; reserve its paths:** native worktree
   `/private/tmp/lazers-retained-bootstrap`, branch`feat/retained-source-bootstrap`,
   base7828387. Root reports first native before-tool guard/additive storage present,
