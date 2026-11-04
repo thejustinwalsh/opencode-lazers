@@ -8,6 +8,39 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **79ceb78 independent checks complete; lifecycle P1 remains:** the single exact
+  candidate run passed **189tests/2974assertions**, formatter/lint/typecheck/diff,
+  unchanged/clean. Original native reviewer confirms authoritative clear controls
+  and dedicated request-bound worker archive repairs, but initial/pending guard
+  preconditions and pending-only recovery still strand missing old registrations
+  after restart/replacement; sealed exclusion cannot self-recover. The reopen test
+  manually reinstalls its guard. [Exact current-candidate references and minimal fix](../../design/reviews/retained-source-guard-lifecycle-20261104.md).
+  Second original review is pending. **Not source-clear; no activation.**
+- **Corrected bootstrap79ceb78 under original independent review; still offline:**
+  Root supplied clean `79ceb78c063b49381c5a61c56029c3c2b6758295` in its isolated
+  tree, including cb6. Root reports authoritative clear controls, dedicated
+  durable-request-bound native worker archive/readback and hard physical alias/
+  unknown denial for disjoint scopes repaired. Original reviewers
+  `ses_e576d7ecfffeHyxWcUXLddebyV` / `ses_e576d378affeuXd3g4C12KTaRQ` are reused;
+  one six-suite/quality check runs as `sh_1a8a837b40011SvdNmye6tnPnY`—await, do not
+  poll/repeat. [Lifecycle proposal](../../design/reviews/retained-source-guard-lifecycle-20261104.md):
+  archive itself does not unload; restart/explicit replacement can strand old guard
+  registration. Recover exact-location **current-runtime** before-hook capability,
+  not a persisted bit/root-only token, preserving all old holds and native fencing.
+  No Root edits or activation. Astra's actual same-DB Radar replay775–803ms/8.55MB,
+  progressSQL536ms follows its7456s initial CUA attach hang; isolated observability
+  repair remains Astra-owned. Held Radar privacy-check authoring continues separately.
+- **Actual130Desktop timing confirmed; one110native review explicitly failed:** Root
+  observed1308.422s/470ms with Unix-ms endpoints and all four original112**PLAN**
+  checks288/1076/240/2172ms with correct mode/endpoints/provenance/history navigation.
+  [Desktop evidence](evidence/trajectory-live-check-durations-20261104.md). Unknown
+  attempt ends stay for131; raw-ID picker/subpixel readability are UX follow-ups,
+  **not new gates**. Root then authorized one genuine pending full-state review:
+  original131chain continued normally, unchanged full task/request/evidence. One
+  16-question broker job packed**2765/8192tokens**, entered run7861ms, device-lost15573ms,
+  terminal error15577ms; no answers/semantic pass, no replay. Same95968/2.2.5/sixtrue
+  settings/demandfalse before+after. [Native failed observation](evidence/native-fullstate-review110-20261104.md)
+  retains trace/job/usage distinctions;110human gate is not silently closed.
 - **Bootstrap cb6d447 is NOT source-clear; do not activate:** independent same-candidate
   **187tests/2889assertions** plus quality passed, but review found three P1 production
   gaps: native clear pending-input/permissions/forms are omitted; worker archive calls
