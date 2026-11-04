@@ -21,7 +21,8 @@ import {
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ProgressInput } from "./schema.ts"
 import { resolveNativeInputID } from "../runner/native-input.ts"
-import type { ProgressRecorder } from "./recorder.ts"
+import type { ProgressAssignment, ProgressRecorder } from "./recorder.ts"
+import { registerProgressReconstruction, sameProgressAssignment } from "./reconstruction.ts"
 
 type ProgressContext = Pick<
   Plugin.Context,
@@ -29,6 +30,9 @@ type ProgressContext = Pick<
 >
 
 const NATIVE_EVENT_TYPES = [
+  "session.created",
+  "session.deleted",
+  "session.moved",
   "session.usage.updated",
   "session.execution.started",
   "session.execution.succeeded",
@@ -37,6 +41,7 @@ const NATIVE_EVENT_TYPES = [
   "session.inbox.enqueued",
   "session.inbox.delivered",
   "session.inbox.cancelled",
+  "session.inbox.delivery.changed",
   "session.synthetic",
   "session.step.started",
   "session.step.streamed",
@@ -50,6 +55,10 @@ const NATIVE_EVENT_TYPES = [
   "session.retry.scheduled",
   "session.shell.started",
   "session.shell.ended",
+  "session.compaction.ended",
+  "session.compaction.failed",
+  "session.idle",
+  "session.status",
 ] as const
 
 const BACKGROUND_INVALIDATING_EVENTS = new Set<string>([
@@ -189,47 +198,56 @@ function reminderEffect(
   }).pipe(Effect.catch(() => Effect.void))
 }
 
-async function reconcileSessions(
+async function reconstructSession(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
-  projectID: string,
+  assignment: ProgressAssignment,
+  isCurrent: () => boolean,
 ) {
-  for (const assignment of recorder.assignments()) {
-    let session: Session.Info
-    try {
-      session = await Effect.runPromise(
-        ctx.session.get({ sessionID: Session.ID.make(assignment.sessionID) }),
-      )
-    } catch (error) {
-      recorder.markRecoveryGap(
-        assignment.sessionID,
-        `Assigned native session is unavailable: ${safeError(error, privacyStats())}`,
-      )
-      continue
-    }
-    if (
-      session.id !== assignment.sessionID ||
-      session.projectID !== projectID ||
-      session.agent !== "lazers-implementor" ||
-      session.location.directory !== assignment.workspace
-    ) {
-      recorder.markRecoveryGap(
-        assignment.sessionID,
-        "Assigned session identity, project, agent, or workspace no longer matches its runner attempt.",
-      )
-      continue
-    }
-    recorder.recordSessionSnapshot(assignment.sessionID, session)
-    recorder.recordSessionOutcome(assignment.sessionID, session)
-    try {
-      const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
-      recorder.reconcileMessages(assignment.sessionID, messages)
-    } catch (error) {
-      recorder.markRecoveryGap(
-        assignment.sessionID,
-        `Retained public session context is unavailable: ${safeError(error, privacyStats())}`,
-      )
-    }
+  const assignmentIsCurrent = () =>
+    isCurrent() &&
+    sameProgressAssignment(recorder.assignmentForSession(assignment.sessionID), assignment)
+  let session: Session.Info
+  try {
+    session = await Effect.runPromise(
+      ctx.session.get({ sessionID: Session.ID.make(assignment.sessionID) }),
+    )
+  } catch (error) {
+    if (!assignmentIsCurrent()) return "stale" as const
+    recorder.markRecoveryGap(
+      assignment.sessionID,
+      `Assigned native session is unavailable: ${safeError(error, privacyStats())}`,
+    )
+    return "retry" as const
+  }
+  if (!assignmentIsCurrent()) return "stale" as const
+  if (
+    session.id !== assignment.sessionID ||
+    session.projectID !== assignment.projectID ||
+    session.agent !== "lazers-implementor" ||
+    session.location.directory !== assignment.workspace
+  ) {
+    recorder.markRecoveryGap(
+      assignment.sessionID,
+      "Assigned session identity, project, agent, or workspace no longer matches its runner attempt.",
+    )
+    return "retry" as const
+  }
+
+  recorder.recordSessionSnapshot(assignment.sessionID, session)
+  recorder.recordSessionOutcome(assignment.sessionID, session)
+  try {
+    const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+    if (!assignmentIsCurrent()) return "stale" as const
+    recorder.reconcileMessages(assignment.sessionID, messages)
+    return "complete" as const
+  } catch (error) {
+    if (!assignmentIsCurrent()) return "stale" as const
+    recorder.markRecoveryGap(
+      assignment.sessionID,
+      `Retained public session context is unavailable: ${safeError(error, privacyStats())}`,
+    )
+    return "retry" as const
   }
 }
 
@@ -427,6 +445,19 @@ export function registerProgress(
       }),
     )
 
+    const reconstruction = registerProgressReconstruction({
+      databasePath: recorder.store.repository.path,
+      projectDirectory: recorder.store.repository.projectDirectory,
+      projectID,
+      participant: {
+        assignments: () => recorder.assignments(),
+        assignmentForSession: (sessionID) => recorder.assignmentForSession(sessionID),
+        reconstruct: (assignment, isCurrent) =>
+          reconstructSession(ctx, recorder, assignment, isCurrent),
+      },
+    })
+    yield* Effect.addFinalizer(() => Effect.sync(() => reconstruction.dispose()))
+
     const listen = Effect.forever(
       Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
         Effect.gen(function* () {
@@ -435,6 +466,7 @@ export function registerProgress(
             const rawSessionID = object(object(event)?.data)?.sessionID
             const type = typeof rawType === "string" ? rawType : undefined
             const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
+            if (sessionID) reconstruction.changed(sessionID)
             if (
               observing &&
               type &&
@@ -582,11 +614,5 @@ export function registerProgress(
       ),
     )
     yield* Effect.forkScoped(listen)
-    yield* Effect.forkScoped(
-      Effect.tryPromise({
-        try: () => reconcileSessions(ctx, recorder, projectID),
-        catch: (error) => new Error(safeError(error, privacyStats())),
-      }).pipe(Effect.catch(() => Effect.void)),
-    )
   })
 }

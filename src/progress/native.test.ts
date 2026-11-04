@@ -32,7 +32,8 @@ function makeContext(
     liveEvents?: boolean
     eventFailure?: boolean
     messages?: unknown[]
-    readContext?: () => Effect.Effect<unknown[]>
+    readContext?: (sessionID: string) => Effect.Effect<unknown[], unknown, never>
+    readSession?: (sessionID: string) => Effect.Effect<unknown, unknown, never>
     synthetic?: (input: unknown) => Effect.Effect<unknown, unknown, never>
   } = {},
 ) {
@@ -71,14 +72,16 @@ function makeContext(
         if (name === "experimental.idle") idleHook = callback
         return Effect.succeed({ dispose: Effect.void })
       },
-      get: () =>
+      get: ({ sessionID }: { sessionID: string }) =>
+        options.readSession?.(sessionID) ??
         Effect.succeed({
-          id: "ses-accepted",
+          id: sessionID,
           projectID: "project",
           agent: "lazers-implementor",
           location: { directory: fixture.directory },
         }),
-      context: () => options.readContext?.() ?? Effect.succeed(options.messages ?? []),
+      context: ({ sessionID }: { sessionID: string }) =>
+        options.readContext?.(sessionID) ?? Effect.succeed(options.messages ?? []),
       synthetic: (input: unknown) => {
         syntheticCalls++
         syntheticInputs.push(input)
@@ -124,8 +127,9 @@ function executionEvent(type: string, sessionID: string, sequence: number) {
   }
 }
 
-async function waitForNativeState(predicate: () => Promise<boolean>) {
-  for (let attempt = 0; attempt < 400; attempt++) {
+async function waitForNativeState(predicate: () => Promise<boolean>, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
     if (await predicate()) return
     await new Promise<void>((resolve) => setTimeout(resolve, 5))
   }
@@ -1400,3 +1404,250 @@ test("reminder completion stays bound to its claimed attempt, session and messag
     fixture.close()
   }
 })
+
+test("project recovery is coalesced while native hooks remain per location", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    let firstGets = 0
+    let firstContexts = 0
+    let secondGets = 0
+    let secondContexts = 0
+    const retainedMessages = (sessionID: string) => [
+      {
+        id: `msg-recovered-${sessionID}`,
+        type: "assistant",
+        time: { created: 1_000 },
+        content: [{ type: "text", text: `Recovered ${sessionID}` }],
+      },
+    ]
+    const first = makeContext(fixture, {
+      liveEvents: true,
+      readSession: (sessionID) => {
+        firstGets++
+        return Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "lazers-implementor",
+          location: { directory: fixture.directory },
+        })
+      },
+      readContext: (sessionID) => {
+        firstContexts++
+        return Effect.succeed(retainedMessages(sessionID))
+      },
+    })
+    const second = makeContext(fixture, {
+      holdEvents: true,
+      readSession: (sessionID) => {
+        secondGets++
+        return Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "lazers-implementor",
+          location: { directory: fixture.directory },
+        })
+      },
+      readContext: (sessionID) => {
+        secondContexts++
+        return Effect.succeed(retainedMessages(sessionID))
+      },
+    })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(first.context, recorder, "project")
+          yield* registerProgress(second.context, recorder, "project")
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => firstContexts + secondContexts === 2),
+          )
+          yield* Effect.sleep(25)
+          expect(firstGets + secondGets).toBe(2)
+          expect(firstContexts + secondContexts).toBe(2)
+          expect(first.tools.get("lz-report-progress")).toBeDefined()
+          expect(second.tools.get("lz-report-progress")).toBeDefined()
+          expect(first.after()).toBeDefined()
+          expect(second.after()).toBeDefined()
+          expect(first.idle()).toBeDefined()
+          expect(second.idle()).toBeDefined()
+
+          const recoveryFactCount = fixture.store
+            .progressFacts([firstAttemptID, secondAttemptID])
+            .filter((fact) => fact.source === "recovery").length
+          yield* Effect.promise(() =>
+            first.emitEvent({
+              id: "context-change",
+              type: "session.step.streamed",
+              created: 2_000,
+              data: { sessionID: "ses-accepted", assistantMessageID: "msg-refresh" },
+            }),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => firstContexts + secondContexts === 3),
+          )
+          yield* Effect.sleep(25)
+          expect(firstGets + secondGets).toBe(3)
+          expect(
+            fixture.store
+              .progressFacts([firstAttemptID, secondAttemptID])
+              .filter((fact) => fact.source === "recovery").length,
+          ).toBe(recoveryFactCount)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test.each(["get", "context", "identity"] as const)(
+  "unavailable or mismatched historical %s reads keep a safe gap and eventually recover",
+  async (failure) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      let getCalls = 0
+      let contextCalls = 0
+      let failedOnce = false
+      const recoveredMessage = {
+        id: "msg-recovered-after-gap",
+        type: "assistant",
+        time: { created: 2_100 },
+        content: [{ type: "text", text: "Retained facts recovered after a safe gap." }],
+      }
+      const sessionInfo = (sessionID: string, workspace = fixture.directory, tokens?: unknown) => ({
+        id: sessionID,
+        projectID: "project",
+        agent: "lazers-implementor",
+        location: { directory: workspace },
+        ...(tokens ? { tokens } : {}),
+      })
+      const ctx = makeContext(fixture, {
+        holdEvents: true,
+        readSession: (sessionID) => {
+          if (sessionID !== "ses-failed") return Effect.succeed(sessionInfo(sessionID))
+          getCalls++
+          if (failure === "get" && !failedOnce) {
+            failedOnce = true
+            return Effect.fail(new Error("temporary native get outage"))
+          }
+          if (failure === "identity" && !failedOnce) {
+            failedOnce = true
+            return Effect.succeed(sessionInfo(sessionID, "/foreign/workspace", { input: 99 }))
+          }
+          return Effect.succeed(sessionInfo(sessionID))
+        },
+        readContext: (sessionID) => {
+          if (sessionID !== "ses-failed") return Effect.succeed([])
+          contextCalls++
+          if (failure === "context" && !failedOnce) {
+            failedOnce = true
+            return Effect.fail(new Error("temporary native context outage"))
+          }
+          return Effect.succeed([recoveredMessage])
+        },
+      })
+
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(ctx.context, recorder, "project")
+            yield* Effect.promise(() =>
+              waitForNativeState(
+                async () =>
+                  fixture.store
+                    .progressFacts([firstAttemptID])
+                    .some(
+                      (fact) =>
+                        fact.kind === "visible-text" &&
+                        JSON.parse(fact.payload).text === recoveredMessage.content[0]!.text,
+                    ),
+                10_000,
+              ),
+            )
+          }),
+        ),
+      )
+
+      const facts = fixture.store.progressFacts([firstAttemptID])
+      expect(facts.filter((fact) => fact.kind === "gap")).toHaveLength(2)
+      expect(facts.some((fact) => fact.kind === "visible-text")).toBe(true)
+      expect(getCalls).toBeGreaterThanOrEqual(failure === "get" || failure === "identity" ? 2 : 1)
+      expect(contextCalls).toBeGreaterThanOrEqual(failure === "context" ? 2 : 1)
+      if (failure === "identity")
+        expect(facts.some((fact) => fact.kind === "usage-snapshot")).toBe(false)
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
+test.each(["get", "context"] as const)(
+  "retired recovery does not touch its recorder after a suspended %s read",
+  async (stage) => {
+    const fixture = makeFixture()
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const returned = Promise.withResolvers<void>()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const ctx = makeContext(fixture, {
+        holdEvents: true,
+        readSession: (sessionID) => {
+          const value = {
+            id: sessionID,
+            projectID: "project",
+            agent: "lazers-implementor",
+            location: { directory: fixture.directory },
+          }
+          if (stage !== "get" || sessionID !== "ses-failed") return Effect.succeed(value)
+          return Effect.promise(async () => {
+            entered.resolve()
+            await release.promise
+            returned.resolve()
+            return value
+          })
+        },
+        readContext: (sessionID) => {
+          if (stage !== "context" || sessionID !== "ses-failed") return Effect.succeed([])
+          return Effect.promise(async () => {
+            entered.resolve()
+            await release.promise
+            returned.resolve()
+            return []
+          })
+        },
+      })
+      const ready = Promise.withResolvers<void>()
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const registrationFiber = yield* Effect.forkScoped(
+              Effect.scoped(
+                Effect.gen(function* () {
+                  yield* registerProgress(ctx.context, recorder, "project")
+                  ready.resolve()
+                  yield* Effect.never
+                }),
+              ),
+            )
+            yield* Effect.promise(() => ready.promise)
+            yield* Effect.promise(() => entered.promise)
+            yield* Fiber.interrupt(registrationFiber)
+            fixture.store.repository.close()
+            release.resolve()
+            yield* Effect.promise(() => returned.promise)
+            yield* Effect.sleep(10)
+          }),
+        ),
+      )
+      expect(
+        (fixture.store.repository as unknown as { connection?: unknown }).connection,
+      ).toBeUndefined()
+    } finally {
+      release.resolve()
+      fixture.close()
+    }
+  },
+)
