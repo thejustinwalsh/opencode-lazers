@@ -8,6 +8,16 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **GUI build completed; actual inference succeeded:** after fresh quiet preflight
+  **1793823901438–1793823901453**, `bun run build:gui` and process-free smoke passed
+  at docs-only descendant`1d8a7b1`, with existing bundler warnings retained. A single
+  ordinary local ask returned`4` (**26 prompt / 1 output tokens**). PID95968/2.2.5
+  and all six true flags are unchanged; Never unload was not written. This clears
+  the last observed inference failure for that call, not the unknown cache-owner
+  cause or LZ128 prevention repair. No explicit reload/restart/takeover/profiler ran.
+  [Rollout evidence](evidence/quiet-rollout-20261104.md) preserves hashes, exact
+  observations and remaining Desktop/per-location activation limitations. Do not
+  repeat the completed GUI build or infer old native acceptance from it.
 - **Merged source; GUI activation still pending:** main
   **b8fe479811dd354ec412503171383e648629c989** contains all three reviewed
   ancestries (127633da56, Tasks6c05cf6, Trajectorya86a6e1). Merged checks passed
