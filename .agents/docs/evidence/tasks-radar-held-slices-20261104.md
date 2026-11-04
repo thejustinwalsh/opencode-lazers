@@ -11,6 +11,11 @@ Before final task submission, reconcile these drafts and existing LZ129 against
 Root's installed bootstrap and Astra's actual source handoff. Reuse already-delivered
 outcomes rather than assigning a second implementation of a fulfilled boundary.
 
+Current coordination: the next rollout boundary is reserved for Astra performance
+only, before bootstrap. Root owns exact-candidate review and actual native latency/
+same-PID CPU before/after captures. No competing build/reload/dispatch, local GPU
+review or performance measurement during capture. These drafts remain held.
+
 Evidence: Repomix`6c782a4a-bf24-40bc-8ff1-4a7a7cab3083`, as-of1793824414267.
 Read-only Tasks researcher verified the ten inspected production files still match
 that snapshot. No behavior tests or runtime actions were performed for these drafts.
@@ -108,10 +113,12 @@ assignment. Proposed excerpts are not approval, actual diff or mutation proof.
 
 **Done conditions:**
 
-- Fixed adapters accept supported pinned native read/edit/patch identities and
-  schemas, plus write metadata only. Unknown/custom tools, shell commands and
-  commentary do not imply file activity. Requested paths remain requested, not
-  claimed resolved targets; native read can select an alternate matching filename.
+- Fixed adapters use the actual registered tool identity and schema for supported
+  read/edit/patch observations, plus write metadata only. Describe registered-tool
+  facts, not verified builtin origin; same-name overrides require no origin ceremony.
+  Unsupported identities/schemas, shell commands and commentary do not imply file
+  activity. Requested paths remain requested, not claimed resolved targets; native
+  read can select an alternate matching filename.
 - Preserve requested/proposed, explicit executed state, terminal outcome and
   native-reported result as distinct facts. A failed multi-file operation may
   have partial effects; never label failure as proof of no changes. Native terminal
@@ -121,8 +128,10 @@ assignment. Proposed excerpts are not approval, actual diff or mutation proof.
   URI/base64 or write content into this projection. Reuse redaction-before-truncation
   and private/encoded/multipart/depth handling without relaxing global sensitive-key
   filtering. Observation access does not broaden target-content disclosure permission.
-- Conservative first boundary: approved repository-relative targets only; external
-  targets and write bodies/previews are omitted with honest coverage. Define bounded
+- First boundary: workspace-relative targets, allowing lexical relativization of
+  native absolute paths inside the assigned workspace. Lexical containment proves
+  neither approval nor symlink resolution; preserve existing permission outcomes.
+  External targets and write bodies/previews are omitted with honest coverage. Define bounded
   aggregate/per-call path/operation/excerpt limits with truncation/redaction reasons;
   malformed/oversized patches fail closed without filesystem reads or guessed targets.
 - Durable assignment and exact session/call/message identity prevent cross-call
@@ -160,6 +169,62 @@ candidate field; read/body/attachment/write-content canaries absent from both ne
 stored projection and RPC; oversized malformed patch/traversal/rename/delete/partial
 failure; permission denial and legacy/unsupported coverage. Safe siblings remain
 where allowed. Test actual ingestion→store→export, not only a pure sanitizer.
+
+#### Independent producer-only refinement
+
+Read-only reviewer `ses_e57570be5ffe5lCqCPiQO8Tusw` completed research against
+snapshot6c782a4a and live sources at d36a32c, unchanged from7828387 for the inspected
+production/tests. No tests, local GPU review, submission or implementation ran.
+
+- Pin exact effective names/schema: read(path/offset/limit), edit(path/oldString/
+  newString/replaceAll), patch(patchText), write path/result metadata only. Name and
+  schema are not proof of builtin origin: native registry supports replacement.
+  Unknown aliases/namespaced lookalikes, shell and commentary imply no file activity.
+- Validate complete assignment/session/call/message/tool identity **before** any
+  enrichment. Existing recorder699–728/889–977 coalescence is not a conflicting
+  tool/message guard. Keep request, proposal, explicit executed fact, outcome and
+  native-reported result distinct; partial failure never proves no mutation.
+- Current native417–428 after-hook input, if sanitized, is a settlement observation,
+  not live request timing. Pre-terminal activity needs a narrow before observation
+  labeled requested/proposed, never approved/executed. Do not infer origin or timing.
+- Bound admitted input length before parsing/redaction; then cap operations, paths,
+  excerpts and aggregate serialized size. Oversized input yields omission coverage,
+  not a raw prefix. No filesystem reads, native-context fetches or diff derivation.
+- Privacy guarantees apply to the **new observation**, not an unrelated rewrite of
+  existing result visibility. Structurally omit attachments/data-URI/base64-bearing
+  fields; existing JSON-encoded tests do not prove universal opaque-secret detection.
+  Keep global sensitive-key filtering and redaction-before-excerpt truncation.
+
+Proposed, unexecuted ingestion→durable facts→projectProgressFact checks:
+
+| Case | Discriminating assertion |
+| --- | --- |
+| Registered hook adapters | Real fixture in progress/native.test.ts310; pinned names/schema only, unknown/malformed coverage rather than inferred file activity. |
+| Identity collisions | Same call in two assigned sessions, conflicting message/tool/agent/assignment and shared long identity prefixes cannot cross-enrich. |
+| Privacy decoys | Credentials/URLs/private tags/JSON depth/multipart/data URI/base64/read bodies/directory entries/write content absent from new stored and exported observations; safe permitted siblings survive. |
+| Bounded parsing | Declared cap and cap+1, huge lines/operation counts/malformed envelopes; parser/visited counters and serialized bounds prove bounded work with zero filesystem/native-context calls, not invented latency targets. |
+| Patch scope | Add/update/delete/move and both endpoints, traversal/absolute/external/URI/malformed paths; no guessed target or claim that lexical containment proves symlink resolution. |
+| Event permutation | Terminal-before-called/replay and late proposals cannot downgrade terminal/executed facts; partial failure stays potentially partial, no arbitrary error-prose applied-file list. |
+| Reopen/no churn | Two real DB connections, reopen and duplicate replay leave sequence/payload/recorded_at unchanged; genuine enrichment updates once. |
+| Legacy/denied | Unsupported/malformed/legacy stays unknown; permission denial never becomes approval/execution/mutation proof. |
+
+Existing precedents: progress/recorder.test.ts90 coalescence/reopen and
+trajectory/read.test.ts1015 multipart/depth are reuse points, not proofs of these
+new conditions. Pinned upstream evidence remains9bbb8ce; tool/runtime and public
+plugin/schema contracts were also inspected.
+
+**User-proxy decisions resolved:** use actual registered tool identity/schema and
+describe registered-tool facts without claiming that same-name overrides prove
+builtin origin. No cryptographic/origin ceremony. Lexically relativize native
+absolute paths inside the assigned workspace; keep requested/proposed meaning until
+executed result evidence exists, and never equate containment with approval or
+symlink proof. Preserve privacy bounds and existing permission outcomes. These
+choices resolve the two authoring questions; they do not authorize dispatch during
+the quiet profile reservation.
+
+**Ownership update:** Astra owns both landed Radar and Trajectory event-directory
+filters, separate from LZ131 backend timing. Do not duplicate those changes in these
+drafts or131. Reconcile the integrated source handoff before assigning remainder.
 
 ### Radar B — bounded live consumer and selected preview
 

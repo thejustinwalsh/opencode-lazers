@@ -8,6 +8,34 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **Performance-only landed; quiet hold extends to Astra idle-JSC profile:** source
+  merge744d9a9 (Astra9edc37f) plus focused472→d2d31a3 are integrated. Root reports
+  independent33tests/364assertions query/privacy and14tests/62assertions transport,
+  GUI build/smoke passing. Actual native same-scope reads before1401/1049/1260ms,
+  after1534/1086/751ms, identical9638edges/1908routes—mixed observations, no battery
+  fix claimed. [Rollout evidence and verbatim CPU report](evidence/performance-only-rollout-20261104.md).
+  No new dispatch/build/reload/activation/local GPU review during upcoming bounded
+  in-process idle-JSC profile. Six true/Never unload unchanged; bootstrap offline.
+  Astra owns **both landed Radar and Trajectory event-directory filters**, separate
+  from131 backend. User proxy resolved held Radar choices: actual registered-tool
+  identity/schema facts, no builtin-origin claim or origin ceremony; lexical
+  workspace relativization of native absolute paths allowed, never approval/symlink
+  proof. Preserve requested/proposed/executed distinctions, privacy bounds and
+  existing permission outcomes. No authoring clarification remains for those choices.
+- **Quiet performance-only rollout boundary reserved ahead of bootstrap:** both
+  bootstrap reviews and the single independent check job are complete. Root now
+  owns exact Astra-candidate review, actual native Radar latency and same-PID CPU
+  before/after capture, then coordinated source landing/GUI activation and repeat.
+  No Architect-initiated build, reload, activation, dispatch, local GPU authoring
+  review or competing performance measurement during those captures; await Root's
+  coordinated release. Do not cancel/interfere with existing work or change runtime
+  state to manufacture quiet. Astra may finish its already-owned event-rate/build/
+  isolated commit handoff; do not duplicate it. Reported repair retains identical
+  8.55MB output and passes33tests/364assertions plus quality; exact candidate and
+  native before/after evidence remain pending, not inferred from replay results.
+  Six inference switches/Never unload unchanged. Bootstrap79ceb78 stays offline
+  with its lifecycle P1 regardless of performance rollout. Independent read-only
+  authoring may continue; held Radar producer review is complete, not dispatched.
 - **Both original79ceb78 reviews complete:** all three original P1 repair areas
   source-addressed, with the same remaining guard-lifecycle P1 confirmed by both.
   [Corrected-candidate review](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
