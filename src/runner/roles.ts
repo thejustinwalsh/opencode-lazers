@@ -6,7 +6,7 @@ import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
 import {
   quarantinedSession,
-  registerSourceGuard,
+  beginSourceGuard,
   sourceQuarantineToolError,
 } from "./source-quarantine.ts"
 
@@ -16,6 +16,10 @@ export const delegationTool = (tool: string) =>
 
 export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
   return Effect.gen(function* () {
+    const guard = yield* Effect.acquireRelease(
+      Effect.sync(() => beginSourceGuard(store, ctx.location.directory)),
+      (registration) => Effect.sync(() => registration.dispose()),
+    )
     yield* ctx.agent.transform((editor) =>
       editor.update(Agent.ID.make("lazers-implementor"), (agent) => {
         agent.name = Agent.Name.make("LAZERS implementor")
@@ -84,9 +88,7 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
         )
       }),
     )
-    yield* Effect.acquireRelease(
-      Effect.sync(() => registerSourceGuard(store, ctx.location.directory)),
-      (unregister) => Effect.sync(unregister),
-    )
+    guard.install()
+    return guard
   })
 }

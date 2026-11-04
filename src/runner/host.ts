@@ -163,6 +163,8 @@ export interface RunnerHost {
   updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
   /** Archive only the stopped worker bound to a durable pending source quarantine. */
   archiveRetainedWorker?(input: RetainedWorkerArchive): Promise<void>
+  /** Demand-load and confirm the exact location's current before-tool registration. */
+  ensureSourceGuard?(input: { directory: string; projectID: string }): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>

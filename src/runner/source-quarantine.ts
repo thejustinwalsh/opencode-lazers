@@ -17,8 +17,9 @@ export type SourceQuarantine = {
   updated_at: number
 }
 
-const registryKey = Symbol.for("lazers.runner.source-quarantine.guards.v1")
-const shared = globalThis as unknown as Record<symbol, Map<string, Set<symbol>> | undefined>
+type GuardState = { current: string; registrations: Map<string, boolean> }
+const registryKey = Symbol.for("lazers.runner.source-quarantine.guards.v2")
+const shared = globalThis as unknown as Record<symbol, Map<string, GuardState> | undefined>
 const guards = (shared[registryKey] ??= new Map())
 export const samePhysicalWorkspace = (left: string, right: string) => {
   try {
@@ -27,24 +28,58 @@ export const samePhysicalWorkspace = (left: string, right: string) => {
     return true
   }
 }
-const key = (store: RunnerStore, workspace: string) =>
+type GuardStore = Pick<RunnerStore, "repository">
+const key = (store: GuardStore, workspace: string) =>
   JSON.stringify([resolve(store.repository.path), resolve(workspace)])
 
-/** Advertise only after the native before-tool hook is installed; dispose with its scope. */
-export function registerSourceGuard(store: RunnerStore, workspace: string) {
+export type SourceGuardRegistration = {
+  registrationID: string
+  install(): void
+  dispose(): void
+}
+
+/** A replacement reserves its identity before hooks install; old scopes cannot bless it. */
+export function beginSourceGuard(store: GuardStore, workspace: string): SourceGuardRegistration {
   const identity = key(store, workspace)
-  const token = Symbol(identity)
-  let registrations = guards.get(identity)
-  if (!registrations) guards.set(identity, (registrations = new Set()))
-  registrations.add(token)
-  return () => {
-    registrations.delete(token)
-    if (!registrations.size && guards.get(identity) === registrations) guards.delete(identity)
+  const registrationID = crypto.randomUUID()
+  let state = guards.get(identity)
+  if (!state) guards.set(identity, (state = { current: registrationID, registrations: new Map() }))
+  state.current = registrationID
+  state.registrations.set(registrationID, false)
+  return {
+    registrationID,
+    install() {
+      if (state.registrations.has(registrationID)) state.registrations.set(registrationID, true)
+    },
+    dispose() {
+      state.registrations.delete(registrationID)
+      if (!state.registrations.size && guards.get(identity) === state) guards.delete(identity)
+    },
   }
 }
 
-export const sourceGuardInstalled = (store: RunnerStore, workspace: string) =>
-  Boolean(guards.get(key(store, workspace))?.size)
+/** Useful when a caller already owns the installed hook's lifetime. */
+export function registerSourceGuard(store: GuardStore, workspace: string) {
+  const registration = beginSourceGuard(store, workspace)
+  registration.install()
+  return Object.assign(() => registration.dispose(), {
+    registrationID: registration.registrationID,
+  })
+}
+
+export function sourceGuardInstalled(store: GuardStore, workspace: string) {
+  const state = guards.get(key(store, workspace))
+  return Boolean(
+    state?.registrations.get(state.current) && [...state.registrations.values()].every(Boolean),
+  )
+}
+
+export function sourceGuardMatches(store: GuardStore, workspace: string, registrationID: string) {
+  return (
+    guards.get(key(store, workspace))?.current === registrationID &&
+    sourceGuardInstalled(store, workspace)
+  )
+}
 
 export function sourceQuarantine(store: RunnerStore, attemptID: string) {
   return store.atomic((db) =>
@@ -77,6 +112,7 @@ export function sourceReservationExcluded(
   if (
     !quarantine ||
     quarantine.phase !== "sealed" ||
+    quarantine.hold_reason !== null ||
     quarantine.plan_id !== attempt.plan_id ||
     quarantine.session_id !== attempt.session_id ||
     quarantine.assigned_message_id !== attempt.message_id ||

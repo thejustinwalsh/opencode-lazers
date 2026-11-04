@@ -454,7 +454,7 @@ export class TaskRuntime {
         )
     )
       throw new Error("Source quarantine requires a retained uncertain check")
-    if (!this.host.archiveRetainedWorker || !sourceGuardInstalled(this.store, attempt.workspace))
+    if (!this.host.archiveRetainedWorker || !this.host.ensureSourceGuard)
       throw new Error("The native worker source guard and archive control must be installed")
     return attempt
   }
@@ -539,6 +539,10 @@ export class TaskRuntime {
         realpathSync(quarantineAttempt.workspace) === realpathSync(this.directory)
       )
         throw new Error("Retained source must be a separate native-owned worktree")
+      await this.host.ensureSourceGuard!({
+        directory: quarantineAttempt.workspace,
+        projectID: this.projectID,
+      })
     }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
@@ -560,6 +564,8 @@ export class TaskRuntime {
         )
       if (command.action === "quarantine-source") {
         const attempt = this.quarantineTarget(plan, command)
+        if (!sourceGuardInstalled(this.store, attempt.workspace))
+          throw new Error("Native worker source guard is not installed")
         if (
           !quarantineAttempt ||
           attempt.message_id !== quarantineAttempt.message_id ||
@@ -2214,25 +2220,39 @@ export class TaskRuntime {
   }
 
   private async advanceSourceQuarantines(fence: number) {
-    const pending = this.store.atomic((db) =>
+    const quarantines = this.store.atomic((db) =>
       db
         .query<SourceQuarantine, [string]>(
-          `SELECT quarantine.* FROM runner_source_quarantines quarantine
-           JOIN runner_plans plan ON plan.id=quarantine.plan_id
-           WHERE quarantine.phase='pending' AND plan.project_directory=?
-           ORDER BY quarantine.created_at`,
+          `SELECT q.* FROM runner_source_quarantines q
+         JOIN runner_plans p ON p.id=q.plan_id
+         JOIN runner_attempts a ON a.id=q.attempt_id
+         WHERE p.project_directory=? AND a.state='verifying'
+         ORDER BY q.created_at`,
         )
         .all(this.directory),
     )
-    for (const quarantine of pending) {
+    for (const quarantine of quarantines) {
+      if (
+        quarantine.phase === "sealed" &&
+        quarantine.hold_reason === null &&
+        sourceGuardInstalled(this.store, quarantine.workspace)
+      )
+        continue
       const wait = (reason: string) =>
         this.store.fenced(this.owner, fence, (db) => {
           const changed = db
             .query(
               `UPDATE runner_source_quarantines SET hold_reason=?,updated_at=?
-          WHERE attempt_id=? AND request_id=? AND phase='pending' AND hold_reason IS NOT ?`,
+             WHERE attempt_id=? AND request_id=? AND phase=? AND hold_reason IS NOT ?`,
             )
-            .run(reason, Date.now(), quarantine.attempt_id, quarantine.request_id, reason).changes
+            .run(
+              reason,
+              Date.now(),
+              quarantine.attempt_id,
+              quarantine.request_id,
+              quarantine.phase,
+              reason,
+            ).changes
           if (changed)
             this.store.record(quarantine.plan_id, null, "SOURCE_QUARANTINE_WAIT", {
               attemptID: quarantine.attempt_id,
@@ -2248,9 +2268,10 @@ export class TaskRuntime {
           .find((item) => item.id === quarantine.attempt_id)
         if (
           !row ||
-          row.phase !== "pending" ||
+          row.phase !== quarantine.phase ||
           row.request_id !== quarantine.request_id ||
-          plan?.owner !== quarantine.requested_owner ||
+          !plan ||
+          (row.phase === "pending" && plan.owner !== quarantine.requested_owner) ||
           !attempt ||
           attempt.state !== "verifying" ||
           attempt.session_id !== quarantine.session_id ||
@@ -2258,6 +2279,10 @@ export class TaskRuntime {
           attempt.workspace !== quarantine.workspace
         )
           throw new Error("Retained source quarantine authority or assignment changed")
+        return attempt
+      }
+      const guarded = () => {
+        const attempt = current()
         if (!sourceGuardInstalled(this.store, quarantine.workspace))
           throw new Error("Native worker source guard is not installed")
         return attempt
@@ -2270,8 +2295,14 @@ export class TaskRuntime {
           wait(reason)
           continue
         }
-        this.store.fenced(this.owner, fence, current)
-        if (!worker!.archived) {
+        if (!this.host.ensureSourceGuard)
+          throw new Error("Native source guard activation is unavailable")
+        await this.host.ensureSourceGuard({
+          directory: quarantine.workspace,
+          projectID: this.projectID,
+        })
+        this.store.fenced(this.owner, fence, guarded)
+        if (quarantine.phase === "pending" && !worker!.archived) {
           if (!this.host.archiveRetainedWorker)
             throw new Error("Native archive control is unavailable")
           await this.host.archiveRetainedWorker({
@@ -2286,23 +2317,30 @@ export class TaskRuntime {
         }
         worker = await this.host.session(quarantine.session_id)
         reason = this.sourceWorkerWait(attempt, worker)
-        if (reason || !worker?.archived) {
+        if (reason || (quarantine.phase === "pending" && !worker?.archived)) {
           wait(reason ?? "Native archive has not been observed")
           continue
         }
         this.store.fenced(this.owner, fence, (db) => {
-          current()
+          guarded()
           db.query(
             `UPDATE runner_source_quarantines SET phase='sealed',hold_reason=NULL,updated_at=?
-            WHERE attempt_id=? AND request_id=? AND phase='pending'`,
-          ).run(Date.now(), quarantine.attempt_id, quarantine.request_id)
-          this.store.record(quarantine.plan_id, attempt.task_id, "SOURCE_QUARANTINE_SEALED", {
-            attemptID: attempt.id,
-            sessionID: attempt.session_id,
-            workspace: attempt.workspace,
-            requestID: quarantine.request_id,
-            resourceHoldsRetained: true,
-          })
+             WHERE attempt_id=? AND request_id=? AND phase=?`,
+          ).run(Date.now(), quarantine.attempt_id, quarantine.request_id, quarantine.phase)
+          this.store.record(
+            quarantine.plan_id,
+            attempt.task_id,
+            quarantine.phase === "pending"
+              ? "SOURCE_QUARANTINE_SEALED"
+              : "SOURCE_QUARANTINE_GUARD_RESTORED",
+            {
+              attemptID: attempt.id,
+              sessionID: attempt.session_id,
+              workspace: attempt.workspace,
+              requestID: quarantine.request_id,
+              resourceHoldsRetained: true,
+            },
+          )
         })
       } catch (error) {
         wait(errorText(error))

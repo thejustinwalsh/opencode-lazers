@@ -19,11 +19,15 @@ import { basename, dirname } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
+import { SourceFence } from "./source-fence-rpc.ts"
+import { sourceGuardMatches } from "./source-quarantine.ts"
+import { resolve } from "node:path"
 import { NativeIdleStore } from "./native-idle.ts"
 import type { NativeIdleTerminal } from "./native-idle.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
+  rpc: ReturnType<typeof OpenCode.make>["rpc"]
   server: Pick<ReturnType<typeof OpenCode.make>["server"], "info">
   form: Pick<ReturnType<typeof OpenCode.make>["form"], "list">
   permission: Pick<ReturnType<typeof OpenCode.make>["permission"], "request">
@@ -699,6 +703,29 @@ export function nativeHost(
           },
         }),
       )
+    },
+    async ensureSourceGuard(input) {
+      const client = await connectedClient()
+      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      const receipt = await runNative(client, () =>
+        client.rpc(SourceFence).status(
+          {},
+          {
+            location: { directory: input.directory },
+            signal: AbortSignal.timeout(10_000),
+          },
+        ),
+      )
+      await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+      if (
+        receipt.pid !== dependencies.processID() ||
+        input.projectID !== ctx.location.project.id ||
+        receipt.projectID !== input.projectID ||
+        receipt.directory !== input.directory ||
+        resolve(receipt.databasePath) !== resolve(repository.path) ||
+        !sourceGuardMatches({ repository }, input.directory, receipt.registrationID)
+      )
+        throw new Error("Native source guard is not the exact current location registration")
     },
     async archiveRetainedWorker(input) {
       const client = await connectedClient()

@@ -11,6 +11,7 @@ import { schedulerProjectKey, sharedScheduler } from "./runner/scheduler-coordin
 import { nativeHost } from "./runner/native.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
+import { registerSourceFence } from "./runner/source-fence-rpc.ts"
 import { ProjectIndex } from "./context/index.ts"
 import type { ContextHost } from "./context/index.ts"
 import { nativeContextPermission, registerContextTools } from "./context/tools.ts"
@@ -101,7 +102,8 @@ export default Plugin.define({
       yield* registerTaskReads(ctx, new AssociationTaskReads(repository), runtime).pipe(
         Effect.orDie,
       )
-      yield* registerWorker(ctx, runtime.store)
+      const sourceGuard = yield* registerWorker(ctx, runtime.store)
+      yield* registerSourceFence(ctx, runtime.store, sourceGuard).pipe(Effect.orDie)
       yield* registerRunnerTools(ctx, runtime)
       yield* registerProgress(ctx, progress, ctx.location.project.id, host.retainedInputID)
       const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)

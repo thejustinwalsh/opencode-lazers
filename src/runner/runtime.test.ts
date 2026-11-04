@@ -35,6 +35,7 @@ import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { sharedScheduler, schedulerProjectKey } from "./scheduler-coordinator.ts"
 import {
   registerSourceGuard,
+  sourceGuardInstalled,
   sourceQuarantine,
   sourceReservationExcluded,
 } from "./source-quarantine.ts"
@@ -250,6 +251,10 @@ function fixture(
         cost: null,
         messages: [],
       })
+    },
+    ensureSourceGuard: async ({ directory }) => {
+      if (!sourceGuardInstalled(store, directory))
+        throw new Error("Native worker source guard is not installed")
     },
     archiveRetainedWorker: async ({ sessionID }) => {
       const session = sessions.get(sessionID)
@@ -555,12 +560,25 @@ async function retainedSourceFixture() {
     attemptID: attempt.id,
     reason: "Retain unknown check resources while excluding this source writer",
   })
+  let guardID: string | undefined
   const install = (store = f.store) => {
     const unregister = registerSourceGuard(store, attempt.workspace)
     cleanup.push(unregister)
+    guardID = unregister.registrationID
     return unregister
   }
-  return { ...f, retained, worker, artifact, effectID, command, install }
+  return {
+    ...f,
+    retained,
+    worker,
+    artifact,
+    effectID,
+    command,
+    install,
+    get guardID() {
+      return guardID
+    },
+  }
 }
 
 function attachNativeQuarantineHost(
@@ -571,9 +589,19 @@ function attachNativeQuarantineHost(
     unavailable?: boolean
     loseReply?: boolean
     onUpdate?: () => void
+    probe?: () => Promise<
+      Partial<{
+        pid: number
+        projectID: string
+        directory: string
+        databasePath: string
+        registrationID: string
+      }>
+    >
   } = {},
 ) {
   let archives = 0
+  let probes = 0
   const target = () => {
     const current = { ...f.worker, ...options.target }
     return {
@@ -588,6 +616,21 @@ function attachNativeQuarantineHost(
     data: [],
   })
   const client = {
+    rpc: () => ({
+      status: async (_input: unknown, request: { location: { directory: string } }) => {
+        probes++
+        expect(request.location.directory).toBe(f.retained.workspace)
+        const changes = await options.probe?.()
+        return {
+          pid: 42,
+          projectID: "project",
+          directory: f.retained.workspace,
+          databasePath: f.repository.path,
+          registrationID: f.guardID,
+          ...changes,
+        }
+      },
+    }),
     server: { info: async () => ({ pid: 42, version: "2.2.5" }) },
     session: {
       get: async () => target(),
@@ -626,11 +669,15 @@ function attachNativeQuarantineHost(
   const fakeSession = f.host.session
   f.host.session = (id, options) =>
     id === f.retained.session_id ? native.session(id, options) : fakeSession(id, options)
+  f.host.ensureSourceGuard = native.ensureSourceGuard
   f.host.archiveRetainedWorker = native.archiveRetainedWorker
   return {
     native,
     get archives() {
       return archives
+    },
+    get probes() {
+      return probes
     },
   }
 }
@@ -705,6 +752,125 @@ test("native retained worker archival rejects foreign or changed bindings, activ
     if (mismatch === "unavailable")
       await expect(f.runtime.command(f.command(), "owner")).rejects.toThrow("unavailable")
   }
+})
+
+test("native location activation restores pending and sealed quarantine after registry loss and database reopen", async () => {
+  for (const phase of ["pending", "sealed"] as const) {
+    const f = await retainedSourceFixture()
+    const guards: ReturnType<typeof f.install>[] = []
+    const adapter = attachNativeQuarantineHost(f, {
+      probe: async () => {
+        if (!sourceGuardInstalled(f.store, f.retained.workspace)) guards.push(f.install())
+        return {}
+      },
+    })
+    // Starts without an old-location registration; the native route loads it.
+    await f.runtime.command(f.command(), "owner")
+    if (phase === "sealed") await f.runtime.tick()
+    expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe(phase)
+    const effect = f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!
+    const probesBefore = adapter.probes
+    await f.runtime.stop()
+    for (const dispose of guards.splice(0)) dispose()
+    expect(sourceGuardInstalled(f.store, f.retained.workspace)).toBe(false)
+    f.repository.close()
+    const repository = new TaskRepository(f.repository.path, f.root)
+    const store = new RunnerStore(repository)
+    const runtime = new TaskRuntime(store, f.host, "project")
+    try {
+      await runtime.tick()
+      expect(adapter.probes).toBe(probesBefore)
+      // A restarted process waits for the old scheduler lease before recovery.
+      store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+      await runtime.tick()
+      expect(sourceQuarantine(store, f.retained.id)).toMatchObject({
+        phase: "sealed",
+        hold_reason: null,
+      })
+      expect(adapter.probes).toBe(probesBefore + 1)
+      expect(adapter.archives).toBe(1)
+      expect(store.effects(f.receipt.planID).find((row) => row.id === f.effectID)).toEqual(effect)
+      expect(
+        sourceReservationExcluded(store, store.attempts(f.receipt.planID)[0]!, {
+          mode: "isolated",
+        }),
+      ).toBe(true)
+      const next = f.createTask("after-restart", "shared.txt")
+      const plan = store.submit(f.inputFor([next], { requestID: `restore-${phase}` }), "owner")
+      await runPlan({ ...f, store, runtime }, plan.planID, `run-restore-${phase}`)
+      await runtime.tick()
+      expect(store.attempts(plan.planID)).toHaveLength(1)
+      expect(store.attempts(f.receipt.planID)[0]!.state).toBe("verifying")
+      // A healthy sealed fence causes no recurring native probe or archive.
+      expect(adapter.probes).toBe(probesBefore + 1)
+    } finally {
+      await runtime.stop()
+      repository.close()
+    }
+  }
+})
+
+test("failed or mismatched native activation retains sealed resources and recovers only a current exact guard", async () => {
+  const f = await retainedSourceFixture()
+  let dispose = f.install()
+  let failure:
+    | "unavailable"
+    | "database"
+    | "project"
+    | "directory"
+    | "pid"
+    | "disposed"
+    | "superseded"
+    | undefined
+  const adapter = attachNativeQuarantineHost(f, {
+    probe: async () => {
+      if (failure === "unavailable") throw new Error("Location activation unavailable")
+      dispose = f.install()
+      if (failure === "disposed") dispose()
+      if (failure === "superseded") {
+        const stale = dispose.registrationID
+        f.install()
+        return { registrationID: stale }
+      }
+      return failure === "database"
+        ? { databasePath: "/foreign/tasks.sqlite" }
+        : failure === "project"
+          ? { projectID: "foreign" }
+          : failure === "directory"
+            ? { directory: f.root }
+            : failure === "pid"
+              ? { pid: 7 }
+              : {}
+    },
+  })
+  await f.runtime.command(f.command(), "owner")
+  await f.runtime.tick()
+  const effect = f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!
+  for (const mismatch of [
+    "unavailable",
+    "database",
+    "project",
+    "directory",
+    "pid",
+    "disposed",
+    "superseded",
+  ] as const) {
+    failure = mismatch
+    dispose()
+    await f.runtime.tick()
+    expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
+    expect(sourceQuarantine(f.store, f.retained.id)?.hold_reason).toBeString()
+    expect(
+      sourceReservationExcluded(f.store, f.store.attempts(f.receipt.planID)[0]!, {
+        mode: "isolated",
+      }),
+    ).toBe(false)
+    expect(f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)).toEqual(effect)
+  }
+  failure = undefined
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.hold_reason).toBeNull()
+  expect(adapter.archives).toBe(1)
 })
 
 test("source quarantine seals only a stopped guarded native writer and permits independent code without accepting old work", async () => {

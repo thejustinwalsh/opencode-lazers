@@ -46,9 +46,25 @@ observations, physical aliases and the positive independent route. A subsequent
 focused identity-binding regression also passes. Formatter, lint and typecheck
 pass. Logs remain under `/private/tmp/lazers-bootstrap-*20261104.log`.
 
-Review the old-location guard lifecycle before activation: a sealed fence must
-remain effective after restart/location unload without creating a permanent
-admission trap. Then coordinate first installation, observe the actual named72
-control and ordinary57→58 dispatch. Existing58 must still demonstrate independent
-verification contexts and distinct check receipts. A new directory alone does not
-establish independence from retained shared services/profiles or accept72/88.
+The corrected lifecycle uses a read-only native location RPC to demand-load and
+confirm that location's own current before-tool registration. Registration begins
+before hook setup, becomes active after setup and disposes with the scope. A known
+unguarded predecessor or disposed/replaced registration cannot confer capability.
+Initial admission and pending recovery use the routed check; sealed recovery calls
+it only after registration loss or a recorded problem. No new timer or healthy
+sealed polling RPC is added. Failed observations retain source/resource holds;
+sealed recovery survives an Architect owner continuation without replaying archive.
+
+Lifecycle suites pass **193 tests / 3,077 assertions** across seven runner suites,
+plus formatter/lint/typecheck/diff checks. Reopen regressions start with an empty
+old-location registry, respect the previous scheduler lease, restore pending and
+sealed guards through the actual native adapter shape, retain the uncertain effect
+and then dispatch independent work. Foreign database/project/location/process,
+failed activation, disposal and superseded replies fail without releasing holds.
+Registered-hook scope tests cover current-generation capability and a known live
+unguarded predecessor. The source remains offline pending independent review.
+
+Coordinate first installation, observe actual72 control and ordinary57→58 dispatch.
+Existing58 still must demonstrate independent verification contexts and distinct
+check receipts. A new directory alone does not establish independence from retained
+shared services/profiles or accept72/88.
