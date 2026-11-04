@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { ObservationChangeTracker } from "./changes.ts"
 import { ObservationReads } from "./read.ts"
 import { RadarOutput, SnapshotOutput } from "./contract.ts"
@@ -1836,6 +1837,51 @@ test("deferred Radar responses from an obsolete scope cannot become fresh in the
     expect(state.scope).toEqual(nextScope)
     expect(nextGeneration).toBeGreaterThan(oldGeneration)
   } finally {
+    fixture.close()
+  }
+})
+
+test("Radar retains observation ordering when the host lacks JSONB iteration", async () => {
+  const fixture = makeFixture()
+  const original = Database.prototype.query
+  let fallback: ReturnType<typeof spyOn> | undefined
+  try {
+    const secret = new Uint8Array(32).fill(28)
+    const reads = radarReads(fixture, radarHost([]), secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    recorder.recordNativeEvent({
+      id: "evt-jsonb-fallback",
+      type: "session.step.started",
+      created: 30_100,
+      data: {
+        sessionID: "ses-failed",
+        assistantMessageID: "msg-jsonb-fallback",
+        agent: "lazers-implementor",
+        model: { providerID: "anthropic", id: "fallback-model" },
+        started: 30_000,
+      },
+    })
+    const input = {
+      scope: { kind: "session" as const, sessionID: "ses-failed" },
+      includeUnmanagedSessions: false,
+    }
+    const before = await reads.radar(input, tracker, new AbortController().signal)
+    fallback = spyOn(Database.prototype, "query").mockImplementation(function (
+      this: Database,
+      sql: string,
+    ) {
+      if (sql === "SELECT value FROM jsonb_each('[]')") throw new Error("no such table: jsonb_each")
+      return original.call(this, sql)
+    } as typeof original)
+    const after = await reads.radar(input, tracker, new AbortController().signal)
+    expect(after.edges.some((edge) => edge.messageID === "msg-jsonb-fallback")).toBe(true)
+    expect(after.edges).toEqual(before.edges)
+    expect(after.routes).toEqual(before.routes)
+    expect(after.coverage).toEqual(before.coverage)
+  } finally {
+    fallback?.mockRestore()
     fixture.close()
   }
 })

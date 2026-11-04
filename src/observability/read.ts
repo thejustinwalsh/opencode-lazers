@@ -376,24 +376,33 @@ function loadRadarSource(
     .all()
     .some((column) => column.name === "recorded_at")
   const recordedAtColumn = hasRecordedAt ? "g.recorded_at" : "NULL AS recorded_at"
+  // JSONB iteration avoids serializing each observation object to JSON text and
+  // reparsing it for every timestamp access. Older host SQLite builds retain the
+  // same query semantics through json_each.
+  let observations = "json_each"
+  try {
+    db.query("SELECT value FROM jsonb_each('[]')").all()
+    observations = "jsonb_each"
+  } catch {
+    // jsonb_each was added in SQLite 3.51; no database/schema change is needed.
+  }
+  // Sort only row identities and observation times. Carrying every payload through
+  // SQLite's history sort repeatedly copies large tool/step records into its temp
+  // B-tree; fetch the unchanged records by primary key after selecting the window.
   const progressRows = db
     .query<ProgressRow, (string | number)[]>(
-      `WITH scoped AS (
-         SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
-                 g.session_id,g.at,${recordedAtColumn},g.source,g.sources_json,g.kind,g.event_ids_json,g.call_id,
-                g.message_id,g.dedupe_key,g.payload,
+      `WITH scoped AS MATERIALIZED (
+         SELECT g.seq,g.at,
                  (SELECT MAX(
                     CASE WHEN observation.type='object' THEN
-                      CASE WHEN json_valid(observation.value) THEN
-                        CASE WHEN json_type(observation.value,'$.at') IN ('integer','real') THEN
-                          CASE WHEN json_extract(observation.value,'$.at')
-                            BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308
-                          THEN json_extract(observation.value,'$.at') END
-                        END
+                      CASE WHEN json_type(observation.value,'$.at') IN ('integer','real') THEN
+                        CASE WHEN json_extract(observation.value,'$.at')
+                          BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308
+                        THEN json_extract(observation.value,'$.at') END
                       END
                     END
                   )
-                  FROM json_each(
+                  FROM ${observations}(
                     CASE WHEN json_valid(g.payload) THEN
                       CASE WHEN json_type(g.payload,'$.observations')='array'
                         THEN g.payload ELSE '{"observations":[]}' END
@@ -404,11 +413,14 @@ function loadRadarSource(
            FROM runner_progress g JOIN runner_plans p ON p.id=g.plan_id
           WHERE p.project_directory=? AND g.plan_id IN (${placeholders})
        )
-        SELECT seq,project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,
-              source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload
-         FROM scoped
-        ORDER BY max(at, COALESCE(observed_at,at)) DESC, seq DESC
-        LIMIT 5001`,
+        SELECT g.seq,g.project_directory,g.project_id,g.plan_id,g.task_id,g.attempt_id,
+               g.session_id,g.at,${recordedAtColumn},g.source,g.sources_json,g.kind,
+               g.event_ids_json,g.call_id,g.message_id,g.dedupe_key,g.payload
+          FROM runner_progress g JOIN (
+            SELECT seq,max(at, COALESCE(observed_at,at)) AS latest_at FROM scoped
+            ORDER BY latest_at DESC, seq DESC LIMIT 5001
+          ) recent ON recent.seq=g.seq
+         ORDER BY recent.latest_at DESC, g.seq DESC`,
     )
     .all(projectDirectory, ...planIDs)
   const progress = progressRows.slice(0, 5_000).sort((left, right) => left.seq - right.seq)
