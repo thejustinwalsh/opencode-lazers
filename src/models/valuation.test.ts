@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test"
 import type { AccountingAttempt, AccountingRoute } from "../trajectory/accounting.ts"
+import { ProgressRecorder } from "../progress/recorder.ts"
+import { projectProgressFact } from "../progress/projection.ts"
+import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { projectTaskValuation } from "./valuation.ts"
 import type { CurrentPriceIndex } from "./valuation-schema.ts"
 import {
@@ -109,6 +112,47 @@ function progressStep(route: unknown, id = "progress-step") {
         route,
       },
     ],
+  }
+}
+
+function projectedStepLifecycleFacts(
+  steps: Array<{
+    messageID: string
+    lifecycleType: "session.step.streamed" | "session.step.ended" | "session.step.failed"
+    route?: AccountingRoute
+  }>,
+) {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    for (const [index, step] of steps.entries()) {
+      const record = (type: string, suffix: string, model?: Record<string, unknown>) =>
+        recorder.recordNativeEvent({
+          id: `evt-${step.messageID}-${suffix}`,
+          type,
+          created: 10_000 + index * 100 + (suffix === "start" ? 0 : 1),
+          data: {
+            sessionID: "ses-failed",
+            assistantMessageID: step.messageID,
+            ...(model ? { model } : {}),
+          },
+        })
+      record(
+        "session.step.started",
+        "start",
+        step.route
+          ? {
+              providerID: step.route.providerID,
+              id: step.route.modelID,
+              ...(step.route.variant === null ? {} : { variant: step.route.variant }),
+            }
+          : undefined,
+      )
+      record(step.lifecycleType, "lifecycle")
+    }
+    return fixture.store.progressFacts([firstAttemptID]).map(projectProgressFact)
+  } finally {
+    fixture.close()
   }
 }
 
@@ -408,11 +452,64 @@ test("retained progress routes participate in exact session allocation without m
   expect(duplicateA.marketEquivalentCost.valueUSD).toBe(0.000346)
 })
 
+test("production-projected route-less lifecycle observations preserve retained start routes", () => {
+  const progress = projectedStepLifecycleFacts([
+    { messageID: "msg-streamed", lifecycleType: "session.step.streamed", route },
+    { messageID: "msg-ended", lifecycleType: "session.step.ended", route },
+    { messageID: "msg-failed", lifecycleType: "session.step.failed", route },
+  ])
+  expect(progress).toHaveLength(3)
+  for (const fact of progress) {
+    expect(fact).toMatchObject({ route, sessionID: "ses-failed" })
+    expect(fact.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: "session.step.started", route }),
+        expect.objectContaining({ route: null }),
+      ]),
+    )
+  }
+
+  const attempts = [attempt({ sessionID: "ses-failed", currentRoute: null })]
+  const baseline = project(attempts)
+  const result = project(attempts, progress)
+  expect(result.marketEquivalentCost.sessions[0]?.routeAllocation).toMatchObject({
+    status: "single-observed-route",
+    route,
+    observedRouteCount: 3,
+  })
+  expect(result.marketEquivalentCost.sessions[0]?.pinCandidates).toEqual(
+    nativeMillionTokenIndex.pins,
+  )
+  expect(result.marketEquivalentCost.valueUSD).toBe(0.000346)
+  expect(result.usage.categories).toEqual(baseline.usage.categories)
+  expect(result.usage.sessions[0]?.categories).toEqual(baseline.usage.sessions[0]?.categories)
+  expect(result.reportedWorkerCost).toEqual(baseline.reportedWorkerCost)
+})
+
+test("a production-projected unresolved start stays unallocated despite the current route", () => {
+  const progress = projectedStepLifecycleFacts([
+    { messageID: "msg-unresolved", lifecycleType: "session.step.ended" },
+  ])
+  const result = project([attempt({ sessionID: "ses-failed" })], progress)
+
+  expect(result.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe(
+    "identity-unavailable",
+  )
+  expect(result.marketEquivalentCost.sessions[0]?.pinCandidates).toEqual([])
+  expect(result.marketEquivalentCost.sessions[0]?.categories.uncachedInput).toMatchObject({
+    tokens: 60,
+    valueUSD: null,
+    status: "unknown",
+  })
+  expect(result.marketEquivalentCost.valueUSD).toBeNull()
+})
+
 test("retained progress with unknown route identities stays unallocated", () => {
   const unknownRoutes: unknown[] = [
     null,
     { providerID: "openrouter" },
     { providerID: "openrouter", modelID: "vendor/model…[truncated]", variant: null },
+    { providerID: "openrouter[REDACTED]", modelID: "vendor/model", variant: null },
     { providerID: "openrouter", modelID: "vendor/model", variant: null, identity: null },
   ]
 
@@ -424,6 +521,24 @@ test("retained progress with unknown route identities stays unallocated", () => 
     expect(result.marketEquivalentCost.sessions[0]?.pinCandidates).toEqual([])
     expect(result.marketEquivalentCost.valueUSD).toBeNull()
   }
+
+  const mismatchedLifecycle = {
+    ...progressStep(null, "unrelated-lifecycle"),
+    observations: [
+      {
+        source: "native-event",
+        eventType: "session.step.ended",
+        at: 1_100,
+        messageID: "another-message",
+        route: null,
+      },
+    ],
+  }
+  const mismatched = project([attempt()], [mismatchedLifecycle])
+  expect(mismatched.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe(
+    "identity-unavailable",
+  )
+  expect(mismatched.marketEquivalentCost.valueUSD).toBeNull()
 })
 
 test("ambiguous current pins are not resolved by source preference or record order", () => {

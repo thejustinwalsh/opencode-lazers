@@ -194,13 +194,34 @@ function retainedProgressRoutes(progressFacts: readonly unknown[], sessionID: st
     const payload = object(fact.payload)
     const routeEvidence = (source: Record<string, unknown>) => {
       const observations = Array.isArray(source.observations) ? source.observations : []
+      let hasRouteLessLifecycleObservation = false
       const routedObservations = observations.flatMap((rawObservation) => {
         const observation = object(rawObservation)
-        return observation && Object.hasOwn(observation, "route")
-          ? [progressRoute(observation.route)]
-          : []
+        if (!observation) return []
+        const eventType = observation.eventType
+        const isRouteLessLifecycleObservation =
+          (observation.source === "native-event" || observation.source === "recovery") &&
+          (eventType === "session.step.streamed" ||
+            eventType === "session.step.ended" ||
+            eventType === "session.step.failed") &&
+          typeof fact.messageID === "string" &&
+          fact.messageID.length > 0 &&
+          observation.messageID === fact.messageID
+        if (
+          isRouteLessLifecycleObservation &&
+          (!Object.hasOwn(observation, "route") || observation.route === null)
+        ) {
+          hasRouteLessLifecycleObservation = true
+          return []
+        }
+        return Object.hasOwn(observation, "route") ? [progressRoute(observation.route)] : []
       })
       if (routedObservations.length) return routedObservations
+      if (
+        hasRouteLessLifecycleObservation &&
+        (!Object.hasOwn(source, "route") || source.route === null)
+      )
+        return null
       return Object.hasOwn(source, "route") ? [progressRoute(source.route)] : null
     }
     const retainedRoutes = routeEvidence(fact) ?? (payload ? routeEvidence(payload) : null)
