@@ -124,9 +124,22 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
 
 - **LZ119** `8d324858-260e-48b9-bc7c-1825666717e4`, plan
   `30c19505-7ef4-46a8-a970-bcc6227c9f76`, repairs recorder/recovery/projection/valuation
-  per-call attribution on retained `eabbc17`; original attempt `34a9cf97` is active.
+  per-call attribution on retained `eabbc17`; original attempt `34a9cf97` accepted
+  `e4d64ad`, with task/combined checks passing. Independent review and a real
+  disposable recorder/store repro found one remaining first-replay persistence
+  rewrite: identical `model:null` or `variant:7` recovery changes payload and advances
+  `recorded_at` once, both immediately and after reopen. Later replay stabilizes;
+  do not call it perpetual churn. Source integration is held, not waived by green tests.
   Preserve known same-call A, reject orphan borrowing and retain conflict/lost-identity
   uncertainty after tail eviction/reopen. No accepted valuation ancestry is discarded.
+- **LZ124** `b2f262ab-bbe7-476b-9437-3bfe22edabdd`, admitted plan
+  `4195aed2-f292-4678-9ed1-f0cf9d9e4e39`, is the narrow first-persistence/replay
+  correction on exact accepted `e4d64ad`, preserving LZ119's original worker/artifact,
+  history and the full retained valuation chain. Actual first-replay/reopen payload,
+  timestamp and accounting checks plus independent review remain required. After
+  correction, request supported fresh original LZ119 gates against the reviewed
+  descendant before integration unblocks LZ120; do not relabel old evidence.
+  Authoring inference was interrupted with zero usage, not a semantic pass.
 - **LZ120** `0390fded-84db-4db7-a566-538013afaab3`, plan
   `f11e1754-064c-4c28-9888-d488a36ec03d`, is admitted after LZ119 integration:
   schema-valid current-price index from complete cached catalogs, ordered whole-model
@@ -141,6 +154,11 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   contributor route/membership schema. Missing metadata means unknown. Existing
   source/fixtures still compile; old strict wire readers are not compatible with
   emitted added fields, so do not activate a half-upgraded producer/consumer.
+  Accepted `af229f4` is independently reviewed and merged as `bce7362` alongside
+  original LZ108. Merged **112 tests / 1,931 assertions**, quality and GUI build
+  passed. Native task/combined integration recorded through v9; non-forced cleanup
+  requested. The contract fixture proves metadata representation, not numeric
+  A100/B50/history150 arithmetic; actual producer/consumer checks must discriminate it.
 - **LZ122** `d45bbaaf-8c7d-4750-b55b-906981b2a171`, plan
   `6c98bc11-0509-49b0-b8f2-f62666e05e28`, is admitted after integrated LZ106/120/121,
   **not LZ108**: production four-method reader plus server, explicit ledger-to-valuation
@@ -166,6 +184,8 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   Native final product acceptance remains on the original LZ108 plan. The plan
   starts from landed `a45ef2b` and waits only on LZ121, avoiding the false dependency
   cycle through LZ108's still-open real-data human gate.
+  Original attempt `8806c6f8` is active on selected Luna Max/UI; source-grounded
+  numeric-fixture warning read back at **1793807434759**, actual outcome pending.
 
 ## Source and native state
 
@@ -222,6 +242,17 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   original `addfb6ee` / `ses_34c9ce29a6d548cda5ffa21144ad41aa` retained. Native
   worker failed with a transport timeout, empty current controls/shells, all three
   effects complete, background unknown. Reconciliation requested; no replacement.
+- **LZ56 remains its existing retained qualification**, not a new relay feature.
+  Full `4535c6c → b164643` work is preserved. Independent source review confirms
+  the 250ms client identity check itself makes no healthy RPC, but the unconditional
+  two-second location/discovery sweep nominally schedules about 990 calls/minute
+  at 66 stable locations, before events. This is source arithmetic, not measured
+  CPU. Preserve missed-event recovery while removing needless healthy-idle churn,
+  and preserve main's newer shared settings scheduler/tool/renderer changes.
+  [Exact retained review](evidence/location-inference-forwarding/retained-review-20261104.md)
+  was delivered to the original session at **1793807896405**, without prompt/resume
+  or activation. Default D1 success is not the exact candidate's non-default enabled
+  forwarding proof. Existing native qualification/accepted-source repair guards stand.
 
 ## Energy and permission evidence
 
