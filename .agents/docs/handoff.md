@@ -62,6 +62,15 @@ defined`. Root reproduced the ECharts stack by evaluating the actual 46MB
   forwarding (about 320ms), `demand=false`. This proves GUI recovery/settings
   transport, **not fresh GPU inference or LZ56 candidate qualification**. The three
   Root-owned files were left untouched by this orchestration; working tree clean.
+  A later GUI replacement exposed Settings error **"The model cache is owned or
+  being cleaned up"**. Root used supported renderer-only `ViewReload`, then saw
+  **"Chat and speech ready · d1 loads on demand"**, all six switches on and idle
+  Never. Root reopened this same Architect with its original draft; service
+  PID **95968** and original LZ117/LZ120 workers remained live. No service restart
+  or settings change occurred. Record this GUI replacement/cache-ownership recovery
+  gap separately from GPU device loss in the improvement notes. Readiness alone is
+  not fresh execution proof; use the next actual normal review, not a benchmark or
+  replay. This observation creates **no additional approval or delivery gate**.
 - **LZ113 is merged as `428c6ad`**, accepted artifact `6203a693`. Root reviewed
   production/docs and adversarial legacy-manifest/receipt-bracketing cases;
   independent candidate and merged checks passed **12 tests / 126 assertions**
@@ -224,8 +233,11 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   Native final product acceptance remains on the original LZ108 plan. The plan
   starts from landed `a45ef2b` and waits only on LZ121, avoiding the false dependency
   cycle through LZ108's still-open real-data human gate.
-  Original attempt `8806c6f8` is active on selected Luna Max/UI; source-grounded
-  numeric-fixture warning read back at **1793807434759**, actual outcome pending.
+  Original attempt `8806c6f8` used selected Luna Max/UI; source-grounded
+  numeric-fixture warning read back at **1793807434759**. Native task/combined panel
+  and quality accepted `3aa4a55` at plan v8; exact-source review is underway before
+  source integration. No fixture or accepted source closes original LZ108's real-data
+  Desktop/Tera gate.
 
 ## Source and native state
 
