@@ -56,3 +56,12 @@ Actual Desktop Tasks/Trajectory interaction, per-location effective-source bindi
 and genuine future native idle observations remain to be established. No old
 certificate was reconstructed, no acceptance was overridden, and no worker turn
 was issued solely to manufacture proof.
+
+## Native GUI access limitation
+
+The attached session has no browser tabs; browser tabs would not themselves prove
+the host's Tasks/Trajectory surface. A read-only native process query found
+OpenCode. Reading its window names/sizes through System Events then failed with
+**“osascript is not allowed assistive access” (-25211)**. No GUI interaction ran,
+and no alternate route was used to bypass this denial. Actual mounted panel
+verification requires user-enabled Accessibility or direct user observations.
