@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-04 after LZ103 same-attempt acceptance/integration. Recheck native state;
+Updated 2026-11-04 after ledger/consumer source review and real backend tasking. Recheck native state;
 source landing, task acceptance, effective activation and cleanup are distinct.
 The [previous checkpoint](evidence/handoff-20261103-retained.md) retains historical evidence.
 
@@ -47,6 +47,126 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
    holds; 85 previously accepted nodes were not 85 completed deliveries. Radar
    redesign remains deferred. See [report](evidence/native-scheduler-performance-20261104.md).
 
+## Current feature and recovery follow-through
+
+- **LZ113 is merged as `428c6ad`**, accepted artifact `6203a693`. Root reviewed
+  production/docs and adversarial legacy-manifest/receipt-bracketing cases;
+  independent candidate and merged checks passed **12 tests / 126 assertions**
+  plus quality. Plan is now integrated at v15 with `WORKTREES_RECONCILED` after
+  ordinary native non-forced cleanup. The original
+  `bd5b2b0d` attempt survived ENOSPC: public native same-intent resource repair
+  succeeded at 1793802317298 and runtime recorded `WORKTREE_RECOVERY_RESUMED`.
+  Original failure activity remains. An earlier target-only setup override was
+  restored exactly at 1793801780455; successful creation used normal native setup.
+- **Root owns capacity reclamation.** Capacity recovered from 134MiB to 9.3+GiB
+  without source/model-weight/active-dependency/worktree-metadata deletion. Large
+  full-instance/model-copy setup remains capacity-gated. Repeated ENOSPC is an
+  environment blockage, not an implementation-check failure.
+- **LZ106 accepted `23a408d` is merged**, preserving original attempt/session/tree/route.
+  Independent source review found no blocking defect within its declared bounded
+  contract. Root and Architect each observed **31 tests / 272 assertions** passing;
+  native task/combined ledger/accounting/quality checks passed. Architect's first
+  merged quality run stopped on formatting these coordination docs, not ledger
+  behavior. After formatting, merged ledger/accounting/consumer tests passed
+  **57 tests / 949 assertions**, plus formatting/lint/types/diff and GUI build.
+  Task/combined source integration is recorded through v26; v27 is cleanup-blocked
+  on inconclusive native background idleness. Preserve the worktree; do not retry
+  unchanged cleanup or confuse that hold with the actual-history capture gap.
+  Root located
+  `Failed to drain Session`, `SessionStep.attempt`, `SQLiteError: database or disk
+is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
+  `ses_556dcf0ecd034ef2acb0cb541f78d57a`. That explains the unfinished latest
+  assistant despite `session.outcome=succeeded`. The second stopped execution
+  settled through supported cancellation; same-attempt resume admitted at v19,
+  with the actual host error in read-back durable worker guidance. No replacement
+  or replacement occurred; preserve all interruption/cancellation usage.
+- **LZ108 original Luna Max/UI artifact `2e6499f` is accepted and merged** in
+  `a45ef2b`. Independent source review cleared stable primitive group identities,
+  retained original-node connection/focus/selection through suspended inspector
+  loading/completion, coherent exercised fixtures and controller negative cases.
+  Artifact-bound task/graph receipts passed panel **26 tests / 677 assertions**,
+  models/chart **103 / 1,397**, quality and build. This is actual post-steering
+  correction, not merely guidance readback. Compact **Model / Accepted / Cost-task**
+  rows and market costs versus collapsed native diagnostics remain. Plan v11's
+  `real-data-native-product` human gate remains open; record source task-only,
+  never fixture-backed whole-product completion. Actual narrow/wide Desktop and
+  Tera 6.1 High acceptance wait for the real producer. Task-only source landing is
+  recorded at plan v12, and reviewed feature classification appended at revision 1.
+- **LZ117 is dispatched**, task `35b9cf6b-7173-47cb-a7fb-bcebf9924bef`, plan
+  `8b8cfc52-6d00-4487-aea2-bf504562d40b`: durable genuine native idle observations
+  across listener disposal/reopen plus fresh exact revalidation. Its scope avoids
+  LZ72's reserved runtime files. No fabricated legacy idle/old-check containment;
+  cross-process persistence, ordering and actual force:false cleanup tests required.
+  Root's actual disposable-store probes initially exposed stale diagnostic revision
+  stranding and supported same-attempt input rotation. Probe **1793806677914** now
+  exits 0 for both: diagnostic safety revision remains stable, authoritative input
+  change invalidates old zero, new genuine sequence converges and late old callbacks
+  cannot overwrite it. Earlier failing store evidence is superseded only there.
+  Reviewer also observed decoded DateTime support, assistant-before-distinct-Idle
+  fixtures, ordinary delivery lineage and latest-marker checks. Remaining candidate:
+  enqueue/synthetic input during a busy execution still clears required start
+  lineage; same worker steered at **1793806808888**. Full native cleanup proof and
+  final artifact/check review remain pending; no replacement or runtime-file edit.
+- **LZ118 is admitted**, task `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
+  `2e5b7147-426f-45b6-934f-6da2b07205e7`: explicit conclusive failed-startup
+  settlement and new linked resource operation within the original attempt.
+  Missing/timeout/lost-response evidence stays blocked; no worker before resource
+  readiness. Local advisory review suffered device loss, not a semantic pass.
+  Actual overlapping reservations still govern dispatch.
+- **Reuse original LZ99/57/58.** LZ99's diagnostic-only LZ72 integration dependency
+  was removed; current-main baseline, priority 2175, plan v3. LZ57/58's inference
+  relay prerequisite was not a worker-control source dependency: their original
+  repair→reverify graph is admitted through plan v3 on current main. Real active
+  LZ72/LZ117 runtime/native-file reservations remain; no guard was bypassed. These
+  are not substitutes for startup settlement or durable idle recovery.
+
+## Real Models backend and coordinated v2 evolution
+
+- **LZ119** `8d324858-260e-48b9-bc7c-1825666717e4`, plan
+  `30c19505-7ef4-46a8-a970-bcc6227c9f76`, repairs recorder/recovery/projection/valuation
+  per-call attribution on retained `eabbc17`; original attempt `34a9cf97` is active.
+  Preserve known same-call A, reject orphan borrowing and retain conflict/lost-identity
+  uncertainty after tail eviction/reopen. No accepted valuation ancestry is discarded.
+- **LZ120** `0390fded-84db-4db7-a566-538013afaab3`, plan
+  `f11e1754-064c-4c28-9888-d488a36ec03d`, is admitted after LZ119 integration:
+  schema-valid current-price index from complete cached catalogs, ordered whole-model
+  fallback, authentic provenance, unknown versus published zero and actual valuation.
+- User selected **creation/submission-time task membership with complete histories**.
+  A-failure/B-acceptance credits acceptance only B; A retains failed effort, while B's
+  empirical sample includes that task's own A+B retries, explicitly cross-route.
+  Strict v2 lacked fields to say this honestly. User explicitly approved coordinated
+  v2 evolution, not label/reason overloading or a silent compatibility claim.
+- **LZ121** `3266bea2-0c5f-457a-8b93-2e96df05ded3`, plan
+  `9263091c-486e-42cc-9d27-18f866ee24dc`, adds dedicated optional history scope,
+  contributor route/membership schema. Missing metadata means unknown. Existing
+  source/fixtures still compile; old strict wire readers are not compatible with
+  emitted added fields, so do not activate a half-upgraded producer/consumer.
+- **LZ122** `d45bbaaf-8c7d-4750-b55b-906981b2a171`, plan
+  `6c98bc11-0509-49b0-b8f2-f62666e05e28`, is admitted after integrated LZ106/120/121,
+  **not LZ108**: production four-method reader plus server, explicit ledger-to-valuation
+  bridge, genuine acceptance, deduplicated failure-inclusive exact-route efficiency,
+  global frontier before paging and separate complete accepted-history estimates.
+  Scope amendment v3 includes ledger read/schema/tests for actual-history capture.
+- Root's SELECT-only actual-project probe **1793806523990** found **28,836 joined
+  progress rows**. Existing 10,000-fact cap returns empty incomplete/no pin/cursor
+  in about 676ms. Truthful overflow is valid LZ106 behavior, **not working Models**.
+  Also each public ledger `read()` recaptures live facts; stable secret alone cannot
+  drain coherently during writes. LZ122 must implement proportional bounded capture
+  and immutable consumption, preserve complete accounting/whole-project shared-session
+  ownership and truthful overflow, and avoid blind cap inflation or stale-page loops.
+  Reviewer recommends bounded batched capture in one SELECT-only transaction, release
+  before output pagination, explicit capture disposal and incremental byte accounting.
+  Sequence cutoff alone misses updates to existing progress rows. This is SQL fact
+  identity, not file-hashing evidence. Actual data and concurrent-write tests remain.
+- **LZ123** `f9734934-7ba8-40da-b3ab-72851a433ae5`, admitted plan
+  `99e4f80d-ced8-4556-8c1b-969483dc52d3`, covers inspector
+  history/route/membership rendering after original LZ108 source and LZ121 schema.
+  Preserve real overlap serialization and Luna Max/UI selection. Do not make source
+  work wait on LZ108's final real-data human gate; use reviewed landed source baseline.
+  Native final product acceptance remains on the original LZ108 plan. The plan
+  starts from landed `a45ef2b` and waits only on LZ121, avoiding the false dependency
+  cycle through LZ108's still-open real-data human gate.
+
 ## Source and native state
 
 - Main `0b058dc` integrates **LZ112 `58f865e`**: ordered price-source settings and
@@ -74,7 +194,12 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   occurred. Its reviewed feature-implementation annotation is revision 1; the
   immutable specification is unchanged.
 - **LZ111 `18cad56`** task accepted, combined plan
-  `446f3b7a-987c-41c4-85ae-8328a0322d54` v18 blocked on native-efficiency evidence.
+  `446f3b7a-987c-41c4-85ae-8328a0322d54` v19 retains a combined artifact-binding
+  hold. Original source landing is now recorded task-only. Existing native evidence
+  is for corrected activated `119fa8e`, including LZ115/116 and Root corrections,
+  not standalone `18cad56`. A truthful human-evidence call naming `119fa8e` was
+  rejected by the old plan's exact `18cad56` binding; do not relabel it to pass.
+  No new measurement/reload is needed merely to repair that recording path.
   Own **83 tests / 703 assertions** and quality passed, but review reproduced:
   inconsistent mixed-case cursor ordering can starve history; a retired unresolved
   read retains drain ownership; dirty-during-await test missed unchanged-assignment
@@ -99,6 +224,31 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   effects complete, background unknown. Reconciliation requested; no replacement.
 
 ## Energy and permission evidence
+
+- Root's 20.094s post-disk-recovery working window measured **40.4% service /
+  27.4% renderer / 34.2% GPU**, with active workers. Raw records:
+  `/private/tmp/lazers-energy-after-disk-recovery-20261104.jsonl`. This is an
+  observation, not matched causality or permanent battery-resolution proof.
+- Desktop main log `20261103T155913/main.log` records real review job
+  `11293f5a-c02f-424e-976f-48aa05713a22`, **1,834 actual input tokens**,
+  run→device-lost→error in roughly 5.38s, then session-create→ready in 3,056ms.
+  Root observed d1 Available, all six switches ON, Never unload. Automatic resident
+  recovery is observed. Six later genuine jobs (`06f97c31`, `56d72e4a`, `0db6d3e7`,
+  `6ae83766`, `467be6a3`, `e20d1662`) completed at 09:56:39–09:57:13, about
+  6.3–6.6s and 2K input each, without reload/replay/toggle/profiler. Successful
+  post-loss inference is proven, not prevention of future loss. Later producer
+  advisory review again encountered device loss; subsequent consumer review
+  completed with no errors. Keep genuine failure/recovery history.
+  Terminal OrtRun classification remained `unknown` despite the explicit
+  device-lost stage: retain that diagnostic improvement gap. No context-overflow,
+  disabled-feature, model replay, profiler or reload claim.
+- Installed Models `refreshSources` generation **30** succeeded at
+  2026-11-04T14:51:27Z. OpenRouter snapshot
+  `fe72063f-e814-431d-9004-5cd682c194e5`, 417 records, includes published prices
+  and cache rates for `openai/gpt-6-luna`, `openai/gpt-6.1-sol` and
+  `anthropic/claude-sonnet-5.5`. Readback used that exact plugin snapshot, not direct
+  curl/session charges. Preserve tiers/provenance; final Models observation must
+  use refreshed current data. No inference or execution-setting change was requested.
 
 - User reports sustained high CPU. PID95968 measured 109% then 48–60%; later
   snapshots differed. Own 07:02:32–07:02:48 sample: **51.6, 63.8, 75.1, 88.2%**;
@@ -127,9 +277,9 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   UI/controller's LZ103 + LZ107 + LZ112 source prerequisites are satisfied;
   explicit `openai/gpt-6-luna#max`, persona `ui`. Runtime still owns dispatch and
   scope serialization; source readiness does not require worktree deletion.
-  LZ113 manifest removal waits only for LZ103's actual fixture-file overlap, not
-  vice versa. Preserve two Git observations, real bindings/receipts and containment;
-  narrowly ignore legacy `candidate.manifest`. It is not a new product gate.
+  LZ113's fixture overlap is resolved and its manifest removal is integrated.
+  Preserve two Git observations, real bindings/receipts and containment; narrowly
+  ignore legacy `candidate.manifest`. It is not a new product gate.
 - Pricing: configured **OpenRouter → OpenCode**, whole-model fallback when a quote
   or needed rate is missing; never blend categories. Preserve source provenance,
   exact provider/model/effort and all tokens. Charges/subscription zero/empty
@@ -160,6 +310,9 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 Authorities: [roadmap](../../design/roadmap.md), [execution](roadmap-execution.md),
 [phase review](phase-review-plan.md), [proactive recovery](../../design/proactive-worker-recovery.md),
 [live verification](../../design/live-product-verification.md), [handoffs](../../design/recovery-handoff-contract.md).
+
+The [116-record reconciliation](evidence/backlog-reconciliation-20261104.md)
+keeps the source/delivery partitions and missing roadmap increments explicit.
 
 Retain R2–R6 struggle/cook/check-in/steer/reassess/handoff; complete worker handoff
 verification/submission and continuing-worker consumption; V3–V6/N1 real-instance
