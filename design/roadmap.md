@@ -26,6 +26,33 @@ Independent nonoverlapping work may execute under ordinary runtime admission;
 blocked lanes are not a global development freeze. Source activation still needs
 Root coordination when watched generations or native observations can be affected.
 
+### Task-attached research and implementation advice
+
+**LZ132** (`5cdc0405-0e7f-4b18-933d-d0a331b37cd5`), plan
+`10964078-2262-4b2c-8f5a-101222a16e55`, delivers the missing task-data boundary:
+an Architect attaches concise research findings/positive starting seams, relevant
+pitfalls and optional deeper references/mini-skills to an existing task; native
+structured task and readable instruction fetches return effective advisory data
+to current or replacement workers. A repo note plus session instructions is useful
+delivery but **does not satisfy durable task attachment**. Preserve original goal,
+acceptance, constraints, execution authority and history.
+
+Reuse transactional append-only annotation, provenance/replay/conflict, task read
+and recovery-report storage patterns without using classification/correction or
+handoff records as a general research store. No registered research-execution tool
+is assumed. Keep metadata/reads bounded, legacy-safe and permission/project scoped;
+readable output remains a string. Advice does not fetch full skills or add policy
+to global agent prose. Session-only publication/wakes are not part of this increment.
+
+This is one coupled native attachment→persistence→both-read-surfaces feature, not a
+storage-only placeholder. Its task-module scope avoids running LZ129 observability,
+retained LZ126 root storage/tools and Root bootstrap/index/runtime changes, allowing
+native isolated execution under real admission. Do not alter or restart129 to prove
+it. After independent checks/source review, Root-coordinated quiet activation must
+establish actual native attach and both getter readbacks; availability is not model
+consumption. H5's source correction/disposition workflow remains a separate later
+consumer, not an implicit dependency or a claim of completion.
+
 ## 1. Tasks, Radar and Trajectory
 
 Tasks needs explicit state filtering alongside Session/Project scope, including
@@ -66,14 +93,14 @@ lanes rather than opening a parallel performance program:
    payloads; preserve separately fetched selected history, privacy and unknown
    coverage. Source-work/native-call/response-byte bounds are part of delivery,
    not just a faster final query or row cap. Reuse landed filters and query repairs.
-2. Investigate the remaining measured prerequisite Git, native-session and attempt/
-   transition reads proportionally. Reuse authoritative eligibility/proof seams for
-   Tasks A and runtime work; do not add a second evaluator or unmeasured cache.
-   Tasks A's first internal refactoring boundary is one authoritative evaluator:
-   validate durable evidence before unchanged Git checks, retain both callers,
-   then measure decision-local reservation-fact reuse. Savings on valid proof are
-   not established by sampled stacks. Any optimization must preserve dispatch
-   **and finalization** proof behavior.
+2. **Astra owns the residual performance repair:** Root resumed the original agent
+   for a native isolated tree, profiling and repair of measured prerequisite Git
+   and repeated native-session/attempt reads. Reserve those seams; do not dispatch
+   the earlier Tasks A performance/refactoring proposal or duplicate its work.
+   Tasks A will consume Astra's reviewed authoritative proof/fact interfaces after
+   handoff. Research below is input, not another implementation assignment. Savings
+   on valid proof are not established by sampled stacks. Any optimization must
+   preserve dispatch **and finalization** proof behavior.
    No queued task is not sufficient reason to skip prerequisite proof: it also gates
    combined verification/finalization. Reuse across observations requires a justified
    freshness/invalidation boundary, not a timer or presumed idle state.
@@ -85,9 +112,19 @@ lanes rather than opening a parallel performance program:
    coordinated boundary; record workload and actual elapsed/calls/bytes, not an
    invented CPU target or another permanent diagnostic endpoint.
 
-Residual runtime optimization is authoring/research until its safe boundary and
-real write reservations are resolved. It must not displace Root's offline source
-fence repair, weaken lifecycle/cleanup checks, or stall unrelated producer/UI work.
+Residual runtime work remains Astra-owned under actual reservations. It must not
+displace Root's first-install/control qualification, weaken lifecycle/cleanup checks,
+or become a duplicate Tasks A optimization. LZ129 and already-started LZ132 keep
+cooking; no additional long-running Architect dispatch before the reserved natural
+quiet boundary. Root owns actual activation, then hands native orchestration back.
+
+Before original LZ57 dispatch, re-audit its amended outcomes against the installed
+adopt-descendant/source-repair flows and qualified bootstrap. Reuse delivered behavior
+instead of implementing it again. Original LZ57/58's zero-attempt plan is reversibly
+cancelled as a scheduling hold, not fulfilled or discarded; use supported native
+requeue/reconciliation for justified remaining work after that audit. LZ58's genuinely
+independent verification contexts/receipts remain required separately. Preserve all
+old effects/resources and the LZ88 integration edge; no manual TaskDB edits.
 
 ### Proactive worker recovery
 
