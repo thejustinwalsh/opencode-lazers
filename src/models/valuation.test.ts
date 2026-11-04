@@ -928,13 +928,52 @@ test("malformed, invalid-effort, redacted, truncated, and explicitly lost routes
         }),
       )
 
+    const recoveredMessageIDs = new Set(
+      invalidModels.map((_, index) => `msg-invalid-recovery-route-${index}`),
+    )
+    recorder.reconcileMessages(
+      "ses-failed",
+      invalidModels.map((model, index) => ({
+        id: `msg-invalid-recovery-route-${index}`,
+        type: "assistant",
+        model,
+        time: { created: 14_100 + index },
+        content: [],
+      })),
+    )
+    recorder.recordNativeEvent(
+      stepEvent({
+        sessionID: "ses-failed",
+        messageID: "msg-unrelated-valid-route",
+        type: "session.step.started",
+        id: "evt-unrelated-valid-route",
+        created: 14_200,
+        model: modelForRoute(routeB),
+        includeModel: true,
+      }),
+    )
+
     const facts = projectStoredProgress(fixture)
-    expect(facts).toHaveLength(invalidModels.length)
-    for (const fact of facts)
+    const stepFacts = facts.filter((fact) => fact.kind === "worker-step")
+    const recoveredInvalidFacts = facts.filter(
+      (fact) => typeof fact.messageID === "string" && recoveredMessageIDs.has(fact.messageID),
+    )
+    expect(stepFacts).toHaveLength(invalidModels.length * 2 + 1)
+    expect(recoveredInvalidFacts).toHaveLength(invalidModels.length)
+    const invalidFacts = stepFacts.filter(
+      (fact) =>
+        typeof fact.messageID === "string" &&
+        (fact.messageID.startsWith("msg-invalid-route-") ||
+          recoveredMessageIDs.has(fact.messageID)),
+    )
+    expect(invalidFacts).toHaveLength(invalidModels.length * 2)
+    for (const fact of invalidFacts)
       expect(fact.routeEvidence).toMatchObject({ status: "identity-unavailable" })
     expect(facts.some((fact) => JSON.stringify(fact).includes("sk-secret-canary"))).toBe(false)
 
-    const valuation = project([attempt({ sessionID: "ses-failed" })], facts)
+    const assigned = [attempt({ sessionID: "ses-failed" })]
+    const baseline = project(assigned, [], indexWithRouteB())
+    const valuation = project(assigned, facts, indexWithRouteB())
     expect(valuation.marketEquivalentCost.sessions[0]?.routeAllocation.status).toBe(
       "identity-unavailable",
     )
@@ -945,6 +984,9 @@ test("malformed, invalid-effort, redacted, truncated, and explicitly lost routes
       valueUSD: null,
     })
     expect(valuation.marketEquivalentCost.valueUSD).toBeNull()
+    expect(valuation.usage.categories).toEqual(baseline.usage.categories)
+    expect(valuation.usage.sessions[0]?.categories).toEqual(baseline.usage.sessions[0]?.categories)
+    expect(valuation.reportedWorkerCost).toEqual(baseline.reportedWorkerCost)
   } finally {
     fixture.close()
   }

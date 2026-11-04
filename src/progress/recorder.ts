@@ -356,6 +356,19 @@ function payloadRouteEvidence(value: JsonObject): JsonObject | undefined {
   )
 }
 
+function setStepRouteEvidence(payload: JsonObject, routeEvidence: JsonObject | undefined): void {
+  if (routeEvidence) {
+    payload.routeEvidence = routeEvidence
+    payload.route = routeEvidence.status === "observed" ? routeEvidence.route : null
+  } else {
+    delete payload.routeEvidence
+  }
+}
+
+function normalizeStepRouteEvidence(payload: JsonObject): void {
+  setStepRouteEvidence(payload, payloadRouteEvidence(payload))
+}
+
 function observationIdentity(item: JsonObject): string {
   return (
     text(item.eventID) ??
@@ -707,18 +720,11 @@ function mergeFactPayload(
     text(incoming.status),
   )
   if (execution) merged.execution = execution
-  if (kind === "step") {
-    const routeEvidence = mergeRouteEvidence(
-      payloadRouteEvidence(previous),
-      payloadRouteEvidence(incoming),
+  if (kind === "step")
+    setStepRouteEvidence(
+      merged,
+      mergeRouteEvidence(payloadRouteEvidence(previous), payloadRouteEvidence(incoming)),
     )
-    if (routeEvidence) {
-      merged.routeEvidence = routeEvidence
-      merged.route = routeEvidence.status === "observed" ? routeEvidence.route : null
-    } else {
-      delete merged.routeEvidence
-    }
-  }
   return merged
 }
 
@@ -891,6 +897,7 @@ export class ProgressRecorder {
       }
     const execution = mergeExecution(undefined, factPayload.execution, text(factPayload.status))
     if (execution) factPayload.execution = execution
+    if (fact.kind === "step") normalizeStepRouteEvidence(factPayload)
     const payload = JSON.stringify(factPayload)
     const insertedAt = Date.now()
     const inserted = db
