@@ -4,7 +4,7 @@ import { Session } from "@opencode/schema/session"
 import { Effect, Stream } from "effect"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
-import { Observability } from "./contract.ts"
+import { Observability, type ObservationChange } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { databaseChanges } from "../database-events.ts"
@@ -174,9 +174,40 @@ export function registerObservability(
         }).pipe(Effect.orDie),
     })
 
-    tracker.initialize((change) => {
-      void Effect.runPromise(rpc.events.emit("changed", change)).catch(() => {})
-    })
+    let disposed = false
+    let retry: ReturnType<typeof setTimeout> | undefined
+    let retryChange: ObservationChange | undefined
+    const publish = (change: ObservationChange) => {
+      if (disposed) return
+      void Effect.runPromise(rpc.events.emit("changed", change)).then(
+        () => {
+          if (retryChange && retryChange.sequence <= change.sequence) {
+            retryChange = undefined
+            if (retry) clearTimeout(retry)
+            retry = undefined
+          }
+        },
+        () => {
+          if (disposed) return
+          if (!retryChange || retryChange.sequence < change.sequence) retryChange = change
+          if (retry) return
+          retry = setTimeout(() => {
+            retry = undefined
+            const latest = retryChange
+            retryChange = undefined
+            if (latest) publish({ ...latest, cause: "gap", resnapshotRequired: true })
+          }, 1_000)
+          retry.unref()
+        },
+      )
+    }
+    tracker.initialize(publish)
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        disposed = true
+        if (retry) clearTimeout(retry)
+      }),
+    )
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {

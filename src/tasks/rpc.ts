@@ -42,13 +42,27 @@ export function registerTaskReads(
         let closed = false
         let pending = false
         let retry: ReturnType<typeof setTimeout> | undefined
+        const retryPublish = () => {
+          if (closed || retry) return
+          retry = setTimeout(() => {
+            retry = undefined
+            publish()
+          }, 1_000)
+          retry.unref()
+        }
         const publish = () => {
           if (closed) return
           if (publishing) {
             pending = true
             return
           }
-          const version = reads.repository.version()
+          let version: number
+          try {
+            version = reads.repository.version()
+          } catch {
+            retryPublish()
+            return
+          }
           if (version === published) return
           publishing = true
           void Effect.runPromise(
@@ -57,19 +71,9 @@ export function registerTaskReads(
               version,
             }),
           )
-            .then(
-              () => {
-                published = version
-              },
-              () => {
-                if (closed || retry) return
-                retry = setTimeout(() => {
-                  retry = undefined
-                  publish()
-                }, 1_000)
-                retry.unref()
-              },
-            )
+            .then(() => {
+              published = version
+            }, retryPublish)
             .finally(() => {
               publishing = false
               if (pending) {
