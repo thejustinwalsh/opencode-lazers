@@ -5,9 +5,6 @@ import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
-  CANDIDATE_A,
-  CANDIDATE_A_SECOND,
-  CANDIDATE_B,
   CANDIDATE_C,
   DIRECTORY_A,
   DIRECTORY_B,
@@ -22,6 +19,29 @@ import {
   taskPage,
   trajectory,
 } from "../models-panel/fixtures/data.ts"
+import {
+  CONFIG_ONE,
+  CONFIG_SINGLE,
+  CONFIG_ZERO,
+  decisionInspect as fixtureDecisionInspect,
+  decisionOverview as fixtureDecisionOverview,
+  decisionRow as fixtureDecisionRow,
+  decisionRows as fixtureDecisionRows,
+  singleEstimate,
+} from "../models-decision/fixtures/decision.ts"
+import type {
+  ModelDecisionConfiguration,
+  ModelDecisionEstimate,
+  ModelDecisionFilters,
+  ModelDecisionInspect,
+  ModelDecisionRow,
+} from "../../src/models/decision-contract.ts"
+import {
+  ModelDecisionConfigurationsOutputSchema,
+  ModelDecisionInspectOutputSchema,
+  ModelDecisionOverviewOutputSchema,
+  ModelDecisionRowsOutputSchema,
+} from "../../src/models/decision-contract.ts"
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -53,6 +73,163 @@ function buttonWithText(container: ParentNode, text: string) {
   return [...container.querySelectorAll("button")].find((button) =>
     button.textContent?.includes(text),
   )
+}
+
+function menuItemWithText(container: ParentNode, text: string) {
+  return [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((button) =>
+    button.textContent?.includes(text),
+  )
+}
+
+const sourceHighDecisionRow = fixtureDecisionRows().rows[0]!
+const highDecisionRow: ModelDecisionRow = {
+  ...sourceHighDecisionRow,
+  cohort: {
+    ...sourceHighDecisionRow.cohort,
+    acceptedTaskCount: sourceHighDecisionRow.efficiency.observationCount,
+  },
+}
+const highConfiguration = highDecisionRow.configuration
+const lowConfiguration: ModelDecisionConfiguration = {
+  ...highConfiguration,
+  configurationID: "configuration:openai/gpt-6::low:opaque/2",
+  label: "GPT-6 · low",
+  route: { ...highConfiguration.route, variant: "low" },
+}
+const qwenConfiguration: ModelDecisionConfiguration = {
+  ...highConfiguration,
+  configurationID: CONFIG_SINGLE,
+  groupID: "group:qwen/qwen-7",
+  label: "Qwen 7",
+  route: { providerID: "qwen", modelID: "qwen-7", variant: null },
+  currentPrice: { ...highConfiguration.currentPrice, sourceRecordID: "qwen/qwen-7" },
+}
+const zeroConfiguration = fixtureDecisionRow(
+  {
+    status: "zero-accepted",
+    tokensPerAcceptedTask: null,
+    currentMarketUSDPerAcceptedTask: null,
+    observationCount: 7,
+  },
+  CONFIG_ZERO,
+).configuration
+const lowDecisionRow: ModelDecisionRow = {
+  ...highDecisionRow,
+  configuration: lowConfiguration,
+  efficiency: {
+    status: "available",
+    tokensPerAcceptedTask: 18_500,
+    currentMarketUSDPerAcceptedTask: 0.185,
+    observationCount: 4,
+  },
+}
+const qwenDecisionRow: ModelDecisionRow = {
+  ...highDecisionRow,
+  configuration: qwenConfiguration,
+  efficiency: {
+    status: "single-observation",
+    tokensPerAcceptedTask: 20_000,
+    currentMarketUSDPerAcceptedTask: 0.08,
+    observationCount: 1,
+  },
+  cohort: { ...highDecisionRow.cohort, acceptedTaskCount: 1 },
+}
+const zeroDecisionRow: ModelDecisionRow = {
+  ...fixtureDecisionRow(
+    {
+      status: "zero-accepted",
+      tokensPerAcceptedTask: null,
+      currentMarketUSDPerAcceptedTask: null,
+      observationCount: 7,
+    },
+    CONFIG_ZERO,
+  ),
+  configuration: zeroConfiguration,
+}
+
+function decisionContextFor(
+  filters: ModelDecisionFilters,
+  directory: string,
+  snapshotID: string,
+  revision = 0,
+) {
+  return {
+    ...fixtureDecisionOverview().context,
+    snapshotID,
+    producedAt: `2026-11-03T12:0${revision % 10}:00.000Z`,
+    scope: { projectDirectory: directory },
+    filters,
+    availability: "ready" as const,
+    freshness: "current" as const,
+    unavailableReason: null,
+  }
+}
+
+function decisionPointDelta(snapshotNumber: number, filters: ModelDecisionFilters) {
+  return snapshotNumber * 125 + (filters.taskKind ? 1_000 : 0) + (filters.persona ? 250 : 0)
+}
+
+function shiftRange(range: { minimum: number; maximum: number } | null, delta: number) {
+  return range ? { minimum: range.minimum + delta, maximum: range.maximum + delta } : null
+}
+
+function shiftDecisionRow(row: ModelDecisionRow, delta: number): ModelDecisionRow {
+  switch (row.efficiency.status) {
+    case "available":
+    case "single-observation":
+      return {
+        ...row,
+        efficiency: {
+          ...row.efficiency,
+          tokensPerAcceptedTask: row.efficiency.tokensPerAcceptedTask + delta,
+          currentMarketUSDPerAcceptedTask:
+            row.efficiency.currentMarketUSDPerAcceptedTask + delta / 100_000,
+        },
+      }
+    case "partial":
+      return {
+        ...row,
+        efficiency: {
+          ...row.efficiency,
+          tokensPerAcceptedTask:
+            row.efficiency.tokensPerAcceptedTask === null
+              ? null
+              : row.efficiency.tokensPerAcceptedTask + delta,
+          currentMarketUSDPerAcceptedTask:
+            row.efficiency.currentMarketUSDPerAcceptedTask === null
+              ? null
+              : row.efficiency.currentMarketUSDPerAcceptedTask + delta / 100_000,
+        },
+      }
+    case "zero-accepted":
+    case "unknown":
+      return row
+  }
+}
+
+function shiftEstimate(estimate: ModelDecisionEstimate, delta: number): ModelDecisionEstimate {
+  switch (estimate.status) {
+    case "available":
+    case "single-observation":
+      return {
+        ...estimate,
+        range: {
+          tokens: shiftRange(estimate.range.tokens, delta)!,
+          currentMarketUSD: shiftRange(estimate.range.currentMarketUSD, delta / 100_000)!,
+        },
+      }
+    case "partial":
+      return {
+        ...estimate,
+        range: {
+          tokens: shiftRange(estimate.range.tokens, delta),
+          currentMarketUSD: shiftRange(estimate.range.currentMarketUSD, delta / 100_000),
+        },
+      }
+    case "zero-accepted":
+    case "unknown":
+      return estimate
+  }
 }
 
 test("gui.setup registers and mounts the real Models panel render with isolated, cancellable DOM state", async () => {
@@ -152,6 +329,17 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const sourceSignals = new Map<string, AbortSignal[]>()
     const locationSignals = new Map<string, AbortSignal[]>()
     const comparisonCounts = new Map<string, number>()
+    const decisionSnapshotCounts = new Map<string, number>()
+    const decisionSnapshots = new Map<string, string>()
+    const decisionDeltas = new Map<string, number>()
+    let failNextComparison = false
+    let suspendedInspection:
+      | {
+          configurationID: string
+          pending: Deferred<ModelDecisionInspect>
+          output?: ModelDecisionInspect
+        }
+      | undefined
     const deferredA1 = deferred<ReturnType<typeof sourceEvidence>>()
     const deferredA3 = deferred<ReturnType<typeof sourceEvidence>>()
     const deferredB2 = deferred<ReturnType<typeof sourceEvidence>>()
@@ -166,8 +354,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         [DIRECTORY_A]: {
           tab: "compare",
           persona: "ui",
+          taskKind: null,
           selectedTaskID: TASK_A,
           selectedCandidateID: CANDIDATE_C,
+          selectedConfigurationID: CONFIG_ONE,
           split: 56,
           topScroll: 0,
           inspectorScroll: 0,
@@ -175,8 +365,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         [DIRECTORY_B]: {
           tab: "compare",
           persona: "ui",
+          taskKind: null,
           selectedTaskID: null,
           selectedCandidateID: null,
+          selectedConfigurationID: null,
           split: 56,
           topScroll: 0,
           inspectorScroll: 0,
@@ -223,6 +415,34 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         id: directory === DIRECTORY_A ? PROJECT_A : PROJECT_B,
       },
     })
+    const decisionKey = (directory: string, filters: ModelDecisionFilters) =>
+      `${directory}:${JSON.stringify(filters)}`
+    const decisionSnapshot = (directory: string, filters: ModelDecisionFilters) =>
+      decisionSnapshots.get(decisionKey(directory, filters)) ?? "decision:missing-overview"
+    const decisionContext = (
+      directory: string,
+      filters: ModelDecisionFilters,
+      snapshotID: string,
+      revision = 0,
+    ) => decisionContextFor(filters, directory, snapshotID, revision)
+    const decisionConfigs = new Map<string, ModelDecisionConfiguration>([
+      [CONFIG_ONE, highConfiguration],
+      [lowConfiguration.configurationID, lowConfiguration],
+      [CONFIG_SINGLE, qwenConfiguration],
+      [CONFIG_ZERO, zeroConfiguration],
+    ])
+    const decisionRowsByID = new Map<string, ModelDecisionRow>([
+      [CONFIG_ONE, highDecisionRow],
+      [lowConfiguration.configurationID, lowDecisionRow],
+      [CONFIG_SINGLE, qwenDecisionRow],
+      [CONFIG_ZERO, zeroDecisionRow],
+    ])
+    const deltaForSnapshot = (snapshotID: string) => decisionDeltas.get(snapshotID) ?? 0
+    const decisionRowForSnapshot = (configurationID: string, snapshotID: string) =>
+      shiftDecisionRow(
+        decisionRowsByID.get(configurationID) ?? highDecisionRow,
+        deltaForSnapshot(snapshotID),
+      )
     const client = {
       location: {
         get: async (
@@ -254,8 +474,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const count = nextCount(key)
               comparisonCounts.set(directory, (comparisonCounts.get(directory) ?? 0) + 1)
               record(directory, "lazers.models", "comparison", input, options.signal)
-              if (directory === DIRECTORY_A && count === 9)
+              if (directory === DIRECTORY_A && failNextComparison) {
+                failNextComparison = false
                 throw new Error("comparison request unavailable")
+              }
               const projectID = directory === DIRECTORY_A ? PROJECT_A : PROJECT_B
               return comparison(projectID, count > 1 ? 2 : 1, input.cursor)
             },
@@ -285,6 +507,182 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const count = nextCount(`${directory}:settings`)
               record(directory, "lazers.models", "settings", input, options.signal)
               return settings(directory, input.taskID, count)
+            },
+          }
+        if (definition.id === "lazers.models.decision.v2")
+          return {
+            overview: async (
+              input: {
+                sessionID: string
+                scope: { projectDirectory: string }
+                filters: ModelDecisionFilters
+              },
+              options: { location: { directory: string }; signal: AbortSignal },
+            ) => {
+              const directory = options.location.directory
+              const key = decisionKey(directory, input.filters)
+              const revision = (decisionSnapshotCounts.get(key) ?? 0) + 1
+              decisionSnapshotCounts.set(key, revision)
+              const snapshotID = `decision:${directory}:${revision}:${input.filters.persona ?? "all"}:${input.filters.taskKind ?? "all"}`
+              decisionSnapshots.set(key, snapshotID)
+              const delta = decisionPointDelta(revision, input.filters)
+              decisionDeltas.set(snapshotID, delta)
+              record(directory, "lazers.models.decision.v2", "overview", input, options.signal)
+              const base = fixtureDecisionOverview()
+              const points = base.graph.points.map((point) => {
+                const row = decisionRowForSnapshot(point.configurationID, snapshotID)
+                const tokens = row.efficiency.tokensPerAcceptedTask
+                const cost = row.efficiency.currentMarketUSDPerAcceptedTask
+                if (tokens === null || cost === null)
+                  throw new Error("Fixture graph points need matching measured row coordinates")
+                return {
+                  ...point,
+                  label: row.configuration.label,
+                  tokensPerAcceptedTask: tokens,
+                  currentMarketUSDPerAcceptedTask: cost,
+                  observationCount: row.efficiency.observationCount,
+                  acceptedTaskCount: row.cohort.acceptedTaskCount,
+                }
+              })
+              return ModelDecisionOverviewOutputSchema.parse({
+                context: decisionContext(directory, input.filters, snapshotID, revision),
+                graph: {
+                  scope: "global-filtered-snapshot",
+                  points,
+                  frontierConfigurationIDs: base.graph.frontierConfigurationIDs,
+                },
+                configurationCount: decisionConfigs.size,
+                groupCount: 3,
+              })
+            },
+            rows: async (
+              input: {
+                sessionID: string
+                scope: { projectDirectory: string }
+                filters: ModelDecisionFilters
+                cursor?: string
+                limit: number
+              },
+              options: { location: { directory: string }; signal: AbortSignal },
+            ) => {
+              const directory = options.location.directory
+              record(directory, "lazers.models.decision.v2", "rows", input, options.signal)
+              const snapshotID = decisionSnapshot(directory, input.filters)
+              return ModelDecisionRowsOutputSchema.parse({
+                context: decisionContext(directory, input.filters, snapshotID),
+                rows: (input.cursor
+                  ? [qwenDecisionRow, zeroDecisionRow]
+                  : [highDecisionRow, lowDecisionRow]
+                ).map((row) =>
+                  decisionRowForSnapshot(row.configuration.configurationID, snapshotID),
+                ),
+                totalCount: 4,
+                nextCursor: input.cursor ? null : "rows-next",
+              })
+            },
+            configurations: async (
+              input: {
+                sessionID: string
+                scope: { projectDirectory: string }
+                filters: ModelDecisionFilters
+                cursor?: string
+                limit: number
+              },
+              options: { location: { directory: string }; signal: AbortSignal },
+            ) => {
+              const directory = options.location.directory
+              record(
+                directory,
+                "lazers.models.decision.v2",
+                "configurations",
+                input,
+                options.signal,
+              )
+              const snapshotID = decisionSnapshot(directory, input.filters)
+              return ModelDecisionConfigurationsOutputSchema.parse({
+                context: decisionContext(directory, input.filters, snapshotID),
+                configurations: input.cursor
+                  ? [qwenConfiguration, zeroConfiguration]
+                  : [highConfiguration, lowConfiguration],
+                totalCount: decisionConfigs.size,
+                nextCursor: input.cursor ? null : "configurations-next",
+              })
+            },
+            inspect: async (
+              input: {
+                sessionID: string
+                scope: { projectDirectory: string }
+                filters: ModelDecisionFilters
+                snapshotID: string
+                configurationID: string
+                selectedTaskID: string | null
+                contributorCursor?: string
+                contributorLimit: number
+              },
+              options: { location: { directory: string }; signal: AbortSignal },
+            ) => {
+              const directory = options.location.directory
+              record(directory, "lazers.models.decision.v2", "inspect", input, options.signal)
+              const configuration = decisionConfigs.get(input.configurationID) ?? {
+                ...highConfiguration,
+                configurationID: input.configurationID,
+                label: "Off-page configuration",
+              }
+              const row = decisionRowForSnapshot(input.configurationID, input.snapshotID)
+              const template = fixtureDecisionInspect()
+              if (template.status !== "found") throw new Error("Expected fixture inspection")
+              const contributor = template.contributorPage.contributors[0]!
+              const estimate =
+                input.configurationID === CONFIG_ZERO
+                  ? {
+                      status: "zero-accepted" as const,
+                      basis: "no-successful-task-efficiency" as const,
+                      observationCount: 7,
+                      range: { tokens: null, currentMarketUSD: null },
+                      confidenceInterval: null,
+                    }
+                  : input.configurationID === CONFIG_SINGLE
+                    ? singleEstimate
+                    : template.estimate
+              const output = ModelDecisionInspectOutputSchema.parse({
+                ...template,
+                context: decisionContext(
+                  directory,
+                  input.filters,
+                  input.snapshotID,
+                  decisionSnapshotCounts.get(decisionKey(directory, input.filters)) ?? 0,
+                ),
+                configuration,
+                cohort: row.cohort,
+                efficiency: row.efficiency,
+                nativeReportedCost: row.nativeReportedCost,
+                selectedTaskID: input.selectedTaskID,
+                estimate: shiftEstimate(estimate, deltaForSnapshot(input.snapshotID)),
+                contributorPage: input.contributorCursor
+                  ? {
+                      contributors: [
+                        {
+                          ...contributor,
+                          taskID: TASK_A,
+                          taskReference: "LZ-17",
+                          attemptID: null,
+                          contribution: "accepted" as const,
+                        },
+                      ],
+                      totalCount: 2,
+                      nextCursor: null,
+                    }
+                  : {
+                      contributors: [contributor],
+                      totalCount: 2,
+                      nextCursor: "contributors-next",
+                    },
+              })
+              if (suspendedInspection?.configurationID === input.configurationID) {
+                suspendedInspection.output = output
+                return suspendedInspection.pending.promise
+              }
+              return output
             },
           }
         if (definition.id === "lazers.tasks")
@@ -378,12 +776,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       server: sessionA.server,
     }
     const sessions = [sessionA, sessionB]
+    const appearanceStore = host.createReactiveStore({
+      mode: "dark" as "dark" | "light",
+      font: "monospace",
+    })
     const context = {
       id: "lazers",
       app: { platform: "web" },
       signal: new AbortController().signal,
       ui: host.createTestUI(),
-      appearance: { font: () => "monospace" },
+      appearance: {
+        mode: () => appearanceStore.value.mode,
+        font: (_kind: "mono") => appearanceStore.value.font,
+      },
       add: (token: unknown, value: unknown) => registrations.push({ token, value }),
       sessions: { current: () => sessionA, list: () => sessions },
       layout: { open: (...args: unknown[]) => opened.push(args) },
@@ -490,7 +895,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     mounts.push(mountA)
     await until(
       () =>
-        containerA.querySelector('[data-candidate-id="' + CANDIDATE_A + '"]') !== null &&
+        containerA.querySelector(
+          `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
+        ) !== null &&
+        containerA.querySelector(".lazers-models-comparison-chart") !== null &&
         containerA.textContent?.includes("Refreshing sources") === true,
     )
     await until(
@@ -500,17 +908,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           ?.getAttribute("title")
           ?.includes("Objective A initial") === true,
     )
+    await until(
+      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6",
+    )
 
     const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
-    const filterDetails = topPaneA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-filter-details",
-    )!
     const sourceDetails = topPaneA.querySelector<HTMLDetailsElement>(
       ".lazers-models-sources-details",
     )!
-    expect(filterDetails.open).toBe(false)
     expect(sourceDetails.open).toBe(false)
-    expect(filterDetails.querySelector("div")?.closest("details")).toBe(filterDetails)
     expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
       sourceDetails,
     )
@@ -519,10 +925,86 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(sourceDetails.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-    expect(comparePanel.querySelector(".lazers-models-chart-empty")?.textContent).toContain(
-      "No sample points or frontier are shown",
+    expect(
+      comparePanel
+        .querySelector(".lazers-models-comparison-chart [role=img]")
+        ?.getAttribute("aria-label"),
+    ).toContain("GPT-6")
+    const chartHost = comparePanel.querySelector<HTMLDivElement>(
+      ".lazers-models-comparison-chart > div[role=img]",
+    )!
+    let chartWidth = 640
+    const chartHeight = 280
+    Object.defineProperty(chartHost, "clientWidth", { configurable: true, get: () => chartWidth })
+    Object.defineProperty(chartHost, "clientHeight", { configurable: true, get: () => chartHeight })
+    Object.defineProperty(chartHost, "getBoundingClientRect", {
+      configurable: true,
+      value: () =>
+        ({
+          top: 0,
+          left: 0,
+          right: chartWidth,
+          bottom: chartHeight,
+          width: chartWidth,
+          height: chartHeight,
+        }) as DOMRect,
+    })
+    dom.window.dispatchEvent(new dom.Event("resize"))
+    const chartSVG = () => chartHost.querySelector<SVGSVGElement>("svg")
+    const chartSVGMarkup = () => chartSVG()?.outerHTML ?? ""
+    const settleChart = async () => {
+      for (let frame = 0; frame < 4; frame++)
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      return chartSVGMarkup()
+    }
+    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    const initialSVGGeometry = await settleChart()
+    appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
+      draft.font = "Test Mono"
+    })
+    await until(() => chartSVGMarkup().includes("Test Mono"))
+    const themedSVGGeometry = await settleChart()
+    expect(themedSVGGeometry).not.toBe(initialSVGGeometry)
+    chartHost.style.setProperty("--surface-base", "rgb(1, 2, 3)")
+    appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
+      draft.mode = "light"
+    })
+    await until(() => chartSVGMarkup() !== themedSVGGeometry)
+    await settleChart()
+    chartWidth = 720
+    dom.window.dispatchEvent(new dom.Event("resize"))
+    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    await settleChart()
+    expect(
+      comparePanel.querySelectorAll(".lazers-models-decision-row[data-group-id]"),
+    ).toHaveLength(1)
+    expect(
+      [...comparePanel.querySelectorAll(".lazers-models-decision-rows thead th")].map(
+        (cell) => cell.textContent,
+      ),
+    ).toEqual(["Model", "Accepted", "Cost / task"])
+    const initialRow = comparePanel.querySelector(".lazers-models-decision-row")!
+    expect(initialRow.querySelector("th[scope=row]")?.textContent).toBe("GPT-6")
+    expect(initialRow.querySelector("td:nth-child(2)")?.textContent).toBe("9")
+    expect(initialRow.querySelector("td:nth-child(3)")?.textContent).toBe("$0.127206")
+    expect(initialRow.querySelector("td:nth-child(3)")?.getAttribute("title")).toBe(
+      "Current market valuation per accepted task.",
     )
-    expect(comparePanel.querySelectorAll(".lazers-models-chart-empty p")).toHaveLength(1)
+    expect(initialRow.textContent).not.toContain("openai")
+    expect(initialRow.textContent).not.toContain("gpt-6")
+    expect(initialRow.textContent).not.toContain("Effort")
+    expect(initialRow.textContent).not.toContain("efficiency")
+    expect(initialRow.textContent).not.toContain("failure")
+    expect(initialRow.textContent).not.toContain("failed")
+    expect(initialRow.textContent).not.toContain("retry")
+    expect(initialRow.textContent).not.toContain("Native reported charges")
+    expect(initialRow.querySelectorAll("button")).toHaveLength(1)
+    expect(initialRow.querySelector("[role=menu]")).toBeNull()
+    expect(comparePanel.querySelector("[data-decision-status]")?.textContent).toContain(
+      "Current producer snapshot",
+    )
     const refreshWarning = topPaneA.querySelector<HTMLElement>(".lazers-models-refresh-note")!
     expect(refreshWarning.textContent).toContain("Refreshing sources")
     expect(refreshWarning.closest("details")).toBeNull()
@@ -539,22 +1021,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "Objective A initial",
     )
 
-    const rowsBeforeMore = [
-      ...containerA.querySelectorAll<HTMLButtonElement>("[data-candidate-id]"),
-    ]
-    expect(rowsBeforeMore).toHaveLength(2)
-    expect(rowsBeforeMore[0]?.tabIndex).toBe(0)
-    expect(rowsBeforeMore[1]?.tabIndex).toBe(-1)
-    expect(rowsBeforeMore[0]?.textContent).toContain("Effort Not specified")
-    expect(rowsBeforeMore[0]?.textContent).toContain("Available")
-    expect(rowsBeforeMore[0]?.textContent).not.toContain("No exact match")
-    expect(rowsBeforeMore[0]?.textContent).not.toContain("No matched benchmark")
-    expect(rowsBeforeMore[0]?.getAttribute("aria-label")).toContain("openai / gpt-6")
-    expect(rowsBeforeMore[0]?.getAttribute("aria-label")).not.toContain(TASK_A)
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
-      "The selected candidate is not in the available evidence page.",
+      "execution accepted",
     )
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_C)
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).not.toContain(
+      "LZ-17 · submitted",
+    )
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
     expect(
       calls.some(
         (call) =>
@@ -563,6 +1036,341 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           call.directory === DIRECTORY_A,
       ),
     ).toBe(true)
+
+    const decisionInputs = calls
+      .filter((call) => call.service === "lazers.models.decision.v2")
+      .map((call) => call.input as { filters?: ModelDecisionFilters })
+    expect(decisionInputs.every((input) => input.filters?.persona === "ui")).toBe(true)
+
+    const chartDescription = () =>
+      containerA.querySelector(".lazers-models-comparison-chart > p")?.textContent ?? ""
+    const globalGraphDescription = chartDescription()
+    const globalGraphSVG = chartSVGMarkup()
+    const initialChartButtons = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(
+        ".lazers-models-comparison-chart-data [data-configuration-id]",
+      ),
+    ]
+    expect(initialChartButtons.map((button) => button.dataset.configurationId)).toEqual([
+      CONFIG_ONE,
+      CONFIG_SINGLE,
+    ])
+    expect(
+      initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
+    ).toBe(false)
+    expect(containerA.querySelector(`[data-group-id="group:qwen/qwen-7"]`)).toBeNull()
+
+    const qwenPoint = containerA.querySelector<HTMLButtonElement>(
+      `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+    )!
+    const beforePointSelectionSVG = globalGraphSVG
+    qwenPoint.click()
+    await until(
+      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "Qwen 7",
+    )
+    await until(() => qwenPoint.getAttribute("aria-pressed") === "true")
+    await until(() => chartSVGMarkup() !== beforePointSelectionSVG)
+    const selectedQwenGraphSVG = await settleChart()
+    const currentFilters = (
+      calls.filter((call) => call.method === "overview").at(-1)?.input as {
+        filters: ModelDecisionFilters
+      }
+    ).filters
+    const currentSnapshotID = decisionSnapshots.get(decisionKey(DIRECTORY_A, currentFilters))
+    await until(() =>
+      calls.some((call) => {
+        if (call.service !== "lazers.models.decision.v2" || call.method !== "inspect") return false
+        return (
+          (
+            call.input as {
+              configurationID?: string
+              selectedTaskID?: string | null
+              snapshotID?: string
+            }
+          ).configurationID === CONFIG_SINGLE &&
+          (call.input as { selectedTaskID?: string | null }).selectedTaskID === TASK_A &&
+          (call.input as { snapshotID?: string }).snapshotID === currentSnapshotID
+        )
+      }),
+    )
+    for (const method of ["overview", "rows", "configurations", "inspect"])
+      expect(
+        calls.some(
+          (call) =>
+            call.directory === DIRECTORY_A &&
+            call.service === "lazers.models.decision.v2" &&
+            call.method === method,
+        ),
+      ).toBe(true)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_SINGLE)
+    expect(qwenPoint.getAttribute("aria-pressed")).toBe("true")
+    const qwenInspectionInput = calls
+      .filter((call) => call.method === "inspect")
+      .map(
+        (call) =>
+          call.input as {
+            configurationID?: string
+            selectedTaskID?: string | null
+            snapshotID?: string
+          },
+      )
+      .find(
+        (input) =>
+          input.configurationID === CONFIG_SINGLE && input.snapshotID === currentSnapshotID,
+      )
+    expect(qwenInspectionInput).toMatchObject({
+      configurationID: CONFIG_SINGLE,
+      selectedTaskID: TASK_A,
+      snapshotID: currentSnapshotID,
+    })
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-inspector .lazers-models-estimate")
+          ?.textContent?.includes("n=1") === true,
+    )
+    expect(
+      containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
+    ).toContain("one observed value, no interval")
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
+      "Current price",
+    )
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
+      "native-reported",
+    )
+    const routeEvidence = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-inspector .lazers-models-evidence-details",
+    )!
+    expect(routeEvidence.open).toBe(false)
+    expect(routeEvidence.textContent).toContain("Exact route")
+    expect(routeEvidence.textContent).toContain("Native reported charges")
+    routeEvidence.open = true
+    routeEvidence.dispatchEvent(new Event("toggle"))
+    expect(routeEvidence.open).toBe(true)
+
+    expect(containerA.querySelector(`[data-group-id="group:qwen/qwen-7"]`)).toBeNull()
+    const moreRows = buttonWithText(containerA, "Load more model groups")
+    if (!moreRows)
+      throw new Error(
+        `Missing row pager: ${containerA.textContent}; row inputs: ${JSON.stringify(calls.filter((call) => call.method === "rows").map((call) => call.input))}`,
+      )
+    moreRows.click()
+    await until(() =>
+      calls.some((call) => call.method === "rows" && (call.input as { cursor?: string }).cursor),
+    )
+    await until(() => containerA.querySelector(`[data-group-id="group:qwen/qwen-7"]`) !== null)
+    await settleChart()
+    expect(chartDescription()).toBe(globalGraphDescription)
+    expect(chartSVGMarkup()).toBe(selectedQwenGraphSVG)
+    const moreConfigurations = buttonWithText(containerA, "Load more exact configurations")
+    if (!moreConfigurations) throw new Error("Missing exact-configuration pager")
+    moreConfigurations.click()
+    await until(() =>
+      calls.some(
+        (call) =>
+          call.method === "configurations" && Boolean((call.input as { cursor?: string }).cursor),
+      ),
+    )
+    await until(() => containerA.querySelector(`[data-configuration-id="${CONFIG_ZERO}"]`) !== null)
+    expect(chartDescription()).toBe(globalGraphDescription)
+    expect(chartSVGMarkup()).toBe(selectedQwenGraphSVG)
+
+    const firstContributorPage = containerA.querySelector(".lazers-models-contributors")!
+    const evidenceDisclosure = firstContributorPage.closest<HTMLDetailsElement>(
+      ".lazers-models-evidence-details",
+    )!
+    evidenceDisclosure.open = true
+    firstContributorPage.closest<HTMLDetailsElement>(".lazers-models-contributor-details")!.open =
+      true
+    const contributorTextBefore = firstContributorPage.textContent
+    const moreContributors = buttonWithText(firstContributorPage, "Load more contributors")
+    if (!moreContributors) throw new Error("Missing contributor pager")
+    moreContributors.click()
+    await until(() =>
+      calls.some(
+        (call) =>
+          call.method === "inspect" &&
+          Boolean((call.input as { contributorCursor?: string }).contributorCursor),
+      ),
+    )
+    await until(() => firstContributorPage.textContent?.includes("LZ-17") === true)
+    expect(chartDescription()).toBe(globalGraphDescription)
+    const contributorTrajectory = firstContributorPage.querySelector<HTMLButtonElement>(
+      '[aria-label="Open trajectory for LZ-17"]',
+    )
+    contributorTrajectory?.click()
+    const contributorTarget = (
+      trajectoryStore.snapshot().projects[DIRECTORY_A] as { target: Record<string, unknown> }
+    ).target
+    expect(contributorTarget).toMatchObject({
+      taskID: TASK_A,
+      reference: "LZ-17",
+      projectID: PROJECT_A,
+      projectDirectory: DIRECTORY_A,
+    })
+    expect(contributorTextBefore).toContain("LZ-42")
+
+    const highRow = containerA.querySelector<HTMLButtonElement>(
+      `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
+    )!
+    const highRowParent = highRow.closest("tr")!
+    const pendingHighInspection = deferred<ModelDecisionInspect>()
+    const inspectCountBeforeRowSelection = calls.filter(
+      (call) => call.service === "lazers.models.decision.v2" && call.method === "inspect",
+    ).length
+    suspendedInspection = { configurationID: CONFIG_ONE, pending: pendingHighInspection }
+    highRow.focus()
+    expect(browserDocument.activeElement).toBe(highRow)
+    highRow.click()
+    await until(() =>
+      calls
+        .filter((call) => call.service === "lazers.models.decision.v2" && call.method === "inspect")
+        .slice(inspectCountBeforeRowSelection)
+        .some((call) => {
+          const input = call.input as {
+            configurationID?: string
+            selectedTaskID?: string | null
+            snapshotID?: string
+          }
+          return (
+            input.configurationID === CONFIG_ONE &&
+            input.selectedTaskID === TASK_A &&
+            input.snapshotID === currentSnapshotID
+          )
+        }),
+    )
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-inspector")
+          ?.textContent?.includes("Loading exact configuration inspection") === true,
+    )
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
+    expect(highRow.isConnected).toBe(true)
+    expect(highRow.closest("tr")).toBe(highRowParent)
+    expect(browserDocument.activeElement).toBe(highRow)
+    expect(highRow.getAttribute("aria-pressed")).toBe("true")
+    await until(() => suspendedInspection?.output !== undefined)
+    pendingHighInspection.resolve(suspendedInspection!.output!)
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-inspector .lazers-models-estimate")
+          ?.textContent?.includes("n=9") === true,
+    )
+    expect(highRow.isConnected).toBe(true)
+    expect(highRow.closest("tr")).toBe(highRowParent)
+    expect(browserDocument.activeElement).toBe(highRow)
+    expect(highRow.getAttribute("aria-pressed")).toBe("true")
+    expect(
+      containerA.querySelector<HTMLDetailsElement>(
+        ".lazers-models-inspector .lazers-models-evidence-details",
+      )?.open,
+    ).toBe(true)
+    suspendedInspection = undefined
+    const effortTrigger = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+    ].find((button) => button.textContent?.includes("Effort"))
+    effortTrigger?.click()
+    const lowOption = menuItemWithText(containerA, "low")
+    if (!lowOption) throw new Error(`No low effort option: ${containerA.textContent}`)
+    lowOption.click()
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    if (
+      modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID !==
+      lowConfiguration.configurationID
+    )
+      throw new Error(
+        `Effort action failed: ${JSON.stringify(modelStore.snapshot().projects[DIRECTORY_A])}`,
+      )
+    await until(
+      () =>
+        containerA
+          .querySelector(`.lazers-models-decision-row-select[aria-pressed="true"]`)
+          ?.getAttribute("data-configuration-id") === lowConfiguration.configurationID,
+    )
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(
+      lowConfiguration.configurationID,
+    )
+    expect(calls.filter((call) => call.method === "inspect").at(-1)?.input).toMatchObject({
+      configurationID: lowConfiguration.configurationID,
+      selectedTaskID: TASK_A,
+    })
+
+    const providerTrigger = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+    ].find((button) => button.textContent?.includes("Provider"))!
+    providerTrigger.click()
+    menuItemWithText(containerA, "qwen / qwen-7")?.click()
+    await until(
+      () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_SINGLE,
+    )
+    expect(containerA.querySelector(".lazers-models-inspector h2")?.textContent).toBe("Qwen 7")
+
+    const zeroProviderTrigger = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+    ].find((button) => button.textContent?.includes("Provider"))!
+    zeroProviderTrigger.click()
+    menuItemWithText(containerA, "anthropic / sonnet")?.click()
+    await until(
+      () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_ZERO,
+    )
+    expect(
+      containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
+    ).toContain("No accepted tasks")
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).not.toContain(
+      "Empirical observed spread · n=7",
+    )
+    expect(chartDescription()).toBe(globalGraphDescription)
+
+    const personaFilter = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),
+    ].find((button) => button.textContent?.includes("Persona"))!
+    personaFilter.click()
+    menuItemWithText(containerA, "Systems")?.click()
+    await until(
+      () =>
+        containerA.querySelector(".lazers-models-filters")?.textContent?.includes("Systems") ===
+        true,
+    )
+    await until(
+      () =>
+        containerA.querySelector(".lazers-models-inspector h2")?.textContent ===
+          "Off-page configuration" ||
+        calls.some(
+          (call) =>
+            call.method === "overview" &&
+            (call.input as { filters?: ModelDecisionFilters }).filters?.persona === "systems",
+        ),
+    )
+    const systemsOverview = calls.filter((call) => call.method === "overview").at(-1)?.input as {
+      filters?: ModelDecisionFilters
+    }
+    expect(systemsOverview.filters?.persona).toBe("systems")
+    const taskKindFilter = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-filters button"),
+    ].find((button) => button.textContent?.includes("Task kind"))!
+    taskKindFilter.click()
+    menuItemWithText(containerA, "Testing")?.click()
+    await until(
+      () =>
+        containerA.querySelector(".lazers-models-filters")?.textContent?.includes("Testing") ===
+        true,
+    )
+    await until(() =>
+      calls.some(
+        (call) =>
+          call.method === "overview" &&
+          (call.input as { filters?: ModelDecisionFilters }).filters?.taskKind === "testing",
+      ),
+    )
+    expect(
+      calls
+        .filter(
+          (call) => call.service === "lazers.models.decision.v2" && call.method === "overview",
+        )
+        .at(-1)?.input,
+    ).toMatchObject({ filters: { persona: "systems", taskKind: "testing" } })
     expect(
       calls.some(
         (call) =>
@@ -577,60 +1385,22 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () =>
         !buttonWithText(containerA, "Refresh")?.disabled && comparisonCounts.get(DIRECTORY_A) === 2,
     )
-    buttonWithText(containerA, "Load more candidates")?.click()
-    await until(() => containerA.querySelector(`[data-candidate-id="${CANDIDATE_C}"]`) !== null)
-    expect(
-      containerA
-        .querySelector(`[data-candidate-id="${CANDIDATE_C}"]`)
-        ?.getAttribute("aria-pressed"),
-    ).toBe("true")
-    await until(() => containerA.textContent?.includes("10 tokens") === true)
-
     const inspectorA = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
-    expect(inspectorA.querySelector(".lazers-models-estimate")?.textContent).toContain(
-      "Task estimate unavailable",
-    )
     expect(inspectorA.querySelector(".lazers-models-task-summary")?.textContent).toContain("LZ-17")
+    expect(inspectorA.querySelector(".lazers-models-task-summary")?.textContent).toContain(
+      "execution accepted",
+    )
     const effortDetails = inspectorA.querySelector<HTMLDetailsElement>(
       ".lazers-models-task-effort-details",
     )!
     expect(effortDetails.open).toBe(false)
-    expect(effortDetails.querySelector(".lazers-models-category-list")?.closest("details")).toBe(
+    expect(effortDetails.querySelector(".lazers-models-category-row")?.closest("details")).toBe(
       effortDetails,
     )
     effortDetails.open = true
-    expect(effortDetails.textContent).toContain("10 tokens · observed subtotal")
-    expect(effortDetails.textContent).toContain("native-session-usage")
-    expect(effortDetails.textContent).toContain("observed ")
-    expect(effortDetails.textContent).toContain("partial coverage")
-    expect(effortDetails.textContent).toContain("not read")
-    expect(effortDetails.textContent).toContain("attempt-route-1")
-    expect(effortDetails.textContent).toContain("Plan route · explicit")
+    expect(effortDetails.textContent).toContain("tokens")
     expect(effortDetails.textContent).toContain("market-equivalent cost: Unknown")
-
-    const candidateEvidence = inspectorA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-evidence-details",
-    )!
-    expect(candidateEvidence.open).toBe(false)
-    expect(
-      candidateEvidence.querySelector(".lazers-models-evidence-summary")?.closest("details"),
-    ).toBe(candidateEvidence)
-    candidateEvidence.open = true
-    expect(candidateEvidence.textContent).toContain("Variants (coverage unknown): Not reported")
-    expect(candidateEvidence.textContent).toContain("Selected route variant: Not specified")
-    expect(candidateEvidence.textContent).toContain("External model correspondence: unresolved")
-    expect(candidateEvidence.textContent).toContain("Benchmark correspondence: unresolved")
-    candidateEvidence.open = false
     effortDetails.open = false
-
-    const rowsAfterMore = [...containerA.querySelectorAll<HTMLButtonElement>("[data-candidate-id]")]
-    rowsAfterMore[2]?.focus()
-    rowsAfterMore[2]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }))
-    expect(browserDocument.activeElement).toBe(rowsAfterMore[1]!)
-    expect(rowsAfterMore[1]?.getAttribute("aria-pressed")).toBe("true")
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(
-      CANDIDATE_A_SECOND,
-    )
 
     const separator = containerA.querySelector<HTMLDivElement>('[role="separator"]')!
     expect(separator.getAttribute("aria-valuemin")).toBe("24")
@@ -727,10 +1497,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.split).toBe(65)
 
     const firstRow = containerA.querySelector<HTMLButtonElement>(
-      `[data-candidate-id="${CANDIDATE_A}"]`,
+      `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
     )!
     firstRow.click()
-    expect(firstRow.getAttribute("aria-pressed")).toBe("true")
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    if (firstRow.getAttribute("aria-pressed") !== "true")
+      throw new Error(
+        `Exact decision row did not select: ${JSON.stringify(modelStore.snapshot().projects[DIRECTORY_A])} · row=${firstRow.parentElement?.parentElement?.outerHTML} · inspector=${containerA.querySelector(".lazers-models-inspector h2")?.textContent} · inspect=${JSON.stringify(
+          calls
+            .filter((call) => call.method === "inspect")
+            .slice(-4)
+            .map((call) => call.input),
+        )}`,
+      )
     const trajectoryButton = buttonWithText(
       containerA.querySelector(".lazers-models-task-summary")!,
       "Open trajectory",
@@ -771,11 +1550,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       )
       .map((call) => call.input)
     expect(comparisonInputs).toContainEqual({ sessionID: sessionA.id, limit: 100 })
-    expect(comparisonInputs).toContainEqual({
-      sessionID: sessionA.id,
-      limit: 100,
-      cursor: "more-candidates",
-    })
 
     const topPaneBeforeRefresh = containerA.querySelector<HTMLElement>(".lazers-models-top")!
     const inspectorBeforeRefresh = containerA.querySelector<HTMLElement>(
@@ -795,8 +1569,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         containerA
           .querySelector(".lazers-models-inspector")
           ?.textContent?.includes("Objective A refreshed") === true &&
-        containerA.querySelector(".lazers-models-inspector")?.textContent?.includes("42 tokens") ===
-          true &&
+        containerA
+          .querySelector(".lazers-models-task-objective")
+          ?.textContent?.includes("Objective A refreshed") === true &&
         containerA.textContent?.includes("openai / route-2") === true,
     )
     expect(topPaneBeforeRefresh.scrollTop).toBe(42)
@@ -852,57 +1627,40 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     ).toBe(true)
 
+    const chartBeforeCompareTab = chartDescription()
     containerA
       .querySelector<HTMLButtonElement>('[role="tab"][aria-controls="lazers-models-compare-panel"]')
       ?.click()
-    await until(
-      () =>
-        containerA
-          .querySelector(".lazers-models-candidate-list")
-          ?.textContent?.includes("GPT-6 refreshed") === true,
-    )
-    const details = containerA.querySelector<HTMLDetailsElement>(".lazers-models-evidence-details")!
-    details.open = true
-    expect(details.textContent).toContain("100 shown of 105 total; 5 omitted")
-    expect(details.textContent).toContain("effort-100")
-    expect(details.textContent).not.toContain("effort-101")
+    await until(() => containerA.querySelector(".lazers-models-decision-rows") !== null)
     const effortDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-task-effort-details",
     )!
     const sourceDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-sources-details",
     )!
-    const filterDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-filter-details",
-    )!
     effortDetailsBeforeRefresh.open = true
     sourceDetailsBeforeRefresh.open = true
-    filterDetailsBeforeRefresh.open = true
 
     buttonWithText(containerA, "Refresh")?.click()
-    await until(() => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 3)
+    await until(
+      () =>
+        (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === 3 &&
+        chartDescription() !== chartBeforeCompareTab,
+    )
     const hiddenSignal = sourceSignals.get(DIRECTORY_A)?.[2]
-    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).not.toBeNull()
-    expect(containerA.querySelector(".lazers-models-candidate-list")?.textContent).toContain(
-      "GPT-6 refreshed",
+    expect(containerA.querySelector(".lazers-models-decision-rows")?.textContent).toContain("GPT-6")
+    expect(containerA.querySelector(".lazers-models-decision-rows")?.textContent).not.toContain(
+      "openai",
     )
     expect(containerA.textContent).toContain("Refreshing sources")
-    expect(
-      containerA
-        .querySelector(".lazers-models-inspector")
-        ?.querySelector<HTMLDetailsElement>(".lazers-models-evidence-details")?.open,
-    ).toBe(true)
     expect(
       containerA.querySelector(".lazers-models-task-effort-details")?.closest("details")?.open,
     ).toBe(true)
     expect(
       containerA.querySelector<HTMLDetailsElement>(".lazers-models-sources-details")?.open,
     ).toBe(true)
-    expect(
-      containerA.querySelector<HTMLDetailsElement>(".lazers-models-filter-details")?.open,
-    ).toBe(true)
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
     mountA.setVisible(false)
     await until(() => hiddenSignal?.aborted === true)
     const beforeLateHiddenResult = comparisonCounts.get(DIRECTORY_A)
@@ -912,7 +1670,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
       rpcsBeforeLocationReopen,
     )
-    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).toBeNull()
+    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
     mountA.setVisible(false)
     await until(() => locationSignals.get(DIRECTORY_A)?.[1]?.aborted === true)
     mountA.setVisible(true)
@@ -921,7 +1679,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
       rpcsBeforeLocationReopen,
     )
-    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).toBeNull()
+    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
     deferredLocationA2.resolve(locationResult(DIRECTORY_A))
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
@@ -936,10 +1694,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     deferredA3.resolve(sourceEvidence())
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(comparisonCounts.get(DIRECTORY_A)).toBe(afterReconnectComparisons)
-    expect(containerA.querySelector(".lazers-models-candidate-list")?.textContent).toContain(
-      "GPT-6 refreshed",
-    )
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
+    expect(containerA.querySelector(".lazers-models-decision-rows")?.textContent).toContain("GPT-6")
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
 
     const rpcsBeforeSessionSwitch = calls.filter((call) => call.service !== "location").length
     sessionScope.update((draft: { id: string; directory: string }) => {
@@ -950,7 +1706,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(calls.filter((call) => call.service !== "location")).toHaveLength(
       rpcsBeforeSessionSwitch,
     )
-    expect(containerA.querySelector(`[data-candidate-id="${CANDIDATE_A}"]`)).toBeNull()
+    expect(containerA.querySelector(`[data-configuration-id="${CONFIG_ONE}"]`)).toBeNull()
     sessionScope.update((draft: { id: string; directory: string }) => {
       draft.id = "ses-models-panel"
       draft.directory = DIRECTORY_A
@@ -979,46 +1735,51 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(counts.get(`${DIRECTORY_A}:refreshSources`)).toBe(5)
 
     await until(() => !buttonWithText(containerA, "Refresh")?.disabled)
-    const retainedEvidence = containerA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-evidence-details",
-    )!
     const retainedEffort = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-task-effort-details",
     )!
     const retainedSources = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-sources-details",
     )!
-    const retainedFilters = containerA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-filter-details",
-    )!
-    retainedEvidence.open = true
     retainedEffort.open = true
     retainedSources.open = true
-    retainedFilters.open = true
     expect(
       [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
         warning.textContent?.includes("Comparison is stale"),
       ),
     ).toBe(false)
+    const sourceCountBeforeComparisonFailure = sourceSignals.get(DIRECTORY_A)?.length ?? 0
+    const comparisonCountBeforeComparisonFailure = comparisonCounts.get(DIRECTORY_A) ?? 0
+    failNextComparison = true
     buttonWithText(containerA, "Refresh")?.click()
-    await until(() =>
-      [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
-        warning.textContent?.includes("Comparison is stale"),
-      ),
+    await until(
+      () =>
+        [...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
+          warning.textContent?.includes("Comparison is stale"),
+        ) ||
+        ((sourceSignals.get(DIRECTORY_A)?.length ?? 0) > sourceCountBeforeComparisonFailure &&
+          (comparisonCounts.get(DIRECTORY_A) ?? 0) > comparisonCountBeforeComparisonFailure &&
+          !buttonWithText(containerA, "Refresh")?.disabled),
     )
+    if (
+      ![...containerA.querySelectorAll(".lazers-models-refresh-note")].some((warning) =>
+        warning.textContent?.includes("Comparison is stale"),
+      )
+    )
+      throw new Error(
+        `Expected comparison failure was not shown (comparison ${comparisonCountBeforeComparisonFailure}→${comparisonCounts.get(DIRECTORY_A)}, source ${sourceCountBeforeComparisonFailure}→${sourceSignals.get(DIRECTORY_A)?.length}): ${containerA.textContent}`,
+      )
     const staleWarning = [
       ...containerA.querySelectorAll<HTMLElement>(".lazers-models-refresh-note"),
     ].find((warning) => warning.textContent?.includes("Comparison is stale"))!
     expect(staleWarning.closest("details")).toBeNull()
-    expect(retainedEvidence.open).toBe(true)
     expect(retainedEffort.open).toBe(true)
     expect(retainedSources.open).toBe(true)
-    expect(retainedFilters.open).toBe(true)
     expect(retainedSources.textContent).toContain(
       "Comparison read error: comparison request unavailable",
     )
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
 
     await until(() => !buttonWithText(containerA, "Refresh")?.disabled)
     buttonWithText(containerA, "Refresh")?.click()
@@ -1031,19 +1792,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     const failedRefreshWarning = containerA.querySelector<HTMLElement>(".lazers-models-error")!
     expect(failedRefreshWarning.closest("details")).toBeNull()
-    expect(containerA.querySelector(".lazers-models-evidence-details")).toBe(retainedEvidence)
     expect(containerA.querySelector(".lazers-models-task-effort-details")).toBe(retainedEffort)
     expect(containerA.querySelector(".lazers-models-sources-details")).toBe(retainedSources)
-    expect(containerA.querySelector(".lazers-models-filter-details")).toBe(retainedFilters)
-    expect(retainedEvidence.open).toBe(true)
     expect(retainedEffort.open).toBe(true)
     expect(retainedSources.open).toBe(true)
-    expect(retainedFilters.open).toBe(true)
     expect(retainedSources.textContent).toContain(
       "Source refresh error: source request unavailable",
     )
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(CANDIDATE_A)
+    expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
 
     const containerB = browserDocument.createElement("main")
     browserDocument.body.append(containerB)
@@ -1051,16 +1808,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     mounts.push(mountB)
     await until(
       () =>
-        containerB.querySelector(`[data-candidate-id="${CANDIDATE_B}"]`) !== null &&
-        containerB.textContent?.includes("Objective B project only") === true,
+        containerB.querySelector(
+          `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
+        ) !== null && containerB.textContent?.includes("Objective B project only") === true,
     )
     expect(containerB.querySelector(".lazers-models-project")?.textContent).toContain("project-b")
-    expect(containerB.querySelector(".lazers-models-candidate-list")?.textContent).toContain(
-      "Claude 4 project B",
-    )
-    expect(containerB.querySelector(".lazers-models-candidate-list")?.textContent).not.toContain(
-      "GPT-6",
-    )
+    expect(containerB.querySelector(".lazers-models-decision-rows")?.textContent).toContain("GPT-6")
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
     expect(modelStore.snapshot().projects[DIRECTORY_B]?.selectedTaskID).toBe(TASK_B)
     expect(

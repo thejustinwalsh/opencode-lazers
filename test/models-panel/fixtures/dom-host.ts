@@ -34,6 +34,7 @@ type ButtonProps = {
   "aria-label"?: string
   title?: string
   onClick?: (event: MouseEvent) => void
+  items?: Array<{ label: string; onSelect: () => void }>
 }
 
 function button(props: ButtonProps, menuTrigger = false) {
@@ -59,7 +60,34 @@ function button(props: ButtonProps, menuTrigger = false) {
 export function createTestUI() {
   return {
     Button: button,
-    Menu: (props: ButtonProps) => button(props, true),
+    Menu: (props: ButtonProps) => {
+      const root = document.createElement("div")
+      root.className = "test-menu"
+      const trigger = button(props, true)
+      root.append(trigger)
+      trigger.addEventListener("click", () => {
+        const existing = root.querySelector('[role="menu"]')
+        if (existing) {
+          existing.remove()
+          return
+        }
+        const menu = document.createElement("div")
+        menu.setAttribute("role", "menu")
+        for (const item of props.items ?? []) {
+          const option = document.createElement("button")
+          option.type = "button"
+          option.setAttribute("role", "menuitem")
+          option.textContent = item.label
+          option.addEventListener("click", () => {
+            item.onSelect()
+            menu.remove()
+          })
+          menu.append(option)
+        }
+        root.append(menu)
+      })
+      return root
+    },
     Icon: (props: { name: string }) => {
       const element = document.createElement("span")
       element.textContent = props.name
