@@ -108,6 +108,15 @@ export type WorkerInstruction = {
   key: string
   text: string
 }
+export type RetainedWorkerArchive = {
+  sessionID: string
+  attemptID: string
+  planID: string
+  requestID: string
+  projectID: string
+  directory: string
+  assignedMessageID: string
+}
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
   /** Current native implementor-agent selection; never inferred from Architect identity. */
@@ -152,6 +161,8 @@ export interface RunnerHost {
   }): Promise<void>
   /** Exact native session archive control; renewal requires this and input observation. */
   updateSession?(input: { sessionID: string; archived: boolean }): Promise<void>
+  /** Archive only the stopped worker bound to a durable pending source quarantine. */
+  archiveRetainedWorker?(input: RetainedWorkerArchive): Promise<void>
   prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>

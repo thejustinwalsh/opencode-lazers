@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
+import { DateTime, Effect } from "effect"
+import type { Plugin } from "@opencode/plugin/effect"
+import { nativeHost, type NativeInboxClient } from "./native.ts"
 import {
   existsSync,
   mkdirSync,
@@ -247,6 +250,12 @@ function fixture(
         cost: null,
         messages: [],
       })
+    },
+    archiveRetainedWorker: async ({ sessionID }) => {
+      const session = sessions.get(sessionID)
+      if (!session) throw new Error("Native session not found")
+      events.push(`archive-retained:${sessionID}`)
+      session.archived = true
     },
     updateSession: async ({ sessionID, archived }) => {
       const session = sessions.get(sessionID)
@@ -554,6 +563,150 @@ async function retainedSourceFixture() {
   return { ...f, retained, worker, artifact, effectID, command, install }
 }
 
+function attachNativeQuarantineHost(
+  f: Awaited<ReturnType<typeof retainedSourceFixture>>,
+  options: {
+    target?: Partial<HostSession>
+    active?: boolean
+    unavailable?: boolean
+    loseReply?: boolean
+    onUpdate?: () => void
+  } = {},
+) {
+  let archives = 0
+  const target = () => {
+    const current = { ...f.worker, ...options.target }
+    return {
+      ...current,
+      location: { directory: current.directory },
+      time: { ...(current.archived ? { archived: DateTime.nowUnsafe() } : {}) },
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    }
+  }
+  const list = async ({ location }: { location: { directory: string } }) => ({
+    location,
+    data: [],
+  })
+  const client = {
+    server: { info: async () => ({ pid: 42, version: "2.2.5" }) },
+    session: {
+      get: async () => target(),
+      active: async () => {
+        if (options.unavailable) throw new Error("Native observation unavailable")
+        return options.active ? { [f.retained.session_id]: { type: "running" } } : {}
+      },
+      inbox: { list: async () => [] },
+      update: async () => {
+        archives++
+        f.worker.archived = true
+        options.onUpdate?.()
+        if (options.loseReply) throw new Error("Archive reply lost")
+      },
+    },
+    permission: { request: { list } },
+    form: { list },
+    shell: { list },
+  } as unknown as NativeInboxClient
+  const native = nativeHost(
+    {
+      app: { version: "2.2.5" },
+      location: { directory: f.root, project: { id: "project" } },
+      session: {
+        get: () => Effect.succeed(target() as never),
+        context: () => Effect.succeed([]),
+      },
+    } as unknown as Plugin.Context,
+    f.repository,
+    {
+      discover: async () => ({ url: "https://opencode.localhost", auth: undefined }),
+      make: () => client,
+      processID: () => 42,
+    },
+  )
+  const fakeSession = f.host.session
+  f.host.session = (id, options) =>
+    id === f.retained.session_id ? native.session(id, options) : fakeSession(id, options)
+  f.host.archiveRetainedWorker = native.archiveRetainedWorker
+  return {
+    native,
+    get archives() {
+      return archives
+    },
+  }
+}
+
+test("source quarantine uses native clear controls and assignment-bound worker archival with lost-reply readback", async () => {
+  const f = await retainedSourceFixture()
+  f.install()
+  const adapter = attachNativeQuarantineHost(f, { loseReply: true })
+  expect(await f.host.session(f.retained.session_id)).toMatchObject({
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+  })
+  await f.runtime.command(f.command(), "owner")
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("sealed")
+  expect(adapter.archives).toBe(1)
+  expect(f.worker.archived).toBe(true)
+  expect(f.store.effects(f.receipt.planID).find((row) => row.id === f.effectID)!.state).toBe(
+    "uncertain",
+  )
+})
+
+test("native retained worker archival rejects foreign or changed bindings, active work and unavailable observations", async () => {
+  for (const mismatch of [
+    "project",
+    "agent",
+    "attempt",
+    "directory",
+    "request",
+    "active",
+    "unavailable",
+    "changed-on-update",
+  ] as const) {
+    const f = await retainedSourceFixture()
+    f.install()
+    const command = f.command()
+    await f.runtime.command(command, "owner")
+    const adapter = attachNativeQuarantineHost(f, {
+      target:
+        mismatch === "project"
+          ? { projectID: "foreign" }
+          : mismatch === "agent"
+            ? { agent: "architect" }
+            : mismatch === "attempt"
+              ? { metadata: { lazersAttemptID: "foreign" } }
+              : mismatch === "directory"
+                ? { directory: "/foreign" }
+                : undefined,
+      active: mismatch === "active",
+      unavailable: mismatch === "unavailable",
+      onUpdate:
+        mismatch === "changed-on-update"
+          ? () => {
+              f.worker.metadata = { lazersAttemptID: "replacement" }
+            }
+          : undefined,
+    })
+    await expect(
+      adapter.native.archiveRetainedWorker!({
+        sessionID: f.retained.session_id,
+        attemptID: f.retained.id,
+        planID: f.retained.plan_id,
+        requestID: mismatch === "request" ? "foreign" : command.requestID,
+        projectID: "project",
+        directory: f.retained.workspace,
+        assignedMessageID: f.retained.message_id,
+      }),
+    ).rejects.toThrow()
+    expect(adapter.archives).toBe(mismatch === "changed-on-update" ? 1 : 0)
+    expect(sourceQuarantine(f.store, f.retained.id)?.phase).toBe("pending")
+    if (mismatch === "unavailable")
+      await expect(f.runtime.command(f.command(), "owner")).rejects.toThrow("unavailable")
+  }
+})
+
 test("source quarantine seals only a stopped guarded native writer and permits independent code without accepting old work", async () => {
   const f = await retainedSourceFixture()
   f.install()
@@ -615,12 +768,12 @@ test("source quarantine seals only a stopped guarded native writer and permits i
 })
 
 test("source quarantine preserves shared and physical-checkout exclusion at both admission gates", async () => {
-  for (const destination of ["shared", "same", "symlink"] as const) {
+  for (const destination of ["shared", "same", "symlink", "unavailable"] as const) {
     const f = await retainedSourceFixture()
     f.install()
     await f.runtime.command(f.command(), "owner")
     await f.runtime.tick()
-    const next = f.createTask("b", "shared.txt")
+    const next = f.createTask("b", "b.txt")
     const input = {
       ...f.inputFor([next], { requestID: `unsafe-${destination}` }),
       baseCommit: f.artifact,
@@ -649,9 +802,9 @@ test("source quarantine recovers lost archive replies after reopen without inven
   const f = await retainedSourceFixture()
   const disposeFirstGuard = f.install()
   let archives = 0
-  f.host.updateSession = async ({ sessionID, archived }) => {
+  f.host.archiveRetainedWorker = async ({ sessionID }) => {
     archives++
-    f.sessions.get(sessionID)!.archived = archived
+    f.sessions.get(sessionID)!.archived = true
     throw new Error("Archive acknowledgement lost")
   }
   const command = f.command()
@@ -704,6 +857,10 @@ test("source quarantine rejects missing enforcement, active writers, stale versi
   await expect(f.runtime.command(f.command(), "another-owner")).rejects.toThrow(
     "Only the plan owner",
   )
+  const metadata = f.worker.metadata
+  f.worker.metadata = { lazersAttemptID: "replacement" }
+  await expect(f.runtime.command(f.command(), "owner")).rejects.toThrow("ownership or location")
+  f.worker.metadata = metadata
   expect(sourceQuarantine(f.store, f.retained.id)).toBeNull()
   expect(f.worker.archived).toBe(false)
 })
@@ -712,8 +869,8 @@ test("source quarantine fences reassignment during archive and accepts a fresh a
   const f = await retainedSourceFixture()
   f.install()
   f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner" })
-  const archive = f.host.updateSession!
-  f.host.updateSession = async (input) => {
+  const archive = f.host.archiveRetainedWorker!
+  f.host.archiveRetainedWorker = async (input) => {
     await archive(input)
     await f.runtime.command(
       {

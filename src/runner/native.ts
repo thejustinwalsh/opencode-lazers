@@ -540,9 +540,9 @@ export function nativeHost(
         metadata: latest.metadata,
         archived: latest.time.archived !== undefined,
         busy: active,
-        ...(pendingInput ? { pendingInput: true } : {}),
-        ...(pendingPermissions ? { pendingPermissions } : {}),
-        ...(pendingForms ? { pendingForms } : {}),
+        ...(!observationUnstable || pendingInput ? { pendingInput } : {}),
+        ...(!observationUnstable || pendingPermissions ? { pendingPermissions } : {}),
+        ...(!observationUnstable || pendingForms ? { pendingForms } : {}),
         ...(observationUnstable ? { observationUnstable: true } : {}),
         ...(turn ? { turn } : {}),
         background: freshBackground,
@@ -699,6 +699,69 @@ export function nativeHost(
           },
         }),
       )
+    },
+    async archiveRetainedWorker(input) {
+      const client = await connectedClient()
+      const validate = async () => {
+        await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+        const target = await runNative(client, () =>
+          client.session.get({ sessionID: input.sessionID }),
+        )
+        if (
+          input.projectID !== ctx.location.project.id ||
+          target.id !== input.sessionID ||
+          target.projectID !== input.projectID ||
+          target.agent !== "lazers-implementor" ||
+          target.metadata?.lazersAttemptID !== input.attemptID ||
+          target.location.directory !== input.directory
+        )
+          throw new Error("Native retained archive target is not the authorized worker assignment")
+        const observed = await observeWorker(client, input.sessionID, input.directory)
+        if (
+          observed.active ||
+          observed.pendingInput ||
+          observed.pendingPermissions ||
+          observed.pendingForms
+        )
+          throw new Error("Native retained archive worker has active input or approval work")
+        const authorized = repository.atomic((db) =>
+          db
+            .query(
+              `SELECT 1 FROM runner_source_quarantines q
+            JOIN runner_attempts a ON a.id=q.attempt_id
+            JOIN runner_plans p ON p.id=q.plan_id
+            WHERE q.phase='pending' AND q.request_id=? AND q.plan_id=?
+              AND q.attempt_id=? AND q.session_id=? AND q.assigned_message_id=?
+              AND q.workspace=? AND q.requested_owner=p.owner
+              AND p.project_directory=? AND a.plan_id=p.id AND a.state='verifying'
+              AND a.session_id=q.session_id AND a.message_id=q.assigned_message_id
+              AND a.workspace=q.workspace`,
+            )
+            .get(
+              input.requestID,
+              input.planID,
+              input.attemptID,
+              input.sessionID,
+              input.assignedMessageID,
+              input.directory,
+              repository.projectDirectory,
+            ),
+        )
+        if (!authorized) throw new Error("Native retained archive request authority changed")
+        return target
+      }
+      if ((await validate()).time.archived !== undefined) return
+      let updateError: unknown
+      try {
+        await client.session.update({ sessionID: input.sessionID, archived: true })
+      } catch (error) {
+        updateError = error
+      }
+      const readback = await validate()
+      if (readback.time.archived === undefined)
+        throw new Error(
+          `Native retained worker archive lacks public readback${updateError ? `: ${String(updateError)}` : ""}`,
+        )
     },
     async updateSession(input) {
       const client = await connectedClient()

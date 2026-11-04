@@ -20,7 +20,7 @@ export type SourceQuarantine = {
 const registryKey = Symbol.for("lazers.runner.source-quarantine.guards.v1")
 const shared = globalThis as unknown as Record<symbol, Map<string, Set<symbol>> | undefined>
 const guards = (shared[registryKey] ??= new Map())
-const samePhysicalWorkspace = (left: string, right: string) => {
+export const samePhysicalWorkspace = (left: string, right: string) => {
   try {
     return realpathSync(left) === realpathSync(right)
   } catch {

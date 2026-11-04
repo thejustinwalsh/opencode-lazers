@@ -1,60 +1,54 @@
 # Controlled retained-source bootstrap
 
-Root owns the first installation assigned through Desktop at Unix ms1793826714605.
-Authority: the existing57→58 amendment and retained-bootstrap installation note.
+Root owns this first installation, assigned through Desktop at Unix ms1793826714605.
 Native worktree `/private/tmp/lazers-retained-bootstrap`, branch
-`feat/retained-source-bootstrap`, created through OpenCode at1793826927661.
-No production activation or canonical DB mutation has occurred.
+`feat/retained-source-bootstrap`. No production activation or canonical DB mutation
+has occurred. Independent review must clear the corrected candidate first.
 
-## Implemented candidate
+## Behavior
 
-`lz-plan-command` action`quarantine-source` takes the retained attempt and reason,
-with existing owner/version/request authority. It admits only an isolated native
-worktree, stopped foreground and an uncertain task check, with the worker-location
-native tool guard installed. Pending intent is durable before asynchronous work.
-The existing runtime tick archives through the supported native API, reads back
-the stopped archived session and rechecks authority before sealing. A racing busy
-worker remains pending; it is never interrupted. Lost archive replies reconcile
-without replaying an already observed archive. There is no new timer/controller.
+`lz-plan-command` action`quarantine-source` uses existing owner/version/request
+controls for an isolated, retained verifying attempt with an uncertain check.
+The exact native worker must have stopped foreground/input/approval work, the
+native source guard must be installed, and its workspace must be native-owned.
+A durable pending request precedes asynchronous archival. The existing scheduler
+archives and reads back that same assignment before sealing; racing activity
+waits, lost replies reconcile, and changed ownership cannot publish a seal.
 
-The native before-tool hook fences source-capable tools for this explicitly
-quarantined worker; ordinary implementor permissions are unchanged. Reads and
-handoff tools remain available, including on a stopped assignment. This is a
-native model/tool source fence, not OS containment of an unknown old child.
+Native before-tool hooks fence source-capable calls for the named worker,
+including nested Code Mode calls and stopped assignments. Reads and handoffs
+remain available; ordinary implementors retain their tools. This source fence
+does not contain a detached old check process.
 
-Selection, retained preparation/prompt admission and active scope amendment use
-the same source-reservation decision. Only a sealed, identity-matching quarantine
-with a live guard can exclude that writer for separate isolated implementation.
-Shared, same physical checkout, aliases, missing guards and changed bindings stay
-blocked. Effective artifact scope is never reduced. Old attempts, uncertain
-effects, receipts, checkout and cleanup holds remain. Integrated prerequisites
-remain independent. Compact plan inspection exposes phase, reason and Unix times.
+Only sealed identity-matching quarantine with active enforcement permits separate
+isolated source work. Actual preparation denies the same physical checkout,
+symlink aliases and unavailable physical identity even for disjoint file scopes.
+Recurring selection does not perform filesystem scans. Shared checkout/resource
+holds, old effects, receipts, attempts, artifact scope and integration dependencies
+remain unchanged. No new timer/controller, acceptance override or file hashing.
 
-Old check/resource containment is not established. A new directory does not
-qualify shared services/profiles or live probes: existing58 still must implement
-and demonstrate independent verification contexts with distinct receipts. This
-bootstrap cannot accept72, satisfy88's dependency or authorize unsafe reuse.
-Review this separation and the actual named source-work route before activation.
+## Native boundary repairs
 
-## Validation and remaining work
+- Authoritative clear observations return false/zero controls. Failed observations
+  throw; unstable detail reads do not manufacture clear controls.
+- Worker archival has its own narrow adapter using public OpenCode2.2.5
+  `session.update({archived:true})` and readback. It checks the durable request,
+  project, current assignment and location before mutation and after readback.
+  Existing Architect archival authorization is unchanged.
+- Physical alias/unknown identity is an explicit preparation denial, independent
+  of scope overlap. Disjoint same/symlink/unavailable cases are covered.
 
-- Final source tests: **187 pass / 2,889 assertions**, six runner suites. Log:
-  `/private/tmp/lazers-bootstrap-regressions-final-20261104.log`.
-- Six dedicated runtime cases cover real Git workspaces, pending versus sealed,
-  foreground races, independent code, shared/same/symlink denial, lost archive
-  replies/reopen/replay, missing guards, owner/version changes, retained checks and
-  scopes, integrated prerequisites, and shared-database project isolation.
-- Registered role tests exercise actual before-tool callbacks: ordinary routes
-  and coding tools remain; quarantined edit/shell/Code Mode fail; reads and handoff
-  remain. Guard registration is scoped and removed on disposal.
-- Scope-amendment and foreign-project regressions failed before their fixes.
-- Formatter, linter, typecheck and diff checks pass. Recurring source selection
-  performs no synchronous filesystem canonicalization; physical path comparison
-  occurs only during actual preparation. Pending-query indexing avoids scanning
-  sealed history. There are no content fingerprints or model approval gates.
+## Verification and remaining work
 
-Still required: independent source review, coordinated installation, actual named
-72 control observation, ordinary57→58 dispatch and subsequent independent
-verification. Native control behavior and safe shared-resource coexistence have
-not been observed live. Do not mark the bootstrap or old tasks delivered from
-unit tests alone.
+Six runner suites pass: **189 tests / 2,973 assertions**, including the real native
+adapter path, lost replies, reassignment, foreign targets/projects, unavailable
+observations, physical aliases and the positive independent route. A subsequent
+focused identity-binding regression also passes. Formatter, lint and typecheck
+pass. Logs remain under `/private/tmp/lazers-bootstrap-*20261104.log`.
+
+Review the old-location guard lifecycle before activation: a sealed fence must
+remain effective after restart/location unload without creating a permanent
+admission trap. Then coordinate first installation, observe the actual named72
+control and ordinary57→58 dispatch. Existing58 must still demonstrate independent
+verification contexts and distinct check receipts. A new directory alone does not
+establish independence from retained shared services/profiles or accept72/88.

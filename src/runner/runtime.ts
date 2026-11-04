@@ -46,6 +46,7 @@ import { ProgressRecorder } from "../progress/recorder.ts"
 import { sharedScheduler } from "./scheduler-coordinator.ts"
 import {
   sourceGuardInstalled,
+  samePhysicalWorkspace,
   sourceQuarantine,
   sourceReservationExcluded,
 } from "./source-quarantine.ts"
@@ -453,20 +454,22 @@ export class TaskRuntime {
         )
     )
       throw new Error("Source quarantine requires a retained uncertain check")
-    if (!this.host.updateSession || !sourceGuardInstalled(this.store, attempt.workspace))
+    if (!this.host.archiveRetainedWorker || !sourceGuardInstalled(this.store, attempt.workspace))
       throw new Error("The native worker source guard and archive control must be installed")
     return attempt
   }
 
   private sourceWorkerWait(
-    attempt: Pick<AttemptRow, "session_id" | "workspace">,
+    attempt: Pick<AttemptRow, "id" | "session_id" | "workspace">,
     session: HostSession | null | undefined,
   ) {
     if (
       !session ||
       session.id !== attempt.session_id ||
       session.projectID !== this.projectID ||
-      session.directory !== attempt.workspace
+      session.directory !== attempt.workspace ||
+      session.agent !== "lazers-implementor" ||
+      session.metadata?.lazersAttemptID !== attempt.id
     )
       return "Retained worker ownership or location is unavailable"
     if (
@@ -2269,8 +2272,17 @@ export class TaskRuntime {
         }
         this.store.fenced(this.owner, fence, current)
         if (!worker!.archived) {
-          if (!this.host.updateSession) throw new Error("Native archive control is unavailable")
-          await this.host.updateSession({ sessionID: quarantine.session_id, archived: true })
+          if (!this.host.archiveRetainedWorker)
+            throw new Error("Native archive control is unavailable")
+          await this.host.archiveRetainedWorker({
+            sessionID: quarantine.session_id,
+            attemptID: attempt.id,
+            planID: attempt.plan_id,
+            requestID: quarantine.request_id,
+            projectID: this.projectID,
+            directory: quarantine.workspace,
+            assignedMessageID: quarantine.assigned_message_id,
+          })
         }
         worker = await this.host.session(quarantine.session_id)
         reason = this.sourceWorkerWait(attempt, worker)
@@ -3150,6 +3162,12 @@ export class TaskRuntime {
       for (const other of this.store.attempts(plan.id)) {
         if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
           continue
+        // Physical ownership is stronger than logical scope disjointness.
+        if (
+          sourceQuarantine(this.store, other.id) &&
+          samePhysicalWorkspace(attempt.workspace, other.workspace)
+        )
+          return false
         if (
           sourceReservationExcluded(this.store, other, {
             mode: attempt.workspace === this.directory ? "shared" : "isolated",
