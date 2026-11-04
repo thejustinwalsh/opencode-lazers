@@ -8,6 +8,22 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **129 concise guidance actually delivered/read back:** original session key
+  `lazers.architect.radar129.source-findings.20261104.v2`,1243characters,
+  1793834273290; exact binding before/after. Older1854-character v1 superseded only
+  after v2 confirmation, not stacked as another policy block. Three source findings,
+  selected persisted-history interpretation and a next-natural-boundary progress
+  check-in; no new turn/interrupt/retry. Availability is not consumption/response.
+- **129 activity checked; one concise steer, then let it cook:** exact native
+  metadata1793834104797 shows running/zero permissions and continuing completed
+  reads/greps; clean tree is not failure. No private reasoning was read/exported.
+  [Task-linked source findings and scope decision](evidence/radar129-source-guidance-20261104.md)
+  replace predecessor-ID-only guidance with three real starting seams/pitfalls.
+  Selected history stays the small on-demand pageable persisted-observation read
+  needed to prove live/history separation—not native conversation/Trajectory/UI
+  expansion. No scope/acceptance rewrite, restart, replacement or proof-only turn.
+  The durable proposal is immutable; guidance is retained alongside the task and
+  delivered through its original native worker instructions, not a database rewrite.
 - **e699793 final review NOT source-clear: one early-generation P1:** both original
   reviews complete. Runtime recovery is clear, real V2 location RPC activation and
   own-token binding confirmed, but beginSourceGuard occurs only in registerWorker

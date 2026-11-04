@@ -96,3 +96,12 @@ owned native worktree. This is Root's live observation, not an inference from
 fixtures, usage or task state. No backend attempt end is supplied or invented;
 131 retains that boundary. Keep original129 cooking. Root candidate stays offline
 while workers are active, independently of its remaining source-review blocker.
+
+## Source findings and scope steer
+
+The user requested review of long research intervals without treating elapsed time
+as failure. [Concise task-linked guidance](radar129-source-guidance-20261104.md)
+retains observed public activity, the let-continue decision and three actual source
+findings. Selected history remains a small separate persisted-observation read in
+the original129 boundary, not complete native conversation history or a UI rewrite.
+Immutable task/acceptance and original worker are preserved.
