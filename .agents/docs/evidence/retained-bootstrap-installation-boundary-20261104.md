@@ -43,3 +43,12 @@ Root/operator must supply a controlled first-installation route before that
 boundary can advance. This note does not authorize direct Architect editing,
 DB mutation, receipt fabrication, reservation bypass or a source-only acceptance.
 No installation or implementation was performed by this research.
+
+## Operator route selected
+
+After this limitation was presented, the user selected **“Root provides bootstrap”**:
+Root will arrange the controlled first installation, then implementation returns
+to the original57→58 lane. This is an operator handoff, not a claim that new runtime
+code or a safe release already exists. Await Root's actual implementation and
+installation observations; review the changed control and regressions before
+using it. Keep LZ72's old effects/resource holds and LZ88's prerequisite intact.
