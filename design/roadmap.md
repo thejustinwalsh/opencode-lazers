@@ -9,14 +9,17 @@ Tasks needs explicit state filtering alongside Session/Project scope, including
 completed, failed and cancelled work. Old tasks should open their own trajectories
 with their recorded attempts. Keep the focused Linear-inspired list, grouping,
 dependencies and compact task references.
+Distinguish current work, attention and next eligible work using the runtime's
+actual priority, dependency and reservation decisions.
 
-Radar is the live operational view: scheduler components, active native sessions
-and agents, the models/effort they use, their states, and message/data flow.
-Tasks/plans provide work context. Use C4-style SVG and elkjs layout, informed by
-gh-wat-dis. Show LAZERS-managed sessions by default, with optional other sessions
-inside the selected scope. Actual activity should animate without constantly
-moving the layout. Keep details below the visualization in the narrow panel,
-using OpenCode fonts and theme.
+Radar is the realtime system/agent monitor: each session's task, actual model and
+effort, current tools, file read/edit activity, durations/results, trajectory health,
+scheduler state and observed message/data flow. Lead with compact live activity;
+keep architecture/state-machine maps as diagnostics. Tasks owns the work queue.
+Show LAZERS-managed sessions by default, with optional other sessions inside the
+selected scope. Keep selected details below the activity view, native theme/fonts
+and stable focus. Use small live summaries/deltas with history fetched separately.
+The [Astra review](reviews/astra-radar-perf-20261104.md) guides the next mockups.
 
 Trajectory history should remain usable while live events arrive. Existing
 lifecycle, trajectory privacy and renderer responsiveness defects remain open;

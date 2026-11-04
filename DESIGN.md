@@ -55,6 +55,10 @@ Show a compact grouped list with status icons, readable task labels and copyable
 project references. Reveal sequential dependencies and parallel sibling groups
 using actual plan relationships; expandable groups keep the list readable. Expose
 state filters, including completed tasks, and access to historical trajectories.
+Make current work, attention and next eligible work easy to distinguish. Show
+actual priorities, dependencies and reservation reasons from the runtime;
+queued tasks inside running plans remain queued. Link executing work to its
+Radar session and trajectory. Keep acceptance, integration and cleanup distinct.
 
 The lower inspector leads with reference, title, waiting-on relationship and goal.
 **Done when stays visible as a checklist.** Details and Activity start collapsed.
@@ -65,15 +69,23 @@ small and contextual; specification changes go through Architect conversation.
 
 ## Radar
 
-Show the scheduler, managed sessions, their agent/model/state, and recorded
-message/data flow. Default to LAZERS-managed sessions; optionally include others.
-Use a readable C4-style SVG map with ELK layout, with the detailed XState chart
-as a diagnostic rather than the primary overview. The initial compact view must
-expose concurrent activity and active workers without scrolling past metadata.
-Select a node/connection to inspect its actual record below. Animate only observed
-activity; keep stale/unknown state honest. Timeline and map share the lower
-inspector pattern. [Research](.agents/docs/research/phase-planning/radar.md) and
-[reference family](design/system-panel/implementation-plan.md).
+Radar is the realtime system and agent monitor. Show what each session is doing:
+assigned task, actual model/effort, state, current tool calls, read/edit targets,
+durations, results, trajectory health and observed message/data flow. Default to
+LAZERS-managed sessions; optionally include others. Task ordering and the backlog
+belong in Tasks.
+
+Lead with compact live session activity above the existing horizontal inspector.
+Keep concurrent calls distinct. Show last meaningful activity and concrete wait
+or failure reasons; native busy state alone does not establish progress. Attribute
+file activity only when the tool/event supplies a trustworthy session/call target.
+Keep unavailable telemetry explicit. Selecting a session, call, file or flow event
+shows its detail and related history below, with navigation to worker, task and
+trajectory. Keep C4/XState maps as optional diagnostics. Animate recorded activity
+without shifting focus or rebuilding history on every event. Use small live
+summaries/deltas and fetch selected historical detail separately.
+
+[Current review](design/reviews/astra-radar-perf-20261104.md).
 
 ## Trajectory
 
