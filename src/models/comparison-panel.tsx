@@ -188,9 +188,51 @@ function estimateLabel(
     estimate.status === "partial"
       ? `Partial empirical observed spread · n=${estimate.observationCount} · missing ${estimate.missing.join(", ")}`
       : estimate.status === "single-observation"
-        ? "Empirical observed spread · n=1 (one observed value, no interval)"
+        ? "Empirical observed spread · n=1 accepted logical-task history (one observed value, no interval)"
         : `Empirical observed spread · n=${estimate.observationCount} accepted logical-task histories`
   return `${basis} · ${renderRange(tokenRange)} tokens · ${priceRange ? `${formatMoney(priceRange.minimum)}${priceRange.maximum === priceRange.minimum ? "" : `–${formatMoney(priceRange.maximum)}`}` : "current-price estimate unknown"}`
+}
+
+function estimateHistoryScopeLabel(
+  estimate: Extract<
+    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
+    { status: "found" }
+  >["estimate"],
+) {
+  const historyScope = estimate.historyScope
+  const completeness =
+    historyScope?.completeness === "complete-accepted-logical-task-retry-history"
+      ? "Complete accepted-task retry history"
+      : "Accepted-task retry-history completeness unknown"
+  return `${completeness} · Route scope · ${historyScope?.routeScope ?? "unknown"}`
+}
+
+function estimateHistoryDescription(
+  estimate: Extract<
+    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
+    { status: "found" }
+  >["estimate"],
+) {
+  const historyIsComplete =
+    estimate.historyScope?.completeness === "complete-accepted-logical-task-retry-history"
+  return historyIsComplete
+    ? "The producer reports complete accepted-task histories, including retries. This is observed spread, not a predictive interval."
+    : "Accepted-task retry-history completeness is unknown. This is observed spread, not a predictive interval."
+}
+
+function contributorMembershipLabel(
+  membership: "cohort-effort" | "empirical-history" | "both" | undefined,
+) {
+  switch (membership) {
+    case "cohort-effort":
+      return "cohort-effort"
+    case "empirical-history":
+      return "history-only"
+    case "both":
+      return "both"
+    default:
+      return "unknown"
+  }
 }
 
 function variantCoverageLabel(candidate: ModelCandidate) {
@@ -1328,10 +1370,9 @@ function ModelPanel(
                           ? "Estimate unavailable"
                           : estimateLabel(inspection().estimate)}
                       </strong>
-                      <span>
-                        Empirical spread across accepted logical-task histories; each accepted
-                        history includes its own retries. This is observed spread, not a predictive
-                        interval.
+                      <span>{estimateHistoryDescription(inspection().estimate)}</span>
+                      <span class="lazers-models-history-scope">
+                        {estimateHistoryScopeLabel(inspection().estimate)}
                       </span>
                     </p>
                     <details
@@ -1350,7 +1391,7 @@ function ModelPanel(
                           <p>
                             Effort · {inspection().configuration.route.variant ?? "Not specified"}
                           </p>
-                          <h3>Failure-inclusive cohort</h3>
+                          <h3>Configuration cohort</h3>
                           <p>
                             {inspection().cohort.acceptedTaskCount} accepted /{" "}
                             {inspection().cohort.terminalTaskCount} terminal logical tasks ·{" "}
@@ -1408,6 +1449,14 @@ function ModelPanel(
                                         ? "Current market cost unknown"
                                         : formatMoney(contributor.currentMarketUSD)}{" "}
                                       · native reported {formatMoney(contributor.nativeReportedUSD)}
+                                    </p>
+                                    <p class="lazers-models-source-meta">
+                                      Exact route ·{" "}
+                                      {contributor.route
+                                        ? routeLabel(contributor.route)
+                                        : "Unknown route"}
+                                      {" · Membership · "}
+                                      {contributorMembershipLabel(contributor.membership)}
                                     </p>
                                     <p class="lazers-models-source-meta">
                                       Attempt · {contributor.attemptID ?? "not attributed"} ·

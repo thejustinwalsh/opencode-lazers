@@ -503,17 +503,28 @@ test("a stale inspection completion is ignored after its decision snapshot is re
   let snapshotReads = 0
   let inspectionCalls = 0
   let oldInspectionSignal: AbortSignal | undefined
+  const baseInspection = decisionInspect()
+  if (baseInspection.status !== "found") throw new Error("Expected a found inspection fixture")
   const state = new ModelComparisonPanelState(() => {})
   const inspectionFor = (page: typeof oldPage, selectedTaskID: string | null) => {
     const row = page.rows.rows[0]!
+    const routeScope =
+      page.overview.context.snapshotID === "snapshot:before-refresh" ? "same-route" : "cross-route"
     return ModelDecisionInspectOutputSchema.parse({
-      ...decisionInspect(),
+      ...baseInspection,
       context: page.overview.context,
       configuration: row.configuration,
       cohort: row.cohort,
       efficiency: row.efficiency,
       nativeReportedCost: row.nativeReportedCost,
       selectedTaskID,
+      estimate: {
+        ...baseInspection.estimate,
+        historyScope: {
+          completeness: "complete-accepted-logical-task-retry-history",
+          routeScope,
+        },
+      },
     })
   }
   state.connect(
@@ -559,6 +570,101 @@ test("a stale inspection completion is ignored after its decision snapshot is re
     await tick()
     expect(state.data.decisionInspection).toBe(currentInspection)
     expect(state.data.decisionInspection?.context.snapshotID).toBe("snapshot:after-refresh")
+    expect(state.data.decisionInspection?.estimate.historyScope?.routeScope).toBe("cross-route")
+  } finally {
+    state.close()
+  }
+})
+
+test("contributor paging appends entries without replacing accepted-history metadata", async () => {
+  const filters = decisionRead.filters
+  const page = coherentDecisionPage("/repo", filters, "snapshot:history-metadata")
+  const base = decisionInspect()
+  if (base.status !== "found") throw new Error("Expected a found contributor fixture")
+  const routeA = { providerID: "provider-a", modelID: "model-a", variant: "100" }
+  const routeB = { providerID: "provider-b", modelID: "model-b", variant: "50" }
+  const inspection = ModelDecisionInspectOutputSchema.parse({
+    ...base,
+    context: page.overview.context,
+    configuration: page.rows.rows[0]!.configuration,
+    selectedTaskID: null,
+    estimate: {
+      ...base.estimate,
+      historyScope: {
+        completeness: "complete-accepted-logical-task-retry-history",
+        routeScope: "cross-route",
+      },
+    },
+    contributorPage: {
+      contributors: [
+        {
+          ...base.contributorPage.contributors[0]!,
+          route: routeA,
+          membership: "empirical-history",
+        },
+      ],
+      totalCount: 2,
+      nextCursor: "history-contributors-next",
+    },
+  })
+  if (inspection.status !== "found") throw new Error("Expected a found inspection")
+  const pagedInspection = ModelDecisionInspectOutputSchema.parse({
+    ...inspection,
+    estimate: { ...inspection.estimate, historyScope: undefined },
+    contributorPage: {
+      contributors: [
+        {
+          ...inspection.contributorPage.contributors[0]!,
+          route: routeB,
+          membership: "both",
+        },
+      ],
+      totalCount: 2,
+      nextCursor: null,
+    },
+  })
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "history-metadata-paging",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async () => page.overview,
+      decisionRows: async () => page.rows,
+      decisionConfigurations: async () => page.configurations,
+      decisionInspect: async (_filters, _snapshotID, _configurationID, _selectedTaskID, cursor) =>
+        cursor ? pagedInspection : inspection,
+    }),
+    {
+      selectedTaskID: null,
+      selectedCandidateID: null,
+      selectedConfigurationID: inspection.configuration.configurationID,
+    },
+    filters,
+  )
+  try {
+    await until(
+      () =>
+        state.data.decisionInspection?.contributorPage.nextCursor === "history-contributors-next",
+    )
+    await state.moreDecisionContributors()
+    const updated = state.data.decisionInspection
+    expect(updated?.estimate.historyScope).toEqual({
+      completeness: "complete-accepted-logical-task-retry-history",
+      routeScope: "cross-route",
+    })
+    expect(updated?.cohort).toEqual(inspection.cohort)
+    expect(updated?.efficiency).toEqual(inspection.efficiency)
+    expect(
+      updated?.contributorPage.contributors.map((contributor) => [
+        contributor.route,
+        contributor.membership,
+      ]),
+    ).toEqual([
+      [routeA, "empirical-history"],
+      [routeB, "both"],
+    ])
   } finally {
     state.close()
   }
