@@ -123,7 +123,8 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   Native observation **1793808638840** found zero pending permissions and the
   original worker foreground-active despite the recorded permission hold. Supported
   reconciliation was requested at plan v11 without interrupt/cancel/replacement or
-  startup-effect replay. Do not mistake a historical `outcome=succeeded` for this
+  startup-effect replay; inspection confirms plan v11 is running with the stale
+  reason cleared. Do not mistake a historical `outcome=succeeded` for this
   live worker's completion.
 - **LZ118 is admitted**, task `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
   `2e5b7147-426f-45b6-934f-6da2b07205e7`: explicit conclusive failed-startup
@@ -147,7 +148,12 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   disposable recorder/store repro found one remaining first-replay persistence
   rewrite: identical `model:null` or `variant:7` recovery changes payload and advances
   `recorded_at` once, both immediately and after reopen. Later replay stabilizes;
-  do not call it perpetual churn. Source integration is held, not waived by green tests.
+  do not call it perpetual churn. LZ124 corrects this; the full reviewed chain is now
+  merged as `f23fcb1`, preserving Root's `f2644c9` GUI repair. Merged original checks
+  and regressions passed **206 tests / 2,791 assertions**, formatting/lint/typecheck,
+  diff checks and the GUI build with actual packaged-bundle process-free evaluation.
+  Native task/combined source integration is recorded through v11; v12 is safely
+  cleanup-blocked on inconclusive native idleness, not a failed source integration.
   Preserve known same-call A, reject orphan borrowing and retain conflict/lost-identity
   uncertainty after tail eviction/reopen. No accepted valuation ancestry is discarded.
 - **LZ124** `b2f262ab-bbe7-476b-9437-3bfe22edabdd`, admitted plan
@@ -168,11 +174,16 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   defect has cleared its exact correction. Native task and combined receipts each
   passed recovery **33 tests / 478 assertions**, compatibility **54 / 317**, and
   quality, with unchanged inputs. Original first-write comparisons span advancing
-  clocks and reopen-before-first-replay. No integration yet.
+  clocks and reopen-before-first-replay. Task/combined source integration recorded
+  through v9 at corrected main `f23fcb1`; v10 is cleanup-blocked on native idleness.
+  No force removal or unchanged retry was performed. Old LZ119 receipts remain
+  distinct; no adoption was requested or fresh original-runtime receipt invented.
 - **LZ120** `0390fded-84db-4db7-a566-538013afaab3`, plan
   `f11e1754-064c-4c28-9888-d488a36ec03d`, is admitted after LZ119 integration:
   schema-valid current-price index from complete cached catalogs, ordered whole-model
   fallback, authentic provenance, unknown versus published zero and actual valuation.
+  Original attempt `b05fddca` is now running at plan v5 after LZ119 source integration;
+  cleanup holds correctly did not become false source dependencies.
 - User selected **creation/submission-time task membership with complete histories**.
   A-failure/B-acceptance credits acceptance only B; A retains failed effort, while B's
   empirical sample includes that task's own A+B retries, explicitly cross-route.
@@ -260,13 +271,14 @@ is full` at 2026-11-04T14:18:36.778Z, service log line 143204, exact session
   project-authorized aggregate calls/outcomes/participants/queues/generations;
   distinguish logical ownership from retired outstanding requests. Reads must not
   create/register/scan/drive recovery, leak content or claim native idleness.
-- **Valuation remains unmerged:** original LZ102 `266dd762`, LZ109 `3cef021`, LZ114
-  `eabbc17`. Own LZ114 **14 tests / 109 assertions**, accounting **38 / 447** and
-  quality passed; driver agreed on those tested cases. Independent review found
-  two remaining P1s: route-less retained-message recovery erases known A, and
-  orphan stream/end/failure borrows unrelated current A. Require complete per-call
-  evidence resolution, not another blanket event exception. Preserve all accepted
-  artifacts/history; no source integration or production-pricing claim yet.
+- **Retained valuation source is now merged:** LZ102 `266dd762` → LZ109 `3cef021`
+  → LZ114 `eabbc17` → LZ119 `e4d64ad` → LZ124 `d1b2b74`, as main `f23fcb1`.
+  Independent review reproduced and corrected the remaining same-call recovery,
+  orphan borrowing and first-replay persistence defects. All accepted ancestry,
+  original attempts and old receipts remain readable; 119/124 source integration
+  is recorded with distinct corrected-artifact evidence. Ancestor source inclusion
+  alone does not certify their old native cleanup/closure records or the real
+  current-price producer. LZ120/122 still must deliver that production boundary.
 - **LZ110** plan `2aa51f63-fd41-4510-92a6-6bad700d8880`, last v8 cancelling;
   original `addfb6ee` / `ses_34c9ce29a6d548cda5ffa21144ad41aa` retained. Native
   worker failed with a transport timeout, empty current controls/shells, all three

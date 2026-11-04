@@ -4,8 +4,9 @@ Read-only audit authority: `/private/tmp/lazers-current-backlog-20261104.json`,
 captured at 1793799204340. Its **116 records / 85 accepted nodes are not 85
 completed deliveries**. The partition below is as-of that audit, not a fresh native
 state certification. Current deltas live in the [handoff](../handoff.md): LZ103
-and LZ113 subsequently accepted/integrated, LZ106/108 accepted source landed, and
-LZ117–123 cover continuing recovery and real Models production. The original
+and LZ113 subsequently accepted/integrated, LZ106/108 accepted source landed, the
+retained valuation chain landed with LZ119/124 corrections, and LZ117–124 cover
+continuing recovery and real Models production. The original
 partition below is intentionally not rewritten into a false current count.
 
 ## Complete audit partition
@@ -59,9 +60,11 @@ cancelled/failed histories. Radar LZ80 remains deferred to the user's brainstorm
 - Evidence-only LZ36 trajectory and LZ81 indicator closure may proceed where the
   exact registered artifact/generation is observable. LZ111's corrected native
   observations already exist; its remaining exact-artifact binding must be truthful.
-- Keep valuation LZ102/109/114 unmerged until recorder→recovery→projection tests
-  preserve known same-call routes and reject orphan-call borrowing. Do not merge
-  another event-name exception just because its component checks pass.
+- Retained valuation LZ102/109/114 now lands through reviewed LZ119/124 with actual
+  recorder→recovery→projection tests preserving known same-call routes, rejecting
+  orphan-call borrowing and proving first-write replay persistence. Keep old
+  receipts distinct from correction evidence; ancestor source inclusion does not
+  certify old cleanup/closure or complete the production index/decision feature.
 
 Authorities: [roadmap](../../../design/roadmap.md),
 [execution](../roadmap-execution.md), [phase review](../phase-review-plan.md),
