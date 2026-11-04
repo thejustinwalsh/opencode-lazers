@@ -220,6 +220,155 @@ function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
   return merged
 }
 
+function routeEvidenceFromModel(
+  value: unknown,
+  stats: ReturnType<typeof privacyStats>,
+): JsonObject {
+  const model = object(value)
+  if (!model) return { status: "identity-unavailable" }
+  const providerID = text(model.providerID)
+  const modelID = text(model.id) ?? text(model.modelID)
+  const rawVariant = model.variant
+  if (!providerID || !modelID) return { status: "identity-unavailable" }
+  const invalidVariant =
+    rawVariant !== undefined && rawVariant !== null && typeof rawVariant !== "string"
+
+  let explicitIdentityLost = false
+  if (Object.hasOwn(model, "identity")) {
+    const identity = object(model.identity)
+    if (
+      !identity ||
+      identity.providerID !== providerID ||
+      identity.modelID !== modelID ||
+      identity.variant !== (typeof rawVariant === "string" ? rawVariant : null)
+    )
+      explicitIdentityLost = true
+  }
+
+  const route = {
+    providerID: safeText(providerID, stats, 200),
+    modelID: safeText(modelID, stats, 300),
+    variant: invalidVariant
+      ? "[REDACTED]"
+      : typeof rawVariant === "string"
+        ? safeText(rawVariant, stats, 200)
+        : null,
+  }
+  const sanitizedIdentityLost =
+    route.providerID !== providerID ||
+    route.modelID !== modelID ||
+    (!invalidVariant && route.variant !== (typeof rawVariant === "string" ? rawVariant : null)) ||
+    [route.providerID, route.modelID, route.variant].some(
+      (part) => part?.endsWith("…[truncated]") || part?.includes("[REDACTED]"),
+    )
+  const identityLost = invalidVariant || explicitIdentityLost || sanitizedIdentityLost
+  const retainedRoute = identityLost ? { ...route, identity: null } : route
+  if (identityLost) return { status: "identity-unavailable", route: retainedRoute }
+  return { status: "observed", route }
+}
+
+function mergeRouteEvidence(
+  previousValue: unknown,
+  incomingValue: unknown,
+): JsonObject | undefined {
+  const values = [previousValue, incomingValue].filter((value) => value !== undefined)
+  if (!values.length) return undefined
+  const identities = new Set<string>()
+  let observed: JsonObject | undefined
+  for (const value of values) {
+    const evidence = object(value)
+    if (evidence?.status !== "observed") return { status: "identity-unavailable" }
+    const route = object(evidence.route)
+    const providerID = text(route?.providerID)
+    const modelID = text(route?.modelID)
+    const variant = route?.variant
+    if (
+      !providerID ||
+      !modelID ||
+      (variant !== null && typeof variant !== "string") ||
+      [providerID, modelID, variant].some(
+        (part) =>
+          typeof part === "string" &&
+          (part.endsWith("…[truncated]") || part.includes("[REDACTED]")),
+      )
+    )
+      return { status: "identity-unavailable" }
+    identities.add(JSON.stringify([providerID, modelID, variant]))
+    observed ??= { status: "observed", route: { providerID, modelID, variant } }
+  }
+  return identities.size === 1 ? observed : { status: "identity-unavailable" }
+}
+
+function routeEvidenceFromStoredRoute(value: unknown): JsonObject {
+  const route = object(value)
+  const providerID = text(route?.providerID)
+  const modelID = text(route?.modelID) ?? text(route?.id)
+  const variant = route?.variant
+  if (!providerID || !modelID || (variant !== null && typeof variant !== "string"))
+    return { status: "identity-unavailable" }
+  if (route && Object.hasOwn(route, "identity")) {
+    const identity = object(route.identity)
+    if (
+      !identity ||
+      identity.providerID !== providerID ||
+      identity.modelID !== modelID ||
+      identity.variant !== (typeof variant === "string" ? variant : null)
+    )
+      return { status: "identity-unavailable" }
+  }
+  if (
+    [providerID, modelID, variant].some(
+      (part) =>
+        typeof part === "string" && (part.endsWith("…[truncated]") || part.includes("[REDACTED]")),
+    )
+  )
+    return { status: "identity-unavailable" }
+  return {
+    status: "observed",
+    route: { providerID, modelID, variant: typeof variant === "string" ? variant : null },
+  }
+}
+
+function payloadRouteEvidence(value: JsonObject): JsonObject | undefined {
+  const assertions: unknown[] = []
+  if (Object.hasOwn(value, "routeEvidence")) assertions.push(value.routeEvidence)
+  if (Object.hasOwn(value, "route"))
+    assertions.push(
+      value.route === null
+        ? { status: "identity-unavailable" }
+        : routeEvidenceFromStoredRoute(value.route),
+    )
+  if (Array.isArray(value.observations))
+    for (const raw of value.observations) {
+      const observation = object(raw)
+      if (!observation) continue
+      if (Object.hasOwn(observation, "routeEvidence")) assertions.push(observation.routeEvidence)
+      if (Object.hasOwn(observation, "route"))
+        assertions.push(
+          observation.route === null
+            ? { status: "identity-unavailable" }
+            : routeEvidenceFromStoredRoute(observation.route),
+        )
+    }
+  return assertions.reduce<JsonObject | undefined>(
+    (merged, assertion) => mergeRouteEvidence(merged, assertion),
+    undefined,
+  )
+}
+
+function setStepRouteEvidence(payload: JsonObject, routeEvidence: JsonObject | undefined): void {
+  if (routeEvidence) {
+    payload.routeEvidence = routeEvidence
+    payload.route = routeEvidence.status === "observed" ? routeEvidence.route : null
+  } else {
+    delete payload.routeEvidence
+  }
+}
+
+function normalizeStepRouteEvidence(payload: JsonObject): void {
+  setStepRouteEvidence(payload, payloadRouteEvidence(payload))
+}
+
 function observationIdentity(item: JsonObject): string {
   return (
     text(item.eventID) ??
@@ -571,6 +720,11 @@ function mergeFactPayload(
     text(incoming.status),
   )
   if (execution) merged.execution = execution
+  if (kind === "step")
+    setStepRouteEvidence(
+      merged,
+      mergeRouteEvidence(payloadRouteEvidence(previous), payloadRouteEvidence(incoming)),
+    )
   return merged
 }
 
@@ -743,6 +897,7 @@ export class ProgressRecorder {
       }
     const execution = mergeExecution(undefined, factPayload.execution, text(factPayload.status))
     if (execution) factPayload.execution = execution
+    if (fact.kind === "step") normalizeStepRouteEvidence(factPayload)
     const payload = JSON.stringify(factPayload)
     const insertedAt = Date.now()
     const inserted = db
@@ -1090,19 +1245,13 @@ export class ProgressRecorder {
               : "ended"
       const payload: Record<string, unknown> = { status }
       const observedAgent = type === "session.step.started" ? text(data.agent) : undefined
-      const model = type === "session.step.started" ? object(data.model) : undefined
-      const providerID = text(model?.providerID)
-      const modelID = text(model?.id)
-      const variant = text(model?.variant)
-      const route =
-        providerID && modelID
-          ? {
-              providerID: safeText(providerID, stats, 200),
-              modelID: safeText(modelID, stats, 300),
-              variant: variant ? safeText(variant, stats, 200) : null,
-            }
+      const routeEvidence =
+        type === "session.step.started" && Object.hasOwn(data, "model")
+          ? routeEvidenceFromModel(data.model, stats)
           : undefined
+      const route = object(routeEvidence?.route)
       if (observedAgent) payload.agent = safeText(observedAgent, stats, 200)
+      if (routeEvidence) payload.routeEvidence = routeEvidence
       if (route) payload.route = route
       if (type === "session.step.ended" || type === "session.step.failed") {
         if (object(data.tokens) || number(data.cost) !== undefined) {
@@ -1155,6 +1304,7 @@ export class ProgressRecorder {
           messageID,
           ...(observedAgent ? { agent: safeText(observedAgent, stats, 200) } : {}),
           ...(route ? { route } : {}),
+          ...(routeEvidence ? { routeEvidence } : {}),
           ...(type === "session.step.started" && dateMillis(data.started) !== undefined
             ? { startedAt: dateMillis(data.started) }
             : {}),
@@ -1355,9 +1505,21 @@ export class ProgressRecorder {
               "Retained assistant completion after tool settlement",
             ),
           })
-          if (assistantTiming || tokens || messageCost !== undefined || message.error) {
+          const routeEvidence = Object.hasOwn(message, "model")
+            ? routeEvidenceFromModel(message.model, privacyStats())
+            : undefined
+          const route = object(routeEvidence?.route)
+          if (
+            assistantTiming ||
+            tokens ||
+            messageCost !== undefined ||
+            message.error ||
+            routeEvidence
+          ) {
             const payload: Record<string, unknown> = {
               status,
+              ...(routeEvidence ? { routeEvidence } : {}),
+              ...(route ? { route } : {}),
               ...(tokens || messageCost !== undefined
                 ? {
                     measurementBasis: "additive-step-measurement",
@@ -1374,6 +1536,8 @@ export class ProgressRecorder {
                     "Retained assistant message creation when available; endpoints are separate",
                   status,
                   messageID,
+                  ...(route ? { route } : {}),
+                  ...(routeEvidence ? { routeEvidence } : {}),
                 },
               ],
               ...(assistantTiming ? { timing: assistantTiming } : {}),

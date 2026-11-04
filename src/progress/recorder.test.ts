@@ -930,6 +930,84 @@ test("native timing endpoints converge across hook, live, and retained recovery 
   }
 })
 
+test("retained unavailable routes are canonical on first write and idempotent through replay and reopen", () => {
+  const originalNow = Date.now
+  const retainedMessages = [
+    {
+      id: "msg-null-retained-route",
+      type: "assistant",
+      model: null,
+      time: { created: 14_000 },
+      content: [],
+    },
+    {
+      id: "msg-malformed-retained-effort",
+      type: "assistant",
+      model: { providerID: "openrouter", id: "vendor/model", variant: 7 },
+      time: { created: 14_100 },
+      content: [],
+    },
+  ]
+
+  for (const reopenBeforeReplay of [false, true]) {
+    const fixture = makeFixture()
+    let reopenedRepository: TaskRepository | undefined
+    let store = fixture.store
+    let recorder = new ProgressRecorder(store, "project")
+    let clock = 50_000
+    try {
+      Date.now = () => clock
+      recorder.reconcileMessages(workerSession, retainedMessages)
+
+      const snapshot = () =>
+        store.progressFacts([firstAttemptID]).map((row) => ({
+          seq: row.seq,
+          at: row.at,
+          recorded_at: row.recorded_at,
+          source: row.source,
+          sources_json: row.sources_json,
+          kind: row.kind,
+          message_id: row.message_id,
+          payload: row.payload,
+        }))
+      const firstWrite = snapshot()
+      const firstRows = store.progressFacts([firstAttemptID])
+      const firstSteps = firstRows.filter((row) => row.kind === "step")
+      expect(firstWrite).toHaveLength(firstRows.length)
+      expect(firstSteps).toHaveLength(2)
+      for (const row of firstSteps) {
+        expect(row.kind).toBe("step")
+        expect(row.source).toBe("recovery")
+        expect(row.at).toBe(row.message_id === "msg-null-retained-route" ? 14_000 : 14_100)
+        expect(JSON.parse(row.payload)).toMatchObject({
+          routeEvidence: { status: "identity-unavailable" },
+          route: null,
+        })
+      }
+
+      if (reopenBeforeReplay) {
+        const dbPath = fixture.repository.path
+        const projectDirectory = fixture.repository.projectDirectory
+        fixture.repository.close()
+        reopenedRepository = new TaskRepository(dbPath, projectDirectory)
+        store = new RunnerStore(reopenedRepository)
+        recorder = new ProgressRecorder(store, "project")
+        expect(snapshot()).toEqual(firstWrite)
+      }
+
+      for (let replay = 0; replay < 3; replay++) {
+        clock += 100
+        recorder.reconcileMessages(workerSession, retainedMessages)
+        expect(snapshot()).toEqual(firstWrite)
+      }
+    } finally {
+      Date.now = originalNow
+      reopenedRepository?.close()
+      fixture.close()
+    }
+  }
+})
+
 test("retained terminal execution wins over stale snapshots in every replay order", () => {
   const fixture = makeFixture()
   let reopened: TaskRepository | undefined

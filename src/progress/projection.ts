@@ -134,11 +134,40 @@ function payload(row: ProgressRow): JsonObject {
 function projectedRoute(value: unknown, stats: ReturnType<typeof privacyStats>) {
   const route = object(value)
   if (typeof route?.providerID !== "string" || typeof route.modelID !== "string") return null
-  return {
+  const projected = {
     providerID: safeText(route.providerID, stats, 200),
     modelID: safeText(route.modelID, stats, 300),
     variant: typeof route.variant === "string" ? safeText(route.variant, stats, 200) : null,
   }
+  const identity = object(route.identity)
+  const explicitIdentityLost =
+    Object.hasOwn(route, "identity") &&
+    (!identity ||
+      identity.providerID !== route.providerID ||
+      identity.modelID !== route.modelID ||
+      identity.variant !== (typeof route.variant === "string" ? route.variant : null))
+  const invalidVariant =
+    route.variant !== undefined && route.variant !== null && typeof route.variant !== "string"
+  const sanitizedIdentityLost = [projected.providerID, projected.modelID, projected.variant].some(
+    (part) => part?.endsWith("…[truncated]") || part?.includes("[REDACTED]"),
+  )
+  return {
+    ...projected,
+    ...(explicitIdentityLost || invalidVariant || sanitizedIdentityLost ? { identity: null } : {}),
+  }
+}
+
+function projectedRouteEvidence(value: unknown, stats: ReturnType<typeof privacyStats>) {
+  const evidence = object(value)
+  if (!evidence) return null
+  if (evidence.status !== "observed") {
+    const route = projectedRoute(evidence.route, stats)
+    return { status: "identity-unavailable", ...(route ? { route } : {}) }
+  }
+  const route = projectedRoute(evidence.route, stats)
+  return route && !Object.hasOwn(route, "identity")
+    ? { status: "observed", route }
+    : { status: "identity-unavailable" }
 }
 
 function projectedObservations(value: unknown, stats: ReturnType<typeof privacyStats>) {
@@ -152,32 +181,49 @@ function projectedObservations(value: unknown, stats: ReturnType<typeof privacyS
     )
       return []
     return [
-      {
-        source: observation.source,
-        eventID:
-          typeof observation.eventID === "string"
-            ? safeText(observation.eventID, stats, 200)
-            : null,
-        eventType: safeText(observation.eventType, stats, 120),
-        at: epochMillis(observation.at),
-        status: string(observation.status),
-        messageID:
-          typeof observation.messageID === "string"
-            ? safeText(observation.messageID, stats, 200)
-            : null,
-        callID:
-          typeof observation.callID === "string" ? safeText(observation.callID, stats, 200) : null,
-        agent:
-          typeof observation.agent === "string" ? safeText(observation.agent, stats, 200) : null,
-        tool: typeof observation.tool === "string" ? safeText(observation.tool, stats, 160) : null,
-        route: projectedRoute(observation.route, stats),
-        startedAt: epochMillis(observation.startedAt),
-        unit: observation.unit === "unix-epoch-ms" ? "unix-epoch-ms" : null,
-        meaning:
-          typeof observation.meaning === "string"
-            ? safeText(observation.meaning, stats, 240)
-            : null,
-      },
+      (() => {
+        const route = projectedRoute(observation.route, stats)
+        const routeEvidence = projectedRouteEvidence(observation.routeEvidence, stats)
+        const explicitEvidenceLost =
+          Object.hasOwn(observation, "routeEvidence") && !object(observation.routeEvidence)
+        const legacyRouteInvalid =
+          (Object.hasOwn(observation, "route") && observation.route === null) ||
+          (observation.route !== undefined && observation.route !== null && route === null)
+        return {
+          source: observation.source,
+          eventID:
+            typeof observation.eventID === "string"
+              ? safeText(observation.eventID, stats, 200)
+              : null,
+          eventType: safeText(observation.eventType, stats, 120),
+          at: epochMillis(observation.at),
+          status: string(observation.status),
+          messageID:
+            typeof observation.messageID === "string"
+              ? safeText(observation.messageID, stats, 200)
+              : null,
+          callID:
+            typeof observation.callID === "string"
+              ? safeText(observation.callID, stats, 200)
+              : null,
+          agent:
+            typeof observation.agent === "string" ? safeText(observation.agent, stats, 200) : null,
+          tool:
+            typeof observation.tool === "string" ? safeText(observation.tool, stats, 160) : null,
+          route,
+          routeEvidence:
+            routeEvidence ??
+            (explicitEvidenceLost || legacyRouteInvalid
+              ? { status: "identity-unavailable" }
+              : null),
+          startedAt: epochMillis(observation.startedAt),
+          unit: observation.unit === "unix-epoch-ms" ? "unix-epoch-ms" : null,
+          meaning:
+            typeof observation.meaning === "string"
+              ? safeText(observation.meaning, stats, 240)
+              : null,
+        }
+      })(),
     ]
   })
 }
@@ -240,7 +286,18 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
       view.finish = string(value.finish)
       view.measurementBasis = string(value.measurementBasis)
       view.agent = typeof value.agent === "string" ? safeText(value.agent, stats, 200) : null
-      view.route = projectedRoute(value.route, stats)
+      const routeEvidence = projectedRouteEvidence(value.routeEvidence, stats)
+      const explicitEvidenceLost =
+        Object.hasOwn(value, "routeEvidence") && !object(value.routeEvidence)
+      const legacyRoute = projectedRoute(value.route, stats)
+      const legacyRouteInvalid =
+        (Object.hasOwn(value, "route") && value.route === null) ||
+        (value.route !== undefined && value.route !== null && legacyRoute === null)
+      view.routeEvidence =
+        routeEvidence ??
+        (explicitEvidenceLost || legacyRouteInvalid ? { status: "identity-unavailable" } : null)
+      view.route =
+        object(routeEvidence)?.route ?? (routeEvidence || legacyRouteInvalid ? null : legacyRoute)
       view.observations = projectedObservations(value.observations, stats)
       view.usage = usage
         ? {
