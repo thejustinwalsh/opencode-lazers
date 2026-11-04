@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-04 after ordered price-source integration. Recheck native state;
+Updated 2026-11-04 after LZ103 same-attempt acceptance/integration. Recheck native state;
 source landing, task acceptance, effective activation and cleanup are distinct.
 The [previous checkpoint](evidence/handoff-20261103-retained.md) retains historical evidence.
 
@@ -34,11 +34,18 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
    **6 get / 6 context** calls. One renderer-ownership error and one expired
    permission 404 remain; no HTTP 5xx in that window. All six inference switches
    stayed enabled. Do not claim the original spike/battery issue permanently
-   solved or a working-worker comparison established yet.
-6. **Native Architect is recovering LZ103's same attempt now**, preserving failures,
-   before releasing ledger/UI/manifest work. Continue the original roadmap and
-   measure actual working behavior; do not reopen Radar redesign before the user
-   supplies the promised brainstorm. See [report](evidence/native-scheduler-performance-20261104.md).
+   solved. An actual LZ103 working window subsequently averaged service **44.0%**,
+   renderer **20.8%**, GPU **24.9%**, with 66 stable locations, one timer and zero
+   scheduler errors. This is not a matched causal comparison or permanent resolution.
+6. **LZ103's same attempt is accepted and source-integrated**, preserving failures.
+   Exact continuation `ca72008` contains only Root's already-landed fixture fix;
+   ancestry merge `f5a4fb3` left main's tree unchanged. Fresh task and combined
+   classification/suite/quality checks passed. Native task/combined integration
+   recorded through plan v48; non-forced cleanup requested, completion unverified.
+   Ledger/UI/manifest plans may now dispatch under their existing runtime gates.
+   Continue the full 116-task audit, including retained valuation and old operational
+   holds; 85 previously accepted nodes were not 85 completed deliveries. Radar
+   redesign remains deferred. See [report](evidence/native-scheduler-performance-20261104.md).
 
 ## Source and native state
 
@@ -51,17 +58,21 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 - Main also contains **Root resume fence `484cedf`**, merged `f3971af`: version
   recheck after async owner inspection. **158 tests / 2,835 assertions**, quality
   passed; Root's clean repair worktree was removed through native non-forced API.
-  **Live scheduler activation has not been established.** Native `location.reload`
-  is server-wide; tool/agent registry reload does not recreate `TaskRuntime`.
+  Effective `scheduler/v2` activation is now observed in the report above. Native
+  `location.reload` is server-wide; no further reload is needed for these notes.
 - **LZ103** task `969c383d-a616-482e-a4af-7b4c7707f03c`, plan
-  `8f369d22-6ca9-494e-9a38-5f4670bedc5c`, last v39 blocked/cancelled. Retain attempt
+  `8f369d22-6ca9-494e-9a38-5f4670bedc5c`, integrated through v48; cleanup requested.
+  Retain attempt
   `3cd4e4c5-113d-4a46-a824-75cf38c256b5`, session
   `ses_4e70382928c9434d81f7ee1ca4f14dc5`, and its original failed attempt.
   Classification `b16344d` + fixture `73ad2d5` are merged with Root `310439c`;
   merged suite **824 tests / 8,982 assertions** passed. Historical native suite
   exit 1 and exit 137 remain failures. Resume at 1793790431281 was cancelled at
-  1793790431286 by the stale-snapshot race. Do not repeat before fix activation,
-  reimplement classification, invent a receipt or force acceptance.
+  1793790431286 by the stale-snapshot race. After effective activation, supported
+  same-attempt resume produced `ca72008`; fresh task and combined checks passed.
+  Historical failures remain, and no classification reimplementation or waiver
+  occurred. Its reviewed feature-implementation annotation is revision 1; the
+  immutable specification is unchanged.
 - **LZ111 `18cad56`** task accepted, combined plan
   `446f3b7a-987c-41c4-85ae-8328a0322d54` v18 blocked on native-efficiency evidence.
   Own **83 tests / 703 assertions** and quality passed, but review reproduced:
@@ -112,8 +123,10 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ## Dependencies, product rules and retained resources
 
-- LZ106 ledger waits for LZ103 integration. LZ108 coupled UI/controller waits for
-  LZ103 + LZ107 + LZ112; explicit `openai/gpt-6-luna#max`, persona `ui`.
+- LZ106 ledger's LZ103 integration prerequisite is now satisfied. LZ108 coupled
+  UI/controller's LZ103 + LZ107 + LZ112 source prerequisites are satisfied;
+  explicit `openai/gpt-6-luna#max`, persona `ui`. Runtime still owns dispatch and
+  scope serialization; source readiness does not require worktree deletion.
   LZ113 manifest removal waits only for LZ103's actual fixture-file overlap, not
   vice versa. Preserve two Git observations, real bindings/receipts and containment;
   narrowly ignore legacy `candidate.manifest`. It is not a new product gate.

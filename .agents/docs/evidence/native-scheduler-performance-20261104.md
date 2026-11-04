@@ -175,5 +175,36 @@ and native shell outputs `sh_1a6bb02570017IiqQp4G4XqHtm.out` (event probe) /
 `sh_1a6bd786f001FsPsRiT0fXgdW2.out` (counter/CPU/error window) under the existing
 OpenCode project shell directory. Root's clean merged performance worktree was
 removed through native `worktree.remove(force:false)` at **1793798904235**.
-Architect is now checking LZ103 for supported same-attempt recovery. Radar's
-functional redesign remains deferred by the user.
+Architect subsequently resumed LZ103's same attempt. Radar's functional redesign
+remains deferred by the user.
+
+## Actual retained-worker window and subsequent acceptance
+
+At Unix **1793799362837 → 1793799395052**, LZ103's original retained attempt
+`3cd4e4c5-113d-4a46-a824-75cf38c256b5` was foreground-active at both boundaries.
+Six five-second CPU intervals after excluding top's initial sample averaged
+**43.97% service, 20.82% renderer, 24.85% GPU helper**. The service range was
+36.9–61.4%; renderer 17.4–25.1%; GPU 21.8–29.0%. Locations remained at 66.
+
+Scheduler generation `a398e53e-ea4d-4dfe-a502-2bce9c54ef0d` remained
+`scheduler/v2`, with one timer and zero scheduler errors. Process job runs
+**116823 → 118658**, wakeups **4613 → 4668**. These include settings/heartbeat
+jobs, not just runner reconciliation. Reconstruction generation
+`7f22a9c4-613a-4e72-8401-fe3dc7fd4b51` retained **partial** coverage: get
+**1004 → 1011**, context **935 → 941**, failed get **42 → 43**. These counters
+exclude authorization reads and are not whole-process native-call totals.
+
+The bounded log window contained one renderer-ownership error, one expired
+permission 404 and zero HTTP 5xx. All six inference switches remained enabled;
+no service restart, settings write or further reload was performed. Raw native
+capture: `sh_1a6c61836001EEevZHhuuwQhzS.out` in the same project shell directory.
+This is a real working observation, not a matched before/after causal experiment,
+ONNX attribution or proof that battery drain and the original spike are solved.
+
+The same attempt subsequently produced `ca72008`, adding only the exact existing
+Root `310439c` fixture isolation fix. Fresh native task and combined classification,
+full-suite and quality checks passed. Independent review confirmed the complete
+delta already existed on main; `f5a4fb3` records accepted-artifact ancestry without
+changing main's tree. Task/combined integration was recorded through plan v48,
+releasing existing source prerequisites. Non-forced cleanup was requested, not
+certified complete. Old exit 1, exit 137 and cancellation history remain intact.
