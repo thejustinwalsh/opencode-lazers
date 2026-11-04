@@ -8,6 +8,15 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **127 is now blockedv13 on actual completion-evidence mismatch, not permissions.**
+  Original candidate **29363e91f5e189551a429b8ff2d6f6bd31edb39b**, parent74272db,
+  is clean/unchanged before-after independent **76tests/427assertions** plus quality
+  pass. These are source checks, not native verification or acceptance. Exact-source
+  review and actual start/hook/success/listener diagnosis are running separately;
+  no repeated reconcile, new task/worker turn solely for proof, retrospective
+  certificate write or unreviewed activation. Keep original110cancelledv18 and
+  126blockedv9/source intact while assessing the producer bootstrap boundary.
+
 - **Latest user panel split supersedes Astra's initial Radar hierarchy.** Tasks owns
   **Now / attention / next / priority / dependencies**. Radar is the **realtime
   system/agent monitor**: what each task/session/model is doing, tools currently
