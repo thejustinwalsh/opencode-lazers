@@ -97,6 +97,54 @@ function snapshots() {
   }
 }
 
+test("an idle event subscription performs no repeated projections and changes still refresh", async () => {
+  const { fixture, session, sessionRadar } = snapshots()
+  const radar = await sessionRadar
+  const queue = new EventQueue<ObservationChange>()
+  let snapshotCalls = 0,
+    radarCalls = 0
+  let sequence = session.boundary.eventSequence
+  const transport: RadarTransport = {
+    snapshot: async () => {
+      snapshotCalls++
+      return { ...session, boundary: { ...session.boundary, eventSequence: sequence } }
+    },
+    radar: async () => {
+      radarCalls++
+      return { ...radar, boundary: { ...radar.boundary, eventSequence: sequence } }
+    },
+    changes: (signal) => changesFrom(queue, signal),
+    online: () => true,
+  }
+  const state = new RadarPanelState(() => {})
+  try {
+    state.connect(
+      "session-view",
+      "project",
+      { kind: "session", sessionID: "ses-failed" },
+      transport,
+    )
+    await until(() => Boolean(state.data.radar) && !state.data.stale)
+    await Bun.sleep(3_100)
+    expect({ snapshotCalls, radarCalls }).toEqual({ snapshotCalls: 1, radarCalls: 1 })
+    sequence++
+    queue.push({
+      projectID: "project",
+      sequence,
+      repositoryVersion: session.boundary.repositoryVersion,
+      sourceRevision: session.boundary.sourceRevision,
+      nativeRevision: session.boundary.nativeRevision,
+      cause: "native",
+      resnapshotRequired: false,
+    })
+    await until(() => state.data.snapshot?.boundary.eventSequence === sequence && !state.data.stale)
+    expect({ snapshotCalls, radarCalls }).toEqual({ snapshotCalls: 2, radarCalls: 2 })
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
 test("late session responses cannot replace a switched project observation", async () => {
   const { fixture, session, project, sessionRadar, projectRadar } = snapshots()
   try {
