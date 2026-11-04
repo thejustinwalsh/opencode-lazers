@@ -69,14 +69,6 @@ export const MaintenanceRequestSchema = z.strictObject({
 })
 export type MaintenanceRequest = z.infer<typeof MaintenanceRequestSchema>
 
-const ManifestEntrySchema = z.strictObject({
-  path: z.string().min(1).max(4_096),
-  mode: z.string().regex(/^[0-7]{6}$/),
-  type: z.enum(["blob", "commit"]),
-  objectID: commit,
-})
-export type ManifestEntry = z.infer<typeof ManifestEntrySchema>
-
 const ProjectSnapshotSchema = z.strictObject({
   id: identifier,
   directory: path,
@@ -126,7 +118,8 @@ const CandidateSnapshotSchema = z.strictObject({
   head: commit.nullable(),
   clean: z.boolean().nullable(),
   unmerged: z.boolean().nullable(),
-  manifest: z.array(ManifestEntrySchema).max(100_000),
+  /** Accepted for compatibility with old snapshots, but never inspected. */
+  manifest: z.unknown().optional(),
 })
 
 const SuppliedReceiptSnapshotSchema = z.discriminatedUnion("status", [
@@ -190,15 +183,6 @@ export const GitWorkspaceObservationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("unavailable") }),
 ])
 export type GitWorkspaceObservation = z.infer<typeof GitWorkspaceObservationSchema>
-
-export const ManifestObservationSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("observed"),
-    entries: z.array(ManifestEntrySchema).max(100_000),
-  }),
-  z.strictObject({ kind: z.literal("unavailable") }),
-])
-export type ManifestObservation = z.infer<typeof ManifestObservationSchema>
 
 export const ReceiptObservationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("missing") }),
