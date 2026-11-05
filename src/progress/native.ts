@@ -21,6 +21,27 @@ type ProgressContext = Pick<
   "event" | "permission" | "session" | "tool" | "location"
 >
 
+type ObservedExecutionStart = {
+  binding: NativeIdleBinding
+  sequence: number
+  source: "live" | "native-log-replay" | "live-peer"
+  current?: () => boolean
+}
+type LiveStartObserver = (
+  binding: NativeIdleBinding,
+  sequence: number,
+) => { current(): boolean } | undefined
+
+// Local plugin imports are replaced independently for each loaded location.
+// Keep only live listener registrations here; no start survives their retirement.
+const liveStartsKey = Symbol.for("opencode-lazers.live-native-start-observers.v1")
+const liveStartsHost = globalThis as typeof globalThis & {
+  [liveStartsKey]?: Map<string, Map<string, LiveStartObserver>>
+}
+const liveStartObservers: Map<string, Map<string, LiveStartObserver>> = (liveStartsHost[
+  liveStartsKey
+] ??= new Map())
+
 const NATIVE_EVENT_TYPES = [
   "session.created",
   "session.deleted",
@@ -383,10 +404,7 @@ export function registerProgress(
     const idleStore = new NativeIdleStore(recorder.store.repository)
     const listenerID = crypto.randomUUID()
     let observing = true
-    const observedExecutionStarts = new Map<
-      string,
-      { binding: NativeIdleBinding; sequence: number; source: "live" | "native-log-replay" }
-    >()
+    const observedExecutionStarts = new Map<string, ObservedExecutionStart>()
     const startsRequiringNewerObservation = new Map<string, number | null>()
     const requireNewerStart = (sessionID: string, afterSequence: number | null) => {
       const current = startsRequiringNewerObservation.get(sessionID)
@@ -444,7 +462,34 @@ export function registerProgress(
         // Diagnostic storage cannot change the native observation or worker execution.
       }
     }
-    yield* Effect.addFinalizer(() => Effect.sync(() => (observing = false)))
+    const liveStartsScope = JSON.stringify([
+      recorder.store.repository.path,
+      projectDirectory,
+      projectID,
+    ])
+    const livePeers =
+      liveStartObservers.get(liveStartsScope) ?? new Map<string, LiveStartObserver>()
+    liveStartObservers.set(liveStartsScope, livePeers)
+    livePeers.set(listenerID, (binding, sequence) => {
+      const start = observedExecutionStarts.get(binding.sessionID)
+      const current = () =>
+        observing &&
+        start !== undefined &&
+        start.source !== "live-peer" &&
+        observedExecutionStarts.get(binding.sessionID) === start &&
+        start.sequence === sequence &&
+        sameIdleBinding(start.binding, binding) &&
+        !startsRequiringNewerObservation.has(binding.sessionID)
+      return current() ? { current } : undefined
+    })
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        observing = false
+        livePeers.delete(listenerID)
+        if (!livePeers.size && liveStartObservers.get(liveStartsScope) === livePeers)
+          liveStartObservers.delete(liveStartsScope)
+      }),
+    )
     yield* ctx.tool.transform((editor) =>
       editor.add({
         name: "lz-report-progress",
@@ -568,10 +613,37 @@ export function registerProgress(
         let eventSequence = latest?.lastEventSequence
         let observedStart = observedExecutionStarts.get(sessionID)
         if (
+          executionStartSequence !== null &&
+          executionStartSequence !== undefined &&
+          !startsRequiringNewerObservation.has(sessionID) &&
+          (observedStart?.sequence !== executionStartSequence ||
+            !sameIdleBinding(observedStart.binding, binding) ||
+            observedStart.current?.() === false)
+        ) {
+          for (const [peerID, peer] of livePeers) {
+            if (peerID === listenerID) continue
+            const witness = peer(binding, executionStartSequence)
+            if (!witness) continue
+            observedStart = {
+              binding,
+              sequence: executionStartSequence,
+              source: "live-peer",
+              current: witness.current,
+            }
+            observedExecutionStarts.set(sessionID, observedStart)
+            trace(sessionID, "idle-lineage-live-peer", {
+              executionStartSequence,
+              eventSequence: eventSequence ?? undefined,
+            })
+            break
+          }
+        }
+        if (
           executionStartSequence === null ||
           executionStartSequence === undefined ||
           observedStart?.sequence !== executionStartSequence ||
-          !sameIdleBinding(observedStart.binding, binding)
+          !sameIdleBinding(observedStart.binding, binding) ||
+          observedStart.current?.() === false
         ) {
           if (readSessionLog) {
             const replayedStart = await replayCurrentExecutionStart(readSessionLog, sessionID)
@@ -612,7 +684,8 @@ export function registerProgress(
           executionStartSequence === null ||
           executionStartSequence === undefined ||
           observedStart?.sequence !== executionStartSequence ||
-          !sameIdleBinding(observedStart.binding, binding)
+          !sameIdleBinding(observedStart.binding, binding) ||
+          observedStart.current?.() === false
         ) {
           trace(sessionID, "idle-lineage-unavailable", {
             inputID,
@@ -730,6 +803,7 @@ export function registerProgress(
         state.executionStartSequence === undefined ||
         observedStart?.sequence !== state.executionStartSequence ||
         !sameIdleBinding(observedStart.binding, binding) ||
+        observedStart.current?.() === false ||
         requiredAfterSequence === null ||
         (requiredAfterSequence !== undefined &&
           state.executionStartSequence <= requiredAfterSequence)
@@ -744,6 +818,7 @@ export function registerProgress(
       const after = await readNativeSession(binding.sessionID)
       const exact =
         observing &&
+        observedStart.current?.() !== false &&
         sameIdleBinding(binding, bindingFor(binding.sessionID)) &&
         matchesBinding(before, binding) &&
         matchesBinding(after, binding) &&

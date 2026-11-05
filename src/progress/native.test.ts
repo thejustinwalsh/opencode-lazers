@@ -15,6 +15,76 @@ import { ProgressRecorder } from "./recorder.ts"
 import { progressReconstructionDiagnostics } from "./reconstruction.ts"
 import { registerProgress } from "./native.ts"
 
+test.each(["connected", "retired", "disconnected", "retired-after-idle"] as const)(
+  "a replacement idle hook retains truthful completion with a %s peer",
+  async (peerState) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const sessionID = "ses-accepted"
+      const binding = nativeIdleBinding(fixture, sessionID)!
+      const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+      const peer = makeContext(fixture, { liveEvents: true, messages })
+      const replacement = makeContext(fixture, { liveEvents: true, messages })
+      const store = new NativeIdleStore(fixture.repository)
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const peerFiber = yield* Effect.forkScoped(
+              Effect.scoped(
+                Effect.gen(function* () {
+                  yield* registerProgress(peer.context, recorder, "project")
+                  yield* Effect.never
+                }),
+              ),
+            )
+            yield* Effect.promise(() => waitForNativeState(async () => peer.subscriptions() > 0))
+            yield* Effect.promise(() =>
+              peer.emitEvent(executionEvent("session.execution.started", sessionID, 1)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => store.read(binding)?.executionStartSequence === 1),
+            )
+            if (peerState === "retired") yield* Fiber.interrupt(peerFiber)
+            if (peerState === "disconnected") {
+              yield* Effect.promise(() => peer.failEvents())
+              yield* Effect.promise(() =>
+                waitForNativeState(async () => peer.subscriptions() > 1, 3_000),
+              )
+            }
+            yield* registerProgress(replacement.context, recorder, "project")
+            yield* replacement.idle()!({ sessionID, background: [] } as never)
+            expect(store.read(binding)?.report?.count).toBe(
+              peerState === "connected" || peerState === "retired-after-idle" ? 0 : undefined,
+            )
+            if (peerState === "retired-after-idle") yield* Fiber.interrupt(peerFiber)
+            yield* Effect.promise(() =>
+              replacement.emitEvent(executionEvent("session.execution.succeeded", sessionID, 2)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => store.read(binding)?.lastEventSequence === 2),
+            )
+            if (peerState === "connected") {
+              yield* Effect.promise(() =>
+                waitForNativeState(async () => nativeIdleBackground(fixture).state === "observed"),
+              )
+              expect(nativeIdleBackground(fixture)).toMatchObject({
+                state: "observed",
+                count: 0,
+                executionStartSequence: 1,
+                terminalSequence: 2,
+                inputID: binding.assignedMessageID,
+              })
+            } else expect(nativeIdleBackground(fixture).state).toBe("unknown")
+          }),
+        ),
+      )
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
 function testObject(value: unknown): Record<string, unknown> | undefined {
