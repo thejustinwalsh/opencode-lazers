@@ -297,6 +297,8 @@ export class RunnerStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT,
         version INTEGER NOT NULL, event TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS runner_transitions_lookup
+        ON runner_transitions(plan_id,task_id,event,id);
       CREATE TABLE IF NOT EXISTS runner_leases (
         project_directory TEXT PRIMARY KEY, owner TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
@@ -311,6 +313,7 @@ export class RunnerStore {
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), task_id TEXT, attempt_id TEXT REFERENCES runner_attempts(id),
         kind TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT, fence INTEGER NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS runner_effects_plan ON runner_effects(plan_id);
       CREATE TABLE IF NOT EXISTS runner_source_quarantines (
         attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
         plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,

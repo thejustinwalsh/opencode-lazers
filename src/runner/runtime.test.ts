@@ -6271,6 +6271,11 @@ test("terminal verification waits for active foreground, exact input completion,
   ).toBe(false)
 
   worker.turn = { inputID: attempt.message_id, state: "completed" }
+  let blockedDetailReads = 0
+  f.host.session = async (id, options) => {
+    if (id === attempt.session_id && options?.messages) blockedDetailReads++
+    return originalSession(id, options)
+  }
   worker.background = {
     state: "unknown",
     source: "experimental.idle",
@@ -6279,6 +6284,7 @@ test("terminal verification waits for active foreground, exact input completion,
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
   expect(f.store.plan(f.receipt.planID)?.reason).toContain("background observation is unknown")
+  expect(blockedDetailReads).toBe(0)
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(
     f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
@@ -6311,6 +6317,7 @@ test("terminal verification waits for active foreground, exact input completion,
     count: 2,
     kinds: { shell: 1, subagent: 1 },
   })
+  expect(blockedDetailReads).toBe(0)
 
   worker.background = {
     state: "observed",
@@ -6324,11 +6331,56 @@ test("terminal verification waits for active foreground, exact input completion,
   }
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(blockedDetailReads).toBeGreaterThan(0)
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(
     f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
   ).toBe(true)
 })
+
+test.each(["failed", "interrupted"] as const)(
+  "background hold avoids repeated context for %s while preserving interruption evidence",
+  async (outcome) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await f.runtime.tick()
+    const attempt = f.store.attempts(f.receipt.planID)[0]!
+    const worker = f.sessions.get(attempt.session_id)!
+    worker.busy = false
+    worker.outcome = outcome
+    worker.background = {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "retained execution has no conclusive idle evidence",
+    }
+    const original = f.host.session
+    let freshReads = 0
+    let detailedReads = 0
+    f.host.session = async (id, options) => {
+      if (id === attempt.session_id) {
+        if (options?.messages) detailedReads++
+        else freshReads++
+      }
+      return original(id, options)
+    }
+    await f.runtime.tick()
+    await f.runtime.tick()
+    expect(freshReads).toBe(2)
+    expect(detailedReads).toBe(outcome === "interrupted" ? 2 : 0)
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+    expect(
+      f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+    ).toBe(false)
+    const stopped = f.store.latestTransition<{ outcome: string }>(
+      f.receipt.planID,
+      attempt.task_id,
+      "WORKER_STOPPED",
+    )
+    expect(stopped?.outcome).toBe(outcome === "interrupted" ? "interrupted" : undefined)
+  },
+)
 
 test("worker-location permissions and forms block terminal work and surface actionable diagnostics", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })

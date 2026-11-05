@@ -3356,8 +3356,12 @@ export class TaskRuntime {
       !session.pendingInput &&
       !session.observationUnstable &&
       backgroundReason &&
-      !session.outcome
+      session.outcome !== "interrupted"
     ) {
+      // A fresh negative background fact already prevents terminal work. Recheck
+      // it next tick instead of loading full context twice just to hold again.
+      // Interruption still takes the detailed path for its stop diagnostic;
+      // clearing this hold still requires every existing terminal proof below.
       this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"])
       this.backgroundWait(plan, attempt, session, backgroundReason, fence)
       return
