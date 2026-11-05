@@ -24,6 +24,15 @@ task and combined registration/quality checks also passed; LZ137 planversion9
 is accepted. This is reviewed source clearance, not native Code Mode qualification
 or permission to activate while other workers remain active.
 
+Root also tested the corrected current-main merge preview without changing live
+source:35 tests/377 assertions pass across advice, instructions, reads, RPC and
+native tool tests. Temporary modules retained the candidate code and shared
+current dependencies; initial temporary-import failures were fixed in that
+harness, not in product source. This is integration preflight, not native
+qualification. The rollout procedure now records the accepted base's task-only
+landing before merging the correction, providing adoption its reviewed scope
+baseline instead of treating prior main changes as new task edits.
+
 ## Cleared retained findings and other boundaries
 
 - No lifetime20-advice write ceiling remains. The20 limit applies to the history

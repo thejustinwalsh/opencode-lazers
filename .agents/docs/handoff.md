@@ -52,8 +52,10 @@ cleanup are separate facts.
   and update its registration test. Plan181baf24-b3dc-49c5-adad-338d0ec9fe34,
   original359a7178/sessionfa6c346c, small-refactoring/OpenAI Luna Max, native busy
   1793863118226→3273840. Review8 tests/99 assertions pass; clean merge preview.
-  Merge corrected descendant and qualify attachment/getters through Code Mode at
-  a quiet boundary. No watched source activation while127/129 remain active.
+  Current-main corrected merge preview35 tests/377 assertions passes without
+  live source changes. At the quiet boundary, merge/record accepted132 base first,
+  then merge137 and adopt against that recorded baseline; see prepared procedure.
+  Qualify attachment/getters through Code Mode. No watched source activation while127/129 remain active.
   129 remains active; its120s home-wide review-note search received an exact
   canonical-path steer through Architect. Path consumption is not yet observed. Source inclusion does not accept99: its native idle
   mismatch remains. The runtime still reserves tools.ts, so133 remains preparing.
@@ -86,7 +88,11 @@ cleanup are separate facts.
   delivered to f58f7187 without another ownership transfer. Its owner then
   cancelled/settled127 atv47 and resumed the SAME38e12d10 attempt at1793862974295,
   v49, new assignedmsg_15c474d20da04ae6b1ed90b959112565. Original worker42ac41f3
-  is actually active on OpenAI Luna Max, researching the replay API alongside129.
+  is actually active on OpenAI Luna Max alongside129. It reported the small cut
+  (authenticated log reader plus genuine-hook fallback) and added red-first
+  replacement/replay-gap/input-race tests; initial native suite43pass/2fail before
+  implementation. Root's source-grounded check-in was delivered at1793864325573;
+  chosen-cut report4354543 and test patch4392936 are observed, not completion.
   No replacement, reload or ownership transfer. Its canonical API read permission
   was already resolved when Root checked; none remained pending.
   Automatic successor04072d58 reviewed real99 work and subsequently renewed into
