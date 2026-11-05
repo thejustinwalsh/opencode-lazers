@@ -32,6 +32,7 @@ import {
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
 import type { ModelPriceSourceSettings } from "./price-source-settings.ts"
+import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
 import type {
   ObservationLedgerDecisionCapture,
   ObservationLedgerDecisionRead,
@@ -192,12 +193,17 @@ function routeID(route: ModelDecisionRoute | null) {
 function collectRoutes(
   capture: ObservationLedgerDecisionCapture,
   tasks: readonly ObservationLedgerDecisionTask[] = capture.tasks,
+  usageSessions: readonly Pick<
+    TaskValuation["usage"]["sessions"][number],
+    "sessionID" | "categories"
+  >[],
 ): CurrentPriceApplicability[] {
-  const routes = new Map<string, CurrentPriceApplicability>()
+  const routes = new Map<string, ModelDecisionRoute>()
+  const observedRoutesBySession = new Map<string, Set<string>>()
   const attempts = tasks.flatMap((task) => task.attempts)
   const attemptIDs = new Set(attempts.map((attempt) => attempt.accounting.id))
   const sessionIDs = new Set(attempts.map((attempt) => attempt.accounting.sessionID))
-  const add = (value: unknown) => {
+  const add = (value: unknown, sessionID?: string) => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return
     const item = value as Record<string, unknown>
     const routeValue =
@@ -221,7 +227,12 @@ function collectRoutes(
     })
     if (!route) return
     const id = routeID(route)!
-    routes.set(id, { route })
+    routes.set(id, route)
+    if (sessionID) {
+      const sessionRoutes = observedRoutesBySession.get(sessionID) ?? new Set<string>()
+      sessionRoutes.add(id)
+      observedRoutesBySession.set(sessionID, sessionRoutes)
+    }
   }
   for (const attempt of attempts) {
     add({ route: attempt.accounting.planRoute })
@@ -234,12 +245,50 @@ function collectRoutes(
       !sessionIDs.has(String(progress.sessionID ?? ""))
     )
       continue
-    add(fact)
+    const sessionID = typeof progress.sessionID === "string" ? progress.sessionID : undefined
+    add(fact, sessionID)
     const observations = (fact as Record<string, unknown>).observations
-    if (Array.isArray(observations)) for (const observation of observations) add(observation)
+    if (Array.isArray(observations))
+      for (const observation of observations) add(observation, sessionID)
   }
-  return [...routes.values()].sort((left, right) =>
-    routeID(left.route)!.localeCompare(routeID(right.route)!),
+  const usageBySession = new Map(usageSessions.map((session) => [session.sessionID, session]))
+  const observedSessionsByRoute = new Map<string, Set<string>>()
+  for (const [sessionID, sessionRoutes] of observedRoutesBySession)
+    for (const id of sessionRoutes) {
+      const sessions = observedSessionsByRoute.get(id) ?? new Set<string>()
+      sessions.add(sessionID)
+      observedSessionsByRoute.set(id, sessions)
+    }
+  const applicability: CurrentPriceApplicability[] = []
+  for (const [id, route] of routes) {
+    const sessions = [...(observedSessionsByRoute.get(id) ?? [])].sort((left, right) =>
+      left.localeCompare(right),
+    )
+    if (!sessions.length) {
+      applicability.push({ route })
+      continue
+    }
+    for (const sessionID of sessions) {
+      const usageSession = usageBySession.get(sessionID)
+      const soleObservedRoute = observedRoutesBySession.get(sessionID)?.size === 1
+      // Session totals only support route-level applicability when the retained route is exact
+      // and singular. Tier/context selectors are never inferred from aggregate token counts.
+      const usage =
+        soleObservedRoute && usageSession
+          ? Object.fromEntries(
+              CATEGORIES.map((category) => {
+                const measure = usageSession.categories[category]
+                return [category, { value: measure.value, status: measure.status }]
+              }),
+            )
+          : undefined
+      applicability.push({ route, ...(usage ? { usage } : {}) })
+    }
+  }
+  return applicability.sort(
+    (left, right) =>
+      routeID(left.route)!.localeCompare(routeID(right.route)!) ||
+      stable(left).localeCompare(stable(right)),
   )
 }
 
@@ -952,17 +1001,25 @@ function buildSnapshotData(
     signal?.throwIfAborted()
     const acceptedTaskCount = cohort.acceptedTaskIDs.size
     const tokens = sumValues([...cohort.sessions.values()].map((session) => session.tokens))
-    const market = sumValues([...cohort.sessions.values()].map((session) => session.marketUSD))
     const tokensComplete = [...cohort.sessions.values()].every(
       (session) => session.tokensComplete && session.tokens !== null,
     )
-    const marketComplete = [...cohort.sessions.values()].every(
-      (session) => session.marketComplete && session.marketUSD !== null,
-    )
     const shared = [...cohort.sessions.values()].some((session) => session.shared)
+    const marketSessionsComplete =
+      cohort.sessions.size > 0 &&
+      [...cohort.sessions.values()].every(
+        (session) => session.marketComplete && session.marketUSD !== null,
+      )
+    const marketSubtotal = marketSessionsComplete
+      ? sumValues([...cohort.sessions.values()].map((session) => session.marketUSD))
+      : null
+    const marketValueComplete = marketSessionsComplete && marketSubtotal !== null
+    const marketAttributionComplete = !cohort.missingAttribution && !shared
+    const marketComplete = marketValueComplete && marketAttributionComplete
+    const market = marketComplete ? marketSubtotal : null
     const missing = new Set<"tokens" | "current-price" | "attribution">()
     if (!tokensComplete) missing.add("tokens")
-    if (!marketComplete) missing.add("current-price")
+    if (!marketValueComplete) missing.add("current-price")
     if (cohort.missingAttribution || shared) missing.add("attribution")
     const efficiency =
       acceptedTaskCount === 0
@@ -1076,9 +1133,10 @@ function buildSnapshotData(
       },
     ]
   })
-  const frontier = points.filter(
+  const completePoints = points.filter((point) => !point.partial)
+  const frontier = completePoints.filter(
     (point) =>
-      !points.some(
+      !completePoints.some(
         (other) =>
           other.configurationID !== point.configurationID &&
           other.tokensPerAcceptedTask <= point.tokensPerAcceptedTask &&
@@ -1399,7 +1457,13 @@ export function createModelDecisionReader(
       return unavailableSnapshot(input, result, priceState)
     }
     const { selectedTasks } = filteredTasks(result, input)
-    const routes = collectRoutes(result, selectedTasks)
+    const effort = projectTaskEffortBasis({
+      attempts: selectedTasks.flatMap((task) => task.attempts.map((attempt) => attempt.accounting)),
+      progressFacts: result.progressFacts,
+      progressTruncated: false,
+      truncatedContextSessionIDs: [],
+    })
+    const routes = collectRoutes(result, selectedTasks, effort.usage.sessions)
     if (routes.length > 4_000)
       throw new Error("Decision route coverage exceeds the 4000 exact-route pricing bound")
     const priceState = await dependencies.readPriceState(routes, signal)

@@ -10,10 +10,12 @@ import type { ModelDecisionRoute } from "./decision-contract.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
 import { CurrentPriceApplicabilitySchema, buildCurrentPriceIndex } from "./current-price-index.ts"
+import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import type { CurrentPriceIndex } from "./valuation-schema.ts"
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
+import { projectTaskValuation } from "./valuation.ts"
 import capturedCatalogs from "../../test/models-current-price-index/fixtures/captured-catalogs.json" with { type: "json" }
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 
@@ -126,7 +128,13 @@ function rewriteAttemptFacts(
   }
 }
 
-function rewriteAttemptUsage(path: string, attemptID: string, input: number) {
+function rewriteAttemptUsage(
+  path: string,
+  attemptID: string,
+  input: number,
+  output = 0,
+  cacheWrite: number | null = 0,
+) {
   const db = new Database(path, { strict: true })
   try {
     const rows = db
@@ -136,7 +144,7 @@ function rewriteAttemptUsage(path: string, attemptID: string, input: number) {
       .all(attemptID)
     for (const row of rows) {
       const payload = JSON.parse(row.payload) as Record<string, unknown>
-      payload.usage = completeUsage(input)
+      payload.usage = { ...completeUsage(input), output, cacheWrite }
       db.query("UPDATE runner_progress SET payload=? WHERE seq=?").run(
         JSON.stringify(payload),
         row.seq,
@@ -188,6 +196,11 @@ function pin(route: ModelDecisionRoute, rate: string, generation = 1) {
   }
 }
 
+function pinWithMissingCompletionRate(route: ModelDecisionRoute, generation: number) {
+  const quote = pin(route, "0.000001", generation)
+  return { ...quote, rates: { ...quote.rates, completion: null } }
+}
+
 function inputFor(projectDirectory: string) {
   return ModelDecisionReadInputSchema.parse({
     schemaVersion: 2,
@@ -220,6 +233,8 @@ function saveCapturedOpenRouterSnapshot(
   projectDirectory: string,
   generation: number,
   promptRate: string,
+  missingCacheWriteRate = false,
+  tieredPromptTiers = false,
 ) {
   const source = ModelEvidenceSnapshotSchema.parse(capturedCatalogs.openrouter)
   if (source.source !== "openrouter-models") throw new Error("Expected captured OpenRouter source")
@@ -235,7 +250,19 @@ function saveCapturedOpenRouterSnapshot(
         ...record,
         prices: {
           ...record.prices,
-          tiers: record.prices.tiers.map((tier) => ({ ...tier, prompt: promptRate })),
+          tiers: record.prices.tiers.flatMap((tier) => {
+            const updated = {
+              ...tier,
+              prompt: promptRate,
+              ...(missingCacheWriteRate ? { inputCacheWrite: null } : {}),
+            }
+            return tieredPromptTiers
+              ? [
+                  { ...updated, minPromptTokens: null },
+                  { ...updated, minPromptTokens: 100_000, prompt: "0.000004" },
+                ]
+              : [updated]
+          }),
         },
       }
     }),
@@ -247,17 +274,113 @@ function saveCapturedOpenRouterSnapshot(
 function makePriceIndex(
   routes: readonly { route: ModelDecisionRoute }[],
   generation = 1,
+  pins?: CurrentPriceIndex["pins"],
 ): CurrentPriceIndex {
   return {
     indexID: `decision-test-price-index:${generation}`,
     retrievedAt: "2026-11-05T12:00:00.000Z",
-    pins: routes.map(({ route }) =>
-      pin(
-        route,
-        route.modelID === "b-model" ? "0.00000001" : generation > 1 ? "0.000002" : "0.000001",
-        generation,
+    pins:
+      pins ??
+      [
+        ...new Map(
+          routes.map(({ route }) => [
+            modelConfigurationID(route.providerID, route.modelID, route.variant),
+            route,
+          ]),
+        ).values(),
+      ].map((route) =>
+        pin(
+          route,
+          route.modelID === "b-model" ? "0.00000001" : generation > 1 ? "0.000002" : "0.000001",
+          generation,
+        ),
       ),
-    ),
+  }
+}
+
+function fixtureDecisionReader(
+  fixture: ReturnType<typeof makeLedgerFixture>,
+  makeIndex: (routes: readonly { route: ModelDecisionRoute }[]) => CurrentPriceIndex,
+) {
+  return createModelDecisionReader({
+    projectDirectory: fixture.projectDirectory,
+    openLedger: () => openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory),
+    async readPriceState(routes) {
+      return { settings: priceSettings(), index: makeIndex(routes), freshness: "current" }
+    },
+  })
+}
+
+function valueFixture(
+  fixture: ReturnType<typeof makeLedgerFixture>,
+  currentIndex: CurrentPriceIndex,
+) {
+  const ledger = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+  try {
+    const capture = ledger.readDecision()
+    if (capture.status !== "captured") throw new Error("Decision fixture was not captured")
+    return projectTaskValuation({
+      attempts: capture.tasks.flatMap((task) => task.attempts.map((attempt) => attempt.accounting)),
+      progressFacts: capture.progressFacts,
+      progressTruncated: false,
+      truncatedContextSessionIDs: [],
+      currentIndex,
+    })
+  } finally {
+    ledger.close()
+  }
+}
+
+function cachedOpenRouterReader(
+  fixture: ReturnType<typeof makeLedgerFixture>,
+  options: {
+    missingCacheWriteRate?: boolean
+    tieredPromptTiers?: boolean
+    onRoutes?: (routes: readonly CurrentPriceApplicability[]) => void
+    onIndex?: (index: CurrentPriceIndex) => void
+  } = {},
+) {
+  const sourceStore = new ModelEvidenceStore(fixture.path, fixture.projectDirectory)
+  const generation = sourceStore.beginRefresh()["openrouter-models"]
+  saveCapturedOpenRouterSnapshot(
+    sourceStore,
+    fixture.projectDirectory,
+    generation,
+    "0.000002",
+    options.missingCacheWriteRate,
+    options.tieredPromptTiers,
+  )
+  const settings = orderedOpenRouterSettings()
+  const reader = createModelDecisionReader({
+    projectDirectory: fixture.projectDirectory,
+    openLedger: () => openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory),
+    async readPriceState(routes) {
+      options.onRoutes?.(routes)
+      const evidence = new ModelEvidenceReadStore(fixture.path, fixture.projectDirectory)
+      try {
+        const sources = evidence.readComparisonSources()
+        const index = buildCurrentPriceIndex({
+          sourceStore: { readComparisonSources: () => sources },
+          priceSources: settings,
+          observedRoutes: routes,
+        })
+        options.onIndex?.(index)
+        return {
+          settings,
+          index,
+          freshness: "current",
+        }
+      } finally {
+        evidence.close()
+      }
+    },
+  })
+  return {
+    reader,
+    close() {
+      reader.close()
+      sourceStore.close()
+    },
   }
 }
 
@@ -435,6 +558,359 @@ test("production decision projection preserves exact route effort, adopted accep
   } finally {
     reader.close()
     fixture.close()
+  }
+})
+
+test("unavailable and incomplete market totals stay unknown while a sourced complete zero remains rankable", async () => {
+  const route = { providerID: "openrouter", modelID: "a-model", variant: "medium" }
+  const routeID = `configuration:${modelConfigurationID(route.providerID, route.modelID, route.variant)}`
+
+  const absentFixture = makeLedgerFixture()
+  addAdoptedUsage(absentFixture, route)
+  const absentReader = fixtureDecisionReader(absentFixture, (routes) =>
+    makePriceIndex(routes, 1, []),
+  )
+  try {
+    const input = inputFor(absentFixture.projectDirectory)
+    const overview = await absentReader.overview(input)
+    const rows = await absentReader.rows({ ...input, limit: 100 })
+    const row = rows.rows.find((candidate) => candidate.configuration.configurationID === routeID)
+    assert.ok(row)
+    expect(row.cohort.acceptedTaskCount).toBeGreaterThan(0)
+    expect(row.efficiency).toMatchObject({
+      status: "partial",
+      currentMarketUSDPerAcceptedTask: null,
+      missing: ["current-price"],
+    })
+    expect(row.configuration.currentPrice).toMatchObject({
+      source: null,
+      semantics: "unknown",
+      freshness: "unavailable",
+    })
+    expect(overview.graph.points.some((point) => point.configurationID === routeID)).toBe(false)
+    expect(overview.graph.frontierConfigurationIDs).not.toContain(routeID)
+    const configurations = await absentReader.configurations({ ...input, limit: 100 })
+    expect(
+      configurations.configurations.find(
+        (configuration) => configuration.configurationID === routeID,
+      )?.currentPrice.source,
+    ).toBeNull()
+    const inspected = await absentReader.inspect({
+      ...input,
+      snapshotID: overview.context.snapshotID,
+      configurationID: routeID,
+      selectedTaskID: null,
+      contributorLimit: 100,
+    })
+    expect(inspected.status).toBe("found")
+    if (inspected.status === "found")
+      expect(inspected.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
+  } finally {
+    absentReader.close()
+    absentFixture.close()
+  }
+
+  const partialFixture = makeLedgerFixture()
+  addAdoptedUsage(partialFixture, route)
+  rewriteAttemptUsage(partialFixture.path, partialFixture.attempts.adoption.id, 50, 10)
+  const partialReader = fixtureDecisionReader(partialFixture, (routes) =>
+    makePriceIndex(
+      routes,
+      1,
+      routes.map(({ route: observed }) => pinWithMissingCompletionRate(observed, 1)),
+    ),
+  )
+  try {
+    const input = inputFor(partialFixture.projectDirectory)
+    const routes = [{ route }]
+    const index = makePriceIndex(
+      routes,
+      1,
+      routes.map(({ route: observed }) => pinWithMissingCompletionRate(observed, 1)),
+    )
+    const sourceValuation = valueFixture(partialFixture, index)
+    expect(
+      sourceValuation.marketEquivalentCost.sessions.some(
+        (session) =>
+          session.status === "partial" &&
+          session.routeAllocation.route?.modelID === route.modelID &&
+          session.subtotalUSD !== null &&
+          session.subtotalUSD > 0 &&
+          session.valueUSD === null,
+      ),
+    ).toBe(true)
+
+    const overview = await partialReader.overview(input)
+    const rows = await partialReader.rows({ ...input, limit: 100 })
+    const row = rows.rows.find((candidate) => candidate.configuration.configurationID === routeID)
+    assert.ok(row)
+    expect(row.cohort.acceptedTaskCount).toBeGreaterThan(0)
+    expect(row.efficiency).toMatchObject({
+      status: "partial",
+      currentMarketUSDPerAcceptedTask: null,
+      missing: ["current-price"],
+    })
+    expect(overview.graph.points.some((point) => point.configurationID === routeID)).toBe(false)
+    expect(overview.graph.frontierConfigurationIDs).not.toContain(routeID)
+    const inspected = await partialReader.inspect({
+      ...input,
+      snapshotID: overview.context.snapshotID,
+      configurationID: routeID,
+      selectedTaskID: null,
+      contributorLimit: 100,
+    })
+    expect(inspected.status).toBe("found")
+    if (inspected.status === "found")
+      expect(inspected.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
+  } finally {
+    partialReader.close()
+    partialFixture.close()
+  }
+
+  const zeroRoute = { providerID: "openai", modelID: "zero-model", variant: null }
+  const zeroRouteID = `configuration:${modelConfigurationID(
+    zeroRoute.providerID,
+    zeroRoute.modelID,
+    zeroRoute.variant,
+  )}`
+  const zeroFixture = makeLedgerFixture()
+  rewriteAttemptFacts(
+    zeroFixture.path,
+    zeroFixture.projectID,
+    zeroFixture.attempts.failed.id,
+    zeroRoute,
+  )
+  rewriteAttemptFacts(
+    zeroFixture.path,
+    zeroFixture.projectID,
+    zeroFixture.attempts.accepted.id,
+    zeroRoute,
+    [20, 30],
+  )
+  const zeroReader = cachedOpenRouterReader(zeroFixture)
+  try {
+    const input = inputFor(zeroFixture.projectDirectory)
+    const overview = await zeroReader.reader.overview(input)
+    const rows = await zeroReader.reader.rows({ ...input, limit: 100 })
+    const row = rows.rows.find(
+      (candidate) => candidate.configuration.configurationID === zeroRouteID,
+    )
+    assert.ok(row)
+    expect(row.cohort.acceptedTaskCount).toBeGreaterThan(0)
+    expect(row.efficiency).toMatchObject({
+      status: "single-observation",
+      currentMarketUSDPerAcceptedTask: 0,
+    })
+    expect(row.configuration.currentPrice).toMatchObject({
+      source: "openrouter",
+      sourceRecordID: "openai/zero-model",
+    })
+    expect(overview.graph.points).toContainEqual(
+      expect.objectContaining({
+        configurationID: zeroRouteID,
+        currentMarketUSDPerAcceptedTask: 0,
+      }),
+    )
+    expect(overview.graph.frontierConfigurationIDs).toContain(zeroRouteID)
+  } finally {
+    zeroReader.close()
+    zeroFixture.close()
+  }
+})
+
+test("current price applicability uses retained usage and leaves incomplete, mixed, or tier-ambiguous inputs unknown", async () => {
+  const route = { providerID: "openai", modelID: "fixture-model", variant: "high" }
+  const routeID = `configuration:${modelConfigurationID(route.providerID, route.modelID, route.variant)}`
+  const completeFixture = makeLedgerFixture()
+  rewriteAttemptFacts(
+    completeFixture.path,
+    completeFixture.projectID,
+    completeFixture.attempts.failed.id,
+    route,
+  )
+  rewriteAttemptFacts(
+    completeFixture.path,
+    completeFixture.projectID,
+    completeFixture.attempts.accepted.id,
+    route,
+    [20, 30],
+  )
+  let collected: readonly CurrentPriceApplicability[] = []
+  const completeIndex: { current: CurrentPriceIndex | null } = { current: null }
+  const complete = cachedOpenRouterReader(completeFixture, {
+    missingCacheWriteRate: true,
+    onRoutes: (routes) => (collected = routes),
+    onIndex: (index) => (completeIndex.current = index),
+  })
+  try {
+    const input = inputFor(completeFixture.projectDirectory)
+    const overview = await complete.reader.overview(input)
+    const rows = await complete.reader.rows({ ...input, limit: 100 })
+    const row = rows.rows.find((candidate) => candidate.configuration.configurationID === routeID)
+    assert.ok(row)
+    expect(row.configuration.currentPrice).toMatchObject({
+      source: "openrouter",
+      sourceRecordID: "openai/fixture-model",
+    })
+    expect(row.efficiency.currentMarketUSDPerAcceptedTask).toBeGreaterThan(0)
+    expect(overview.context.priceIndex.pins).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: "openrouter" })]),
+    )
+    assert.ok(completeIndex.current)
+    expect(completeIndex.current.pins).toContainEqual(
+      expect.objectContaining({
+        route,
+        rates: expect.objectContaining({
+          unit: "USD per token",
+          uncachedInput: "0.000002",
+          completion: "0.000010",
+          cacheRead: "0.0000005",
+          cacheWrite: null,
+        }),
+        provenance: expect.objectContaining({
+          source: "openrouter-models",
+          recordID: "openai/fixture-model",
+        }),
+      }),
+    )
+    expect(
+      collected.some((applicability) => {
+        const cacheWrite = applicability.usage?.cacheWrite
+        return (
+          applicability.route.modelID === route.modelID &&
+          cacheWrite?.value === 0 &&
+          cacheWrite.status === "observed"
+        )
+      }),
+    ).toBe(true)
+  } finally {
+    complete.close()
+    completeFixture.close()
+  }
+
+  const incompleteFixture = makeLedgerFixture()
+  rewriteAttemptFacts(
+    incompleteFixture.path,
+    incompleteFixture.projectID,
+    incompleteFixture.attempts.failed.id,
+    route,
+  )
+  rewriteAttemptFacts(
+    incompleteFixture.path,
+    incompleteFixture.projectID,
+    incompleteFixture.attempts.accepted.id,
+    route,
+    [20, 30],
+  )
+  rewriteAttemptUsage(incompleteFixture.path, incompleteFixture.attempts.accepted.id, 50, 0, null)
+  let incompleteInputs: readonly CurrentPriceApplicability[] = []
+  const incomplete = cachedOpenRouterReader(incompleteFixture, {
+    missingCacheWriteRate: true,
+    onRoutes: (routes) => (incompleteInputs = routes),
+  })
+  try {
+    const input = inputFor(incompleteFixture.projectDirectory)
+    const overview = await incomplete.reader.overview(input)
+    const row = (await incomplete.reader.rows({ ...input, limit: 100 })).rows.find(
+      (candidate) => candidate.configuration.configurationID === routeID,
+    )
+    assert.ok(row)
+    expect(row.configuration.currentPrice.source).toBeNull()
+    expect(row.efficiency.currentMarketUSDPerAcceptedTask).toBeNull()
+    expect(overview.graph.points.some((point) => point.configurationID === routeID)).toBe(false)
+    expect(
+      incompleteInputs.some((applicability) => {
+        const cacheWrite = applicability.usage?.cacheWrite
+        return (
+          applicability.route.modelID === route.modelID &&
+          cacheWrite !== undefined &&
+          cacheWrite.status !== "observed"
+        )
+      }),
+    ).toBe(true)
+  } finally {
+    incomplete.close()
+    incompleteFixture.close()
+  }
+
+  const mixedFixture = makeLedgerFixture()
+  const mixedRoute = { providerID: "openai", modelID: "different-model", variant: "high" }
+  rewriteAttemptFacts(
+    mixedFixture.path,
+    mixedFixture.projectID,
+    mixedFixture.attempts.sharedFeature.id,
+    route,
+  )
+  rewriteAttemptFacts(
+    mixedFixture.path,
+    mixedFixture.projectID,
+    mixedFixture.attempts.sharedTesting.id,
+    mixedRoute,
+  )
+  let mixedInputs: readonly CurrentPriceApplicability[] = []
+  const mixedIndex: { current: CurrentPriceIndex | null } = { current: null }
+  const mixed = cachedOpenRouterReader(mixedFixture, {
+    missingCacheWriteRate: true,
+    onRoutes: (routes) => (mixedInputs = routes),
+    onIndex: (index) => (mixedIndex.current = index),
+  })
+  try {
+    await mixed.reader.overview(inputFor(mixedFixture.projectDirectory))
+    expect(
+      mixedInputs.some(
+        (applicability) =>
+          applicability.route.modelID === route.modelID && applicability.usage === undefined,
+      ),
+    ).toBe(true)
+    assert.ok(mixedIndex.current)
+    expect(mixedIndex.current.pins.some((pin) => pin.route?.modelID === route.modelID)).toBe(false)
+  } finally {
+    mixed.close()
+    mixedFixture.close()
+  }
+
+  const tieredFixture = makeLedgerFixture()
+  rewriteAttemptFacts(
+    tieredFixture.path,
+    tieredFixture.projectID,
+    tieredFixture.attempts.failed.id,
+    route,
+  )
+  rewriteAttemptFacts(
+    tieredFixture.path,
+    tieredFixture.projectID,
+    tieredFixture.attempts.accepted.id,
+    route,
+    [20, 30],
+  )
+  let tieredInputs: readonly CurrentPriceApplicability[] = []
+  const tieredIndex: { current: CurrentPriceIndex | null } = { current: null }
+  const tiered = cachedOpenRouterReader(tieredFixture, {
+    tieredPromptTiers: true,
+    onRoutes: (routes) => (tieredInputs = routes),
+    onIndex: (index) => (tieredIndex.current = index),
+  })
+  try {
+    const overview = await tiered.reader.overview(inputFor(tieredFixture.projectDirectory))
+    expect(
+      tieredInputs.some((applicability) => {
+        const input = applicability.usage?.uncachedInput
+        return (
+          applicability.route.modelID === route.modelID &&
+          input?.status === "observed" &&
+          input.value !== null &&
+          applicability.openRouterMinPromptTokens === undefined
+        )
+      }),
+    ).toBe(true)
+    assert.ok(tieredIndex.current)
+    expect(tieredIndex.current.pins.some((pin) => pin.route?.modelID === route.modelID)).toBe(false)
+    expect(overview.context.priceIndex.note).toContain(
+      "No configured ordered source supplied an exact applicable quote",
+    )
+  } finally {
+    tiered.close()
+    tieredFixture.close()
   }
 })
 
