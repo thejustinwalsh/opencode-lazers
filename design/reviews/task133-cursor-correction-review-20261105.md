@@ -55,3 +55,12 @@ registered Code Mode journal traversal, record truthful artifact-bound evidence,
 complete native integration and perform supported non-forced cleanup. That gate
 remains pending at this report update. No new proof worker or invented historical
 idle observation is required.
+
+Architect's actual registered Code Mode traversal ended at `1793873489052`:
+94 pages, 4,657 records and unique IDs, zero duplicates, one snapshot revision
+(589197), selected reference present, final cursor absent, no bodies printed.
+Counts: 3 source, 3,848 result, 806 input records. Its fast traversal did not
+observe scanner advancement; the separate Root probe above did. These are
+complementary observed scopes, not a claim of scanner movement within that fast
+registered call. Root's direct row comparisons establish unchanged dispositions
+and notices for the supplemental probe. Hashes are not acceptance evidence.
