@@ -125,7 +125,8 @@ export function sourceReservationExcluded(
   attempt: AttemptRow,
   destination: { mode: "shared" | "isolated"; workspace?: string },
 ) {
-  if (destination.mode !== "isolated" || attempt.state !== "verifying") return false
+  if (destination.mode !== "isolated" || !["running", "verifying"].includes(attempt.state))
+    return false
   const quarantine = sourceQuarantine(store, attempt.id)
   if (
     !quarantine ||
@@ -144,6 +145,8 @@ export function sourceReservationExcluded(
 }
 
 const quarantineReads = new Set([
+  // Native Code Mode re-enters tool hooks for each nested call; retain the inner guards.
+  "execute",
   "read",
   "grep",
   "glob",

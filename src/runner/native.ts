@@ -817,7 +817,7 @@ export function nativeHost(
             WHERE q.phase='pending' AND q.request_id=? AND q.plan_id=?
               AND q.attempt_id=? AND q.session_id=? AND q.assigned_message_id=?
               AND q.workspace=? AND q.requested_owner=p.owner
-              AND p.project_directory=? AND a.plan_id=p.id AND a.state='verifying'
+              AND p.project_directory=? AND a.plan_id=p.id AND a.state IN ('running','verifying')
               AND a.session_id=q.session_id AND a.message_id=q.assigned_message_id
               AND a.workspace=q.workspace`,
             )

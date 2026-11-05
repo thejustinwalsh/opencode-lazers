@@ -433,13 +433,16 @@ export class TaskRuntime {
     const attempt = this.store.attempts(plan.id).find((row) => row.id === command.attemptID)
     if (
       !attempt ||
-      attempt.state !== "verifying" ||
+      !["running", "verifying"].includes(attempt.state) ||
       !["running", "blocked"].includes(plan.state) ||
       attempt.workspace === this.directory ||
       JSON.parse(plan.body).workspaceMode === "shared"
     )
-      throw new Error("Source quarantine requires an isolated retained verifying attempt")
+      throw new Error(
+        "Source quarantine requires an isolated retained running or verifying attempt",
+      )
     if (
+      attempt.state === "verifying" &&
       !this.store
         .effects(plan.id)
         .some(
@@ -456,8 +459,9 @@ export class TaskRuntime {
   }
 
   private sourceWorkerWait(
-    attempt: Pick<AttemptRow, "id" | "session_id" | "workspace">,
+    attempt: Pick<AttemptRow, "id" | "session_id" | "workspace" | "state" | "message_id">,
     session: HostSession | null | undefined,
+    requireCompletedForeground = true,
   ) {
     if (
       !session ||
@@ -476,6 +480,14 @@ export class TaskRuntime {
       session.pendingForms !== 0
     )
       return "Retained worker has active or unresolved foreground/input/approval work"
+    if (
+      attempt.state === "running" &&
+      requireCompletedForeground &&
+      (session.outcome !== "succeeded" ||
+        session.turn?.state !== "completed" ||
+        session.turn.inputID !== attempt.message_id)
+    )
+      return "Retained running attempt requires its current input's completed foreground execution"
     return undefined
   }
 
@@ -765,7 +777,10 @@ export class TaskRuntime {
     if (command.action === "quarantine-source") {
       if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
       quarantineAttempt = this.quarantineTarget(old, command)
-      const worker = await this.host.session(quarantineAttempt.session_id)
+      const worker = await this.host.session(
+        quarantineAttempt.session_id,
+        quarantineAttempt.state === "running" ? { messages: true } : undefined,
+      )
       const wait = this.sourceWorkerWait(quarantineAttempt, worker)
       if (wait) throw new Error(wait)
       const worktrees = await this.host.worktrees()
@@ -2723,7 +2738,7 @@ export class TaskRuntime {
           `SELECT q.* FROM runner_source_quarantines q
          JOIN runner_plans p ON p.id=q.plan_id
          JOIN runner_attempts a ON a.id=q.attempt_id
-         WHERE p.project_directory=? AND a.state='verifying'
+         WHERE p.project_directory=? AND a.state IN ('running','verifying')
          ORDER BY q.created_at`,
         )
         .all(this.directory),
@@ -2770,7 +2785,7 @@ export class TaskRuntime {
           !plan ||
           (row.phase === "pending" && plan.owner !== quarantine.requested_owner) ||
           !attempt ||
-          attempt.state !== "verifying" ||
+          !["running", "verifying"].includes(attempt.state) ||
           attempt.session_id !== quarantine.session_id ||
           attempt.message_id !== quarantine.assigned_message_id ||
           attempt.workspace !== quarantine.workspace
@@ -2786,8 +2801,10 @@ export class TaskRuntime {
       }
       try {
         const attempt = this.store.fenced(this.owner, fence, current)
-        let worker = await this.host.session(quarantine.session_id)
-        let reason = this.sourceWorkerWait(attempt, worker)
+        const pending = quarantine.phase === "pending"
+        const readOptions = pending && attempt.state === "running" ? { messages: true } : undefined
+        let worker = await this.host.session(quarantine.session_id, readOptions)
+        let reason = this.sourceWorkerWait(attempt, worker, pending)
         if (reason) {
           wait(reason)
           continue
@@ -2812,8 +2829,8 @@ export class TaskRuntime {
             assignedMessageID: quarantine.assigned_message_id,
           })
         }
-        worker = await this.host.session(quarantine.session_id)
-        reason = this.sourceWorkerWait(attempt, worker)
+        worker = await this.host.session(quarantine.session_id, readOptions)
+        reason = this.sourceWorkerWait(attempt, worker, pending)
         if (reason || (quarantine.phase === "pending" && !worker?.archived)) {
           wait(reason ?? "Native archive has not been observed")
           continue

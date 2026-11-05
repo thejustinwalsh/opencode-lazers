@@ -112,7 +112,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
 
   quarantined = true
   activeAssignment = false
-  for (const tool of ["edit", "bash", "execute"]) {
+  for (const tool of ["edit", "bash"]) {
     await expect(
       Effect.runPromise(
         executeHook!({
@@ -124,6 +124,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
     ).rejects.toThrow("source workspace is quarantined")
   }
   for (const tool of [
+    "execute",
     "read",
     "lz-get-task-instructions",
     "lz-verify-handoff",

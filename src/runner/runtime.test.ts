@@ -583,7 +583,10 @@ async function retainedSourceFixture() {
 }
 
 function attachNativeQuarantineHost(
-  f: Awaited<ReturnType<typeof retainedSourceFixture>>,
+  f: Pick<
+    Awaited<ReturnType<typeof retainedSourceFixture>>,
+    "worker" | "retained" | "repository" | "root" | "host" | "guardID"
+  >,
   options: {
     target?: Partial<HostSession>
     active?: boolean
@@ -933,6 +936,113 @@ test("source quarantine seals only a stopped guarded native writer and permits i
   await f.runtime.tick()
   expect(f.store.attempts(dependentPlan.planID)).toHaveLength(0)
 })
+
+test("source quarantine isolates a completed foreground worker with unknown background without accepting it", async () => {
+  const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const original = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(original.session_id)
+  const worker = f.sessions.get(original.session_id)!
+  Object.assign(worker, {
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    background: {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "Missing historical idle",
+    },
+  })
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+  const guard = registerSourceGuard(f.store, original.workspace)
+  cleanup.push(guard)
+  await f.runtime.command(
+    {
+      requestID: "quarantine-completed-foreground",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "quarantine-source",
+      attemptID: original.id,
+      reason: "Preserve old resources while allowing independent isolated source work",
+    },
+    "owner",
+  )
+  const observeSession = f.host.session
+  const adapter = attachNativeQuarantineHost({
+    ...f,
+    retained: original,
+    worker,
+    guardID: guard.registrationID,
+  })
+  f.host.session = observeSession
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, original.id)?.phase).toBe("sealed")
+  expect(adapter.archives).toBe(1)
+  expect(worker.archived).toBe(true)
+  expect(worker.background?.state).toBe("unknown")
+  let contextReads = 0
+  const readSession = f.host.session
+  f.host.session = async (id, options) => {
+    if (id === original.session_id && options?.messages) contextReads++
+    return readSession(id, options)
+  }
+  await f.runtime.tick()
+  expect(contextReads).toBe(0)
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+  expect(
+    f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+  ).toBe(false)
+  const next = f.createTask("b", "shared.txt")
+  const following = f.store.submit(
+    f.inputFor([next], { requestID: "after-completed-quarantine" }),
+    "owner",
+  )
+  await runPlan(f, following.planID, "run-after-completed-quarantine")
+  await f.runtime.tick()
+  const successor = f.store.attempts(following.planID)[0]!
+  expect(successor.workspace).not.toBe(original.workspace)
+  expect(readFileSync(join(successor.workspace, "shared.txt"), "utf8")).toBe("b")
+  expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).not.toBe("accepted")
+})
+
+test.each(["pending", "different-input", "failed", "busy", "missing-turn"] as const)(
+  "running source quarantine rejects %s foreground without mutation",
+  async (invalid) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await f.runtime.tick()
+    const attempt = f.store.attempts(f.receipt.planID)[0]!
+    f.completeWorker(attempt.session_id)
+    const worker = f.sessions.get(attempt.session_id)!
+    Object.assign(worker, { pendingInput: false, pendingPermissions: 0, pendingForms: 0 })
+    if (invalid === "pending") worker.turn!.state = "pending"
+    if (invalid === "different-input") worker.turn!.inputID = "msg_newer"
+    if (invalid === "failed") worker.outcome = "failed"
+    if (invalid === "busy") worker.busy = true
+    if (invalid === "missing-turn") worker.turn = undefined
+    cleanup.push(registerSourceGuard(f.store, attempt.workspace))
+    const before = f.store.plan(f.receipt.planID)
+    await expect(
+      f.runtime.command(
+        {
+          requestID: `reject-source-${invalid}`,
+          planID: f.receipt.planID,
+          expectedVersion: before!.version,
+          action: "quarantine-source",
+          attemptID: attempt.id,
+          reason: "Do not quarantine unresolved foreground work",
+        },
+        "owner",
+      ),
+    ).rejects.toThrow()
+    expect(f.store.plan(f.receipt.planID)).toEqual(before)
+    expect(sourceQuarantine(f.store, attempt.id)).toBeNull()
+    expect(worker.archived).toBe(false)
+  },
+)
 
 test("source quarantine preserves shared and physical-checkout exclusion at both admission gates", async () => {
   for (const destination of ["shared", "same", "symlink", "unavailable"] as const) {
