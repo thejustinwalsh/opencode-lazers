@@ -6227,6 +6227,102 @@ test("manual continuation accepts a real failed outcome only for its completed c
   expect(f.store.attempts(planID)).toHaveLength(1)
 })
 
+test("a failed fresh continuation input is processed despite the unchanged prior unknown background", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt, worker } = await holdInterruptedAttempt(f)
+  const previousBackground = structuredClone(worker.background)
+  await f.runtime.command(
+    {
+      requestID: "resume-before-fresh-terminal-failure",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue the same attempt before observing its fresh input",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const current = f.store.attempts(planID)[0]!
+  expect(current.id).toBe(attempt.id)
+  expect(current.message_id).not.toBe(attempt.message_id)
+  expect(worker.background).toEqual(previousBackground)
+  expect(worker.turn).toEqual({ inputID: current.message_id, state: "pending" })
+
+  worker.busy = false
+  worker.outcome = "failed"
+  worker.turn = { inputID: current.message_id, state: "completed" }
+  await f.runtime.tick()
+
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.plan(planID)?.reason).toContain("Worker execution failed")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: attempt.id,
+    state: "running",
+    message_id: current.message_id,
+  })
+  expect(
+    f.store.latestTransition<Record<string, unknown>>(planID, attempt.task_id, "WORKER_STOPPED"),
+  ).toMatchObject({ outcome: "failed", inputID: current.message_id })
+  expect(
+    f.store.latestTransition<{ workerObservation?: Record<string, unknown> }>(
+      planID,
+      null,
+      "BLOCKED",
+    )?.workerObservation,
+  ).toMatchObject({ outcome: "failed", inputID: current.message_id, turnState: "completed" })
+  expect(worker.background).toEqual(previousBackground)
+})
+
+test.each(["permission", "form"] as const)(
+  "a current-input %s hold is not suppressed by the unchanged prior unknown background",
+  async (approval) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const { planID, attempt, worker } = await holdInterruptedAttempt(f)
+    const previousBackground = structuredClone(worker.background)
+    await f.runtime.command(
+      {
+        requestID: `resume-before-current-${approval}`,
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        reason: "Continue the same attempt before observing a current approval",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+    const current = f.store.attempts(planID)[0]!
+    expect(worker.turn).toEqual({ inputID: current.message_id, state: "pending" })
+    expect(worker.background).toEqual(previousBackground)
+    if (approval === "permission") worker.pendingPermissions = 1
+    else worker.pendingForms = 1
+
+    await f.runtime.tick()
+
+    expect(f.store.plan(planID)?.state).toBe("blocked")
+    expect(f.store.plan(planID)?.reason).toContain(
+      approval === "permission" ? "permission request" : "form",
+    )
+    expect(f.store.attempts(planID)).toHaveLength(1)
+    expect(f.store.attempts(planID)[0]?.message_id).toBe(current.message_id)
+    expect(
+      f.store.latestTransition<Record<string, unknown>>(
+        planID,
+        attempt.task_id,
+        "WORKER_APPROVAL_WAIT",
+      ),
+    ).toMatchObject({
+      attemptID: attempt.id,
+      pendingPermissions: approval === "permission" ? 1 : 0,
+      pendingForms: approval === "form" ? 1 : 0,
+    })
+  },
+)
+
 test("terminal failed worker with a genuine current-input idle report can resume from failed state", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)

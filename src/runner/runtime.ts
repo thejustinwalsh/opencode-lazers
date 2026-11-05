@@ -2814,7 +2814,15 @@ export class TaskRuntime {
   private isPriorContinuationBackground(
     attempt: AttemptRow,
     background: HostSession["background"],
+    currentInputID: string | null | undefined,
   ) {
+    const assignedInputID = currentInputID === undefined ? attempt.message_id : currentInputID
+    if (!assignedInputID || !this.matchesWorkerInput(attempt, assignedInputID)) return false
+    if (background?.state === "observed")
+      return (
+        background.inputID !== assignedInputID &&
+        this.isPriorContinuationInput(attempt, background.inputID)
+      )
     if (background?.state !== "unknown") return false
     const previous = this.store.latestTransition<{
       attemptID?: string
@@ -2823,6 +2831,7 @@ export class TaskRuntime {
     }>(attempt.plan_id, attempt.task_id, "WORKER_BACKGROUND_UNKNOWN")
     return (
       previous?.attemptID === attempt.id &&
+      previous.inputID !== assignedInputID &&
       this.isPriorContinuationInput(attempt, previous.inputID) &&
       JSON.stringify(previous.background) === JSON.stringify(background)
     )
@@ -3432,17 +3441,6 @@ export class TaskRuntime {
     const task = this.store.repository.get(attempt.task_id)!
     this.observeUsage(attempt, session, fence)
     if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
-    if (
-      (session.turn &&
-        !this.matchesWorkerInput(attempt, session.turn.inputID) &&
-        this.isPriorContinuationInput(attempt, session.turn.inputID)) ||
-      (session.background?.state === "observed" &&
-        !this.matchesWorkerInput(attempt, session.background.inputID) &&
-        this.isPriorContinuationInput(attempt, session.background.inputID))
-    )
-      return
-    if (this.isPriorContinuationBackground(attempt, session.background)) return
-    const backgroundReason = this.backgroundBlockReason(session, attempt)
     if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
       this.approvalWait(plan, attempt, session, fence)
       this.hold(
@@ -3453,14 +3451,28 @@ export class TaskRuntime {
       return
     }
     if (
+      session.turn &&
+      !this.matchesWorkerInput(attempt, session.turn.inputID) &&
+      this.isPriorContinuationInput(attempt, session.turn.inputID)
+    )
+      return
+    const priorBackground = this.isPriorContinuationBackground(
+      attempt,
+      session.background,
+      session.turn?.inputID,
+    )
+    const backgroundReason = this.backgroundBlockReason(session, attempt)
+    if (
       !session.busy &&
       !session.pendingInput &&
       !session.observationUnstable &&
       backgroundReason &&
       !session.outcome
     ) {
-      this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"])
-      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+      if (!priorBackground) {
+        this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"])
+        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+      }
       return
     }
     if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
@@ -3475,18 +3487,6 @@ export class TaskRuntime {
       }
       session = detailed
       this.observeUsage(attempt, session, fence)
-      if (session.busy || session.pendingInput || session.observationUnstable) return
-      if (
-        (session.turn &&
-          !this.matchesWorkerInput(attempt, session.turn.inputID) &&
-          this.isPriorContinuationInput(attempt, session.turn.inputID)) ||
-        (session.background?.state === "observed" &&
-          !this.matchesWorkerInput(attempt, session.background.inputID) &&
-          this.isPriorContinuationInput(attempt, session.background.inputID))
-      )
-        return
-      if (this.isPriorContinuationBackground(attempt, session.background)) return
-      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
         this.approvalWait(plan, attempt, session, fence)
         this.hold(
@@ -3496,6 +3496,19 @@ export class TaskRuntime {
         )
         return
       }
+      if (session.busy || session.pendingInput || session.observationUnstable) return
+      if (
+        session.turn &&
+        !this.matchesWorkerInput(attempt, session.turn.inputID) &&
+        this.isPriorContinuationInput(attempt, session.turn.inputID)
+      )
+        return
+      const priorBackground = this.isPriorContinuationBackground(
+        attempt,
+        session.background,
+        session.turn?.inputID,
+      )
+      const detailedBackgroundReason = this.backgroundBlockReason(session, attempt, true)
       if (session.outcome === "interrupted") {
         this.workerEvent(
           plan,
@@ -3548,6 +3561,7 @@ export class TaskRuntime {
           )
           return
         }
+        if (priorBackground && !session.outcome) return
         this.hold(plan, detailedBackgroundReason, ["audit", "reconcile", "cancel"])
         this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
         return
