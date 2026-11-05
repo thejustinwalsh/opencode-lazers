@@ -11,8 +11,9 @@ cleanup are separate facts.
   combined checks, actual original133/135 review-input reconciliation, source
   integration and native non-forced cleanup. Main merge6bf4a8b preserves original
   commit ancestry. Planad6cb637-d5d7-4ee4-974e-727216f2bdd5 is integrated/version21;
-  its tree is absent in filesystem and native registry. Original133/135 assignments
-  remain unchanged with one attempt each; their ordinary checks pass. See
+  its tree is absent in filesystem and native registry. Initial133/135 alias
+  qualification preserved assignments; each still has its original attempt/session.
+  Later133 repair uses an explicit same-attempt resume as described below. See
   design/reviews/task136-native-completion-20261104.md.
 - **133/135 source is landed; independent live gates remain.** Main merged133 as
   2b0cd50 and135 as e6ab406. Postmerge journal16 tests/260 assertions and quality
@@ -44,11 +45,13 @@ cleanup are separate facts.
   real implementation: standing stop approval applies only historical-only turns,
   not this worker or a coordinator handling its actionable completion.99 and133
   scopes overlap src/runner/tools.ts; account for that reservation.
-- **133 repair is intentionally paused via native controls.** Cancellation settled
-  version11, preserving original attempt/session/clean tree. Deliver Luna diagnosis
-  as concise task advice, then explicitly resume that same worker; do not create a
-  duplicate or infer abandonment from the cancelled runtime state. Research is
-  ses_e55ed968fffeXvP5LZ1nxVPktq, verified OpenAI Luna Max. No58 transfers approved.
+- **133 repair has been explicitly resumed, awaiting dispatch.** Cancellation
+  settled version11; native resume at1793855098062 set version13, original attempt
+  6ee1191f-95ef-45d0-9b90-8e96623b9841 preparing in original session9250c22e.
+  New assigned input is msg_08cba7ba9b274893916a6ec810e1caad through the supported
+  resume, not a fabricated report.99's higher-priority tools.ts reservation remains.
+  Research diagnosis and read-back advice are in canonical622b4e7; consumption is
+  not yet observed. No duplicate, replacement or58-plan ownership transfer.
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are
   unchanged. The user subsequently approved72 transfer plus existing quarantine.
