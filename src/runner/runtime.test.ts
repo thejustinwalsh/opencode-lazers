@@ -1144,6 +1144,148 @@ test("tagged review source quarantine survives reopen and native archive without
   }
 })
 
+test.each(
+  (["worktrees", "guard"] as const).flatMap((boundary) =>
+    (["input", "tag", "route", "owner"] as const).map((field) => ({ boundary, field })),
+  ),
+)(
+  "source review admission rejects $field changed during $boundary without mutation",
+  async ({ boundary, field }) => {
+    const f = await completedSourceReviewFixture()
+    const change = () => {
+      if (field === "input") f.worker.turn!.inputID = "msg_newer"
+      if (field === "tag")
+        (f.worker.messages.at(-1)!.metadata!.lazersReview as Record<string, unknown>).requestID =
+          "changed-review"
+      if (field === "route") f.worker.model = { ...f.worker.model!, id: "different-model" }
+      if (field === "owner") f.sessions.get("owner")!.archived = true
+    }
+    if (boundary === "worktrees") {
+      const list = f.host.worktrees
+      f.host.worktrees = async () => {
+        const rows = await list()
+        change()
+        return rows
+      }
+    } else {
+      const ensure = f.host.ensureSourceGuard!
+      f.host.ensureSourceGuard = async (input) => {
+        await ensure(input)
+        change()
+      }
+    }
+    const before = f.store.plan(f.receipt.planID)
+    await expect(f.runtime.command(f.command, "owner")).rejects.toThrow()
+    expect(f.store.plan(f.receipt.planID)).toEqual(before)
+    expect(sourceQuarantine(f.store, f.attempt.id)).toBeNull()
+    expect(f.worker.archived).toBe(false)
+  },
+)
+
+async function sealedSourceReviewFixture() {
+  const f = await completedSourceReviewFixture()
+  await f.runtime.command(f.command, "owner")
+  const observe = f.host.session
+  const adapter = attachNativeQuarantineHost({
+    ...f,
+    retained: f.attempt,
+    guardID: f.guard.registrationID,
+  })
+  f.host.session = observe
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.attempt.id)?.phase).toBe("sealed")
+  return { ...f, adapter }
+}
+
+test("malformed sealed review pin cannot exclude source even with its installed guard", async () => {
+  const f = await sealedSourceReviewFixture()
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_source_quarantines SET review_input_json=? WHERE attempt_id=?")
+      .run("{invalid", f.attempt.id),
+  )
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.attempt.id)?.hold_reason).not.toBeNull()
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+})
+
+test.each(["before-restore", "during-restore"] as const)(
+  "source review guard recovery holds a changed pin %s",
+  async (when) => {
+    const f = await sealedSourceReviewFixture()
+    f.guard()
+    const change = () => {
+      ;(f.worker.messages.at(-1)!.metadata!.lazersReview as Record<string, unknown>).requestID =
+        "changed-review"
+    }
+    if (when === "before-restore") change()
+    f.host.ensureSourceGuard = async () => {
+      cleanup.push(registerSourceGuard(f.store, f.attempt.workspace))
+      if (when === "during-restore") change()
+    }
+    await f.runtime.tick()
+    expect(sourceQuarantine(f.store, f.attempt.id)?.hold_reason).toContain("metadata")
+    expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+    expect(f.adapter.archives).toBe(1)
+    expect(f.worker.background?.state).toBe("unknown")
+  },
+)
+
+test("fresh owner command explicitly supersedes a pending review pin; old replay cannot retarget it", async () => {
+  const f = await completedSourceReviewFixture()
+  const firstReceipt = await f.runtime.command(f.command, "owner")
+  const nextInputID = "msg_next_source_review"
+  f.worker.turn!.inputID = nextInputID
+  f.worker.messages.push({
+    id: nextInputID,
+    type: "synthetic",
+    text: "Correct retained review",
+    metadata: {
+      lazersReview: {
+        taskID: f.attempt.task_id,
+        attemptID: f.attempt.id,
+        requestID: "corrected-review",
+      },
+    },
+  })
+  const next = {
+    ...f.command,
+    requestID: "explicit-corrected-source-pin",
+    reviewInputID: nextInputID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    reason: "Explicitly supersede the old pending pin after reviewing the correction",
+  }
+  await f.runtime.command(next, "owner")
+  const row = sourceQuarantine(f.store, f.attempt.id)!
+  expect(JSON.parse(row.review_input_json!)).toEqual({
+    inputID: nextInputID,
+    requestID: "corrected-review",
+  })
+  expect(f.store.attempts(f.receipt.planID)[0]!.message_id).toBe(f.attempt.message_id)
+  const history = f.store
+    .atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='SOURCE_QUARANTINE_REQUESTED' ORDER BY id",
+        )
+        .all(f.receipt.planID),
+    )
+    .map((entry) => JSON.parse(entry.payload))
+  expect(history).toHaveLength(2)
+  expect(history[0].reviewInput.inputID).toBe(f.reviewInputID)
+  expect(history[1]).toMatchObject({
+    supersedesRequestID: f.command.requestID,
+    reviewInput: { inputID: nextInputID },
+  })
+  expect(await f.runtime.command(f.command, "owner")).toEqual(firstReceipt)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(row)
+  await expect(
+    f.runtime.command({ ...next, reviewInputID: f.reviewInputID }, "owner"),
+  ).rejects.toThrow()
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(row)
+})
+
 test("legacy source quarantine migration preserves its original-input binding", async () => {
   const f = await completedSourceReviewFixture()
   f.worker.turn!.inputID = f.attempt.message_id

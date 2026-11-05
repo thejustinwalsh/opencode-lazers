@@ -1613,6 +1613,22 @@ export class TaskRuntime {
         directory: quarantineAttempt.workspace,
         projectID: this.projectID,
       })
+      const [currentOwner, currentWorker] = await Promise.all([
+        this.host.session(caller),
+        this.host.session(
+          quarantineAttempt.session_id,
+          quarantineAttempt.state === "running" ? { messages: true } : undefined,
+        ),
+      ])
+      if (!this.validArchitect(currentOwner) || currentOwner.id !== old.owner)
+        throw new Error("Source quarantine owner session changed during admission")
+      const currentWait = this.sourceWorkerWait(
+        quarantineAttempt,
+        currentWorker,
+        true,
+        quarantineReview,
+      )
+      if (currentWait) throw new Error(currentWait)
     }
     const reviewInput = await this.prepareReviewInputReconciliation(
       old,
@@ -1734,6 +1750,7 @@ export class TaskRuntime {
           requestID: command.requestID,
           reason: command.reason,
           ...(quarantineReview ? { reviewInput: quarantineReview } : {}),
+          ...(existing ? { supersedesRequestID: existing.request_id } : {}),
           resourceHoldsRetained: true,
         })
         return {
@@ -4454,8 +4471,14 @@ export class TaskRuntime {
         quarantine.phase === "sealed" &&
         quarantine.hold_reason === null &&
         sourceGuardInstalled(this.store, quarantine.workspace)
-      )
-        continue
+      ) {
+        try {
+          sourceReviewBinding(quarantine)
+          continue
+        } catch {
+          // Invalid stored bindings remain held even with a healthy source guard.
+        }
+      }
       const wait = (reason: string) =>
         this.store.fenced(this.owner, fence, (db) => {
           const changed = db
@@ -4510,9 +4533,11 @@ export class TaskRuntime {
         const attempt = this.store.fenced(this.owner, fence, current)
         const review = sourceReviewBinding(quarantine)
         const pending = quarantine.phase === "pending"
-        const readOptions = pending && attempt.state === "running" ? { messages: true } : undefined
+        const requireForeground = pending || review !== undefined
+        const readOptions =
+          requireForeground && attempt.state === "running" ? { messages: true } : undefined
         let worker = await this.host.session(quarantine.session_id, readOptions)
-        let reason = this.sourceWorkerWait(attempt, worker, pending, review)
+        let reason = this.sourceWorkerWait(attempt, worker, requireForeground, review)
         if (reason) {
           wait(reason)
           continue
@@ -4539,7 +4564,7 @@ export class TaskRuntime {
           })
         }
         worker = await this.host.session(quarantine.session_id, readOptions)
-        reason = this.sourceWorkerWait(attempt, worker, pending, review)
+        reason = this.sourceWorkerWait(attempt, worker, requireForeground, review)
         if (reason || (quarantine.phase === "pending" && !worker?.archived)) {
           wait(reason ?? "Native archive has not been observed")
           continue

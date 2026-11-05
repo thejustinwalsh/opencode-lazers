@@ -162,6 +162,13 @@ export function sourceReservationExcluded(
   if (destination.mode !== "isolated" || !["running", "verifying"].includes(attempt.state))
     return false
   const quarantine = sourceQuarantine(store, attempt.id)
+  if (quarantine) {
+    try {
+      sourceReviewBinding(quarantine)
+    } catch {
+      return false
+    }
+  }
   if (
     !quarantine ||
     quarantine.phase !== "sealed" ||
