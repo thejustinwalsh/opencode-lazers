@@ -238,3 +238,39 @@ the full current runner suite:424 tests/5764 assertions across23 files in118.83s
 These checks do not claim actual139/141 recovery or completed feature delivery.
 Main reconciled the genuine completed worker review input through the native
 control and is awaiting source activation for real startup settlement/resume.
+
+## Native outcome and remaining real defects
+
+Main44e313b integrated the reviewed source. Runtime recorded118 integrated/v43;
+Root and Main both observed its native worktree absent, original session retained
+and inactive, and134 still active. No forced removal or historical acceptance
+reconstruction was used.
+
+Real139/141 settlement then failed. Each original attempt has exactly one
+runner_progress row: kind=gap, source=recovery, describing the assigned native
+session as unavailable. The blanket progressFacts length check treats that
+observation gap as execution. Root isolated the same failure on current main in
+/private/tmp/lazers-startup-gap-review-20261105.test.ts, without production
+writes. Preserve the gap history while distinguishing actual downstream work.
+The separate reviewer also found cleanupWorktrees omits worktree-recovery from
+both creation-effect lists. Recovery and eventual cleanup remain unproven for
+139/141; no product worker start has occurred yet. Main received both findings
+and is coordinating with active134, whose runtime scope overlaps the correction.
+
+## Steering baseline correction
+
+The134 worker started from b682992 before118 integration. Its public tools
+repeatedly searched that checkout for the later startupSettlementCandidate
+implementation. Root identified the mismatch and relayed the reviewed main
+reference and existing reviewedScopeBase behavior through Desktop. Architect
+steered the same worker; native tool output at1793884718258 confirmed a clean
+advance to37ffe0b while retaining the admitted baseline as an ancestor. No
+attempt restart, replacement worker or additional feature task was needed.
+Root requested a focused blocker commit before the broader134 notification
+work, so feature startup need not await that whole increment.
+
+A temporary Desktop Radar inspection loaded the active Luna/max route and
+matching attempt27727aaf, and distinguished the absent141 reserved session as
+unavailable. The diagram still uses oversized/truncated cards and dense
+relationship details; this observation is not visual acceptance of the planned
+agent monitor. Root closed its temporary Radar tab after inspection.

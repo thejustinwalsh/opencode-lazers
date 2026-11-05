@@ -28,8 +28,8 @@ acceptance, native observations and cleanup are separate facts.
   and became natively idle. Main reconciled the genuine completed review input;
   the runtime accepted the plan/version41. Root integrated both commits, preserving
   newer review-input/quarantine behavior. Combined source passed424 runner tests/
-  5764 assertions plus format/lint/types. Integration recording and native cleanup
-  must be read back; real139/141 recovery is still unproven.
+  5764 assertions plus format/lint/types. Runtime is integrated/v43; native non-forced cleanup removed its tree and cache
+  location while retaining session/history. Real139/141 recovery is still unproven.
 - Root independently checked repeated failure, dependency-derived bases and
   replacement-Architect recovery; all three cases pass. Broad current main tests
   also preserve native idle and retained-work behavior.
@@ -53,6 +53,14 @@ acceptance, native observations and cleanup are separate facts.
   restart a confirmed active worker because a stale label says blocked.
 
 ## Actual startup recovery and visible features
+
+- Live139/141 settlement currently rejects their recovery-only trajectory gaps
+  as execution: each has one kind=gap/source=recovery row for the absent native
+  session. Root reproduced this on main in /private/tmp/lazers-startup-gap-review-20261105.test.ts.
+  Preserve history; distinguish actual downstream work. Main is coordinating the
+  minimal correction with active134 runtime scope. A native reviewer also found
+  cleanupWorktrees omits worktree-recovery from its two creation-effect lists.
+  Do not claim those recovered resources cleaned until the lifecycle is exercised.
 
 - **LZ139 and141 have not run implementer turns.** Their preparing attempts have
   absent reserved workers/worktrees and uncertain startup effects with original
