@@ -49,3 +49,31 @@ transport outcomes.
 Recheck script: `/private/tmp/lazers-startup-native-error-shape-recheck-20261105.ts`.
 Root queued this finding in Desktop for the existing same-worker review flow;
 no worker/canonical source edits or extra acceptance claims.
+
+## Cache retirement review
+
+The in-progress `nativeHost.retireWorktreeLocation` uses
+`session.list({ archived: false, directory })` and treats any result as an active
+session. Unarchived history is not active execution. At `1793878102319`, the
+completed LZ133 worker `ses_9250c22e68da40ff86371b407b9c3c11` was still unarchived
+and located at its legitimately removed checkout; the native active-session
+observations exclude it. This is a real retained-history counterexample, not a
+reason to archive or delete its history. The new fixture calls its session-list
+entries `activeSessionDirectories`, hiding the distinction.
+
+As written, routine completed-worker history prevents cache eviction, leaving the
+stale-location problem unfixed for that normal lifecycle. Cache-retirement refusal
+is recorded separately and does not invalidate cleanup or acceptance; preserve
+that separation. Check actual native active execution for the location and retain
+session history. This finding is from the in-progress source and requires fresh
+review after the worker finishes.
+
+## Structural classifier recheck
+
+At `1793878175613`, the independent cross-package reproduction against the
+worker's revised structural classifier returned true for the actual separately
+loaded `Worktree.OperationError` and the pinned directory-unavailable class, and
+false for the HTTP envelope. The constructor-identity regression is corrected
+in this source revision. This narrow check does not establish adapter, recovery,
+whole-suite or native-product acceptance; the cache-retirement finding remains
+open pending later changes.
