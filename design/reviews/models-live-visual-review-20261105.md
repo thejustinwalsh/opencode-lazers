@@ -1,5 +1,26 @@
 # Models live review
 
+## Remaining logical-task accounting gap
+
+Read-only production inspection on November5 confirmed the saved correction
+link LZ-124 (`b2f262ab-bbe7-476b-9437-3bfe22edabdd`) to LZ-119
+(`8d324858-260e-48b9-bc7c-1825666717e4`), revision1. Both physical tasks and
+their histories are intentionally retained. The current decision producer adds
+accepted physical task UUIDs to `acceptedTaskIDs`, uses that set's size as the
+denominator and builds accepted retry histories from sessions for that UUID
+alone. It does not consume the existing `readTaskCorrections` projection.
+Its contract nevertheless labels the result accepted logical tasks and complete
+logical-task retry history. This source/data mismatch needs a small follow-up;
+it does not establish the magnitude of the live chart's resulting distortion.
+
+Reuse explicit correction membership, preserve physical attempt history and
+avoid counting one original goal twice. Define how cross-model correction
+effort and outcomes are attributed before presenting a model comparison as
+complete. Unknown attribution should stay visible. Verify against a linked
+accepted original/correction pair and reprobe the connected product. Keep this
+separate from active122 pricing and146 visual corrections and preserve the
+overdue Tasks/Trajectory/Radar order.
+
 ## Current connected observation
 
 Root integrated LZ-122 `04fe393` as `3a07387` after158 current-main tests/2477
