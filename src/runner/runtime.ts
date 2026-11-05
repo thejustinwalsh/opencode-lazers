@@ -115,6 +115,8 @@ type RetainedRepairSeed = {
   previousMessageID: string
   messageID: string
   operationID: string
+  owner: string
+  ownerEpoch: number
   sessionID: string
   workspace: string
   model: ModelPolicy
@@ -126,6 +128,8 @@ type RetainedRepairRecord = {
   attemptID: string
   previousMessageID: string
   messageID: string
+  owner: string
+  ownerEpoch: number
   sessionID: string
   workspace: string
   route: unknown
@@ -652,6 +656,7 @@ export class TaskRuntime {
       ownerSession.id !== plan.owner
     )
       throw new Error("Retained repair requires the current same-project Architect owner")
+    const ownerEpoch = this.store.planControlEpoch(plan.id)
     if (!["running", "accepted"].includes(plan.state))
       throw new Error("Retained repair requires a running or accepted, unintegrated plan")
     if (this.store.activeAdoptions(plan.id).length)
@@ -801,7 +806,10 @@ export class TaskRuntime {
       throw new Error(
         confirmedProblem ?? "Retained worker input or ownership changed during repair admission",
       )
-    if (this.store.plan(plan.id)?.version !== command.expectedVersion)
+    if (
+      this.store.plan(plan.id)?.version !== command.expectedVersion ||
+      this.store.planControlEpoch(plan.id) !== ownerEpoch
+    )
       throw new Error("Retained repair plan changed during native observation")
     return {
       taskID: task.id,
@@ -810,6 +818,8 @@ export class TaskRuntime {
       previousMessageID,
       messageID: messageID(),
       operationID: crypto.randomUUID(),
+      owner: caller,
+      ownerEpoch,
       sessionID: attempt.session_id,
       workspace: attempt.workspace,
       model: attemptModel.data,
@@ -1135,7 +1145,11 @@ export class TaskRuntime {
       const attempt = this.store
         .attempts(old.id)
         .find((candidate) => candidate.id === retainedRepair.attemptID)
-      if (!attempt || this.store.plan(old.id)?.version !== command.expectedVersion)
+      if (
+        !attempt ||
+        this.store.plan(old.id)?.version !== command.expectedVersion ||
+        this.store.planControlEpoch(old.id) !== retainedRepair.ownerEpoch
+      )
         throw new Error("Retained repair plan or attempt changed before final native revalidation")
       const observedOwner = await this.host.session(old.owner)
       if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
@@ -1170,6 +1184,7 @@ export class TaskRuntime {
         !confirmedWorker ||
         this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
         this.store.plan(old.id)?.version !== command.expectedVersion ||
+        this.store.planControlEpoch(old.id) !== retainedRepair.ownerEpoch ||
         !this.preparationAllowed(attempt)
       )
         throw new Error(
@@ -1254,6 +1269,12 @@ export class TaskRuntime {
           throw new Error("Retained repair requires the current same-project Architect owner")
         if (caller !== plan.owner || ownerSession.id !== plan.owner)
           throw new Error("Retained repair owner changed before admission")
+        if (
+          caller !== retainedRepair.owner ||
+          plan.owner !== retainedRepair.owner ||
+          this.store.planControlEpoch(plan.id) !== retainedRepair.ownerEpoch
+        )
+          throw new Error("Retained repair owner/control authorization changed before admission")
         if (!new Set(["running", "accepted"]).has(plan.state))
           throw new Error("Retained repair requires a running or accepted, unintegrated plan")
         const input = PlanInput.parse(JSON.parse(plan.body))
@@ -1352,6 +1373,7 @@ export class TaskRuntime {
           operationID: retainedRepair.operationID,
           requestID: command.requestID,
           owner: caller,
+          ownerEpoch: retainedRepair.ownerEpoch,
           expectedVersion: command.expectedVersion,
           attemptID: attempt.id,
           previousMessageID: retainedRepair.previousMessageID,
@@ -4413,6 +4435,8 @@ export class TaskRuntime {
       attemptID?: unknown
       previousMessageID?: unknown
       messageID?: unknown
+      owner?: unknown
+      ownerEpoch?: unknown
       sessionID?: unknown
       workspace?: unknown
       route?: unknown
@@ -4424,6 +4448,10 @@ export class TaskRuntime {
       typeof repair.attemptID !== "string" ||
       typeof repair.previousMessageID !== "string" ||
       typeof repair.messageID !== "string" ||
+      typeof repair.owner !== "string" ||
+      !repair.owner.trim() ||
+      !Number.isSafeInteger(repair.ownerEpoch) ||
+      (repair.ownerEpoch as number) < 0 ||
       typeof repair.sessionID !== "string" ||
       typeof repair.workspace !== "string" ||
       typeof repair.defect !== "string" ||
@@ -4436,6 +4464,8 @@ export class TaskRuntime {
       attemptID: repair.attemptID,
       previousMessageID: repair.previousMessageID,
       messageID: repair.messageID,
+      owner: repair.owner,
+      ownerEpoch: repair.ownerEpoch as number,
       sessionID: repair.sessionID,
       workspace: repair.workspace,
       route: repair.route,
@@ -4484,7 +4514,9 @@ export class TaskRuntime {
       const latestRepair = this.retainedRepairForAttempt(attempt)
       return Boolean(
         latestPlan?.state === "running" &&
-        latestPlan.owner === plan.owner &&
+        latestPlan.owner === repair.owner &&
+        plan.owner === repair.owner &&
+        this.store.planControlEpoch(plan.id) === repair.ownerEpoch &&
         latestAttempt?.state === "preparing" &&
         latestAttempt.message_id === attempt.message_id &&
         latestAttempt.session_id === attempt.session_id &&
@@ -4509,8 +4541,8 @@ export class TaskRuntime {
       !current()
     )
       return false
-    const owner = await this.host.session(plan.owner)
-    if (!this.validArchitect(owner) || owner.id !== plan.owner) return false
+    const owner = await this.host.session(repair.owner)
+    if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
     const confirmed = await this.host.session(attempt.session_id, { messages: true })
     return Boolean(
       !this.retainedRepairWorkerProblem(
@@ -4531,6 +4563,14 @@ export class TaskRuntime {
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
     if (!this.promptAdmissionAllowed(plan.id, attempt)) return
     const retainedRepair = this.retainedRepairForAttempt(attempt)
+    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
+      plan.id,
+      attempt.task_id,
+    )
+    if (latestRepair?.attemptID === attempt.id && !retainedRepair) {
+      this.hold(plan, "Retained repair is missing a valid owner/control authorization fence")
+      return
+    }
     const existing = this.store.effects(plan.id)
     if (
       retainedRepair &&

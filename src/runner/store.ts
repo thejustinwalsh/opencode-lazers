@@ -2478,6 +2478,20 @@ export class RunnerStore {
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
   }
+  /** High-water mark for plan-level owner/cancellation changes, excluding task activity. */
+  planControlEpoch(planID: string): number {
+    return this.atomic(
+      (db) =>
+        db
+          .query<{ epoch: number }, [string]>(
+            `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
+             WHERE plan_id=? AND task_id IS NULL AND event IN (
+               'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
+             )`,
+          )
+          .get(planID)!.epoch,
+    )
+  }
   move(planID: string, taskID: string, event: string, reason: string | null = null) {
     return this.atomic((db) => {
       const node = this.nodes(planID).find((n) => n.task_id === taskID)
