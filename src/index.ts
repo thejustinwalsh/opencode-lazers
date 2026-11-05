@@ -103,7 +103,13 @@ export default Plugin.define({
       )
       yield* registerWorker(ctx, runtime.store)
       yield* registerRunnerTools(ctx, runtime)
-      yield* registerProgress(ctx, progress, ctx.location.project.id, host.retainedInputID)
+      yield* registerProgress(
+        ctx,
+        progress,
+        ctx.location.project.id,
+        host.retainedInputID,
+        host.readSessionLog,
+      )
       const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
       const radarSessionHost = nativeRadarSessionHost(ctx)
       yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)

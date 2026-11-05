@@ -31,6 +31,9 @@ export type NativeInboxClient = {
     ReturnType<typeof OpenCode.make>["session"],
     "active" | "get" | "synthetic" | "inbox" | "update"
   >
+  experimental: {
+    session: Pick<ReturnType<typeof OpenCode.make>["experimental"]["session"], "log">
+  }
   message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
   shell: Pick<ReturnType<typeof OpenCode.make>["shell"], "list">
 }
@@ -246,7 +249,10 @@ export function nativeHost(
   ctx: Plugin.Context,
   repository: TaskRepository,
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
-): RunnerHost & { retainedInputID(sessionID: string): Promise<string | undefined> } {
+): RunnerHost & {
+  retainedInputID(sessionID: string): Promise<string | undefined>
+  readSessionLog(sessionID: string): AsyncIterable<unknown>
+} {
   const idleStore =
     typeof (repository as TaskRepository | undefined)?.atomic === "function"
       ? new NativeIdleStore(repository)
@@ -288,8 +294,20 @@ export function nativeHost(
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
   }
+  const readSessionLog = (sessionID: string): AsyncIterable<unknown> => ({
+    [Symbol.asyncIterator]: async function* () {
+      const client = await connectedClient()
+      try {
+        yield* client.experimental.session.log({ sessionID, follow: false })
+      } catch (error) {
+        invalidate(client)
+        throw error
+      }
+    },
+  })
   return {
     retainedInputID,
+    readSessionLog,
     async workerModel() {
       const agent = await Effect.runPromise(
         ctx.agent.get({ agentID: Agent.ID.make("lazers-implementor") }),

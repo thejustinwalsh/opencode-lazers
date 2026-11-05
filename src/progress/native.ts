@@ -70,6 +70,10 @@ const HANDOFF_REMINDER =
 
 type NativeIdleWork = { kind: "shell" | "subagent" | "image" }
 type NativeIdleHook = { sessionID: Session.ID; background: readonly NativeIdleWork[] }
+type NativeSessionLogReader = (
+  sessionID: string,
+) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>
+type NativeReplayedStart = { sequence: number; lastObservedEventSequence: number }
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -87,6 +91,75 @@ function eventSequence(event: unknown, sessionID: string): number | undefined {
   )
     return undefined
   return durable.seq
+}
+
+async function replayCurrentExecutionStart(
+  readSessionLog: NativeSessionLogReader,
+  sessionID: string,
+): Promise<NativeReplayedStart | undefined> {
+  let synced = false
+  let watermark: number | undefined
+  let lastSequence: number | undefined
+  let lastObservedEventSequence: number | undefined
+  let executionStartSequence: number | undefined
+
+  try {
+    const log = await readSessionLog(sessionID)
+    for await (const raw of log) {
+      const item = object(raw)
+      if (item?.type === "log.synced") {
+        if (synced || item.aggregateID !== sessionID) return undefined
+        synced = true
+        if (item.seq !== undefined) {
+          if (typeof item.seq !== "number" || !Number.isSafeInteger(item.seq) || item.seq < 0)
+            return undefined
+          watermark = item.seq
+        }
+        continue
+      }
+      if (synced || !item || typeof item.type !== "string") return undefined
+      const durable = object(item.durable)
+      if (
+        durable?.aggregateID !== sessionID ||
+        typeof durable.seq !== "number" ||
+        !Number.isSafeInteger(durable.seq) ||
+        durable.seq < 0 ||
+        (lastSequence === undefined ? durable.seq > 1 : durable.seq !== lastSequence + 1)
+      )
+        return undefined
+      lastSequence = durable.seq
+
+      const observedByIdleStore =
+        BACKGROUND_INVALIDATING_EVENTS.has(item.type) || item.type === "session.execution.succeeded"
+      if (observedByIdleStore) {
+        if (object(item.data)?.sessionID !== sessionID) return undefined
+        lastObservedEventSequence = durable.seq
+      }
+      if (item.type === "session.execution.started") {
+        executionStartSequence = durable.seq
+      } else if (item.type === "session.inbox.delivered") {
+        // Delivery may occur inside an unfinished execution; later invalidations still clear it.
+      } else if (
+        BACKGROUND_INVALIDATING_EVENTS.has(item.type) ||
+        item.type === "session.execution.succeeded" ||
+        item.type === "session.execution.failed" ||
+        item.type === "session.execution.interrupted"
+      ) {
+        executionStartSequence = undefined
+      }
+    }
+  } catch {
+    return undefined
+  }
+
+  if (
+    !synced ||
+    (lastSequence === undefined ? watermark !== undefined : watermark !== lastSequence)
+  )
+    return undefined
+  return executionStartSequence === undefined || lastObservedEventSequence === undefined
+    ? undefined
+    : { sequence: executionStartSequence, lastObservedEventSequence }
 }
 
 function idleBinding(
@@ -295,6 +368,7 @@ export function registerProgress(
   recorder: ProgressRecorder,
   projectID: string,
   retainedInputID: (sessionID: string) => Promise<string | undefined> = async () => undefined,
+  readSessionLog?: NativeSessionLogReader,
 ) {
   return Effect.gen(function* () {
     const readInputID = (sessionID: Session.ID) =>
@@ -311,7 +385,7 @@ export function registerProgress(
     let observing = true
     const observedExecutionStarts = new Map<
       string,
-      { binding: NativeIdleBinding; sequence: number }
+      { binding: NativeIdleBinding; sequence: number; source: "live" | "native-log-replay" }
     >()
     const startsRequiringNewerObservation = new Map<string, number | null>()
     const requireNewerStart = (sessionID: string, afterSequence: number | null) => {
@@ -468,7 +542,7 @@ export function registerProgress(
       })
       try {
         const before = await readNativeSession(sessionID)
-        const inputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
+        let inputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
         const after = await readNativeSession(sessionID)
         const latest = idleStore.read(binding)
         if (
@@ -490,9 +564,50 @@ export function registerProgress(
           )
           return
         }
-        const executionStartSequence = latest?.executionStartSequence
-        const eventSequence = latest?.lastEventSequence
-        const observedStart = observedExecutionStarts.get(sessionID)
+        let executionStartSequence = latest?.executionStartSequence
+        let eventSequence = latest?.lastEventSequence
+        let observedStart = observedExecutionStarts.get(sessionID)
+        if (
+          executionStartSequence === null ||
+          executionStartSequence === undefined ||
+          observedStart?.sequence !== executionStartSequence ||
+          !sameIdleBinding(observedStart.binding, binding)
+        ) {
+          if (readSessionLog) {
+            const replayedStart = await replayCurrentExecutionStart(readSessionLog, sessionID)
+            if (replayedStart !== undefined) {
+              const replaySession = await readNativeSession(sessionID)
+              const replayInputID = await Effect.runPromise(readInputID(Session.ID.make(sessionID)))
+              const replayedState = idleStore.read(binding)
+              const requiredAfterSequence = startsRequiringNewerObservation.get(sessionID)
+              const replayedSequence = replayedStart.sequence
+              if (
+                observing &&
+                sameIdleBinding(binding, bindingFor(sessionID)) &&
+                (replayedState?.revision ?? 0) === expectedRevision &&
+                replayedState?.executionStartSequence === replayedSequence &&
+                replayedState.lastEventSequence === replayedStart.lastObservedEventSequence &&
+                replayedState.pendingTerminal === null &&
+                replayedState.terminal === null &&
+                replayInputID === inputID &&
+                matchesBinding(replaySession, binding) &&
+                (requiredAfterSequence === undefined ||
+                  (requiredAfterSequence !== null && replayedSequence > requiredAfterSequence))
+              ) {
+                inputID = replayInputID
+                executionStartSequence = replayedSequence
+                eventSequence = replayedState.lastEventSequence
+                observedStart = { binding, sequence: replayedSequence, source: "native-log-replay" }
+                observedExecutionStarts.set(sessionID, observedStart)
+                trace(sessionID, "idle-lineage-replayed", {
+                  inputID,
+                  executionStartSequence: replayedSequence,
+                  eventSequence,
+                })
+              }
+            }
+          }
+        }
         if (
           executionStartSequence === null ||
           executionStartSequence === undefined ||
@@ -536,12 +651,20 @@ export function registerProgress(
           },
           expectedRevision,
         )
-        trace(sessionID, recorded ? "idle-report" : "idle-stale", {
-          inputID,
-          executionStartSequence,
-          eventSequence,
-          backgroundCount: idle.background.length,
-        })
+        trace(
+          sessionID,
+          recorded
+            ? observedStart.source === "native-log-replay"
+              ? "idle-report-replayed-lineage"
+              : "idle-report"
+            : "idle-stale",
+          {
+            inputID,
+            executionStartSequence,
+            eventSequence,
+            backgroundCount: idle.background.length,
+          },
+        )
         const current = idleStore.read(binding)
         const sameExecutionReport =
           !recorded &&
@@ -716,7 +839,7 @@ export function registerProgress(
                   (requiredAfterSequence === undefined ||
                     (requiredAfterSequence !== null && sequence > requiredAfterSequence))
                 ) {
-                  observedExecutionStarts.set(sessionID, { binding, sequence })
+                  observedExecutionStarts.set(sessionID, { binding, sequence, source: "live" })
                   startsRequiringNewerObservation.delete(sessionID)
                 }
               }
