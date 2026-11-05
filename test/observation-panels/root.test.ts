@@ -281,6 +281,17 @@ const nativeModelCatalog = ModelCatalogOutputSchema.parse({
       variants: ["high", "xhigh"],
     },
     {
+      providerID: "openai",
+      id: "gpt-6-luna",
+      name: "GPT-6 Luna",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: ["max"],
+    },
+    {
       providerID: "anthropic",
       id: "claude-4",
       name: "Claude 4 Sonnet",
@@ -1979,6 +1990,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           JSON.stringify(call.input) === JSON.stringify({ sessionID: sessionA.id }),
       ),
     ).toBe(true)
+    expect(
+      containerA.querySelector(".lazers-models-top .lazers-models-assignment-editor"),
+    ).toBeNull()
     const assignmentRows = () => [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-assignment-row"),
     ]
@@ -1994,9 +2008,43 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     rowForPersona("UI").click()
     const assignmentEditor = containerA.querySelector<HTMLElement>(
-      ".lazers-models-assignment-editor",
+      ".lazers-models-inspector .lazers-models-assignment-editor",
     )!
+    expect(assignmentEditor.closest(".lazers-models-inspector")).not.toBeNull()
+    expect(
+      containerA.querySelectorAll(".lazers-models-top .lazers-models-assignment-editor"),
+    ).toHaveLength(0)
     expect(containerA.querySelectorAll(".lazers-models-assignment-editor")).toHaveLength(1)
+    expect(containerA.querySelector(".lazers-models-assignments")?.textContent).toContain(
+      "Routing is not active. Saved assignments do not change worker dispatch.",
+    )
+    expect(
+      containerA.querySelector(".lazers-models-assignment-rows")?.contains(assignmentEditor),
+    ).toBe(false)
+    expect(
+      [...containerA.querySelectorAll(".lazers-models-filters button")].map((button) =>
+        button.textContent?.trim(),
+      ),
+    ).not.toContain("Persona · All")
+    expect(
+      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
+        button.textContent?.includes("Task kind ·"),
+      ),
+    ).toBe(false)
+    expect(containerA.querySelector(".lazers-models-filter-status")).toBeNull()
+    expect(containerA.querySelector("[data-decision-status]")).toBeNull()
+    expect(containerA.textContent).not.toContain(
+      "Select a producer-backed configuration or chart point to inspect its evidence.",
+    )
+    const taskSelectButton = containerA.querySelector<HTMLButtonElement>(
+      ".lazers-models-task-select button",
+    )
+    expect(taskSelectButton).toBeDefined()
+    expect(taskSelectButton?.disabled).toBe(false)
+    taskSelectButton?.click()
+    const taskOption = menuItemWithText(containerA, "LZ-17")
+    expect(taskOption).toBeDefined()
+    taskOption?.click()
     expect(assignmentEditor.getAttribute("aria-labelledby")).toBe(
       assignmentEditor.querySelector("h3")!.id,
     )
@@ -2067,12 +2115,30 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         {
           title: "GPT-6",
           value: catalogSelection,
-          description: "gpt-6 · chat",
+          description: "openai gpt-6 · chat",
+          group: "openai",
+        },
+        {
+          title: "GPT-6 Luna",
+          description: "openai gpt-6-luna · chat",
           group: "openai",
         },
         { title: "Claude 4 Sonnet", group: "anthropic" },
       ],
     })
+    const nativeOpenAISearchResults = nativePickerCalls
+      .at(-1)!
+      .options.filter(({ title, description }) =>
+        `${title} ${description ?? ""}`.toLowerCase().includes("openai gpt-6-luna"),
+      )
+    expect(nativeOpenAISearchResults).toMatchObject([
+      {
+        title: "GPT-6 Luna",
+        value: JSON.stringify(["openai", "gpt-6-luna"]),
+        group: "openai",
+        description: "openai gpt-6-luna · chat",
+      },
+    ])
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(modelPicker()?.textContent).toBe("Custom route")
 
@@ -2144,6 +2210,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     rowForPersona("UI").click()
     await until(() => buttonWithText(currentAssignmentEditor(), "Effort · high") !== undefined)
     scopeMenu()?.click()
+    expect(menuItemWithText(containerA, "Task override")).toBeDefined()
     menuItemWithText(containerA, "Task override")?.click()
     await until(
       () =>
@@ -2426,6 +2493,18 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       .querySelector<HTMLButtonElement>('[role="tab"][aria-controls="lazers-models-compare-panel"]')
       ?.click()
     await until(() => containerA.querySelector(".lazers-models-decision-rows") !== null)
+    expect(
+      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
+        button.textContent?.includes("Persona ·"),
+      ),
+    ).toBe(true)
+    expect(
+      [...containerA.querySelectorAll(".lazers-models-filters button")].some((button) =>
+        button.textContent?.includes("Task kind ·"),
+      ),
+    ).toBe(true)
+    expect(containerA.querySelector(".lazers-models-filter-status")).not.toBeNull()
+    expect(containerA.querySelector(".lazers-models-assignment-editor")).toBeNull()
     const effortDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-task-effort-details",
     )!

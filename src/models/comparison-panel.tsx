@@ -851,7 +851,7 @@ function ModelPanel(
           title: option.name || option.id,
           value: catalogOptionKey(option),
           group: option.providerID,
-          description: `${option.id}${option.type ? ` · ${option.type}` : ""}`,
+          description: `${option.providerID} ${option.id}${option.type ? ` · ${option.type}` : ""}`,
         })),
       })
     } catch {
@@ -880,6 +880,246 @@ function ModelPanel(
       variant: sameModel ? previous.variant : "",
     })
   }
+  const AssignmentEditor = () => (
+    <Show when={assignmentSettings()}>
+      {(persona) => (
+        <section
+          class="lazers-models-assignment-editor"
+          aria-labelledby={assignmentEditorTitleID()}
+        >
+          <header class="lazers-models-assignment-editor-heading">
+            <div>
+              <h3 id={assignmentEditorTitleID()}>Edit {persona().personaLabel}</h3>
+              <p>Exact native route</p>
+            </div>
+            <Ui.Menu
+              label={`Target · ${assignmentScopeLabel(assignmentScope())}`}
+              trigger="button"
+              icon="chevron-down"
+              disabled={assignmentBlocked()}
+              items={[
+                { label: "Shared default", onSelect: () => selectAssignmentScope("shared") },
+                { label: "Project override", onSelect: () => selectAssignmentScope("project") },
+                { label: "Task override", onSelect: () => selectAssignmentScope("task") },
+              ]}
+            />
+          </header>
+          <Show when={assignmentScope() === "task" && !visible()?.selectedTaskID}>
+            <p class="lazers-models-note" role="status">
+              Choose a task from the toolbar before editing a task override.
+            </p>
+          </Show>
+          <Show when={visible()?.catalogStatus === "loading"}>
+            <p class="lazers-models-catalog-status" role="status">
+              <Ui.Loader size="small" /> Loading native models…
+            </p>
+          </Show>
+          <Show when={visible()?.catalogStatus === "unavailable"}>
+            <div class="lazers-models-catalog-status" role="status">
+              <span>Model catalog unavailable. Custom routes remain available.</span>
+              <Ui.Button
+                size="small"
+                variant="ghost-muted"
+                onClick={() => void state.refreshCatalog()}
+              >
+                Retry catalog
+              </Ui.Button>
+              <details class="lazers-models-catalog-error">
+                <summary>Catalog details</summary>
+                <p>{visible()?.catalogError}</p>
+              </details>
+            </div>
+          </Show>
+          <Show when={visible()?.catalogStatus === "ready" && !catalogOptions().length}>
+            <p class="lazers-models-catalog-status" role="status">
+              No models are listed. Custom routes remain available.
+            </p>
+          </Show>
+          <div class="lazers-models-assignment-fields">
+            <div class="lazers-models-assignment-choice">
+              <span>Model</span>
+              <Ui.Button
+                size="small"
+                disabled={
+                  assignmentBlocked() ||
+                  visible()?.catalogStatus !== "ready" ||
+                  !catalogOptions().length
+                }
+                onClick={() => void openAssignmentModelPicker()}
+              >
+                {modelPickerButtonLabel()}
+              </Ui.Button>
+              <small>{modelSelectionCaption()}</small>
+            </div>
+            <div class="lazers-models-assignment-choice">
+              <span>Effort / variant</span>
+              <Ui.Menu
+                label={`Effort · ${assignmentVariantLabel()}`}
+                trigger="button"
+                icon="chevron-down"
+                disabled={assignmentBlocked() || !selectedCatalogModel()}
+                items={[
+                  { label: "No variant", onSelect: () => updateAssignmentRoute({ variant: "" }) },
+                  ...assignmentVariantChoices().map((variant) => ({
+                    label: variant,
+                    onSelect: () => updateAssignmentRoute({ variant }),
+                  })),
+                ]}
+              />
+              <small>
+                {selectedCatalogModel()
+                  ? `For ${selectedCatalogModel()!.name || selectedCatalogModel()!.id}`
+                  : "Custom variants can be entered below"}
+              </small>
+            </div>
+          </div>
+          <details class="lazers-models-assignment-manual-route">
+            <summary>Custom route (manual IDs)</summary>
+            <p>Use exact IDs when a route is missing from the native catalog.</p>
+            <div class="lazers-models-assignment-manual-fields">
+              <div class="lazers-models-assignment-field">
+                <span>Provider ID</span>
+                <Ui.TextInput
+                  label="Provider ID"
+                  value={assignmentRoute().providerID}
+                  onInput={(providerID) => updateAssignmentRoute({ providerID })}
+                  disabled={assignmentBlocked()}
+                />
+              </div>
+              <div class="lazers-models-assignment-field">
+                <span>Model ID</span>
+                <Ui.TextInput
+                  label="Model ID"
+                  value={assignmentRoute().id}
+                  onInput={(id) => updateAssignmentRoute({ id })}
+                  disabled={assignmentBlocked()}
+                />
+              </div>
+              <div class="lazers-models-assignment-field">
+                <span>Variant / effort (optional)</span>
+                <Ui.TextInput
+                  label="Variant / effort (optional)"
+                  value={assignmentRoute().variant}
+                  onInput={(variant) => updateAssignmentRoute({ variant })}
+                  disabled={assignmentBlocked()}
+                />
+              </div>
+            </div>
+          </details>
+          <p class="lazers-models-assignment-current">
+            <strong>Current override:</strong>{" "}
+            {assignmentLayer()?.route
+              ? routeLabel({
+                  providerID: assignmentLayer()!.route!.providerID,
+                  modelID: assignmentLayer()!.route!.id,
+                  variant: assignmentLayer()!.route!.variant ?? null,
+                })
+              : assignmentLayer()
+                ? "Removed"
+                : "Not set"}
+          </p>
+          <div class="lazers-models-assignment-actions">
+            <Ui.Button
+              size="small"
+              disabled={!assignmentCanSave()}
+              busy={assignmentBusy()}
+              onClick={saveAssignmentRoute}
+            >
+              Save route
+            </Ui.Button>
+            <Ui.Button
+              size="small"
+              variant="ghost-muted"
+              disabled={!assignmentLayer()?.route || assignmentBlocked()}
+              onClick={removeAssignmentRoute}
+            >
+              Remove override
+            </Ui.Button>
+          </div>
+          <Show when={assignmentWrite()}>
+            {(write) => {
+              const alert = () => ["uncertain", "conflict", "failed"].includes(write().status)
+              const statusLabel = () => {
+                switch (write().status) {
+                  case "saving":
+                  case "verifying":
+                    return "Saving…"
+                  case "confirmed":
+                    return "Saved"
+                  case "uncertain":
+                    return "Write unconfirmed"
+                  case "conflict":
+                    return "Updated elsewhere"
+                  case "failed":
+                    return "Could not save"
+                }
+              }
+              const targetLabel = () => {
+                const target = write().target
+                if (!target) return "No target"
+                return target.scope === "task"
+                  ? `Task override · ${visible()?.settings?.projectDirectory ?? "current project"} · ${target.taskID}`
+                  : target.scope === "project"
+                    ? `Project override · ${visible()?.settings?.projectDirectory ?? "current project"}`
+                    : assignmentScopeLabel(target.scope)
+              }
+              const requestRouteLabel = () => {
+                const route = write().route
+                return route
+                  ? `${route.providerID} / ${route.id}${route.variant ? ` · ${route.variant}` : ""}`
+                  : "remove override"
+              }
+              return (
+                <div
+                  class="lazers-models-assignment-feedback"
+                  data-status={write().status}
+                  role={alert() ? "alert" : "status"}
+                  aria-live={alert() ? "assertive" : "polite"}
+                >
+                  <p>{statusLabel()}</p>
+                  <Show when={write().status === "uncertain"}>
+                    <Ui.Button
+                      size="small"
+                      variant="ghost-muted"
+                      busy={assignmentBusy()}
+                      onClick={() => void state.recheckAssignmentWrite()}
+                    >
+                      Check saved settings
+                    </Ui.Button>
+                  </Show>
+                  <Show when={write().status === "conflict" || write().status === "failed"}>
+                    <Ui.Button
+                      size="small"
+                      variant="ghost-muted"
+                      busy={visible()?.settingsLoading}
+                      onClick={() => void state.refreshSettings()}
+                    >
+                      Reload current settings
+                    </Ui.Button>
+                  </Show>
+                  <details class="lazers-models-assignment-write-details">
+                    <summary>Write details</summary>
+                    <p>{write().message}</p>
+                    <p>
+                      {modelPersonaLabels[write().persona]} · {targetLabel()} · expected revision{" "}
+                      {write().expectedRevision} · observed revision {write().revision ?? "unknown"}
+                    </p>
+                    <p>Requested route: {requestRouteLabel()}</p>
+                  </details>
+                </div>
+              )
+            }}
+          </Show>
+          <details class="lazers-models-assignment-layers">
+            <summary>Mapping layers and revisions</summary>
+            <p>{assignmentLayerLabel("Task override", persona().layers.task)}</p>
+            <p>{assignmentLayerLabel("Project override", persona().layers.project)}</p>
+            <p>{assignmentLayerLabel("Shared default", persona().layers.shared)}</p>
+          </details>
+        </section>
+      )}
+    </Show>
+  )
   const sourceWarning = () => {
     const sources = visible()?.comparison?.sources ?? []
     if (sources.some((source) => source.refresh?.state === "failed"))
@@ -1061,36 +1301,41 @@ function ModelPanel(
             </button>
           </div>
           <div class="lazers-models-filters">
-            <Ui.Menu
-              label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                { label: "All personas", onSelect: () => changeDecisionFilters({ persona: null }) },
-                ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
-                  label: modelPersonaLabels[persona],
-                  onSelect: () => changeDecisionFilters({ persona }),
-                })),
-              ]}
-            />
-            <Ui.Menu
-              label={`Task kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                {
-                  label: "All task kinds",
-                  onSelect: () => changeDecisionFilters({ taskKind: null }),
-                },
-                ...modelTaskKinds.map((taskKind) => ({
-                  label: modelTaskKindLabels[taskKind],
-                  onSelect: () => changeDecisionFilters({ taskKind }),
-                })),
-              ]}
-            />
-            <span class="lazers-models-filter-status">
-              {visible()?.decisionContext?.classification.status ?? "Classification loading"}
-            </span>
+            <Show when={prefs().tab === "compare"}>
+              <Ui.Menu
+                label={`Persona · ${personaFilterLabel(visible()?.decisionFilters.persona ?? null)}`}
+                trigger="button"
+                icon="chevron-down"
+                items={[
+                  {
+                    label: "All personas",
+                    onSelect: () => changeDecisionFilters({ persona: null }),
+                  },
+                  ...(["ui", "systems", "small-refactoring"] as const).map((persona) => ({
+                    label: modelPersonaLabels[persona],
+                    onSelect: () => changeDecisionFilters({ persona }),
+                  })),
+                ]}
+              />
+              <Ui.Menu
+                label={`Task kind · ${visible()?.decisionFilters.taskKind ? modelTaskKindLabels[visible()!.decisionFilters.taskKind!] : "All"}`}
+                trigger="button"
+                icon="chevron-down"
+                items={[
+                  {
+                    label: "All task kinds",
+                    onSelect: () => changeDecisionFilters({ taskKind: null }),
+                  },
+                  ...modelTaskKinds.map((taskKind) => ({
+                    label: modelTaskKindLabels[taskKind],
+                    onSelect: () => changeDecisionFilters({ taskKind }),
+                  })),
+                ]}
+              />
+              <span class="lazers-models-filter-status">
+                {visible()?.decisionContext?.classification.status ?? "Classification loading"}
+              </span>
+            </Show>
             <span
               class="lazers-models-task-select"
               role="group"
@@ -1217,260 +1462,6 @@ function ModelPanel(
                     )}
                   </For>
                 </div>
-                <Show when={assignmentSettings()}>
-                  {(persona) => (
-                    <section
-                      class="lazers-models-assignment-editor"
-                      aria-labelledby={assignmentEditorTitleID()}
-                    >
-                      <header class="lazers-models-assignment-editor-heading">
-                        <div>
-                          <h3 id={assignmentEditorTitleID()}>Edit {persona().personaLabel}</h3>
-                          <p>Exact native route</p>
-                        </div>
-                        <Ui.Menu
-                          label={`Target · ${assignmentScopeLabel(assignmentScope())}`}
-                          trigger="button"
-                          icon="chevron-down"
-                          disabled={assignmentBlocked()}
-                          items={[
-                            {
-                              label: "Shared default",
-                              onSelect: () => selectAssignmentScope("shared"),
-                            },
-                            {
-                              label: "Project override",
-                              onSelect: () => selectAssignmentScope("project"),
-                            },
-                            {
-                              label: "Task override",
-                              onSelect: () => selectAssignmentScope("task"),
-                            },
-                          ]}
-                        />
-                      </header>
-                      <Show when={assignmentScope() === "task" && !visible()?.selectedTaskID}>
-                        <p class="lazers-models-note" role="status">
-                          Choose a task from the toolbar before editing a task override.
-                        </p>
-                      </Show>
-                      <Show when={visible()?.catalogStatus === "loading"}>
-                        <p class="lazers-models-catalog-status" role="status">
-                          <Ui.Loader size="small" /> Loading native models…
-                        </p>
-                      </Show>
-                      <Show when={visible()?.catalogStatus === "unavailable"}>
-                        <div class="lazers-models-catalog-status" role="status">
-                          <span>Model catalog unavailable. Custom routes remain available.</span>
-                          <Ui.Button
-                            size="small"
-                            variant="ghost-muted"
-                            onClick={() => void state.refreshCatalog()}
-                          >
-                            Retry catalog
-                          </Ui.Button>
-                          <details class="lazers-models-catalog-error">
-                            <summary>Catalog details</summary>
-                            <p>{visible()?.catalogError}</p>
-                          </details>
-                        </div>
-                      </Show>
-                      <Show when={visible()?.catalogStatus === "ready" && !catalogOptions().length}>
-                        <p class="lazers-models-catalog-status" role="status">
-                          No models are listed. Custom routes remain available.
-                        </p>
-                      </Show>
-                      <div class="lazers-models-assignment-fields">
-                        <div class="lazers-models-assignment-choice">
-                          <span>Model</span>
-                          <Ui.Button
-                            size="small"
-                            disabled={
-                              assignmentBlocked() ||
-                              visible()?.catalogStatus !== "ready" ||
-                              !catalogOptions().length
-                            }
-                            onClick={() => void openAssignmentModelPicker()}
-                          >
-                            {modelPickerButtonLabel()}
-                          </Ui.Button>
-                          <small>{modelSelectionCaption()}</small>
-                        </div>
-                        <div class="lazers-models-assignment-choice">
-                          <span>Effort / variant</span>
-                          <Ui.Menu
-                            label={`Effort · ${assignmentVariantLabel()}`}
-                            trigger="button"
-                            icon="chevron-down"
-                            disabled={assignmentBlocked() || !selectedCatalogModel()}
-                            items={[
-                              {
-                                label: "No variant",
-                                onSelect: () => updateAssignmentRoute({ variant: "" }),
-                              },
-                              ...assignmentVariantChoices().map((variant) => ({
-                                label: variant,
-                                onSelect: () => updateAssignmentRoute({ variant }),
-                              })),
-                            ]}
-                          />
-                          <small>
-                            {selectedCatalogModel()
-                              ? `For ${selectedCatalogModel()!.name || selectedCatalogModel()!.id}`
-                              : "Custom variants can be entered below"}
-                          </small>
-                        </div>
-                      </div>
-                      <details class="lazers-models-assignment-manual-route">
-                        <summary>Custom route (manual IDs)</summary>
-                        <p>Use exact IDs when a route is missing from the native catalog.</p>
-                        <div class="lazers-models-assignment-manual-fields">
-                          <div class="lazers-models-assignment-field">
-                            <span>Provider ID</span>
-                            <Ui.TextInput
-                              label="Provider ID"
-                              value={assignmentRoute().providerID}
-                              onInput={(providerID) => updateAssignmentRoute({ providerID })}
-                              disabled={assignmentBlocked()}
-                            />
-                          </div>
-                          <div class="lazers-models-assignment-field">
-                            <span>Model ID</span>
-                            <Ui.TextInput
-                              label="Model ID"
-                              value={assignmentRoute().id}
-                              onInput={(id) => updateAssignmentRoute({ id })}
-                              disabled={assignmentBlocked()}
-                            />
-                          </div>
-                          <div class="lazers-models-assignment-field">
-                            <span>Variant / effort (optional)</span>
-                            <Ui.TextInput
-                              label="Variant / effort (optional)"
-                              value={assignmentRoute().variant}
-                              onInput={(variant) => updateAssignmentRoute({ variant })}
-                              disabled={assignmentBlocked()}
-                            />
-                          </div>
-                        </div>
-                      </details>
-                      <p class="lazers-models-assignment-current">
-                        <strong>Current override:</strong>{" "}
-                        {assignmentLayer()?.route
-                          ? routeLabel({
-                              providerID: assignmentLayer()!.route!.providerID,
-                              modelID: assignmentLayer()!.route!.id,
-                              variant: assignmentLayer()!.route!.variant ?? null,
-                            })
-                          : assignmentLayer()
-                            ? "Removed"
-                            : "Not set"}
-                      </p>
-                      <div class="lazers-models-assignment-actions">
-                        <Ui.Button
-                          size="small"
-                          disabled={!assignmentCanSave()}
-                          busy={assignmentBusy()}
-                          onClick={saveAssignmentRoute}
-                        >
-                          Save route
-                        </Ui.Button>
-                        <Ui.Button
-                          size="small"
-                          variant="ghost-muted"
-                          disabled={!assignmentLayer()?.route || assignmentBlocked()}
-                          onClick={removeAssignmentRoute}
-                        >
-                          Remove override
-                        </Ui.Button>
-                      </div>
-                      <Show when={assignmentWrite()}>
-                        {(write) => {
-                          const alert = () =>
-                            ["uncertain", "conflict", "failed"].includes(write().status)
-                          const statusLabel = () => {
-                            switch (write().status) {
-                              case "saving":
-                              case "verifying":
-                                return "Saving…"
-                              case "confirmed":
-                                return "Saved"
-                              case "uncertain":
-                                return "Write unconfirmed"
-                              case "conflict":
-                                return "Updated elsewhere"
-                              case "failed":
-                                return "Could not save"
-                            }
-                          }
-                          const targetLabel = () => {
-                            const target = write().target
-                            if (!target) return "No target"
-                            return target.scope === "task"
-                              ? `Task override · ${visible()?.settings?.projectDirectory ?? "current project"} · ${target.taskID}`
-                              : target.scope === "project"
-                                ? `Project override · ${visible()?.settings?.projectDirectory ?? "current project"}`
-                                : assignmentScopeLabel(target.scope)
-                          }
-                          const requestRouteLabel = () => {
-                            const route = write().route
-                            return route
-                              ? `${route.providerID} / ${route.id}${route.variant ? ` · ${route.variant}` : ""}`
-                              : "remove override"
-                          }
-                          return (
-                            <div
-                              class="lazers-models-assignment-feedback"
-                              data-status={write().status}
-                              role={alert() ? "alert" : "status"}
-                              aria-live={alert() ? "assertive" : "polite"}
-                            >
-                              <p>{statusLabel()}</p>
-                              <Show when={write().status === "uncertain"}>
-                                <Ui.Button
-                                  size="small"
-                                  variant="ghost-muted"
-                                  busy={assignmentBusy()}
-                                  onClick={() => void state.recheckAssignmentWrite()}
-                                >
-                                  Check saved settings
-                                </Ui.Button>
-                              </Show>
-                              <Show
-                                when={write().status === "conflict" || write().status === "failed"}
-                              >
-                                <Ui.Button
-                                  size="small"
-                                  variant="ghost-muted"
-                                  busy={visible()?.settingsLoading}
-                                  onClick={() => void state.refreshSettings()}
-                                >
-                                  Reload current settings
-                                </Ui.Button>
-                              </Show>
-                              <details class="lazers-models-assignment-write-details">
-                                <summary>Write details</summary>
-                                <p>{write().message}</p>
-                                <p>
-                                  {modelPersonaLabels[write().persona]} · {targetLabel()} · expected
-                                  revision {write().expectedRevision} · observed revision{" "}
-                                  {write().revision ?? "unknown"}
-                                </p>
-                                <p>Requested route: {requestRouteLabel()}</p>
-                              </details>
-                            </div>
-                          )
-                        }}
-                      </Show>
-                      <details class="lazers-models-assignment-layers">
-                        <summary>Mapping layers and revisions</summary>
-                        <p>{assignmentLayerLabel("Task override", persona().layers.task)}</p>
-                        <p>{assignmentLayerLabel("Project override", persona().layers.project)}</p>
-                        <p>{assignmentLayerLabel("Shared default", persona().layers.shared)}</p>
-                      </details>
-                    </section>
-                  )}
-                </Show>
               </Show>
             </section>
           }
@@ -1763,187 +1754,197 @@ function ModelPanel(
         }}
         onScroll={(event) => save({ inspectorScroll: event.currentTarget.scrollTop })}
       >
-        <Show
-          when={selectedDecisionConfiguration()}
-          fallback={
-            <p class="lazers-models-note" role="status">
-              {visible()?.selectedConfigurationID
-                ? `Inspecting exact configuration ${visible()!.selectedConfigurationID}…`
-                : visible()?.decisionStatus === "missing-rpc"
-                  ? "The decision RPC is not registered; no route inspection or estimate is available."
-                  : "Select a producer-backed configuration or chart point to inspect its evidence."}
-            </p>
-          }
-        >
-          {(configuration) => (
-            <>
-              <div class="lazers-models-inspector-heading">
-                <div>
-                  <h2>{decisionModelLabel(configuration())}</h2>
-                </div>
-              </div>
-              <Show when={visible()?.decisionInspectLoading}>
+        <Show when={prefs().tab === "assignments"}>
+          <AssignmentEditor />
+        </Show>
+        <Show when={prefs().tab === "compare"}>
+          <>
+            <Show
+              when={selectedDecisionConfiguration()}
+              fallback={
                 <p class="lazers-models-note" role="status">
-                  <Ui.Loader size="small" /> Loading exact configuration inspection…
+                  {visible()?.selectedConfigurationID
+                    ? `Inspecting exact configuration ${visible()!.selectedConfigurationID}…`
+                    : visible()?.decisionStatus === "missing-rpc"
+                      ? "The decision RPC is not registered; no route inspection or estimate is available."
+                      : "Select a producer-backed configuration or chart point to inspect its evidence."}
                 </p>
-              </Show>
-              <Show when={visible()?.decisionInspectError}>
-                <p class="lazers-models-error" role="alert">
-                  Configuration inspection unavailable: {visible()?.decisionInspectError}
-                </p>
-              </Show>
-              <Show when={visible()?.decisionNotFound}>
-                <p class="lazers-models-note" role="status">
-                  This exact configuration is not present in the selected producer snapshot.
-                </p>
-              </Show>
-              <Show when={visible()?.decisionStatus === "backend-not-ready"}>
-                <p class="lazers-models-estimate" role="status">
-                  <strong>Decision backend not ready</strong>
-                  <span>
-                    {visible()?.decisionContext?.unavailableReason ?? "No estimate is available."}
-                  </span>
-                </p>
-              </Show>
-              <Show when={visible()?.decisionInspection}>
-                {(inspection) => (
-                  <>
+              }
+            >
+              {(configuration) => (
+                <>
+                  <div class="lazers-models-inspector-heading">
+                    <div>
+                      <h2>{decisionModelLabel(configuration())}</h2>
+                    </div>
+                  </div>
+                  <Show when={visible()?.decisionInspectLoading}>
+                    <p class="lazers-models-note" role="status">
+                      <Ui.Loader size="small" /> Loading exact configuration inspection…
+                    </p>
+                  </Show>
+                  <Show when={visible()?.decisionInspectError}>
+                    <p class="lazers-models-error" role="alert">
+                      Configuration inspection unavailable: {visible()?.decisionInspectError}
+                    </p>
+                  </Show>
+                  <Show when={visible()?.decisionNotFound}>
+                    <p class="lazers-models-note" role="status">
+                      This exact configuration is not present in the selected producer snapshot.
+                    </p>
+                  </Show>
+                  <Show when={visible()?.decisionStatus === "backend-not-ready"}>
                     <p class="lazers-models-estimate" role="status">
-                      <strong>
-                        {visible()?.decisionStatus === "missing-rpc" ||
-                        visible()?.decisionStatus === "error"
-                          ? "Estimate unavailable"
-                          : estimateLabel(inspection().estimate)}
-                      </strong>
-                      <span>{estimateHistoryDescription(inspection().estimate)}</span>
-                      <span class="lazers-models-history-scope">
-                        {estimateHistoryScopeLabel(inspection().estimate)}
+                      <strong>Decision backend not ready</strong>
+                      <span>
+                        {visible()?.decisionContext?.unavailableReason ??
+                          "No estimate is available."}
                       </span>
                     </p>
-                    <details
-                      class="lazers-models-evidence-details"
-                      open={decisionEvidenceOpen()}
-                      onToggle={(event) => setDecisionEvidenceOpen(event.currentTarget.open)}
-                    >
-                      <summary>Route, cohort and price evidence</summary>
-                      <div class="lazers-models-evidence-content">
-                        <section
-                          class="lazers-models-decision-inspection"
-                          aria-label="Producer comparison evidence"
+                  </Show>
+                  <Show when={visible()?.decisionInspection}>
+                    {(inspection) => (
+                      <>
+                        <p class="lazers-models-estimate" role="status">
+                          <strong>
+                            {visible()?.decisionStatus === "missing-rpc" ||
+                            visible()?.decisionStatus === "error"
+                              ? "Estimate unavailable"
+                              : estimateLabel(inspection().estimate)}
+                          </strong>
+                          <span>{estimateHistoryDescription(inspection().estimate)}</span>
+                          <span class="lazers-models-history-scope">
+                            {estimateHistoryScopeLabel(inspection().estimate)}
+                          </span>
+                        </p>
+                        <details
+                          class="lazers-models-evidence-details"
+                          open={decisionEvidenceOpen()}
+                          onToggle={(event) => setDecisionEvidenceOpen(event.currentTarget.open)}
                         >
-                          <h3>Exact route</h3>
-                          <p>{routeLabel(inspection().configuration.route)}</p>
-                          <p>
-                            Effort · {inspection().configuration.route.variant ?? "Not specified"}
-                          </p>
-                          <h3>Configuration cohort</h3>
-                          <p>
-                            {inspection().cohort.acceptedTaskCount} accepted /{" "}
-                            {inspection().cohort.terminalTaskCount} terminal logical tasks ·{" "}
-                            {inspection().cohort.failedAttemptCount} failed attempts ·{" "}
-                            {inspection().cohort.retryAttemptCount} retries ·{" "}
-                            {inspection().cohort.attemptCount} total attempts
-                          </p>
-                          <p>{efficiencyLabel(inspection())}</p>
-                          <p>
-                            Native reported charges · {inspection().nativeReportedCost.source} ·{" "}
-                            {inspection().nativeReportedCost.status} ·{" "}
-                            {formatMoney(inspection().nativeReportedCost.totalUSD)} ·{" "}
-                            {inspection().nativeReportedCost.note}
-                          </p>
-                          <p class="lazers-models-source-meta">
-                            Current price ·{" "}
-                            {inspection().configuration.currentPrice.source ?? "unavailable"} ·{" "}
-                            {inspection().configuration.currentPrice.semantics} ·{" "}
-                            {inspection().configuration.currentPrice.freshness}
-                            {inspection().configuration.currentPrice.retrievedAt
-                              ? ` · retrieved ${formatDate(inspection().configuration.currentPrice.retrievedAt)}`
-                              : " · retrieval date unavailable"}
-                            {inspection().configuration.currentPrice.sourceRecordID
-                              ? ` · source record ${inspection().configuration.currentPrice.sourceRecordID}`
-                              : ""}
-                          </p>
-                          <p class="lazers-models-source-meta">
-                            Price index · {inspection().context.priceIndex.source} ·{" "}
-                            {inspection().context.priceIndex.freshness} ·{" "}
-                            {inspection().context.priceIndex.semantics} ·{" "}
-                            {inspection().context.priceIndex.note}
-                          </p>
-                        </section>
-                        <details class="lazers-models-contributor-details">
-                          <summary>
-                            Contributors · {inspection().contributorPage.totalCount}
-                          </summary>
-                          <section
-                            class="lazers-models-contributors"
-                            aria-label="Empirical contributors"
-                          >
-                            <For each={inspection().contributorPage.contributors}>
-                              {(contributor) => (
-                                <article class="lazers-models-contributor">
-                                  <div>
-                                    <strong>
-                                      {contributor.taskReference} · {contributor.contribution}
-                                    </strong>
-                                    <p>
-                                      {contributor.tokens === null
-                                        ? "Tokens unknown"
-                                        : `${formatNumber(contributor.tokens)} tokens`}{" "}
-                                      ·{" "}
-                                      {contributor.currentMarketUSD === null
-                                        ? "Current market cost unknown"
-                                        : formatMoney(contributor.currentMarketUSD)}{" "}
-                                      · native reported {formatMoney(contributor.nativeReportedUSD)}
-                                    </p>
-                                    <p class="lazers-models-source-meta">
-                                      Exact route ·{" "}
-                                      {contributor.route
-                                        ? routeLabel(contributor.route)
-                                        : "Unknown route"}
-                                      {" · Membership · "}
-                                      {contributorMembershipLabel(contributor.membership)}
-                                    </p>
-                                    <p class="lazers-models-source-meta">
-                                      Attempt · {contributor.attemptID ?? "not attributed"} ·
-                                      session · {contributor.sessionID || "not attributed"} ·
-                                      observed {formatDate(contributor.observedAt)}
-                                    </p>
-                                  </div>
+                          <summary>Route, cohort and price evidence</summary>
+                          <div class="lazers-models-evidence-content">
+                            <section
+                              class="lazers-models-decision-inspection"
+                              aria-label="Producer comparison evidence"
+                            >
+                              <h3>Exact route</h3>
+                              <p>{routeLabel(inspection().configuration.route)}</p>
+                              <p>
+                                Effort ·{" "}
+                                {inspection().configuration.route.variant ?? "Not specified"}
+                              </p>
+                              <h3>Configuration cohort</h3>
+                              <p>
+                                {inspection().cohort.acceptedTaskCount} accepted /{" "}
+                                {inspection().cohort.terminalTaskCount} terminal logical tasks ·{" "}
+                                {inspection().cohort.failedAttemptCount} failed attempts ·{" "}
+                                {inspection().cohort.retryAttemptCount} retries ·{" "}
+                                {inspection().cohort.attemptCount} total attempts
+                              </p>
+                              <p>{efficiencyLabel(inspection())}</p>
+                              <p>
+                                Native reported charges · {inspection().nativeReportedCost.source} ·{" "}
+                                {inspection().nativeReportedCost.status} ·{" "}
+                                {formatMoney(inspection().nativeReportedCost.totalUSD)} ·{" "}
+                                {inspection().nativeReportedCost.note}
+                              </p>
+                              <p class="lazers-models-source-meta">
+                                Current price ·{" "}
+                                {inspection().configuration.currentPrice.source ?? "unavailable"} ·{" "}
+                                {inspection().configuration.currentPrice.semantics} ·{" "}
+                                {inspection().configuration.currentPrice.freshness}
+                                {inspection().configuration.currentPrice.retrievedAt
+                                  ? ` · retrieved ${formatDate(inspection().configuration.currentPrice.retrievedAt)}`
+                                  : " · retrieval date unavailable"}
+                                {inspection().configuration.currentPrice.sourceRecordID
+                                  ? ` · source record ${inspection().configuration.currentPrice.sourceRecordID}`
+                                  : ""}
+                              </p>
+                              <p class="lazers-models-source-meta">
+                                Price index · {inspection().context.priceIndex.source} ·{" "}
+                                {inspection().context.priceIndex.freshness} ·{" "}
+                                {inspection().context.priceIndex.semantics} ·{" "}
+                                {inspection().context.priceIndex.note}
+                              </p>
+                            </section>
+                            <details class="lazers-models-contributor-details">
+                              <summary>
+                                Contributors · {inspection().contributorPage.totalCount}
+                              </summary>
+                              <section
+                                class="lazers-models-contributors"
+                                aria-label="Empirical contributors"
+                              >
+                                <For each={inspection().contributorPage.contributors}>
+                                  {(contributor) => (
+                                    <article class="lazers-models-contributor">
+                                      <div>
+                                        <strong>
+                                          {contributor.taskReference} · {contributor.contribution}
+                                        </strong>
+                                        <p>
+                                          {contributor.tokens === null
+                                            ? "Tokens unknown"
+                                            : `${formatNumber(contributor.tokens)} tokens`}{" "}
+                                          ·{" "}
+                                          {contributor.currentMarketUSD === null
+                                            ? "Current market cost unknown"
+                                            : formatMoney(contributor.currentMarketUSD)}{" "}
+                                          · native reported{" "}
+                                          {formatMoney(contributor.nativeReportedUSD)}
+                                        </p>
+                                        <p class="lazers-models-source-meta">
+                                          Exact route ·{" "}
+                                          {contributor.route
+                                            ? routeLabel(contributor.route)
+                                            : "Unknown route"}
+                                          {" · Membership · "}
+                                          {contributorMembershipLabel(contributor.membership)}
+                                        </p>
+                                        <p class="lazers-models-source-meta">
+                                          Attempt · {contributor.attemptID ?? "not attributed"} ·
+                                          session · {contributor.sessionID || "not attributed"} ·
+                                          observed {formatDate(contributor.observedAt)}
+                                        </p>
+                                      </div>
+                                      <Ui.Button
+                                        size="small"
+                                        variant="ghost-muted"
+                                        aria-label={`Open trajectory for ${contributor.taskReference}`}
+                                        onClick={() => openContributorTrajectory(contributor)}
+                                      >
+                                        Open trajectory
+                                      </Ui.Button>
+                                    </article>
+                                  )}
+                                </For>
+                                <Show when={!inspection().contributorPage.contributors.length}>
+                                  <p class="lazers-models-note">
+                                    No contributor records are available.
+                                  </p>
+                                </Show>
+                                <Show when={inspection().contributorPage.nextCursor}>
                                   <Ui.Button
                                     size="small"
-                                    variant="ghost-muted"
-                                    aria-label={`Open trajectory for ${contributor.taskReference}`}
-                                    onClick={() => openContributorTrajectory(contributor)}
+                                    variant="ghost"
+                                    busy={visible()?.decisionContributorsLoading}
+                                    onClick={() => void state.moreDecisionContributors()}
                                   >
-                                    Open trajectory
+                                    Load more contributors
                                   </Ui.Button>
-                                </article>
-                              )}
-                            </For>
-                            <Show when={!inspection().contributorPage.contributors.length}>
-                              <p class="lazers-models-note">
-                                No contributor records are available.
-                              </p>
-                            </Show>
-                            <Show when={inspection().contributorPage.nextCursor}>
-                              <Ui.Button
-                                size="small"
-                                variant="ghost"
-                                busy={visible()?.decisionContributorsLoading}
-                                onClick={() => void state.moreDecisionContributors()}
-                              >
-                                Load more contributors
-                              </Ui.Button>
-                            </Show>
-                          </section>
+                                </Show>
+                              </section>
+                            </details>
+                          </div>
                         </details>
-                      </div>
-                    </details>
-                  </>
-                )}
-              </Show>
-            </>
-          )}
+                      </>
+                    )}
+                  </Show>
+                </>
+              )}
+            </Show>
+          </>
         </Show>
 
         <section class="lazers-models-inspector-block" aria-label="Selected task execution">
@@ -2042,7 +2043,7 @@ function ModelPanel(
           </Show>
         </section>
 
-        <Show when={selectedCandidate()}>
+        <Show when={prefs().tab === "compare" && selectedCandidate()}>
           {(candidate) => (
             <details class="lazers-models-evidence-details">
               <summary>Native and external model evidence</summary>
