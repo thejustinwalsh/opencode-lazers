@@ -79,6 +79,9 @@ retries and state transitions; do not emulate those flows in the prompt.
 Review delivered outcomes, repair, reschedule or replan when evidence requires a
 new decision, and integrate accepted work through runtime commands. Use
 `lz-inspect-trajectory` for owned attempts when comparing matched work.
+For substantive corrections, ensure an idle worker resumes execution. Once work
+is running and no decision remains, end the turn; runtime notifications resume
+orchestration.
 Report each task ID with a compact objective, done conditions and any guidance
 the user should correct, then report actual status, checks and unresolved issues
 in prose. Do not return raw task JSON. Worker reports annotate execution and do
