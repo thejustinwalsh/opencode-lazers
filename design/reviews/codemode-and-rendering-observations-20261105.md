@@ -29,11 +29,11 @@ One-shot process CPU windows, with inference settings unchanged and native model
 work continuing. Root used OpenCode's Toggle review button to hide and restore
 the region; AX observations confirmed Tasks disappeared and returned selected.
 
-| Region | Unix start (ms) | Duration | Service | Renderer | GPU process |
-| --- | --- | --- | --- | --- | --- |
-| Tasks visible | 1793867504391 | 12.063s | 72.20% | 27.36% | 29.84% |
-| Review region hidden | 1793867584022 | 12.064s | 62.42% | 28.93% | 43.68% |
-| Tasks restored | 1793867620878 | 12.039s | 47.85% | 19.69% | 39.79% |
+| Region               | Unix start (ms) | Duration | Service | Renderer | GPU process |
+| -------------------- | --------------- | -------- | ------- | -------- | ----------- |
+| Tasks visible        | 1793867504391   | 12.063s  | 72.20%  | 27.36%   | 29.84%      |
+| Review region hidden | 1793867584022   | 12.064s  | 62.42%  | 28.93%   | 43.68%      |
+| Tasks restored       | 1793867620878   | 12.039s  | 47.85%  | 19.69%   | 39.79%      |
 
 These windows do **not** isolate Task animations as the cause: hiding Tasks did
 not produce a renderer/GPU-process drop, and model/tool activity was not matched.

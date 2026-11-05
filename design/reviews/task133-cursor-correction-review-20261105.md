@@ -29,9 +29,29 @@ The exact successful terminal assistant was `msg_1ab1ddc15001dwXN8JW1SkE5sz`,
 followed by native idle message `msg_1ab1df0c2001f0QtGsAfy4GN37`. This is the
 resumed repair turn's wall time, not total attempt age or final acceptance time.
 
-Next: coordinate canonical source activation without interrupting active model or
-verification operations, exercise registered paging under actual scanner activity,
-retrieve a selected native message using its returned identity, and verify reads
-do not acknowledge notices. Then record actual artifact-bound evidence, integrate
-through the native owner, and perform supported non-forced cleanup. No new worker
-proof turn or invented historical idle observation is required.
+## Merged-source live observation
+
+Root merged the reviewed correction with ancestry at `00a4a84`. During the
+acknowledged quiet window, public active inventory was empty at `1793873274831`.
+Canonical source registration changed from
+`018f60ca-aaa5-4bac-adb3-057e481b127e` to
+`7d735827-9da4-4e73-93de-83ffac69a375`, same service PID95968. Source loading
+activated the new generation; no explicit global reload was needed. Merged
+inspection/store/tool tests passed17/347 assertions; format/lint/types pass. All
+six inference flags remained true; no inference was requested.
+
+From `1793873324637` to `1793873336783`, Root's read-only production-reader probe
+traversed94 pages/4,657 unique records of plan
+`243f8093-7c3c-44e3-bda5-e06870e4f680`, stable journal revision589197, while scanner
+diagnostics advanced. Input dispositions/reference revisions and notice states
+were unchanged. Authenticated native SDK retrieval returned the exact selected
+message `msg_1975612c6001T2yR5gefFr5CRo` from
+`ses_e68a9ed37ffeVqzPWRXN5SB7Uw`; its body was not printed. No production writes.
+Raw result: `/private/tmp/lazers-journal-correction-live-probe-20261105.json`.
+
+This directly exercises production data and native retrieval, but does not itself
+prove registered-tool invocation. Architect was resumed through Desktop to run
+registered Code Mode journal traversal, record truthful artifact-bound evidence,
+complete native integration and perform supported non-forced cleanup. That gate
+remains pending at this report update. No new proof worker or invented historical
+idle observation is required.
