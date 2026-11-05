@@ -25,12 +25,21 @@ cleanup are separate facts.
   race and astral-Unicode schema-cap failures. Do not merge or clean it up yet.
   Preserve task/attempt/session/artifact and use existing accepted-work repair,
   not replacement work. [Final review](../../design/reviews/task129-final-review-20261105.md).
-  The user authorizes folding Astra's proportional proposal into queued57/58:
+  The user authorizes folding Astra's proportional proposal into existing57/58
+  (fresh read: cancelled, zero attempts, pland0ce36bb/version16, ownerc59b85e3):
   ordinary tests and required live probes may accept a safely isolated committed
   candidate while old execution/uncertain effects/cleanup remain truthful.
   Actual resource isolation is required; no old idle certificate or proof-only
   worker turn. Current-owner admission, amendments and independent visible
   Tasks/Radar/Models eligibility are being researched, not manually transferred.
+  Existing ownerc59b received the actionable retry/admission request;58 stays
+  undispatched until its no-worktree assertion has a supported authorization path.
+  Fresh131 plan96cc983c/version18 is running with131 queued/zero attempts and130
+  task-landed; its current owner is checking real reservations, not assuming
+  eligibility from missing coarse reasons. Models122/version14 still waits on126's
+  historical-idle hold (version18), separate from cleanup-blocked prerequisites
+  whose actual integration proof may already qualify. Fresh Git confirms129 is
+  not in main;127 source is in main but is not a deployable replay recovery fix.
 - **Real-host replay is not the completion fix here.**127 returned acceptedaf6dd111;
   independent review clears its code and permanent realistic-inbox regression,
   but actual host log returns no events plus log.synced even on active sessions

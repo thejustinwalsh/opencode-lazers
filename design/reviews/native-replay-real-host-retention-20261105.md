@@ -64,7 +64,9 @@ owner, not ownership transfers or replacement tasks. Fold in Astra's review
    Git directory alone does not isolate a profile/service or an old child process.
 3. Preserve old execution, uncertain-effect receipts, reservations and cleanup.
    Fresh independent checks must not overwrite or certify unknown old checks.
-4. Use queued LZ57 accepted-work repair and LZ58 zero-turn retained verification.
+4. Use existing LZ57 accepted-work repair and LZ58 zero-turn retained verification.
+   Fresh read finds both cancelled with zero attempts in plan `d0ce36bb`,version16,
+   owned by `ses_c59b85e3559c47a8a6f8191eb3b47eae`; Astra's queued state is historical.
    Research their current admission and the supported amendment needed for58's
    existing no-worktree assertion; do not silently contradict immutable specs.
 5. Regression: lost historical lineage plus safe isolation can reach normal checks
