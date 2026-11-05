@@ -77,3 +77,16 @@ false for the HTTP envelope. The constructor-identity regression is corrected
 in this source revision. This narrow check does not establish adapter, recovery,
 whole-suite or native-product acceptance; the cache-retirement finding remains
 open pending later changes.
+
+## Committed-worker continuation regression
+
+The broad worker run at `1793878582019` returned 254 passes, four failures and
+one error. Focused reruns reproduced the existing resumed-worker/new-commit and
+lost-prompt-response/committed-worker tests. Root source review found that
+`prepareWorker` unconditionally calls `startupWorkspaceReady`, whose completed
+worktree-receipt branch requires current HEAD to equal `attempt.base_commit`.
+That rejects legitimate worker-produced commits on continuation. Creation-time
+source validation must remain scoped to creation/recovery; it must not become a
+general attempt freshness gate. Preserve these regression expectations and old
+attempt baselines. Root sent this diagnosis through Desktop's existing review
+flow. Subsequent source and test results must establish the correction.
