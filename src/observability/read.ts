@@ -26,6 +26,7 @@ import type {
   RadarRequestInput,
   RadarResponse,
   SnapshotResponse,
+  TopologyResponse,
   TrajectoryRequest,
   TrajectoryResponse,
   TrajectoryHistoryRequest,
@@ -194,7 +195,7 @@ function initialAssociations(db: Database, projectDirectory: string, scope: Obse
     : sessionAssociations(db, projectDirectory, scope.sessionID)
 }
 
-function loadProjectionSource(
+function loadTopologySource(
   db: Database,
   projectDirectory: string,
   scope: ObservationScope,
@@ -274,6 +275,20 @@ function loadProjectionSource(
         )
         .all(...planIDs)
     : []
+  if (plans.length > 1000) throw new Error("Observation scope is too large; narrow it")
+  return { stamp, associations, tasks, plans, nodes, dependencies }
+}
+
+function loadProjectionSource(
+  db: Database,
+  projectDirectory: string,
+  scope: ObservationScope,
+  secret: Uint8Array,
+  extraSessionIDs: Iterable<string> = [],
+) {
+  const topology = loadTopologySource(db, projectDirectory, scope, secret, extraSessionIDs)
+  const planIDs = [...topology.associations.planIDs]
+  const placeholders = planIDs.map(() => "?").join(",")
   const transitions = planIDs.length
     ? db
         .query<TransitionRecord, string[]>(
@@ -301,14 +316,75 @@ function loadProjectionSource(
         )
         .all(...planIDs)
     : []
-  if (
-    plans.length > 1000 ||
-    transitions.length > 10_000 ||
-    attempts.length > 10_000 ||
-    checks.length > 10_000
-  )
+  if (transitions.length > 10_000 || attempts.length > 10_000 || checks.length > 10_000)
     throw new Error("Observation scope is too large; narrow it")
-  return { stamp, associations, tasks, plans, nodes, dependencies, transitions, attempts, checks }
+  return { ...topology, transitions, attempts, checks }
+}
+
+function projectTopology(source: ReturnType<typeof loadTopologySource>) {
+  const projection = source
+  const stats = privacyStats()
+  const taskSpecs = new Map(projection.tasks.map((task) => [task.id, task]))
+  const states = new Map(projection.nodes.map((node) => [node.task_id, node.state]))
+  const waitingOn = new Map<string, string[]>()
+  for (const edge of projection.dependencies) {
+    if (states.get(edge.prerequisite) === "accepted") continue
+    const values = waitingOn.get(edge.successor) ?? []
+    values.push(edge.prerequisite)
+    waitingOn.set(edge.successor, values)
+  }
+  const plans = projection.plans.map((plan) => {
+    const input = planInput(plan)
+    const nodes = projection.nodes.filter((node) => node.plan_id === plan.id)
+    return {
+      id: plan.id,
+      revision: plan.revision,
+      version: plan.version,
+      state: safeText(plan.state, stats, 80),
+      reason: plan.reason === null ? null : safeText(plan.reason, stats),
+      title: input?.title ? safeText(input.title, stats, 120) : null,
+      afterPlans: (input?.afterPlans ?? []).filter((id) => projection.associations.planIDs.has(id)),
+      nodes: nodes.map((node) => {
+        const task = taskSpecs.get(node.task_id)
+        if (!task) throw new Error("Observation task specification is unavailable")
+        const state = TaskState.parse(node.state)
+        const machineSnapshot = safeSnapshot(node)
+        return {
+          taskID: node.task_id,
+          revision: task.revision,
+          objective: safeText(task.proposal.objective, stats, 8000),
+          ordinal: node.ordinal,
+          state,
+          version: node.version,
+          reason: node.reason === null ? null : safeText(node.reason, stats),
+          machineVersion: safeText(node.machine_version, stats, 120),
+          machineSupported: node.machine_version === machineVersion,
+          ...machineSnapshot,
+          waitingOn: waitingOn.get(node.task_id) ?? [],
+        }
+      }),
+      dependencies: projection.dependencies
+        .filter((edge) => edge.plan_id === plan.id)
+        .map(({ prerequisite, successor }) => ({ prerequisite, successor })),
+    }
+  })
+
+  const plannedTaskIDs = new Set(projection.nodes.map((node) => node.task_id))
+  const unplannedTasks = projection.tasks
+    .filter((task) => !plannedTaskIDs.has(task.id))
+    .map((task) => ({
+      taskID: task.id,
+      revision: task.revision,
+      status: "submitted" as const,
+      title: safeText(
+        task.proposal.objective.trim().replace(/\s+/g, " ").slice(0, 120),
+        stats,
+        120,
+      ),
+    }))
+  if (unplannedTasks.length > 1000) throw new Error("Observation scope is too large; narrow it")
+
+  return { plans, unplannedTasks }
 }
 
 function loadRadarSource(
@@ -1589,6 +1665,40 @@ export class ObservationReads {
     }
   }
 
+  topology(scope: ObservationScope, tracker: ObservationChangeTracker): TopologyResponse {
+    const connection = openReadOnlyTrajectoryStore(
+      this.store.repository.path,
+      this.store.repository.projectDirectory,
+    )
+    try {
+      const source = connection.store.atomic((db) =>
+        loadTopologySource(db, this.store.repository.projectDirectory, scope, this.secret),
+      )
+      const topology = projectTopology(source)
+      const latest = connection.store.atomic((db) =>
+        sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
+      )
+      if (
+        source.stamp.repositoryVersion !== latest.repositoryVersion ||
+        source.stamp.sourceFingerprint !== latest.sourceFingerprint
+      )
+        throw new Error("Observation changed while reading; restart from a fresh snapshot")
+      tracker.observeStamp(latest)
+      // Current topology has no historical cutoff and does not claim to cover transitions.
+      const { transitionSequence: _transitionSequence, ...boundary } = tracker.boundary(latest, 0)
+      return {
+        schemaVersion: 1,
+        projectID: this.projectID,
+        scope: scopeView(scope),
+        observedAt: new Date().toISOString(),
+        boundary,
+        ...topology,
+      }
+    } finally {
+      connection.close()
+    }
+  }
+
   snapshot(scope: ObservationScope, tracker: ObservationChangeTracker): SnapshotResponse {
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -1599,68 +1709,8 @@ export class ObservationReads {
         loadProjectionSource(db, this.store.repository.projectDirectory, scope, this.secret),
       )
       const visibleTaskIDs = new Set(projection.tasks.map((task) => task.id))
-      const taskSpecs = new Map(projection.tasks.map((task) => [task.id, task]))
-      const states = new Map(projection.nodes.map((node) => [node.task_id, node.state]))
-      const waitingOn = new Map<string, string[]>()
-      for (const edge of projection.dependencies) {
-        if (states.get(edge.prerequisite) === "accepted") continue
-        const values = waitingOn.get(edge.successor) ?? []
-        values.push(edge.prerequisite)
-        waitingOn.set(edge.successor, values)
-      }
       const stats = privacyStats()
-      const plans = projection.plans.map((plan) => {
-        const input = planInput(plan)
-        const nodes = projection.nodes.filter((node) => node.plan_id === plan.id)
-        return {
-          id: plan.id,
-          revision: plan.revision,
-          version: plan.version,
-          state: safeText(plan.state, stats, 80),
-          reason: plan.reason === null ? null : safeText(plan.reason, stats),
-          title: input?.title ? safeText(input.title, stats, 120) : null,
-          afterPlans: (input?.afterPlans ?? []).filter((id) =>
-            projection.associations.planIDs.has(id),
-          ),
-          nodes: nodes.map((node) => {
-            const task = taskSpecs.get(node.task_id)
-            if (!task) throw new Error("Observation task specification is unavailable")
-            const state = TaskState.parse(node.state)
-            const machineSnapshot = safeSnapshot(node)
-            return {
-              taskID: node.task_id,
-              revision: task.revision,
-              objective: safeText(task.proposal.objective, stats, 8000),
-              ordinal: node.ordinal,
-              state,
-              version: node.version,
-              reason: node.reason === null ? null : safeText(node.reason, stats),
-              machineVersion: safeText(node.machine_version, stats, 120),
-              machineSupported: node.machine_version === machineVersion,
-              ...machineSnapshot,
-              waitingOn: waitingOn.get(node.task_id) ?? [],
-            }
-          }),
-          dependencies: projection.dependencies
-            .filter((edge) => edge.plan_id === plan.id)
-            .map(({ prerequisite, successor }) => ({ prerequisite, successor })),
-        }
-      })
-
-      const plannedTaskIDs = new Set(projection.nodes.map((node) => node.task_id))
-      const unplannedTasks = projection.tasks
-        .filter((task) => !plannedTaskIDs.has(task.id))
-        .map((task) => ({
-          taskID: task.id,
-          revision: task.revision,
-          status: "submitted" as const,
-          title: safeText(
-            task.proposal.objective.trim().replace(/\s+/g, " ").slice(0, 120),
-            stats,
-            120,
-          ),
-        }))
-      if (unplannedTasks.length > 1000) throw new Error("Observation scope is too large; narrow it")
+      const { plans, unplannedTasks } = projectTopology(projection)
 
       const attemptIDs = new Set(projection.attempts.map((attempt) => attempt.id))
       const attempts = projection.attempts

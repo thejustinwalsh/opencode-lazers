@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { TaskPanelState } from "./panel-state.ts"
 import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
-import type { SnapshotResponse } from "../observability/contract.ts"
+import type { TopologyResponse } from "../observability/contract.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 
 function deferred<T>() {
@@ -395,12 +395,12 @@ test("topology is published only when it shares the task-page repository boundar
   let queries = 0
   let snapshots = 0
   const api = transport(async () => page("/project", crypto.randomUUID(), ++queries))
-  api.snapshot = async () => {
+  api.topology = async () => {
     snapshots++
     return {
       boundary: { repositoryVersion: snapshots === 1 ? 0 : 2 },
       plans: [],
-    } as unknown as SnapshotResponse
+    } as unknown as TopologyResponse
   }
   try {
     state.connect("view", "/project", api, {})
@@ -439,11 +439,11 @@ test("linked dependency details use the transport's same-scope authorization pat
 
 test("late optional topology cannot publish old tasks into a newly connected scope", async () => {
   const state = new TaskPanelState(() => {})
-  const pending = deferred<SnapshotResponse>()
+  const pending = deferred<TopologyResponse>()
   const old = page("/old")
   const current = page("/new")
   const oldTransport = transport(async () => old)
-  oldTransport.snapshot = () => pending.promise // Deliberately ignores abort, like a late RPC.
+  oldTransport.topology = () => pending.promise // Deliberately ignores abort, like a late RPC.
   try {
     state.connect("old-view", "/old", oldTransport, {})
     await tick()
@@ -457,7 +457,7 @@ test("late optional topology cannot publish old tasks into a newly connected sco
     pending.resolve({
       boundary: { repositoryVersion: old.snapshot },
       plans: [],
-    } as unknown as SnapshotResponse)
+    } as unknown as TopologyResponse)
     await tick()
     expect(state.data.key).toBe("new-view")
     expect(state.data.tasks).toEqual(current.tasks)
@@ -472,7 +472,7 @@ test("late optional topology cannot publish old tasks into a newly connected sco
 test("restored inspectors load while topology is pending or the list fails", async () => {
   for (const failList of [false, true]) {
     const state = new TaskPanelState(() => {})
-    const pending = deferred<SnapshotResponse>()
+    const pending = deferred<TopologyResponse>()
     const selectedID = crypto.randomUUID()
     const requested: string[] = []
     const api = transport(
@@ -485,7 +485,7 @@ test("restored inspectors load while topology is pending or the list fails", asy
         return { status: "not_found" }
       },
     )
-    api.snapshot = () => pending.promise
+    api.topology = () => pending.promise
     try {
       state.connect("saved-view", "/project", api, {}, selectedID)
       await tick()
@@ -499,7 +499,34 @@ test("restored inspectors load while topology is pending or the list fails", asy
       pending.resolve({
         boundary: { repositoryVersion: 1 },
         plans: [],
-      } as unknown as SnapshotResponse)
+      } as unknown as TopologyResponse)
     }
+  }
+})
+
+test.each([
+  [
+    { type: "rpc.internal", message: "RPC call failed" },
+    "Execution links unavailable: RPC call failed. Showing ungrouped tasks.",
+  ],
+  [{ arbitrary: "private details" }, "Execution links unavailable. Showing ungrouped tasks."],
+  [
+    new Error("Scope is too large"),
+    "Execution links unavailable: Scope is too large. Showing ungrouped tasks.",
+  ],
+])("optional topology errors show only a readable public message: %j", async (error, expected) => {
+  const state = new TaskPanelState(() => {})
+  const api = transport(async () => page("/project"))
+  api.topology = async () => {
+    throw error
+  }
+  try {
+    state.connect("view", "/project", api, {})
+    await tick()
+    expect(state.data.tasks).toHaveLength(1)
+    expect(state.data.topologyError).toBe(expected)
+    expect(state.data.topologyError).not.toContain("[object Object]")
+  } finally {
+    state.close()
   }
 })

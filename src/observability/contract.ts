@@ -135,6 +135,18 @@ export const SnapshotOutput = z.strictObject({
   checks: z.array(TimelineCheck).max(10_000),
 })
 
+// Complete current recorded topology, independent of execution-history volume.
+export const TopologyInput = z.strictObject({ scope: ObservationScope })
+export const TopologyOutput = z.strictObject({
+  schemaVersion: z.literal(1),
+  projectID: z.string().min(1),
+  scope: ObservationScopeView,
+  observedAt: z.iso.datetime(),
+  boundary: Boundary.omit({ transitionSequence: true }),
+  plans: z.array(ObservationPlan).max(1000),
+  unplannedTasks: z.array(UnplannedTask).max(1000),
+})
+
 export const ProgressDiagnosticsInput = z.strictObject({ scope: ObservationScope })
 const ProcessSchedulerTotals = z.discriminatedUnion("status", [
   z.strictObject({
@@ -474,6 +486,7 @@ export const Observability = Rpc.define({
   id: "lazers.observability",
   methods: {
     snapshot: { input: SnapshotInput, output: SnapshotOutput },
+    topology: { input: TopologyInput, output: TopologyOutput },
     progressDiagnostics: {
       input: ProgressDiagnosticsInput,
       output: ProgressDiagnosticsOutput,
@@ -492,6 +505,7 @@ export const Observability = Rpc.define({
 
 export type ObservationScope = z.infer<typeof ObservationScope>
 export type ObservationScopeView = z.infer<typeof ObservationScopeView>
+export type TopologyResponse = z.infer<typeof TopologyOutput>
 export type SnapshotRequest = z.infer<typeof SnapshotInput>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>
 export type ProgressDiagnosticsRequest = z.infer<typeof ProgressDiagnosticsInput>

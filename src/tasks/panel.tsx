@@ -187,8 +187,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               { taskID, ...(sessionID ? { sessionID } : {}) },
               { location: { directory: value.directory }, signal },
             ),
-          snapshot: (signal) =>
-            value.client.rpc(Observability).snapshot(
+          topology: (signal) =>
+            value.client.rpc(Observability).topology(
               {
                 scope:
                   view.scope === "session"

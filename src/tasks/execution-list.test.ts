@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { SnapshotResponse } from "../observability/contract.ts"
+import type { TopologyResponse } from "../observability/contract.ts"
 import type { TaskSummary } from "./contract.ts"
 import { buildExecutionList } from "./execution-list.ts"
 
@@ -8,7 +8,7 @@ const planID = id(900)
 
 type FixtureNode = { taskID: string; ordinal: number; state?: string }
 
-function topology(nodes: FixtureNode[], dependencies: Array<[string, string]>): SnapshotResponse {
+function topology(nodes: FixtureNode[], dependencies: Array<[string, string]>): TopologyResponse {
   return {
     schemaVersion: 1,
     projectID: "project",
@@ -20,9 +20,7 @@ function topology(nodes: FixtureNode[], dependencies: Array<[string, string]>): 
       sourceFingerprint: "a".repeat(64),
       nativeRevision: 1,
       eventSequence: 1,
-      transitionSequence: 1,
     },
-    machine: { id: "lazers-task", version: "lazers-task/1", initialState: "queued", states: [] },
     plans: [
       {
         id: planID,
@@ -53,9 +51,6 @@ function topology(nodes: FixtureNode[], dependencies: Array<[string, string]>): 
       },
     ],
     unplannedTasks: [],
-    transitions: [],
-    attempts: [],
-    checks: [],
   }
 }
 

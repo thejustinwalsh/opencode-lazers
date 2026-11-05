@@ -1,7 +1,7 @@
-import type { SnapshotResponse } from "../observability/contract.ts"
+import type { TopologyResponse } from "../observability/contract.ts"
 import type { TaskSummary } from "./contract.ts"
 
-type Plan = SnapshotResponse["plans"][number]
+type Plan = TopologyResponse["plans"][number]
 type Node = Plan["nodes"][number]
 
 export type ExecutionListRow = {
@@ -181,7 +181,7 @@ function forkBlocks(plan: Plan): ForkBlock[] {
   return blocks
 }
 
-function relationMap(topology: SnapshotResponse) {
+function relationMap(topology: TopologyResponse) {
   const prerequisites = new Map<string, string[]>()
   const successors = new Map<string, string[]>()
   for (const plan of topology.plans) {
@@ -230,7 +230,7 @@ function row(
  * filter/page. Summary rows control visibility; topology supplies only recorded relationships.
  */
 export function buildExecutionList(input: {
-  topology?: SnapshotResponse
+  topology?: TopologyResponse
   tasks: TaskSummary[]
   search?: string
   revealTaskIDs?: ReadonlySet<string>

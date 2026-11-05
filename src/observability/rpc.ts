@@ -108,6 +108,20 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
+      topology: (input) =>
+        Effect.tryPromise({
+          try: async () => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.topology(input.scope, tracker)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
       progressDiagnostics: (input) =>
         Effect.tryPromise({
           try: async (signal) => {

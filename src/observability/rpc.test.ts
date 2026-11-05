@@ -109,6 +109,7 @@ test("history cache hits remain permission-first and continuation data stays sco
           },
         ): Effect.Effect<unknown, unknown>
         trajectoryStatus(input: unknown): Effect.Effect<unknown>
+        topology(input: unknown): Effect.Effect<unknown>
       }
     | undefined
   const rpcContext = {
@@ -148,6 +149,20 @@ test("history cache hits remain permission-first and continuation data stays sco
       ),
     )
     const scope = { kind: "project" as const, sessionID: "ses-owner" }
+    expect(await Effect.runPromise(handlers!.topology({ scope }))).toMatchObject({
+      plans: [{ nodes: [{ taskID }] }],
+    })
+    expect(permissionCalls.at(-1)).toBe("read")
+    denied = true
+    await expect(Effect.runPromise(handlers!.topology({ scope }))).rejects.toThrow(
+      "native permission denied",
+    )
+    denied = false
+    foreignProject = true
+    await expect(Effect.runPromise(handlers!.topology({ scope }))).rejects.toThrow(
+      "Observation scope is unavailable",
+    )
+    foreignProject = false
     const first = (await Effect.runPromise(
       handlers!.trajectoryHistory({ scope, taskID, limit: 2 }, rpcContext),
     )) as {
@@ -234,6 +249,8 @@ test("history cache hits remain permission-first and continuation data stays sco
       ),
     ).rejects.toThrow("Observation scope is unavailable")
     expect(permissionCalls).toEqual([
+      "read",
+      "read",
       "lz-inspect-trajectory",
       "lz-inspect-trajectory",
       "lz-inspect-trajectory",

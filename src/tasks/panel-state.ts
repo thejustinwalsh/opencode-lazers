@@ -6,7 +6,7 @@ import type {
   TaskQuery,
   TaskSummary,
 } from "./contract.ts"
-import type { SnapshotResponse } from "../observability/contract.ts"
+import type { TopologyResponse } from "../observability/contract.ts"
 
 export type TaskPanelChange = {
   projectDirectory: string
@@ -17,7 +17,7 @@ export type TaskPanelChange = {
 export interface TaskTransport {
   query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
-  snapshot?(signal: AbortSignal): Promise<SnapshotResponse>
+  topology?(signal: AbortSignal): Promise<TopologyResponse>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
   online(): boolean
@@ -26,7 +26,7 @@ export interface PanelData {
   key: string
   tasks: TaskSummary[]
   page?: TaskPage
-  topology?: SnapshotResponse
+  topology?: TopologyResponse
   topologyError?: string
   detail?: TaskDetail
   selectedID?: string
@@ -121,7 +121,7 @@ export class TaskPanelState {
     try {
       let page: TaskPage | undefined
       let tasks: TaskSummary[] = []
-      let topology: SnapshotResponse | undefined
+      let topology: TopologyResponse | undefined
       let topologyError = ""
       for (let attempt = 0; attempt < 3; attempt++) {
         const first = await transport.query({ ...this.query, cursor: undefined }, signal)
@@ -130,9 +130,9 @@ export class TaskPanelState {
           throw new Error("Task response belongs to another project")
         topology = undefined
         topologyError = ""
-        if (transport.snapshot) {
+        if (transport.topology) {
           try {
-            const observed = await transport.snapshot(signal)
+            const observed = await transport.topology(signal)
             if (signal.aborted || generation !== this.generation || request !== this.listRequest)
               return
             if (observed.boundary.repositoryVersion !== first.snapshot) {
@@ -144,7 +144,16 @@ export class TaskPanelState {
             }
           } catch (error) {
             if (signal.aborted || generation !== this.generation) return
-            topologyError = `Execution links unavailable: ${String(error)}`
+            const message =
+              typeof error === "object" &&
+              error !== null &&
+              "message" in error &&
+              typeof error.message === "string"
+                ? error.message.trim().slice(0, 400)
+                : ""
+            topologyError = message
+              ? `Execution links unavailable: ${message}. Showing ungrouped tasks.`
+              : "Execution links unavailable. Showing ungrouped tasks."
           }
         }
         const wanted = Math.max(
@@ -166,7 +175,7 @@ export class TaskPanelState {
         }
         if (changedSnapshot && attempt < 2) continue
         if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
-        if (!topology && transport.snapshot && !topologyError)
+        if (!topology && transport.topology && !topologyError)
           topologyError = "Execution topology is unavailable. Showing ungrouped tasks."
         break
       }
