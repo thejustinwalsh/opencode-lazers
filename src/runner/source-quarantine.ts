@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs"
-import { resolve } from "node:path"
+import { lstatSync, realpathSync } from "node:fs"
+import { basename, dirname, resolve } from "node:path"
 import type { AttemptRow, RunnerStore } from "./store.ts"
 
 export type SourceQuarantine = {
@@ -22,9 +22,29 @@ type GuardState = { current: string; registrations: Map<string, GuardEntry> }
 const registryKey = Symbol.for("lazers.runner.source-quarantine.guards.v3")
 const shared = globalThis as unknown as Record<symbol, Map<string, GuardState> | undefined>
 const guards = (shared[registryKey] ??= new Map())
+function physicalWorkspace(path: string): string {
+  let ancestor = resolve(path)
+  const missing: string[] = []
+  for (;;) {
+    try {
+      return resolve(realpathSync(ancestor), ...missing)
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "ENOENT") ||
+        lstatSync(ancestor, { throwIfNoEntry: false }) !== undefined
+      )
+        throw error
+      const parent = dirname(ancestor)
+      if (parent === ancestor) throw error
+      missing.unshift(basename(ancestor))
+      ancestor = parent
+    }
+  }
+}
+
 export const samePhysicalWorkspace = (left: string, right: string) => {
   try {
-    return realpathSync(left) === realpathSync(right)
+    return physicalWorkspace(left) === physicalWorkspace(right)
   } catch {
     return true
   }

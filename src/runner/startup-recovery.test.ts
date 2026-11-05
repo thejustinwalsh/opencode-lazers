@@ -18,6 +18,7 @@ import {
 } from "./startup-recovery.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
+import { registerSourceGuard } from "./source-quarantine.ts"
 
 const roots: string[] = []
 const repositories: TaskRepository[] = []
@@ -315,6 +316,96 @@ function explicitResumeCommand(f: ReturnType<typeof fixture>, attemptID: string)
     reason: "Explicitly continue after confirmed startup failure.",
   }
 }
+
+test("an absent startup reservation can recover beside a guarded retained worktree", async () => {
+  const f = fixture()
+  const { attempt } = await createTerminalFailure(f)
+  const retained = join(f.temporary, "retained-worktree")
+  git(f.root, ["worktree", "add", "--detach", retained, f.base])
+  const retainedAttemptID = crypto.randomUUID()
+  const retainedSessionID = "ses_retained_source"
+  const retainedMessageID = "msg_retained_source"
+  const retainedTask = f.repository.insert({
+    ...f.repository.get(f.taskID)!,
+    id: crypto.randomUUID(),
+  })
+  const other = f.store.submit(
+    {
+      requestID: "retained-source-plan",
+      objective: "Preserve earlier work while independent recovery proceeds",
+      baseCommit: f.base,
+      workspaceMode: "isolated",
+      nodes: [{ taskID: retainedTask.id, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [retainedTask.id],
+      verification: retainedTask.proposal.verification,
+      acceptance: retainedTask.proposal.acceptance,
+    },
+    "owner",
+  )
+  const now = Date.now()
+  f.store.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_attempts(
+      id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,'running',?)`,
+    ).run(
+      retainedAttemptID,
+      other.planID,
+      retainedTask.id,
+      1,
+      retainedSessionID,
+      retainedMessageID,
+      retained,
+      f.base,
+      "{}",
+      now - 1,
+    )
+    db.query(
+      `INSERT INTO runner_source_quarantines(
+      attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,
+      request_id,reason,phase,hold_reason,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,'sealed',NULL,?,?)`,
+    ).run(
+      retainedAttemptID,
+      other.planID,
+      retainedSessionID,
+      retainedMessageID,
+      "owner",
+      retained,
+      "retain-source",
+      "Preserve stopped source without blocking independent work",
+      now,
+      now,
+    )
+    db.query("UPDATE runner_plans SET state='blocked' WHERE id=?").run(other.planID)
+  })
+  const disposeGuard = registerSourceGuard(f.store, retained)
+  try {
+    await f.runtime.command(settlementCommand(f, attempt.id), "owner")
+    f.host.worktree = async ({ directory, base }) => {
+      f.calls.worktree++
+      git(f.root, ["worktree", "add", "--detach", directory, base])
+      return directory
+    }
+    await f.runtime.command(explicitResumeCommand(f, attempt.id), "owner")
+    await f.runtime.tick()
+    expect(f.calls).toEqual({ worktree: 2, create: 1, prompt: 1 })
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.planID)[0]!.id).toBe(attempt.id)
+    expect(await f.host.worktrees()).toContain(retained)
+    expect(f.store.attempts(other.planID)[0]!.state).toBe("running")
+    expect(
+      f.store.atomic((db) =>
+        db
+          .query("SELECT phase FROM runner_source_quarantines WHERE attempt_id=?")
+          .get(retainedAttemptID),
+      ),
+    ).toEqual({ phase: "sealed" })
+  } finally {
+    disposeGuard()
+  }
+})
 
 test("recovery-only unavailable-session telemetry survives settlement and reopen, then permits explicit resume and safe cleanup", async () => {
   const f = fixture()
