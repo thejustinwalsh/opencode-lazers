@@ -8,7 +8,8 @@ acceptance, native observations and cleanup are separate facts.
 ## Active execution
 
 - Latest [native delivery checkpoint](../../design/reviews/native-delivery-checkpoint-20261105.md):
-  Main is active;134 stopped on disk exhaustion with unfinished work preserved.
+  Main is active;134 stopped on disk exhaustion, then resumed substantive work on
+  its same Luna session at1793891366202; new shell calls independently observed.
   Clearing regenerable compile caches recovered1.3GiB.139 is source-integrated
   (`7a9eba2`,84 assigned tests pass), but its targeted Desktop timeline is blank
   because rendering still requires the absent broad snapshot.141 committedf65697d,

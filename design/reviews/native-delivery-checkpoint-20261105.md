@@ -6,7 +6,9 @@ Observed at Unix ms 1793891269313; recheck sessions before acting.
   `ses_c55347be4cfb42a59fd168de6728bb77` exists but is waiting on an obsolete
   screenshot-permission question. Actual LZ-141 permissions/forms are empty.
 - LZ-134's original Luna worker stopped after `SQLITE_FULL`, leaving unfinished
-  edits. Preserve the worktree and resume substantive work through native tools.
+  edits. Main resumed substantive work on the same session at1793891366202;
+  independent readback1793891396169 found new completed shell calls. Acceptance
+  and new tests remain unproven.
 - Disk recovery removed regenerable Node compile caches and one reproducible
   temporary replay DB copy. Free space rose to 1.3 GiB. Snapshot compression failed;
   original historical performance snapshots remain. No active work/model deletion.
