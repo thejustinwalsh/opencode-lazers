@@ -61,6 +61,23 @@ and manual Start consumption remain a small linked follow-up for Architect;
 do not claim this gap is already implemented. The same worker resumed, added
 boundary tests and continued broader verification. No implementation was restarted.
 
+LZ-142 committed `a1b9219` after255 tests/4252 assertions. Root reviewed and merged
+it into current main as the two-parent `9be146c`, preserving the original worker
+commit and newer source-quarantine changes. The only conflict was adjacent test
+imports; both were retained. Merged-source verification passed598 tests and7579
+assertions across32 files in162.19s, plus all763 files formatted, lint, types and
+diff checks. Log: `/private/tmp/lz142-main-compatibility.log`.
+
+Before that merge, native quality verification on the old worker baseline failed
+and automatically started attempt2 `56382e52-7ef1-4ace-9369-e4039e318e09`, session
+`ses_b8ffc8cf2d004610b38e0135de2d20fc`, retaining the original attempt as failed.
+The known old-baseline document formatting problem is already fixed on main.
+Root directed Architect to inspect the exact receipt, authorize only the affected
+formatting path if needed and let the existing repair worker auto-fix it. Do not
+rewrite routing or launch more replacements for mechanical formatting. The repair
+worker's255-test suite also passed. Native acceptance, cleanup and a subsequent
+substantive mapped dispatch remain unproven; source merge does not establish them.
+
 ## Current delivery update
 
 Latest:126 natively integrated/v30 and cleaned up; original artifactbb26ab2 now

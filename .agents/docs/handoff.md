@@ -1,120 +1,132 @@
 # LAZERS current handoff
 
-Updated2026-11-05. Read native state before intervention. Goal remains all active
-plans implemented, tested, observed live, reviewed, integrated and cleaned up;
-then propose observation-based improvements. Do not narrow it to these checkpoints.
+Updated November 5, 2026. Recheck native state before intervention. The active
+goal is all active plans implemented, tested, observed live, reviewed, integrated
+and cleaned up, followed by an observation-based improvement plan for review.
 
 ## Current delivery
 
-- Main Architect `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI `gpt-6.1-sol/high`,
-  was active at1793897866464, investigating the overdue126→122 Models path.
-  All implementors/research use OpenAI `gpt-6-luna/max`; Tera High is the explicit
-  visual-review exception. Model prompts go through Desktop CUA. Native agents
-  use SDK/LAZERS tools. Root may fix concrete blockers and review/integrate work.
-- All58 approved plan transfers are done. Nonlisted57/58,138,139,141,142 remain
-  with `ses_c55347be4cfb42a59fd168de6728bb77`, last observed idle. No new transfer
-  approvals or direct production SQL edits. Read ownership before commanding.
-- Reviewed source is merged at3999968. GUI was rebuilt after569f2e0. Service95968 remains;
-  no Root-issued reload/restart in this pass. New134 selected-message handler
-  was independently exercised live, so do not assume all backend code is stale.
+- Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI `gpt-6.1-sol/high`.
+  Retained coordinator: `ses_c55347be4cfb42a59fd168de6728bb77`, same route.
+  Both remain present; idle is not lost. Native workers and delegated research use
+  OpenAI `gpt-6-luna/max`; Tera High is the explicit visual-review exception.
+- Desktop prompts use CUA. Root can fix blockers, review, merge and clean up.
+  No production SQL mutations, custom daemons, arbitrary model budgets or source
+  hashes as evidence. Tests and actual product behavior establish evidence.
+- Main source is `9be146c`: real two-parent merge of LZ-142 `a1b9219` with current
+  main. Root preserved newer source-quarantine fixes and both conflicting test
+  imports. Merged verification passed598 tests/7579 assertions across32 files in
+  162.19s, plus formatting of all763 files, lint, types and diff checks.
+  Log: `/private/tmp/lz142-main-compatibility.log`.
+- Service PID95968 remains; Root did not restart/reload it. Normal native contexts
+  have loaded new handlers in this pass; verify specific capabilities instead of
+  assuming every context is either old or newly activated.
 
-## Qualified source and actual remaining boundaries
+## Running / unfinished Models delivery
 
-- **141 Models Assignments:** original worker `ses_9f38dcf3886440938e167596f2517a32`,
-  attempt `d63243f2-4f6c-4a14-b26b-4a72200d073b`, finished c6f380c; integrated569f2e0.
-  Current-main45 tests/1017 assertions, fmt/lint/types/build pass. Actual distinct
-  wide/narrow Desktop captures and Tera review have no visual blocker. Native
-  provider search, split keyboard/scroll and Light+Georgia inheritance worked;
-  original Dark/Ayu/default UI font restored. Earlier save/readback/reopen/remove
-  of a temporary LZ137 override worked; project Luna Max routes unchanged.
-  [Review](../../design/reviews/task141-native-visual-20261105.md).
-  Runtime remains held on missing matching idle lineage. Do not wake for a stamp.
-- **139 historical trajectory:** integratedd0fdafa. Actual completed-task navigation,
-  check durations, history50→98 and Models task effort worked. Same original worker
-  `ses_620c358ef5094d448751694fd5b7e898`, attemptdd65c71f-4864-4bdd-a412-03856c5c72c4,
-  is idle. Native acceptance/cleanup still held on idle lineage.
-  [Native observation](evidence/task139-native-observed-20261105.md).
-- **134 notifications:** original worker `ses_246a295ccf11456c9e582e383131978d`,
-  attempt27727aaf-1b81-4d77-963e-9b906f757bfb, finished855532c+2973853; integrated
-  77c1b1f+d4997a4. Current-main450 runner tests/6147 assertions plus quality pass.
-  Selected journal-message retrieval worked live. Native source4229 reconciliation
-  found all3 legacy admitted records already consumed, preserved history and
-  verified exact IDs absent from queue. Cancelled0; positive cancellation still
-  unproven. Idle lineage/acceptance/cleanup remain open.
-- **Native listener repair1d1d73d:** fresh hook can borrow an exact live start from
-  a still-connected same-process peer.95 tests/538 assertions plus quality pass;
-  retired/disconnected/retired-after-idle peers cannot establish completion.
-  Live handover remains unproven; no past idle report was reconstructed.
-  df92dc4 only recovers real retained input metadata after compaction; it does not
-  fix missing idle history. Keep backend source stable during substantive probes.
+1. **LZ-122 production Compare data**: plan
+   `6c98bc11-0509-49b0-b8f2-f62666e05e28`, original attempt
+   `38df5475-caa8-4469-8c68-1b330f981c80`, worker
+   `ses_4c2333ab99e14396b784425511414a08`, baseline3999968. Native tree is
+   `/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/38df5475-caa8-4469-8c68-1b330f981c80`.
+   Same worker remains active. New decision reader/server code is NOT merged.
+   Earlier158 relevant tests passed; after concurrent-write correction30 targeted
+   tests/348 assertions and lint/types passed. Final full checks remain pending.
+2. Root measured a real read-only failure on the active DB:3515.33ms, RSS growth
+   116113480 bytes, then ledger-changed rejection. Worker corrected the reader.
+   Reprobe at1793907098001 succeeded:143 tasks/13831 facts,3311.75ms, RSS growth
+   150290528 bytes. Reader only, not complete RPC/UI or a performance-fix claim.
+   Architect advice revision5 requires coherent transaction snapshots and pinned
+   pages during normal writes, new reads refreshing newer facts/prices. The worker
+   added regressions and is finishing full live-path verification. No quiet-world
+   requirement; no hashes as work evidence. Compare graph remains unqualified.
+3. **LZ-142 actual routing**: plan `6948fd6a-1b1e-4ec4-8738-0888c41e7be3`, task
+   `caec4d67-1b5b-4f0a-a61c-f023b61d931c`, owned by c553. Source is merged9be146c.
+   Original attempt541f163e/worker `ses_0eb91864d4a3425c9f14d04a8edaa736` committed
+   a1b9219 with255 tests/4252 assertions. Native quality failed on old-baseline
+   formatting and automatically created repair attempt
+   `56382e52-7ef1-4ace-9369-e4039e318e09`, worker
+   `ses_b8ffc8cf2d004610b38e0135de2d20fc`, still active at1793907550533.
+   Its255 tests also passed. Root asked Architect to inspect the exact failed
+   receipt, authorize only `.agents/docs/evidence/task133-native-qualified-20261105.md`
+   if needed and auto-format it. Already formatted on current main. Preserve both
+   attempts; do not call the formatting failure a routing defect or rewrite routing.
+   Native acceptance/cleanup and a substantive subsequent mapped dispatch remain
+   unproven. Do not manufacture a proof-only worker turn.
+4. Root answered the142 worker's scope question in Desktop: finish persona-bearing
+   plan dispatch and preserve legacy manual Start fallback. Task kind is separate
+   from persona; do not infer one from the other. Main has a native Luna research
+   subagent `ses_e52cbbe85ffe0HfsLhKV6vB558` scoping a small linked follow-up for
+   explicit task-persona authority from Architect submission through manual Start.
+   It must remain behind current Models work and preserve Tasks/Radar priorities.
 
-## Next delivery
+## Guarded release / preserved work
 
-1. **126 is natively integrated/v30 and cleaned up.** Plan
-   c64e0231-b47c-4432-96a9-5e5e39fe6a6b;
-   original worker `ses_5cb41dc1d06e4ae3a4f5c6a978f33fdc`, attempt
-   a805c93f-0f01-4d18-92d2-a5ee5399cc3e. The previous handoff incorrectly said
-   bb26ab2 was integrated; it was not. Root integrated it asef0b591 after independent
-   Luna review and the original worker's pre-write verification.9cbbb55 enables
-   correction writes in Code Mode.51 tests/444 assertions and26 runner compatibility
-   tests/393 assertions plus fmt/lint/types pass. Normal activation migratedDB6→7.
-   The genuine completed pre-write input ismsg_1aca65f240011qxOLdzkNKYzvy: native
-   zero-background report1793898152834/start1146/event1148, terminal1296,
-   evt_1aca98389001Zc06FY3yljyQ29, invalidationnull. Use supported explicit
-   reviewInputID reconciliation for this observation, not an old-input mismatch.
-   Native controls recorded124→119 and125→120, each revision1; all4 endpoint
-   inspections showed correction identity2. Native acceptance, task integration,
-   plan integration and non-forced worktree removal completed; session retained,
-   private tree/cache location absent. Root3999968 merged originalbb26ab2 ancestry,
-   preserving the tested Code Mode changes without changing the tree. A separate
-   worker-specific post-write probe was not observed; do not claim one.
-2. **122 producer is actually running:** plan6c98bc11-0509-49b0-b8f2-f62666e05e28,
-   attempt38df5475-caa8-4469-8c68-1b330f981c80,
-   worker `ses_4c2333ab99e14396b784425511414a08`, OpenAI Luna Max, parentMain,
-   native started1793898969416, workspace under native runner/worktrees/attemptID,
-   baseline3999968. Bounded index discovery, source research and actual RPC-doc
-   webfetch were observed. Keep source stable while it implements. Build the approved
-   Compare/Pareto graph with real cohorts/current market prices. Assignments UI
-   is not completion of Compare. Reference design/models-panel/models-approved.png.
-3. Existing142 plan6948fd6a-1b1e-4ec4-8738-0888c41e7be3 remains unstarted: actual
-   persona→model dispatch/provenance. Saved assignments are not active routing.
-4. Preserve the whole remaining roadmap: retained57/58→138 and129 corrections;
-   Tasks Now/Attention/Next, priority/dependencies/grouping; realtime agent/tool/file
-   Radar;131 native timestamps;88 observation race;128 GPU generation recovery;
-   recovery/handoff/live verification walkthroughs, performance qualification and
-   distribution/install/upgrade/full-brief audit. Reuse queued tasks, no duplicates.
-   [Held Tasks/Radar slices](evidence/tasks-radar-held-slices-20261104.md).
+- LZ-134 original attempt27727aaf/worker `ses_246a295ccf11456c9e582e383131978d`
+  and LZ-139 original attemptdd65c71f/worker `ses_620c358ef5094d448751694fd5b7e898`
+  source-only quarantines sealed natively at1793905330056 and1793905447032.
+  Exact review bindings and guard readbacks were verified. This released source
+  admission and immediately allowed142 dispatch, not completion, uncertain-check
+  settlement or resource cleanup. Old unknown background history stays unknown.
+- LZ-143 Root repair is merged through97eeb50. Final584 tests/7338 assertions,
+  focused40 tests/405 assertions, quality and native source releases observed.
+  Its unused zero-attempt plan204d4ebc is cancelled/v4. Task disposition is still
+  missing: fulfillment storage rejects cancelled nodes despite reviewed-evidence
+  tool wording. Do not run a fake worker to satisfy bookkeeping.
+- Native bootstrap worktree `/private/tmp/lazers-retained-bootstrap` was removed
+  through OpenCode at1793905596021 after its clean merged ancestry was verified.
+  Path and registration are absent. Do not run further commands from that path.
+  Worker trees were preserved; physical disk recovery was not assumed from size.
+  -126 is natively integrated/v30 and cleaned up. Real124→119 and125→120 correction
+  links were recorded/read back; worker-specific post-write probe was not observed.
+  -141 Assignments source is merged and passed actual wide/narrow Desktop and Tera
+  visual review, provider search and theme/font inheritance. Native acceptance and
+  cleanup still held on missing idle lineage. Assignments is not Compare delivery.
+  -139 historical Trajectory rendering is merged and observed live.134 journal reads
+  and legacy notice reconciliation were observed; positive cancellation remains
+  unproven. Do not redo qualified work solely to create stamps.
+
+## Delivery order and remaining scope
+
+Keep Models122 and142 first, then Tasks/Trajectory and Radar.142 priority2075,
+122 priority2090;88 reduced to1700.128 is deliberately deferred at priority0 to
+preserve future57's shared WebGPU critical path. No broad lifecycle refactor.
+
+Preserve the full backlog: retained57/58→138 and129 repair; Tasks Now/Attention/Next,
+priority/dependencies/grouping; realtime Radar agent/session/model/tool/file/health
+and message flow;131 timestamps;88 transient approval race;128 GPU generation
+recovery; recovery/handoff/live verification walkthroughs including two genuine
+implementer runs and failure/correction/reprobe; performance qualification; audio
+placement/auto-speak; distribution/install/upgrade/full-brief audit. Reuse queued
+work. Preserve99/72 quarantines and unknown resources. All58 approved transfers
+are done; no reapproval or SQL ownership fixups.
 
 ## Operating facts
 
-- Native source/wake presence differs from actual activity/useful progress. Missing
-  owner continuation exists; renewal is30 minutes idle plus plugin override,
-  not model/provider-aware cache policy. Broad consolidation stays behind UI work.
-- Keep continuity to current user decisions/questions; runtime owns execution
-  state/history. Both Architects shortened checkpoints to6 decisions after churn.
-- Desktop binding goalDesktop in CUA; restore docs after compaction. Main is open
-  with Models at narrow width. Tasks→Trajectory→Open worker session works; global
-  session search did not find141. Browser tools reported disconnected there.
-- Latest Root coordination paste was NOT sent: composer received unrelated payroll
-  text instead of the intended integration message. Draft preserved; user asked
-  whether Desktop is shared. Resume UI control after coordination. Do not send or
-  discard that draft. Main has not received Root'sef0b591/9cbbb55 update yet.
-- All6 inference flags stay on, unloadNever. Available was visible after settings
-  navigation; no new inference job in this pass. Recurring model-cache ownership
-  error remains existing128 work. Do not disable inference/delete models.
-- Root sampled real-work CPU without restarting anything: service55.8→68.4%,
-  renderer13.1→14.1%, helper31.5→31.2%. This is not a quiet comparison or a fixed
-  performance claim.5-second stack files are `/private/tmp/lz-service-active-producer-20261105.sample.txt`,
-  `/private/tmp/lz-renderer-active-producer-20261105.sample.txt`, and
-  `/private/tmp/lz-gpu-helper-active-producer-20261105.sample.txt`. Service shows
-  SQLite JSON parsing/preparation plus unsymbolicated JIT work; helper includes
-  Metal rendering. These do not identify an exact plugin call site or prove ONNX
-  caused CPU use. Preserve evidence for existing performance qualification.
-- Work is retained in native worktrees. Preserve quarantines99/72 and unknown
-  resource history. Cleanup failures do not erase legitimate work. Evidence is
-  tests and actual behavior; no source hashes/fingerprints as proof.
+- Missing/archived Architect replacement exists. Idle renewal defaults to30 minutes
+  with plugin override and an explicit continuity checkpoint. This is not a
+  provider/model prompt-cache TTL or proof of useful wake progress. Consolidation
+  stays behind overdue visible delivery.
+- All6 inference switches stay ON, unload Never. Desktop currently shows LFM3
+  Available; earlier ownership errors remain relevant128 recovery work. Do not
+  disable inference or delete models. GPU status alone proves no inference job.
+- Tasks project scope/state filters and grouped rows load, but blocked retained
+  work can still show Running. Topology-change fallback was observed to switch to
+  ungrouped rows and recover. Keep this in existing Tasks status/read work.
+- CUA binding `deskNow`; restore documentation after compaction. Never use
+  setValue for OpenCode composer (visible value can diverge from sent draft),
+  multiline typeText (newline submits), or paste (clipboard collision occurred).
+  Use a fresh Prompt index, single-line prefix, verify, append remainder, verify,
+  click fresh Send and verify sent text. Current composer is empty after a sent
+  mechanical142 repair message. Accidental payroll fragments are explicitly
+  disregarded; preserved draft `/private/tmp/lz-preserved-main-composer-draft.txt`.
+- Sidebar Build roadmap can reopen deep historical coordinator children; Main
+  session Esc goes one parent at a time. Main e568 sidebar entry is direct.
+- Read-only helpers under `/private/tmp`: `lz-native-presence-only.ts`,
+  `lazers-read-question.ts`, `lazers-native-status-metadata.ts`,
+  `lz-current-public-tools.ts`. Model SDK helpers need localhost authorization;
+  credentials are internal, never print them. Changes:[] is not terminal.
 
-[Current checkpoint](../../design/reviews/native-delivery-checkpoint-20261105.md)
-contains exact native observations/log paths. [Previous handoff](evidence/handoff-20261105-before-models-visual-qualification.md)
-preserves older identities, qualified118/132/137/133/136 closures and operational
-history. Read it selectively; do not reload historical transcripts up front.
+[Detailed current observations](../../design/reviews/native-delivery-checkpoint-20261105.md)
+retain logs and earlier qualified work. Read selectively instead of loading
+historical transcripts up front. Goal completion is not established.
