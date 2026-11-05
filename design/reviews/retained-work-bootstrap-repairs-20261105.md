@@ -22,6 +22,12 @@ Exact replay added neither event again. Owner, original task revisions,
 dependencies and OpenAI Luna Max route were preserved; attempts and effects
 remained zero. LZ58 remained cancelled. LZ99 still prevented dispatch.
 
+Later inspection found the cancelled successor blocks the whole plan. LZ57's
+ready node is therefore not a claim of dispatch eligibility. Changed remaining
+requirements must be reconciled through the existing linked task/disposition
+flows. An older admitted baseline alone is not a global execution failure;
+delivered LZ130 history must not be rewritten just to refresh queued LZ131.
+
 ## Guarded source isolation
 
 `658099c` extends the existing source-quarantine operation to a retained running
@@ -54,3 +60,24 @@ saved at `/private/tmp/lazers-lz99-before-source-isolation-20261105.json`:
 LZ99 planblocked/version19, original attempt running, three effects retained.
 No source-quarantine success, task completion, old cleanup or resumed worker is
 claimed by these test results.
+
+## Review corrections
+
+Luna Max reviewer `ses_e55054657ffebAGSulafITdIMx` found an input race between
+runtime preflight and native archival. `eb7d696` checks the retained native input
+at the archive boundary and during readback for running attempts. A newer input
+visible before update produces zero archive calls; a change after update leaves
+quarantine pending and source admission held, without repeating the archive.
+The public update is not a compare-and-swap operation; the latter test explicitly
+preserves that distinction. Final quarantine/race tests:16 pass/260 assertions.
+
+Root also found native Code Mode `fetch` bypasses tool hooks and instead asserts
+`webfetch` permission. Source: [pinned fetch extension](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/codemode/fetch.ts#L24-L34).
+`9c342e2` preserves the previous quarantine restriction through OpenCode's
+permission-evaluation hook. Normal sessions retain their existing fetch policy;
+quarantined sessions can use Code Mode's permitted task/handoff tools, while
+fetch, source writes and shell remain denied. Role/adapter/guard-lifetime
+tests:39 pass/237 assertions. Formatting, lint, types and diff checks pass.
+
+Both corrections were delivered through Desktop for focused review and the
+existing owner's native walkthrough. No extra Root approval/release remains.
