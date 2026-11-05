@@ -140,3 +140,28 @@ The native idle/input-lineage hold has existing `lz-plan-command reconcile`
 from reconstructing a missing historical idle event. A pending substantive
 correction needs a real wake and execution before that reconciliation. Delivery,
 wake, implementation, checks and acceptance remain separately observable facts.
+
+## Repeated conclusive startup failure
+
+Root's isolated `/private/tmp/lazers-startup-repeat-review-20261105.test.ts`
+reproduces a second-failure dead end: first typed failure settles, explicit
+resume creates a `worktree-recovery` operation, that creation fails conclusively
+without resources or a worker prompt, and the next settlement rejects with
+`Startup settlement requires the original uncertain worktree effect`. The
+selector still finds only the already-failed original `worktree` operation.
+The run returned one failure after six assertions; temporary fixtures were
+cleaned normally and no production data/source was changed. This is a repeatable
+behavior regression, not a request for another approval gate or retry budget.
+Sent through Desktop for existing118 review and same-worker correction.
+
+## Reusable legacy compatibility
+
+The first legacy draft added a production allowlist containing the exact139/141
+plan/task/attempt/effect/session/message IDs and source commits. Root rejected
+that approach through Desktop. A reusable plugin must derive current identity
+bindings from runtime records and classify a versioned historical receipt format,
+not embed this backlog or use source revisions as admission fingerprints. New
+untyped captures need a distinguishable format so a modern defect with similar
+error text cannot become inferred legacy typed evidence. Preserve original raw
+receipts, unknowns, fresh resource checks and tests with independent identities.
+This is an open correction, not a qualified migration.

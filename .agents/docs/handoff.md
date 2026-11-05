@@ -81,9 +81,11 @@ acceptance, native observations and cleanup are separate facts.
 2. Use native tools to settle and explicitly resume original139/141, preserve all
    history, and observe actual worker execution. Delivery of a steer is not proof
    of correctness or completion. Continue their normal review/integration/cleanup.
-3. Continue original57 and linked138 retained-candidate work.57's wholly unstarted
-   plan still has a cancelled58 sibling hold; unchanged reconcile is not a planning
-   solution. Existing138 replaces the genuinely changed remaining58 requirement.
+3. Continue original57 and linked138 retained-candidate work.57 is wholly unstarted
+   with cancelled58 downstream. `runtime.step` selects ready tasks before aggregate
+   cancelled-node handling; after118 releases overlapping runtime files, check real
+   reservations and try supported reconciliation. Do not assume a new sibling-
+   repair API is needed. Existing138 replaces the changed remaining58 requirement.
    Then use the accepted-unintegrated repair flow for original129's three concrete
    review findings; preserve its unmerged artifact.99 source quarantine is already
    sealed; do not repeat it or claim its old idle evidence was reconstructed.
