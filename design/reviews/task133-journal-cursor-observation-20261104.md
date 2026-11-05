@@ -54,3 +54,35 @@ unchanged. No message body was printed and no production data was written.
 This establishes native reference retrieval/non-acknowledgement for that record;
 registered journal-tool observation on an activated candidate remains outstanding.
 Probe:`/private/tmp/lazers-journal-native-reference-probe-20261104.ts`.
+
+## Registered native paging after canonical integration
+
+Root merged reviewed133 as `2b0cd50` and reported16 journal/inspection/store
+tests plus quality passing. The exposed `lz-inspect-plan` schema supports
+`view: journal`, bounded limits and cursors. Code Mode discovery did not expose a
+callable copy, so the registered tool was called directly; only metadata summaries
+were extracted from its retained outputs.
+
+For owned129 plan `243f8093-7c3c-44e3-bda5-e06870e4f680`:
+
+- Page1, limit100:100 records/100 distinct record IDs, three source sessions,
+  three source records, two result records and95 input records. Snapshot
+  revision4362; `hasMore: true`. Returned cursor was supplied unchanged to page2,
+  which rejected it: “Journal changed since this page; restart the journal view”.
+- One bounded restart at limit2 returned two records/two distinct IDs, snapshot
+  revision6174 and `hasMore: true`. Its cursor also failed continuation with the
+  same explicit invalidation. No successful second page or complete traversal is
+  claimed.
+- The repeated first source/result IDs retained source revision1 and result
+  revision1. Their scan sweep advanced2172→2181; scan/result updated timestamps
+  advanced1793854408734→1793854462423. This establishes observed churn, not its
+  cause: other selected-journal mutations have not been ruled out.
+
+First page output:
+`/Users/tjw/.local/share/opencode/tool-output/tool_1aa0e0d6a001LKqQ4pf2FKnxjO`.
+Coverage remained metadata-only, with transcript completeness and native
+consumption unknown. No journal bodies, acknowledgement/cancellation commands,
+worker prompts, reload or ownership transfers were requested. Root's promised
+post-inspection disposition check remains separate evidence. Native paging
+qualification stays held; the earlier disposable-clone success does not establish
+stable live traversal under this observed activity.

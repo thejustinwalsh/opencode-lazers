@@ -19,6 +19,12 @@ remained active. No fresh implementation or worker input was changed. This is a
 second observed failure of explicit-stop preservation, not new authorization to
 discard plans or silently mark historical notices consumed.
 
+Root subsequently reported another successor `c10fbf89` (parent728b) and applied
+the standing chain-stop approval at1793854357004, with no workers affected. Carry
+this recurrence into the same134 boundary; it does not authorize the pending
+proposal to transfer58 unfinished plans. No such transfer is approved or performed
+by this Architect.
+
 Carry this observed failure into **LZ134**, alongside its original LZ28/LZ30 seams:
 
 - Honor explicit operator stop of this historical-review chain across the idle
