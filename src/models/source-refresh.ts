@@ -1,6 +1,12 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import {
+  ENDPOINT_PRICING_PRODUCTS,
+  EndpointPricingSnapshotSchema,
+  parseEndpointPricingResponse,
+} from "./endpoint-pricing.ts"
+import type { EndpointPricingProductID, EndpointPricingSnapshot } from "./endpoint-pricing.ts"
+import {
   MODEL_EVIDENCE_QUERIES,
   MODEL_EVIDENCE_SOURCE_URLS,
   ModelEvidenceSnapshotSchema,
@@ -27,6 +33,11 @@ type Outcome =
   | { state: "success"; snapshot: ModelEvidenceSnapshot }
   | { state: "failed"; errorCode: ModelEvidenceErrorCode; httpStatus: number | null }
   | { state: "cancelled" }
+
+type EndpointPricingOutcome =
+  | { state: "success"; snapshot: EndpointPricingSnapshot }
+  | { state: "failed"; errorCode: ModelEvidenceErrorCode; httpStatus: number | null }
+  | { state: "cancelled"; httpStatus: number | null }
 
 type CredentialResult = { key: string } | { errorCode: ModelEvidenceErrorCode }
 
@@ -135,6 +146,23 @@ function asFailure(error: unknown, signal: AbortSignal, timedOut: AbortSignal): 
   if (error instanceof SourceFailure)
     return { state: "failed", errorCode: error.errorCode, httpStatus: error.httpStatus }
   return { state: "failed", errorCode: "network-error", httpStatus: null }
+}
+
+function asEndpointPricingFailure(
+  error: unknown,
+  signal: AbortSignal,
+  timedOut: AbortSignal,
+  responseStatus: number | null,
+): EndpointPricingOutcome {
+  if (signal.aborted) return { state: "cancelled", httpStatus: responseStatus }
+  if (timedOut.aborted) return { state: "failed", errorCode: "timeout", httpStatus: responseStatus }
+  if (error instanceof SourceFailure)
+    return {
+      state: "failed",
+      errorCode: error.errorCode,
+      httpStatus: error.httpStatus ?? responseStatus,
+    }
+  return { state: "failed", errorCode: "network-error", httpStatus: responseStatus }
 }
 
 function makeSnapshot(
@@ -371,8 +399,9 @@ export class ModelEvidenceRefresher {
   async refresh(signal: AbortSignal) {
     signal.throwIfAborted()
     const generations = this.store.beginRefresh()
+    const endpointGenerations = this.store.beginEndpointPricingRefresh()
     if (signal.aborted) {
-      this.cancelAll(generations)
+      this.cancelAll(generations, endpointGenerations)
       return this.store.read()
     }
 
@@ -381,7 +410,7 @@ export class ModelEvidenceRefresher {
       this.openRouterCredential(signal),
     ])
     if (signal.aborted) {
-      this.cancelAll(generations)
+      this.cancelAll(generations, endpointGenerations)
       return this.store.read()
     }
 
@@ -406,10 +435,25 @@ export class ModelEvidenceRefresher {
             errorCode: credential.errorCode,
             httpStatus: null,
           })
-    const [modelsOutcome, benchmarkOutcome] = await Promise.all([models, benchmarks])
+    const endpointPricing = Promise.all(
+      ENDPOINT_PRICING_PRODUCTS.map(({ productID }) =>
+        this.endpointPricingOutcome(
+          productID,
+          endpointGenerations[productID],
+          "key" in credential ? credential.key : null,
+          "key" in credential ? null : credential.errorCode,
+          signal,
+        ),
+      ),
+    )
+    const [modelsOutcome, benchmarkOutcome, endpointOutcomes] = await Promise.all([
+      models,
+      benchmarks,
+      endpointPricing,
+    ])
 
     if (signal.aborted) {
-      this.cancelAll(generations)
+      this.cancelAll(generations, endpointGenerations, endpointOutcomes)
       return this.store.read()
     }
     const outcomes = [
@@ -419,10 +463,21 @@ export class ModelEvidenceRefresher {
     ] as const
     for (const [source, outcome] of outcomes) {
       if (signal.aborted) {
-        this.cancelAll(generations)
+        this.cancelAll(generations, endpointGenerations, endpointOutcomes)
         return this.store.read()
       }
       this.commit(source, generations[source], outcome)
+    }
+    for (const [index, { productID }] of ENDPOINT_PRICING_PRODUCTS.entries()) {
+      if (signal.aborted) {
+        this.cancelAll(generations, endpointGenerations, endpointOutcomes)
+        return this.store.read()
+      }
+      this.commitEndpointPricing(
+        productID,
+        endpointGenerations[productID],
+        endpointOutcomes[index]!,
+      )
     }
     return this.store.read()
   }
@@ -536,6 +591,62 @@ export class ModelEvidenceRefresher {
     }
   }
 
+  private async endpointPricingOutcome(
+    productID: EndpointPricingProductID,
+    generation: number,
+    key: string | null,
+    credentialError: ModelEvidenceErrorCode | null,
+    signal: AbortSignal,
+  ): Promise<EndpointPricingOutcome> {
+    if (signal.aborted) return { state: "cancelled", httpStatus: null }
+    if (!key)
+      return {
+        state: "failed",
+        errorCode: credentialError ?? "missing-credentials",
+        httpStatus: null,
+      }
+
+    const product = ENDPOINT_PRICING_PRODUCTS.find((item) => item.productID === productID)!
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    const requestSignal = AbortSignal.any([signal, timeout])
+    let responseStatus: number | null = null
+    try {
+      signal.throwIfAborted()
+      const response = await this.fetcher(product.sourceURL, {
+        method: "GET",
+        headers: new Headers({ Accept: "application/json", Authorization: `Bearer ${key}` }),
+        redirect: "error",
+        signal: requestSignal,
+      })
+      responseStatus = response.status
+      signal.throwIfAborted()
+      if (!response.ok) throw httpFailure(response.status)
+      const payload = await boundedJSON(response, requestSignal)
+      signal.throwIfAborted()
+      if (timeout.aborted) throw new SourceFailure("timeout")
+
+      let records
+      try {
+        records = parseEndpointPricingResponse(payload, productID)
+      } catch {
+        throw new SourceFailure("malformed-response")
+      }
+      const snapshot = EndpointPricingSnapshotSchema.parse({
+        snapshotID: crypto.randomUUID(),
+        projectDirectory: this.store.projectDirectory,
+        productID,
+        generation,
+        retrievedAt: new Date().toISOString(),
+        sourceURL: product.sourceURL,
+        httpStatus: response.status,
+        records,
+      })
+      return { state: "success", snapshot }
+    } catch (error) {
+      return asEndpointPricingFailure(error, signal, timeout, responseStatus)
+    }
+  }
+
   private commit(source: ModelEvidenceSource, generation: number, outcome: Outcome): void {
     if (outcome.state === "success") {
       this.store.saveSnapshot(outcome.snapshot)
@@ -546,8 +657,37 @@ export class ModelEvidenceRefresher {
     }
   }
 
-  private cancelAll(generations: Record<ModelEvidenceSource, number>): void {
+  private commitEndpointPricing(
+    productID: EndpointPricingProductID,
+    generation: number,
+    outcome: EndpointPricingOutcome,
+  ): void {
+    if (outcome.state === "success") {
+      this.store.saveEndpointPricingSnapshot(outcome.snapshot)
+    } else if (outcome.state === "cancelled") {
+      this.store.cancelEndpointPricingRefresh(productID, generation, outcome.httpStatus)
+    } else {
+      this.store.failEndpointPricingRefresh(
+        productID,
+        generation,
+        outcome.errorCode,
+        outcome.httpStatus,
+      )
+    }
+  }
+
+  private cancelAll(
+    generations: Record<ModelEvidenceSource, number>,
+    endpointGenerations: Record<EndpointPricingProductID, number>,
+    endpointOutcomes?: readonly EndpointPricingOutcome[],
+  ): void {
     for (const source of ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const)
       this.store.cancelRefresh(source, generations[source])
+    for (const [index, { productID }] of ENDPOINT_PRICING_PRODUCTS.entries()) {
+      const outcome = endpointOutcomes?.[index]
+      const httpStatus =
+        outcome?.state === "success" ? outcome.snapshot.httpStatus : (outcome?.httpStatus ?? null)
+      this.store.cancelEndpointPricingRefresh(productID, endpointGenerations[productID], httpStatus)
+    }
   }
 }
