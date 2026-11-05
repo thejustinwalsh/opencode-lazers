@@ -41,6 +41,7 @@ import {
   sourceReservationExcluded,
 } from "./source-quarantine.ts"
 import { inspectPlan } from "./inspection.ts"
+import { ModelMappingStore } from "../models/mapping-store.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -2180,12 +2181,25 @@ test("Start admits the configured route independently of the Architect model", a
   const result = await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
   expect(result).toMatchObject({ status: "started", state: "running" })
   expect(JSON.parse(f.store.plan(result.planID)!.model!)).toEqual(selected)
+  expect(JSON.parse(f.store.plan(result.planID)!.body).workerModel).toBeUndefined()
   const attempt = f.store.attempts(result.planID)[0]!
+  expect(JSON.parse(attempt.policy)).not.toHaveProperty("routeDecision")
   expect(f.sessions.get(attempt.session_id)?.model).toEqual(selected)
 
   const noModel = fixture({ shared: true, commit: true, startOnly: true })
   noModel.host.workerModel = async () => undefined
   const noModelTask = noModel.tasks[0]!
+  expect(noModelTask.proposal.classification).toEqual({
+    taxonomy: "task-kind/v1",
+    primaryKind: "feature-implementation",
+  })
+  const irrelevantPersonaMapping = new ModelMappingStore(noModel.repository).update({
+    target: { scope: "task", taskID: noModelTask.id },
+    persona: "systems",
+    expectedRevision: 0,
+    route: { providerID: "mapped-provider", id: "mapped-model", variant: "future/effort" },
+  })
+  expect(irrelevantPersonaMapping.status).toBe("updated")
   await expect(
     noModel.runtime.startTask({
       taskID: noModelTask.id,
@@ -2195,6 +2209,43 @@ test("Start admits the configured route independently of the Architect model", a
   ).rejects.toThrow("Select an implementor model")
   expect(noModel.store.plans()).toHaveLength(0)
   expect(noModel.events).toEqual([])
+})
+
+test("manual Start supports legacy unclassified tasks without inventing persona provenance", async () => {
+  const f = fixture({ shared: true, commit: true, startOnly: true })
+  const proposal = validProposal()
+  delete proposal.classification
+  const task = f.repository.insert({
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: new Date().toISOString(),
+    provenance: {
+      projectID: "project",
+      projectDirectory: f.root,
+      workspaceDirectory: f.root,
+      sessionID: "owner",
+      startingRevision: { kind: "git", commit: f.base },
+    },
+    proposal,
+  })
+  const selected = { providerID: "legacy-provider", id: "legacy-model", variant: "native" }
+  f.host.workerModel = async () => selected
+
+  const result = await f.runtime.startTask({
+    taskID: task.id,
+    revision: 1,
+    sessionID: "owner",
+  })
+  const plan = f.store.plan(result.planID)!
+  const attempt = f.store.attempts(result.planID)[0]!
+  expect(result).toMatchObject({ status: "started", state: "running" })
+  expect(task.proposal.classification).toBeUndefined()
+  expect(JSON.parse(plan.body).workerModel).toBeUndefined()
+  expect(JSON.parse(attempt.policy)).toMatchObject({ model: selected })
+  expect(JSON.parse(attempt.policy)).not.toHaveProperty("routeDecision")
+  expect(f.sessions.get(attempt.session_id)?.model).toEqual(selected)
 })
 
 test("Go and configured routes reach native execution unchanged alongside independent personas", async () => {
@@ -2267,6 +2318,364 @@ test("Go and configured routes reach native execution unchanged alongside indepe
   }
 })
 
+test("Start of explicitly persona-bearing plans honors mappings for every persona", async () => {
+  const personas: WorkerPersona[] = ["ui", "systems", "small-refactoring"]
+  const scopes = ["shared", "project", "task"] as const
+  const makeRoute = (name: string) => ({
+    providerID: `runtime-provider-${name}`,
+    id: `runtime-model-${name}`,
+    variant: `native-effort/${name}/uncatalogued`,
+  })
+
+  for (const persona of personas) {
+    for (const scope of scopes) {
+      const f = fixture({ shared: true, personas: [persona] })
+      const task = f.tasks[0]!
+      const mappings = new ModelMappingStore(f.repository)
+      const routes = {
+        shared: makeRoute(`${persona}-shared`),
+        project: makeRoute(`${persona}-project`),
+        task: makeRoute(`${persona}-task`),
+      }
+      const fallback = makeRoute(`${persona}-native-fallback`)
+      f.host.workerModel = async () => fallback
+      const shared = mappings.update({
+        target: { scope: "shared" },
+        persona,
+        expectedRevision: 0,
+        route: routes.shared,
+      })
+      expect(shared.status).toBe("updated")
+      if (scope !== "shared")
+        expect(
+          mappings.update({
+            target: { scope: "project" },
+            persona,
+            expectedRevision: 0,
+            route: routes.project,
+          }).status,
+        ).toBe("updated")
+      if (scope === "task")
+        expect(
+          mappings.update({
+            target: { scope: "task", taskID: task.id },
+            persona,
+            expectedRevision: 0,
+            route: routes.task,
+          }).status,
+        ).toBe("updated")
+
+      const nativeRoutes: NonNullable<PlanInput["workerModel"]>[] = []
+      const create = f.host.create
+      f.host.create = async (input) => {
+        nativeRoutes.push(input.model)
+        await create(input)
+      }
+      await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
+
+      const attempt = f.store.attempts(f.receipt.planID)[0]!
+      const expectedRoute = routes[scope]
+      const source = `${scope}-mapping` as const
+      const target =
+        scope === "shared"
+          ? { scope: "shared" as const }
+          : scope === "project"
+            ? { scope: "project" as const, projectDirectory: f.root }
+            : { scope: "task" as const, projectDirectory: f.root, taskID: task.id }
+      expect(nativeRoutes).toEqual([expectedRoute])
+      expect(JSON.parse(attempt.policy)).toMatchObject({
+        model: expectedRoute,
+        persona,
+        routeDecision: {
+          schemaVersion: 1,
+          status: "resolved",
+          persona,
+          source,
+          route: expectedRoute,
+          provenance: { target, revision: 1 },
+        },
+      })
+      expect(JSON.parse(f.store.plan(f.receipt.planID)!.body).workerModel).toBeUndefined()
+    }
+  }
+})
+
+test("an intentional plan route wins mappings and fallback while native fallback keeps honest provenance", async () => {
+  const makeRoute = (name: string) => ({
+    providerID: `runtime-provider-${name}`,
+    id: `runtime-model-${name}`,
+    variant: `native-effort/${name}/uncatalogued`,
+  })
+  const explicit = makeRoute("explicit-plan")
+  const fallback = makeRoute("native-fallback")
+  const f = fixture({ shared: true, personas: ["systems"], workerModel: explicit })
+  const task = f.tasks[0]!
+  const mappings = new ModelMappingStore(f.repository)
+  for (const target of [
+    { scope: "shared" as const },
+    { scope: "project" as const },
+    { scope: "task" as const, taskID: task.id },
+  ])
+    expect(
+      mappings.update({
+        target,
+        persona: "systems",
+        expectedRevision: 0,
+        route: makeRoute(`mapped-${target.scope}`),
+      }).status,
+    ).toBe("updated")
+  f.host.workerModel = async () => fallback
+  const nativeRoutes: NonNullable<PlanInput["workerModel"]>[] = []
+  const create = f.host.create
+  f.host.create = async (input) => {
+    nativeRoutes.push(input.model)
+    await create(input)
+  }
+
+  await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(nativeRoutes).toEqual([explicit])
+  expect(JSON.parse(attempt.policy)).toMatchObject({
+    model: explicit,
+    routeDecision: {
+      status: "resolved",
+      source: "explicit-plan-selection",
+      route: explicit,
+      provenance: null,
+    },
+  })
+
+  const inherited = fixture({
+    shared: true,
+    personas: ["small-refactoring"],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const admittedFallback = makeRoute("admitted-fallback")
+  const inheritedFallback = makeRoute("current-inherited-fallback")
+  inherited.host.workerModel = async () => admittedFallback
+  await runPlan(inherited)
+  inherited.host.workerModel = async () => inheritedFallback
+  await inherited.runtime.tick()
+  const inheritedAttempt = inherited.store.attempts(inherited.receipt.planID)[0]!
+  expect(JSON.parse(inheritedAttempt.policy)).toMatchObject({
+    model: inheritedFallback,
+    routeDecision: {
+      status: "resolved",
+      persona: "small-refactoring",
+      source: "native-implementor-selection",
+      route: inheritedFallback,
+      provenance: null,
+    },
+  })
+})
+
+test("a route removed after admission blocks dispatch before creating a worker", async () => {
+  const f = fixture({
+    shared: true,
+    personas: ["systems"],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const admittedFallback = {
+    providerID: "admitted-provider",
+    id: "admitted-model",
+    variant: "admitted/native-effort",
+  }
+  f.host.workerModel = async () => admittedFallback
+  const task = f.tasks[0]!
+  const mappings = new ModelMappingStore(f.repository)
+  const mapping = mappings.update({
+    target: { scope: "task", taskID: task.id },
+    persona: "systems",
+    expectedRevision: 0,
+    route: { providerID: "mapped-provider", id: "mapped-model", variant: "future/effort" },
+  })
+  expect(mapping.status).toBe("updated")
+
+  await runPlan(f)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.model!)).toEqual(admittedFallback)
+  expect(
+    mappings.update({
+      target: { scope: "task", taskID: task.id },
+      persona: "systems",
+      expectedRevision: 1,
+      route: null,
+    }).status,
+  ).toBe("updated")
+  f.host.workerModel = async () => undefined
+
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)).toMatchObject({
+    state: "blocked",
+    reason: expect.stringContaining("No native worker route"),
+  })
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(0)
+})
+
+test("a reopened retry preserves the earlier route decision and uses the current mapping variant", async () => {
+  const f = fixture({
+    shared: true,
+    fail: true,
+    personas: ["systems"],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const task = f.tasks[0]!
+  const mappings = new ModelMappingStore(f.repository)
+  const initialRoute = {
+    providerID: "uncatalogued-provider",
+    id: "uncatalogued-model",
+    variant: "future/effort-v1",
+  }
+  const updatedRoute = { ...initialRoute, variant: "future/effort-v2" }
+  mappings.update({
+    target: { scope: "task", taskID: task.id },
+    persona: "systems",
+    expectedRevision: 0,
+    route: initialRoute,
+  })
+  const nativeRoutes: NonNullable<PlanInput["workerModel"]>[] = []
+  const create = f.host.create
+  f.host.create = async (input) => {
+    nativeRoutes.push(input.model)
+    await create(input)
+  }
+  await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
+  const planID = f.store.execution(task.id)!.planID
+  const first = f.store.attempts(planID)[0]!
+  const firstPolicy = first.policy
+  expect(nativeRoutes).toEqual([initialRoute])
+  expect(JSON.parse(firstPolicy).routeDecision).toMatchObject({
+    source: "task-mapping",
+    route: initialRoute,
+    provenance: { revision: 1 },
+  })
+
+  mappings.update({
+    target: { scope: "task", taskID: task.id },
+    persona: "systems",
+    expectedRevision: 1,
+    route: updatedRoute,
+  })
+  expect(first.policy).toBe(firstPolicy)
+  expect(nativeRoutes).toEqual([initialRoute])
+  expect(f.sessions.get(first.session_id)?.model).toEqual(initialRoute)
+  f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner" })
+  await f.runtime.command(
+    {
+      requestID: "reassign-during-route-attempt",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "reassign",
+      targetSessionID: "new-owner",
+      reason: "Transfer plan ownership without retargeting its active attempt",
+    },
+    "owner",
+  )
+  expect(f.store.attempts(planID)[0]!.policy).toBe(firstPolicy)
+
+  f.completeWorker(first.session_id)
+  await drive(f.runtime)
+  expect(f.store.attempts(planID)[0]?.state).toBe("failed")
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  await f.runtime.command(
+    {
+      requestID: "retry-with-updated-mapping",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "retry",
+      taskID: task.id,
+      reason: "Retry using the currently assigned persona route",
+    },
+    "new-owner",
+  )
+
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  try {
+    await reopened.tick()
+  } finally {
+    await reopened.stop()
+  }
+  const attempts = f.store.attempts(planID).filter((attempt) => attempt.task_id === task.id)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[0]!.policy).toBe(firstPolicy)
+  expect(nativeRoutes).toEqual([initialRoute, updatedRoute])
+  expect(JSON.parse(attempts[1]!.policy)).toMatchObject({
+    model: updatedRoute,
+    routeDecision: {
+      source: "task-mapping",
+      route: updatedRoute,
+      provenance: { revision: 2 },
+    },
+  })
+})
+
+test("resuming a mapped attempt preserves its native route after the mapping changes", async () => {
+  const f = fixture({
+    shared: true,
+    delayed: true,
+    personas: ["systems"],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  f.host.workerModel = async () => undefined
+  const task = f.tasks[0]!
+  const mappings = new ModelMappingStore(f.repository)
+  const originalRoute = {
+    providerID: "resume-provider",
+    id: "resume-model",
+    variant: "future/resume-v1",
+  }
+  const updatedRoute = { ...originalRoute, variant: "future/resume-v2" }
+  mappings.update({
+    target: { scope: "task", taskID: task.id },
+    persona: "systems",
+    expectedRevision: 0,
+    route: originalRoute,
+  })
+  const nativeRoutes: NonNullable<PlanInput["workerModel"]>[] = []
+  const create = f.host.create
+  f.host.create = async (input) => {
+    nativeRoutes.push(input.model)
+    await create(input)
+  }
+
+  const { planID, attempt } = await holdInterruptedAttempt(f)
+  const originalPolicy = attempt.policy
+  expect(f.store.plan(planID)?.model).toBeNull()
+  expect(nativeRoutes).toEqual([originalRoute])
+  mappings.update({
+    target: { scope: "task", taskID: task.id },
+    persona: "systems",
+    expectedRevision: 1,
+    route: updatedRoute,
+  })
+
+  await f.runtime.command(
+    {
+      requestID: "resume-with-retained-route",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: task.id,
+      attemptID: attempt.id,
+      reason: "Continue the exact interrupted native assignment",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const resumed = f.store.attempts(planID)[0]!
+  expect(resumed).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+    state: "running",
+  })
+  expect(resumed.policy).toBe(originalPolicy)
+  expect(nativeRoutes).toEqual([originalRoute])
+  expect(f.sessions.get(attempt.session_id)?.model).toEqual(originalRoute)
+})
+
 test("a native route failure stays visible and is never retried with a substitute", async () => {
   const selected = { providerID: "custom-provider", id: "selected-model", variant: "max" }
   const f = fixture({ shared: true, workerModel: selected })
@@ -2289,6 +2698,9 @@ test("a native route failure stays visible and is never retried with a substitut
     reason: expect.stringContaining("Native provider rejected selected route"),
   })
   expect(JSON.parse(f.store.attempts(f.receipt.planID)[0]!.policy).model).toEqual(selected)
+  expect(JSON.parse(f.store.attempts(f.receipt.planID)[0]!.policy)).not.toHaveProperty(
+    "routeDecision",
+  )
 })
 
 test("Start rejects stale, foreign and ended work without changing runtime state", async () => {
