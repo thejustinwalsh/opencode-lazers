@@ -4533,11 +4533,9 @@ export class TaskRuntime {
         const attempt = this.store.fenced(this.owner, fence, current)
         const review = sourceReviewBinding(quarantine)
         const pending = quarantine.phase === "pending"
-        const requireForeground = pending || review !== undefined
-        const readOptions =
-          requireForeground && attempt.state === "running" ? { messages: true } : undefined
+        const readOptions = pending && attempt.state === "running" ? { messages: true } : undefined
         let worker = await this.host.session(quarantine.session_id, readOptions)
-        let reason = this.sourceWorkerWait(attempt, worker, requireForeground, review)
+        let reason = this.sourceWorkerWait(attempt, worker, pending, review)
         if (reason) {
           wait(reason)
           continue
@@ -4564,7 +4562,7 @@ export class TaskRuntime {
           })
         }
         worker = await this.host.session(quarantine.session_id, readOptions)
-        reason = this.sourceWorkerWait(attempt, worker, requireForeground, review)
+        reason = this.sourceWorkerWait(attempt, worker, pending, review)
         if (reason || (quarantine.phase === "pending" && !worker?.archived)) {
           wait(reason ?? "Native archive has not been observed")
           continue

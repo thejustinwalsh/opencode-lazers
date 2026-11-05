@@ -39,6 +39,7 @@ import {
   sourceGuardInstalled,
   sourceQuarantine,
   sourceReservationExcluded,
+  sourceQuarantineToolError,
 } from "./source-quarantine.ts"
 import { inspectPlan } from "./inspection.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
@@ -1211,13 +1212,18 @@ test("malformed sealed review pin cannot exclude source even with its installed 
 })
 
 test.each(["before-restore", "during-restore"] as const)(
-  "source review guard recovery holds a changed pin %s",
+  "sealed review guard recovery permits a later handoff %s without replaying archive",
   async (when) => {
     const f = await sealedSourceReviewFixture()
+    const pin = sourceQuarantine(f.store, f.attempt.id)!.review_input_json
     f.guard()
     const change = () => {
-      ;(f.worker.messages.at(-1)!.metadata!.lazersReview as Record<string, unknown>).requestID =
-        "changed-review"
+      f.worker.turn!.inputID = "msg_later_handoff"
+      f.worker.messages.push({
+        id: "msg_later_handoff",
+        type: "synthetic",
+        text: "Read retained work and submit handoff",
+      })
     }
     if (when === "before-restore") change()
     f.host.ensureSourceGuard = async () => {
@@ -1225,12 +1231,93 @@ test.each(["before-restore", "during-restore"] as const)(
       if (when === "during-restore") change()
     }
     await f.runtime.tick()
-    expect(sourceQuarantine(f.store, f.attempt.id)?.hold_reason).toContain("metadata")
-    expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+    expect(sourceQuarantine(f.store, f.attempt.id)).toMatchObject({
+      hold_reason: null,
+      review_input_json: pin,
+    })
+    expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(true)
+    expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "shell")).toContain(
+      "quarantined",
+    )
+    expect(
+      sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-submit-handoff"),
+    ).toBeUndefined()
     expect(f.adapter.archives).toBe(1)
     expect(f.worker.background?.state).toBe("unknown")
   },
 )
+
+test("healthy sealed review guard permits a later handoff without rescanning review messages", async () => {
+  const f = await sealedSourceReviewFixture()
+  f.worker.turn!.inputID = "msg_later_handoff"
+  let reads = 0
+  const observe = f.host.session
+  f.host.session = async (id, options) => {
+    if (id === f.attempt.session_id && options?.messages) reads++
+    return observe(id, options)
+  }
+  await f.runtime.tick()
+  expect(reads).toBe(0)
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(true)
+  expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "write")).toContain("quarantined")
+  expect(
+    sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-get-task-instructions"),
+  ).toBeUndefined()
+})
+
+test("concurrent explicit pending supersessions use the plan version once", async () => {
+  const f = await completedSourceReviewFixture()
+  await f.runtime.command(f.command, "owner")
+  const version = f.store.plan(f.receipt.planID)!.version
+  const results = await Promise.allSettled(
+    ["a", "b"].map((suffix) =>
+      f.runtime.command(
+        {
+          ...f.command,
+          requestID: `concurrent-source-pin-${suffix}`,
+          expectedVersion: version,
+        },
+        "owner",
+      ),
+    ),
+  )
+  expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+  expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
+  expect(f.store.plan(f.receipt.planID)!.version).toBe(version + 1)
+  expect(f.worker.archived).toBe(false)
+})
+
+test("a later explicit quarantine cannot retarget an already sealed review pin", async () => {
+  const f = await sealedSourceReviewFixture()
+  const row = sourceQuarantine(f.store, f.attempt.id)
+  const version = f.store.plan(f.receipt.planID)!.version
+  const nextInput = "msg_later_sealed_review"
+  f.worker.turn!.inputID = nextInput
+  f.worker.messages.push({
+    id: nextInput,
+    type: "synthetic",
+    text: "Later review",
+    metadata: {
+      lazersReview: {
+        taskID: f.attempt.task_id,
+        attemptID: f.attempt.id,
+        requestID: "later-review",
+      },
+    },
+  })
+  await f.runtime.command(
+    {
+      ...f.command,
+      requestID: "later-sealed-request",
+      reviewInputID: nextInput,
+      expectedVersion: version,
+    },
+    "owner",
+  )
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(row)
+  expect(f.store.plan(f.receipt.planID)!.version).toBe(version)
+  expect(f.adapter.archives).toBe(1)
+})
 
 test("fresh owner command explicitly supersedes a pending review pin; old replay cannot retarget it", async () => {
   const f = await completedSourceReviewFixture()
