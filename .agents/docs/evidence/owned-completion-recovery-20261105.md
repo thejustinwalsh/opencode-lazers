@@ -379,3 +379,32 @@ procedure is `.agents/docs/evidence/task132-native-readback-procedure-20261105.m
 actual attachment and both getter calls must run through Code Mode after Root's
 quiet activation, preserving original task/worker identity and exact-artifact
 human evidence. Read availability is not model consumption.
+
+## Focused original127 check-in
+
+At the user's request, research/compaction, pinned-source404 and a cancelled
+search were treated as reasons for focused assistance, not as failure. Planv52's
+pending-form notice was historical by native inspection at1793864264640: no
+pending forms remained. At1793864277423 the original Luna Max worker was active
+and had completed reads of `src/runner/native.ts`, `src/runner/native-idle.ts`,
+`src/progress/native.test.ts` and `src/progress/recorder.ts`; no source patch or
+chosen cut was yet observed.
+
+Instruction-only check-in key
+`lazers.advice.lz127.small-cut-checkin.20261105.v1` was delivered/read back to
+original worker and current owner at1793864325388/524. It asks for the chosen
+small implementation cut or concrete blocker in ordinary progress at the next
+natural boundary, then continued implementation. The short steer cites existing
+retained `nativeHost` (`src/runner/native.ts:245`), `connectedClient:259` and
+`runNative:277` as the native transport reuse point and `observeIdleHook` as the
+missing-start fallback seam. No second transport or broad redesign is requested.
+Prospective genuine-hook and exact-lineage safety fences remain unchanged.
+
+Original worker input stayed `msg_15c474d20da04ae6b1ed90b959112565`; owner input
+stayed `msg_1aa8fd65b001hIrG8qO0g5jvGb`. No worker prompt, interruption or action
+on129 was sent. Check-in consumption and the worker's answer remain unobserved.
+
+Root's `32f9d0c` readback-procedure correction is verified: at the quiet boundary,
+land accepted132 base and record **task-only** integration first, keeping its
+combined live gate open; then merge137 and adopt the corrected descendant against
+that recorded baseline, rather than including unrelated historical main changes.
