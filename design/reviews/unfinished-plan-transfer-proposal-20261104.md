@@ -12,6 +12,25 @@ read-only for observation. No hashes support this check. The coordinator reporte
 unchanged nodes and policies as well. This establishes ownership consolidation,
 not task completion or successful recovery.
 
+Coordinator readback at1793877344072 also confirmed unchanged task/specification
+rows, priorities/integration order and exact attempt policies. All58 were eligible
+at their fresh per-plan checks; none required skipping. Native request IDs use
+`approved58-transfer-<plan UUID>-v<expected version>`; durable command receipts
+retain each result. Read-only direct-comparison snapshots are in the approved
+session temporary directory as `approved58-owner-before-20261105.json` and
+`approved58-owner-after-20261105.json`.
+
+The batch retained six unresolved LZ117 outcome deliveries as unknown (prior
+admitted delivery to c59 had a missing observation). Original notice IDs and
+receipts remain; no replay or consumption was fabricated. At1793877361778 the
+original118 worker was still active in its original50345fa1 checkout on Luna Max.
+
+Nonlisted57/58,138,139,141 and142 remain with c59; their workers, uncertain effects,
+LZ139 consumer scope amendment and LZ140 duplicate disposition are untouched.
+Ordinary authorized recovery continues through existing Architect controls, not
+another ownership approval ceremony. Runtime already allows non-owner Architect
+reassignment; external automatic approval review is a separate behavior.
+
 The proposal and original authorization boundary follow for the retained record.
 
 Transfer these 58 existing unfinished plans from stopped historical owner
