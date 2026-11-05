@@ -2,8 +2,8 @@ import {
   evaluatePrerequisiteIntegration,
   type PrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
-import { existsSync, readFileSync, realpathSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
 import {
@@ -21,7 +21,12 @@ import {
   verificationEnvironmentIdentity,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
+import type {
+  HostSession,
+  RunnerHost,
+  WorkerInstruction,
+  WorktreeLocationRetirement,
+} from "./host.ts"
 import {
   ArchitectContinuityInput,
   CommandInput,
@@ -40,7 +45,7 @@ import type {
   AdoptionCheckRow,
   ArchitectRenewalRow,
 } from "./store.ts"
-import { appendOutboxReceipt, RunnerStore } from "./store.ts"
+import { appendOutboxReceipt, appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
 import type { OutcomeOwnership } from "./inbox.ts"
@@ -63,6 +68,16 @@ import {
   sourceReservationExcluded,
 } from "./source-quarantine.ts"
 import type { SourceQuarantine } from "./source-quarantine.ts"
+import {
+  isStartupWorktreeCandidate,
+  nativeWorktreeFailureEvidence,
+  nativeWorktreeFailureFromReceipt,
+  startupFailureSettlementFromReceipt,
+  startupWorktreeFailureEvidence,
+  startupWorktreeCandidates,
+  UNCERTAIN_EFFECT_RECEIPT_SCHEMA,
+} from "./startup-recovery.ts"
+import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
 
 const terminal = new Set([
   "accepted",
@@ -78,6 +93,8 @@ const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 const isCommitID = (value: unknown): value is string =>
   typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message || String(error) : String(error)
 export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
@@ -105,6 +122,25 @@ type AdoptionSeed = {
   inputFingerprint: string
   reason: string
   combinedArtifact: string
+}
+
+type StartupRecoveryAuthorization = {
+  schema: "lazers-worktree-startup-authorization/v1"
+  recoveryID: string
+  sourceEffectID: string
+  settlementRequestID: string
+  requestID: string
+  owner: string
+  planVersion: number
+  ownerEpoch: number
+  planRevision: number
+  taskID: string
+  attemptID: string
+  sessionID: string
+  messageID: string
+  workspace: string
+  base: string
+  policy: string
 }
 
 export function architectIdleWindowMs(value: unknown): number {
@@ -689,6 +725,715 @@ export class TaskRuntime {
     })
   }
 
+  private startupSettlementCandidate(
+    plan: PlanRow,
+    taskID: string,
+    attemptID: string,
+  ): { attempt: AttemptRow; effect: EffectRow; failure: StartupWorktreeFailureEvidence } {
+    if (plan.state !== "blocked") throw new Error("Startup settlement requires a blocked plan")
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    if (input.workspaceMode !== "isolated")
+      throw new Error("Startup settlement applies only to isolated worktree creation")
+    const node = this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
+    const attempt = this.store.attempts(plan.id).find((candidate) => candidate.id === attemptID)
+    if (
+      !node ||
+      node.state !== "running" ||
+      !attempt ||
+      attempt.task_id !== taskID ||
+      attempt.plan_id !== plan.id ||
+      attempt.state !== "preparing" ||
+      attempt.workspace === this.directory
+    )
+      throw new Error("Startup settlement identity does not match a preparing attempt")
+    const effects = this.store.effects(plan.id)
+    const authorization = this.startupRecoveryAuthorization(plan, attempt)
+    let effect: EffectRow | undefined
+    if (authorization) {
+      effect = this.historicalStartupRecoveryOperation(plan, attempt, effects, authorization)
+      if (!effect)
+        throw new Error("Startup settlement requires the current linked recovery operation")
+    } else {
+      effect = effects.find(
+        (candidate) =>
+          candidate.kind === "worktree" &&
+          candidate.task_id === taskID &&
+          candidate.attempt_id === attemptID,
+      )
+    }
+    if (!effect || effect.state !== "uncertain")
+      throw new Error("Startup settlement requires the current uncertain startup worktree effect")
+    const failure = startupWorktreeFailureEvidence({
+      planID: plan.id,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      effectID: effect.id,
+      kind: effect.kind,
+      state: effect.state,
+      receipt: effect.receipt,
+      payload: effect.payload,
+      sessionID: attempt.session_id,
+      messageID: attempt.message_id,
+      workspace: attempt.workspace,
+      base: attempt.base_commit,
+    })
+    if (!failure || startupFailureSettlementFromReceipt(effect.receipt))
+      throw new Error(
+        "Startup worktree effect lacks bound terminal native failure evidence or exact legacy inference",
+      )
+
+    if (
+      effects.some(
+        (candidate) =>
+          ["intended", "uncertain"].includes(candidate.state) && candidate.id !== effect.id,
+      ) ||
+      effects.some(
+        (candidate) =>
+          candidate.attempt_id === attemptID &&
+          (candidate.kind === "session" ||
+            candidate.kind === "prompt" ||
+            candidate.kind.startsWith("verify:") ||
+            candidate.kind.startsWith("graph-verify:")),
+      ) ||
+      this.store.progressFacts([attemptID]).length > 0 ||
+      this.store.latestTransition<{ attemptID?: string }>(plan.id, taskID, "WORKER_STARTED")
+        ?.attemptID === attemptID ||
+      !this.preparationAllowed(attempt)
+    )
+      throw new Error("Startup settlement is unsafe after downstream work or conflicting ownership")
+    return { attempt, effect, failure }
+  }
+
+  private startupSettlementForEffect(
+    planID: string,
+    attempt: AttemptRow,
+    effect: EffectRow,
+    effects = this.store.effects(planID),
+  ): StartupAbsenceEvidence | undefined {
+    if (
+      effect.plan_id !== planID ||
+      effect.task_id !== attempt.task_id ||
+      effect.attempt_id !== attempt.id ||
+      effect.state !== "failed" ||
+      !["worktree", "worktree-recovery"].includes(effect.kind)
+    )
+      return undefined
+    const settlement = startupFailureSettlementFromReceipt(effect.receipt)
+    if (
+      !settlement ||
+      settlement.effectID !== effect.id ||
+      settlement.planID !== planID ||
+      settlement.attemptID !== attempt.id ||
+      settlement.taskID !== attempt.task_id ||
+      settlement.sessionID !== attempt.session_id ||
+      settlement.workspace !== attempt.workspace ||
+      settlement.base !== attempt.base_commit
+    )
+      return undefined
+    if (settlement.legacyFailure) {
+      const binding = settlement.legacyFailure.binding
+      if (
+        binding.planID !== planID ||
+        binding.taskID !== attempt.task_id ||
+        binding.attemptID !== attempt.id ||
+        binding.effectID !== effect.id ||
+        binding.sessionID !== attempt.session_id ||
+        binding.messageID !== attempt.message_id ||
+        binding.workspace !== attempt.workspace ||
+        binding.base !== attempt.base_commit
+      )
+        return undefined
+    }
+
+    if (effect.kind === "worktree") {
+      return effect.payload ===
+        JSON.stringify({ workspace: attempt.workspace, base: attempt.base_commit })
+        ? settlement
+        : undefined
+    }
+
+    let operation: Record<string, unknown> | undefined
+    try {
+      const parsed: unknown = JSON.parse(effect.payload)
+      operation = isRecord(parsed) ? parsed : undefined
+    } catch {
+      return undefined
+    }
+    if (!operation) return undefined
+    const sourceIndex = effects.findIndex((candidate) => candidate.id === operation?.sourceEffectID)
+    const effectIndex = effects.findIndex((candidate) => candidate.id === effect.id)
+    if (
+      sourceIndex < 0 ||
+      sourceIndex >= effectIndex ||
+      operation.schema !== "lazers-worktree-recovery-operation/v1" ||
+      operation.workspace !== attempt.workspace ||
+      operation.base !== attempt.base_commit ||
+      operation.sessionID !== attempt.session_id ||
+      operation.messageID !== attempt.message_id ||
+      operation.policy !== attempt.policy ||
+      typeof operation.recoveryID !== "string" ||
+      typeof operation.sourceEffectID !== "string" ||
+      typeof operation.settlementRequestID !== "string" ||
+      typeof operation.authorizationRequestID !== "string" ||
+      typeof operation.authorizedOwner !== "string" ||
+      typeof operation.authorizedVersion !== "number"
+    )
+      return undefined
+    const source = effects.find((candidate) => candidate.id === operation.sourceEffectID)
+    if (!source) return undefined
+    const sourceSettlement = this.startupSettlementForEffect(planID, attempt, source, effects)
+    if (
+      !sourceSettlement ||
+      sourceSettlement.requestID !== operation.settlementRequestID ||
+      !this.store.activity(planID, attempt.task_id).some((entry) => {
+        if (entry.event !== "STARTUP_RECOVERY_AUTHORIZED") return false
+        try {
+          const authorization = JSON.parse(entry.payload) as Record<string, unknown>
+          return (
+            authorization.schema === "lazers-worktree-startup-authorization/v1" &&
+            authorization.recoveryID === operation.recoveryID &&
+            authorization.sourceEffectID === source.id &&
+            authorization.settlementRequestID === sourceSettlement.requestID &&
+            authorization.requestID === operation.authorizationRequestID &&
+            authorization.owner === operation.authorizedOwner &&
+            authorization.planVersion === operation.authorizedVersion &&
+            authorization.taskID === attempt.task_id &&
+            authorization.attemptID === attempt.id &&
+            authorization.sessionID === attempt.session_id &&
+            authorization.messageID === attempt.message_id &&
+            authorization.workspace === attempt.workspace &&
+            authorization.base === attempt.base_commit &&
+            authorization.policy === attempt.policy
+          )
+        } catch {
+          return false
+        }
+      })
+    )
+      return undefined
+    return settlement
+  }
+
+  private settledStartupEffect(planID: string, attempt: AttemptRow): EffectRow | undefined {
+    const effects = this.store.effects(planID)
+    return effects
+      .filter((effect) => this.startupSettlementForEffect(planID, attempt, effect, effects))
+      .at(-1)
+  }
+
+  private historicalStartupRecoveryOperation(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    effects: EffectRow[],
+    authorization: StartupRecoveryAuthorization,
+  ): EffectRow | undefined {
+    if (
+      authorization.planVersion > plan.version ||
+      authorization.planRevision !== plan.revision ||
+      authorization.taskID !== attempt.task_id ||
+      authorization.attemptID !== attempt.id ||
+      authorization.sessionID !== attempt.session_id ||
+      authorization.messageID !== attempt.message_id ||
+      authorization.workspace !== attempt.workspace ||
+      authorization.base !== attempt.base_commit ||
+      authorization.policy !== attempt.policy
+    )
+      return undefined
+    const source = effects.find((candidate) => candidate.id === authorization.sourceEffectID)
+    const sourceSettlement = source
+      ? this.startupSettlementForEffect(plan.id, attempt, source, effects)
+      : undefined
+    if (!sourceSettlement || sourceSettlement.requestID !== authorization.settlementRequestID)
+      return undefined
+    const matching = effects.filter((candidate) => {
+      if (
+        candidate.kind !== "worktree-recovery" ||
+        candidate.task_id !== attempt.task_id ||
+        candidate.attempt_id !== attempt.id
+      )
+        return false
+      try {
+        const parsed: unknown = JSON.parse(candidate.payload)
+        if (!isRecord(parsed)) return false
+        const operation = parsed
+        return (
+          operation.recoveryID === authorization.recoveryID &&
+          operation.sourceEffectID === authorization.sourceEffectID &&
+          operation.settlementRequestID === authorization.settlementRequestID &&
+          operation.authorizationRequestID === authorization.requestID &&
+          operation.authorizedOwner === authorization.owner &&
+          operation.authorizedVersion === authorization.planVersion &&
+          operation.sessionID === authorization.sessionID &&
+          operation.messageID === authorization.messageID &&
+          operation.workspace === authorization.workspace &&
+          operation.base === authorization.base &&
+          operation.policy === authorization.policy
+        )
+      } catch {
+        return false
+      }
+    })
+    return matching.length === 1 ? matching[0] : undefined
+  }
+
+  private currentStartupRecoveryOperation(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    effects: EffectRow[],
+    authorization: StartupRecoveryAuthorization,
+  ) {
+    if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return undefined
+    return this.historicalStartupRecoveryOperation(plan, attempt, effects, authorization)
+  }
+
+  private completeStartupRecovery(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    operation: EffectRow,
+    authorization: StartupRecoveryAuthorization,
+    workspace: string,
+    fence: number,
+  ): boolean {
+    return this.store.fenced(this.owner, fence, (db) => {
+      const currentPlan = db
+        .query<PlanRow, [string, string]>(
+          "SELECT * FROM runner_plans WHERE id=? AND project_directory=?",
+        )
+        .get(plan.id, this.store.repository.projectDirectory)
+      const currentAttempt = db
+        .query<AttemptRow, [string]>("SELECT * FROM runner_attempts WHERE id=?")
+        .get(attempt.id)
+      const currentOperation = db
+        .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?")
+        .get(operation.id)
+      const ownerEpoch = db
+        .query<{ epoch: number }, [string]>(
+          `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
+           WHERE plan_id=? AND task_id IS NULL AND event IN (
+             'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
+           )`,
+        )
+        .get(plan.id)!.epoch
+      const latestAuthorization = db
+        .query<{ payload: string }, [string, string]>(
+          `SELECT payload FROM runner_transitions
+           WHERE plan_id=? AND task_id=? AND event='STARTUP_RECOVERY_AUTHORIZED'
+           ORDER BY id DESC LIMIT 1`,
+        )
+        .get(plan.id, attempt.task_id)
+      let operationPayload: Record<string, unknown> | undefined
+      try {
+        const parsed: unknown = JSON.parse(currentOperation?.payload ?? "null")
+        operationPayload = isRecord(parsed) ? parsed : undefined
+      } catch {
+        operationPayload = undefined
+      }
+      if (
+        !currentPlan ||
+        !currentAttempt ||
+        !currentOperation ||
+        currentPlan.state !== "running" ||
+        currentPlan.owner !== authorization.owner ||
+        currentPlan.version < authorization.planVersion ||
+        currentPlan.revision !== authorization.planRevision ||
+        ownerEpoch !== authorization.ownerEpoch ||
+        !latestAuthorization ||
+        fingerprint(JSON.parse(latestAuthorization.payload)) !== fingerprint(authorization) ||
+        currentAttempt.state !== "preparing" ||
+        currentAttempt.task_id !== attempt.task_id ||
+        currentAttempt.session_id !== authorization.sessionID ||
+        currentAttempt.message_id !== authorization.messageID ||
+        currentAttempt.workspace !== authorization.workspace ||
+        currentAttempt.base_commit !== authorization.base ||
+        currentAttempt.policy !== authorization.policy ||
+        currentOperation.plan_id !== plan.id ||
+        currentOperation.task_id !== attempt.task_id ||
+        currentOperation.attempt_id !== attempt.id ||
+        currentOperation.kind !== "worktree-recovery" ||
+        !["intended", "uncertain"].includes(currentOperation.state) ||
+        operationPayload?.schema !== "lazers-worktree-recovery-operation/v1" ||
+        operationPayload.recoveryID !== authorization.recoveryID ||
+        operationPayload.sourceEffectID !== authorization.sourceEffectID ||
+        operationPayload.settlementRequestID !== authorization.settlementRequestID ||
+        operationPayload.authorizationRequestID !== authorization.requestID ||
+        operationPayload.authorizedOwner !== authorization.owner ||
+        operationPayload.authorizedVersion !== authorization.planVersion ||
+        operationPayload.sessionID !== authorization.sessionID ||
+        operationPayload.messageID !== authorization.messageID ||
+        operationPayload.workspace !== authorization.workspace ||
+        operationPayload.base !== authorization.base ||
+        operationPayload.policy !== authorization.policy ||
+        workspace !== authorization.workspace
+      )
+        return false
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state='completed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+        )
+        .run(
+          JSON.stringify({
+            workspace,
+            base: authorization.base,
+            recoveryID: authorization.recoveryID,
+            sourceEffectID: authorization.sourceEffectID,
+            ready: true,
+          }),
+          operation.id,
+        ).changes
+      if (changed !== 1) return false
+      this.store.record(plan.id, attempt.task_id, "EFFECT_COMPLETED", {
+        effectID: operation.id,
+        kind: operation.kind,
+      })
+      this.store.record(plan.id, attempt.task_id, "STARTUP_RECOVERY_WORKTREE_READY", {
+        effectID: operation.id,
+        sourceEffectID: authorization.sourceEffectID,
+        recoveryID: authorization.recoveryID,
+        attemptID: attempt.id,
+        workspace,
+        base: authorization.base,
+      })
+      return true
+    })
+  }
+
+  private assertStartupSettlementCurrent(
+    expectedPlan: PlanRow,
+    expectedAttempt: AttemptRow,
+    expectedEffect: EffectRow,
+    failure: StartupWorktreeFailureEvidence,
+  ) {
+    const plan = this.store.plan(expectedPlan.id)
+    const attempt = this.store
+      .attempts(expectedPlan.id)
+      .find((candidate) => candidate.id === expectedAttempt.id)
+    const effect = this.store
+      .effects(expectedPlan.id)
+      .find((candidate) => candidate.id === expectedEffect.id)
+    let currentCandidate:
+      | { attempt: AttemptRow; effect: EffectRow; failure: StartupWorktreeFailureEvidence }
+      | undefined
+    try {
+      if (plan && attempt)
+        currentCandidate = this.startupSettlementCandidate(plan, attempt.task_id, attempt.id)
+    } catch {
+      currentCandidate = undefined
+    }
+    if (
+      !plan ||
+      plan.version !== expectedPlan.version ||
+      plan.owner !== expectedPlan.owner ||
+      plan.state !== "blocked" ||
+      !attempt ||
+      attempt.task_id !== expectedAttempt.task_id ||
+      attempt.number !== expectedAttempt.number ||
+      attempt.session_id !== expectedAttempt.session_id ||
+      attempt.message_id !== expectedAttempt.message_id ||
+      attempt.workspace !== expectedAttempt.workspace ||
+      attempt.base_commit !== expectedAttempt.base_commit ||
+      attempt.policy !== expectedAttempt.policy ||
+      attempt.state !== "preparing" ||
+      !effect ||
+      effect.state !== "uncertain" ||
+      effect.attempt_id !== expectedAttempt.id ||
+      effect.task_id !== expectedAttempt.task_id ||
+      currentCandidate?.effect.id !== expectedEffect.id ||
+      fingerprint(currentCandidate.failure) !== fingerprint(failure) ||
+      startupFailureSettlementFromReceipt(effect.receipt) ||
+      !this.preparationAllowed(attempt)
+    )
+      throw new Error("Startup settlement identity, version, or ownership changed")
+  }
+
+  private async observeStartupAbsence(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    effect: EffectRow,
+    failure: StartupWorktreeFailureEvidence,
+    requestID: string,
+  ): Promise<StartupAbsenceEvidence> {
+    const candidates = startupWorktreeCandidates(attempt.workspace)
+    const assertCurrent = () => this.assertStartupSettlementCurrent(plan, attempt, effect, failure)
+
+    const worker = await this.host.session(attempt.session_id)
+    assertCurrent()
+    if (worker)
+      throw new Error("Reserved worker session already exists; startup settlement refused")
+
+    const nativeWorktrees = await this.host.worktrees()
+    assertCurrent()
+    if (nativeWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
+      throw new Error("Native worktree or collision candidate exists; startup settlement refused")
+
+    const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => line.slice("worktree ".length))
+    if (gitWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
+      throw new Error("Git worktree or collision candidate exists; startup settlement refused")
+
+    for (const candidate of candidates) {
+      let present = false
+      try {
+        lstatSync(candidate)
+        present = true
+      } catch (error) {
+        if (!isRecord(error) || error.code !== "ENOENT")
+          throw new Error(
+            `Filesystem absence observation failed for ${candidate}: ${errorText(error)}`,
+            { cause: error },
+          )
+      }
+      if (present)
+        throw new Error(
+          "Filesystem worktree or collision candidate exists; startup settlement refused",
+        )
+    }
+
+    const owner = await this.host.session(plan.owner)
+    assertCurrent()
+    if (!this.validArchitect(owner) || owner.id !== plan.owner)
+      throw new Error("Current Architect owner changed during startup settlement")
+
+    const evidence = {
+      kind: "worktree-startup-failure-settled-absent" as const,
+      schema: "lazers-worktree-startup-settlement/v1" as const,
+      requestID,
+      planID: plan.id,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      effectID: effect.id,
+      sessionID: attempt.session_id,
+      workspace: attempt.workspace,
+      base: attempt.base_commit,
+      observedAt: this.now(),
+      observations: {
+        candidates,
+        nativeAbsent: true as const,
+        gitAbsent: true as const,
+        filesystemAbsent: true as const,
+        sessionAbsent: true as const,
+      },
+    }
+    return failure.kind === "native-typed-failure"
+      ? { ...evidence, nativeFailure: failure.nativeFailure }
+      : { ...evidence, legacyFailure: failure.legacyFailure }
+  }
+
+  private startupRecoveryAuthorization(
+    plan: PlanRow,
+    attempt: AttemptRow,
+  ): StartupRecoveryAuthorization | undefined {
+    const authorization = this.store.latestTransition<unknown>(
+      plan.id,
+      attempt.task_id,
+      "STARTUP_RECOVERY_AUTHORIZED",
+    )
+    if (!isRecord(authorization)) return undefined
+    if (
+      authorization.schema !== "lazers-worktree-startup-authorization/v1" ||
+      typeof authorization.recoveryID !== "string" ||
+      typeof authorization.sourceEffectID !== "string" ||
+      typeof authorization.settlementRequestID !== "string" ||
+      typeof authorization.requestID !== "string" ||
+      typeof authorization.owner !== "string" ||
+      typeof authorization.planVersion !== "number" ||
+      typeof authorization.ownerEpoch !== "number" ||
+      typeof authorization.planRevision !== "number" ||
+      authorization.taskID !== attempt.task_id ||
+      authorization.attemptID !== attempt.id ||
+      typeof authorization.sessionID !== "string" ||
+      typeof authorization.messageID !== "string" ||
+      typeof authorization.workspace !== "string" ||
+      typeof authorization.base !== "string" ||
+      typeof authorization.policy !== "string"
+    )
+      return undefined
+    return authorization as StartupRecoveryAuthorization
+  }
+
+  private startupRecoveryAuthorityCurrent(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    authorization: StartupRecoveryAuthorization,
+  ) {
+    const current = this.store.plan(plan.id)
+    const currentAttempt = this.store
+      .attempts(plan.id)
+      .find((candidate) => candidate.id === attempt.id)
+    return Boolean(
+      current &&
+      currentAttempt &&
+      current.state === "running" &&
+      current.owner === authorization.owner &&
+      current.version >= authorization.planVersion &&
+      this.store.planControlEpoch(plan.id) === authorization.ownerEpoch &&
+      current.revision === authorization.planRevision &&
+      currentAttempt.state === "preparing" &&
+      currentAttempt.task_id === authorization.taskID &&
+      currentAttempt.session_id === authorization.sessionID &&
+      currentAttempt.message_id === authorization.messageID &&
+      currentAttempt.workspace === authorization.workspace &&
+      currentAttempt.base_commit === authorization.base &&
+      currentAttempt.policy === authorization.policy,
+    )
+  }
+
+  private async startupWorkspaceReady(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+  ): Promise<boolean> {
+    if (attempt.workspace === this.directory) return true
+    const effects = this.store.effects(plan.id).filter((effect) => effect.attempt_id === attempt.id)
+    const matchingReceipt = (effect: EffectRow) => {
+      if (effect.state !== "completed" || !effect.receipt) return false
+      try {
+        const receipt = JSON.parse(effect.receipt) as { workspace?: unknown; base?: unknown }
+        return receipt.workspace === attempt.workspace && receipt.base === attempt.base_commit
+      } catch {
+        return false
+      }
+    }
+    const recoveryAuthorization = this.startupRecoveryAuthorization(plan, attempt)
+    const authorizedRecovery = recoveryAuthorization
+      ? this.currentStartupRecoveryOperation(
+          plan,
+          attempt,
+          this.store.effects(plan.id),
+          recoveryAuthorization,
+        )
+      : undefined
+    if (
+      effects.some((effect) => effect.kind === "worktree" && matchingReceipt(effect)) ||
+      (authorizedRecovery?.kind === "worktree-recovery" && matchingReceipt(authorizedRecovery))
+    ) {
+      try {
+        if (!existsSync(attempt.workspace)) return false
+        const head = git(attempt.workspace, ["rev-parse", "HEAD"])
+        const workerWasAdmitted =
+          effects.some(
+            (effect) =>
+              effect.kind === "prompt" &&
+              effect.state === "completed" &&
+              effect.attempt_id === attempt.id,
+          ) || this.store.progressFacts([attempt.id]).length > 0
+        return workerWasAdmitted || head === attempt.base_commit
+      } catch {
+        return false
+      }
+    }
+
+    const authorization = this.startupRecoveryAuthorization(plan, attempt)
+    if (!authorization || !this.startupRecoveryAuthorityCurrent(plan, attempt, authorization))
+      return false
+    const sourceEffect = effects.find((effect) => effect.id === authorization.sourceEffectID)
+    const settlement = sourceEffect
+      ? this.startupSettlementForEffect(plan.id, attempt, sourceEffect, effects)
+      : undefined
+    if (
+      sourceEffect?.state !== "failed" ||
+      !settlement ||
+      settlement.planID !== plan.id ||
+      settlement.taskID !== attempt.task_id ||
+      settlement.attemptID !== attempt.id ||
+      settlement.sessionID !== attempt.session_id ||
+      settlement.workspace !== attempt.workspace ||
+      settlement.base !== attempt.base_commit ||
+      settlement.requestID !== authorization.settlementRequestID ||
+      !this.preparationAllowed(attempt)
+    )
+      return false
+
+    const recoveryEffect = effects.find((effect) => {
+      if (effect.kind !== "worktree-recovery") return false
+      try {
+        return (
+          (JSON.parse(effect.payload) as { recoveryID?: unknown }).recoveryID ===
+          authorization.recoveryID
+        )
+      } catch {
+        return false
+      }
+    })
+    if (recoveryEffect) return false
+
+    const workerEffects = this.store
+      .effects(plan.id)
+      .some(
+        (effect) =>
+          effect.attempt_id === attempt.id &&
+          (effect.kind === "session" || effect.kind === "prompt"),
+      )
+    if (workerEffects || this.store.progressFacts([attempt.id]).length > 0) return false
+
+    const candidates = startupWorktreeCandidates(attempt.workspace)
+    try {
+      const worker = await this.host.session(attempt.session_id)
+      if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization) || worker)
+        return false
+      const nativeWorktrees = await this.host.worktrees()
+      if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
+      if (nativeWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
+        return false
+      const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => line.slice("worktree ".length))
+      if (gitWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
+        return false
+      for (const candidate of candidates) {
+        try {
+          lstatSync(candidate)
+          return false
+        } catch (error) {
+          if (!isRecord(error) || error.code !== "ENOENT") return false
+        }
+      }
+      if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
+    } catch {
+      return false
+    }
+
+    const operation = this.effect(
+      plan.id,
+      attempt.task_id,
+      attempt.id,
+      "worktree-recovery",
+      {
+        schema: "lazers-worktree-recovery-operation/v1",
+        recoveryID: authorization.recoveryID,
+        sourceEffectID: authorization.sourceEffectID,
+        settlementRequestID: authorization.settlementRequestID,
+        authorizationRequestID: authorization.requestID,
+        authorizedOwner: authorization.owner,
+        authorizedVersion: authorization.planVersion,
+        sessionID: attempt.session_id,
+        messageID: attempt.message_id,
+        workspace: attempt.workspace,
+        base: attempt.base_commit,
+        policy: attempt.policy,
+      },
+      fence,
+    )
+    if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
+    try {
+      const actual = await this.host.worktree({
+        directory: attempt.workspace,
+        base: attempt.base_commit,
+      })
+      if (
+        actual !== attempt.workspace ||
+        git(actual, ["rev-parse", "HEAD"]) !== attempt.base_commit
+      )
+        throw new Error("Recovered native worktree did not match the reserved workspace and source")
+      return this.completeStartupRecovery(plan, attempt, operation, authorization, actual, fence)
+    } catch (error) {
+      this.uncertain(operation, error, fence)
+      return false
+    }
+  }
+
   async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
@@ -719,6 +1464,7 @@ export class TaskRuntime {
         "retry",
         "adopt-descendant",
         "quarantine-source",
+        "settle-startup",
       ].includes(command.action)
     ) {
       if (!target) throw new Error("Target session required")
@@ -800,6 +1546,42 @@ export class TaskRuntime {
       caller,
       ownerSession,
     )
+    let startupSettlement:
+      | {
+          attempt: AttemptRow
+          effect: EffectRow
+          failure: StartupWorktreeFailureEvidence
+          evidence: StartupAbsenceEvidence
+        }
+      | undefined
+    if (command.action === "settle-startup") {
+      if (
+        !command.taskID ||
+        !command.attemptID ||
+        !command.reason ||
+        !ownerSession ||
+        !this.validArchitect(ownerSession) ||
+        ownerSession.id !== old.owner
+      )
+        throw new Error(
+          "Startup settlement requires the current Architect owner and exact task attempt",
+        )
+      const candidate = this.startupSettlementCandidate(old, command.taskID, command.attemptID)
+      const evidence = await this.observeStartupAbsence(
+        old,
+        candidate.attempt,
+        candidate.effect,
+        candidate.failure,
+        command.requestID,
+      )
+      this.assertStartupSettlementCurrent(
+        old,
+        candidate.attempt,
+        candidate.effect,
+        candidate.failure,
+      )
+      startupSettlement = { ...candidate, evidence }
+    }
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -1080,6 +1862,63 @@ export class TaskRuntime {
       }
       if (command.action === "audit")
         return { status: "audited", ...this.store.audit(), version: plan.version }
+      if (command.action === "settle-startup") {
+        if (!startupSettlement || !command.taskID || !command.reason)
+          throw new Error("Startup settlement evidence is unavailable")
+        this.assertStartupSettlementCurrent(
+          plan,
+          startupSettlement.attempt,
+          startupSettlement.effect,
+          startupSettlement.failure,
+        )
+        const receipt = appendRunnerEffectReceipt(
+          startupSettlement.effect.receipt,
+          startupSettlement.evidence,
+        )
+        const settledEffect = db
+          .query(
+            `UPDATE runner_effects SET state='failed',receipt=?
+             WHERE id=? AND plan_id=? AND task_id=? AND attempt_id=? AND state='uncertain'`,
+          )
+          .run(
+            receipt,
+            startupSettlement.effect.id,
+            plan.id,
+            command.taskID,
+            startupSettlement.attempt.id,
+          ).changes
+        if (settledEffect !== 1)
+          throw new Error("Original startup effect changed before settlement")
+        const reason =
+          "Startup worktree failure evidence was settled after all reserved resources were confirmed absent; explicit resume is required"
+        const changed = db
+          .query(
+            `UPDATE runner_plans SET reason=?,version=version+1
+             WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='blocked'`,
+          )
+          .run(
+            reason,
+            plan.id,
+            this.store.repository.projectDirectory,
+            caller,
+            command.expectedVersion,
+          ).changes
+        if (changed !== 1) throw new Error("Plan changed before startup settlement")
+        this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
+          ...startupSettlement.evidence,
+          reason: command.reason,
+          caller,
+        })
+        return {
+          status: "startup-failure-settled-absent",
+          planID: plan.id,
+          taskID: command.taskID,
+          attemptID: startupSettlement.attempt.id,
+          effectID: startupSettlement.effect.id,
+          version: plan.version + 1,
+          evidence: startupSettlement.evidence,
+        }
+      }
       if (command.action === "reassign") {
         if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
           throw new Error("Reassignment needs an unarchived same-project owner")
@@ -1288,6 +2127,84 @@ export class TaskRuntime {
             .some((effect) => ["intended", "uncertain"].includes(effect.state))
         )
           throw new Error("Reconcile uncertain effects first")
+
+        const settledStartupEffect = attempt
+          ? this.settledStartupEffect(plan.id, attempt)
+          : undefined
+        if (settledStartupEffect) {
+          const settlement = startupFailureSettlementFromReceipt(settledStartupEffect.receipt)
+          if (
+            retry ||
+            !command.attemptID ||
+            command.attemptID !== attempt!.id ||
+            attempt!.state !== "preparing" ||
+            plan.state !== "blocked" ||
+            !this.validArchitect(ownerSession) ||
+            ownerSession.id !== plan.owner ||
+            caller !== plan.owner ||
+            !settlement
+          )
+            throw new Error(
+              "Startup recovery requires explicit resume of the exact settled attempt",
+            )
+          const workerEffects = this.store
+            .effects(plan.id)
+            .some(
+              (effect) =>
+                effect.attempt_id === attempt!.id &&
+                (effect.kind === "session" ||
+                  effect.kind === "prompt" ||
+                  effect.kind.startsWith("verify:") ||
+                  effect.kind.startsWith("graph-verify:")),
+            )
+          if (
+            workerEffects ||
+            this.store.progressFacts([attempt!.id]).length > 0 ||
+            !this.preparationAllowed(attempt!)
+          )
+            throw new Error(
+              "Startup recovery cannot continue after worker effects or conflicting ownership",
+            )
+
+          const recoveryID = crypto.randomUUID()
+          const authorization: StartupRecoveryAuthorization = {
+            schema: "lazers-worktree-startup-authorization/v1",
+            recoveryID,
+            sourceEffectID: settledStartupEffect.id,
+            settlementRequestID: settlement.requestID,
+            requestID: command.requestID,
+            owner: plan.owner,
+            planVersion: plan.version + 1,
+            ownerEpoch: this.store.planControlEpoch(plan.id),
+            planRevision: plan.revision,
+            taskID: attempt!.task_id,
+            attemptID: attempt!.id,
+            sessionID: attempt!.session_id,
+            messageID: attempt!.message_id,
+            workspace: attempt!.workspace,
+            base: attempt!.base_commit,
+            policy: attempt!.policy,
+          }
+          db.query(
+            "UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
+          ).run(plan.id, plan.version)
+          this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_AUTHORIZED", authorization)
+          this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
+            attemptID: attempt!.id,
+            reason: command.reason,
+            usageRetained: true,
+            budget: null,
+            startupRecoveryID: recoveryID,
+            sourceEffectID: settledStartupEffect.id,
+          })
+          return {
+            status: "startup-recovery-authorized",
+            version: plan.version + 1,
+            attemptID: attempt!.id,
+            recoveryID,
+          }
+        }
+
         if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
         else if (node.state !== "running")
           this.store.move(plan.id, node.task_id, "RESUME", command.reason)
@@ -2706,9 +3623,12 @@ export class TaskRuntime {
   }
   private receipt(effect: EffectRow, receipt: unknown, fence: number) {
     this.store.fenced(this.owner, fence, (db) => {
-      db.query(
-        "UPDATE runner_effects SET state='completed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
-      ).run(JSON.stringify(receipt), effect.id)
+      const changed = db
+        .query(
+          "UPDATE runner_effects SET state='completed',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+        )
+        .run(JSON.stringify(receipt), effect.id).changes
+      if (changed !== 1) return
       this.store.record(effect.plan_id, effect.task_id, "EFFECT_COMPLETED", {
         effectID: effect.id,
         kind: effect.kind,
@@ -2716,13 +3636,43 @@ export class TaskRuntime {
     })
   }
   private uncertain(effect: EffectRow, error: unknown, fence: number) {
-    this.store.fenced(this.owner, fence, (db) =>
-      db
-        .query("UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=?")
-        .run(JSON.stringify({ error: errorText(error) }), effect.id),
+    const nativeFailure =
+      effect.kind === "worktree" || effect.kind === "worktree-recovery"
+        ? nativeWorktreeFailureEvidence(error)
+        : undefined
+    const changed = this.store.fenced(
+      this.owner,
+      fence,
+      (db) =>
+        db
+          .query(
+            "UPDATE runner_effects SET state='uncertain',receipt=? WHERE id=? AND state IN ('intended','uncertain')",
+          )
+          .run(
+            JSON.stringify({
+              ...(!nativeFailure ? { schema: UNCERTAIN_EFFECT_RECEIPT_SCHEMA } : {}),
+              error: errorText(error),
+              ...(nativeFailure ? { nativeFailure } : {}),
+            }),
+            effect.id,
+          ).changes,
     )
-    const plan = this.store.plan(effect.plan_id)!
-    if (plan.state !== "cancelling") {
+    if (changed !== 1) return
+    const plan = this.store.plan(effect.plan_id)
+    if (!plan || plan.state === "cancelling" || terminal.has(plan.state)) return
+    if (effect.kind === "worktree-recovery" && effect.attempt_id) {
+      const attempt = this.store
+        .attempts(effect.plan_id)
+        .find((item) => item.id === effect.attempt_id)
+      const authorization = attempt ? this.startupRecoveryAuthorization(plan, attempt) : undefined
+      if (
+        !attempt ||
+        !authorization ||
+        !this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)
+      )
+        return
+    }
+    {
       const reason = `Recovery uncertain for ${effect.kind} ${effect.id}: ${errorText(error)}`
       const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
       if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
@@ -3010,8 +3960,15 @@ export class TaskRuntime {
                 JSON.parse(effect.payload).messageID === attempt.message_id &&
                 effect.state === "completed",
             )
-          if (plan!.state === "blocked" && attempt.state === "preparing" && !promptCompleted)
+          const settledStartup = this.settledStartupEffect(plan!.id, attempt)
+          if (
+            plan!.state === "blocked" &&
+            attempt.state === "preparing" &&
+            !promptCompleted &&
+            !settledStartup
+          )
             return this.cancelReservedAttempt(plan!, attempt, fence)
+          if (plan!.state === "blocked" && settledStartup) return
           const scopeWait = this.store.latestTransition<{ attemptID: string; reason: string }>(
             plan!.id,
             attempt.task_id,
@@ -3730,13 +4687,22 @@ export class TaskRuntime {
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
     })
+    const admissionPlan = this.store.plan(plan.id)!
+    const admissionOwner = admissionPlan.owner
+    const admissionEpoch = this.store.planControlEpoch(plan.id)
     this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {
       attemptID: id,
       packet: policy.packet,
       ...(persona ? { persona } : {}),
     })
     if (input.workspaceMode === "shared") {
-      if (this.store.plan(plan.id)?.state !== "running") return
+      const current = this.store.plan(plan.id)
+      if (
+        current?.state !== "running" ||
+        current.owner !== admissionOwner ||
+        this.store.planControlEpoch(plan.id) !== admissionEpoch
+      )
+        return
       await this.prepareWorker(plan, attempt, fence)
       return
     }
@@ -3754,7 +4720,13 @@ export class TaskRuntime {
       this.uncertain(effect, error, fence)
       return
     }
-    if (this.store.plan(plan.id)?.state !== "running") return
+    const current = this.store.plan(plan.id)
+    if (
+      current?.state !== "running" ||
+      current.owner !== admissionOwner ||
+      this.store.planControlEpoch(plan.id) !== admissionEpoch
+    )
+      return
     await this.prepareWorker(plan, attempt, fence)
   }
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
@@ -3817,16 +4789,25 @@ export class TaskRuntime {
     return true
   }
 
-  private promptAdmissionAllowed(planID: string, attempt: AttemptRow) {
+  private promptAdmissionAllowed(
+    planID: string,
+    attempt: AttemptRow,
+    authority: { owner: string; ownerEpoch: number },
+  ) {
     const plan = this.store.plan(planID)
     const currentAttempt = this.store
       .attempts(planID)
       .find((candidate) => candidate.id === attempt.id)
     if (
       plan?.state !== "running" ||
+      plan.owner !== authority.owner ||
+      this.store.planControlEpoch(planID) !== authority.ownerEpoch ||
       currentAttempt?.state !== "preparing" ||
       !this.preparationAllowed(currentAttempt)
     )
+      return false
+    const recovery = this.startupRecoveryAuthorization(plan, currentAttempt)
+    if (recovery && !this.startupRecoveryAuthorityCurrent(plan, currentAttempt, recovery))
       return false
 
     const prerequisites = PlanInput.parse(JSON.parse(plan.body)).afterPlans ?? []
@@ -3891,10 +4872,18 @@ export class TaskRuntime {
   }
 
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    if (!this.promptAdmissionAllowed(plan.id, attempt)) return
+    const admissionPlan = this.store.plan(plan.id)
+    if (!admissionPlan || admissionPlan.state !== "running" || admissionPlan.owner !== plan.owner)
+      return
+    const authority = {
+      owner: admissionPlan.owner,
+      ownerEpoch: this.store.planControlEpoch(plan.id),
+    }
+    if (!(await this.startupWorkspaceReady(admissionPlan, attempt, fence))) return
+    if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
     const existing = this.store.effects(plan.id)
     if (!existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")) {
-      if (!this.promptAdmissionAllowed(plan.id, attempt)) return
+      if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -3919,6 +4908,7 @@ export class TaskRuntime {
         return
       }
     }
+    if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
     if (
       !existing.some(
         (e) =>
@@ -3927,7 +4917,7 @@ export class TaskRuntime {
           JSON.parse(e.payload).messageID === attempt.message_id,
       )
     ) {
-      if (!this.promptAdmissionAllowed(plan.id, attempt)) return
+      if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
       const effect = this.effect(
         plan.id,
         attempt.task_id,
@@ -3965,6 +4955,7 @@ export class TaskRuntime {
         return
       }
     }
+    if (!this.promptAdmissionAllowed(plan.id, attempt, authority)) return
     this.store.fenced(this.owner, fence, (db) =>
       db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(attempt.id),
     )
@@ -5457,6 +6448,49 @@ export class TaskRuntime {
         })
     })
   }
+  private async retireCleanedWorktreeLocation(
+    plan: PlanRow,
+    workspace: string,
+    cleanupCurrent: () => boolean,
+  ) {
+    const retire = this.host.retireWorktreeLocation
+    if (!retire) return "unsupported"
+    const target = resolve(workspace)
+    if (target === resolve(this.directory)) return "shared-checkout"
+    if (!cleanupCurrent()) return "superseded"
+    if (
+      this.store
+        .plans()
+        .some(
+          (other) =>
+            other.id !== plan.id &&
+            this.store.attempts(other.id).some((attempt) => resolve(attempt.workspace) === target),
+        )
+    )
+      return "reserved-by-other-attempt"
+    try {
+      const native = await this.host.worktrees()
+      if (!cleanupCurrent()) return "superseded"
+      if (native.some((directory) => resolve(directory) === target))
+        return "native-resource-present"
+      const gitWorktrees = git(this.directory, ["worktree", "list", "--porcelain"])
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => resolve(line.slice("worktree ".length)))
+      if (gitWorktrees.includes(target)) return "git-resource-present"
+      try {
+        lstatSync(target)
+        return "filesystem-resource-present"
+      } catch (error) {
+        if (!isRecord(error) || error.code !== "ENOENT") return "unavailable"
+      }
+      if (!cleanupCurrent()) return "superseded"
+      const result: WorktreeLocationRetirement = await retire.call(this.host, target)
+      return cleanupCurrent() ? result : "superseded"
+    } catch {
+      return "unavailable"
+    }
+  }
   private async cleanupWorktrees(plan: PlanRow, fence: number) {
     const cleanupCurrent = () => this.store.plan(plan.id)?.state === "cleaning"
     if (!cleanupCurrent()) return
@@ -5532,7 +6566,13 @@ export class TaskRuntime {
           throw new Error(
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )
-        this.receipt(effect, { workspace, removed: true, native: true }, fence)
+        const cacheRetirement = await this.retireCleanedWorktreeLocation(
+          plan,
+          workspace,
+          cleanupCurrent,
+        )
+        if (!cleanupCurrent()) return
+        this.receipt(effect, { workspace, removed: true, native: true, cacheRetirement }, fence)
         if (!cleanupCurrent()) return
       } catch (error) {
         const reason = errorText(error)
@@ -5684,29 +6724,42 @@ export class TaskRuntime {
       } else if (
         [
           "worktree",
+          "worktree-recovery",
           "graph-worktree",
           "adoption-task-worktree",
           "adoption-combined-worktree",
         ].includes(effect.kind)
       ) {
+        const nativeFailure =
+          effect.kind === "worktree" || effect.kind === "worktree-recovery"
+            ? nativeWorktreeFailureFromReceipt(effect.receipt)
+            : undefined
         const startupRecoveryReason = (() => {
-          if (effect.kind !== "worktree" || effect.state !== "uncertain" || !effect.receipt)
+          if (
+            !["worktree", "worktree-recovery"].includes(effect.kind) ||
+            effect.state !== "uncertain" ||
+            !effect.receipt ||
+            nativeFailure
+          )
             return undefined
           try {
             const receipt = JSON.parse(effect.receipt) as { error?: unknown }
             return typeof receipt.error === "string"
-              ? `Recovery uncertain for worktree ${effect.id}: ${receipt.error}`
+              ? `Recovery uncertain for ${effect.kind} ${effect.id}: ${receipt.error}`
               : undefined
           } catch {
             return undefined
           }
         })()
-        const candidates = (await this.host.worktrees())
-          .filter(
-            (directory) =>
-              directory === payload.workspace ||
-              (/^-[2-9]$|^-10$/.test(directory.slice(payload.workspace.length)) &&
-                directory.startsWith(payload.workspace)),
+        const nativeWorktrees = await this.host.worktrees()
+        // A typed native failure is affirmative terminal evidence, not a lost
+        // success response. It can never be promoted to a ready workspace.
+        if (nativeFailure) return
+        const candidates = nativeWorktrees
+          .filter((directory) =>
+            effect.kind === "worktree-recovery"
+              ? directory === payload.workspace
+              : isStartupWorktreeCandidate(payload.workspace, directory),
           )
           .filter(
             (directory) =>
@@ -5738,7 +6791,35 @@ export class TaskRuntime {
             const attempt = plan
               ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
               : undefined
-            if (plan?.state === "blocked" && attempt?.state === "preparing") {
+            const authorization =
+              effect.kind === "worktree-recovery" && plan && attempt
+                ? this.startupRecoveryAuthorization(plan, attempt)
+                : undefined
+            let recoveryBinding = true
+            if (effect.kind === "worktree-recovery") {
+              try {
+                const operation = JSON.parse(effect.payload) as {
+                  recoveryID?: unknown
+                  sourceEffectID?: unknown
+                }
+                recoveryBinding = Boolean(
+                  authorization &&
+                  plan?.owner === authorization.owner &&
+                  plan.version >= authorization.planVersion &&
+                  this.store.planControlEpoch(plan.id) === authorization.ownerEpoch &&
+                  operation.recoveryID === authorization.recoveryID &&
+                  operation.sourceEffectID === authorization.sourceEffectID,
+                )
+              } catch {
+                recoveryBinding = false
+              }
+            }
+            if (
+              plan?.state === "blocked" &&
+              plan.reason === startupRecoveryReason &&
+              attempt?.state === "preparing" &&
+              recoveryBinding
+            ) {
               this.store.fenced(this.owner, fence, (db) => {
                 const changed =
                   db
@@ -5747,11 +6828,26 @@ export class TaskRuntime {
                     )
                     .run(plan.id, startupRecoveryReason).changes === 1
                 if (!changed) return
-                this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
-                  effectID: effect.id,
-                  attemptID: effect.attempt_id,
-                  workspace,
-                })
+                if (effect.kind === "worktree-recovery" && authorization)
+                  this.store.record(
+                    plan.id,
+                    attempt!.task_id,
+                    "STARTUP_RECOVERY_OPERATION_RESUMED",
+                    {
+                      effectID: effect.id,
+                      sourceEffectID: authorization.sourceEffectID,
+                      recoveryID: authorization.recoveryID,
+                      attemptID: effect.attempt_id,
+                      workspace,
+                      planVersion: plan.version + 2,
+                    },
+                  )
+                else
+                  this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
+                    effectID: effect.id,
+                    attemptID: effect.attempt_id,
+                    workspace,
+                  })
               })
             }
           }

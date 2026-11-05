@@ -240,6 +240,31 @@ export function appendOutboxReceipt(previous: string | null, next: unknown) {
   return JSON.stringify({ history })
 }
 
+/** Preserve the first effect receipt while adding durable, append-only recovery evidence. */
+export function appendRunnerEffectReceipt(previous: string | null, next: unknown) {
+  let prior: Record<string, unknown> | undefined
+  if (previous) {
+    try {
+      const parsed: unknown = JSON.parse(previous)
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed))
+        prior = parsed as Record<string, unknown>
+    } catch {
+      // Preserve legacy, non-JSON receipts as an opaque history entry.
+    }
+  }
+  const history = Array.isArray(prior?.history)
+    ? [...prior.history]
+    : prior
+      ? [prior]
+      : previous
+        ? [{ legacyReceipt: previous }]
+        : []
+  return JSON.stringify({
+    ...(prior ?? {}),
+    history: [...history, next],
+  })
+}
+
 function isGeneratedOutcome(
   db: Database,
   sessionID: string,
@@ -2495,6 +2520,20 @@ export class RunnerStore {
         .get(planID, taskID, event),
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
+  }
+  /** High-water mark for plan-level owner/cancellation changes, excluding ordinary node activity. */
+  planControlEpoch(planID: string): number {
+    return this.atomic(
+      (db) =>
+        db
+          .query<{ epoch: number }, [string]>(
+            `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
+             WHERE plan_id=? AND task_id IS NULL AND event IN (
+               'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
+             )`,
+          )
+          .get(planID)!.epoch,
+    )
   }
   move(planID: string, taskID: string, event: string, reason: string | null = null) {
     return this.atomic((db) => {

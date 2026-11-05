@@ -177,6 +177,7 @@ export const CommandInput = z
       "amend-scope",
       "adopt-descendant",
       "quarantine-source",
+      "settle-startup",
     ]),
     reason: z
       .string()
@@ -225,6 +226,16 @@ export const CommandInput = z
         path: ["reviewInputID"],
         message: "Review input reconciliation requires action reconcile, taskID and attemptID",
       })
+  })
+  .superRefine((command, context) => {
+    if (command.action !== "settle-startup") return
+    for (const field of ["taskID", "attemptID", "reason"] as const)
+      if (!command[field])
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `Startup settlement requires ${field}`,
+        })
   })
 export type CommandInput = z.infer<typeof CommandInput>
 

@@ -44,9 +44,9 @@ At1793873488383–1793873489052 the registered traversal returned:
 - Correct page counts and cursor/hasMore agreement, ending without a next cursor.
 - Root's selected original SDK reference was present in these registered results.
 - Metadata-only/no-bodies coverage was checked; output projected counts, uniqueness
- and revision summaries rather than records or message bodies.
+  and revision summaries rather than records or message bodies.
 
-No scanner diagnostic change was observed *within* this subsecond traversal.
+No scanner diagnostic change was observed _within_ this subsecond traversal.
 Scanner advance is established by Root's separate12-second production-reader
 probe, not by this registered traversal.
 

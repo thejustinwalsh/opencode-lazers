@@ -165,3 +165,76 @@ untyped captures need a distinguishable format so a modern defect with similar
 error text cannot become inferred legacy typed evidence. Preserve original raw
 receipts, unknowns, fresh resource checks and tests with independent identities.
 This is an open correction, not a qualified migration.
+
+## Repeat recheck and dependent task bases
+
+Root reran the independent repeated-failure regression after the operation-selection
+change: one pass, seven assertions. The second conclusive creation failure can now
+be settled through the current tool path. This is a narrow behavioral recheck.
+
+`/private/tmp/lazers-startup-dependent-base-review-20261105.test.ts` then reproduced
+a classifier rejection when a child attempt's source includes accepted prerequisite
+artifacts and differs from the plan anchor. Existing `runtime.dependencySource`
+explicitly constructs that normal source. The legacy classifier's extra
+`planBase === attempt.base` condition is therefore not a valid generic invariant;
+creation payload/base/attempt bindings still apply. The pure classifier test
+returned one failure; it does not claim an end-to-end dependent-worker run.
+Delivered through Desktop for the same implementation.
+
+The expanded independent repeated-failure recheck also passed: after two failed
+creations and two settlements, explicit continuation created the worktree and
+admitted exactly one session/prompt in the original single attempt (ten
+assertions). This exercises the complete repeated-recovery admission path in an
+isolated Git/SQLite fixture; it is not a native OpenCode product observation.
+
+After the dependent-base correction, both independent rechecks passed together:
+the child-base classifier case (one assertion) and full repeated-recovery admission
+case (ten assertions). The production-ID allowlist is absent from the current
+helper. Broad current checks, final artifact review and native139/141 execution
+remain open; these are source/fixture observations only.
+
+## Recovery after coordinator reassignment
+
+Root's `/private/tmp/lazers-startup-new-owner-review-20261105.test.ts` adds a
+supported reassignment after the linked recovery creation fails conclusively.
+The current same-project Architect then cannot settle it: the lookup requires
+the historical recovery authorization's owner/epoch still to be current. The
+run returned one failure after six assertions. The command's current-owner and
+version checks already authorize settlement; historical operation identity and
+fresh execution admission need distinct checks. Preserve stale-caller/callback
+fences while proving the new owner's positive settlement/continuation path.
+Sent to the same118 review; no production state changed by the fixture.
+
+After the worker correction, the independent new-owner recheck passed: one test,
+ten assertions, including settlement and continuation under the replacement
+coordinator. This is isolated source verification; native recovery of139/141 and
+final integration remain outstanding.
+
+## Delivery priority and coordinator observation
+
+At1793883198876, the native active-session API listed only the118 Luna worker.
+Main Architect e568 was present, unarchived and idle. Retained coordinator5920
+was archived at1793882713544 and replaced by4229, whose native parent is5920;
+4229 was also idle. This was renewal, not a missing-session incident.
+
+Current source already distinguishes invalid/missing owners from valid idle
+owners: `ensureArchitectOwner` reuses or creates a native continuation, while
+idle renewal uses a default30-minute window with a single plugin override.
+The timeout selection is not provider/model-aware. A broader lifecycle
+simplification must reuse this existing recovery machinery and queued work,
+after overdue product delivery. Root relayed that order through Desktop:
+finish the minimum118 blocker, recover the existing trajectory/Models workers,
+and deliver visible features before expanding the foundation refactor.
+
+## Combined-source integration verification
+
+Luna completed53cc05d atop4cd3694 and became natively idle. Its branch passed
+265 runner tests/3748 assertions and format/lint/types. Root independently
+resolved adjacent additions against main in a temporary source copy, preserving
+review-input reconciliation, quarantine and retained-work behavior. Integration
+restored the record-shape helper required by the new recovery code and removed
+a duplicate import. The combined source passed typecheck,61 focused tests and
+the full current runner suite:424 tests/5764 assertions across23 files in118.83s.
+These checks do not claim actual139/141 recovery or completed feature delivery.
+Main reconciled the genuine completed worker review input through the native
+control and is awaiting source activation for real startup settlement/resume.

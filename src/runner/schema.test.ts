@@ -39,6 +39,24 @@ test("PlanInput keeps the title absent for untitled and legacy plan bodies", () 
   expect(parsed.objective).toBe(legacyBody.objective)
 })
 
+test("startup settlement command requires exact task, attempt and decision", () => {
+  const base = {
+    requestID: "settle-startup-test",
+    planID: crypto.randomUUID(),
+    expectedVersion: 2,
+    action: "settle-startup" as const,
+    reason: "Native failure and absence were reviewed.",
+    taskID: crypto.randomUUID(),
+    attemptID: crypto.randomUUID(),
+  }
+  expect(CommandInput.parse(base)).toEqual(base)
+  for (const field of ["taskID", "attemptID", "reason"] as const) {
+    const invalid = { ...base }
+    delete invalid[field]
+    expect(CommandInput.safeParse(invalid).success).toBe(false)
+  }
+})
+
 test("Architect continuity preserves exact authored decisions and bounds the handoff", () => {
   const continuity = {
     decisions: [" Keep the accepted direction. "],

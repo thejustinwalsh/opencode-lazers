@@ -7,23 +7,24 @@ import { Provider } from "@opencode/schema/provider"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { AbsolutePath } from "@opencode/schema/schema"
-import { DateTime, Effect } from "effect"
+import { Cause, DateTime, Effect, Exit } from "effect"
 import type {
   ArchitectInputPage,
   ArchitectSourceResult,
   HostBackgroundObservation,
   RunnerHost,
+  WorktreeLocationRetirement,
 } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
-import { basename, dirname } from "node:path"
+import { basename, dirname, resolve } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
 import { SourceFence } from "./source-fence-rpc.ts"
 import { sourceGuardMatches } from "./source-quarantine.ts"
-import { resolve } from "node:path"
 import { NativeIdleStore } from "./native-idle.ts"
 import type { NativeIdleTerminal } from "./native-idle.ts"
+import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -33,13 +34,14 @@ export type NativeInboxClient = {
   permission: Pick<ReturnType<typeof OpenCode.make>["permission"], "request">
   session: Pick<
     ReturnType<typeof OpenCode.make>["session"],
-    "active" | "get" | "synthetic" | "inbox" | "update"
+    "active" | "get" | "synthetic" | "inbox" | "update" | "list"
   >
   experimental: {
     session: Pick<ReturnType<typeof OpenCode.make>["experimental"]["session"], "log">
   }
   message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
   shell: Pick<ReturnType<typeof OpenCode.make>["shell"], "list">
+  debug: Pick<ReturnType<typeof OpenCode.make>["debug"], "location">
 }
 export type NativeInboxDependencies = {
   discover: typeof Service.discover
@@ -363,16 +365,37 @@ export function nativeHost(
       return agent.data.model
     },
     async worktree(input) {
-      const result = await Effect.runPromise(
-        ctx.worktree.create({
-          projectID: ctx.location.project.id,
-          from: ctx.location.directory,
-          branch: input.base,
-          directory: AbsolutePath.make(dirname(input.directory)),
-          name: basename(input.directory),
-        }),
+      const create = {
+        projectID: ctx.location.project.id,
+        // Worktree creation belongs to the canonical project even when this
+        // plugin invocation is hosted from a disposable participant tree.
+        from: AbsolutePath.make(repository.projectDirectory),
+        branch: input.base,
+        directory: AbsolutePath.make(dirname(input.directory)),
+        name: basename(input.directory),
+      }
+      let operation: ReturnType<typeof ctx.worktree.create>
+      try {
+        operation = ctx.worktree.create(create)
+      } catch (error) {
+        throw new Error(error instanceof Error ? error.message || String(error) : String(error), {
+          cause: error,
+        })
+      }
+      const exit = await Effect.runPromiseExit(operation)
+      if (Exit.isSuccess(exit)) return exit.value.directory
+      const [reason] = exit.cause.reasons
+      if (exit.cause.reasons.length === 1 && reason && Cause.isFailReason(reason)) {
+        const evidence = nativeWorktreeFailureEvidence(reason.error)
+        if (evidence) throw new NativeWorktreeCreationFailure(evidence)
+      }
+      const failure = Cause.squash(exit.cause)
+      throw new Error(
+        failure instanceof Error ? failure.message || String(failure) : String(failure),
+        {
+          cause: failure,
+        },
       )
-      return result.directory
     },
     async worktrees() {
       await Effect.runPromise(ctx.worktree.refresh({ projectID: ctx.location.project.id }))
@@ -388,6 +411,41 @@ export function nativeHost(
           force: false,
         }),
       )
+    },
+    async retireWorktreeLocation(directory): Promise<WorktreeLocationRetirement> {
+      const target = resolve(directory)
+      if (
+        target === resolve(ctx.location.directory) ||
+        target === resolve(repository.projectDirectory)
+      )
+        return "current-location"
+      try {
+        const client = await connectedClient()
+        const loaded = await runNative(client, () => client.debug.location.list())
+        if (!loaded.some((location) => resolve(location.directory) === target)) return "not-loaded"
+
+        const active = await runNative(client, () => client.session.active())
+        if (!active || typeof active !== "object" || Array.isArray(active)) return "unavailable"
+        for (const [sessionID, status] of Object.entries(active)) {
+          if (!status || status.type !== "running") return "unavailable"
+          const session = await runNative(client, () =>
+            client.session.get({ sessionID: Session.ID.make(sessionID) }),
+          )
+          if (resolve(session.location.directory) === target) return "active-session"
+        }
+
+        const current = await runNative(client, () => client.debug.location.list())
+        if (!current.some((location) => resolve(location.directory) === target)) return "not-loaded"
+        await runNative(client, () =>
+          client.debug.location.evict({ location: { directory: target } }),
+        )
+        const after = await runNative(client, () => client.debug.location.list())
+        return after.some((location) => resolve(location.directory) === target)
+          ? "unavailable"
+          : "evicted"
+      } catch {
+        return "unavailable"
+      }
     },
     async session(id, options) {
       const client = await connectedClient()

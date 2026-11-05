@@ -117,13 +117,18 @@ export type RetainedWorkerArchive = {
   directory: string
   assignedMessageID: string
 }
+export type WorktreeLocationRetirement =
+  "evicted" | "not-loaded" | "active-session" | "current-location" | "unavailable"
 /** All host uncertainty is an error. null means authoritative not-found only. */
 export interface RunnerHost {
   /** Current native implementor-agent selection; never inferred from Architect identity. */
   workerModel?(): Promise<ModelPolicy | undefined>
+  /** Native adapters preserve only pinned typed creation failures; all other throws remain uncertain. */
   worktree(input: { directory: string; base: string }): Promise<string>
   worktrees(): Promise<string[]>
   removeWorktree(directory: string): Promise<void>
+  /** Evict only a positively cleaned checkout with no active sessions; absence is a no-op. */
+  retireWorktreeLocation?(directory: string): Promise<WorktreeLocationRetirement>
   /**
    * Session metadata is the normal heartbeat path. Request messages only for
    * explicit reconciliation or final accounting, where message history is

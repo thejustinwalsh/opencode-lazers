@@ -7,7 +7,7 @@ import { validProposal } from "../../test/proposal.ts"
 import { fingerprint } from "../identity.ts"
 import { TaskRepository } from "../storage.ts"
 import { PlanInput } from "./schema.ts"
-import { RunnerStore } from "./store.ts"
+import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -40,6 +40,17 @@ test("legacy Architect renewal rows migrate to store an explicit continuity snap
         .map((column) => column.name),
     ),
   ).toContain("continuity_json")
+})
+
+test("startup settlement receipt appends evidence without replacing the original operation failure", () => {
+  const nativeFailure = { nativeFailure: { nativeTag: "WorktreeError", message: "setup failed" } }
+  const settlement = { kind: "worktree-startup-failure-settled-absent", attemptID: "attempt" }
+  const receipt = JSON.parse(appendRunnerEffectReceipt(JSON.stringify(nativeFailure), settlement))
+
+  expect(receipt.history).toEqual([nativeFailure, settlement])
+  expect(appendRunnerEffectReceipt(null, settlement)).toBe(
+    JSON.stringify({ history: [settlement] }),
+  )
 })
 
 test("legacy adoption evidence remains auditable but cannot satisfy phase-bound evidence", () => {

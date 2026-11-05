@@ -130,6 +130,9 @@ test("authorized callers read native catalog advice; only orchestration requires
     revision: 1,
   })
   expect(continuityCalls).toEqual([{ sessionID: "ses_test", input: checkpoint }])
+  expect(tools.get("lz-plan-command")!.description).toContain(
+    "settle a terminal failed isolated-worktree startup",
+  )
   await expect(
     Effect.runPromise(continuity.execute(checkpoint, callContext("lazers-implementor"))),
   ).rejects.toThrow("Plan orchestration is restricted to Architect")
