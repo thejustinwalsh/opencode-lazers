@@ -43,7 +43,7 @@ authorized. The historical owner remains stopped, natively interrupted/idle at
   Do not rewrite initial IDs, fabricate idle, re-prompt for certificates or label
   review inputs as reminders to clear this gate.
 
-## Narrow repair and exact admission boundary
+## Narrow repair and original admission boundary
 
 LZ136 `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`, plan
 `ad6cb637-d5d7-4ee4-974e-727216f2bdd5`, is admitted for Luna Max at priority2300.
@@ -59,6 +59,34 @@ The repair cannot bypass that source admission. Existing `quarantine-source`
 requires the plan owner (`runtime.ts:486,539`) and preserves uncertain resources;
 the approved129/132 transfer grants no control over72. Root assistance must use
 authorized supported maintenance, not caller spoofing or direct lifecycle SQL.
+
+### Subsequent explicit72 approval and native dispatch
+
+The operator subsequently approved transfer of **only72** and its installed
+source-quarantine/archive flow. Fresh inspection found a renewed owner
+`ses_72db8086246b4cabb6abf6f2f431dcc7` at version13. Supported controls reassigned
+72 to this Architect (version14), then requested quarantine for original attempt
+`ed96f0b9-102b-4c64-aa8b-708a62d49fe7` (version15). Runtime revalidated the native
+state and sealed quarantine at1793849032014. Native worker
+`ses_136dd90605a14fc0a6e7ce9e0edc1413` was archived at1793849032001; SDK readback
+at1793849068839 confirmed archive and original worktree presence.
+
+72 is still blocked/verifying: four completed effects and the same one uncertain
+`verify:runner` effect. Its resources/history remain; no old-process termination,
+task completion or acceptance follows.88's plan
+`04020fac-7522-4024-a4bf-8b606c78034a` still has72 as its integrated prerequisite.
+
+136 then **actually dispatched** at1793849034879: planversion4, original new attempt
+`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`, native worker
+`ses_48e456730db5448d89a03440b372dca5`. SDK readback confirms this Architect parent,
+isolated attempt tree and exact OpenAI `gpt-6-luna/max`. This is native execution,
+not merely an admitted queued plan. No other legacy transfer was performed.
+
+Root also resolved predecessor reference
+`ses_e68a9ed37ffeVqzPWRXN5SB7Uw/msg_1a9794037001guCoXw4ue64keL` through native
+`client.session.message.get` at1793848806589 while journal disposition/revision/
+update remained unchanged. Selected retrieval is observed; registered candidate
+journal-tool observation remains outstanding.
 
 ## Retained quota failures and execution order
 
