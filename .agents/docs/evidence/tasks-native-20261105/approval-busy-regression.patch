@@ -5,7 +5,7 @@ index 7a38d49..7458a95 100644
 @@ -7798,6 +7798,24 @@ test.each(["failed", "interrupted"] as const)(
    },
  )
- 
+
 +test("approval resolution is visible while the same worker is still busy", async () => {
 +  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
 +  await runPlan(f)
