@@ -470,38 +470,10 @@ export const Changed = z.strictObject({
   resnapshotRequired: z.boolean(),
 })
 
-/** Temporary explicit process diagnostic; no model inputs or source bodies. */
-export const ServiceCPUProfileOutput = z.strictObject({
-  pid: z.int().positive(),
-  startedAt: z.number().finite(),
-  endedAt: z.number().finite(),
-  elapsedMs: z.number().nonnegative(),
-  requestedDurationMs: z.literal(10_000),
-  sampleIntervalUs: z.literal(1_000),
-  sampleCount: z.int().nonnegative(),
-  frames: z.array(
-    z.strictObject({
-      id: z.int().nonnegative(),
-      name: z.string(),
-      file: z.string().nullable(),
-      line: z.int().positive().nullable(),
-      column: z.int().positive().nullable(),
-      category: z.string(),
-      selfSamples: z.int().nonnegative(),
-      totalSamples: z.int().nonnegative(),
-    }),
-  ),
-  stacks: z.array(
-    z.strictObject({ frames: z.array(z.int().nonnegative()), samples: z.int().positive() }),
-  ),
-})
-export type ServiceCPUProfile = z.infer<typeof ServiceCPUProfileOutput>
-
 export const Observability = Rpc.define({
   id: "lazers.observability",
   methods: {
     snapshot: { input: SnapshotInput, output: SnapshotOutput },
-    serviceCPUProfile: { input: SnapshotInput, output: ServiceCPUProfileOutput },
     progressDiagnostics: {
       input: ProgressDiagnosticsInput,
       output: ProgressDiagnosticsOutput,
