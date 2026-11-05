@@ -1,6 +1,18 @@
 # Proposed unfinished-plan ownership consolidation
 
-Snapshot Unix ms: 1793853724691. Pending user approval; no transfers performed.
+Snapshot Unix ms: 1793853724691. User approved the exact list; all 58 transfers
+completed through native `lz-plan-command reassign` on 2026-11-05.
+
+Root independently checked at Unix ms `1793877361137`: all 58 now belong to
+`ses_e568438ebffeaoFbF9nBb942XM`, with 58 `OWNER_REASSIGNED` events. Direct
+before/after row comparisons found unchanged authored bodies, revisions, model
+routes, attempt/session/input/workspace identities, attempt policies and
+dependencies. Runtime writes came through the native tool; Root used SQLite
+read-only for observation. No hashes support this check. The coordinator reported
+unchanged nodes and policies as well. This establishes ownership consolidation,
+not task completion or successful recovery.
+
+The proposal and original authorization boundary follow for the retained record.
 
 Transfer these 58 existing unfinished plans from stopped historical owner
 `ses_728b844b477c4a569402cfdbcc5423e2` to current Architect `ses_e568438ebffeaoFbF9nBb942XM` through native `lz-plan-command reassign`.
