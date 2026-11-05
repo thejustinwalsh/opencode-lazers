@@ -83,9 +83,21 @@ function hasLatestSuccessfulIdleMarker(
           message.id === inputID && (message.type === "user" || message.type === "synthetic"),
       )
     : -1
+  // Completed compaction can remove every input from model context. The caller
+  // resolves that input from retained native history and binds it to the idle
+  // report; requiring its presence here would reject a genuine completed turn.
+  const inputPrecedesIdle =
+    currentInputIndex >= 0
+      ? currentInputIndex < latestIdleIndex
+      : inputID !== undefined &&
+        messages.some(
+          (message, index) =>
+            index < latestIdleIndex &&
+            message.type === "compaction" &&
+            message.status === "completed",
+        )
   return (
-    currentInputIndex >= 0 &&
-    currentInputIndex < latestIdleIndex &&
+    inputPrecedesIdle &&
     !messages.slice(latestIdleIndex + 1).some((message) => message.type === "assistant")
   )
 }

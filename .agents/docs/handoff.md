@@ -20,14 +20,15 @@ cleanup are separate facts.
   `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. Following authorized72 quarantine,136
   dispatched at1793849034879: attempt`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`,
   session`ses_48e456730db5448d89a03440b372dca5`, OpenAI Luna Max in its native
-  isolated worktree. After independent Luna review, corrected admission-race and
-  sequence-bound regressions pass200 runtime/schema tests/3469 assertions at 1793851696638. Full compatibility then passed400 tests but one inherited
-  artifact-evidence test timed out at Bun's5-second test deadline, with a follow-on
-  error. Same-worker rerun began1793851878210 and remains active. Root autoformatted
-  the inherited Astra evidence note in that tree and canonical (b310b7f); Architect
-  amended exactly that file into the existing scope, planversion9. No new worker
-  input, attempt, activation, integration or acceptance. LZ134 waits for133.
-  Final-candidate review and native qualification remain required.
+  isolated worktree. Candidate4a9a8d6 is committed;200 focused tests and the exact
+  combined401-test/quality command pass. Final native Luna review is running in
+  ses_e560d6997ffexfId3QjKfNupkQ. Runtime completion is blocked by a separate
+  compacted-context adapter bug: the exact successful idle marker survives but
+  every input was compacted out, while the old validator requires input presence.
+  Root fixed native.ts/native.test.ts,52 tests/334 assertions plus quality pass;
+  quiet activation and actual136 verification remain pending. Original worker and
+  input are unchanged. See design/reviews/native-compaction-idle-confirmation-20261104.md.
+  No136 activation/integration/acceptance yet;133/135 remain blocked and134 waits.
   [Actual order and evidence](../../design/reviews/execution-order-20261104.md).
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are

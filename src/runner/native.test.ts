@@ -16,6 +16,7 @@ import { makeFixture as makeTrajectoryFixture } from "../../test/trajectory/fixt
 
 type NativeRevalidationOptions = {
   messages?: unknown[]
+  history?: unknown[]
   sessionError?: unknown
   inboxError?: unknown
   inbox?: unknown[]
@@ -104,7 +105,9 @@ function nativeRevalidationHost(
         },
     message: {
       list: async ({ type }: { type: string }) => ({
-        data: messages.filter((message) => testNativeObject(message)?.type === type),
+        data: (options.history ?? messages).filter(
+          (message) => testNativeObject(message)?.type === type,
+        ),
         cursor: {},
       }),
     },
@@ -1321,6 +1324,58 @@ test("fresh native reads confirm the separate pinned idle terminal marker after 
     ).toBe(true)
   } finally {
     fixture.close()
+  }
+})
+
+test("compacted native idle confirmation uses retained input without accepting stale markers", async () => {
+  for (const inputType of ["user", "synthetic"] as const) {
+    for (const scenario of [
+      "current",
+      "foreign-input",
+      "stale-marker",
+      "later-response",
+    ] as const) {
+      const fixture = makeTrajectoryFixture()
+      try {
+        const idleStore = new NativeIdleStore(fixture.repository)
+        const binding = idleStore.assignmentForSession("ses-accepted")!
+        const terminal = persistNativeIdle(idleStore, binding, 0)!
+        const now = DateTime.nowUnsafe()
+        const assistant = {
+          id: "msg_after_compaction",
+          type: "assistant",
+          time: { created: now, completed: now },
+          finish: "stop",
+          content: [],
+        }
+        const messages = [
+          { id: "msg_compaction", type: "compaction", status: "completed" },
+          assistant,
+          {
+            id: scenario === "stale-marker" ? "msg_other_idle" : terminal.messageID,
+            type: "idle",
+            outcome: "succeeded",
+            time: { created: now },
+          },
+          ...(scenario === "later-response" ? [{ ...assistant, id: "msg_later_response" }] : []),
+        ]
+        const inputID = scenario === "foreign-input" ? "msg_foreign_input" : "msg_current_input"
+        const adapter = nativeRevalidationHost(fixture.repository, {
+          messages,
+          history: [{ id: inputID, type: inputType }],
+        })
+        const result = await adapter.host.session(binding.sessionID, { messages: true })
+        expect(result?.turn?.inputID).toBe(inputID)
+        expect(result?.background).toMatchObject(
+          scenario === "current"
+            ? { state: "observed", count: 0, inputID, terminalMessageID: terminal.messageID }
+            : { state: "unknown" },
+        )
+        expect(adapter.contextReads).toBe(2)
+      } finally {
+        fixture.close()
+      }
+    }
   }
 })
 
