@@ -559,6 +559,7 @@ test("native worker selection survives role registration and reaches native crea
   let fail = false
   const ctx = {
     location: { directory: "/work" },
+    permission: { hook: () => Effect.void },
     agent: {
       get: () => Effect.succeed({ data: agent }),
       transform: (transform: (editor: unknown) => void) =>

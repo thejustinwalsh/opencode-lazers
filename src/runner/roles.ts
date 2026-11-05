@@ -91,6 +91,15 @@ export function registerWorker(
         return Effect.void
       }),
     )
+    yield* ctx.permission.hook("evaluate", (request) =>
+      Effect.sync(() => {
+        // Code Mode fetch is an extension, so it does not enter the tool hook.
+        if (request.action === "webfetch" && quarantinedSession(store, request.sessionID)) {
+          request.effect = "deny"
+          request.message = "Retained source is quarantined; use task and handoff tools."
+        }
+      }),
+    )
     yield* ctx.session.hook("retry", (retry) =>
       Effect.sync(() => {
         const owned = attempt(retry.sessionID)

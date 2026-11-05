@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { Plugin } from "@opencode/plugin/effect"
+import type { PermissionEvaluation } from "@opencode/plugin/effect/permission"
+import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import workerInstructions from "../implementor.md" with { type: "text" }
 import { delegationTool, registerWorker } from "./roles.ts"
@@ -12,6 +14,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   const agent = { model, permissions: [] as unknown[] }
   let contextHook: ((context: never) => Effect.Effect<void>) | undefined
   let executeHook: ((call: never) => Effect.Effect<void>) | undefined
+  let permissionHook: ((request: PermissionEvaluation) => Effect.Effect<void>) | undefined
   let quarantined = false
   let activeAssignment = true
   const store = {
@@ -22,7 +25,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
           get: () =>
             sql.includes("runner_source_quarantines")
               ? quarantined
-                ? { session_id: "worker" }
+                ? { session_id: "ses_worker" }
                 : null
               : activeAssignment
                 ? { id: "attempt", task_id: "task", tool_count: 0, retry_count: 0 }
@@ -33,6 +36,12 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   } as unknown as RunnerStore
   const ctx = {
     location: { directory: "/work" },
+    permission: {
+      hook: (_name: string, callback: typeof permissionHook) => {
+        permissionHook = callback
+        return Effect.void
+      },
+    },
     agent: {
       transform: (transform: (editor: unknown) => void) =>
         Effect.sync(() =>
@@ -72,7 +81,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
     effect: "deny",
   })
   const context = {
-    sessionID: "worker",
+    sessionID: "ses_worker",
     tools: {
       read: {},
       edit: {},
@@ -88,14 +97,14 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   expect(Object.keys(context.tools)).toEqual(["read", "edit", "bash", "lz-worker-catalog"])
   await Effect.runPromise(
     executeHook!({
-      sessionID: "worker",
+      sessionID: "ses_worker",
       agent: Agent.ID.make("lazers-implementor"),
       tool: "bash",
     } as never),
   )
   await Effect.runPromise(
     executeHook!({
-      sessionID: "worker",
+      sessionID: "ses_worker",
       agent: Agent.ID.make("lazers-implementor"),
       tool: "lz-worker-catalog",
     } as never),
@@ -103,20 +112,31 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   await expect(
     Effect.runPromise(
       executeHook!({
-        sessionID: "worker",
+        sessionID: "ses_worker",
         agent: Agent.ID.make("lazers-implementor"),
         tool: "subagent.list",
       } as never),
     ),
   ).rejects.toThrow("Only the LAZERS runtime may dispatch agents")
 
+  const fetchRequest: PermissionEvaluation = {
+    sessionID: Session.ID.make("ses_worker"),
+    action: "webfetch",
+    resources: ["https://example.test"],
+    effect: "allow",
+  }
+  await Effect.runPromise(permissionHook!(fetchRequest))
+  expect(fetchRequest.effect).toBe("allow")
   quarantined = true
+  await Effect.runPromise(permissionHook!(fetchRequest))
+  expect(fetchRequest.effect).toBe("deny")
+  expect(fetchRequest.message).toContain("quarantined")
   activeAssignment = false
   for (const tool of ["edit", "bash"]) {
     await expect(
       Effect.runPromise(
         executeHook!({
-          sessionID: "worker",
+          sessionID: "ses_worker",
           agent: Agent.ID.make("lazers-implementor"),
           tool,
         } as never),
@@ -132,7 +152,7 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   ]) {
     await Effect.runPromise(
       executeHook!({
-        sessionID: "worker",
+        sessionID: "ses_worker",
         agent: Agent.ID.make("lazers-implementor"),
         tool,
       } as never),

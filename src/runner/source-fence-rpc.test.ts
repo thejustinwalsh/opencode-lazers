@@ -20,6 +20,7 @@ test("the exact native location reports its installed guard only for its live ho
   const ctx = {
     location: { directory: f.repository.projectDirectory, project: { id: "project" } },
     agent: { transform: () => Effect.void },
+    permission: { hook: () => Effect.void },
     session: { hook: () => Effect.void },
     tool: {
       hook: () =>
@@ -123,6 +124,7 @@ test("full plugin early setup failure invalidates a borrowed predecessor before 
     const prior = {
       location: { directory: workspace, project: { id: "project", canonical: f.directory } },
       agent: { transform: () => Effect.void },
+      permission: { hook: () => Effect.void },
       session: { hook: () => Effect.void },
       tool: {
         hook: () =>
