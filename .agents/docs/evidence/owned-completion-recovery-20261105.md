@@ -158,9 +158,18 @@ the journal's still-required registered native observation.
 Only after those133 checks completed, original135 was reconciled atversion7→8
 with actual message `msg_118166ff437e4ce6b18e68161896467b`; its response also
 confirmed `relationshipRecorded: true`. Initial inspection atversion9 showed the
-original attempt verifying and `verify:recovery` intended. Its check result is
-not yet evidence here.136's human gate remains held until real135 verification
-finishes and the qualification results can be recorded accurately.
+original attempt verifying and `verify:recovery` intended. Subsequent inspection
+atversion10 confirmed `verify:recovery` and `verify:quality` completed with exit0,
+no timeouts and unchanged artifacts, on original candidate
+`335cd57fe1066aabba1b5ed673788c5f90b111b3`. All five effects are completed, none
+uncertain.135 remains held on `native-performance:human`: Root's comparable quiet
+native CPU/recovery measurement is still required; fixture savings do not clear it.
+
+This completes the observed registered steering-control and ordinary-verification
+qualification for136 under Root's direction, not the separate journal or
+performance acceptance of133/135.136's artifact-bound human evidence may now cite
+both actual reconciliation results and completed checks; combined plan verification
+and runtime acceptance remain authoritative.
 
 Both commands retained the original task/attempt/session/worktree and assignment;
 no replacement, certificate/review prompt, historical-owner wake, ownership
