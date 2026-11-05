@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode/plugin/effect"
+import { randomUUID } from "node:crypto"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { Effect, Stream } from "effect"
@@ -10,6 +11,7 @@ import { Observability, type ObservationChange } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { databaseChanges } from "../database-events.ts"
+import { LiveHistoryUnavailableError } from "./live-store.ts"
 
 type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
 
@@ -93,6 +95,7 @@ export function registerObservability(
 ) {
   return Effect.gen(function* () {
     const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
+    let streamEpoch = randomUUID()
     const rpc = yield* ctx.rpc.register(Observability, {
       snapshot: (input) =>
         Effect.tryPromise({
@@ -156,6 +159,45 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
+      liveRadar: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.liveRadar(input, tracker, signal, streamEpoch)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
+      liveHistory: (input, context) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.liveHistory(input, signal)
+          },
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof LiveHistoryUnavailableError
+              ? Effect.fail(
+                  context.error("live_history_unavailable", error.message, {
+                    reason: error.reason,
+                    recovery: "restart",
+                  }),
+                )
+              : Effect.die(new Error(safeError(error, privacyStats()))),
+          ),
+        ),
       trajectory: (input) =>
         Effect.tryPromise({
           try: async () => {
@@ -275,9 +317,11 @@ export function registerObservability(
         Effect.match({
           onFailure: () => {
             tracker.streamGap()
+            streamEpoch = randomUUID()
           },
           onSuccess: () => {
             tracker.streamGap()
+            streamEpoch = randomUUID()
           },
         }),
         Effect.andThen(Effect.sleep(1_000)),

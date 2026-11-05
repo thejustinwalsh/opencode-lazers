@@ -20,7 +20,10 @@ import { sourceStampFromDatabase } from "./changes.ts"
 import { projectAssociations, sessionAssociations } from "./associations.ts"
 import { associatedSessionIDs } from "./associations.ts"
 import { projectProgressFact } from "../progress/projection.ts"
+import { LiveRadarReader } from "./live-read.ts"
 import type {
+  LiveHistoryRequestInput,
+  LiveRadarRequestInput,
   ObservationScope,
   ObservationScopeView,
   RadarRequestInput,
@@ -524,6 +527,7 @@ export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
   private readonly history: TrajectoryHistoryCache
+  private readonly live: LiveRadarReader
 
   constructor(
     readonly store: RunnerStore,
@@ -533,6 +537,20 @@ export class ObservationReads {
     private readonly nativeSessions?: RadarSessionHost,
   ) {
     this.history = new TrajectoryHistoryCache(secret)
+    this.live = new LiveRadarReader(store, nativeSessions, projectID, secret)
+  }
+
+  liveRadar(
+    input: LiveRadarRequestInput,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    streamEpoch: string,
+  ) {
+    return this.live.radar(input, tracker, signal, streamEpoch)
+  }
+
+  liveHistory(input: LiveHistoryRequestInput, signal: AbortSignal) {
+    return this.live.history(input, signal)
   }
 
   async radar(
