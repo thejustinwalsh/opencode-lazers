@@ -216,6 +216,24 @@ test("compact inspection keeps scheduling signal without serializing logs", () =
   expect(JSON.stringify(full)).toContain("FULL_STDOUT_CANARY")
 })
 
+test("selected full detail does not run the project audit; explicit project inspection retains it", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  let audits = 0
+  const audit = f.store.audit.bind(f.store)
+  f.store.audit = () => {
+    audits++
+    return audit()
+  }
+  const detail = inspectPlan(f.store, { planID: receipt.planID, full: true })
+  expect(detail).toHaveProperty("plan.id", receipt.planID)
+  expect(detail).not.toHaveProperty("audit")
+  expect(audits).toBe(0)
+  const project = inspectPlan(f.store, { full: true })
+  expect(project).toHaveProperty("audit.findings")
+  expect(audits).toBe(1)
+})
+
 test("journal is an explicitly selected bounded view and leaves compact/full inputs compatible", () => {
   const planID = crypto.randomUUID()
   const parsed = InspectPlanInput.parse({ planID, view: "journal" })

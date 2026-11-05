@@ -90,6 +90,12 @@ test("CommandInput scopes exact review-input aliases to owner reconciliation", (
     reviewInputID: "msg_received_review_steer",
   }
   expect(CommandInput.parse(command)).toEqual(command)
+  expect(
+    CommandInput.parse({ ...command, action: "quarantine-source", reason: "Release only source" }),
+  ).toMatchObject({
+    reviewInputID: command.reviewInputID,
+    action: "quarantine-source",
+  })
   expect(CommandInput.safeParse({ ...command, action: "resume" }).success).toBe(false)
   expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(false)
   expect(

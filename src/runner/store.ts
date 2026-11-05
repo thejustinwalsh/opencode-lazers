@@ -676,7 +676,7 @@ export class RunnerStore {
         plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL UNIQUE,
         assigned_message_id TEXT NOT NULL, requested_owner TEXT NOT NULL,
         workspace TEXT NOT NULL, request_id TEXT NOT NULL, reason TEXT NOT NULL,
-        phase TEXT NOT NULL CHECK(phase IN ('pending','sealed')), hold_reason TEXT,
+        phase TEXT NOT NULL CHECK(phase IN ('pending','sealed')), hold_reason TEXT, review_input_json TEXT,
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS runner_source_quarantines_pending
@@ -804,6 +804,11 @@ export class RunnerStore {
         attempts INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL
       );
     `)
+      const quarantineColumns = db
+        .query<{ name: string }, []>("PRAGMA table_info(runner_source_quarantines)")
+        .all()
+      if (!quarantineColumns.some((column) => column.name === "review_input_json"))
+        db.exec("ALTER TABLE runner_source_quarantines ADD COLUMN review_input_json TEXT")
       const progressColumns = new Set(
         db
           .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
@@ -3666,7 +3671,6 @@ export class RunnerStore {
         .query("SELECT * FROM runner_transitions WHERE plan_id=? ORDER BY id")
         .all(planID),
       delivery: db.query("SELECT * FROM runner_outbox WHERE plan_id=? ORDER BY rowid").all(planID),
-      audit: this.audit(),
     }))
   }
 }

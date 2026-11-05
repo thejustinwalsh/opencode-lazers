@@ -213,7 +213,7 @@ export const CommandInput = z
       .max(200)
       .optional()
       .describe(
-        "For explicit review-input reconciliation only: exact native synthetic message ID already observed as this attempt's current input. Supply taskID and attemptID too; this records lineage, not acceptance or idle proof.",
+        "Exact tagged native review input for reconcile or quarantine-source. Supply taskID and attemptID. Quarantine pins the current completed review for source-only archival; it does not establish task completion or background-idle proof.",
       ),
     scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
     assertionID: z.string().max(64).optional(),
@@ -228,12 +228,14 @@ export const CommandInput = z
   .superRefine((input, context) => {
     if (
       input.reviewInputID !== undefined &&
-      (input.action !== "reconcile" || !input.taskID || !input.attemptID)
+      (!["reconcile", "quarantine-source"].includes(input.action) ||
+        !input.taskID ||
+        !input.attemptID)
     )
       context.addIssue({
         code: "custom",
         path: ["reviewInputID"],
-        message: "Review input reconciliation requires action reconcile, taskID and attemptID",
+        message: "Review input requires reconcile or quarantine-source, taskID and attemptID",
       })
   })
   .superRefine((input, context) => {

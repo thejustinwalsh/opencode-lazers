@@ -82,7 +82,10 @@ export type ReviewInputBinding = {
 
 export type ReviewInputEvidence = ReturnType<typeof observeReviewInput>
 
-function reviewMetadata(message: HostMessage, binding: ReviewInputBinding) {
+export function reviewMetadata(
+  message: HostMessage,
+  binding: Pick<ReviewInputBinding, "taskID" | "attemptID">,
+) {
   if (message.type !== "synthetic") return undefined
   const metadata = message.metadata
   if (!metadata || !("lazersReview" in metadata)) return undefined

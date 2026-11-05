@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs"
 import { basename, dirname, resolve } from "node:path"
+import { z } from "zod"
 import type { AttemptRow, RunnerStore } from "./store.ts"
 
 export type SourceQuarantine = {
@@ -15,6 +16,19 @@ export type SourceQuarantine = {
   hold_reason: string | null
   created_at: number
   updated_at: number
+  review_input_json?: string | null
+}
+
+export const SourceReviewBinding = z.strictObject({
+  inputID: z.string().min(1).max(200),
+  requestID: z.string().min(1).max(200),
+})
+export type SourceReviewBinding = z.infer<typeof SourceReviewBinding>
+
+export function sourceReviewBinding(row: Pick<SourceQuarantine, "review_input_json">) {
+  return row.review_input_json == null
+    ? undefined
+    : SourceReviewBinding.parse(JSON.parse(row.review_input_json))
 }
 
 type GuardEntry = { installed: boolean; databasePath?: string; projectDirectory: string }
@@ -148,6 +162,13 @@ export function sourceReservationExcluded(
   if (destination.mode !== "isolated" || !["running", "verifying"].includes(attempt.state))
     return false
   const quarantine = sourceQuarantine(store, attempt.id)
+  if (quarantine) {
+    try {
+      sourceReviewBinding(quarantine)
+    } catch {
+      return false
+    }
+  }
   if (
     !quarantine ||
     quarantine.phase !== "sealed" ||

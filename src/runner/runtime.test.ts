@@ -39,6 +39,7 @@ import {
   sourceGuardInstalled,
   sourceQuarantine,
   sourceReservationExcluded,
+  sourceQuarantineToolError,
 } from "./source-quarantine.ts"
 import { inspectPlan } from "./inspection.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
@@ -652,15 +653,30 @@ function attachNativeQuarantineHost(
         options.onUpdate?.()
         if (options.loseReply) throw new Error("Archive reply lost")
       },
+      message: {
+        get: async ({ messageID }: { messageID: string }) => {
+          const message = f.worker.messages.find((item) => item.id === messageID)
+          if (!message) throw new Error("Native message missing")
+          return message
+        },
+      },
     },
     message: {
-      list: async ({ type }: { type: string }) => ({
-        data:
-          type === "user" && f.worker.turn?.inputID
-            ? [{ type: "user", id: f.worker.turn.inputID }]
-            : [],
-        cursor: {},
-      }),
+      list: async ({ type }: { type: string }) => {
+        const review = f.worker.messages.find(
+          (message) => message.id === f.worker.turn?.inputID && message.type === "synthetic",
+        )
+        return {
+          data: review
+            ? type === "synthetic"
+              ? [review]
+              : []
+            : type === "user" && f.worker.turn?.inputID
+              ? [{ type: "user", id: f.worker.turn.inputID }]
+              : [],
+          cursor: {},
+        }
+      },
     },
     permission: { request: { list } },
     form: { list },
@@ -672,7 +688,28 @@ function attachNativeQuarantineHost(
       location: { directory: f.root, project: { id: "project" } },
       session: {
         get: () => Effect.succeed(target() as never),
-        context: () => Effect.succeed([]),
+        context: () => {
+          const review = f.worker.messages.find(
+            (message) => message.id === f.worker.turn?.inputID && message.type === "synthetic",
+          )
+          return Effect.succeed(
+            review
+              ? ([
+                  review,
+                  {
+                    id: "msg_review_response",
+                    type: "assistant",
+                    content: [],
+                    finish: f.worker.turn?.state === "completed" ? "stop" : "tool-calls",
+                    time: {
+                      created: 1,
+                      ...(f.worker.turn?.state === "completed" ? { completed: 2 } : {}),
+                    },
+                  },
+                ] as never)
+              : [],
+          )
+        },
       },
     } as unknown as Plugin.Context,
     f.repository,
@@ -1018,6 +1055,422 @@ test("source quarantine isolates a completed foreground worker with unknown back
   expect(readFileSync(join(successor.workspace, "shared.txt"), "utf8")).toBe("b")
   expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
   expect(f.store.nodes(f.receipt.planID)[0]!.state).not.toBe("accepted")
+})
+
+async function completedSourceReviewFixture() {
+  const f = fixture({ delayed: true, commit: true, taskFiles: [{ name: "a", path: "shared.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id)
+  const worker = f.sessions.get(attempt.session_id)!
+  const reviewInputID = "msg_tagged_source_review"
+  Object.assign(worker, {
+    model: JSON.parse(attempt.policy).model,
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    turn: { inputID: reviewInputID, state: "completed" },
+    background: { state: "unknown", source: "experimental.idle", reason: "Missing old idle" },
+  })
+  worker.messages.push({
+    id: reviewInputID,
+    type: "synthetic",
+    text: "Review retained product work",
+    metadata: {
+      lazersReview: { taskID: attempt.task_id, attemptID: attempt.id, requestID: "review-product" },
+    },
+  })
+  const guard = registerSourceGuard(f.store, attempt.workspace)
+  cleanup.push(guard)
+  const command = {
+    requestID: "quarantine-tagged-source-review",
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "quarantine-source" as const,
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    reviewInputID,
+    reason: "Retain completed review and release only guarded source",
+  }
+  return { ...f, attempt, worker, reviewInputID, guard, command }
+}
+
+test("tagged review source quarantine survives reopen and native archive without accepting unknown background", async () => {
+  const f = await completedSourceReviewFixture()
+  const original = f.store.attempts(f.receipt.planID)[0]!
+  const receipt = await f.runtime.command(f.command, "owner")
+  expect(sourceQuarantine(f.store, f.attempt.id)?.review_input_json).toBe(
+    JSON.stringify({ inputID: f.reviewInputID, requestID: "review-product" }),
+  )
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const repository = new TaskRepository(f.repository.path, f.root)
+  const store = new RunnerStore(repository)
+  const observe = f.host.session
+  const adapter = attachNativeQuarantineHost(
+    {
+      ...f,
+      repository,
+      retained: f.attempt,
+      guardID: f.guard.registrationID,
+    },
+    { loseReply: true },
+  )
+  f.host.session = observe
+  const runtime = new TaskRuntime(store, f.host, "project")
+  try {
+    await runtime.tick()
+    expect(sourceQuarantine(store, f.attempt.id)?.phase).toBe("sealed")
+    expect(adapter.archives).toBe(1)
+    expect(f.worker.archived).toBe(true)
+    expect(f.worker.background?.state).toBe("unknown")
+    expect(store.attempts(f.receipt.planID)[0]!.message_id).toBe(original.message_id)
+    expect(store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+    expect(store.nodes(f.receipt.planID)[0]!.state).not.toBe("accepted")
+    expect(
+      store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM runner_transitions WHERE plan_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'",
+            )
+            .get(f.receipt.planID)?.count,
+      ),
+    ).toBe(0)
+    expect(await runtime.command(f.command, "owner")).toEqual(receipt)
+  } finally {
+    await runtime.stop()
+    repository.close()
+  }
+})
+
+test.each(
+  (["worktrees", "guard"] as const).flatMap((boundary) =>
+    (["input", "tag", "route", "owner"] as const).map((field) => ({ boundary, field })),
+  ),
+)(
+  "source review admission rejects $field changed during $boundary without mutation",
+  async ({ boundary, field }) => {
+    const f = await completedSourceReviewFixture()
+    const change = () => {
+      if (field === "input") f.worker.turn!.inputID = "msg_newer"
+      if (field === "tag")
+        (f.worker.messages.at(-1)!.metadata!.lazersReview as Record<string, unknown>).requestID =
+          "changed-review"
+      if (field === "route") f.worker.model = { ...f.worker.model!, id: "different-model" }
+      if (field === "owner") f.sessions.get("owner")!.archived = true
+    }
+    if (boundary === "worktrees") {
+      const list = f.host.worktrees
+      f.host.worktrees = async () => {
+        const rows = await list()
+        change()
+        return rows
+      }
+    } else {
+      const ensure = f.host.ensureSourceGuard!
+      f.host.ensureSourceGuard = async (input) => {
+        await ensure(input)
+        change()
+      }
+    }
+    const before = f.store.plan(f.receipt.planID)
+    await expect(f.runtime.command(f.command, "owner")).rejects.toThrow()
+    expect(f.store.plan(f.receipt.planID)).toEqual(before)
+    expect(sourceQuarantine(f.store, f.attempt.id)).toBeNull()
+    expect(f.worker.archived).toBe(false)
+  },
+)
+
+async function sealedSourceReviewFixture() {
+  const f = await completedSourceReviewFixture()
+  await f.runtime.command(f.command, "owner")
+  const observe = f.host.session
+  const adapter = attachNativeQuarantineHost({
+    ...f,
+    retained: f.attempt,
+    guardID: f.guard.registrationID,
+  })
+  f.host.session = observe
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.attempt.id)?.phase).toBe("sealed")
+  return { ...f, adapter }
+}
+
+test("malformed sealed review pin cannot exclude source even with its installed guard", async () => {
+  const f = await sealedSourceReviewFixture()
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_source_quarantines SET review_input_json=? WHERE attempt_id=?")
+      .run("{invalid", f.attempt.id),
+  )
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+  await f.runtime.tick()
+  expect(sourceQuarantine(f.store, f.attempt.id)?.hold_reason).not.toBeNull()
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+})
+
+test.each(["before-restore", "during-restore"] as const)(
+  "sealed review guard recovery permits a later handoff %s without replaying archive",
+  async (when) => {
+    const f = await sealedSourceReviewFixture()
+    const pin = sourceQuarantine(f.store, f.attempt.id)!.review_input_json
+    f.guard()
+    const change = () => {
+      f.worker.turn!.inputID = "msg_later_handoff"
+      f.worker.messages.push({
+        id: "msg_later_handoff",
+        type: "synthetic",
+        text: "Read retained work and submit handoff",
+      })
+    }
+    if (when === "before-restore") change()
+    f.host.ensureSourceGuard = async () => {
+      cleanup.push(registerSourceGuard(f.store, f.attempt.workspace))
+      if (when === "during-restore") change()
+    }
+    await f.runtime.tick()
+    expect(sourceQuarantine(f.store, f.attempt.id)).toMatchObject({
+      hold_reason: null,
+      review_input_json: pin,
+    })
+    expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(true)
+    expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "shell")).toContain(
+      "quarantined",
+    )
+    expect(
+      sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-submit-handoff"),
+    ).toBeUndefined()
+    expect(f.adapter.archives).toBe(1)
+    expect(f.worker.background?.state).toBe("unknown")
+  },
+)
+
+test("healthy sealed review guard permits a later handoff without rescanning review messages", async () => {
+  const f = await sealedSourceReviewFixture()
+  f.worker.turn!.inputID = "msg_later_handoff"
+  let reads = 0
+  const observe = f.host.session
+  f.host.session = async (id, options) => {
+    if (id === f.attempt.session_id && options?.messages) reads++
+    return observe(id, options)
+  }
+  await f.runtime.tick()
+  expect(reads).toBe(0)
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(true)
+  expect(sourceQuarantineToolError(f.store, f.attempt.session_id, "write")).toContain("quarantined")
+  expect(
+    sourceQuarantineToolError(f.store, f.attempt.session_id, "lz-get-task-instructions"),
+  ).toBeUndefined()
+})
+
+test("concurrent explicit pending supersessions use the plan version once", async () => {
+  const f = await completedSourceReviewFixture()
+  await f.runtime.command(f.command, "owner")
+  const version = f.store.plan(f.receipt.planID)!.version
+  const results = await Promise.allSettled(
+    ["a", "b"].map((suffix) =>
+      f.runtime.command(
+        {
+          ...f.command,
+          requestID: `concurrent-source-pin-${suffix}`,
+          expectedVersion: version,
+        },
+        "owner",
+      ),
+    ),
+  )
+  expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+  expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
+  expect(f.store.plan(f.receipt.planID)!.version).toBe(version + 1)
+  expect(f.worker.archived).toBe(false)
+})
+
+test("a later explicit quarantine cannot retarget an already sealed review pin", async () => {
+  const f = await sealedSourceReviewFixture()
+  const row = sourceQuarantine(f.store, f.attempt.id)
+  const version = f.store.plan(f.receipt.planID)!.version
+  const nextInput = "msg_later_sealed_review"
+  f.worker.turn!.inputID = nextInput
+  f.worker.messages.push({
+    id: nextInput,
+    type: "synthetic",
+    text: "Later review",
+    metadata: {
+      lazersReview: {
+        taskID: f.attempt.task_id,
+        attemptID: f.attempt.id,
+        requestID: "later-review",
+      },
+    },
+  })
+  await f.runtime.command(
+    {
+      ...f.command,
+      requestID: "later-sealed-request",
+      reviewInputID: nextInput,
+      expectedVersion: version,
+    },
+    "owner",
+  )
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(row)
+  expect(f.store.plan(f.receipt.planID)!.version).toBe(version)
+  expect(f.adapter.archives).toBe(1)
+})
+
+test("fresh owner command explicitly supersedes a pending review pin; old replay cannot retarget it", async () => {
+  const f = await completedSourceReviewFixture()
+  const firstReceipt = await f.runtime.command(f.command, "owner")
+  const nextInputID = "msg_next_source_review"
+  f.worker.turn!.inputID = nextInputID
+  f.worker.messages.push({
+    id: nextInputID,
+    type: "synthetic",
+    text: "Correct retained review",
+    metadata: {
+      lazersReview: {
+        taskID: f.attempt.task_id,
+        attemptID: f.attempt.id,
+        requestID: "corrected-review",
+      },
+    },
+  })
+  const next = {
+    ...f.command,
+    requestID: "explicit-corrected-source-pin",
+    reviewInputID: nextInputID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    reason: "Explicitly supersede the old pending pin after reviewing the correction",
+  }
+  await f.runtime.command(next, "owner")
+  const row = sourceQuarantine(f.store, f.attempt.id)!
+  expect(JSON.parse(row.review_input_json!)).toEqual({
+    inputID: nextInputID,
+    requestID: "corrected-review",
+  })
+  expect(f.store.attempts(f.receipt.planID)[0]!.message_id).toBe(f.attempt.message_id)
+  const history = f.store
+    .atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='SOURCE_QUARANTINE_REQUESTED' ORDER BY id",
+        )
+        .all(f.receipt.planID),
+    )
+    .map((entry) => JSON.parse(entry.payload))
+  expect(history).toHaveLength(2)
+  expect(history[0].reviewInput.inputID).toBe(f.reviewInputID)
+  expect(history[1]).toMatchObject({
+    supersedesRequestID: f.command.requestID,
+    reviewInput: { inputID: nextInputID },
+  })
+  expect(await f.runtime.command(f.command, "owner")).toEqual(firstReceipt)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(row)
+  await expect(
+    f.runtime.command({ ...next, reviewInputID: f.reviewInputID }, "owner"),
+  ).rejects.toThrow()
+  expect(sourceQuarantine(f.store, f.attempt.id)).toEqual(row)
+})
+
+test("legacy source quarantine migration preserves its original-input binding", async () => {
+  const f = await completedSourceReviewFixture()
+  f.worker.turn!.inputID = f.attempt.message_id
+  const { reviewInputID: _reviewInputID, ...legacyCommand } = f.command
+  await f.runtime.command(legacyCommand, "owner")
+  await f.runtime.stop()
+  f.store.atomic((db) =>
+    db.exec("ALTER TABLE runner_source_quarantines DROP COLUMN review_input_json"),
+  )
+  const repository = new TaskRepository(f.repository.path, f.root)
+  try {
+    const store = new RunnerStore(repository)
+    expect(sourceQuarantine(store, f.attempt.id)).toMatchObject({
+      assigned_message_id: f.attempt.message_id,
+      review_input_json: null,
+      phase: "pending",
+    })
+    expect(store.attempts(f.receipt.planID)[0]!.message_id).toBe(f.attempt.message_id)
+  } finally {
+    repository.close()
+  }
+})
+
+test.each([
+  "metadata",
+  "task",
+  "attempt",
+  "duplicate",
+  "current",
+  "failed",
+  "route",
+  "non-synthetic",
+  "absent",
+  "pending",
+  "permission",
+  "form",
+  "unstable",
+  "effort",
+] as const)("tagged review source quarantine rejects %s before mutation", async (invalid) => {
+  const f = await completedSourceReviewFixture()
+  const message = f.worker.messages.at(-1)!
+  if (invalid === "metadata") message.metadata = {}
+  if (invalid === "task")
+    (message.metadata!.lazersReview as Record<string, unknown>).taskID = crypto.randomUUID()
+  if (invalid === "attempt")
+    (message.metadata!.lazersReview as Record<string, unknown>).attemptID = crypto.randomUUID()
+  if (invalid === "duplicate") f.worker.messages.push({ ...message })
+  if (invalid === "current") f.worker.turn!.inputID = "msg_newer"
+  if (invalid === "failed") f.worker.outcome = "failed"
+  if (invalid === "route") f.worker.model = { ...f.worker.model!, id: "other-model" }
+  if (invalid === "non-synthetic") message.type = "user"
+  if (invalid === "absent") f.worker.messages.pop()
+  if (invalid === "pending") f.worker.turn!.state = "pending"
+  if (invalid === "permission") f.worker.pendingPermissions = 1
+  if (invalid === "form") f.worker.pendingForms = 1
+  if (invalid === "unstable") f.worker.observationUnstable = true
+  if (invalid === "effort") f.worker.model = { ...f.worker.model!, variant: "different" }
+  const before = f.store.plan(f.receipt.planID)
+  await expect(f.runtime.command(f.command, "owner")).rejects.toThrow()
+  expect(f.store.plan(f.receipt.planID)).toEqual(before)
+  expect(sourceQuarantine(f.store, f.attempt.id)).toBeNull()
+  expect(f.worker.archived).toBe(false)
+})
+
+test.each(
+  (["before-update", "after-update"] as const).flatMap((when) =>
+    (["input", "tag", "route", "foreground"] as const).map((field) => ({ when, field })),
+  ),
+)("tagged review archive fences a changed $field $when", async ({ when, field }) => {
+  const f = await completedSourceReviewFixture()
+  await f.runtime.command(f.command, "owner")
+  const observe = f.host.session
+  const change = () => {
+    if (field === "input") f.worker.turn!.inputID = "msg_newer"
+    if (field === "tag")
+      (f.worker.messages.at(-1)!.metadata!.lazersReview as Record<string, unknown>).requestID =
+        "different-review"
+    if (field === "route") f.worker.model = { ...f.worker.model!, id: "different-model" }
+    if (field === "foreground") f.worker.outcome = "failed"
+  }
+  const adapter = attachNativeQuarantineHost(
+    {
+      ...f,
+      retained: f.attempt,
+      guardID: f.guard.registrationID,
+    },
+    {
+      onObserve: when === "before-update" ? change : undefined,
+      onUpdate: when === "after-update" ? change : undefined,
+    },
+  )
+  f.host.session = observe
+  await f.runtime.tick()
+  expect(adapter.archives).toBe(when === "before-update" ? 0 : 1)
+  expect(sourceQuarantine(f.store, f.attempt.id)?.phase).toBe("pending")
+  expect(sourceReservationExcluded(f.store, f.attempt, { mode: "isolated" })).toBe(false)
+  await f.runtime.tick()
+  expect(adapter.archives).toBe(when === "before-update" ? 0 : 1)
 })
 
 test.each(["before-update", "after-update"] as const)(
