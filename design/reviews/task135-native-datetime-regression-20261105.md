@@ -1,0 +1,36 @@
+# Native timestamp memo bypass
+
+The production caller in src/progress/native.ts passes the in-process
+ctx.session.context messages directly to ProgressRecorder.reconcileMessages.
+Those schema values use Effect DateTime timestamps. Current
+encodeRecoveryFingerprintValue accepts only ordinary object prototypes; Effect
+DateTime has a different prototype, so its fingerprint is unavailable and the
+whole unchanged reconciliation falls back to replay.
+
+Root reproduced the representation difference on the actual current recorder
+implementation with a disposable repository. Same message and three passes:
+
+| Timestamp representation | Append attempts by pass |
+| ------------------------ | ----------------------- |
+| numeric timestamps       | 3,0,0                   |
+| Effect DateTime          | 3,3,3                   |
+
+Observed1793857504726/7504750. No production data was written; this is a regression
+reproducer, not native CPU acceptance. Script:
+/private/tmp/lazers-recorder-native-time-regression-20261105.ts.
+Native caller/type evidence plus this reproduction explains why the numeric
+fixtures do not establish memo reuse for the in-process native representation.
+It does not attribute all remaining service CPU to this function.
+
+Architect independently reran the reproduction with the same result, delivered
+concise advice/readback, and resumed original135 at1793857764502, planversion15.
+Original attemptd0930725-f837-40e7-8992-892f66ec1010 and session
+ses_671fad53a1b548679a7afc4472879ed2 are retained. Its OpenAI Luna Max repair is
+active alongside99 in a separate native worktree. The fix and regression fit
+recorder.ts/test scope; broader diagnostics wiring remains separate behind127.
+No performance or acceptance claim is made before correction and native reprobe.
+
+Separate native fact check at1793856175726/728: original129/132 are inactive with
+outcome failed and idle timestamps later than busy. An interrupted-only99 branch
+does not establish their recovery. That scope gap and the draft's human-reason
+string matching were sent to the native coordinators for explicit disposition.

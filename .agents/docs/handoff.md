@@ -52,6 +52,22 @@ cleanup are separate facts.
   resume, not a fabricated report.99's higher-priority tools.ts reservation remains.
   Research diagnosis and read-back advice are in canonical622b4e7; consumption is
   not yet observed. No duplicate, replacement or58-plan ownership transfer.
+- **135 native timestamp bug is reproduced; original worker is active again.**
+  Native context contains Effect DateTime objects, which the memo encoder rejects
+  as non-plain. Same-message three-pass repro: numbers[3,0,0] append attempts versus
+  DateTime[3,3,3]. Architect independently reproduced, advised and resumed135 at
+  1793857764502, version15. Original d0930725/671fad53 worker is active on OpenAI
+  Luna Max alongside99; recorder-only fix avoids127 reservation. Broader per-
+  participant diagnostics research is complete, but wiring still touches127 scope.
+  See design/reviews/task135-native-datetime-regression-20261105.md.
+- **Current-owner coordination works without transfer.** A keyed instruction on
+  c10fbf89 preserved its input, then it focused on99 and reconciled the cleared
+  approval hold (version13). Existing owner may handle actionable99/127 work;
+  historical-only replay remains covered by standing stop approval. Root verified
+  127 tree clean at633da56, already main ancestry; its native idle hold remains.
+  Fresh coordinator is coordinating substantive original127 verification/recovery.
+  Root129/132 fact check shows native failed outcomes, not interrupted;99's narrow
+  draft does not yet prove their quota recovery. Do not relabel those native facts.
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are
   unchanged. The user subsequently approved72 transfer plus existing quarantine.
