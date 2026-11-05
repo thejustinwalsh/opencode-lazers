@@ -236,21 +236,6 @@ const RECOVERY_TIME_FIELDS = new Set(["created", "streamed", "completed", "ran"]
 
 function encodeEffectDateTime(value: object): RecoveryFingerprintValue | undefined {
   if (!DateTime.isDateTime(value)) return undefined
-  const prototype = Object.getPrototypeOf(value)
-  if (prototype === null || Object.hasOwn(value, "_tag")) return undefined
-  const tagDescriptor = Object.getOwnPropertyDescriptor(prototype, "_tag")
-  if (
-    !tagDescriptor ||
-    !("value" in tagDescriptor) ||
-    (tagDescriptor.value !== "Utc" && tagDescriptor.value !== "Zoned")
-  )
-    return undefined
-  if (
-    (tagDescriptor.value === "Utc" && !DateTime.isUtc(value)) ||
-    (tagDescriptor.value === "Zoned" && !DateTime.isZoned(value))
-  )
-    return undefined
-
   const epochDescriptor = Object.getOwnPropertyDescriptor(value, "epochMilliseconds")
   if (
     !epochDescriptor ||

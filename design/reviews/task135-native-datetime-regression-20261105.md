@@ -38,6 +38,16 @@ production writes occurred. This establishes the original representation repro
 is corrected in that draft; final review, changed/late-fact regressions, source
 integration and actual native performance qualification remain outstanding.
 
+Candidate374a599 was merged with ancestry as26f0825. Postmerge69 recovery tests/
+660 assertions, lint and types passed. Final Luna review recommended removing
+private Effect prototype/tag checks. Root removed those checks directly in
+canonical source, retaining supported DateTime detection, safe data-property
+reads, existing dateMillis conversion and timestamp-position restriction. All20
+recorder tests/375 assertions pass; lint/types pass. The original numeric and
+Effect repro again yields[3,0,0] at1793860037987/38130. No worker certificate or
+restart was needed for this source simplification. Production activation and
+native-performance acceptance remain separate.
+
 Separate native fact check at1793856175726/728: original129/132 are inactive with
 outcome failed and idle timestamps later than busy. An interrupted-only99 branch
 does not establish their recovery. That scope gap and the draft's human-reason
