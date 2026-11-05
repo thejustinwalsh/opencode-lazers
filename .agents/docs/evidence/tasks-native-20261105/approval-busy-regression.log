@@ -1,0 +1,23 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+src/runner/runtime.test.ts:
+7808 |   await f.runtime.tick()
+7809 |   expect(f.store.plan(f.receipt.planID)?.reason).toContain("pending permission")
+7810 |   worker.pendingPermissions = 0
+7811 |   worker.busy = true
+7812 |   await f.runtime.tick()
+7813 |   expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+                                                       ^
+error: expect(received).toBe(expected)
+
+Expected: "running"
+Received: "blocked"
+
+      at <anonymous> (/Users/tjw/Documents/ChatGPT/opencode-lazers/src/runner/runtime.test.ts:7813:49)
+(fail) approval resolution is visible while the same worker is still busy [192.81ms]
+
+ 0 pass
+ 298 filtered out
+ 1 fail
+ 7 expect() calls
+Ran 1 test across 1 file. [703.00ms]

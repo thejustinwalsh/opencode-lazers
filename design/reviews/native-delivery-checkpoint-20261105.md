@@ -44,8 +44,8 @@ no duration bar, while the native worker view showed18m51s. The unknown attempt
 end is honest, but the running view does not communicate elapsed work. Any
 follow-up should distinguish ongoing elapsed time from a recorded terminal end,
 without inferring activity for old held attempts. Captures:
-`/private/tmp/lz138-running-trajectory-20261105.png` and
-`/private/tmp/lz138-native-worker-open-20261105.png`.
+`.agents/docs/evidence/tasks-native-20261105/running-trajectory.png` and
+`.agents/docs/evidence/tasks-native-20261105/native-worker.png`.
 
 Architect subsequently submitted LZ147
 (`c1e32cb7-6c7b-427c-927c-97f8332a8165`): truthful current activity plus precise
@@ -55,6 +55,45 @@ Plan/dispatch was pending at this checkpoint; it is not yet delivered. The wider
 runtime ordering feed and its priority/dependency presentation remain separate
 outcomes. Root used the native Steer control to bring the queued feature request
 into the long active Architect turn; it was visibly consumed in Desktop.
+
+### Parallel implementation and queued ordering
+
+LZ147 subsequently dispatched normally with the UI persona and explicit OpenAI
+Luna Max route: attempt3b4bad86-2aad-44d2-a17a-fb98707dcd6e,
+worker ses_f4eb00b5f274438a8aba61a09782395f,
+plan b4736219-82ba-44f2-b319-f26a5095d0a2, startedAt1793919604342.
+Both147 and138 were independently confirmed natively active with distinct native
+worktrees;138 was Systems/Luna Max. Root opened147 through the native subagent
+menu and confirmed its model/worktree display. Optional advice about existing
+native change streams and refresh coalescing was attached to147 by Architect.
+
+Architect also submitted148 (authoritative scheduling feed) and149 (compact
+Now/Attention/Next, priority and dependency presentation). They share plan
+7d463854-6ef1-4206-beb8-5a9b8d4e6692 with an explicit148→149 dependency and
+integration order. Its afterPlans require138,147 and the existing88 approval
+repair. Each task has three acceptance conditions and concise code-grounded
+guidance. Neither had an implementation attempt at this checkpoint.
+
+### Stale approval hold reproduced
+
+LZ147 recorded WORKER_APPROVAL_WAIT at1793919649038 and BLOCKED at1793919649039.
+Main later observed an empty permission/form queue while the worker continued
+executing tools. Normal owner-authorized reconciliation at1793920109738 cleared
+the plan reason; Root read back running/v6 with the same worker/attempt. The
+recorded hold lasted460699ms, about7m41s; this is not worker idle time, and the
+exact permission-clear time is unknown. No production SQL edit was used.
+
+Root reproduced the defect in the actual runtime fixture: approval1→0 while
+the worker stays busy leaves the plan blocked. The source only calls
+resumeTransientObservationWait after its busy/pending/unstable/outcome return.
+The temporary test failed as expected and was removed from main after retaining
+its patch/log under `.agents/docs/evidence/tasks-native-20261105/`. This is a
+negative regression, not a passing verification claim.
+
+Existing LZ88 already covers that exact behavior. Architect attached the live
+finding and regression, and scheduled it after138 and before148, preserving its
+unresolved72 prerequisite and history. It remains unfixed. Reuse88 rather than
+creating another runtime repair;147 remains the presentation/read increment.
 
 ## Latest observed state, November 5 afternoon
 

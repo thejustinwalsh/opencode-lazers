@@ -127,9 +127,13 @@ Screenshot /private/tmp/lz-tasks-blocked-shown-running-20261105.png. Open filter
 worked after transient topology-unavailable refresh. Preserve these findings in
 the existing task-panel work; do not invent a duplicate task.
 
-Main has submitted LZ147/c1e32cb7-6c7b-427c-927c-97f8332a8165 for truthful
+Main submitted and dispatched LZ147/c1e32cb7-6c7b-427c-927c-97f8332a8165 for truthful
 activity and specific queued/running/blocked filters, with Tasks-only scope and
-code-grounded guidance; plan/dispatch was pending at last read. Root explicitly
+code-grounded guidance. Plan b4736219-82ba-44f2-b319-f26a5095d0a2; attempt
+3b4bad86-2aad-44d2-a17a-fb98707dcd6e; worker
+ses_f4eb00b5f274438a8aba61a09782395f; UI/explicit-plan/OpenAI LunaMax,
+started1793919604342 in its own isolated tree.138 and147 are genuinely parallel
+native implementors. Root explicitly
 authorized authoring missing Tasks A/B work rather than treating old drafts as
 permanent holds. Native Steer brought that queued ask into the active turn.
 Wider authoritative ordering and its compact presentation remain separate slices.
@@ -138,6 +142,18 @@ its worktree/transcript/patches. Mounted trajectory counters advanced78→96 wit
 manual refresh, matching DB. Its running elapsed axis/bar still shows0–1m/no
 duration while native worker view showed18m51s; keep that scoped finding for
 trajectory follow-through without inventing a terminal timestamp.
+
+148/f2156326-490b-4dcb-a6a8-d1dbb3de8b37 (scheduling feed) and
+149/461956c6-6899-466f-b863-2d75fbea1b69 (Now/Attention/Next presentation) are
+submitted in plan7d463854-6ef1-4206-beb8-5a9b8d4e6692,148→149, after138/147/88.
+Root reproduced a stale approval-only hold while a worker remains busy; existing
+88 already covers it. Main attached the regression and scheduled88 after138,
+before148, preserving its72 prerequisite.147's actual stale hold was cleared
+through normal reconciliation, same worker/attempt, now running/v6. The runtime
+bug remains unfixed; no SQL repair or duplicate task. Reproducer patch/log are
+.agents/docs/evidence/tasks-native-20261105/approval-busy-regression.{patch,log}.
+Main attached optional event-stream/coalesced-refresh advice to147. Check latest
+native activity before treating any actor as idle or restarting it.
 
 ## Pricing findings and live evidence
 

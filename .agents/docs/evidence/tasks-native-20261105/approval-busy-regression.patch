@@ -1,0 +1,29 @@
+diff --git a/src/runner/runtime.test.ts b/src/runner/runtime.test.ts
+index 7a38d49..7458a95 100644
+--- a/src/runner/runtime.test.ts
++++ b/src/runner/runtime.test.ts
+@@ -7798,6 +7798,24 @@ test.each(["failed", "interrupted"] as const)(
+   },
+ )
+ 
++test("approval resolution is visible while the same worker is still busy", async () => {
++  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
++  await runPlan(f)
++  await f.runtime.tick()
++  const attempt = f.store.attempts(f.receipt.planID)[0]!
++  const worker = f.sessions.get(attempt.session_id)!
++  worker.pendingPermissions = 1
++  await f.runtime.tick()
++  expect(f.store.plan(f.receipt.planID)?.reason).toContain("pending permission")
++  worker.pendingPermissions = 0
++  worker.busy = true
++  await f.runtime.tick()
++  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
++  expect(f.store.plan(f.receipt.planID)?.reason).toBeNull()
++  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
++  expect(f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:"))).toBe(false)
++})
++
+ test("worker-location permissions and forms block terminal work and surface actionable diagnostics", async () => {
+   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+   await runPlan(f)
