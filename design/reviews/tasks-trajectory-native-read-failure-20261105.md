@@ -28,6 +28,13 @@ verification effects: transitions already exceed that ceiling.
 Repair should authorize the requested task/attempt within the selected scope,
 then read the required task-scoped data and truthful boundary, without loading
 unrelated project history. Do not merely raise the ceiling or discard history.
+The existing panel entry path must also change: `trajectory-panel/projection.ts:59`
+calls full-project `rpc.snapshot`, and `panel-state.ts:271` awaits that snapshot
+before selected-task history/status loading. Backend task-method narrowing alone
+cannot repair actual navigation. Include the minimal consumer/transport adaptation
+and preserve selected task identity and check display; this is existing behavior
+restoration, not a new UI feature. Verify the complete entry path above the old
+ceiling, not just direct backend method calls.
 Reconcile with existing LZ131 and Models/Tasks work; add a focused linked increment
 only if their current scope cannot coherently contain this repair. Cover an
 unrelated project-history volume above the old ceiling, foreign task exclusion,
