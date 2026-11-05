@@ -42,3 +42,24 @@ task and attempt lookup, historical/status reads and actual Desktop navigation.
 
 Read-only findings: no production data, source, settings or running workers were
 modified during this observation.
+
+## Native tasking follow-through
+
+Architect submitted LZ139 (`873b7617-e895-486d-bdba-7e89b07dee07`), plan
+`916474c0-4f49-4c42-80dd-718ff3c20ba3`. Existing owner c59 applied supported
+scope amendment/version7 adding the consumer projection/state files and tests.
+No immutable task rewrite, duplicate task or worker restart was needed.
+
+Its first launch reached preparing attempt
+`dd65c71f-4864-4bdd-a412-03856c5c72c4`, then worktree creation returned
+`Worktree.DirectoryUnavailableError`; no worker session exists. The creation
+effect remains uncertain. Native inventory found no matching tree. Disk had
+7.3GiB available, so ENOSPC is not established.
+
+Root's source hypothesis: `nativeHost.worktree` passes `ctx.location.directory`
+as `from`, while the shared scheduler selects its first registered participant.
+A removed checkout's retained location could therefore be used as a creation
+source. Actual selected host identity is not captured, so this is not yet a
+confirmed cause. Validate canonical project sourcing and a removed-location
+regression within existing LZ118/owner coordination. LZ118 is actively implementing
+startup recovery; no watched canonical source was changed mid-worker.
