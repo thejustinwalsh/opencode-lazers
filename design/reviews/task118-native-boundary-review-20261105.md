@@ -122,3 +122,21 @@ Do not extend it to arbitrary errors, timeouts or lost responses.
 
 Delivered through Desktop for the current original worker; actual LZ139/141
 settlement, resumed execution and feature acceptance remain unobserved.
+
+## Observed substantive continuation
+
+Original worker committed `4cd3694`, reported passing44 focused and259 runner
+tests plus quality checks, and reached native idle at `1793880221270`. The late
+legacy review was initially delivered with `resume:false` while it was inactive.
+Delivery did not wake it. Main then used supported `session.synthetic` with
+`resume:true`; native busy at `1793880443616` and subsequent worker tool calls
+confirm actual implementation resumed in the same session/attempt/tree. The
+observed idle interval was222346ms (3m42.346s); this is elapsed coordination time,
+not a claim that all of it was avoidable overhead. Legacy source changes and
+actual139/141 recovery were not yet complete at this observation.
+
+The native idle/input-lineage hold has existing `lz-plan-command reconcile`
+`reviewInputID` support for an actually completed observed review. It is distinct
+from reconstructing a missing historical idle event. A pending substantive
+correction needs a real wake and execution before that reconciliation. Delivery,
+wake, implementation, checks and acceptance remain separately observable facts.

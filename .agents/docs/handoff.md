@@ -16,7 +16,8 @@ acceptance, native observations and cleanup are separate facts.
   `1793877361137` found unchanged authored plans, revisions, routes, attempt/
   worker/input/workspace identities, policies and dependencies. There were 58
   reassignment events. Do not ask again. Nonlisted57/58,138,139,141,142 remain
-  coordinated by `ses_c59b85e3559c47a8a6f8191eb3b47eae`; that session has substantive
+  coordinated by automatic successor `ses_592005672c5a40b19eb05d4918334223`
+  (parent c59b85e3). All five owners were checked directly. It has substantive
   work and is not a historical-only replay loop to stop.
   [Transfer record](../../design/reviews/unfinished-plan-transfer-proposal-20261104.md).
 - **LZ118 is the active implementation.** Task
@@ -24,7 +25,9 @@ acceptance, native observations and cleanup are separate facts.
   `2e5b7147-426f-45b6-934f-6da2b07205e7`, original attempt
   `50345fa1-fccf-4cb7-9e85-e459ec1f85d9`, worker
   `ses_8a19b036a82f42599a1d978220fb871a`. Its native tree is under the attempt ID
-  in the runner worktree directory. No final artifact is recorded yet. The latest
+  in the runner worktree directory. Source commit4cd3694 is retained, but native
+  acceptance has not recorded an artifact. The same worker was explicitly woken
+  at1793880443616 for substantive legacy compatibility, preserving its attempt. The latest
   broad run passed259 tests/3608 assertions plus format/lint/types; subsequent
   portability/legacy changes need current checks. Do not merge intermediate source.
 - Root review corrected HTTP-only versus in-process native error classification,
@@ -34,7 +37,10 @@ acceptance, native observations and cleanup are separate facts.
   independent-package fixture is being corrected before integration.
   [Findings and rechecks](../../design/reviews/task118-native-boundary-review-20261105.md).
 - Main cleared recurrent stale permission holds through native `reconcile`,
-  preserving the original118 worker/attempt. Latest observed plan is running26.
+  preserving the original118 worker/attempt. The observed review-input lineage hold has an existing explicit `reconcile`
+  `reviewInputID` control; use real completed-review observations. Native
+  `session.synthetic` needs `resume:true` to wake an idle worker for substantive
+  correction. Message delivery without wake is not resumed implementation.
   Existing LZ88 carries the observation-race fix; do not create another task or
   restart a confirmed active worker because a stale label says blocked.
 
