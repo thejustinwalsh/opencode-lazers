@@ -45,3 +45,12 @@ not registered native tool observation or runtime acceptance. The reader now
 requires the new journal-revision table; the original read-only production probe
 cannot exercise that draft before its migration is installed. Script:
 `/private/tmp/lazers-journal-migrated-clone-probe-20261104.ts`.
+
+At1793848806589, authenticated `client.session.message.get` resolved an actual
+retained predecessor reference: session`ses_e68a9ed37ffeVqzPWRXN5SB7Uw`, message
+`msg_1a9794037001guCoXw4ue64keL`. Returned ID/type matched. Before/after SQL reads
+kept disposition`delivered`, referenced revision55 and updated_at1793848737876
+unchanged. No message body was printed and no production data was written.
+This establishes native reference retrieval/non-acknowledgement for that record;
+registered journal-tool observation on an activated candidate remains outstanding.
+Probe:`/private/tmp/lazers-journal-native-reference-probe-20261104.ts`.

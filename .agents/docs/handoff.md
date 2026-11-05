@@ -17,26 +17,32 @@ cleanup are separate facts.
   admitted input alias. Neither is accepted/integrated yet. Fresh coordinator
   `ses_e568438ebffeaoFbF9nBb942XM` created LZ136 for that narrow repair, priority2300,
   plan`ad6cb637-d5d7-4ee4-974e-727216f2bdd5`, task
-  `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. It is queued with no attempt; its only
-  overlapping write reservation is retained LZ72. LZ134 waits for133 integration.
+  `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. Following authorized72 quarantine,136
+  dispatched at1793849034879: attempt`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`,
+  session`ses_48e456730db5448d89a03440b372dca5`, OpenAI Luna Max in its native
+  isolated worktree. Native activity/streaming confirms it is live; no candidate
+  yet at1793849245262. LZ134 waits for133 integration.
   [Actual order and evidence](../../design/reviews/execution-order-20261104.md).
-- **Selected legacy ownership transfer completed with explicit user approval.**
-  LZ129/LZ132 are now owned by the fresh coordinator, versions26/13 at
-  1793848404029; original workers, attempts and worktrees are unchanged. No other
-  legacy plan was transferred. Root has separately requested approval for72
-  ownership transfer plus the existing source-quarantine/archive flow, preserving
-  its unresolved verification effect and resources. Do not infer that approval.
+- **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
+  to the fresh coordinator, versions26/13; original workers/attempts/trees are
+  unchanged. The user subsequently approved72 transfer plus existing quarantine.
+  It moved to the fresh coordinator at1793849020944, then reached sealed source
+  quarantine at1793849032014. Native worker archive timestamp1793849032001;
+  tree exists, uncertain verification remains uncertain and88's integrated72 edge
+  is unchanged. This actually unblocked136 dispatch. No other legacy plan was
+  manually transferred. [Live qualification](../../design/reviews/task72-source-quarantine-live-20261104.md).
 - **Research route is Luna Max too.** The subsequent “Scope recorder recovery
   optimization” delegate `ses_e5679b057ffeoNd6sRQPR2UKBb` was verified on OpenAI
   Luna Max and completed. An earlier Explore inherited Sol High; it finished before
   the explicit correction. Do not create further Sol research delegates.
-- **Old historical-review loop stopped with explicit user approval.** Native
-  interrupt of `ses_5aa94658965844ed85f4b0ebdd5266cb` returned true; outcome became
-  `interrupted`, idle at1793847176491. At1793847191037 the only active sessions
-  were the original LZ133/135 workers. Fresh coordinator e568 was already idle
-  after relaying both review corrections. No plans, history, worktrees or workers
-  were cancelled. Original Main e68 remains archived. Preserve legacy ownership
-  records; do not resume the historical loop merely to consume old notices.
+- **Historical-review stop did not survive automatic renewal.** Native interrupt
+  of5aa completed at1793847176491. Runtime then renewed it at1793848976947 into
+  `ses_72db8086246b4cabb6abf6f2f431dcc7`, which owns88 legacy plans and again
+  reviews old notices. Renewal`42b3b6b3-1a18-4665-8698-2c6d735de906` committed.
+  Automatic approval review rejected stopping this successor because the prior
+  explicit approval named5aa. Root requested approval covering this historical
+  review chain; no stop after rejection or workaround was attempted. Fresh
+  Architect and136 are separate. Do not create another fresh Architect.
 - **Performance source repairs are integrated.** Earlier matched service CPU
   73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
   [Report](../../design/reviews/astra-renewal-spike-repair-20261104.md). Current
@@ -75,10 +81,10 @@ cleanup are separate facts.
   usage/activity. Switching scope unexpectedly changed selected task135→133.
   Old archived Main also fails observation authorization. Do not confuse these
   failures with missing durable data. Timing/backend LZ131 remains queued.
-- **Source quarantine is installed but unexercised.** Original72 old verification
-  effect/resources remain uncertain; no release or acceptance was fabricated.
-  Guard registration is not control-flow qualification. Preserve original57/58's
-  reversible zero-attempt scheduling hold and existing88/99/118 relationships.
+- **Original72 source quarantine is now observed live.** Guard, archive and seal
+  readbacks plus actual136 dispatch prove the source-isolation path. This does not
+  prove old72 check termination, task acceptance or cleanup. Preserve its uncertain
+  effect/resources, original57/58 hold and existing88/99/118 relationships.
 
 Local usage at1793844441690–1731 confirmed native/SQLite counters agree for both
 original Luna workers:129 input577024/output49096/reasoning134798/cacheRead23348864;
@@ -97,18 +103,22 @@ subscription cost0 is not market cost. OpenRouter remains the default market ind
 `1ba8ca4b-0b21-4db0-8f72-162ceac48e5c`. Worktree paths use the attempt IDs under
 `/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/`.
 
+LZ136 repair: task`06fc208a-e4ed-4fe6-9b5b-33905840f8a8`, plan
+`ad6cb637-d5d7-4ee4-974e-727216f2bdd5`, attempt
+`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`, session
+`ses_48e456730db5448d89a03440b372dca5`. Native tree uses its attempt ID.
+
 ## Next actions
 
-0. Continue the current fresh Architect. LZ136 is submitted/queued; identify
-   current72 approval before any additional transfer, then qualify its existing
-   native source-quarantine flow and dispatch136. Do not build another delegation
-   feature or manually mutate TaskDB lifecycle state. Its repair must recognize
-   actual same-attempt steering without another worker prompt or fabricated idle
-   report. Review/integrate133/135, activate the exact candidates and perform native
-   journal/CPU checks. Root probe reports are in design/reviews/task133* and task135*.
-   System One task136 review returned unavailable due to a new ONNX WebGPU
-   device-loss buffer-download error; submission continued with recorded concerns.
-   No inference flag change or proven automatic recovery occurred.
+0. Monitor the actual136 worker. Once reviewed, perform coordinated activation
+   and native reconciliation of original133/135, then their actual journal/CPU
+   gates and integration. Original72 quarantine is already qualified: do not repeat
+   it or ask for approval again. User has explicitly approved129/132/72 transfers.
+   Historical review successor stop-chain approval remains pending as described
+   above. No direct TaskDB lifecycle edits or new delegation feature.
+   Task136 System One review was unavailable due to WebGPU device-loss buffer
+   download; submission continued with recorded concerns. No flag changes or
+   successful automatic GPU recovery were observed.
 
 1. Continue native orchestration on the now-reset OpenAI route with current model
    preferences. Prioritize the observed LZ28/LZ30 compact-context
@@ -116,11 +126,10 @@ subscription cost0 is not market cost. OpenRouter remains the default market ind
    notices into model context. Let Architect investigate and decompose the plan;
    use the existing task identities/contracts. Performance source/tests are landed;
    do not repeat the repaired loops or rerun benchmarks without a new concern.
-2. Exercise installed source quarantine/archive/readback on original72 using native
-   Architect/LAZERS tools, retaining its uncertain effect and resources. Guard
-   registration alone is not that exercise. Audit delivered behavior against
-   original57/58's remaining amended outcomes, then supported original requeue.
-   Their zero-attempt plan is reversibly cancelled as a scheduling hold.
+2. Reuse observed original72 source quarantine; its check/effect is still
+   uncertain. Audit delivered behavior against original57/58's remaining amended
+   outcomes, then supported original requeue. Their zero-attempt plan is reversibly
+   cancelled as a scheduling hold.
 3. Resolve original129/132 through supported runtime recovery; Root drives Desktop
    observations, while scheduler uses native SDK execution. Deliver concise
    source findings/corrections through their actual task/instruction surfaces;
