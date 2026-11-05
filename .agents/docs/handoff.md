@@ -26,23 +26,48 @@ cleanup are separate facts.
   Preserve task/attempt/session/artifact and use existing accepted-work repair,
   not replacement work. [Final review](../../design/reviews/task129-final-review-20261105.md).
   The user authorizes folding Astra's proportional proposal into existing57/58
-  (fresh read: cancelled, zero attempts, pland0ce36bb/version16, ownerc59b85e3):
+  (current ownerc59b85e3):
   ordinary tests and required live probes may accept a safely isolated committed
   candidate while old execution/uncertain effects/cleanup remain truthful.
   Actual resource isolation is required; no old idle certificate or proof-only
   worker turn. Current-owner admission, amendments and independent visible
-  Tasks/Radar/Models eligibility are being researched, not manually transferred.
-  Existing ownerc59b received the actionable retry/admission request;58 stays
-  undispatched until its no-worktree assertion has a supported authorization path.
+  Tasks/Radar/Models eligibility remain with their existing owners, not manually transferred.
+  Root8fcdca0 fixed explicit retry baselines; original57 readiness and exact replay
+  are actually verified: pland0ce36bb revision3/base8f, unchanged owner/task IDs/
+  revisions/dependency/Luna Max route, one baseline/requeue event and zero attempts/
+  effects. Latest planversion23/revision4 is blocked on cancelled58;57 is now
+  blocked too, still zero attempts/effects. Readiness correction alone did not
+  remove the cancelled-sibling plan hold.
+  Do not search again for a baseline API or cancel99 to shed its reservation.
+  Root658099c source-quarantine extension's focused-review input race is corrected
+  byeb7d696;9c342e2 also closes Code Mode fetch bypass. Quick Luna delta review is
+  clear; current owner sealed original99 quarantine at1793871137427, planversion20,
+  resourceHoldsRetained:true. Native worker archived1793871137393, old tree retained;
+  node/attempt remain running/unaccepted, artifact null and background unknown.
+  Original133 resumed on Luna Max with actual patch activity. No extra Root release,
+  99 cancellation, force, old acceptance or fabricated idle report is needed.
+  [Review](../../design/reviews/source-quarantine-current-input-review-20261105.md).
+  Changed remaining58 scope should use a clear linked correction/supersession
+  while preserving its original record—not a generic exception framework for old
+  zero-worktree wording. Existing owner received concrete task/plan authoring request
+  msg_1ab1728500019omGMxRXskWyR8; no linked replacement scope is observed submitted yet.
+  [Proportional follow-through](../../design/retained-candidate-proportional-follow-through-20261105.md).
   Fresh131 plan96cc983c/version18 is running with131 queued/zero attempts and130
   task-landed; its current owner is checking real reservations, not assuming
-  eligibility from missing coarse reasons. Models122/version14 still waits on126's
+  eligibility from missing coarse reasons. Keep131's admitted baseline and130
+  history: age/HEAD drift alone is not a safety gate. Concise current-interface
+  advice is attached to original131; meaningful checks and normal integration
+  address concrete incompatibilities. Models122/version14 still waits on126's
   historical-idle hold (version18), separate from cleanup-blocked prerequisites
   whose actual integration proof may already qualify. Fresh Git confirms129 is
   not in main;127 source is in main but is not a deployable replay recovery fix.
 - **Real-host replay is not the completion fix here.**127 returned acceptedaf6dd111;
   independent review clears its code and permanent realistic-inbox regression,
-  but actual host log returns no events plus log.synced even on active sessions
+  Root source-only landed it with ancestry at7bcb46b; postmerge95 tests/527
+  assertions and lint/types pass. Current ownerc59b recorded task-only source
+  integration at planversion61 against main3de2bd96. No combined finalization or
+  cleanup was requested; old native gates, history and resources remain intact.
+  The actual host log returns no events plus log.synced even on active sessions
   and raw HTTP. Pinned2.2.5 source defaults payload persistence off while retaining
   sequence counters; stock CLI omits the opt-in construction option. The actual
   process startup flag is not exposed and remains unproven. Preserve useful

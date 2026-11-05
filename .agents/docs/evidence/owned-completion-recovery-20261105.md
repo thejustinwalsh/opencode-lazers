@@ -482,3 +482,27 @@ permanent realistic-inbox regression and empty replay failure safety
 (`ses_e5546f0aeffeVg5LUEi27cLgrr`). No supported alternative is yet confirmed.
 No canonical source activation, worker replacement, replay certificate or private
 database workaround has been performed.
+
+## Reviewed127 source-only integration, not native replay qualification
+
+Root landed original accepted `af6dd111b8e33940cf03f51205cdc1bfb59fe533` with
+ancestry at `7bcb46b89e593f3ea7759e8b3494b50d6f5a0071`, at a boundary with no
+implementation worker active. Root's postmerge95 tests/527 assertions and
+lint/types pass. The real-host replay limitation and historical idle gates remain.
+
+Fresh native plan inspection found current owner
+`ses_c59b85e3559c47a8a6f8191eb3b47eae`, planversion60 accepted. Root's exact
+task-only integration request was delivered to that owner at1793868685974,
+without ownership transfer or original-worker prompt. Its supported Code Mode
+command used request `lz127-reviewed-task-source-integration-20261105-v1`,
+task `a683d4bf-ef65-4225-9891-a39237d0ffb6`, original accepted artifact and main.
+Observed native owner receipt: **task-integration-recorded/version61**, main
+`3de2bd96cf7fe34e542b726a12019be5a04d00d1`. No combined integration, cleanup or
+native recovery qualification was requested. Original attempt/session/tree and
+unknown historical resource facts remain preserved.
+
+132/137 are separately fully qualified/integrated with native non-forced cleanup;
+their [completed record](task132-native-qualified-20261105.md) is not invalidated by
+later unrelated source commits. The source rollout is over; current work is the
+existing57/58 retained-candidate lane, original129 source corrections and fresh131
+eligibility through existing owner/native scheduling, not historical-notice loops.
