@@ -1159,18 +1159,6 @@ export async function inspectTrajectory(
   const messageSessions = allAttempts.filter(
     ({ attempt }) => sessions.get(attempt.id)?.messages,
   ).length
-  const redactedSource = {
-    targetScope,
-    task,
-    plans: rawPlans,
-    sessions: [...sessions.entries()],
-    sessionErrors: [...sessionErrors.entries()],
-    events: rawEvents,
-  }
-  // The raw-source fingerprint is kept inside the continuation token; key it
-  // so the token cannot be used as an offline oracle for private source values.
-  const snapshotHash = hashSource(redactedSource, cursorSecret)
-
   const summary = {
     schemaVersion: 1,
     task: {
@@ -1279,13 +1267,38 @@ export async function inspectTrajectory(
     },
   }
 
-  const filterHash = hashSource({ targetScope, limit: input.limit })
-  const snapshot = hashSource({ hash: snapshotHash, summary, events: visibleEvents })
   let offset = 0
   if (input.cursor && options.allEvents) throw new Error("Invalid or stale trajectory cursor")
+  // Full captures and live status never issue continuation tokens.
+  const pagination = options.allEvents
+    ? null
+    : {
+        scope: hashSource({ targetScope, limit: input.limit }),
+        snapshot: hashSource({
+          // Key raw-source identity so tokens cannot expose an offline oracle
+          // for private source values.
+          hash: hashSource(
+            {
+              targetScope,
+              task,
+              plans: rawPlans,
+              sessions: [...sessions.entries()],
+              sessionErrors: [...sessionErrors.entries()],
+              events: rawEvents,
+            },
+            cursorSecret,
+          ),
+          summary,
+          events: visibleEvents,
+        }),
+      }
   if (input.cursor) {
     const cursor = readCursor(cursorSecret, input.cursor)
-    if (cursor.scope !== filterHash || cursor.snapshot !== snapshot || cursor.limit !== input.limit)
+    if (
+      cursor.scope !== pagination?.scope ||
+      cursor.snapshot !== pagination?.snapshot ||
+      cursor.limit !== input.limit
+    )
       throw new Error("Stale trajectory cursor; restart from the first page")
     offset = cursor.offset
   }
@@ -1293,12 +1306,12 @@ export async function inspectTrajectory(
   const page = options.allEvents ? visibleEvents : visibleEvents.slice(offset, offset + input.limit)
   const nextOffset = offset + page.length
   const nextCursor =
-    !options.allEvents && nextOffset < visibleEvents.length
+    pagination && nextOffset < visibleEvents.length
       ? makeCursor(cursorSecret, {
           v: 1,
           offset: nextOffset,
-          snapshot,
-          scope: filterHash,
+          snapshot: pagination.snapshot,
+          scope: pagination.scope,
           limit: input.limit,
         })
       : null

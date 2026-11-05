@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { inspectTrajectory } from "./read.ts"
+import { captureTrajectoryHistory, inspectTrajectory, inspectTrajectoryStatus } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -9,6 +9,70 @@ import { openReadOnlyTrajectoryStore } from "./store.ts"
 function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
 }
+
+test("full capture preserves every paged event and live status reads metadata only", async () => {
+  const fixture = makeFixture()
+  try {
+    const input = parse({ taskID, limit: 2 })
+    const capture = await captureTrajectoryHistory(
+      fixture.store,
+      fixture.host,
+      "project",
+      input,
+      cursorSecret,
+    )
+    const events = []
+    let cursor: string | undefined
+    do {
+      const page = await inspectTrajectory(
+        fixture.store,
+        fixture.host,
+        "project",
+        { ...input, cursor },
+        cursorSecret,
+      )
+      events.push(...page.trajectory.events)
+      cursor = page.trajectory.nextCursor ?? undefined
+    } while (cursor)
+    expect(events.length).toBeGreaterThan(input.limit)
+    expect(capture.trajectory.events).toEqual(events)
+    expect(capture.trajectory.nextCursor).toBeNull()
+    expect(capture.trajectory.hasMore).toBe(false)
+    await expect(
+      captureTrajectoryHistory(
+        fixture.store,
+        fixture.host,
+        "project",
+        { ...input, cursor: "invalid" },
+        cursorSecret,
+      ),
+    ).rejects.toThrow("Invalid or stale trajectory cursor")
+
+    const calls: string[] = []
+    const status = await inspectTrajectoryStatus(
+      fixture.store,
+      {
+        session: async () => {
+          throw new Error("Status must not load transcript context")
+        },
+        status: async (id) => {
+          calls.push(id)
+          const session = await fixture.host.session(id)
+          return session && { ...session, messages: null, messageStatus: "not-read" as const }
+        },
+      },
+      "project",
+      taskID,
+      cursorSecret,
+    )
+    expect(calls.length).toBeGreaterThan(0)
+    expect(status.trajectory.nextCursor).toBeNull()
+    expect(status.trajectory.hasMore).toBe(false)
+    expect(status.attempts).toHaveLength(capture.attempts.length)
+  } finally {
+    fixture.close()
+  }
+})
 
 function configureFailedAttemptRoute(
   fixture: ReturnType<typeof makeFixture>,
