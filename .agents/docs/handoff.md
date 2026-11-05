@@ -45,9 +45,11 @@ cleanup are separate facts.
   tests/3932 assertions, lint/types pass. Rootc711f89 then corrected native
   heartbeats omitting turn details;46 related tests/574 assertions pass. Original
   129/132 resumed at1793861931679/1661 through supported controls, versions35/22,
-  same attempts/sessions/dirty trees and OpenAI Luna Max.132 is patching;129 resumed
-  tools but hit a120s home-wide guidance search, and Architect received the exact
-  canonical review-note path. Source inclusion does not accept99: its native idle
+  same attempts/sessions/dirty trees and OpenAI Luna Max.132 returned e67fee1 and
+  its original node/attempt are accepted; task and combined checks pass, while
+  native-attached-readback:human remains open. Review/integration is pending.
+  129 remains active; its120s home-wide review-note search received an exact
+  canonical-path steer through Architect. Path consumption is not yet observed. Source inclusion does not accept99: its native idle
   mismatch remains. The runtime still reserves tools.ts, so133 remains preparing.
   See design/reviews/task99-current-input-failure-20261105.md.
 - **133 repair has been explicitly resumed, awaiting dispatch.** Cancellation
