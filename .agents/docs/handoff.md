@@ -47,7 +47,13 @@ cleanup are separate facts.
   129/132 resumed at1793861931679/1661 through supported controls, versions35/22,
   same attempts/sessions/dirty trees and OpenAI Luna Max.132 returned e67fee1 and
   its original node/attempt are accepted; task and combined checks pass, while
-  native-attached-readback:human remains open. Review/integration is pending.
+  native-attached-readback:human remains open. Reviewed LZ137 correction is
+  accepted at7262d827, basee67fee1: exactly two lines expose attachment in Code Mode
+  and update its registration test. Plan181baf24-b3dc-49c5-adad-338d0ec9fe34,
+  original359a7178/sessionfa6c346c, small-refactoring/OpenAI Luna Max, native busy
+  1793863118226→3273840. Review8 tests/99 assertions pass; clean merge preview.
+  Merge corrected descendant and qualify attachment/getters through Code Mode at
+  a quiet boundary. No watched source activation while127/129 remain active.
   129 remains active; its120s home-wide review-note search received an exact
   canonical-path steer through Architect. Path consumption is not yet observed. Source inclusion does not accept99: its native idle
   mismatch remains. The runtime still reserves tools.ts, so133 remains preparing.
@@ -77,7 +83,12 @@ cleanup are separate facts.
   Root answered its Desktop clarification: use supported ordered native session-log
   replay with a genuine current idle hook. Prospective implementation is authorized;
   no historical report fabrication. The current-owner implementation brief has been
-  delivered to f58f7187 without another ownership transfer.
+  delivered to f58f7187 without another ownership transfer. Its owner then
+  cancelled/settled127 atv47 and resumed the SAME38e12d10 attempt at1793862974295,
+  v49, new assignedmsg_15c474d20da04ae6b1ed90b959112565. Original worker42ac41f3
+  is actually active on OpenAI Luna Max, researching the replay API alongside129.
+  No replacement, reload or ownership transfer. Its canonical API read permission
+  was already resolved when Root checked; none remained pending.
   Automatic successor04072d58 reviewed real99 work and subsequently renewed into
   f58f7187. Its current work is being inspected before any historical-only stop. It hit native subagent depth1: renewal creates nested Architects. Luna
   researched parentless native creation with metadata lineage; existing134 advice
