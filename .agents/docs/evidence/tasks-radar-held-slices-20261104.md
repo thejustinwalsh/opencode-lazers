@@ -157,7 +157,7 @@ follow-through, not a duplicate task or unrelated addition to136/131:
   keep full-history compatibility/coverage promises. Reuse reviewed129 producer
   work where applicable rather than adding another reader implementation.
 - Root's correct136 Session trajectory showed one running original attempt,
- 127tool calls, tokens/context and an honestly unknown unfinished end. This is not
+  127tool calls, tokens/context and an honestly unknown unfinished end. This is not
   a missing-timestamp repair or proof that Project navigation is fixed.
 
 Desktop was left on the correct136 Session trajectory. Do not distract its original
