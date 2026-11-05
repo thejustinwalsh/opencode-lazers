@@ -4339,7 +4339,12 @@ export class TaskRuntime {
     attempt: AttemptRow,
     worker: HostSession,
   ): TerminalWorkerHold | undefined {
-    if (worker.outcome !== "interrupted" && worker.outcome !== "failed") return undefined
+    if (
+      worker.outcome !== "interrupted" &&
+      worker.outcome !== "failed" &&
+      worker.outcome !== "succeeded"
+    )
+      return undefined
     return {
       kind: "terminal-worker-observation",
       attemptID: attempt.id,
@@ -5881,15 +5886,15 @@ export class TaskRuntime {
       null,
       "BLOCKED",
     )?.workerObservation
-    const unchangedFailure =
-      session.outcome === "failed" &&
-      typeof session.idleAt === "number" &&
-      Number.isFinite(session.idleAt) &&
+    const unchangedTerminal =
+      (session.outcome === "failed" || session.outcome === "succeeded") &&
+      (session.outcome === "succeeded" ||
+        (typeof session.idleAt === "number" && Number.isFinite(session.idleAt))) &&
       previousHold?.kind === "terminal-worker-observation" &&
       previousHold.attemptID === attempt.id &&
       previousHold.sessionID === session.id &&
       previousHold.workspace === attempt.workspace &&
-      previousHold.outcome === "failed" &&
+      previousHold.outcome === session.outcome &&
       previousHold.idleAt === session.idleAt &&
       (!session.turn ||
         (previousHold.inputID === session.turn.inputID &&
@@ -5901,14 +5906,19 @@ export class TaskRuntime {
       !session.observationUnstable &&
       backgroundReason &&
       session.outcome !== "interrupted" &&
-      (session.outcome !== "failed" || unchangedFailure)
+      ((session.outcome !== "failed" && session.outcome !== "succeeded") ||
+        unchangedTerminal ||
+        session.archived ||
+        (session.outcome === "succeeded" &&
+          session.background?.state === "observed" &&
+          session.background.count > 0))
     ) {
       if (!priorBackground) {
         this.hold(
           plan,
           backgroundReason,
           ["audit", "reconcile", "cancel"],
-          unchangedFailure ? previousHold : undefined,
+          unchangedTerminal ? previousHold : undefined,
         )
         this.backgroundWait(plan, attempt, session, backgroundReason, fence)
       }
@@ -5980,8 +5990,15 @@ export class TaskRuntime {
         return
       }
       if (detailedBackgroundReason) {
-        if (session.outcome === "failed") {
-          this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, "failed", session.turn?.inputID)
+        if (session.outcome === "failed" || session.outcome === "succeeded") {
+          this.workerEvent(
+            plan,
+            attempt,
+            "WORKER_STOPPED",
+            fence,
+            session.outcome,
+            session.turn?.inputID,
+          )
           this.backgroundWait(
             plan,
             attempt,
@@ -5994,7 +6011,7 @@ export class TaskRuntime {
           )
           this.hold(
             plan,
-            `Worker execution failed; ${detailedBackgroundReason}`,
+            `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${detailedBackgroundReason}`,
             ["audit", "reconcile", "cancel"],
             this.terminalWorkerObservation(attempt, session),
           )

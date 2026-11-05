@@ -7695,7 +7695,11 @@ test("terminal verification waits for active foreground, exact input completion,
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
   expect(f.store.plan(f.receipt.planID)?.reason).toContain("background observation is unknown")
-  expect(blockedDetailReads).toBe(0)
+  // Capture the current terminal assignment once for an explicit correction,
+  // then keep unchanged background holds on the lightweight read path.
+  expect(blockedDetailReads).toBe(1)
+  await f.runtime.tick()
+  expect(blockedDetailReads).toBe(1)
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
   expect(
     f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
@@ -7728,7 +7732,7 @@ test("terminal verification waits for active foreground, exact input completion,
     count: 2,
     kinds: { shell: 1, subagent: 1 },
   })
-  expect(blockedDetailReads).toBe(0)
+  expect(blockedDetailReads).toBe(1)
 
   worker.background = {
     state: "observed",
@@ -8777,6 +8781,60 @@ test("native heartbeat failures retain structured holds without repeatedly readi
   expect(f.store.attempts(planID)).toHaveLength(1)
 })
 
+test("owner can resume completed but unaccepted work for a correction while background stays unknown", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const original = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(original.session_id)!
+  worker.busy = false
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: original.message_id, state: "completed" }
+  worker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "Completed foreground turn has no matching background observation",
+  }
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  const command = {
+    requestID: "resume-completed-worker-for-correction",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "resume",
+    taskID: original.task_id,
+    attemptID: original.id,
+    reason: "Apply the visual review correction in the original worker",
+  }
+  const receipt = await f.runtime.command(command, "owner")
+  expect(await f.runtime.command(command, "owner")).toEqual(receipt)
+  expect(receipt).toMatchObject({ status: "resuming" })
+  const assigned = f.store.attempts(planID)[0]!
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(assigned).toMatchObject({
+    id: original.id,
+    session_id: original.session_id,
+    workspace: original.workspace,
+    policy: original.policy,
+    base_commit: original.base_commit,
+  })
+  expect(assigned.message_id).not.toBe(original.message_id)
+  expect(worker.background?.state).toBe("unknown")
+  await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+  expect(f.store.effects(planID).some((effect) => effect.kind.startsWith("verify:"))).toBe(false)
+  expect(f.store.nodes(planID)[0]?.state).not.toBe("accepted")
+
+  worker.busy = false
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: assigned.message_id, state: "completed" }
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(worker.background?.state).toBe("unknown")
+})
+
 test("an explicit resume continues one process-replaced interrupted attempt without inventing idle proof", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)
@@ -9236,10 +9294,10 @@ test.each(["active", "pending-input", "pending-approval", "unstable", "known-bac
   },
 )
 
-test("a completed turn without a native failed outcome cannot authorize terminal continuation", async () => {
+test("a completed turn for another input cannot authorize terminal continuation", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
-  const { planID, attempt, worker } = await holdFailedAttempt(f, undefined, "succeeded")
-  expect(worker.turn).toEqual({ inputID: attempt.message_id, state: "completed" })
+  const { planID, attempt, worker } = await holdFailedAttempt(f, "other-input", "succeeded")
+  expect(worker.turn).toEqual({ inputID: "other-input", state: "completed" })
   await expect(
     f.runtime.command(
       {
@@ -9249,7 +9307,7 @@ test("a completed turn without a native failed outcome cannot authorize terminal
         action: "resume",
         taskID: attempt.task_id,
         attemptID: attempt.id,
-        reason: "A completed turn alone is not a terminal failure observation",
+        reason: "A completed turn for another input does not authorize this assignment",
       },
       "owner",
     ),

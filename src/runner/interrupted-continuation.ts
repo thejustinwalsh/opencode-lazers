@@ -115,7 +115,9 @@ export function terminalWorkerContinuationProblem(
 
   const nativeOutcome = worker?.outcome
   const validState =
-    (nativeOutcome === "interrupted" && node.state === "running" && attempt.state === "running") ||
+    ((nativeOutcome === "interrupted" || nativeOutcome === "succeeded") &&
+      node.state === "running" &&
+      attempt.state === "running") ||
     (nativeOutcome === "failed" &&
       ((node.state === "running" && attempt.state === "running") ||
         (node.state === "failed" && attempt.state === "failed")))
@@ -166,7 +168,9 @@ export function terminalWorkerContinuationProblem(
     return "Native worker has active, pending, approval or unstable activity"
   const expectedTurnState = nativeOutcome === "interrupted" ? "interrupted" : "completed"
   if (
-    (nativeOutcome !== "interrupted" && nativeOutcome !== "failed") ||
+    (nativeOutcome !== "interrupted" &&
+      nativeOutcome !== "failed" &&
+      nativeOutcome !== "succeeded") ||
     worker.turn?.state !== expectedTurnState ||
     !worker.turn.inputID ||
     !facts.assignedInputMatches

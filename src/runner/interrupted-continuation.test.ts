@@ -109,6 +109,20 @@ test("unknown background remains explicit while the exact interrupted assignment
   expect(terminalWorkerContinuationProblem(facts())).toBeUndefined()
 })
 
+test("a completed model turn can continue unfinished work without establishing task completion", () => {
+  const value = facts()
+  value.worker!.outcome = "succeeded"
+  value.worker!.turn = { inputID, state: "completed" }
+  value.stopObservation!.outcome = "succeeded"
+  value.planHoldObservation!.outcome = "succeeded"
+  value.planHoldObservation!.turnState = "completed"
+
+  expect(terminalWorkerContinuationProblem(value)).toBeUndefined()
+  expect(value.worker!.background?.state).toBe("unknown")
+  value.node!.state = "accepted"
+  expect(terminalWorkerContinuationProblem(value)).toBeDefined()
+})
+
 test("a genuinely failed native outcome with its completed assigned turn stays failed and may continue", () => {
   const value = facts()
   value.worker!.outcome = "failed"
