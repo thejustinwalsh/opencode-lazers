@@ -20,7 +20,7 @@ Two idempotent indexes support the unchanged SQL: `runner_effects(plan_id)` and 
 
 A fresh read-only snapshot248061952 bytes contains1162 effects and9320 transitions. Forty actual lookup shapes across25 running/blocked/cancelling plans and5 active attempts return deeply identical rows before/after indexing. EXPLAIN changes full-table SCAN to the respective indexed SEARCH. Twelve alternating same-snapshot rounds, excluding each first round, measure median8.588ms before versus1.113ms after for the forty-query group. Index setup is excluded from those timings; first creation measured10.0ms. Artifacts: `/private/tmp/lazers-residual2-sql-replay.json` (plans/output counts/EXPLAIN), `/private/tmp/lazers-residual2-sql-interleaved.json` (alternating timings), and the private snapshot/scripts beside them. These are lookup replay gains, not a claim of whole-service CPU savings.
 
-Canonical activation and one comparable post-fix OS/profile observation remain pending Root coordination. The temporary profiler must then be removed in a separate cleanup commit. Remaining context/reconstruction work is not assumed fixed until the new measurement.
+Canonical activation and the post-fix observations are recorded below. Remaining context/reconstruction work is not assumed fixed from source checks alone.
 
 ## Live post-fix attribution and diagnostic cleanup
 
@@ -31,3 +31,16 @@ The single post-fix profile `/private/tmp/lazers-service-residual-after-20261104
 The temporary CPU-profile contract/handler/helper/tests are removed after these two captures. No model-facing tool, background profiling or permanent diagnostic API remains. Root will take one final settled OS window after cleanup activation; that result belongs alongside the separate17.54% pre-fix service baseline.
 
 Cleanup verification: affected Observability RPC suite4 tests/41 assertions passes; formatter, lint358, typecheck348 and diff checks pass. No GUI rebuild or broad test repeat was needed.
+
+## Final cleanup window exposed another spike
+
+Canonical960b7a3 removes the temporary profiler. Current source-fence registration
+was confirmed at1793839526019, samePID95968/project/DB. Native active inventory was
+empty at1793839525404; all six inference flags remained true and demand false.
+Desktop confirmed Main selected and DevTools closed. An OS-only12.038-second
+window1793839542408–1793839554446 then measured **service103.92%, renderer29.41%,
+GPU-process1.99%**, with the same PIDs and no competing Root model, build, test or
+profiling traffic. This contradicts any claim that idle performance is resolved.
+The prior15.29% and17.54% windows remain bounded observations, not a steady-state
+ceiling. Astra is investigating the recurrence; cause is not established. Raw rows
+remain in `/private/tmp/lazers-panel-cpu-windows-20261104.jsonl`.

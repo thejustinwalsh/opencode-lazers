@@ -8,7 +8,7 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Current coordination
 
-- **c44eb9b installed; residual profiling continues:** Root combined the reviewed
+- **960b7a3 installed; residual performance investigation continues:** Root combined the reviewed
   bootstrap5d with Astra f07cc43/b420a98/96f147e, preserving5d's branch. The merge
   retains sourceReservationExcluded after the new single reservation read.
   Merged199tests/3181assertions/eight files, quality and GUI build/smoke pass.
@@ -25,13 +25,24 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
   provider switch occurred. User route preference is pending. Original57/58's
   zero-attempt scheduling hold remains until actual qualification and installed
   reuse audit. Root can continue local review/integration without model calls.
-- **Performance remains active:** settled same-PID serviceCPU19.35→17.54% is only a
-  modest backend improvement. The separate controlled busy-label experiment gave
-  renderer23.75→0.50/GPU-process21.18→0.25%; no battery or GPU-utilization claim.
-  All six inference flags true/Never unload unchanged. Temporary bounded JSC
-  endpoint5e9e9be is currently installed for Astra's fresh residual investigation;
-  one10s/1080-sample capture is retained privately. Remove the endpoint after
-  comparison. No daemon, model prompt, extra recurring timer or lifecycle DB edit.
+- **Performance remains active; recurrence after cleanup:** combined reservation,
+  prerequisite and static busy-text repairs are installed. Server repair7d72291
+  avoids full context reads while fresh background facts already block progress
+  and adds two history indexes; targeted tests and live profiles confirm the
+  intended hot-path changes. Temporary profiling API removed in960b7a3.
+  Native active inventory empty1793839525404, six flags true/demand false, current
+  registration1793839526019, samePID95968. Final quiet OS-only window
+  1793839542408–1793839554446 measured **service103.92%, renderer29.41%,
+  GPU-process1.99%**: prior17.54/15.29% windows do not establish resolved idle cost.
+  Astra is investigating this recurrence; no cause or battery improvement claimed.
+  [Current attribution and recurrence](../../design/reviews/astra-idle-service-repair-20261104.md).
+- **132 retained source review, not completion:** Root's exact native worktree GUI
+  build/smoke pass. Original worker's tests/quality finished before quota stop;
+  source remains dirty and unaccepted. Remove its arbitrary lifetime20-advice
+  correction ceiling and empty-advice prose through that original worker after
+  route/reset; preserve history and bound read projections instead. Native actual
+  attachment/getter walkthrough remains pending.
+  [Review](../../design/reviews/task132-retained-review-20261104.md).
 
 - **57/58 source reuse pre-audit complete, NOT post-install authorization:**
   [Outcome comparison](evidence/retained57-58-reuse-preaudit-20261104.md) finds genuine

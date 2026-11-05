@@ -112,3 +112,13 @@ no other Root diagnostic traffic ran in that interval. Raw metadata is private a
 `/private/tmp/lazers-service-residual-before-20261104.json`. Attribution and the next
 fix are pending; SQL primitive names alone do not establish a cause. This temporary
 diagnostic must be removed again after the comparison.
+
+## Subsequent service investigation
+
+The temporary diagnostic was removed in960b7a3 after repair7d72291 and matching
+JSC captures. Targeted full-context samples fell244→0; history lookup samples also
+fell after indexing. See [the idle-service investigation](astra-idle-service-repair-20261104.md)
+for tests, actual activation and attribution limits. The final profiler-free CPU
+window exposed a recurrence: service103.92%, renderer29.41%, GPU-process1.99% over
+12.038seconds at1793839542408–1793839554446, same PIDs, native active inventory
+empty immediately beforehand. Performance remains open; Astra is investigating.
