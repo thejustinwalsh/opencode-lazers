@@ -5,6 +5,8 @@ import { makeFixture, cursorSecret, taskID } from "../../test/trajectory/fixture
 import {
   exactRouteMatch,
   candidateFocusIndex,
+  boundedModelLabel,
+  modelDisplayName,
   readTaskEffortBasis,
   routeLabel,
   sourceState,
@@ -55,6 +57,40 @@ test("route identity comparison includes provider, model and exact variant", () 
   ).toBe(false)
   expect(routeLabel({ providerID: "openai", modelID: "gpt-6", variant: "high" })).toBe(
     "openai / gpt-6 · high",
+  )
+})
+
+test("model names use exact provider/model metadata independent of effort and fallback without guessing", () => {
+  const candidates = [
+    {
+      identity: { providerID: "openai", modelID: "gpt-6", variant: null },
+      native: { name: "Cached GPT-6" },
+    },
+  ]
+  const catalog = [
+    { providerID: "openai", id: "gpt-6-mini", name: "GPT-6 Mini" },
+    { providerID: "openai", id: "gpt-6", name: "GPT-6 from native catalog" },
+  ]
+
+  expect(
+    modelDisplayName(
+      { providerID: "openai", modelID: "gpt-6", variant: "effort-not-in-catalog" },
+      candidates,
+      catalog,
+    ),
+  ).toBe("GPT-6 from native catalog")
+  expect(
+    modelDisplayName(
+      { providerID: "anthropic", modelID: "gpt-6", variant: null },
+      candidates,
+      catalog,
+    ),
+  ).toBe("gpt-6")
+  expect(
+    modelDisplayName({ providerID: "openai", modelID: "gpt-6", variant: "low" }, candidates, []),
+  ).toBe("Cached GPT-6")
+  expect(boundedModelLabel("a-model-id-that-is-far-too-long-to-display-in-one-row", 18)).toBe(
+    "a-model-id-that-i…",
   )
 })
 

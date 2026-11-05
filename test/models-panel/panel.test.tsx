@@ -100,8 +100,9 @@ test("candidate row exposes sourced route and separate external benchmark with k
   expect(html).toContain('aria-pressed="true"')
   expect(html).toContain('tabindex="0"')
   expect(html).toContain(
-    'aria-label="openai / gpt-6 · high. Effort high. Available in the native catalog."',
+    'aria-label="GPT-6. Exact route openai / gpt-6 · high. Effort high. Available in the native catalog."',
   )
+  expect(html).toContain('<strong title="GPT-6">GPT-6</strong>')
   expect(html).toContain("Effort high")
   expect(html).toContain("Available")
   expect(html).not.toContain("OpenRouter GPT-6")
@@ -109,10 +110,32 @@ test("candidate row exposes sourced route and separate external benchmark with k
   expect(html).not.toContain("$0.18")
 })
 
+test("candidate row bounds a missing-name ID visually and exposes its full exact route accessibly", () => {
+  const modelID = "provider-specific-model-identifier-that-is-long"
+  const fallbackCandidate = {
+    ...candidate,
+    candidateID: "fallback-candidate",
+    identity: { providerID: "new-provider", modelID, variant: null },
+    native: { ...candidate.native, name: null },
+  } as ModelCandidate
+  const html = renderToString(() =>
+    createComponent(ModelCandidateRow, {
+      candidate: fallbackCandidate,
+      selected: false,
+      tabIndex: 0,
+      onKeyDown: () => {},
+      onSelect: () => {},
+    }),
+  )
+  expect(html).toContain(`>${modelID.slice(0, 35)}…</strong>`)
+  expect(html).toContain(`Exact route new-provider / ${modelID}`)
+  expect(html).toContain(`title="new-provider / ${modelID}"`)
+})
+
 test("unavailable chart and read-only assignments never fabricate values or imply active routing", () => {
   const chart = renderToString(() => createComponent(HistoricalChartPlaceholder, {}))
-  expect(chart).toContain("Comparable coordinates unavailable")
-  expect(chart).toContain("No sample points or frontier are shown")
+  expect(chart).toContain("No plottable comparison points")
+  expect(chart).toContain("Unknown prices and zero-accepted configurations have no coordinates")
   expect(chart).not.toContain("<svg")
   expect(chart).not.toContain("illustrative")
 

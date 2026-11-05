@@ -50,6 +50,24 @@ const money = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 6,
 })
 const tokens = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 })
+const tokenAxis = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  compactDisplay: "short",
+  maximumFractionDigits: 1,
+})
+
+const noPointDescription =
+  "No plottable observations. Unknown prices and zero-accepted configurations have no coordinates."
+
+export function compactTokenAxisValue(value: number) {
+  return tokenAxis.format(value)
+}
+
+function boundedPointLabel(value: string, maximumLength = 18) {
+  const characters = Array.from(value)
+  if (characters.length <= maximumLength) return value
+  return `${characters.slice(0, maximumLength - 1).join("")}…`
+}
 
 function nativeToken(styles: CSSStyleDeclaration, name: string, fallback: string) {
   return styles.getPropertyValue(name).trim() || fallback
@@ -97,22 +115,27 @@ function plottable(point: ComparisonChartPoint) {
   )
 }
 
+export function comparisonChartHasPlottablePoints(points: readonly ComparisonChartPoint[]) {
+  return points.some(plottable)
+}
+
 export function comparisonChartOptions(data: ComparisonChartData, theme: ComparisonChartTheme) {
   const points = data.points.filter(plottable)
   const frontier = new Set(data.frontierConfigurationIDs)
+  const largestTokenValue = Math.max(0, ...points.map((point) => point.tokensPerAcceptedTask))
   const frontierPoints = points
     .filter((point) => frontier.has(point.configurationID))
     .toSorted((left, right) => left.tokensPerAcceptedTask - right.tokensPerAcceptedTask)
   const description = points.length
     ? points.map(comparisonChartPointText).join(" ")
-    : "No plottable observations. Unknown and zero-accepted configurations have no coordinates."
+    : noPointDescription
 
   return {
     animation: false,
     backgroundColor: theme.surface,
     textStyle: { fontFamily: theme.fontFamily, color: theme.text },
     aria: { enabled: true, description, decal: { show: false } },
-    grid: { left: 76, right: 24, top: 28, bottom: 62, containLabel: false },
+    grid: { left: 72, right: 14, top: 22, bottom: 44, containLabel: false },
     tooltip: {
       trigger: "item",
       confine: true,
@@ -127,18 +150,22 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
       type: "value",
       name: "Tokens / accepted task",
       nameLocation: "middle",
-      nameGap: 40,
+      nameGap: 26,
       min: 0,
       nameTextStyle: { color: theme.mutedText, fontFamily: theme.fontFamily },
-      axisLabel: { color: theme.mutedText, fontFamily: theme.monoFontFamily },
+      axisLabel: {
+        color: theme.mutedText,
+        fontFamily: theme.monoFontFamily,
+        formatter: compactTokenAxisValue,
+      },
       axisLine: { lineStyle: { color: theme.grid } },
       splitLine: { lineStyle: { color: theme.grid, opacity: 0.35 } },
     },
     yAxis: {
       type: "value",
-      name: "Current market USD / accepted task",
+      name: "Market USD / accepted task",
       nameLocation: "middle",
-      nameGap: 58,
+      nameGap: 48,
       min: 0,
       nameTextStyle: { color: theme.mutedText, fontFamily: theme.fontFamily },
       axisLabel: {
@@ -170,8 +197,11 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
             },
             label: {
               show: true,
-              formatter: point.label,
-              position: "right",
+              formatter: boundedPointLabel(point.label),
+              position:
+                largestTokenValue > 0 && point.tokensPerAcceptedTask >= largestTokenValue * 0.65
+                  ? "left"
+                  : "right",
               color: selected ? theme.text : theme.mutedText,
               fontFamily: theme.fontFamily,
               fontWeight: selected ? 600 : 400,
@@ -179,7 +209,7 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
           }
         }),
         emphasis: { focus: "self" },
-        labelLayout: { hideOverlap: true },
+        labelLayout: { hideOverlap: true, moveOverlap: "shiftY" },
       },
       {
         id: "authoritative-frontier",
@@ -305,7 +335,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
         style={{
           width: "100%",
           height: "100%",
-          "min-height": "240px",
+          "min-height": "0",
           overflow: "hidden",
           "font-family": "inherit",
         }}
@@ -324,9 +354,9 @@ export function ComparisonChart(props: ComparisonChartProps) {
           border: "0",
         }}
       >
-        {props.points.length
-          ? props.points.map(comparisonChartPointText).join(" ")
-          : "No plottable observations. Unknown and zero-accepted configurations have no coordinates."}
+        {props.points.filter(plottable).length
+          ? props.points.filter(plottable).map(comparisonChartPointText).join(" ")
+          : noPointDescription}
       </p>
       <details class="lazers-models-comparison-chart-data">
         <summary>Chart data and point selection</summary>
