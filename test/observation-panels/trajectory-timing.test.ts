@@ -353,7 +353,10 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(replacedInferenceRuntime).toBe(true)
 
     let changeSubscriber:
-      ((event: { type: string; data?: unknown } | undefined) => void) | undefined
+      | ((
+          event: { type: string; location?: { directory: string }; data?: unknown } | undefined,
+        ) => void)
+      | undefined
     let publishedSequence = 1
     let attemptEnd = pairs.models[1]
     let capturedAt = 1_793_792_604_000
@@ -415,12 +418,12 @@ test("registered Trajectory panel renders proportional check intervals and preci
         subscribe: ({ signal }: { signal: AbortSignal }) =>
           (async function* () {
             while (!signal.aborted) {
-              const next = await new Promise<{ type: string; data?: unknown } | undefined>(
-                (resolve) => {
-                  changeSubscriber = resolve
-                  signal.addEventListener("abort", () => resolve(undefined), { once: true })
-                },
-              )
+              const next = await new Promise<
+                { type: string; location?: { directory: string }; data?: unknown } | undefined
+              >((resolve) => {
+                changeSubscriber = resolve
+                signal.addEventListener("abort", () => resolve(undefined), { once: true })
+              })
               if (!next) return
               yield next
             }
@@ -680,6 +683,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(publish).toBeDefined()
     publish?.({
       type: "rpc.lazers.observability.changed",
+      location: { directory },
       data: {
         projectID,
         sequence: publishedSequence,
