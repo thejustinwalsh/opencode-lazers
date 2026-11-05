@@ -11,6 +11,14 @@ The runtime nevertheless renewed its ownership to successor
 the native API at1793850535819 and confirmed interrupted/idle1793850535856;
 only the LZ136 implementor remained active. This Architect and136 were untouched.
 
+Second recurrence: the stopped72db successor renewed at1793852337790 into
+`ses_728b844b477c4a569402cfdbcc5423e2` (parent72db); Root observed only legacy
+inspection tools. Under the existing chain-stop approval Root interrupted that
+successor at1793852396456 and confirmed interrupted/idle1793852396587. Only136
+remained active. No fresh implementation or worker input was changed. This is a
+second observed failure of explicit-stop preservation, not new authorization to
+discard plans or silently mark historical notices consumed.
+
 Carry this observed failure into **LZ134**, alongside its original LZ28/LZ30 seams:
 
 - Honor explicit operator stop of this historical-review chain across the idle
