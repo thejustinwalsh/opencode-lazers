@@ -116,17 +116,42 @@ type NativeWorkerObservation = {
   runningShells: number
 }
 
+function isMissingNativeSession(
+  error: unknown,
+  sessionID: string,
+): error is { _tag: "Session.NotFoundError" | "SessionNotFoundError"; sessionID: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    (error._tag === "Session.NotFoundError" || error._tag === "SessionNotFoundError") &&
+    "sessionID" in error &&
+    error.sessionID === sessionID
+  )
+}
+
 async function workerObservation(
   client: NativeInboxClient,
   sessionID: string,
   directory?: string,
   requireLocationShells = true,
+  confirmedAbsent = false,
 ): Promise<NativeWorkerObservation> {
   if (directory && requireLocationShells && typeof client.shell?.list !== "function")
     throw new Error("Native worker location shell inventory is unavailable")
   const [active, inbox, permissions, forms, shells] = await Promise.all([
     client.session.active(),
-    client.session.inbox.list({ sessionID }),
+    client.session.inbox.list({ sessionID }).catch((error: unknown) => {
+      // Only the already-absent session path can treat its absent inbox as empty.
+      // Present-worker reads must retain every inventory failure as unknown.
+      if (
+        confirmedAbsent &&
+        isMissingNativeSession(error, sessionID) &&
+        error._tag === "SessionNotFoundError"
+      )
+        return []
+      throw error
+    }),
     directory
       ? client.permission.request.list({ location: { directory } })
       : Promise.resolve(undefined),
@@ -286,8 +311,15 @@ export function nativeHost(
       throw error
     }
   }
-  const observeWorker = (client: NativeInboxClient, sessionID: string, directory?: string) =>
-    runNative(client, () => workerObservation(client, sessionID, directory, Boolean(idleStore)))
+  const observeWorker = (
+    client: NativeInboxClient,
+    sessionID: string,
+    directory?: string,
+    confirmedAbsent = false,
+  ) =>
+    runNative(client, () =>
+      workerObservation(client, sessionID, directory, Boolean(idleStore), confirmedAbsent),
+    )
   const retainedInputID = async (sessionID: string) => {
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
@@ -336,18 +368,8 @@ export function nativeHost(
           Effect.runPromise(
             ctx.session.get({ sessionID: Session.ID.make(id) }).pipe(
               Effect.catch((error) => {
-                if (
-                  typeof error === "object" &&
-                  error !== null &&
-                  "_tag" in error &&
-                  // The in-process host exposes the core tag; the HTTP client
-                  // uses the protocol tag. Neither means a different ID is absent.
-                  (error._tag === "Session.NotFoundError" ||
-                    error._tag === "SessionNotFoundError") &&
-                  "sessionID" in error &&
-                  error.sessionID === id
-                )
-                  return Effect.succeed(null)
+                // In-process core and HTTP protocol expose different pinned tags.
+                if (isMissingNativeSession(error, id)) return Effect.succeed(null)
                 return Effect.fail(error)
               }),
             ),
@@ -355,7 +377,7 @@ export function nativeHost(
         )
       const session = await readSession()
       if (!session) {
-        const before = await observeWorker(client, id)
+        const before = await observeWorker(client, id, undefined, true)
         if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
         if (before.active || before.pendingInput)
           throw new Error("Native worker session is absent while execution or input is observed")

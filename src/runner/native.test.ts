@@ -17,6 +17,8 @@ import { makeFixture as makeTrajectoryFixture } from "../../test/trajectory/fixt
 type NativeRevalidationOptions = {
   messages?: unknown[]
   sessionError?: unknown
+  inboxError?: unknown
+  inbox?: unknown[]
   contextAt?: (read: number, messages: unknown[]) => unknown[]
   sessionAt?: (read: number, session: Record<string, unknown>) => Record<string, unknown>
   active?: Record<string, { type: "running" }>
@@ -65,7 +67,12 @@ function nativeRevalidationHost(
     server: { info: async () => ({ pid: 42, version: "2.2.5" }) },
     session: {
       active: async () => options.active ?? {},
-      inbox: { list: async () => [] },
+      inbox: {
+        list: async () => {
+          if (options.inboxError !== undefined) throw options.inboxError
+          return options.inbox ?? []
+        },
+      },
     },
     permission: {
       request: {
@@ -1227,6 +1234,39 @@ test("native session absence accepts the pinned core and protocol tags only for 
     await expect(active.host.session("ses-absent")).rejects.toThrow(
       "absent while execution or input is observed",
     )
+  } finally {
+    fixture.close()
+  }
+})
+
+test("only confirmed native absence permits a same-session missing inbox", async () => {
+  const fixture = makeTrajectoryFixture()
+  try {
+    const sessionError = new CoreSessionNotFound({ sessionID: "ses-absent" })
+    const inboxError = {
+      _tag: "SessionNotFoundError",
+      sessionID: "ses-absent",
+      message: "Session not found: ses-absent",
+    }
+    expect(
+      await nativeRevalidationHost(fixture.repository, {
+        sessionError,
+        inboxError,
+      }).host.session("ses-absent"),
+    ).toBeNull()
+    for (const options of [
+      { sessionError, inboxError: { ...inboxError, sessionID: "ses-other" } },
+      { sessionError, inboxError: new Error("inbox transport unavailable") },
+      { sessionError, inboxError, active: { "ses-absent": { type: "running" as const } } },
+      { sessionError, inbox: [{ id: "pending", type: "user", delivery: "queue" }] },
+      { inboxError: { ...inboxError, sessionID: "ses-accepted" } },
+    ]) {
+      await expect(
+        nativeRevalidationHost(fixture.repository, options).host.session(
+          options.sessionError ? "ses-absent" : "ses-accepted",
+        ),
+      ).rejects.toBeDefined()
+    }
   } finally {
     fixture.close()
   }
