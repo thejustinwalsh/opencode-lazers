@@ -1,8 +1,10 @@
 import { afterEach, expect, test } from "bun:test"
+import { Buffer } from "node:buffer"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
+import { fingerprint } from "../identity.ts"
 import { TaskRepository } from "../storage.ts"
 import { PlanInput } from "./schema.ts"
 import { RunnerStore } from "./store.ts"
@@ -235,9 +237,247 @@ function fixture(requestID = "plan-title-store") {
   return { databasePath, projectDirectory, repository, store, input }
 }
 
+function seedSourceJournal(
+  store: RunnerStore,
+  planID: string,
+  inputCount: number,
+  resultCount: number,
+) {
+  const renewalID = crypto.randomUUID()
+  const mappedPlanID = crypto.randomUUID()
+  const sourceSessionID = "ses_retained_architect_predecessor"
+  const successorSessionID = "ses_current_architect_owner"
+  store.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body,model,reason,artifact)
+       SELECT ?,project_directory,owner,revision,version,state,body,model,reason,artifact
+       FROM runner_plans WHERE id=?`,
+    ).run(mappedPlanID, planID)
+    db.query(
+      `INSERT INTO runner_architect_renewals(
+         id,anchor_plan_id,previous_session_id,successor_session_id,directory,model,idle_at,
+         generation,state,handoff_message_id,started_at
+       ) VALUES(?,?,?,?,?,?,?,?,'committed',?,?)`,
+    ).run(
+      renewalID,
+      planID,
+      sourceSessionID,
+      successorSessionID,
+      "/project",
+      "{}",
+      100,
+      2,
+      "msg_handoff",
+      200,
+    )
+    const mapping = db.query(
+      "INSERT INTO runner_architect_renewal_plans(renewal_id,plan_id,prior_continuation,transferred) VALUES(?,?,NULL,1)",
+    )
+    mapping.run(renewalID, planID)
+    mapping.run(renewalID, mappedPlanID)
+    db.query(
+      `INSERT INTO runner_architect_sources(
+         session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
+       ) VALUES(?,?,?,?,?,?,'active',?)`,
+    ).run(sourceSessionID, renewalID, planID, "native-history-cursor", 9, 12, 300)
+
+    const inputInsert = db.query(
+      `INSERT INTO runner_architect_inputs(
+         session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
+         metadata_json,last_seen_sweep,referenced_revision,updated_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (let index = 0; index < inputCount; index++) {
+      const id = `msg_input_${String(index).padStart(4, "0")}`
+      const disposition = ["pending", "steering", "delivered", "unknown"][index % 4]!
+      inputInsert.run(
+        sourceSessionID,
+        id,
+        400 + index,
+        renewalID,
+        "user",
+        disposition === "steering" ? "steer" : null,
+        disposition,
+        JSON.stringify({ privateBodyCanary: "ORIGINAL_MESSAGE_BODY" }),
+        9,
+        index % 2,
+        400 + index,
+      )
+    }
+
+    const resultInsert = db.query(
+      `INSERT INTO runner_architect_source_results(
+         session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
+         tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
+       ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,0,?)`,
+    )
+    for (let index = 0; index < resultCount; index++) {
+      const id = `msg_result_${String(index).padStart(4, "0")}`
+      resultInsert.run(sourceSessionID, renewalID, id, `fingerprint-${index}`, 800 + index)
+    }
+  })
+  return { renewalID, mappedPlanID, sourceSessionID, successorSessionID }
+}
+
 afterEach(() => {
   for (const repository of repositories.splice(0)) repository.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
+})
+
+test("Architect source journal pages traverse large retained sources and invalidate foreign or stale cursors", () => {
+  const f = fixture("architect-source-journal")
+  const anchor = f.store.submit(f.input, "owner")
+  const source = seedSourceJournal(f.store, anchor.planID, 804, 3_839)
+  const snapshot = () =>
+    f.store.atomic((db) => ({
+      journalRevision:
+        db
+          .query<{ revision: number }, [string, string]>(
+            `SELECT revision FROM runner_architect_journal_revisions
+             WHERE project_directory=? AND plan_id=?`,
+          )
+          .get(f.projectDirectory, source.mappedPlanID)?.revision ?? 0,
+      source: db
+        .query(
+          "SELECT scan_cursor,scan_sweep,revision,state,updated_at FROM runner_architect_sources WHERE session_id=?",
+        )
+        .get(source.sourceSessionID),
+      inputs: db
+        .query(
+          "SELECT count(*) AS count,sum(referenced_revision) AS referencesMade FROM runner_architect_inputs WHERE session_id=?",
+        )
+        .get(source.sourceSessionID),
+      results: db
+        .query(
+          "SELECT count(*) AS count,sum(referenced_revision) AS referencesMade FROM runner_architect_source_results WHERE session_id=?",
+        )
+        .get(source.sourceSessionID),
+      notices: db
+        .query("SELECT count(*) AS count FROM runner_outbox WHERE session_id=?")
+        .get(source.sourceSessionID),
+    }))
+  const before = snapshot()
+  const first = f.store.architectSourceJournalPage(source.mappedPlanID, 73)
+  expect(first.records[0]).toMatchObject({
+    kind: "source",
+    sourceSessionID: source.sourceSessionID,
+    predecessorSessionID: source.sourceSessionID,
+    successorSessionID: source.successorSessionID,
+    anchorPlanID: anchor.planID,
+    associatedPlanID: source.mappedPlanID,
+    sourceRevision: 12,
+    scan: { sweep: 9, cursorPresent: true },
+  })
+  expect(first.coverage).toMatchObject({
+    kind: "metadata-only",
+    messageBodies: "not-included",
+    transcriptCompleteness: "unknown",
+    nativeConsumption: "unknown",
+    checkpointCoverage: "not-asserted",
+  })
+  expect(snapshot()).toEqual(before)
+
+  const records = [...first.records]
+  let cursor = first.nextCursor ?? undefined
+  while (cursor) {
+    const page = f.store.architectSourceJournalPage(source.mappedPlanID, 73, cursor)
+    expect(page.page.snapshotRevision).toBe(first.page.snapshotRevision)
+    expect(page.page.hasMore).toBe(page.nextCursor !== null)
+    records.push(...page.records)
+    cursor = page.nextCursor ?? undefined
+  }
+
+  const inputIDs = Array.from(
+    { length: 804 },
+    (_, index) => `input:${source.sourceSessionID}:msg_input_${String(index).padStart(4, "0")}`,
+  )
+  const resultIDs = Array.from(
+    { length: 3_839 },
+    (_, index) => `result:${source.sourceSessionID}:msg_result_${String(index).padStart(4, "0")}`,
+  )
+  const expectedIDs = [`source:${source.sourceSessionID}`, ...inputIDs, ...resultIDs].toSorted()
+  const actualIDs = records.map((record) => record.recordID)
+  expect(records).toHaveLength(1 + 804 + 3_839)
+  expect(new Set(actualIDs).size).toBe(actualIDs.length)
+  expect(actualIDs.toSorted()).toEqual(expectedIDs)
+  expect(records.find((record) => record.recordID === inputIDs[0])).toMatchObject({
+    kind: "input",
+    messageID: "msg_input_0000",
+    disposition: "pending",
+    referencedSourceRevision: 0,
+  })
+  expect(records.find((record) => record.recordID === resultIDs[0])).toMatchObject({
+    kind: "result",
+    messageID: "msg_result_0000",
+    sourceRevision: 12,
+    resultRevision: 1,
+    referencedSourceRevision: 0,
+    toolCounts: { completed: 2 },
+  })
+  expect(JSON.stringify(records)).not.toContain("ORIGINAL_MESSAGE_BODY")
+  expect(snapshot()).toEqual(before)
+
+  const cursorPage = f.store.architectSourceJournalPage(source.mappedPlanID, 2)
+  expect(cursorPage.nextCursor).toBeString()
+  expect(
+    f.store.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!),
+  ).toEqual(f.store.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!))
+  expect(() =>
+    f.store.architectSourceJournalPage(anchor.planID, 2, cursorPage.nextCursor!),
+  ).toThrow("Journal cursor does not match this project and plan")
+  const cursorBody = JSON.parse(
+    Buffer.from(cursorPage.nextCursor!, "base64url").toString("utf8"),
+  ) as {
+    version: 1
+    planID: string
+    scope: string
+    revision: number
+    after: { sourceSessionID: string; kind: string; messageID: string }
+  }
+  const foreignSourceBody = {
+    version: cursorBody.version,
+    planID: cursorBody.planID,
+    scope: cursorBody.scope,
+    revision: cursorBody.revision,
+    after: { sourceSessionID: "ses_not_associated_with_this_plan", kind: "source", messageID: "" },
+  }
+  const foreignSourceCursor = Buffer.from(
+    JSON.stringify({ ...foreignSourceBody, checksum: fingerprint(foreignSourceBody) }),
+  ).toString("base64url")
+  expect(() =>
+    f.store.architectSourceJournalPage(source.mappedPlanID, 2, foreignSourceCursor),
+  ).toThrow("Journal cursor does not identify a record in this plan")
+  expect(() => f.store.architectSourceJournalPage(source.mappedPlanID, 2, "")).toThrow(
+    "Invalid journal cursor",
+  )
+
+  const foreignRepository = new TaskRepository(f.databasePath, join(f.projectDirectory, "foreign"))
+  repositories.push(foreignRepository)
+  const foreignStore = new RunnerStore(foreignRepository)
+  expect(() =>
+    foreignStore.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!),
+  ).toThrow("Journal cursor does not match this project and plan")
+
+  const resultMarkers = () =>
+    f.store.atomic((db) =>
+      db
+        .query(
+          "SELECT count(*) AS count,max(updated_at) AS latestUpdate FROM runner_architect_source_results WHERE session_id=?",
+        )
+        .get(source.sourceSessionID),
+    )
+  const markersBeforeMutation = resultMarkers()
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_architect_source_results SET result_revision=result_revision+1 WHERE session_id=? AND message_id=?",
+      )
+      .run(source.sourceSessionID, "msg_result_0000"),
+  )
+  expect(resultMarkers()).toEqual(markersBeforeMutation)
+  expect(() =>
+    f.store.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!),
+  ).toThrow("Journal changed since this page; restart the journal view")
 })
 
 test("active project reservations preserve priority and attempt order and refresh across transitions and reopen", () => {
