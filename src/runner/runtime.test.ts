@@ -1147,7 +1147,8 @@ test("tagged review source quarantine survives reopen and native archive without
 test("legacy source quarantine migration preserves its original-input binding", async () => {
   const f = await completedSourceReviewFixture()
   f.worker.turn!.inputID = f.attempt.message_id
-  await f.runtime.command({ ...f.command, reviewInputID: undefined }, "owner")
+  const { reviewInputID: _reviewInputID, ...legacyCommand } = f.command
+  await f.runtime.command(legacyCommand, "owner")
   await f.runtime.stop()
   f.store.atomic((db) =>
     db.exec("ALTER TABLE runner_source_quarantines DROP COLUMN review_input_json"),
