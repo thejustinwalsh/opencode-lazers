@@ -14,7 +14,7 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
 - All58 approved plan transfers are done. Nonlisted57/58,138,139,141,142 remain
   with `ses_c55347be4cfb42a59fd168de6728bb77`, last observed idle. No new transfer
   approvals or direct production SQL edits. Read ownership before commanding.
-- Main is clean at8e33dde. GUI was rebuilt after569f2e0. Service95968 remains;
+- Main is clean at9cbbb55. GUI was rebuilt after569f2e0. Service95968 remains;
   no Root-issued reload/restart in this pass. New134 selected-message handler
   was independently exercised live, so do not assume all backend code is stale.
 
@@ -52,7 +52,15 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
 
 1. Main now owns126 native qualification: plan c64e0231-b47c-4432-96a9-5e5e39fe6a6b,
    original worker `ses_5cb41dc1d06e4ae3a4f5c6a978f33fdc`, attempt
-   a805c93f-0f01-4d18-92d2-a5ee5399cc3e, sourcebb26ab2 already in main.
+   a805c93f-0f01-4d18-92d2-a5ee5399cc3e. The previous handoff incorrectly said
+   bb26ab2 was integrated; it was not. Root integrated it asef0b591 after independent
+   Luna review and the original worker's pre-write verification.9cbbb55 enables
+   correction writes in Code Mode.51 tests/444 assertions and26 runner compatibility
+   tests/393 assertions plus fmt/lint/types pass. Normal activation migratedDB6→7.
+   The genuine completed pre-write input ismsg_1aca65f240011qxOLdzkNKYzvy: native
+   zero-background report1793898152834/start1146/event1148, terminal1296,
+   evt_1aca98389001Zc06FY3yljyQ29, invalidationnull. Use supported explicit
+   reviewInputID reconciliation for this observation, not an old-input mismatch.
    Explicit user-approved correction pairs119+124 and120+125 still need supported
    native controls and producer-readable verification. Real unfinished product
    verification is useful work; proof-only model turns are not.
@@ -79,6 +87,10 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
 - Desktop binding goalDesktop in CUA; restore docs after compaction. Main is open
   with Models at narrow width. Tasks→Trajectory→Open worker session works; global
   session search did not find141. Browser tools reported disconnected there.
+- Latest Root coordination paste was NOT sent: composer received unrelated payroll
+  text instead of the intended integration message. Draft preserved; user asked
+  whether Desktop is shared. Resume UI control after coordination. Do not send or
+  discard that draft. Main has not received Root'sef0b591/9cbbb55 update yet.
 - All6 inference flags stay on, unloadNever. Available was visible after settings
   navigation; no new inference job in this pass. Recurring model-cache ownership
   error remains existing128 work. Do not disable inference/delete models.
