@@ -19,6 +19,22 @@ cleaned up, followed by an observation-based improvement plan for review.
 
 ## Current implementation and review state
 
+Root fixed a concrete continuation gap indd931b8: the existing owner-authorized
+`resume` action can continue a completed/succeeded foreground turn on unfinished
+blocked running work, preserving exact attempt/session/tree/route and unknown
+background. It neither accepts work nor clears resource holds. Behavioral tests
+retain one worker/attempt, exact replay and no verification/acceptance while
+background is unknown. Full current-main runner498 tests/6731 assertions plus
+fmt/lint/types/diff passed; log
+`/private/tmp/lz-completed-worker-continuation-qualified-tests.log`. Initial
+failures exposed archived-worker context rereads; final code preserves those
+fast paths and captures an active completed assignment once. Native use of this
+new succeeded-turn case remains unproven; do not create a proof-only turn. Main
+was told through Desktop. Both original146/57 workers are active on substantive
+corrections; do not send another duplicate wake. Root keeps backend source stable
+during these turns. Existing native Luna e533 is investigating remaining pricing
+applicability, not an implementer artifact or proof of usable pricing.
+
 Root merged pricing correction5a34617 as8c1b161 after native Luna cleared the
 delta. Current-main160 tests/2511 assertions and full fmt/lint/types/diff pass;
 log `/private/tmp/lz122-pricing-current-main-tests.log`. Real authenticated rows
@@ -38,17 +54,22 @@ build pass; logs `/private/tmp/lz146-current-main-{tests,gui-build}.log`. Deskto
 loaded the bundle without forced restart. Names are readable, no-price state is
 compact, all3 costs stay Unknown. Actual Qwen row selection updated inspector/
 route/effort correctly; restored Kimi/narrow width. Remaining visual failure:
-only part of first row fits above normal narrow/default split. Root queued
-captures to existing native Tera High reviewer e52a via Main; minimal correction
-and recapture remain. Captures are durably copied to
+only part of first row fits above normal narrow/default split. Tera High e52a
+reviewed both captures: remove wrapped upper route controls, compact redundant
+no-point headings/status and pre-row spacing; retain at least two complete rows
+above the unchanged divider. Wide no-point layout has no blocker; plotted
+geometry is still unqualified. Original146 is applying this real correction.
+Full review `/private/tmp/lz146-terra-connected-review-20261105.txt`. Captures are
+durably copied to
 `.agents/docs/evidence/models-compare-20261105/{narrow,wide}.png`; original temp
 paths `/private/tmp/lz146-compact-{narrow,wide}-live-20261105.png` still exist.
 
 57 committed7b49633:17 runner files,1846 insertions/40 deletions. Final416 runner
 tests/5514 assertions, scoped typecheck/fmt/diff and lint(warnings only) passed.
-Not integrated: needs independent source review, meaningful current-main checks,
-native repair walkthrough and cleanup. Original worker now inactive. Preserve
-all retained work. Existing138 is the next isolated-candidate verification lane;
+Not integrated: Luna review found an owner A→B→A/control-epoch race. Original57
+is active fixing it while preserving7b49633. Needs reviewed correction, meaningful
+current-main checks, native repair walkthrough and cleanup. Preserve all retained
+work. Existing138 is the next isolated-candidate verification lane;
 do not duplicate it or revive129 directly. Main can coordinate with currentc160.
 
 Read-only DB at1793914445670:57 blocked/v39 (ownerc160),146 blocked/v15 and122
