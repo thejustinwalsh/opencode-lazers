@@ -25,11 +25,22 @@ Broad lifecycle/cache policy consolidation stays behind visible delivery.
 - Main Architect: ses_e568438ebffeaoFbF9nBb942XM.
 - Retained coordinator: ses_c160aaf520a445b3821428498a712e9f, successor of archived
  29e2/c553. Do not revive those predecessors or request transfer approval.
-- Native service PID95968 at last read. No Root restart this pass.
+- Native service PID71027 after automatic crash recovery; Root did not restart it.
 - Presence helper /private/tmp/lz-native-presence-only.ts reads authoritative
  active/model/time/outcome. A timeout or changes:[] does not mean terminal.
 
 ## Integrated this pass
+
+Root fixed a reproduced indexing crash in1bd08da. Installed oh-my-openagent5.1.60
+observes process worker events and assumes Node .on/.once, but our Repomix global
+Web Worker lacks those methods. Exact exception was reproduced in isolation and
+an actual ProjectIndex regression. Both parent and processor now use native
+worker_threads/parentPort, still off-thread, without third-party/global patches.
+Seventeen context tests/131 assertions and final quality checks passed. Service
+auto-restarted95968→71027 at22:26:27Z; panels disappeared temporarily and returned.
+Main has a queued Desktop request for one actual project-refresh with PID
+before/after. Live fix qualification is pending. Report:
+design/reviews/repomix-worker-observer-crash-20261105.md.
 
 LZ-57 worker committed7b49633 plus owner-control ABA correctionefaa923. Native
 Luna reviewer e525 cleared the correction with25 focused tests/356 assertions.
@@ -83,8 +94,9 @@ followed by attempt ID. Preserve source and held resources.
  Actual persisted Systems/project-mapping/OpenAI Luna Max matched native route:
  substantive routing142 dogfood. Worker is inactive/succeeded with clean efaa923.
  Coordinator reported blockedv46: matching native idle evidence missing. Do not
- repeat reconciliation or imply background stopped.58 stays cancelled. Reuse138
- for isolated-candidate verification, then existing129 work, not duplicates.
+ repeat reconciliation or imply background stopped. Its guarded source quarantine
+ is now sealed.58 stays cancelled. Existing138 is actively implementing isolated
+ candidate verification, then existing129 work; no duplicates.
 -146 task7281416b-5557-4467-8426-f75e93d342e9;
  plan6b5f7053-7934-4deb-b5c5-d94c036f1dcf;
  attempt3d869ab8-2d97-42ef-8571-fb0da5039de1;
@@ -101,6 +113,17 @@ followed by attempt ID. Preserve source and held resources.
 - Tera reviewer ses_e52a5ae04ffeObat8Bt6imz4ci completed final no-point review;
  reuse it for real priced geometry. Runner reviewer ses_e525f7986ffeedmphvnhcQ4jHB
  cleared efaa923. No duplicate local reviewers needed.
+
+138 plan e48290a6-a871-42a2-94f1-c88f700c0d11; original new attempt
+87c14979-917d-4495-9fa6-90bb3aaeff17; worker
+ses_28780d1d92544da880d3db3496c8a29d. Native Luna Max, ownerc160, reviewed
+baseline0a4d43b, isolated tree. WORKER_STARTED observed at1793917824960. Main's
+existing Luna e522 is reviewing ready Tasks/Trajectory scope and received Root's
+live screenshot: blocked/inactive work misleadingly shows Running/green rings;
+filters offer Open/Completed/Failed/Cancelled/All, not specific activity states.
+Screenshot /private/tmp/lz-tasks-blocked-shown-running-20261105.png. Open filter
+worked after transient topology-unavailable refresh. Preserve these findings in
+the existing task-panel work; do not invent a duplicate task.
 
 ## Pricing findings and live evidence
 
