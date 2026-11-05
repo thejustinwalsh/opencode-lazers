@@ -24,6 +24,11 @@ The task is accepted; plan version25 is held only on combined
 - Record the integrated candidate ancestry, effective registration and current
   runtime version. Preserve the original task specifications, attempts, sessions,
   inputs, routes, usage, check history and retained worktrees.
+- At the quiet boundary, first merge accepted base `e67fee1` and record its
+  task-only source landing through `integrated` with LZ132's task ID. Keep its
+  combined live gate open. Then merge reviewed correction `7262d827`. This gives
+  adoption a recorded integration baseline: merging both at once leaves only
+  `e67fee1` as the scope base and includes unrelated prior main-branch changes.
 - Because the correction is a descendant rather than the original accepted
   artifact, use supported `adopt-descendant` for original LZ132 at the reviewed
   target-branch HEAD: exact original task/attempt, original artifact `e67fee1`
