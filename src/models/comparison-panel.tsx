@@ -149,6 +149,27 @@ function decisionStatusLabel(status: ModelComparisonPanelData["decisionStatus"])
   }
 }
 
+function decisionStatusSummary(status: ModelComparisonPanelData["decisionStatus"]) {
+  switch (status) {
+    case "loading":
+      return "Loading"
+    case "ready":
+      return "Current"
+    case "partial":
+      return "Partial evidence"
+    case "stale":
+      return "Stale evidence"
+    case "unknown":
+      return "Freshness unknown"
+    case "backend-not-ready":
+      return "Backend not ready"
+    case "missing-rpc":
+      return "RPC unavailable"
+    case "error":
+      return "Read failed"
+  }
+}
+
 function efficiencyLabel(row: ModelDecisionRow) {
   const efficiency = row.efficiency
   switch (efficiency.status) {
@@ -322,10 +343,9 @@ export function ModelCandidateRow(props: {
 
 export function HistoricalChartPlaceholder() {
   return (
-    <div class="lazers-models-chart-empty" role="status">
-      <strong>No plottable comparison points</strong>
-      <p>Unknown prices and zero-accepted configurations have no coordinates.</p>
-    </div>
+    <p class="lazers-models-chart-empty" role="status">
+      Unknown prices and zero-accepted configurations stay unplotted.
+    </p>
   )
 }
 
@@ -1528,34 +1548,6 @@ function ModelPanel(
               </div>
             </details>
 
-            <div class="lazers-models-decision-tools" aria-label="Exact route selection">
-              <Ui.Menu
-                label={`Provider · ${selectedDecisionConfiguration() ? `${selectedDecisionConfiguration()!.route.providerID} / ${selectedDecisionConfiguration()!.route.modelID}` : "Select route"}`}
-                trigger="button"
-                icon="chevron-down"
-                disabled={!providerChoices().length}
-                items={providerChoices().map((configuration) => ({
-                  label: `${configuration.route.providerID} / ${configuration.route.modelID}`,
-                  onSelect: () => selectDecisionGroup(configuration.groupID),
-                }))}
-              />
-              <Ui.Menu
-                label={`Effort · ${selectedDecisionConfiguration()?.route.variant ?? "Not specified"}`}
-                trigger="button"
-                icon="chevron-down"
-                disabled={!selectedGroupID() || !configurationsForGroup(selectedGroupID()!).length}
-                items={configurationsForGroup(selectedGroupID() ?? "").map((configuration) => ({
-                  label: configuration.route.variant ?? "Not specified",
-                  onSelect: () => state.selectConfiguration(configuration.configurationID),
-                }))}
-              />
-              <span
-                class="lazers-models-filter-status"
-                data-decision-status={visible()?.decisionStatus}
-              >
-                {decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
-              </span>
-            </div>
             <Show when={visible()?.decisionError}>
               <p
                 class={
@@ -1577,11 +1569,20 @@ function ModelPanel(
             <div class="lazers-models-overview">
               <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
                 <div class="lazers-models-section-heading">
-                  <h3 id="lazers-models-chart-title">Historical task outcomes</h3>
-                  <span>
-                    {visible()?.decisionOverview
-                      ? `${visible()!.decisionOverview!.graph.points.length} plotted configurations · global filtered snapshot`
-                      : "Producer data"}
+                  <h3 id="lazers-models-chart-title">
+                    {visible()?.decisionOverview &&
+                    !comparisonChartHasPlottablePoints(visible()!.decisionOverview!.graph.points)
+                      ? "No plottable comparison points"
+                      : "Historical task outcomes"}
+                  </h3>
+                  <span
+                    class="lazers-models-decision-status"
+                    role="status"
+                    data-decision-status={visible()?.decisionStatus ?? "loading"}
+                    aria-label={decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
+                    title={decisionStatusLabel(visible()?.decisionStatus ?? "loading")}
+                  >
+                    {decisionStatusSummary(visible()?.decisionStatus ?? "loading")}
                   </span>
                 </div>
                 <Show
@@ -1591,19 +1592,16 @@ function ModelPanel(
                       : visible()?.decisionOverview
                   }
                   fallback={
-                    <div class="lazers-models-chart-empty" role="status">
-                      <strong>{decisionStatusLabel(visible()?.decisionStatus ?? "loading")}</strong>
-                      <p>
-                        {visible()?.decisionStatus === "backend-not-ready"
-                          ? (visible()?.decisionContext?.unavailableReason ??
-                            "No decision points or estimate are available yet.")
-                          : visible()?.decisionStatus === "missing-rpc"
-                            ? "The native Models decision service is not registered. No fixture data is substituted."
-                            : visible()?.decisionStatus === "error"
-                              ? "No graph or estimate is shown because the producer read failed."
-                              : "Waiting for the producer-owned comparison snapshot."}
-                      </p>
-                    </div>
+                    <p class="lazers-models-chart-empty" role="status">
+                      {visible()?.decisionStatus === "backend-not-ready"
+                        ? (visible()?.decisionContext?.unavailableReason ??
+                          "No decision points or estimate are available yet.")
+                        : visible()?.decisionStatus === "missing-rpc"
+                          ? "The native Models decision service is not registered. No fixture data is substituted."
+                          : visible()?.decisionStatus === "error"
+                            ? "No graph or estimate is shown because the producer read failed."
+                            : "Waiting for the producer-owned comparison snapshot."}
+                    </p>
                   }
                 >
                   {(overview) => (
@@ -1624,15 +1622,7 @@ function ModelPanel(
                 </Show>
               </section>
 
-              <section class="lazers-models-candidates" aria-labelledby="lazers-models-rows-title">
-                <div class="lazers-models-section-heading">
-                  <h3 id="lazers-models-rows-title">Canonical model groups</h3>
-                  <span>
-                    {visible()?.decisionOverview
-                      ? `${decisionGroupIDs().length} of ${visible()!.decisionOverview!.groupCount} groups · ${visible()!.decisionRows.length} configurations loaded`
-                      : "Waiting for producer rows"}
-                  </span>
-                </div>
+              <section class="lazers-models-candidates" aria-label="Canonical model groups">
                 <Show
                   when={decisionGroupIDs().length}
                   fallback={
@@ -1809,6 +1799,33 @@ function ModelPanel(
                       >
                         {routeLabel(configuration().route)}
                       </p>
+                      <div
+                        class="lazers-models-decision-tools lazers-models-inspector-tools"
+                        aria-label="Exact route selection"
+                      >
+                        <Ui.Menu
+                          label={`Provider · ${selectedDecisionConfiguration() ? `${selectedDecisionConfiguration()!.route.providerID} / ${selectedDecisionConfiguration()!.route.modelID}` : "Select route"}`}
+                          trigger="button"
+                          icon="chevron-down"
+                          disabled={!providerChoices().length}
+                          items={providerChoices().map((choice) => ({
+                            label: `${choice.route.providerID} / ${choice.route.modelID}`,
+                            onSelect: () => selectDecisionGroup(choice.groupID),
+                          }))}
+                        />
+                        <Ui.Menu
+                          label={`Effort · ${selectedDecisionConfiguration()?.route.variant ?? "Not specified"}`}
+                          trigger="button"
+                          icon="chevron-down"
+                          disabled={
+                            !selectedGroupID() || !configurationsForGroup(selectedGroupID()!).length
+                          }
+                          items={configurationsForGroup(selectedGroupID() ?? "").map((choice) => ({
+                            label: choice.route.variant ?? "Not specified",
+                            onSelect: () => state.selectConfiguration(choice.configurationID),
+                          }))}
+                        />
+                      </div>
                     </div>
                   </div>
                   <Show when={visible()?.decisionInspectLoading}>

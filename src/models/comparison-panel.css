@@ -230,6 +230,10 @@
   min-width: 0;
 }
 
+.lazers-models-inspector-tools {
+  padding: 4px 0 0;
+}
+
 .lazers-models-decision-rows {
   width: 100%;
   min-width: 0;
@@ -385,25 +389,10 @@
 }
 
 .lazers-models-chart-empty {
-  display: grid;
-  align-content: center;
-  min-height: 68px;
-  padding: 8px 10px;
-  border: 1px dashed var(--border-weak-base);
-  border-radius: 6px;
-  background: var(--surface-base);
-}
-
-.lazers-models-chart-empty strong {
-  color: var(--text-base);
-  font-size: 12px;
-}
-
-.lazers-models-chart-empty p {
-  margin: 4px 0 0;
+  margin: 0;
   color: var(--text-weak);
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
@@ -1178,8 +1167,8 @@
     padding-bottom: 5px;
   }
 
-  .lazers-models-chart-empty {
-    min-height: 62px;
+  .lazers-models-candidates {
+    padding-top: 0;
   }
 }
 

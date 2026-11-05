@@ -134,8 +134,8 @@ test("candidate row bounds a missing-name ID visually and exposes its full exact
 
 test("unavailable chart and read-only assignments never fabricate values or imply active routing", () => {
   const chart = renderToString(() => createComponent(HistoricalChartPlaceholder, {}))
-  expect(chart).toContain("No plottable comparison points")
-  expect(chart).toContain("Unknown prices and zero-accepted configurations have no coordinates")
+  expect(chart).toContain("Unknown prices and zero-accepted configurations stay unplotted")
+  expect(chart).toContain('role="status"')
   expect(chart).not.toContain("<svg")
   expect(chart).not.toContain("illustrative")
 

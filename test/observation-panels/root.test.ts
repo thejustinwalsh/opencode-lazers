@@ -1408,9 +1408,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(initialRow.textContent).not.toContain("Native reported charges")
     expect(initialRow.querySelectorAll("button")).toHaveLength(1)
     expect(initialRow.querySelector("[role=menu]")).toBeNull()
-    expect(comparePanel.querySelector("[data-decision-status]")?.textContent).toContain(
-      "Current producer snapshot",
-    )
+    const decisionStatus = comparePanel.querySelector<HTMLElement>(
+      ".lazers-models-decision-status",
+    )!
+    expect(decisionStatus.textContent).toBe("Current")
+    expect(decisionStatus.getAttribute("aria-label")).toBe("Current producer snapshot")
+    expect(comparePanel.querySelector(".lazers-models-decision-tools")).toBeNull()
+    const inspectorTools = containerA.querySelector<HTMLElement>(".lazers-models-inspector-tools")!
+    expect(inspectorTools.closest(".lazers-models-inspector")).not.toBeNull()
+    expect(inspectorTools.querySelectorAll("button")).toHaveLength(2)
+    expect(inspectorTools.textContent).toContain("Provider ·")
+    expect(inspectorTools.textContent).toContain("Effort ·")
+    const exactRoute = containerA.querySelector<HTMLElement>(".lazers-models-inspector-route")!
+    expect(exactRoute.textContent).toContain("openai / gpt-6")
+    expect(exactRoute.title).toBe(exactRoute.textContent)
+    expect(
+      containerA.querySelector(".lazers-models-inspector-heading h2")?.getAttribute("aria-label"),
+    ).toContain("Exact route")
     const refreshWarning = topPaneA.querySelector<HTMLElement>(".lazers-models-refresh-note")!
     expect(refreshWarning.textContent).toContain("Refreshing sources")
     expect(refreshWarning.closest("details")).toBeNull()
@@ -1874,9 +1888,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     menuItemWithText(containerA, "Maintenance")?.click()
     await until(
       () =>
-        containerA.querySelector(".lazers-models-chart-empty strong")?.textContent ===
+        containerA.querySelector(".lazers-models-chart h3")?.textContent ===
           "No plottable comparison points" &&
         containerA.querySelector(`[data-group-id="${unknownPriceConfiguration.groupID}"]`) !== null,
+    )
+    expect(containerA.querySelector(".lazers-models-chart-empty")?.textContent).toContain(
+      "Unknown prices and zero-accepted configurations stay unplotted",
     )
     const unknownPriceRow = containerA.querySelector<HTMLElement>(
       `[data-group-id="${unknownPriceConfiguration.groupID}"]`,
@@ -2638,7 +2655,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         button.textContent?.includes("Task kind ·"),
       ),
     ).toBe(true)
-    expect(containerA.querySelector(".lazers-models-filter-status")).not.toBeNull()
+    expect(containerA.querySelector(".lazers-models-decision-status")).not.toBeNull()
     expect(containerA.querySelector(".lazers-models-assignment-editor")).toBeNull()
     const effortDetailsBeforeRefresh = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-task-effort-details",
