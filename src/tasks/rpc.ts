@@ -45,7 +45,7 @@ export function registerTaskReads(
           description:
             "Architect-only: attach concise findings and implementation advice to an existing task without changing its specification. Supply a requestID, the exact current advice expectedRevision (0 when absent), and the task specRevision. Reuse requestID only for exact retries; changed content conflicts. Advice history is bounded and retained. Optional source/mini-skill references are links only and are never fetched.",
           input: z.toJSONSchema(TaskAdviceInput, { io: "input" }),
-          options: { codemode: false, permission: "lz-attach-task-advice" },
+          options: { codemode: true, permission: "lz-attach-task-advice" },
           execute: (input, context) =>
             ctx.permission
               .assert({
