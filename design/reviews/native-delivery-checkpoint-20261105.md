@@ -1,5 +1,53 @@
 # Native delivery checkpoint
 
+## Latest observed state, November 5 afternoon
+
+This section supersedes older activity and delivery statements below. Native
+readback at Unix ms1793906452057 found both Sol High coordinators present and idle,
+with two active OpenAI Luna Max workers in distinct native worktrees:
+
+- LZ-122: `ses_4c2333ab99e14396b784425511414a08`, attempt
+  `38df5475-caa8-4469-8c68-1b330f981c80`. Its latest relevant suite passed157 tests
+  and2460 assertions. Type corrections and final verification were still underway;
+  the production Compare graph is not yet qualified.
+- LZ-142: `ses_0eb91864d4a3425c9f14d04a8edaa736`, attempt
+  `541f163e-d590-40f0-b945-108bf2df7eed`. Focused routing tests passed; broader
+  checks remain in progress. Root sent a Desktop review finding about manual
+  Tasks Start omitting persona and requiring native fallback even when mappings
+  could supply a route. This is under the existing task, not a new roadmap item.
+
+LZ-134 and LZ-139 source-only quarantines were sealed through native controls at
+1793905330056 and1793905447032 respectively. LZ-142 dispatched immediately after
+the first release. These releases do not establish old task completion, settle
+uncertain checks, or release retained resources.
+
+Root's reviewed source repair is merged through97eeb50; the current documentation
+commit is a087497. The native clean, merged bootstrap worktree was removed through
+OpenCode at1793905596021, with registration and path absence read back. Worker
+trees were preserved. LZ-143's unused zero-attempt plan is cancelled/v4. Its
+fulfilled task disposition is still missing: storage rejects any nonaccepted
+node despite the tool's reviewed-evidence wording. Do not manufacture execution
+or claim that closure succeeded.
+
+The missing/archived Architect replacement path exists. Idle renewal remains a
+fixed30-minute default with plugin override and continuity requirements. Neither
+session presence nor successful notice delivery proves useful continuation;
+the timeout is not a provider/model cache guarantee. Later consolidation should
+cover missing, archived, responsive idle, busy, failed wake and expired context
+through one recovery policy. Preserve priority: Models, then Tasks/Trajectory,
+then Radar; no broad lifecycle refactor ahead of those features.
+
+Root's read-only live LZ-122 probe at1793906685402 called the worker's current
+`openReadOnlyObservationLedger(...).readDecision()` against the real task DB
+while both workers were active. It took3515.33ms with RSS growth116113480 bytes,
+then threw `Observation ledger changed during the decision capture`. The newer
+158-test suite passed2461 assertions, but that does not establish active-product
+read availability. Root sent the observation through Desktop: retain a coherent
+transaction snapshot and its as-of revision across pages, refresh for subsequent
+facts, and avoid requiring a write-free projection window. Live correction and
+reprobe remain required. These measurements cover one reader call, not the full
+RPC/UI path or a statistically established latency/memory distribution.
+
 ## Current delivery update
 
 Latest:126 natively integrated/v30 and cleaned up; original artifactbb26ab2 now
