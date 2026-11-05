@@ -1,4 +1,5 @@
 import { DateTime } from "effect"
+import { createHash } from "node:crypto"
 import type { Database } from "bun:sqlite"
 import type { Tool } from "@opencode/schema/tool"
 import { TaskSpecSchema } from "../task.ts"
@@ -84,6 +85,17 @@ type ToolCall = {
 }
 
 type JsonObject = Record<string, unknown>
+
+type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
+
+const MAX_RECOVERY_MEMOS = 256
+
+type RecoveryMemo = {
+  assignmentFingerprint: string
+  fingerprint: string
+  progressFingerprint: string
+  revision: number
+}
 
 type TimingSource = "native-event" | "recovery" | "runtime"
 
@@ -218,6 +230,92 @@ function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
     merged[key] = oldObject && nextObject ? mergeObjects(oldObject, nextObject) : value
   }
   return merged
+}
+
+function encodeRecoveryFingerprintValue(
+  value: unknown,
+  seen: Set<object>,
+): RecoveryFingerprintValue | undefined {
+  if (value === null) return ["null"]
+  if (value === undefined) return ["undefined"]
+  if (typeof value === "string") return ["string", value]
+  if (typeof value === "boolean") return ["boolean", value]
+  if (typeof value === "number") {
+    const encoded = Number.isNaN(value)
+      ? "NaN"
+      : value === Number.POSITIVE_INFINITY
+        ? "Infinity"
+        : value === Number.NEGATIVE_INFINITY
+          ? "-Infinity"
+          : Object.is(value, -0)
+            ? "-0"
+            : String(value)
+    return ["number", encoded]
+  }
+  if (typeof value !== "object") return undefined
+  if (seen.has(value)) return undefined
+
+  seen.add(value)
+  try {
+    if (Array.isArray(value)) {
+      const entries: RecoveryFingerprintValue[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (descriptor && (descriptor.get || descriptor.set)) return undefined
+        const encoded = encodeRecoveryFingerprintValue(descriptor?.value, seen)
+        if (encoded === undefined) return undefined
+        entries.push(encoded)
+      }
+      return ["array", value.length, ...entries]
+    }
+
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return undefined
+    const entries: RecoveryFingerprintValue[] = []
+    for (const key of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || descriptor.get || descriptor.set) return undefined
+      const encoded = encodeRecoveryFingerprintValue(descriptor.value, seen)
+      if (encoded === undefined) return undefined
+      entries.push([key, descriptor.enumerable === true, encoded])
+    }
+    return ["object", prototype === null, ...entries]
+  } finally {
+    seen.delete(value)
+  }
+}
+
+/** Hash only ordinary retained data; unusual objects fall back to full reconciliation. */
+function retainedMessagesFingerprint(
+  messages: readonly unknown[],
+  hasMoreThanBound: boolean,
+): string | undefined {
+  try {
+    const encoded = encodeRecoveryFingerprintValue(messages, new Set())
+    if (encoded === undefined) return undefined
+    return createHash("sha256")
+      .update(JSON.stringify([hasMoreThanBound, encoded]))
+      .digest("hex")
+  } catch {
+    // Proxies and malformed retained data must retain the original recovery path.
+    return undefined
+  }
+}
+
+function recoveryAssignmentFingerprint(assignment: ProgressAssignment): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        assignment.projectID,
+        assignment.taskID,
+        assignment.planID,
+        assignment.attemptID,
+        assignment.sessionID,
+        assignment.assignedMessageID,
+        assignment.workspace,
+      ]),
+    )
+    .digest("hex")
 }
 
 function routeEvidenceFromModel(
@@ -751,6 +849,8 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
  * OpenCode observations, recovery and runtime verification facts.
  */
 export class ProgressRecorder {
+  private readonly recoveryMemos = new Map<string, RecoveryMemo>()
+
   constructor(
     readonly store: RunnerStore,
     readonly projectID: string,
@@ -813,6 +913,71 @@ export class ProgressRecorder {
       )
       .get(this.store.repository.projectDirectory, this.store.repository.projectDirectory, value)
     return row ? this.assignmentFromRow(row) : undefined
+  }
+
+  private observationRevisionIn(db: Database): number | undefined {
+    const row = db
+      .query<{ revision: number }, [string]>(
+        "SELECT revision FROM observation_revisions WHERE project_directory=?",
+      )
+      .get(this.store.repository.projectDirectory)
+    return row?.revision
+  }
+
+  private progressFingerprintIn(db: Database, assignment: ProgressAssignment): string {
+    const rows = db
+      .query<
+        {
+          seq: number
+          project_id: string
+          plan_id: string
+          task_id: string
+          attempt_id: string
+          session_id: string
+          at: number
+          recorded_at: number | null
+          source: string
+          sources_json: string
+          kind: string
+          event_ids_json: string
+          call_id: string | null
+          message_id: string | null
+          dedupe_key: string
+          payload: string
+        },
+        [string, string, string]
+      >(
+        `SELECT seq,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
+                sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload
+         FROM runner_progress
+         WHERE project_directory=? AND attempt_id=? AND session_id=? ORDER BY seq`,
+      )
+      .iterate(this.store.repository.projectDirectory, assignment.attemptID, assignment.sessionID)
+    const hash = createHash("sha256")
+    for (const row of rows)
+      hash
+        .update(
+          JSON.stringify([
+            row.seq,
+            row.project_id,
+            row.plan_id,
+            row.task_id,
+            row.attempt_id,
+            row.session_id,
+            row.at,
+            row.recorded_at,
+            row.source,
+            row.sources_json,
+            row.kind,
+            row.event_ids_json,
+            row.call_id,
+            row.message_id,
+            row.dedupe_key,
+            row.payload,
+          ]),
+        )
+        .update("\0")
+    return hash.digest("hex")
   }
 
   assignmentForSession(sessionID: string): ProgressAssignment | undefined {
@@ -1443,11 +1608,38 @@ export class ProgressRecorder {
 
   /** Reconcile only retained public session messages; it never invokes execution. */
   reconcileMessages(sessionID: string, rawMessages: readonly unknown[]): void {
+    const messages = rawMessages.slice(0, 10_000)
+    const fingerprint = retainedMessagesFingerprint(messages, rawMessages.length > messages.length)
     this.reconcileReminder(sessionID, rawMessages)
     this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
-      if (!assignment) return
-      const messages = rawMessages.slice(0, 10_000)
+      if (!assignment) {
+        this.recoveryMemos.delete(sessionID)
+        return
+      }
+      const revision = this.observationRevisionIn(db)
+      const assignmentFingerprint = recoveryAssignmentFingerprint(assignment)
+      const memo = this.recoveryMemos.get(sessionID)
+      const reusable =
+        fingerprint !== undefined &&
+        revision !== undefined &&
+        memo?.assignmentFingerprint === assignmentFingerprint &&
+        memo.fingerprint === fingerprint
+      let reusableProgressFingerprint: string | undefined
+      if (reusable && memo.revision !== revision) {
+        const currentProgressFingerprint = this.progressFingerprintIn(db, assignment)
+        if (currentProgressFingerprint === memo.progressFingerprint) memo.revision = revision
+        else reusableProgressFingerprint = currentProgressFingerprint
+      }
+      if (reusable && memo.revision === revision) {
+        // Keep hot sessions in the bounded per-recorder LRU. The revision fence
+        // notices writes anywhere in this project. When it advances, compare only
+        // this attempt's durable facts so unrelated sessions do not evict a warm hit.
+        this.recoveryMemos.delete(sessionID)
+        this.recoveryMemos.set(sessionID, memo)
+        return
+      }
+      this.recoveryMemos.delete(sessionID)
       for (const raw of messages) {
         const message = object(raw)
         const messageID = text(message?.id)
@@ -1693,6 +1885,24 @@ export class ProgressRecorder {
             "The native event stream has no durable cursor and session.context is not guaranteed complete; facts outside retained public messages cannot be reconstructed.",
         },
       })
+      const completedRevision = this.observationRevisionIn(db)
+      if (fingerprint !== undefined && completedRevision !== undefined) {
+        const progressFingerprint =
+          revision === completedRevision && reusableProgressFingerprint !== undefined
+            ? reusableProgressFingerprint
+            : this.progressFingerprintIn(db, assignment)
+        this.recoveryMemos.set(sessionID, {
+          assignmentFingerprint,
+          revision: completedRevision,
+          fingerprint,
+          progressFingerprint,
+        })
+        while (this.recoveryMemos.size > MAX_RECOVERY_MEMOS) {
+          const oldest = this.recoveryMemos.keys().next().value
+          if (oldest === undefined) break
+          this.recoveryMemos.delete(oldest)
+        }
+      }
     })
   }
 

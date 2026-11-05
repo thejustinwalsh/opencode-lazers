@@ -79,6 +79,92 @@ function stableToolRow(row: ReturnType<RunnerStore["progressFacts"]>[number]) {
   }
 }
 
+function retainedToolHistory(size: number) {
+  return Array.from({ length: size }, (_, index) => ({
+    id: `msg-history-${index}`,
+    type: "assistant",
+    time: { created: 1_000 + index },
+    content: [
+      {
+        type: "tool",
+        id: `call-history-${index}`,
+        name: "Bash",
+        executed: true,
+        time: { created: 900 + index, ran: 950 + index },
+        state: { status: "running", input: { command: "private" } },
+      },
+    ],
+  }))
+}
+
+function observeReplayWork(recorder: ProgressRecorder) {
+  let appendAttempts = 0
+  let reminderReconciliations = 0
+  let progressFingerprintReads = 0
+  const instrumented = recorder as unknown as {
+    appendIn: (db: Database, assignment: unknown, fact: unknown) => number
+    reconcileReminder: (sessionID: string, messages: readonly unknown[]) => void
+    progressFingerprintIn: (db: Database, assignment: unknown) => string
+  }
+  const appendIn = instrumented.appendIn
+  const reconcileReminder = instrumented.reconcileReminder
+  const progressFingerprintIn = instrumented.progressFingerprintIn
+  instrumented.appendIn = (...args) => {
+    appendAttempts++
+    return appendIn.apply(recorder, args)
+  }
+  instrumented.reconcileReminder = (...args) => {
+    reminderReconciliations++
+    return reconcileReminder.apply(recorder, args)
+  }
+  instrumented.progressFingerprintIn = (...args) => {
+    progressFingerprintReads++
+    return progressFingerprintIn.apply(recorder, args)
+  }
+  return {
+    appendAttempts: () => appendAttempts,
+    reminderReconciliations: () => reminderReconciliations,
+    progressFingerprintReads: () => progressFingerprintReads,
+    resetAppendAttempts: () => {
+      appendAttempts = 0
+    },
+    resetProgressFingerprintReads: () => {
+      progressFingerprintReads = 0
+    },
+  }
+}
+
+function addTerminalAssignments(fixture: ReturnType<typeof makeFixture>, count: number) {
+  const base = fixture.attempts[0]!
+  const assignments = Array.from({ length: count }, (_, index) => ({
+    attemptID: crypto.randomUUID(),
+    number: index + 3,
+    sessionID: `ses-terminal-${index.toString().padStart(3, "0")}`,
+    messageID: `msg-terminal-assigned-${index.toString().padStart(3, "0")}`,
+  }))
+  fixture.store.atomic((db) => {
+    for (const assignment of assignments)
+      db.query(
+        `INSERT INTO runner_attempts
+         (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,
+          state,started_at,token_count,tool_count,retry_count,cost)
+         VALUES(?,?,?,?,?,?,?,?,NULL,?,'accepted',?,NULL,0,0,NULL)`,
+      ).run(
+        assignment.attemptID,
+        base.plan_id,
+        fixture.task.id,
+        assignment.number,
+        assignment.sessionID,
+        assignment.messageID,
+        base.workspace,
+        base.base_commit,
+        base.policy,
+        10_000 + assignment.number,
+      )
+  })
+  return assignments
+}
+
 function toolEvent(type: string, id: string, data: Record<string, unknown>, created: number) {
   return {
     id,
@@ -1412,6 +1498,304 @@ test("unchanged recovery performs no SQLite write while fresh and changed facts 
   } finally {
     observer?.close()
     reopened?.close()
+    fixture.close()
+  }
+})
+
+test("warm unchanged recovery skips per-message fact append and merge attempts across history sizes", () => {
+  for (const historySize of [1, 4, 16]) {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const work = observeReplayWork(recorder)
+      const history = retainedToolHistory(historySize)
+      const state = () =>
+        fixture.store.atomic((db) => ({
+          facts: db.query("SELECT * FROM runner_progress ORDER BY seq").all(),
+          sequence: db.query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'").get(),
+          revision: db
+            .query("SELECT revision FROM observation_revisions WHERE project_directory=?")
+            .get(fixture.directory),
+        }))
+
+      recorder.reconcileMessages(workerSession, history)
+      // The pre-memo repeated-replay path attempted one tool and one assistant
+      // step append per message, followed by the fixed recovery-gap append.
+      expect(work.appendAttempts()).toBe(2 * historySize + 1)
+      expect(work.progressFingerprintReads()).toBe(1)
+      const durable = state()
+
+      work.resetAppendAttempts()
+      work.resetProgressFingerprintReads()
+      recorder.reconcileMessages(workerSession, history)
+
+      expect(work.reminderReconciliations()).toBe(2)
+      expect(work.appendAttempts()).toBe(0)
+      expect(work.progressFingerprintReads()).toBe(0)
+      expect(state()).toEqual(durable)
+    } finally {
+      fixture.close()
+    }
+  }
+})
+
+test("bounded recovery memo preserves warm reuse across 122 terminal sessions and unrelated activity", () => {
+  const fixture = makeFixture()
+  let otherRepository: TaskRepository | undefined
+  try {
+    const assignments = addTerminalAssignments(fixture, 122)
+    const attemptIDs = assignments.map((assignment) => assignment.attemptID)
+    const sessionIDs = assignments.map((assignment) => assignment.sessionID)
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const work = observeReplayWork(recorder)
+    otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
+    const otherRecorder = new ProgressRecorder(new RunnerStore(otherRepository), "project")
+    const cache = recorder as unknown as {
+      recoveryMemos: Map<
+        string,
+        {
+          assignmentFingerprint: string
+          fingerprint: string
+          progressFingerprint: string
+          revision: number
+        }
+      >
+    }
+    const retainedFor = (sessionID: string) => [
+      retainedToolMessage(
+        `msg-retained-${sessionID}`,
+        `call-retained-${sessionID}`,
+        "completed",
+        true,
+      ),
+    ]
+    const replayAll = () => {
+      for (const sessionID of sessionIDs)
+        recorder.reconcileMessages(sessionID, retainedFor(sessionID))
+    }
+    const state = () => ({
+      facts: fixture.store.progressFacts(attemptIDs),
+      sequence: fixture.store.atomic((db) =>
+        db.query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'").get(),
+      ),
+      revision: fixture.store.atomic((db) =>
+        db
+          .query("SELECT revision FROM observation_revisions WHERE project_directory=?")
+          .get(fixture.directory),
+      ),
+    })
+
+    expect(
+      recorder.assignments().filter((assignment) => sessionIDs.includes(assignment.sessionID)),
+    ).toHaveLength(122)
+
+    replayAll()
+    expect(work.appendAttempts()).toBe(122 * 3)
+    expect(work.progressFingerprintReads()).toBe(122)
+    expect(cache.recoveryMemos.size).toBe(122)
+    expect(cache.recoveryMemos.size).toBeLessThanOrEqual(256)
+    const retainedMetadata = [...cache.recoveryMemos.entries()]
+    expect(retainedMetadata.every(([sessionID]) => sessionIDs.includes(sessionID))).toBe(true)
+    expect(
+      retainedMetadata.every(
+        ([, memo]) =>
+          Object.keys(memo).toSorted().join(",") ===
+            "assignmentFingerprint,fingerprint,progressFingerprint,revision" &&
+          /^[a-f0-9]{64}$/.test(memo.assignmentFingerprint) &&
+          /^[a-f0-9]{64}$/.test(memo.fingerprint) &&
+          /^[a-f0-9]{64}$/.test(memo.progressFingerprint),
+      ),
+    ).toBe(true)
+    expect(JSON.stringify(retainedMetadata)).not.toContain("private")
+    const cold = state()
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    replayAll()
+    expect(work.appendAttempts()).toBe(0)
+    // Earlier session writes during the cold pass advanced the project revision;
+    // compare those sessions' compact durable-fact digests once, then refresh their fence.
+    expect(work.progressFingerprintReads()).toBe(121)
+    expect(state()).toEqual(cold)
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    replayAll()
+    expect(work.appendAttempts()).toBe(0)
+    expect(work.progressFingerprintReads()).toBe(0)
+    const warm = state()
+
+    otherRecorder.recordNativeObservation({
+      sessionID: "ses-accepted",
+      listenerID: "unrelated-worker-listener",
+      directory: fixture.directory,
+      phase: "unrelated-progress-activity",
+    })
+    const afterUnrelatedActivity = state()
+    expect(afterUnrelatedActivity.facts).toEqual(warm.facts)
+    expect(afterUnrelatedActivity.sequence).not.toEqual(warm.sequence)
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    replayAll()
+    expect(work.appendAttempts()).toBe(0)
+    expect(work.progressFingerprintReads()).toBe(122)
+    const afterRecheck = state()
+    expect(afterRecheck).toEqual(afterUnrelatedActivity)
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    replayAll()
+    expect(work.appendAttempts()).toBe(0)
+    expect(work.progressFingerprintReads()).toBe(0)
+    expect(state()).toEqual(afterRecheck)
+    expect(cache.recoveryMemos.size).toBe(122)
+  } finally {
+    otherRepository?.close()
+    fixture.close()
+  }
+})
+
+test("recovery fingerprint distinguishes an absent property from an own undefined route", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const retained = {
+      id: "msg-route-ownership",
+      type: "assistant",
+      time: { created: 1_000 },
+      content: [],
+    }
+    recorder.reconcileMessages(workerSession, [retained])
+    const step = () =>
+      fixture.store.progressFacts([firstAttemptID]).find((row) => row.kind === "step")!
+    expect(JSON.parse(step().payload)).not.toHaveProperty("routeEvidence")
+
+    recorder.reconcileMessages(workerSession, [{ ...retained, model: undefined }])
+
+    expect(JSON.parse(step().payload)).toMatchObject({
+      routeEvidence: { status: "identity-unavailable" },
+      route: null,
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("retained recovery reprojects after same- and other-connection native updates", () => {
+  const fixture = makeFixture()
+  let otherRepository: TaskRepository | undefined
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const work = observeReplayWork(recorder)
+    otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
+    const otherRecorder = new ProgressRecorder(new RunnerStore(otherRepository), "project")
+    const retained = retainedToolMessage("msg-noop", "call-noop", "running", true)
+    const state = () =>
+      fixture.store.atomic((db) => ({
+        facts: db
+          .query<{ call_id: string | null; payload: string; event_ids_json: string }, []>(
+            "SELECT * FROM runner_progress ORDER BY seq",
+          )
+          .all(),
+        sequence: db.query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'").get(),
+        revision: db
+          .query("SELECT revision FROM observation_revisions WHERE project_directory=?")
+          .get(fixture.directory),
+      }))
+
+    recorder.reconcileMessages(workerSession, [retained])
+    const beforeNativeUpdate = state()
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.success",
+        "event-late-success",
+        {
+          assistantMessageID: "msg-noop",
+          id: "call-noop",
+          content: [{ type: "text", text: "done" }],
+          executed: true,
+        },
+        300,
+      ),
+    )
+    const afterNativeUpdate = state()
+    expect(afterNativeUpdate).not.toEqual(beforeNativeUpdate)
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    recorder.reconcileMessages(workerSession, [retained])
+
+    expect(work.appendAttempts()).toBe(3)
+    expect(work.progressFingerprintReads()).toBe(1)
+    const afterSameConnectionReplay = state()
+    expect(afterSameConnectionReplay).toEqual(afterNativeUpdate)
+    const sameConnectionTool = afterSameConnectionReplay.facts.find(
+      (row) => row.call_id === "call-noop",
+    ) as {
+      payload: string
+      event_ids_json: string
+    }
+    expect(JSON.parse(sameConnectionTool.payload)).toMatchObject({
+      status: "succeeded",
+      timing: {
+        endpoints: {
+          inputAt: { at: 90, source: "recovery" },
+          calledAt: { at: 200, source: "recovery" },
+          completedAt: { at: 300, source: "native-event" },
+        },
+      },
+    })
+
+    otherRecorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.input.started",
+        "event-late-input",
+        {
+          assistantMessageID: "msg-noop",
+          id: "call-noop",
+          name: "Bash",
+        },
+        80,
+      ),
+    )
+    const afterOtherConnectionUpdate = state()
+    expect(afterOtherConnectionUpdate).not.toEqual(afterSameConnectionReplay)
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    recorder.reconcileMessages(workerSession, [retained])
+
+    expect(work.appendAttempts()).toBe(3)
+    expect(work.progressFingerprintReads()).toBe(1)
+    const afterRetainedReplay = state()
+    expect(afterRetainedReplay).toEqual(afterOtherConnectionUpdate)
+    const replayedTool = afterRetainedReplay.facts.find((row) => row.call_id === "call-noop") as {
+      payload: string
+      event_ids_json: string
+    }
+    expect(JSON.parse(replayedTool.payload)).toMatchObject({
+      status: "succeeded",
+      timing: {
+        endpoints: {
+          inputAt: { at: 80, source: "native-event" },
+          calledAt: { at: 200, source: "recovery" },
+          completedAt: { at: 300, source: "native-event" },
+        },
+      },
+    })
+    expect(JSON.parse(replayedTool.event_ids_json)).toEqual(
+      expect.arrayContaining(["event-late-input", "event-late-success"]),
+    )
+
+    work.resetAppendAttempts()
+    work.resetProgressFingerprintReads()
+    recorder.reconcileMessages(workerSession, [retained])
+    expect(work.appendAttempts()).toBe(0)
+    expect(work.progressFingerprintReads()).toBe(0)
+    expect(state()).toEqual(afterRetainedReplay)
+  } finally {
+    otherRepository?.close()
     fixture.close()
   }
 })
