@@ -127,6 +127,18 @@ Screenshot /private/tmp/lz-tasks-blocked-shown-running-20261105.png. Open filter
 worked after transient topology-unavailable refresh. Preserve these findings in
 the existing task-panel work; do not invent a duplicate task.
 
+Main has submitted LZ147/c1e32cb7-6c7b-427c-927c-97f8332a8165 for truthful
+activity and specific queued/running/blocked filters, with Tasks-only scope and
+code-grounded guidance; plan/dispatch was pending at last read. Root explicitly
+authorized authoring missing Tasks A/B work rather than treating old drafts as
+permanent holds. Native Steer brought that queued ask into the active turn.
+Wider authoritative ordering and its compact presentation remain separate slices.
+Root opened138's actual native LunaMax worker through Trajectory and observed
+its worktree/transcript/patches. Mounted trajectory counters advanced78→96 without
+manual refresh, matching DB. Its running elapsed axis/bar still shows0–1m/no
+duration while native worker view showed18m51s; keep that scoped finding for
+trajectory follow-through without inventing a terminal timestamp.
+
 ## Pricing findings and live evidence
 
 Durable captures, Tera review and exact pricing input JSON:

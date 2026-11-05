@@ -29,6 +29,33 @@ quality checks and a real native project refresh:782files/170789tokens at
 
 Older checkpoints below retain historical observations, not current activity.
 
+### Connected worker and trajectory observation
+
+Root opened LZ138 from Tasks into Trajectory, then used Open worker session.
+OpenCode displayed the assigned isolated worktree, native implementor transcript,
+real patches, and `OpenAI / GPT-6 Luna Max`, running18m51s at capture. The active
+worker was editing its own checkout; Root returned to the coordinating Architect.
+While the trajectory remained mounted, its visible tool count advanced from78
+to96, matching the read-only attempt record at Unix ms1793919233206. Captured
+activity and live-progress counts also advanced without a manual Refresh.
+
+Remaining display issue: the running trajectory's elapsed axis showed0–1m and
+no duration bar, while the native worker view showed18m51s. The unknown attempt
+end is honest, but the running view does not communicate elapsed work. Any
+follow-up should distinguish ongoing elapsed time from a recorded terminal end,
+without inferring activity for old held attempts. Captures:
+`/private/tmp/lz138-running-trajectory-20261105.png` and
+`/private/tmp/lz138-native-worker-open-20261105.png`.
+
+Architect subsequently submitted LZ147
+(`c1e32cb7-6c7b-427c-927c-97f8332a8165`): truthful current activity plus precise
+queued/running/blocked filters. It carries source-grounded guidance, five
+observable acceptance conditions, and an independent Tasks-only write scope.
+Plan/dispatch was pending at this checkpoint; it is not yet delivered. The wider
+runtime ordering feed and its priority/dependency presentation remain separate
+outcomes. Root used the native Steer control to bring the queued feature request
+into the long active Architect turn; it was visibly consumed in Desktop.
+
 ## Latest observed state, November 5 afternoon
 
 This section supersedes older activity and delivery statements below. Native
