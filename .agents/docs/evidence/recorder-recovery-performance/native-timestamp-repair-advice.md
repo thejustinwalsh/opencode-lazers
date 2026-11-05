@@ -68,3 +68,17 @@ prompt or worker mutation occurred. Independent Luna provisional draft review is
 running as `ses_e55aeb8cbffeBEO3CpWmM70vZe`; no final source clearance is claimed.
 Root observes c10 idle with an empty inbox and only original99/135 implementors
 active; preserve them and133's queued repair. No new owner input was sent.
+
+The provisional Luna review found a semantic risk: recursively normalizing every
+DateTime in the retained message tree can hide a non-timestamp payload change.
+Limit normalization to supported timestamp positions consumed by the existing
+projection semantics, or prove that other occurrences cannot affect durable facts.
+Keep conservative fallback elsewhere; add a discriminating non-timestamp DateTime
+case alongside the useful native UTC/zoned, changed/late, getter and cycle cases.
+Do not couple product correctness to tests of private Effect marker acceptance.
+
+These provisional findings were delivered/read back at1793859125087, key
+`lazers.review.lz135.non-timestamp-datetime-and-proportionality.20261105.v1`.
+The assigned input stayed unchanged; no prompt or new scope/gate was added.
+The review ran no tests and was not a final-artifact clearance. Final source
+correction, checks and native remeasurement remain outstanding.

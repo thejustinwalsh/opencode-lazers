@@ -242,3 +242,24 @@ transfer occurred; consumption and implementation remain unobserved. A separate
 fresh runtime inspection showed99 atversion13 running with its approval reason
 cleared and a reconciliation recorded; that does not establish these later review
 findings were consumed or that129/132 are eligible.
+
+### Fresh current-input failure regression in original99 draft
+
+Root's disposable `/private/tmp/lazers-lz99-current-failure-review.test.ts`, run
+with `bun test` and `-t "root review:"`, failed0pass/1fail without production
+writes. After an interrupted hold, explicit resume and tick send a new assigned
+input to the same worker. Reporting failed/completed for that new input with the
+unchanged unknown-background object incorrectly leaves the plan running. Root
+identified `isPriorContinuationBackground` as a likely value-equality suppression
+that does not respect current turn input. Preserve delayed-old-input suppression,
+but never swallow a fresh current-input failure or permission/form hold.
+
+The concrete correction was delivered/read back instruction-only to original99
+worker at1793859125068, key
+`lazers.review.lz99.fresh-current-input-failure-not-old-background.20261105.v1`,
+and its current owner at1793859125076, key
+`lazers.coordination.lz99.current-failure-regression-delivered.20261105.v1`.
+Both native input IDs matched before/after. No model prompt, session, ownership,
+worker or acceptance/scope change occurred. Consumption and the corrected result
+remain unverified; actual retained129/132 recovery is still required after99
+integration, not inferred from a draft's failed-outcome support.
