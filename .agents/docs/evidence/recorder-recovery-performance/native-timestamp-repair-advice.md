@@ -82,3 +82,30 @@ These provisional findings were delivered/read back at1793859125087, key
 The assigned input stayed unchanged; no prompt or new scope/gate was added.
 The review ran no tests and was not a final-artifact clearance. Final source
 correction, checks and native remeasurement remain outstanding.
+
+## Committed candidate and remaining native proof hold
+
+Original135 committed clean candidate
+`374a5997d665ad13d7eb3828933e2b3e09b1ce13`. Native shell message
+`msg_1aa5af9d2001Cs0f5Ot9IXTkGu` confirms the exact recovery suite exited0:
+69pass/0fail/660 assertions in11.96s; `msg_1aa5aac74001QswlRB7n4W7nsC` confirms
+`bun run verify` exited0. These are worker check results, not runtime acceptance.
+
+The Architect ran the Root-shaped disposable probe against that exact worker
+recorder: numeric timestamps `[3,0,0]` at1793859672290; Effect DateTime `[3,0,0]`
+at1793859672313. No production data was written. Probe:
+`/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lz135-final-candidate-native-time-probe.ts`.
+This addresses the demonstrated representation-specific miss at component level,
+not live plugin performance acceptance.
+
+Authenticated SDK1793859562007 reports the original session succeeded, idle at
+1793859547774, with no pending permissions/forms. One supported fresh-terminal
+reconcile atversion16→17 still ended blocked atversion18: native execution success
+does not match the current `experimental.idle` execution. All six effects are
+completed, none pending/uncertain; the new artifact has not entered ordinary
+runtime verification. Preserve that unknown proof; no repeated unchanged reconcile,
+certificate prompt, replacement or fabricated idle was used.
+
+Independent final-artifact Luna review `ses_e55a2bb57ffeCH4USt7r0t1031` is running.
+Final source clearance, native completion proof and Root's actual post-activation
+recovery/performance observations remain separate outstanding requirements.
