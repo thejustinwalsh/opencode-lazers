@@ -39,10 +39,13 @@ cleanup are separate facts.
   of5aa completed at1793847176491. Runtime then renewed it at1793848976947 into
   `ses_72db8086246b4cabb6abf6f2f431dcc7`, which owns88 legacy plans and again
   reviews old notices. Renewal`42b3b6b3-1a18-4665-8698-2c6d735de906` committed.
-  Automatic approval review rejected stopping this successor because the prior
-  explicit approval named5aa. Root requested approval covering this historical
-  review chain; no stop after rejection or workaround was attempted. Fresh
-  Architect and136 are separate. Do not create another fresh Architect.
+  The user subsequently approved stopping this historical-only review chain,
+  including automatic successors. Native interrupt of72db returned true at
+  1793850535819; readback confirmed interrupted/idle1793850535856. Fresh Architect
+  and original136 worker were untouched. Runtime renewal after an explicit stop
+  still needs repair within existing notification/renewal work. Revalidate any
+  later successor belongs to this historical-only chain before stopping it.
+  Do not create another fresh Architect.
 - **Performance source repairs are integrated.** Earlier matched service CPU
   73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
   [Report](../../design/reviews/astra-renewal-spike-repair-20261104.md). Current
@@ -230,7 +233,7 @@ compiling code and actual product probes are evidence; no file-hash ceremony,
 model approval substitution, arbitrary spend budgets or invented task gates.
 Preserve native permissions, schema validation and SystemOne task/handoff review.
 
-Current service last observed PID95968, renderer54076, GPU-process54072. DB:
+Current service last observed PID95968, renderer8902, GPU-process8898. DB:
 `/Users/tjw/.local/share/opencode/plugins/lazers/tasks.sqlite`. Raw CPU/profile
 captures stay under `/private/tmp`; review reports are in `design/reviews`.
 Root owns canonical activation and source-control integration. Astra's performance

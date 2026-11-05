@@ -34,3 +34,14 @@ legacy plans and again reads old notices. It is separate from the current
 Architect/136 worker. Automatic approval review rejected Root's attempt to stop
 this continuation because prior approval named5aa. Root requested explicit
 approval for the historical-review chain; no stop was performed after rejection.
+
+## Approved historical-chain stop
+
+The user explicitly approved stopping successor `ses_72db8086246b4cabb6abf6f2f431dcc7`
+and further historical-only successors of that same chain. Native interrupt with
+resume:false returned interrupted:true at1793850535819. Independent readback
+confirmed outcome interrupted and idle timestamp1793850535856. Active inventory
+afterward contained only the original LZ136 worker. The fresh coordinator was
+untouched and subsequently received this result through Desktop. Automatic
+renewal after an explicit stop remains a runtime defect to address in the existing
+notification/renewal work; this stop does not prove a persistent repair.
