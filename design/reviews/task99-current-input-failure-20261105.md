@@ -26,3 +26,11 @@ Root delivered the reproducer to the existing Sol High Architect through Desktop
 and native Steer. Repair, permanent regression coverage and reprobe remain pending.
 Passing the earlier 166-test runtime suite and 341-test runner suite did not cover
 this continuation sequence. Real retained quota-worker recovery is still unproven.
+
+The original worker subsequently changed reconciliation in its retained tree.
+Root reran the same disposable regression against that updated runtime: 1 pass,
+0 fail, 15 assertions. The draft checks permissions before stale-input suppression
+and no longer returns early on background equality before processing a current
+terminal outcome. Permanent worker regression coverage, final review/integration
+and native retained-worker qualification remain pending; no production lifecycle
+state was changed by this fixture test.
