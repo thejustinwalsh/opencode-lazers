@@ -174,3 +174,28 @@ and runtime acceptance remain authoritative.
 Both commands retained the original task/attempt/session/worktree and assignment;
 no replacement, certificate/review prompt, historical-owner wake, ownership
 transfer or reload was requested. No acceptance follows merely from delivery.
+
+### LZ136 integrated and native cleanup verified
+
+Runtime accepted original136's task after the bounded native qualification above.
+Root's ancestry-preserving merge `6bf4a8bab40b5f94dd4c6e304fbb6c2b77cf56af`
+contains accepted candidate `4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1` on
+`main`; reviewed source paths match. Task integration was recorded atversion18.
+The ordinary combined `review-input-integration` check then completed with exit0,
+no timeout and an unchanged artifact; plan acceptance was observed atversion19.
+
+Supported combined `integrated` recorded that exact artifact/branch/head and
+requested non-forced native cleanup atversion20. Inspection atversion21 confirms
+the plan is **integrated**, all nine effects completed, none pending, and
+`WORKTREES_RECONCILED` at1793853533560. The completed `worktree-remove` receipt
+reports `removed: true, native: true` for original attempt directory
+`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`. The directory is absent from both the
+filesystem and Git worktree inventory. Authenticated SDK readback at1793853541178
+still resolves the original succeeded session and its history; it is not archived.
+No direct removal, force flag, re-prompt or unrelated worker change was used.
+
+This closes136, not133/135's independent human gates or retained recovery work.
+133 still requires its registered native journal observation;135 still requires
+Root's comparable quiet native performance measurements. Existing134 waits for
+integrated133. Existing99 remains the continuation task; do not duplicate it or
+transfer its stopped owner's plans without authorization.
