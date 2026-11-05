@@ -86,3 +86,22 @@ worker prompts, reload or ownership transfers were requested. Root's promised
 post-inspection disposition check remains separate evidence. Native paging
 qualification stays held; the earlier disposable-clone success does not establish
 stable live traversal under this observed activity.
+
+## Registered native qualification exposed remaining churn
+
+After merge2b0cd50 and passing16 tests/260 assertions plus quality, Architect called
+the actual registered journal view. The first page returned100 distinct IDs, but
+continuation failed with “Journal changed since this page; restart the journal
+view.” A restarted two-record traversal failed again. Observed snapshot revision
+advanced4362→6174 while sampled source/result revisions remained1 and scan metadata
+changed. This is an actual product defect; scan churn is under investigation, not
+semantic-change causality established by those samples alone. The live gate stays
+held. Architect refreshed the repository index and launched Luna Max research
+ses_e55ed968fffeXvP5LZ1nxVPktq, then will repair the original task/worker through
+supported controls, preserving retained work and history. No duplicate task.
+
+Native reference lookup before paging at1793854294324 and afterward at1793854725862
+resolved the same retained user message without body output or writes. Its
+recorded disposition stayed delivered and referenced_revision55. Background scan
+updated_at changed between runs, while each lookup itself left its sampled row
+unchanged. This is not proof of stable cursor continuation or full acceptance.

@@ -16,7 +16,10 @@ cleanup are separate facts.
   design/reviews/task136-native-completion-20261104.md.
 - **133/135 source is landed; independent live gates remain.** Main merged133 as
   2b0cd50 and135 as e6ab406. Postmerge journal16 tests/260 assertions and quality
-  pass. Architect is qualifying registered journal paging for owned129. Root's
+  pass. Registered journal paging for owned129 failed cursor continuation twice
+  amid scan metadata churn (snapshot4362→6174); native-journal gate stays held.
+  Architect is investigating with Luna Max delegate ses_e55ed968fffeXvP5LZ1nxVPktq
+  and will repair the original task/worker through supported controls. Root's
   native retained-reference lookup succeeds without acknowledgement.135's quiet
   native CPU windows measured30.92%→30.16% service, inconclusive for total savings;
   direct unchanged-recovery work/late-fact observation is still needed before its

@@ -25,3 +25,14 @@ cleared. Receipt timestamps show background verification had already started bef
 that explicit reload call. Root's original quiet guard checked model activity only;
 it now also rejects in-flight task and graph verification. No uncertain136 effects
 were introduced. Activation chronology does not establish a successful global reload.
+
+## Observed timing
+
+Dispatch1793849034879; native worker idle1793852476945; task acceptance1793853317236;
+plan acceptance1793853463698; native worktree reconciliation1793853533560.
+Dispatch→worker idle57m22.066s; idle→task acceptance14m0.291s;
+task→plan acceptance2m26.462s; plan acceptance→cleanup1m9.862s.
+Total dispatch→cleanup74m58.681s. Worker time includes model, tools, tests and
+permission/repair activity; it is not pure model latency. Driver assistance
+included four substantive review corrections, a formatting-only repair, and the
+separate compacted-input host fix. These costs are not hidden by the final pass.
