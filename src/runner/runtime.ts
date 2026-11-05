@@ -54,6 +54,13 @@ import { terminalWorkerContinuationProblem } from "./interrupted-continuation.ts
 import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
+import {
+  DispatchRouteDecisionSchema,
+  resolveDispatchRoute,
+  type DispatchRouteDecision,
+} from "../models/dispatch-resolution.ts"
+import { ModelMappingResolver } from "../models/mapping-resolver.ts"
+import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { SourceMessagesInspectPlanSchema } from "./inspection.ts"
 import { sharedScheduler } from "./scheduler-coordinator.ts"
@@ -191,6 +198,7 @@ export class TaskRuntime {
   private readonly architectIdleWindowMs: number
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
+  private readonly modelMappingResolver: ModelMappingResolver
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -203,12 +211,38 @@ export class TaskRuntime {
     this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
     this.architectPromptHook = options.architectPromptHook ?? false
     this.requestTick = options.requestTick ?? (() => this.tick())
+    this.modelMappingResolver = new ModelMappingResolver(new ModelMappingStore(store.repository))
   }
   get directory() {
     return this.store.repository.projectDirectory
   }
   get dataDirectory() {
     return join(dirname(this.store.repository.path), "runner")
+  }
+
+  private resolveTaskDispatchRoute(
+    proposal: PlanInput,
+    taskID: string,
+    persona: NonNullable<PlanInput["nodes"][number]["persona"]>,
+    configuredImplementor: NonNullable<PlanInput["workerModel"]> | null,
+  ): DispatchRouteDecision {
+    return resolveDispatchRoute({
+      schemaVersion: 1,
+      persona,
+      projectDirectory: this.directory,
+      taskID,
+      explicitOverride: proposal.workerModel
+        ? { source: "explicit-plan-selection", route: proposal.workerModel }
+        : null,
+      mappingResolution: {
+        source: "model-mapping-resolver",
+        resolution: this.modelMappingResolver.resolve({ persona, taskID }),
+      },
+      configuredImplementor: {
+        source: "native-implementor-selection",
+        route: proposal.workerModel ? null : configuredImplementor,
+      },
+    })
   }
 
   private adoptionInputFingerprint(input: {
@@ -686,6 +720,28 @@ export class TaskRuntime {
       null,
       "BLOCKED",
     )?.workerObservation
+    let continuationPlan = plan
+    if (attempt) {
+      try {
+        const attemptPolicy = JSON.parse(attempt.policy) as {
+          model?: unknown
+          routeDecision?: unknown
+        }
+        const decision = DispatchRouteDecisionSchema.safeParse(attemptPolicy.routeDecision)
+        const route = ModelPolicy.safeParse(attemptPolicy.model)
+        if (
+          decision.success &&
+          decision.data.status === "resolved" &&
+          route.success &&
+          decision.data.route.providerID === route.data.providerID &&
+          decision.data.route.id === route.data.id &&
+          decision.data.route.variant === route.data.variant
+        )
+          continuationPlan = { ...plan, model: JSON.stringify(route.data) }
+      } catch {
+        // The retained attempt remains fail-closed if its route snapshot is malformed.
+      }
+    }
     const planHoldObservation =
       typeof blockedObservation === "object" && blockedObservation !== null
         ? (blockedObservation as TerminalWorkerHold)
@@ -711,7 +767,7 @@ export class TaskRuntime {
       }
     }
     return terminalWorkerContinuationProblem({
-      plan,
+      plan: continuationPlan,
       node,
       attempt,
       latestAttemptID: attempt?.id,
@@ -2183,7 +2239,6 @@ export class TaskRuntime {
         if (retry && node?.state === "cancelled" && !attempt) {
           if (
             !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
-            !plan.model ||
             plan.artifact !== null
           )
             throw new Error("Only an admitted, nonintegrated plan can requeue an unstarted task")
@@ -2557,9 +2612,20 @@ export class TaskRuntime {
         throw new Error("Only an Architect session can own execution")
       const proposal = PlanInput.parse(JSON.parse(plan.body))
       const selectedModel = proposal.workerModel ?? configuredWorker
-      if (!selectedModel)
+      const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
+      const nodeRouteDecisions = proposal.nodes.map((node) =>
+        node.persona
+          ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
+          : null,
+      )
+      const everyNodeHasRoute = proposal.nodes.every((node, index) =>
+        node.persona
+          ? nodeRouteDecisions[index]?.status === "resolved"
+          : selectedModel !== undefined,
+      )
+      if (!everyNodeHasRoute)
         return this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
-      const model = ModelPolicy.parse(selectedModel)
+      const model = selectedModel ? ModelPolicy.parse(selectedModel) : null
       try {
         if (
           git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
@@ -2581,10 +2647,14 @@ export class TaskRuntime {
         )
       db.query(
         "UPDATE runner_plans SET state='running',model=?,reason=NULL,version=version+1 WHERE id=?",
-      ).run(JSON.stringify(model), plan.id)
+      ).run(model ? JSON.stringify(model) : null, plan.id)
       this.store.record(plan.id, null, "ADMITTED", {
         model,
-        modelSource: proposal.workerModel ? "explicit-plan-selection" : "native-agent-selection",
+        modelSource: proposal.workerModel
+          ? "explicit-plan-selection"
+          : configuredWorker
+            ? "native-agent-selection"
+            : "persona-mapping-selection",
         auditWatermark: audit.watermark,
         source: proposal.baseCommit,
         enforcement: {
@@ -2646,7 +2716,6 @@ export class TaskRuntime {
           objective: proposal.objective,
           baseCommit: task.provenance.startingRevision.commit,
           workspaceMode: "shared",
-          workerModel,
           nodes: [{ taskID: task.id, revision: task.revision }],
           dependencies: [],
           integrationOrder: [task.id],
@@ -5385,6 +5454,30 @@ export class TaskRuntime {
     if (JSON.parse(plan.body).workspaceMode === undefined && attempts.length)
       input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
     const persona = input.nodes.find((candidate) => candidate.taskID === task.id)?.persona
+    const configuredImplementor = input.workerModel
+      ? null
+      : persona
+        ? ((await this.host.workerModel?.()) ?? null)
+        : plan.model
+          ? ModelPolicy.parse(JSON.parse(plan.model))
+          : null
+    const routeDecision = persona
+      ? this.resolveTaskDispatchRoute(input, task.id, persona, configuredImplementor)
+      : undefined
+    if (routeDecision?.status === "unavailable") {
+      this.hold(plan, `No native worker route is available for the ${persona} persona`)
+      return
+    }
+    const model =
+      routeDecision?.status === "resolved"
+        ? routeDecision.route
+        : plan.model
+          ? ModelPolicy.parse(JSON.parse(plan.model))
+          : null
+    if (!model) {
+      this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
+      return
+    }
     const id = crypto.randomUUID()
     // Isolated work inherits its dependency artifacts. A new shared node
     // starts at the actual reviewed checkout, so intervening integrated repairs
@@ -5417,7 +5510,8 @@ export class TaskRuntime {
     const policy = {
       agent: "lazers-implementor",
       workspaceMode: input.workspaceMode,
-      model: ModelPolicy.parse(JSON.parse(plan.model!)),
+      model,
+      ...(routeDecision ? { routeDecision } : {}),
       ...(persona ? { persona } : {}),
       source: base,
       context: text,
