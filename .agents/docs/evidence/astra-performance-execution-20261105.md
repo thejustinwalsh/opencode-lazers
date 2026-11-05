@@ -11,11 +11,11 @@ All new implementors and research use OpenAI `gpt-6-luna`, `max`. Architect stay
 Sol High. Root owns Desktop, visual verification, quiet native comparisons and
 watched-source integration at a coordinated boundary.
 
-| Task | Plan | Boundary and current execution |
-| --- | --- | --- |
-| LZ-133 `051be9d5-f03b-4ef8-b75e-7758fbe03d8c` | `5a8a96ed-839a-41d7-9e97-ba7845174fd3` | Bounded read-only Architect journal inspection; native attempt `6ee1191f-95ef-45d0-9b90-8e96623b9841`, session `ses_9250c22e68da40ff86371b407b9c3c11`, dispatched on Luna Max. |
+| Task                                          | Plan                                   | Boundary and current execution                                                                                                                                                    |
+| --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LZ-133 `051be9d5-f03b-4ef8-b75e-7758fbe03d8c` | `5a8a96ed-839a-41d7-9e97-ba7845174fd3` | Bounded read-only Architect journal inspection; native attempt `6ee1191f-95ef-45d0-9b90-8e96623b9841`, session `ses_9250c22e68da40ff86371b407b9c3c11`, dispatched on Luna Max.    |
 | LZ-134 `ed59519e-1771-461f-9303-a8a77f9df146` | `d9d4554c-44ff-4600-9a65-5de231f94205` | Compact prospective source notifications and explicit legacy reconciliation; run requested, waits for integrated133 and actual source reservations. Zero attempts at observation. |
-| LZ-135 `1ba8ca4b-0b21-4db0-8f72-162ceac48e5c` | `cc65e13d-9b72-411e-a9de-41a996a3f951` | Unchanged recorder replay projection cost; native attempt `d0930725-f837-40e7-8992-892f66ec1010`, session `ses_671fad53a1b548679a7afc4472879ed2`, dispatched on Luna Max. |
+| LZ-135 `1ba8ca4b-0b21-4db0-8f72-162ceac48e5c` | `cc65e13d-9b72-411e-a9de-41a996a3f951` | Unchanged recorder replay projection cost; native attempt `d0930725-f837-40e7-8992-892f66ec1010`, session `ses_671fad53a1b548679a7afc4472879ed2`, dispatched on Luna Max.         |
 
 135 briefly reported one pending approval. An authenticated read at1793845967415
 showed zero permissions/forms for that exact worker; native reconcile was requested

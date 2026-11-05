@@ -25,7 +25,8 @@ import type {
   RunnerHost,
 } from "./host.ts"
 import { DEFAULT_ARCHITECT_IDLE_WINDOW_MS, TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
-import { RunnerStore } from "./store.ts"
+import { RunnerStore, type AttemptRow } from "./store.ts"
+import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
 import { PlanInput } from "./schema.ts"
 import type { WorkerPersona } from "./schema.ts"
 import { TaskReads } from "../tasks/read.ts"
@@ -2433,6 +2434,92 @@ async function runPlan(
     "owner",
   )
 }
+function setReviewInputObservation(
+  f: ReturnType<typeof fixture>,
+  attempt: AttemptRow,
+  reviewInputID: string,
+) {
+  const ownedAttempt = attempt
+  const worker = f.sessions.get(ownedAttempt.session_id)!
+  const reviewRequestID = `review-${ownedAttempt.task_id}-${ownedAttempt.number}`
+  worker.messages.push({
+    id: reviewInputID,
+    type: "synthetic",
+    text: "Continue the already-assigned task after review.",
+    metadata: {
+      lazersReview: {
+        taskID: ownedAttempt.task_id,
+        attemptID: ownedAttempt.id,
+        requestID: reviewRequestID,
+      },
+    },
+  })
+  worker.busy = false
+  worker.pendingInput = false
+  worker.pendingPermissions = 0
+  worker.pendingForms = 0
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: reviewInputID, state: "completed" }
+  worker.model = JSON.parse(ownedAttempt.policy).model
+  worker.background = {
+    state: "observed",
+    source: "experimental.idle",
+    observedAt: Date.now(),
+    inputID: reviewInputID,
+    executionStartSequence: 10,
+    eventSequence: 11,
+    terminalSequence: 12,
+    terminalEventID: "event_review_success",
+    terminalMessageID: "msg_review_terminal",
+    projectDirectory: f.root,
+    projectID: "project",
+    attemptID: ownedAttempt.id,
+    sessionID: ownedAttempt.session_id,
+    workspace: ownedAttempt.workspace,
+    assignedMessageID: ownedAttempt.message_id,
+    count: 0,
+    kinds: { shell: 0, subagent: 0, image: 0 },
+  }
+  return { worker, reviewRequestID }
+}
+
+async function heldReviewInputFixture() {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const reviewInputID = "msg_received_review_steer"
+  const { worker, reviewRequestID } = setReviewInputObservation(f, attempt, reviewInputID)
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.plan(f.receipt.planID)?.reason).toContain("current worker input lineage")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+  return { f, attempt, worker, reviewInputID, reviewRequestID }
+}
+
+function expireRunnerLease(f: ReturnType<typeof fixture>) {
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
+  )
+}
+
+function reviewInputCommand(
+  f: ReturnType<typeof fixture>,
+  attempt: AttemptRow,
+  reviewInputID: string,
+  requestID = "reconcile-review-steer",
+) {
+  return {
+    requestID,
+    planID: f.receipt.planID,
+    expectedVersion: f.store.plan(f.receipt.planID)!.version,
+    action: "reconcile" as const,
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    reviewInputID,
+  }
+}
+
 async function acceptPlan(
   f: ReturnType<typeof fixture>,
   planID: ReturnType<typeof crypto.randomUUID>,
@@ -6565,6 +6652,696 @@ test("a durably admitted same-attempt handoff reminder can finish with fresh mat
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
+
+test("owner reconciliation binds an observed review input without replacing the assignment", async () => {
+  const {
+    f,
+    attempt: initialAttempt,
+    worker,
+    reviewInputID,
+    reviewRequestID,
+  } = await heldReviewInputFixture()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(attempt.id).toBe(initialAttempt.id)
+  const originalAssignment = {
+    id: attempt.id,
+    session_id: attempt.session_id,
+    message_id: attempt.message_id,
+    workspace: attempt.workspace,
+    base_commit: attempt.base_commit,
+    policy: attempt.policy,
+    token_count: attempt.token_count,
+    tool_count: attempt.tool_count,
+    cost: attempt.cost,
+  }
+  const promptCount = f.events.filter((event) => event.startsWith("prompt:")).length
+  const command = reviewInputCommand(f, attempt, reviewInputID)
+
+  const first = await f.runtime.command(command, "owner")
+  expect(first).toMatchObject({
+    status: "reconciling",
+    reviewInputID,
+    relationshipRecorded: true,
+  })
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+  expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject(originalAssignment)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("create:")).length).toBe(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptCount)
+  expect(
+    f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+  ).toBe(false)
+
+  const alias = f.store.latestTransition<{
+    source: string
+    runtimeSentMessage: boolean
+    projectDirectory: string
+    projectID: string
+    planID: string
+    taskID: string
+    attemptID: string
+    sessionID: string
+    workspace: string
+    assignedMessageID: string
+    reviewInputID: string
+    reviewRequestID: string
+    commandRequestID: string
+    input: Record<string, unknown>
+    observation: { inputID: string; turnState: string; idle: Record<string, unknown> }
+  }>(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED")!
+  expect(alias).toMatchObject({
+    source: "observed-native-review-input",
+    runtimeSentMessage: false,
+    projectDirectory: f.root,
+    projectID: "project",
+    planID: f.receipt.planID,
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    sessionID: attempt.session_id,
+    workspace: attempt.workspace,
+    assignedMessageID: attempt.message_id,
+    reviewInputID,
+    reviewRequestID,
+    commandRequestID: command.requestID,
+    input: {
+      type: "synthetic",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      requestID: reviewRequestID,
+    },
+    observation: {
+      outcome: "succeeded",
+      inputID: reviewInputID,
+      turnState: "completed",
+      idle: {
+        inputID: reviewInputID,
+        count: 0,
+        terminalSequence: 12,
+        terminalEventID: "event_review_success",
+        terminalMessageID: "msg_review_terminal",
+      },
+    },
+  })
+  expect(alias.input).not.toHaveProperty("delivery")
+  expect(alias.input).not.toHaveProperty("resume")
+  const parsedAlias = parseReviewInputAlias(alias)
+  expect(parsedAlias).toBeDefined()
+  for (const sequence of ["executionStartSequence", "eventSequence", "terminalSequence"] as const) {
+    const malformed = structuredClone(alias) as typeof alias
+    ;(malformed.observation.idle as Record<string, unknown>)[sequence] = -1
+    expect(parseReviewInputAlias(malformed)).toBeUndefined()
+  }
+  expect(
+    matchesReviewInputAlias(parsedAlias!, {
+      projectDirectory: f.root,
+      projectID: "project",
+      planID: f.receipt.planID,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      sessionID: attempt.session_id,
+      workspace: attempt.workspace,
+      assignedMessageID: attempt.message_id,
+      reviewInputID,
+    }),
+  ).toBe(true)
+  expect(worker.messages.find((message) => message.id === reviewInputID)?.metadata).toEqual({
+    lazersReview: {
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      requestID: reviewRequestID,
+    },
+  })
+
+  expect(await f.runtime.command(command, "owner")).toEqual(first)
+  const replay = await f.runtime.command(
+    reviewInputCommand(f, attempt, reviewInputID, "reconcile-review-steer-duplicate"),
+    "owner",
+  )
+  expect(replay).toMatchObject({ relationshipRecorded: false, reviewInputID })
+  const aliasCount = f.store.atomic(
+    (db) =>
+      db
+        .query<{ count: number }, [string, string]>(
+          "SELECT count(*) AS count FROM runner_transitions WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'",
+        )
+        .get(f.receipt.planID, attempt.task_id)!.count,
+  )
+  expect(aliasCount).toBe(1)
+
+  const reopened = new TaskRuntime(f.store, f.host, "project")
+  cleanup.push(() => reopened.stop())
+  expireRunnerLease(f)
+  await drive(reopened, 6)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject(originalAssignment)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptCount)
+  expect(f.store.effects(f.receipt.planID).some((effect) => effect.kind === "verify:content")).toBe(
+    true,
+  )
+})
+
+test("review input identity accepts unrelated additive native message metadata", async () => {
+  const { f, attempt, worker, reviewInputID } = await heldReviewInputFixture()
+  worker.messages.find((message) => message.id === reviewInputID)!.metadata!.trace = "native-note"
+  const result = await f.runtime.command(
+    reviewInputCommand(f, attempt, reviewInputID, "review-input-extra-metadata"),
+    "owner",
+  )
+  expect(result).toMatchObject({ status: "reconciling", relationshipRecorded: true })
+  expect(
+    f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED"),
+  ).toBeDefined()
+})
+
+test.each(["OWNER_CONTINUED", "OWNER_REASSIGNED"] as const)(
+  "an admitted review-input alias survives later %s with the original worker assignment",
+  async (ownerEvent) => {
+    const { f, attempt, worker, reviewInputID } = await heldReviewInputFixture()
+    await f.runtime.command(
+      reviewInputCommand(f, attempt, reviewInputID, `review-before-${ownerEvent}`),
+      "owner",
+    )
+    const nextOwner: HostSession = {
+      ...structuredClone(f.sessions.get("owner")!),
+      id: `next-${ownerEvent.toLowerCase()}`,
+    }
+    f.sessions.set(nextOwner.id, nextOwner)
+    if (ownerEvent === "OWNER_CONTINUED") {
+      expect(f.store.updatePlanOwner(f.receipt.planID, "owner", nextOwner.id)).toBe(true)
+    } else {
+      await f.runtime.command(
+        {
+          requestID: "reassign-after-review-alias",
+          planID: f.receipt.planID,
+          expectedVersion: f.store.plan(f.receipt.planID)!.version,
+          action: "reassign",
+          targetSessionID: nextOwner.id,
+          reason: "Transfer ownership after exact review-input reconciliation",
+        },
+        "owner",
+      )
+    }
+    expect(f.store.latestTransition(f.receipt.planID, null, ownerEvent)).toBeDefined()
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.receipt.planID)[0]).toMatchObject({
+      id: attempt.id,
+      session_id: attempt.session_id,
+      message_id: attempt.message_id,
+      workspace: attempt.workspace,
+      base_commit: attempt.base_commit,
+      policy: attempt.policy,
+    })
+    expect(worker.turn).toEqual({ inputID: reviewInputID, state: "completed" })
+
+    const reopened = new TaskRuntime(f.store, f.host, "project")
+    cleanup.push(() => reopened.stop())
+    expireRunnerLease(f)
+    await drive(reopened, 6)
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.receipt.planID)[0]?.id).toBe(attempt.id)
+  },
+)
+
+type HeldReviewInput = Awaited<ReturnType<typeof heldReviewInputFixture>>
+
+const invalidReviewInputs: {
+  name: string
+  mutate: (context: HeldReviewInput) => void
+}[] = [
+  {
+    name: "wrong task metadata",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.messages.find((message) => message.id === reviewInputID)!.metadata!.lazersReview = {
+        taskID: crypto.randomUUID(),
+        attemptID: "wrong-attempt",
+        requestID: "review-request",
+      }
+    },
+  },
+  {
+    name: "wrong attempt metadata",
+    mutate: ({ attempt, worker, reviewInputID }) => {
+      worker.messages.find((message) => message.id === reviewInputID)!.metadata!.lazersReview = {
+        taskID: attempt.task_id,
+        attemptID: crypto.randomUUID(),
+        requestID: "review-request",
+      }
+    },
+  },
+  {
+    name: "missing review metadata",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.messages.find((message) => message.id === reviewInputID)!.metadata = { forged: true }
+    },
+  },
+  {
+    name: "absent native message",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.messages = worker.messages.filter((message) => message.id !== reviewInputID)
+    },
+  },
+  {
+    name: "unrelated latest input",
+    mutate: ({ worker }) => {
+      worker.turn = { inputID: "msg_unrelated_latest_input", state: "completed" }
+    },
+  },
+  {
+    name: "wrong session",
+    mutate: ({ worker }) => {
+      worker.id = "ses_foreign_worker"
+    },
+  },
+  {
+    name: "wrong project",
+    mutate: ({ worker }) => {
+      worker.projectID = "foreign-project"
+    },
+  },
+  {
+    name: "wrong workspace",
+    mutate: ({ worker }) => {
+      worker.directory = "/foreign/workspace"
+    },
+  },
+  {
+    name: "wrong attempt session metadata",
+    mutate: ({ worker }) => {
+      worker.metadata = { lazersAttemptID: crypto.randomUUID() }
+    },
+  },
+  {
+    name: "wrong model route",
+    mutate: ({ worker }) => {
+      worker.model = { providerID: "other-provider", id: "other-model" }
+    },
+  },
+  {
+    name: "stale idle assignment",
+    mutate: ({ attempt, f }) => {
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_attempts SET message_id=? WHERE id=?")
+          .run("msg_reassigned_original", attempt.id),
+      )
+    },
+  },
+  {
+    name: "unknown background",
+    mutate: ({ worker }) => {
+      worker.background = {
+        state: "unknown",
+        source: "experimental.idle",
+        reason: "No native idle confirmation",
+      }
+    },
+  },
+  {
+    name: "nonzero background",
+    mutate: ({ worker }) => {
+      if (worker.background?.state === "observed") {
+        worker.background.count = 1
+        worker.background.kinds.shell = 1
+      }
+    },
+  },
+  {
+    name: "negative execution start sequence",
+    mutate: ({ worker }) => {
+      if (worker.background?.state === "observed") worker.background.executionStartSequence = -1
+    },
+  },
+  {
+    name: "negative idle event sequence",
+    mutate: ({ worker }) => {
+      if (worker.background?.state === "observed") worker.background.eventSequence = -1
+    },
+  },
+  {
+    name: "negative terminal sequence",
+    mutate: ({ worker }) => {
+      if (worker.background?.state === "observed") worker.background.terminalSequence = -1
+    },
+  },
+  {
+    name: "active foreground",
+    mutate: ({ worker }) => {
+      worker.busy = true
+    },
+  },
+  {
+    name: "pending native input",
+    mutate: ({ worker }) => {
+      worker.pendingInput = true
+    },
+  },
+  {
+    name: "pending turn",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.turn = { inputID: reviewInputID, state: "pending" }
+    },
+  },
+  {
+    name: "pending approval",
+    mutate: ({ worker }) => {
+      worker.pendingPermissions = 1
+    },
+  },
+  {
+    name: "pending form",
+    mutate: ({ worker }) => {
+      worker.pendingForms = 1
+    },
+  },
+  {
+    name: "unstable observation",
+    mutate: ({ worker }) => {
+      worker.observationUnstable = true
+    },
+  },
+]
+
+test.each(invalidReviewInputs)(
+  "review reconciliation rejects $name without recording an alias",
+  async ({ mutate }) => {
+    const context = await heldReviewInputFixture()
+    mutate(context)
+    const { f, attempt, reviewInputID } = context
+    const promptCount = f.events.filter((event) => event.startsWith("prompt:")).length
+    await expect(
+      f.runtime.command(reviewInputCommand(f, attempt, reviewInputID), "owner"),
+    ).rejects.toThrow()
+    expect(
+      f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED"),
+    ).toBeUndefined()
+    expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+    expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptCount)
+    expect(
+      f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+    ).toBe(false)
+  },
+)
+
+test.each(["wrong-owner", "stale-version", "wrong-task", "wrong-attempt"] as const)(
+  "review reconciliation rejects %s command identity",
+  async (scenario) => {
+    const { f, attempt, reviewInputID } = await heldReviewInputFixture()
+    const command = reviewInputCommand(f, attempt, reviewInputID)
+    const caller = scenario === "wrong-owner" ? "not-owner" : "owner"
+    if (scenario === "stale-version") command.expectedVersion++
+    if (scenario === "wrong-task") command.taskID = crypto.randomUUID()
+    if (scenario === "wrong-attempt") command.attemptID = crypto.randomUUID()
+    await expect(f.runtime.command(command, caller)).rejects.toThrow()
+    expect(
+      f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED"),
+    ).toBeUndefined()
+  },
+)
+
+test.each(["intended", "uncertain"] as const)(
+  "review reconciliation does not record lineage while an effect is %s",
+  async (state) => {
+    const { f, attempt, reviewInputID } = await heldReviewInputFixture()
+    f.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_effects(id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
+         VALUES(?,?,?,?,?,?,?,NULL,0)`,
+        )
+        .run(
+          crypto.randomUUID(),
+          f.receipt.planID,
+          attempt.task_id,
+          attempt.id,
+          "review-test-effect",
+          state,
+          "{}",
+        ),
+    )
+    const result = await f.runtime.command(
+      reviewInputCommand(f, attempt, reviewInputID, `review-effect-${state}`),
+      "owner",
+    )
+    expect(result).toMatchObject({ status: "blocked" })
+    expect(
+      f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED"),
+    ).toBeUndefined()
+  },
+)
+
+test("cancellation and assignment changes during review observation fence stale aliases", async () => {
+  const cancelled = await heldReviewInputFixture()
+  const originalSession = cancelled.f.host.session
+  let didCancel = false
+  cancelled.f.host.session = async (id, options) => {
+    const snapshot = await originalSession(id, options)
+    if (id === cancelled.attempt.session_id && options?.messages && !didCancel) {
+      didCancel = true
+      await cancelled.f.runtime.command(
+        {
+          requestID: "cancel-during-review-observation",
+          planID: cancelled.f.receipt.planID,
+          expectedVersion: cancelled.f.store.plan(cancelled.f.receipt.planID)!.version,
+          action: "cancel",
+        },
+        "owner",
+      )
+    }
+    return snapshot
+  }
+  await expect(
+    cancelled.f.runtime.command(
+      reviewInputCommand(
+        cancelled.f,
+        cancelled.attempt,
+        cancelled.reviewInputID,
+        "review-cancel-race",
+      ),
+      "owner",
+    ),
+  ).rejects.toThrow("Stale plan version")
+  expect(cancelled.f.store.plan(cancelled.f.receipt.planID)?.state).toBe("cancelling")
+  expect(
+    cancelled.f.store.latestTransition(
+      cancelled.f.receipt.planID,
+      cancelled.attempt.task_id,
+      "WORKER_REVIEW_INPUT_RECONCILED",
+    ),
+  ).toBeUndefined()
+
+  const reassigned = await heldReviewInputFixture()
+  const replacementOwner: HostSession = {
+    ...reassigned.f.sessions.get("owner")!,
+    id: "new-owner",
+  }
+  reassigned.f.sessions.set(replacementOwner.id, replacementOwner)
+  const originalReassignmentSession = reassigned.f.host.session
+  let didReassign = false
+  reassigned.f.host.session = async (id, options) => {
+    const snapshot = await originalReassignmentSession(id, options)
+    if (id === reassigned.attempt.session_id && options?.messages && !didReassign) {
+      didReassign = true
+      await reassigned.f.runtime.command(
+        {
+          requestID: "reassign-during-review-observation",
+          planID: reassigned.f.receipt.planID,
+          expectedVersion: reassigned.f.store.plan(reassigned.f.receipt.planID)!.version,
+          action: "reassign",
+          targetSessionID: replacementOwner.id,
+          reason: "Move current ownership during review reconciliation",
+        },
+        "owner",
+      )
+    }
+    return snapshot
+  }
+  await expect(
+    reassigned.f.runtime.command(
+      reviewInputCommand(
+        reassigned.f,
+        reassigned.attempt,
+        reassigned.reviewInputID,
+        "review-owner-race",
+      ),
+      "owner",
+    ),
+  ).rejects.toThrow("Stale plan version")
+  expect(reassigned.f.store.plan(reassigned.f.receipt.planID)?.owner).toBe(replacementOwner.id)
+  expect(
+    reassigned.f.store.latestTransition(
+      reassigned.f.receipt.planID,
+      reassigned.attempt.task_id,
+      "WORKER_REVIEW_INPUT_RECONCILED",
+    ),
+  ).toBeUndefined()
+})
+
+test.each(["new-input", "new-execution"] as const)(
+  "a concurrent %s during deferred owner observation rejects review reconciliation",
+  async (change) => {
+    const { f, attempt, worker, reviewInputID } = await heldReviewInputFixture()
+    const originalSession = f.host.session
+    let ownerReads = 0
+    let signalOwnerRead!: () => void
+    let resumeOwnerRead!: () => void
+    const ownerReadStarted = new Promise<void>((resolve) => {
+      signalOwnerRead = resolve
+    })
+    const ownerReadGate = new Promise<void>((resolve) => {
+      resumeOwnerRead = resolve
+    })
+    f.host.session = async (id, options) => {
+      const snapshot = await originalSession(id, options)
+      if (id === "owner" && !options?.messages && ++ownerReads === 2) {
+        signalOwnerRead()
+        await ownerReadGate
+      }
+      return snapshot
+    }
+    const pendingReconciliation = f.runtime.command(
+      reviewInputCommand(f, attempt, reviewInputID, `review-${change}-race`),
+      "owner",
+    )
+    await ownerReadStarted
+    if (change === "new-input") {
+      worker.messages.push({ id: "msg_later_input", type: "synthetic", text: "Later input" })
+      worker.turn = { inputID: "msg_later_input", state: "completed" }
+      if (worker.background?.state === "observed") worker.background.inputID = "msg_later_input"
+    } else {
+      worker.busy = true
+      worker.outcome = undefined
+    }
+    resumeOwnerRead()
+    await expect(pendingReconciliation).rejects.toThrow()
+    expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+    expect(
+      f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED"),
+    ).toBeUndefined()
+    expect(
+      f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+    ).toBe(false)
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  },
+)
+
+test("an admitted review alias does not match a later unrelated native current input", async () => {
+  const { f, attempt, worker, reviewInputID } = await heldReviewInputFixture()
+  await f.runtime.command(
+    reviewInputCommand(f, attempt, reviewInputID, "review-then-later-input"),
+    "owner",
+  )
+  worker.messages.push({ id: "msg_later_unrelated_input", type: "synthetic", text: "Later input" })
+  worker.turn = { inputID: "msg_later_unrelated_input", state: "completed" }
+  if (worker.background?.state === "observed")
+    worker.background.inputID = "msg_later_unrelated_input"
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+  expect(
+    f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+  ).toBe(false)
+})
+
+test("a changed current attempt during native review observation rejects the stale alias", async () => {
+  const { f, attempt, reviewInputID } = await heldReviewInputFixture()
+  const originalSession = f.host.session
+  let ownerReads = 0
+  let signalOwnerRead!: () => void
+  let resumeOwnerRead!: () => void
+  const ownerReadStarted = new Promise<void>((resolve) => {
+    signalOwnerRead = resolve
+  })
+  const ownerReadGate = new Promise<void>((resolve) => {
+    resumeOwnerRead = resolve
+  })
+  f.host.session = async (id, options) => {
+    const snapshot = await originalSession(id, options)
+    if (id === "owner" && !options?.messages && ++ownerReads === 2) {
+      signalOwnerRead()
+      await ownerReadGate
+    }
+    return snapshot
+  }
+  const pendingReconciliation = f.runtime.command(
+    reviewInputCommand(f, attempt, reviewInputID, "review-attempt-race"),
+    "owner",
+  )
+  await ownerReadStarted
+  const replacementAttemptID = crypto.randomUUID()
+  const replacementSessionID = "ses_changed_during_review_observation"
+  const replacementMessageID = "msg_changed_during_review_observation"
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id)
+    db.query(
+      `INSERT INTO runner_attempts(
+         id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,
+         policy,state,started_at,token_count,tool_count,retry_count,cost
+       ) VALUES(?,?,?,?,?,?,?,?,NULL,?,'running',?,NULL,0,0,NULL)`,
+    ).run(
+      replacementAttemptID,
+      attempt.plan_id,
+      attempt.task_id,
+      attempt.number + 1,
+      replacementSessionID,
+      replacementMessageID,
+      attempt.workspace,
+      attempt.base_commit,
+      attempt.policy,
+      Date.now() + 1,
+    )
+  })
+  resumeOwnerRead()
+  await expect(pendingReconciliation).rejects.toThrow(
+    "Review input worker assignment changed during native observation",
+  )
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+  expect(f.store.attempts(f.receipt.planID)[1]).toMatchObject({
+    id: replacementAttemptID,
+    session_id: replacementSessionID,
+    message_id: replacementMessageID,
+    state: "running",
+  })
+  expect(
+    f.store.latestTransition(f.receipt.planID, attempt.task_id, "WORKER_REVIEW_INPUT_RECONCILED"),
+  ).toBeUndefined()
+  expect(
+    f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+  ).toBe(false)
+})
+
+test.each(["projectID", "taskID", "attemptID", "sessionID", "assignedMessageID"] as const)(
+  "a persisted foreign %s review alias cannot verify the original attempt",
+  async (field) => {
+    const { f, attempt, reviewInputID } = await heldReviewInputFixture()
+    await f.runtime.command(
+      reviewInputCommand(f, attempt, reviewInputID, `review-foreign-alias-${field}`),
+      "owner",
+    )
+    const row = f.store.atomic((db) =>
+      db
+        .query<{ id: number; payload: string }, [string, string]>(
+          `SELECT id,payload FROM runner_transitions
+           WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'`,
+        )
+        .get(f.receipt.planID, attempt.task_id)!,
+    )
+    const payload = JSON.parse(row.payload) as Record<string, unknown>
+    payload[field] = field === "projectID" ? "foreign-project" : crypto.randomUUID()
+    f.store.atomic((db) =>
+      db
+        .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+        .run(JSON.stringify(payload), row.id),
+    )
+    await f.runtime.tick()
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+    expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+    expect(
+      f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("verify:")),
+    ).toBe(false)
+  },
+)
 
 test.each(["unconfirmed", "foreign", "stale-assignment", "pre-reminder-report"])(
   "reminder completion rejects %s lineage",

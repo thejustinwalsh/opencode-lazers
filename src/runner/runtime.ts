@@ -49,6 +49,12 @@ import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { sharedScheduler } from "./scheduler-coordinator.ts"
 import {
+  matchesReviewInputAlias,
+  observeReviewInput,
+  parseReviewInputAlias,
+} from "./review-input.ts"
+import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
+import {
   sourceGuardInstalled,
   samePhysicalWorkspace,
   sourceQuarantine,
@@ -471,6 +477,89 @@ export class TaskRuntime {
     return undefined
   }
 
+  private async prepareReviewInputReconciliation(
+    plan: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+  ): Promise<{ binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined> {
+    if (command.reviewInputID === undefined) return undefined
+    if (command.action !== "reconcile" || !command.taskID || !command.attemptID)
+      throw new Error("Review input reconciliation requires reconcile, taskID and attemptID")
+    if (
+      caller !== plan.owner ||
+      !this.validArchitect(ownerSession) ||
+      ownerSession.id !== plan.owner
+    )
+      throw new Error(
+        "Review input reconciliation requires the current same-project Architect owner",
+      )
+    if (!(["running", "blocked"] as const).includes(plan.state as "running" | "blocked"))
+      throw new Error("Review input reconciliation requires a running or blocked plan")
+    if (this.store.activeAdoptions(plan.id).length)
+      throw new Error(
+        "A descendant adoption is pending; review input reconciliation is unavailable",
+      )
+
+    const proposal = PlanInput.parse(JSON.parse(plan.body))
+    const task = this.store.repository.get(command.taskID)
+    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+    const latest = this.store
+      .attempts(plan.id)
+      .filter((attempt) => attempt.task_id === command.taskID)
+      .at(-1)
+    const proposalNode = proposal.nodes.find((item) => item.taskID === command.taskID)
+    if (
+      !task ||
+      !node ||
+      !proposalNode ||
+      !latest ||
+      latest.id !== command.attemptID ||
+      latest.state !== "running" ||
+      node.state !== "running" ||
+      task.revision !== proposalNode.revision ||
+      task.provenance.projectID !== this.projectID ||
+      task.provenance.projectDirectory !== this.directory
+    )
+      throw new Error(
+        "Review input reconciliation must name the exact current running task attempt",
+      )
+
+    const model = ModelPolicy.parse(JSON.parse(latest.policy).model)
+    const binding: ReviewInputBinding = {
+      projectDirectory: this.directory,
+      projectID: this.projectID,
+      planID: plan.id,
+      taskID: latest.task_id,
+      attemptID: latest.id,
+      sessionID: latest.session_id,
+      workspace: latest.workspace,
+      assignedMessageID: latest.message_id,
+      reviewInputID: command.reviewInputID,
+      ownerSessionID: plan.owner,
+      commandRequestID: command.requestID,
+      expectedPlanVersion: command.expectedVersion,
+      model,
+    }
+    const worker = await this.host.session(latest.session_id, { messages: true })
+    if (!worker) throw new Error("Exact review-input worker session is unavailable")
+    const observedEvidence = observeReviewInput(worker, binding)
+
+    // Recheck owner liveness after the asynchronous worker observation. The
+    // worker is then read again so input/execution changes during that owner
+    // read cannot leave a stale relationship in the journal. The transaction
+    // below separately fences durable reassignment/version/attempt races.
+    const currentOwner = await this.host.session(plan.owner)
+    if (!this.validArchitect(currentOwner) || currentOwner.id !== caller)
+      throw new Error("Review input reconciliation owner is no longer current and active")
+    const currentWorker = await this.host.session(latest.session_id, { messages: true })
+    if (!currentWorker) throw new Error("Exact review-input worker session is unavailable")
+    const evidence = observeReviewInput(currentWorker, binding)
+    if (JSON.stringify(evidence) !== JSON.stringify(observedEvidence))
+      throw new Error("Review input native observation changed during owner revalidation")
+    return { binding, evidence }
+  }
+
   async command(input: unknown, caller: string): Promise<unknown> {
     const command = CommandInput.parse(input)
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
@@ -532,6 +621,12 @@ export class TaskRuntime {
         projectID: this.projectID,
       })
     }
+    const reviewInput = await this.prepareReviewInputReconciliation(
+      old,
+      command,
+      caller,
+      ownerSession,
+    )
     const result = this.store.command(command.requestID, { command, caller }, (db) => {
       const plan = this.store.plan(command.planID)!
       if (plan.version !== command.expectedVersion)
@@ -1050,6 +1145,88 @@ export class TaskRuntime {
       }
       if (command.action === "reconcile") {
         if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+        let existingReviewInput = false
+        if (reviewInput) {
+          const { binding, evidence } = reviewInput
+          if (
+            caller !== plan.owner ||
+            !this.validArchitect(ownerSession) ||
+            ownerSession.id !== binding.ownerSessionID ||
+            binding.planID !== plan.id ||
+            binding.expectedPlanVersion !== command.expectedVersion ||
+            binding.commandRequestID !== command.requestID ||
+            !["running", "blocked"].includes(plan.state)
+          )
+            throw new Error("Review input reconciliation authorization or plan version changed")
+
+          const latest = this.store
+            .attempts(plan.id)
+            .filter((attempt) => attempt.task_id === binding.taskID)
+            .at(-1)
+          const node = this.store.nodes(plan.id).find((item) => item.task_id === binding.taskID)
+          const task = this.store.repository.get(binding.taskID)
+          if (
+            !latest ||
+            latest.id !== binding.attemptID ||
+            latest.state !== "running" ||
+            latest.session_id !== binding.sessionID ||
+            latest.workspace !== binding.workspace ||
+            latest.message_id !== binding.assignedMessageID ||
+            !node ||
+            node.state !== "running" ||
+            !task ||
+            task.provenance.projectID !== binding.projectID ||
+            task.provenance.projectDirectory !== binding.projectDirectory ||
+            task.revision !==
+              PlanInput.parse(JSON.parse(plan.body)).nodes.find(
+                (item) => item.taskID === binding.taskID,
+              )?.revision
+          )
+            throw new Error("Review input worker assignment changed during native observation")
+
+          const policy = ModelPolicy.parse(JSON.parse(latest.policy).model)
+          if (
+            policy.providerID !== binding.model.providerID ||
+            policy.id !== binding.model.id ||
+            policy.variant !== binding.model.variant
+          )
+            throw new Error("Review input worker route changed during native observation")
+
+          const aliases = db
+            .query<{ id: number; payload: string }, [string, string]>(
+              `SELECT id,payload FROM runner_transitions
+               WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
+               ORDER BY id`,
+            )
+            .all(plan.id, binding.taskID)
+          for (const row of aliases) {
+            let prior: ReturnType<typeof parseReviewInputAlias>
+            try {
+              prior = parseReviewInputAlias(JSON.parse(row.payload))
+            } catch {
+              prior = undefined
+            }
+            if (!prior || prior.attemptID !== binding.attemptID) continue
+            if (prior.reviewInputID !== binding.reviewInputID) continue
+            if (
+              !matchesReviewInputAlias(prior, {
+                projectDirectory: binding.projectDirectory,
+                projectID: binding.projectID,
+                planID: binding.planID,
+                taskID: binding.taskID,
+                attemptID: binding.attemptID,
+                sessionID: binding.sessionID,
+                workspace: binding.workspace,
+                assignedMessageID: binding.assignedMessageID,
+                reviewInputID: binding.reviewInputID,
+              }) ||
+              prior.reviewRequestID !== evidence.reviewRequestID
+            )
+              throw new Error("Review input already has a different durable lineage relationship")
+            existingReviewInput = true
+            break
+          }
+        }
         if (this.store.effects(plan.id).some((e) => ["intended", "uncertain"].includes(e.state)))
           return {
             status: "blocked",
@@ -1067,11 +1244,46 @@ export class TaskRuntime {
             )
               this.store.move(plan.id, node.task_id, "RECONCILE")
         }
+        if (reviewInput && !existingReviewInput) {
+          const { binding, evidence } = reviewInput
+          this.store.record(plan.id, binding.taskID, "WORKER_REVIEW_INPUT_RECONCILED", {
+            schemaVersion: 1,
+            kind: "owner-reviewed-native-input-alias",
+            source: "observed-native-review-input",
+            runtimeSentMessage: false,
+            projectDirectory: binding.projectDirectory,
+            projectID: binding.projectID,
+            planID: binding.planID,
+            taskID: binding.taskID,
+            attemptID: binding.attemptID,
+            sessionID: binding.sessionID,
+            workspace: binding.workspace,
+            assignedMessageID: binding.assignedMessageID,
+            reviewInputID: binding.reviewInputID,
+            reviewRequestID: evidence.reviewRequestID,
+            ownerSessionID: binding.ownerSessionID,
+            commandRequestID: binding.commandRequestID,
+            expectedPlanVersion: binding.expectedPlanVersion,
+            model: binding.model,
+            input: evidence.input,
+            observation: evidence.observation,
+          })
+        }
         this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
           caller,
           verificationEpoch: this.store.plan(plan.id)!.version,
+          ...(reviewInput ? { reviewInputID: reviewInput.binding.reviewInputID } : {}),
         })
-        return { status: "reconciling", version: this.store.plan(plan.id)!.version }
+        return {
+          status: "reconciling",
+          version: this.store.plan(plan.id)!.version,
+          ...(reviewInput
+            ? {
+                reviewInputID: reviewInput.binding.reviewInputID,
+                relationshipRecorded: !existingReviewInput,
+              }
+            : {}),
+        }
       }
       if (plan.state !== "draft" && plan.state !== "blocked")
         throw new Error("Execution already requested or ended")
@@ -2794,12 +3006,66 @@ export class TaskRuntime {
   }
 
   private matchesWorkerInput(attempt: AttemptRow, inputID: string | null | undefined): boolean {
-    return this.progress.matchesAssignedInput(
-      attempt.id,
-      attempt.session_id,
-      attempt.message_id,
-      inputID,
+    if (
+      this.progress.matchesAssignedInput(
+        attempt.id,
+        attempt.session_id,
+        attempt.message_id,
+        inputID,
+      )
     )
+      return true
+    if (!inputID) return false
+
+    const plan = this.store.plan(attempt.plan_id)
+    const latest = this.store
+      .attempts(attempt.plan_id)
+      .filter((candidate) => candidate.task_id === attempt.task_id)
+      .at(-1)
+    if (
+      !plan ||
+      !latest ||
+      latest.id !== attempt.id ||
+      latest.session_id !== attempt.session_id ||
+      latest.workspace !== attempt.workspace ||
+      latest.message_id !== attempt.message_id
+    )
+      return false
+
+    const aliases = this.store.atomic((db) =>
+      db
+        .query<{ id: number; payload: string }, [string, string]>(
+          `SELECT id,payload FROM runner_transitions
+           WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
+           ORDER BY id DESC`,
+        )
+        .all(attempt.plan_id, attempt.task_id),
+    )
+    for (const row of aliases) {
+      let alias: ReturnType<typeof parseReviewInputAlias>
+      try {
+        alias = parseReviewInputAlias(JSON.parse(row.payload))
+      } catch {
+        alias = undefined
+      }
+      if (
+        !alias ||
+        !matchesReviewInputAlias(alias, {
+          projectDirectory: this.directory,
+          projectID: this.projectID,
+          planID: attempt.plan_id,
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          assignedMessageID: attempt.message_id,
+          reviewInputID: inputID,
+        })
+      )
+        continue
+      return true
+    }
+    return false
   }
 
   private backgroundBlockReason(
