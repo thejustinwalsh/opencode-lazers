@@ -52,6 +52,7 @@ test("agent tools enforce permissions before RPC and apply bounded defaults", as
       }),
     ),
   )
+  for (const tool of tools.values()) expect(tool.options?.codemode).toBe(true)
   const context = {
     sessionID: Session.ID.create(),
     agent: Agent.ID.make("architect"),

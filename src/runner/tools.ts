@@ -53,7 +53,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         name: definition.name,
         description: definition.description,
         input: z.toJSONSchema(definition.schema, { io: "input" }),
-        options: { codemode: false, permission: definition.name },
+        options: { codemode: true, permission: definition.name },
         execute: (input, call) =>
           ctx.permission
             .assert({

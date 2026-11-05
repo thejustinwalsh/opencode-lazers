@@ -65,7 +65,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
       description:
         "Validate and persist a task; does not execute. Required idempotencyKey: 1–200 characters, non-whitespace, compared exactly within the canonical repo across sessions/restarts. Retry the same key/content to recover the original ID. Changed content conflicts; new logical work needs a new key. Object key order is ignored; array order and values matter. Invalid input returns field errors without saving.",
       input: z.toJSONSchema(TaskSubmissionSchema, { io: "input" }),
-      options: { codemode: false, permission: "lz-submit-task" },
+      options: { codemode: true, permission: "lz-submit-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
@@ -118,7 +118,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
       description:
         "Architect-only durable disposition for an old task: record reviewed fulfillment, supersession, rejection or duplication with a reason, evidence and project-local related task IDs. The immutable task remains readable. This does not accept worker execution, override active work, or force a plan state.",
       input: z.toJSONSchema(TaskDispositionInput, { io: "input" }),
-      options: { codemode: false, permission: "lz-dispose-task" },
+      options: { codemode: true, permission: "lz-dispose-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
@@ -157,7 +157,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
       description:
         "Architect-only append-only task-kind/v1 classification or correction. Supply one primaryKind, a requestID, the exact expected classification revision and a reason. Read lz-get-task first; stale corrections conflict and must not be automatically retried.",
       input: z.toJSONSchema(TaskClassificationAnnotationInput, { io: "input" }),
-      options: { codemode: false, permission: "lz-classify-task" },
+      options: { codemode: true, permission: "lz-classify-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
@@ -257,7 +257,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
       description:
         "List recent open submitted tasks in this repository, including each stable project-local LZ reference and UUID. Retired records stay available through lz-get-task or lz-query-tasks with includeRetired; use the latter for the full specification list.",
       input: listInput,
-      options: { codemode: false, permission: "lz-list-tasks" },
+      options: { codemode: true, permission: "lz-list-tasks" },
       execute: (input, context) =>
         ctx.permission
           .assert({

@@ -89,9 +89,10 @@ test("authorized callers read native catalog advice; only orchestration requires
     },
   } as unknown as TaskRuntime
   await Effect.runPromise(Effect.scoped(registerRunnerTools(ctx, runtime)))
+  for (const tool of tools.values()) expect(tool.options?.codemode).toBe(true)
 
   const catalog = tools.get("lz-worker-catalog")!
-  expect(catalog.options).toMatchObject({ codemode: false, permission: "lz-worker-catalog" })
+  expect(catalog.options).toMatchObject({ codemode: true, permission: "lz-worker-catalog" })
   const result = await Effect.runPromise(catalog.execute({}, callContext("architect")))
   const advice = JSON.parse(String(result.content))
   expect(advice.options[0]).toMatchObject({
@@ -113,7 +114,7 @@ test("authorized callers read native catalog advice; only orchestration requires
   expect(catalogCalls).toBe(2)
   const continuity = tools.get("lz-record-architect-continuity")!
   expect(continuity.options).toMatchObject({
-    codemode: false,
+    codemode: true,
     permission: "lz-record-architect-continuity",
   })
   const checkpoint = {
@@ -188,7 +189,7 @@ test("journal inspection is permission-gated before bounded store reads", async 
 
   const inspection = tools.get("lz-inspect-plan")!
   expect(inspection.options).toMatchObject({
-    codemode: false,
+    codemode: true,
     permission: "lz-inspect-plan",
   })
   const input = {

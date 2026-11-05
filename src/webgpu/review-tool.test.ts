@@ -53,6 +53,7 @@ test("the native review tool checks permission before reading review state and r
       ),
     ),
   )
+  expect(tool!.options?.codemode).toBe(true)
   const context = {
     sessionID: Session.ID.create(),
     agent: Agent.ID.make("architect"),

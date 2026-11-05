@@ -428,7 +428,7 @@ test("task reads expose structured Code Mode outputs and require their own permi
   expect(query.options?.codemode).toBe(true)
   expect(query.output).toBeDefined()
   expect(output.output).toEqual(JSON.parse(String(output.content)))
-  expect(tools.get("lz-submit-task")!.options?.codemode).toBe(false)
+  expect(tools.get("lz-submit-task")!.options?.codemode).toBe(true)
   expect(assertions.at(-1)).toBe("lz-query-tasks")
   const denied = await setup(true)
   for (const [name, input] of [

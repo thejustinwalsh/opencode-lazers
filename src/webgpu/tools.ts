@@ -51,7 +51,7 @@ export function registerInferenceTools(
         description:
           "Evaluate named noul (yes probability), choice (categories with descriptions), or score (ordered rubric) questions over shared text/JSON state using genuine local d1-Omni-2B on WebGPU. Autoloads; up to 16 questions and 20 choices within a bounded 64,000-character serialized transport envelope (not a model context limit); actual packed input must fit the 8,192-token context and is never truncated. Default 60-second inclusive deadline. Returns System One answers/probabilities and measured zero-output-token usage, or an explicit error. Advisory; never grants permission or accepts a task. Ask concrete observable questions; use clarification for missing evidence or uncertain results.",
         input: SystemOneRequest,
-        options: { codemode: false, permission: "lz-local-system-one" },
+        options: { codemode: true, permission: "lz-local-system-one" },
         execute: (input, context) =>
           guard("decisions", () =>
             ctx.permission
@@ -78,7 +78,7 @@ export function registerInferenceTools(
         description:
           "Ask the optional local WebGPU model a general question. Autoloads. Bounded FIFO queue; default 60-second total deadline including loading and waiting. Returns measured text/usage or an explicit error.",
         input: ask,
-        options: { codemode: false, permission: "lz-local-ask" },
+        options: { codemode: true, permission: "lz-local-ask" },
         execute: (input, context) =>
           guard("questions", () =>
             ctx.permission
@@ -105,7 +105,7 @@ export function registerInferenceTools(
         description:
           "Ask the optional local WebGPU model for an advisory typed boolean, exact choice, or bounded numeric score using supplied context. Output is validated; malformed or unavailable results remain unresolved. Does not authorize actions or accept tasks.",
         input: decide,
-        options: { codemode: false, permission: "lz-local-decide" },
+        options: { codemode: true, permission: "lz-local-decide" },
         execute: (input, context) =>
           guard("decisions", () =>
             ctx.permission
