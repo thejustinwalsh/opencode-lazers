@@ -507,7 +507,6 @@ function ModelPanel(
       const tasks = value.client.rpc(Tasks)
       const observations = value.client.rpc(Observability)
       const location = { location: { directory: value.directory } }
-      const timed = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(8_000)])
       const transport: ModelComparisonTransport = {
         comparison: (cursor, signal) =>
           models.comparison(
@@ -516,40 +515,33 @@ function ModelPanel(
               limit: 100,
               ...(cursor ? { cursor } : {}),
             },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
         refreshSources: (signal) =>
-          models.refreshSources(
-            { sessionID: value.session },
-            { ...location, signal: timed(signal) },
-          ),
+          models.refreshSources({ sessionID: value.session }, { ...location, signal }),
         settings: (taskID, signal) =>
           models.settings(
             { sessionID: value.session, ...(taskID ? { taskID } : {}) },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
-        catalog: (signal) =>
-          models.catalog({ sessionID: value.session }, { ...location, signal: timed(signal) }),
+        catalog: (signal) => models.catalog({ sessionID: value.session }, { ...location, signal }),
         configure: (update, signal) =>
-          models.configure(
-            { sessionID: value.session, ...update },
-            { ...location, signal: timed(signal) },
-          ),
+          models.configure({ sessionID: value.session, ...update }, { ...location, signal }),
         queryTasks: (signal) =>
           tasks.query(
             { state: "all", includeCompleted: true, includeRetired: true, limit: 100 },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
-        getTask: (taskID, signal) => tasks.get({ taskID }, { ...location, signal: timed(signal) }),
+        getTask: (taskID, signal) => tasks.get({ taskID }, { ...location, signal }),
         trajectoryStatus: (taskID, signal) =>
           observations.trajectoryStatus(
             { scope: { kind: "project", sessionID: value.session }, taskID },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
         decisionOverview: (filters, signal) =>
           decisions.overview(
             { sessionID: value.session, scope: { projectDirectory: value.project }, filters },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
         decisionRows: (filters, cursor, signal) =>
           decisions.rows(
@@ -560,7 +552,7 @@ function ModelPanel(
               limit: 50,
               ...(cursor ? { cursor } : {}),
             },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
         decisionConfigurations: (filters, cursor, signal) =>
           decisions.configurations(
@@ -571,7 +563,7 @@ function ModelPanel(
               limit: 50,
               ...(cursor ? { cursor } : {}),
             },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
         decisionInspect: (
           filters,
@@ -592,7 +584,7 @@ function ModelPanel(
               contributorLimit: 50,
               ...(contributorCursor ? { contributorCursor } : {}),
             },
-            { ...location, signal: timed(signal) },
+            { ...location, signal },
           ),
         online: () => props.session.server.connected,
       }
