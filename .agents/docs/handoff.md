@@ -16,26 +16,34 @@ acceptance, native observations and cleanup are separate facts.
   `1793877361137` found unchanged authored plans, revisions, routes, attempt/
   worker/input/workspace identities, policies and dependencies. There were 58
   reassignment events. Do not ask again. Nonlisted57/58,138,139,141,142 remain
-  coordinated by automatic successor `ses_592005672c5a40b19eb05d4918334223`
-  (parent c59b85e3). All five owners were checked directly. It has substantive
+  coordinated by automatic successor `ses_422903914b434fc5be0f805659788e8f`
+  (parent5920, which is now archived). The current native successor exists and has substantive
   work and is not a historical-only replay loop to stop.
   [Transfer record](../../design/reviews/unfinished-plan-transfer-proposal-20261104.md).
-- **LZ118 is the active implementation.** Task
+- **LZ118 source is integrated in main44e313b.** Task
   `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
   `2e5b7147-426f-45b6-934f-6da2b07205e7`, original attempt
   `50345fa1-fccf-4cb7-9e85-e459ec1f85d9`, worker
-  `ses_8a19b036a82f42599a1d978220fb871a`. Its native tree is under the attempt ID
-  in the runner worktree directory. Source commit4cd3694 is retained, but native
-  acceptance has not recorded an artifact. The same worker was explicitly woken
-  at1793880443616 for substantive legacy compatibility, preserving its attempt. The latest
-  broad run passed259 tests/3608 assertions plus format/lint/types; subsequent
-  portability/legacy changes need current checks. Do not merge intermediate source.
-- Root review corrected HTTP-only versus in-process native error classification,
-  constructor identity across package copies, historical sessions mistaken for
-  active execution, and an overbroad HEAD-equals-base guard rejecting legitimate
-  committed-worker continuations. The latter targeted regressions pass. A portable
-  independent-package fixture is being corrected before integration.
+  `ses_8a19b036a82f42599a1d978220fb871a`. Luna finished53cc05d atop4cd3694
+  and became natively idle. Main reconciled the genuine completed review input;
+  the runtime accepted the plan/version41. Root integrated both commits, preserving
+  newer review-input/quarantine behavior. Combined source passed424 runner tests/
+  5764 assertions plus format/lint/types. Integration recording and native cleanup
+  must be read back; real139/141 recovery is still unproven.
+- Root independently checked repeated failure, dependency-derived bases and
+  replacement-Architect recovery; all three cases pass. Broad current main tests
+  also preserve native idle and retained-work behavior.
   [Findings and rechecks](../../design/reviews/task118-native-boundary-review-20261105.md).
+- **Priority: visible product delivery before broader lifecycle refactoring.**
+  Current idle renewal defaults to30 minutes with one plugin override, not a
+  model/provider-aware policy. Missing-owner continuation already exists. Reuse
+  queued lifecycle work for later consolidation; do not add a foundation epic
+  ahead of overdue trajectory, Models, Tasks and Radar features.
+- LZ134 compact-renewal work auto-started after118 acceptance: attempt
+  `27727aaf-1b81-4d77-963e-9b906f757bfb`, Luna session
+  `ses_246a295ccf11456c9e582e383131978d`. Preserve it.139/141 have separate
+  source scopes and can execute in parallel after real startup recovery. Main
+  received the44e313b activation and original-attempt recovery direction in Desktop.
 - Main cleared recurrent stale permission holds through native `reconcile`,
   preserving the original118 worker/attempt. The observed review-input lineage hold has an existing explicit `reconcile`
   `reviewInputID` control; use real completed-review observations. Native
@@ -59,8 +67,8 @@ acceptance, native observations and cleanup are separate facts.
   attempt/workspace/base, and use existing fresh resource/session observations.
   Do not fabricate modern v2 error fields, broaden to arbitrary errors/timeouts,
   require an unavailable historical build fingerprint, or create duplicate tasks.
-  This researched decision is delivered to Main; implementation and actual
-  settlement/resumed execution remain unproven. Continue through their real use.
+  Implementation is integrated in44e313b. Actual settlement/resumed execution
+  remain unproven. Continue through their real use using the current owner4229.
 - Task filters were observed working. Tasks-to-Trajectory is broken by the broad
   project projection and its10000-transition ceiling;139 includes the consumer
   initialization path as well as scoped server reads. Do not raise the global
