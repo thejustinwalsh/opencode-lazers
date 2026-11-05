@@ -331,6 +331,87 @@ function seedSourceJournal(
   return { renewalID, mappedPlanID, sourceSessionID, successorSessionID }
 }
 
+test("source-notice pointer readers materialize only current owners or exact replacement IDs", () => {
+  const f = fixture("architect-bounded-source-notice-reads")
+  const anchor = f.store.submit(f.input, "owner")
+  const source = seedSourceJournal(f.store, anchor.planID, 4, 3)
+  const owners = ["ses_current_owner_a", "ses_current_owner_b"]
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET owner=? WHERE id=?").run(owners[0]!, anchor.planID)
+    db.query("UPDATE runner_plans SET owner=? WHERE id=?").run(owners[1]!, source.mappedPlanID)
+  })
+  const plan = f.store.plan(anchor.planID)!
+  const ensured = f.store.ensureArchitectSourceChangeNotices({
+    planID: plan.id,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: owners[0]!,
+    expectedPlanVersion: plan.version,
+    projectID: "project",
+  })
+  expect(ensured.targets.map((target) => target.owner)).toEqual(owners)
+  expect(ensured.notices).toHaveLength(2)
+
+  const padding = "historical-notice-payload-".repeat(512)
+  f.store.atomic((db) => {
+    const insert = db.query(
+      `INSERT INTO runner_outbox(
+         id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
+       ) VALUES(?,?,?,?,?,'admitted',0,NULL,NULL)`,
+    )
+    for (let index = 0; index < 512; index++) {
+      const payload = JSON.stringify({
+        status: "architect-source-reference",
+        sourceSessionID: source.sourceSessionID,
+        version: index,
+        padding,
+      })
+      insert.run(
+        `historical-source-reference-${index}`,
+        anchor.planID,
+        index % 3 === 0 ? "ses_retired_owner" : owners[index % 2]!,
+        `msg_historical_source_reference_${index}`,
+        payload,
+      )
+    }
+  })
+  const backlog = f.store.atomic((db) =>
+    db
+      .query<{ count: number; payloadBytes: number }, [string, string]>(
+        `SELECT count(*) AS count,sum(length(o.payload)) AS payloadBytes
+         FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+         WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
+           AND json_extract(o.payload,'$.status')='architect-source-reference'`,
+      )
+      .get(f.projectDirectory, source.sourceSessionID)!,
+  )
+  expect(backlog.count).toBe(512)
+  expect(backlog.payloadBytes).toBeGreaterThan(6_000_000)
+
+  const pointers = f.store.architectCurrentSourceChangeNoticeRows(source.sourceSessionID)
+  expect(pointers.map((row) => row.session_id)).toEqual(owners)
+  expect(pointers.map((row) => row.id).sort()).toEqual(
+    ensured.notices.map((notice) => notice.id).sort(),
+  )
+  expect(pointers.reduce((bytes, row) => bytes + Buffer.byteLength(row.payload), 0)).toBeLessThan(
+    2_000,
+  )
+
+  const exact = f.store.architectSourceChangeNoticeRowsByIDs(
+    source.sourceSessionID,
+    ensured.notices,
+  )
+  expect(exact.map((row) => row.id).sort()).toEqual(
+    ensured.notices.map((notice) => notice.id).sort(),
+  )
+  expect(exact).toHaveLength(2)
+  expect(exact.reduce((bytes, row) => bytes + Buffer.byteLength(row.payload), 0)).toBeLessThan(
+    2_000,
+  )
+  expect(
+    f.store.architectSourceChangeNoticeRowsByIDs(source.sourceSessionID, [ensured.notices[0]!]),
+  ).toHaveLength(1)
+})
+
 afterEach(() => {
   for (const repository of repositories.splice(0)) repository.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })

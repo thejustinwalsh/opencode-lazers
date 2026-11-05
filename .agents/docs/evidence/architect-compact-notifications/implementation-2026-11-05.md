@@ -5,7 +5,12 @@
 - Predecessor input and assistant-result metadata remains in the durable progressive source journal. Native notification payloads use a compact source-change pointer, not per-ID batches. The pointer text directs the current Architect to page the journal and retrieve only selected original messages.
 - Selected-message reads require the current plan owner and an active same-project Architect. The native adapter reads only the requested message from the validated same-project client, redacts secret-like strings, omits metadata, reasoning, tools, and attachments, and bounds visible text. Journal completeness and native consumption remain explicitly unknown.
 - Explicit legacy reconciliation is current-owner authorized and bounded to 20 outstanding legacy rows per call. It establishes a compact pointer for every current owner, verifies exact pointer ownership and native queued/consumed observation, claims each legacy outbox row, then cancels only positively owned still-queued notices. Original payloads, message IDs, and admission receipts are retained. Foreign metadata, missing/unavailable native reads, cancellation errors, and lost responses remain recoverable unknown/deferred states. Successful cancellation is recorded only after native readback confirms absence; consumption races are recorded as consumption.
+- Normal source-change observation reads at most the latest pointer per current owner; reconciliation re-reads only the exact replacement IDs returned by pointer ensure. Neither runtime path uses the all-history reader. The bounded legacy page remains separate and limited to 20 outbox payloads.
 - Regression coverage exercises disjoint equal-revision batches, multiple retained sources/current-owner routing, bounded continuation, concurrent reconciliation, owner changes during native awaits, API unavailability and retry, store reopen/claim replacement, cancellation response loss, cancellation-versus-consumption, independent outcome state/receipt preservation, same-owner admitted no-op delivery, and unrelated native user input.
+
+## Bounded historical notice reads
+
+The store fixture seeds 512 historical reference notices with multi-kilobyte payloads (more than 6 MB combined) and two current owners. The normal pointer reader returns the two current-owner pointers with less than 2 KB combined payload; exact replacement lookup returns only its two requested IDs, also below 2 KB. It additionally checks a one-ID lookup returns exactly one row. The runtime regressions instrument the all-history reader and assert it is never called during a changed-source normal scan with a 128-row, more-than-2-MB multi-owner backlog or during explicit reconciliation of a 96-row, more-than-1-MB backlog. Reconciliation still processes the bounded first 20 legacy notices and preserves their payloads and admission receipts.
 
 ## Compact-growth fixture
 
@@ -22,9 +27,9 @@ The journal retains 201 each of pending, steering, and unknown inputs at the fir
 
 ## Verification and limits
 
-- `bun test src/runner test/runner` — 450 tests passed across 25 files (6,163 assertions) on the final candidate after compact-notification expectation updates.
+- `bun test src/runner test/runner` — 453 tests passed across 25 files (6,198 assertions) after the bounded-read correction.
 - `bun run verify` — Bun formatter, linter, and type checker passed.
 - `git diff --check` — passed.
-- Focused compact-growth, reconciliation, schema/tool-routing, selected-message privacy, and store-reopen tests passed.
+- Focused bounded-read, compact-growth, reconciliation, schema/tool-routing, selected-message privacy, and store-reopen tests passed.
 
 These are source-level fixture and unit-test measurements, not native token counts, cache measurements, usage estimates, or guaranteed savings. Root's exact-candidate native observation of inbox/receipt sizes, progressive retrieval, current-owner routing, and cancellation readback is still outstanding; no task acceptance is claimed here.

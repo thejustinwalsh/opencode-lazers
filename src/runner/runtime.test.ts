@@ -8899,6 +8899,38 @@ function seedLegacySourceNotice(
   return { outboxID, messageID, payload: JSON.stringify(payload), metadata, receipt }
 }
 
+function seedLargeLegacySourceNoticeBacklog(
+  f: ReturnType<typeof fixture>,
+  sourceSessionID: string,
+  owner: string,
+  count: number,
+  options: {
+    queue?: boolean
+    payloadBytes?: number
+    ownerForIndex?: (index: number) => string
+  } = {},
+) {
+  const padding = "historical-source-notice-payload-"
+    .repeat(Math.ceil((options.payloadBytes ?? 12_000) / 33))
+    .slice(0, options.payloadBytes ?? 12_000)
+  return Array.from({ length: count }, (_, index) => {
+    const notice = seedLegacySourceNotice(
+      f,
+      sourceSessionID,
+      options.ownerForIndex?.(index) ?? owner,
+      {
+        suffix: `large-${String(index).padStart(4, "0")}`,
+        queue: options.queue,
+      },
+    )
+    const payload = JSON.stringify({ ...JSON.parse(notice.payload), historicalPadding: padding })
+    f.store.atomic((db) =>
+      db.query("UPDATE runner_outbox SET payload=? WHERE id=?").run(payload, notice.outboxID),
+    )
+    return { ...notice, payload }
+  })
+}
+
 function reconcileSourceNotice(
   f: ReturnType<typeof fixture>,
   owner: string,
@@ -8917,6 +8949,112 @@ function reconcileSourceNotice(
     owner,
   )
 }
+
+test("normal source scans do not materialize historical notice payloads across a large multi-owner backlog", async () => {
+  const now = 2_000_000_239_000
+  const { f, renewal, input } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const backlog = seedLargeLegacySourceNoticeBacklog(f, renewal.previous_session_id, owner, 128, {
+    queue: false,
+    payloadBytes: 16_000,
+    ownerForIndex: (index) => (index % 2 ? owner : "ses_retired_notice_owner"),
+  })
+  expect(backlog).toHaveLength(128)
+  const backlogBytes = f.store.atomic(
+    (db) =>
+      db
+        .query<{ payloadBytes: number }, [string, string]>(
+          `SELECT sum(length(o.payload)) AS payloadBytes FROM runner_outbox o
+         JOIN runner_plans p ON p.id=o.plan_id
+         WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
+           AND json_extract(o.payload,'$.status')='architect-source-reference'`,
+        )
+        .get(f.repository.projectDirectory, renewal.previous_session_id)!.payloadBytes,
+  )
+  expect(backlogBytes).toBeGreaterThan(2_000_000)
+
+  const readAll = f.store.architectSourceNoticeRows.bind(f.store)
+  let historicalRowsRead = 0
+  f.store.architectSourceNoticeRows = (sourceSessionID) => {
+    historicalRowsRead++
+    return readAll(sourceSessionID)
+  }
+  const changedInput = {
+    id: "msg_normal_ensure_after_large_backlog",
+    type: "user",
+    delivery: "queue",
+    metadata: { source: "normal-ensure-regression" },
+  }
+  f.inbox.set(renewal.previous_session_id, [input, changedInput])
+  await f.runtime.tick()
+
+  expect(historicalRowsRead).toBe(0)
+  expect(
+    f.store.architectSourceInputs(renewal.previous_session_id).map((row) => row.message_id),
+  ).toContain(changedInput.id)
+  expect(
+    f.store
+      .architectCurrentSourceChangeNoticeRows(renewal.previous_session_id)
+      .map((row) => row.session_id),
+  ).toContain(owner)
+})
+
+test("legacy reconciliation resolves exact replacement IDs without loading its large historical payload backlog", async () => {
+  const now = 2_000_000_239_500
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const backlog = seedLargeLegacySourceNoticeBacklog(f, renewal.previous_session_id, owner, 96, {
+    queue: true,
+    payloadBytes: 12_000,
+  })
+  expect(backlog).toHaveLength(96)
+  const backlogBytes = f.store.atomic(
+    (db) =>
+      db
+        .query<{ payloadBytes: number }, [string, string]>(
+          `SELECT sum(length(o.payload)) AS payloadBytes FROM runner_outbox o
+         JOIN runner_plans p ON p.id=o.plan_id
+         WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
+           AND json_extract(o.payload,'$.status')='architect-source-reference'`,
+        )
+        .get(f.repository.projectDirectory, renewal.previous_session_id)!.payloadBytes,
+  )
+  expect(backlogBytes).toBeGreaterThan(1_000_000)
+
+  const readAll = f.store.architectSourceNoticeRows.bind(f.store)
+  let historicalRowsRead = 0
+  f.store.architectSourceNoticeRows = (sourceSessionID) => {
+    historicalRowsRead++
+    return readAll(sourceSessionID)
+  }
+  const result = (await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-large-payload-backlog",
+  )) as { results: Array<unknown> }
+  expect(historicalRowsRead).toBe(0)
+  expect(result).toMatchObject({
+    status: "deferred",
+    legacyNoticeCount: 96,
+    processedLegacyNoticeCount: 20,
+    remainingLegacyNoticeCount: 76,
+  })
+  expect(result.results).toHaveLength(20)
+  expect(
+    f.events.filter((event) => event.startsWith("cancel:msg_legacy_source_reference_large-")),
+  ).toHaveLength(20)
+  const first = f.store.atomic((db) =>
+    db
+      .query<{ state: string; payload: string; receipt: string }, [string]>(
+        "SELECT state,payload,receipt FROM runner_outbox WHERE id=?",
+      )
+      .get(backlog[0]!.outboxID)!,
+  )
+  expect(first.state).toBe("superseded")
+  expect(first.payload).toBe(backlog[0]!.payload)
+  expect(JSON.parse(first.receipt).history[0]).toMatchObject({ kind: "native-admission" })
+})
 
 test("explicit reconciliation cancels disjoint equal-revision notices only after pointer coverage", async () => {
   const now = 2_000_000_240_000

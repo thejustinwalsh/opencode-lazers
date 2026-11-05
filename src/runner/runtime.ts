@@ -2890,18 +2890,9 @@ export class TaskRuntime {
     if (!source || source.state !== "active" || !result.hasJournal) return
     if (result.changedInputs.length || result.changedResults.length) {
       const targets = this.store.architectSourceNoticeTargets(source.session_id)
-      const rows = this.store.architectSourceNoticeRows(source.session_id)
+      const rows = this.store.architectCurrentSourceChangeNoticeRows(source.session_id)
       for (const target of targets) {
-        const current = rows
-          .filter((row) => row.session_id === target.owner)
-          .filter((row) => {
-            try {
-              return JSON.parse(row.payload).status === "architect-source-change"
-            } catch {
-              return false
-            }
-          })
-          .at(-1)
+        const current = rows.find((row) => row.session_id === target.owner)
         if (!current || !["admitted", "delivered", "uncertain", "unknown"].includes(current.state))
           continue
         const ownership = this.ownership(current)
@@ -3065,10 +3056,14 @@ export class TaskRuntime {
         planIDs: target.planIDs,
       })),
     )
-    const refreshedRows = this.store.architectSourceNoticeRows(sourceSessionID)
+    const refreshedRows = this.store.architectSourceChangeNoticeRowsByIDs(
+      sourceSessionID,
+      ensured.notices,
+    )
+    const refreshedByID = new Map(refreshedRows.map((row) => [row.id, row]))
     for (const notice of ensured.notices) {
-      const replacement = refreshedRows.find((row) => row.id === notice.id)
-      if (!replacement) {
+      const replacement = refreshedByID.get(notice.id)
+      if (!replacement || replacement.session_id !== notice.sessionID) {
         return {
           status: "deferred" as const,
           reason: "Current source-change pointer is not present in the durable outbox",

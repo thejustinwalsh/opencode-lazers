@@ -1216,6 +1216,105 @@ export class RunnerStore {
         .all(this.repository.projectDirectory, sessionID),
     )
   }
+  architectCurrentSourceChangeNoticeRows(sessionID: string) {
+    return this.atomic((db) => {
+      const source = db
+        .query<{ renewal_id: string }, [string, string]>(
+          `SELECT s.renewal_id FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND s.state='active' AND anchor.project_directory=?`,
+        )
+        .get(sessionID, this.repository.projectDirectory)
+      if (!source) return []
+      const targets = architectSourceNoticeTargets(
+        db,
+        this.repository.projectDirectory,
+        source.renewal_id,
+      )
+      const rows: OutboxRow[] = []
+      for (const target of targets) {
+        // Return just the newest pointer for each current owner. Historical source
+        // payloads stay in SQLite and are not copied into the runtime.
+        const row = db
+          .query<OutboxRow, [string, string, string, string, string]>(
+            `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
+               o.rowid AS sequence
+             FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+             WHERE p.project_directory=? AND p.owner=? AND o.session_id=?
+               AND json_extract(o.payload,'$.sourceSessionID')=?
+               AND json_extract(o.payload,'$.status')='architect-source-change'
+               AND EXISTS(
+                 SELECT 1 FROM runner_architect_renewal_plans rp
+                 JOIN runner_architect_renewals r ON r.id=rp.renewal_id
+                 WHERE rp.plan_id=o.plan_id AND rp.renewal_id=? AND rp.transferred=1
+                   AND r.state IN ('archiving','committed')
+               )
+             ORDER BY o.rowid DESC LIMIT 1`,
+          )
+          .get(
+            this.repository.projectDirectory,
+            target.owner,
+            target.owner,
+            sessionID,
+            source.renewal_id,
+          )
+        if (row) rows.push(row)
+      }
+      return rows
+    })
+  }
+  architectSourceChangeNoticeRowsByIDs(
+    sourceSessionID: string,
+    notices: Array<{ id: string; sessionID: string }>,
+  ) {
+    return this.atomic((db) => {
+      if (!notices.length) return []
+      const source = db
+        .query<Pick<ArchitectSourceRow, "renewal_id">, [string, string]>(
+          `SELECT s.renewal_id FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND s.state='active' AND anchor.project_directory=?`,
+        )
+        .get(sourceSessionID, this.repository.projectDirectory)
+      if (!source) return []
+      const currentOwners = new Set(
+        architectSourceNoticeTargets(db, this.repository.projectDirectory, source.renewal_id).map(
+          (target) => target.owner,
+        ),
+      )
+      const rows: OutboxRow[] = []
+      for (const notice of notices) {
+        if (!currentOwners.has(notice.sessionID)) continue
+        // IDs originate from ensureArchitectSourceChangeNotices. Constrain every
+        // lookup by that exact ID, source, project and current native owner.
+        const row = db
+          .query<OutboxRow, [string, string, string, string, string, string]>(
+            `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
+               o.rowid AS sequence
+             FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+             WHERE o.id=? AND p.project_directory=? AND p.owner=? AND o.session_id=?
+               AND json_extract(o.payload,'$.sourceSessionID')=?
+               AND json_extract(o.payload,'$.status')='architect-source-change'
+               AND EXISTS(
+                 SELECT 1 FROM runner_architect_renewal_plans rp
+                 JOIN runner_architect_renewals r ON r.id=rp.renewal_id
+                 WHERE rp.plan_id=o.plan_id AND rp.renewal_id=? AND rp.transferred=1
+                   AND r.state IN ('archiving','committed')
+               )`,
+          )
+          .get(
+            notice.id,
+            this.repository.projectDirectory,
+            notice.sessionID,
+            notice.sessionID,
+            sourceSessionID,
+            source.renewal_id,
+          )
+        if (row) rows.push(row)
+      }
+      return rows
+    })
+  }
   architectLegacySourceNoticePage(sessionID: string, limit = 20) {
     const boundedLimit = Math.min(20, Math.max(1, Math.floor(limit)))
     return this.atomic((db) => ({
