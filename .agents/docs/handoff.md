@@ -8,6 +8,43 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **57/58 source reuse pre-audit complete, NOT post-install authorization:**
+  [Outcome comparison](evidence/retained57-58-reuse-preaudit-20261104.md) finds genuine
+  remaining57same-original-worker accepted repair and amended58zero-turn independent
+  verification; adopt-descendant and Root source quarantine are delivered foundations
+  to reuse, not implementations to repeat or evidence that those remaining outcomes
+  are already met. No blanket58scope expansion. After actual Root installation/
+  qualification, re-audit installed controls/receipts before supported original requeue.
+  Deliver approved pinned amendments through actual assignment instructions;132advice
+  may carry reuse findings but cannot rewrite acceptance. Preaudit reviewer complete.
+- **Next actual quiet window RESERVED for Root first install/control qualification;
+  Astra owns residual performance:** no new long-running Architect dispatch before
+  that boundary.132had already started before this hold; preserve it with129. Exact
+  native observations1793835928496 show **both running,0permissions/0forms**, so no
+  quiet window exists yet.132same547ae78b/sessionf2286b reconciled approval-onlyv5→v6,
+  all3effectscomplete/45tools;129v15/140tools. No interruption/replacement/reply.
+  Root5d485d13 stays offline until genuine quiet/Root activation+control handback.
+  Original57/58plan d0ce36bb reversibly cancelled tov7 as **zero-attempt/effect
+  scheduling hold**, preserving task identities/specs and58's independent-context
+  outcome. This prevents57autodispatch before required post-install reuse audit.
+  Read-only preaudit ses_e576d378affeuXd3g4C12KTaRQ compares amendments/adopt-descendant/
+  source-repair/bootstrap; final installed audit required before supported requeue.
+  Root resumed original Astra for native isolated residual runner Git/prerequisite/
+  repeated session+attempt reads. **Reserve these seams; remove Tasks A performance
+  dispatch**, consume reviewed Astra handoff, preserve dispatch AND finalization
+  proof. Root owns actual activation; no manual TaskDB edits or old resource release.
+- **Durable task attachment gap accepted; new independent132 admitted for execution:**
+  repo note/session delivery is not task-read attachment. Researched **LZ132**
+  `5cdc0405-0e7f-4b18-933d-d0a331b37cd5` / plan10964078 provides one coupled
+  Architect native attachment→advisory task metadata→structured/readable fetch
+  feature, preserving goal/acceptance/authority. Scope is Tasks advice/contract/read/
+  instructions/RPC, avoiding126root files,129observability and Rootbootstrap/index.
+  [Research, executable conditions and gates](evidence/task-attached-advice-20261104.md).
+  Isolated Systems run requested on22b7823; runtime decides dispatch. Genuine local
+  authoring review interrupted/noanswers, not a pass; no replay. Native attach+both
+  getter readbacks remain gated after quiet activation, not session-note proof.
+  129continues originalattempt; fresh nativezero-controls observation reconciled
+  approval-onlyv14→v15/112tools, no retry/replacement. Roadmap now carries this lane.
 - **5d485d13 SOURCE-CLEAR for the named72→original57/58 route:** original native
   follow-up completed; prior bounded runtime clearance preserved. First-effect
   location reservation, binding only on hook install, invalidation before hook

@@ -11,11 +11,12 @@ Before final task submission, reconcile these drafts and existing LZ129 against
 Root's installed bootstrap and Astra's actual source handoff. Reuse already-delivered
 outcomes rather than assigning a second implementation of a fulfilled boundary.
 
-Current coordination: Astra's permanent repairs are integrated at8aed4ea and the
-quiet hold is released. These four drafts remain unsubmitted; original129 now has
-its own isolated execution plan, not a replacement task. Root retains offline
-bootstrap lifecycle ownership. Ordinary nonoverlapping execution may proceed;
-watched-source activation still needs coordination.
+Current coordination: Astra's first repairs are integrated at8aed4ea; the original
+Astra agent now owns the remaining measured runner Git/prerequisite/session/attempt
+performance repair in a native isolated tree. Reserve those seams. These four drafts
+remain unsubmitted;129 and already-started durable-advice132 continue. The next
+natural global quiet boundary is reserved for Root's first bootstrap installation/
+control qualification; no further long-running Architect dispatch before it.
 
 Evidence: Repomix`6c782a4a-bf24-40bc-8ff1-4a7a7cab3083`, as-of1793824414267.
 Read-only Tasks researcher verified the ten inspected production files still match
@@ -52,10 +53,10 @@ coverage. An eligibility observation never authorizes execution.
 
 **Proposed scope:** focused new runner eligibility module/tests, runtime selection/
 admission wiring and focused runtime tests, Tasks contract/read/RPC plus their tests.
-No observability reader or standalone performance/profiling program. The
-decision-local proof/fact seam below incorporates the measured residual scheduler
-cost without changing eligibility. Add store scope only for a concretely needed
-reviewed seam. Existing reservations serialize runtime edits; this does not
+No observability reader or performance implementation. Astra owns the residual
+proof/fact/read-cost seams below; Tasks A consumes their reviewed handoff instead
+of duplicating them. Add store scope only for a concretely needed, nonduplicative
+reviewed eligibility seam. Existing reservations serialize runtime edits; this does not
 implement LZ88, retained ownership bootstrap, timing capture or LZ129.
 
 **Grounded guidance:** store580–595 defines priority/submission/node order;
@@ -66,7 +67,7 @@ eligibility authority. Preserve existing execution behavior when factoring it.
 Use registered Tasks RPC→actual store/runtime tests and compare real dispatch;
 runtime.test4617–4701 provides useful admission cases.
 
-### Tasks A internal first boundary — proof-preserving decision facts
+### Astra-owned residual proof/read research — input, not a Tasks A increment
 
 Read-only residual-cost research `ses_e573b2a93ffe047i3H9BpnEWf8` at8aed4ea
 confirms prerequisite proof protects **finalization as well as dispatch**:
@@ -75,13 +76,13 @@ selected node, while finish4178–4328 has no additional prerequisite check. Pro
 admission2953–3001 separately revalidates against immutable base_commit across
 preparation/session/prompt awaits. Never skip proof merely because no node is queued.
 
-Small coherent first increment, if separately specified: extract the authoritative
-proof evaluator with equivalent behavior at both callers; validate all durable
-evidence before performing unchanged Git checks. Its primary kind is refactoring,
-not a claimed CPU fix or completion of Tasks A. Rejecting malformed proof may avoid
-Git work; savings on valid proof remain unmeasured. Subsequent bounded reservation
-facts reuse one synchronous decision's necessary inputs, ending reuse at mutation
-or asynchronous boundary. No cross-tick positive cache or session-safety-read removal.
+The earlier proposal to extract the authoritative evaluator/decision facts is now
+reserved to Astra's assigned residual repair, not separately tasked or dispatched
+under Tasks A. Preserve equivalent behavior at both callers. Durable-evidence-first
+validation and decision-local reservation reuse are researched opportunities, not
+a prescribed implementation or measured gain on valid proof. Any reuse ends at
+relevant mutation/asynchronous boundaries; no unproven cross-tick positive cache or
+session-safety-read removal. Reconcile actual delivered interfaces before Tasks A.
 
 Preserve runtime2672–2780: distinct same-project prerequisite snapshot,100-ID query
 batches, latest plan-level acceptance and combined integration, matching artifact/
