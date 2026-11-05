@@ -101,3 +101,24 @@ either checkout, with ordinary cleanup; do not skip it on main. Root also verifi
 that Bun resolves a file URL with a query suffix to the same module/constructor,
 so a query suffix alone does not create an independent copy here. Sent through
 Desktop for the existing review.
+
+## Actual legacy startup recovery decision
+
+Native Luna Max research (`ses_e547cd8dfffe5Ly35RtxsaSECJ`) checked LZ139's
+starting revision `2d5c550` and LZ141's `ed5cd6a`: the native adapter called
+`Effect.runPromise(ctx.worktree.create(...))`, while the old runtime stored only
+`errorText(error)`. Both existing uncertain effects retain exactly
+`{ "error": "Worktree.DirectoryUnavailableError" }`. The original tag payload
+and executing plugin-build field were not retained.
+
+Root selected the researched narrow legacy compatibility case in existing118,
+using the same settlement then explicit resume flow and its existing fresh
+resource/session checks. Preserve the original receipt, bind a distinct legacy
+classification to its effect/attempt/workspace/base, and keep inference/unknowns
+honest. Do not fabricate a v2 failure payload or require an unavailable historical
+build fingerprint. This is a source-grounded compatibility decision, not an
+assertion that absent resources alone prove every unknown operation stopped.
+Do not extend it to arbitrary errors, timeouts or lost responses.
+
+Delivered through Desktop for the current original worker; actual LZ139/141
+settlement, resumed execution and feature acceptance remain unobserved.

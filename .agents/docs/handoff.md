@@ -1,328 +1,120 @@
 # LAZERS current handoff
 
-Updated 2026-11-05. Read current native state before acting. This file is the
-resumption summary; [the retained checkpoint](evidence/handoff-20261104-retained.md)
-contains historical detail. Source landing, task acceptance, live observations and
-cleanup are separate facts.
+Updated 2026-11-05. Re-read native state before acting. The previous detailed
+snapshot is [retained](evidence/handoff-20261105-before-current-reconciliation.md);
+it is history, not current execution instructions. Source landing, runtime
+acceptance, native observations and cleanup are separate facts.
 
-## Current state
+## Active execution
 
-- **LZ132 and137 are complete, not merely accepted.** Root landed132 basee67fee1
-  at e4104ee, its task-only integration established the real adoption baseline,
-  then Root merged reviewed137 correction7262d827 with ancestry at cf463209.
-  Adoption044eb65e-6fed-413b-b638-b86dad63f8fd passed fresh task/combined checks.
-  Actual Code Mode attachment, exact retry and fresh structured/readable-string
-  getters passed with identical advice revision1/provenance/timestamp and unchanged
-  immutable task/worker identity. Artifact-bound human evidence closed the live
-  gate.132 plan10964078-2262-4b2c-8f5a-101222a16e55 is integrated32;137
-  plan181baf24-b3dc-49c5-adad-338d0ec9fe34 integrated12. Native `force:false` cleanup
-  completed; both original and both adoption worktrees are absent, original native
-  sessions/history retained. No worker proof turn or model-consumption claim.
-  See [actual qualification](evidence/task132-native-qualified-20261105.md).
-- **Current next work: original129 repair and retained-candidate verification.**
-  Original129 returned accepted37dadd7, but independent Luna Max review found
-  unbounded assignment-query scan/sort, first-read unmanaged-event invalidation
-  race and astral-Unicode schema-cap failures. Do not merge or clean it up yet.
-  Preserve task/attempt/session/artifact and use existing accepted-work repair,
-  not replacement work. [Final review](../../design/reviews/task129-final-review-20261105.md).
-  The user authorizes folding Astra's proportional proposal into existing57/58
-  (current ownerc59b85e3):
-  ordinary tests and required live probes may accept a safely isolated committed
-  candidate while old execution/uncertain effects/cleanup remain truthful.
-  Actual resource isolation is required; no old idle certificate or proof-only
-  worker turn. Current-owner admission, amendments and independent visible
-  Tasks/Radar/Models eligibility remain with their existing owners, not manually transferred.
-  Root8fcdca0 fixed explicit retry baselines; original57 readiness and exact replay
-  are actually verified: pland0ce36bb revision3/base8f, unchanged owner/task IDs/
-  revisions/dependency/Luna Max route, one baseline/requeue event and zero attempts/
-  effects. Latest planversion23/revision4 is blocked on cancelled58;57 is now
-  blocked too, still zero attempts/effects. Readiness correction alone did not
-  remove the cancelled-sibling plan hold.
-  Do not search again for a baseline API or cancel99 to shed its reservation.
-  Root658099c source-quarantine extension's focused-review input race is corrected
-  byeb7d696;9c342e2 also closes Code Mode fetch bypass. Quick Luna delta review is
-  clear; current owner sealed original99 quarantine at1793871137427, planversion20,
-  resourceHoldsRetained:true. Native worker archived1793871137393, old tree retained;
-  node/attempt remain running/unaccepted, artifact null and background unknown.
-  Original133 subsequently completed its retained Luna Max repair and qualification.
-  No extra Root release,
-  99 cancellation, force, old acceptance or fabricated idle report is needed.
-  [Review](../../design/reviews/source-quarantine-current-input-review-20261105.md).
-  Changed remaining58 scope should use a clear linked correction/supersession
-  while preserving its original record—not a generic exception framework for old
-  zero-worktree wording. Existing owner submitted changed-scope LZ138, task
-  0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4, plane48290a6-a871-42a2-94f1-c88f700c0d11,
-  currently queued/zero attempts. This does not by itself resolve57's sibling hold.
-  [Proportional follow-through](../../design/retained-candidate-proportional-follow-through-20261105.md).
-  Fresh131 plan96cc983c/version18 is running with131 queued/zero attempts and130
-  task-landed; its current owner is checking real reservations, not assuming
-  eligibility from missing coarse reasons. Keep131's admitted baseline and130
-  history: age/HEAD drift alone is not a safety gate. Concise current-interface
-  advice is attached to original131; meaningful checks and normal integration
-  address concrete incompatibilities. Models122/version14 still waits on126's
-  historical-idle hold (version18), separate from cleanup-blocked prerequisites
-  whose actual integration proof may already qualify. Fresh Git confirms129 is
-  not in main;127 source is in main but is not a deployable replay recovery fix.
-- **Real-host replay is not the completion fix here.**127 returned acceptedaf6dd111;
-  independent review clears its code and permanent realistic-inbox regression,
-  Root source-only landed it with ancestry at7bcb46b; postmerge95 tests/527
-  assertions and lint/types pass. Current ownerc59b recorded task-only source
-  integration at planversion61 against main3de2bd96. No combined finalization or
-  cleanup was requested; old native gates, history and resources remain intact.
-  The actual host log returns no events plus log.synced even on active sessions
-  and raw HTTP. Pinned2.2.5 source defaults payload persistence off while retaining
-  sequence counters; stock CLI omits the opt-in construction option. The actual
-  process startup flag is not exposed and remains unproven. Preserve useful
-  implementation/tests, but do not claim deployable recovery from fixture green.
-  Prefer the existing retained-candidate lifecycle lane; preserve unknown history,
-  old uncertain effects and real resource guards. See
-  [host findings and proportional outcome](../../design/reviews/native-replay-real-host-retention-20261105.md).
-- **LZ136 is complete.** Candidate4a9a8d6 passed final native Luna review, task and
-  combined checks, actual original133/135 review-input reconciliation, source
-  integration and native non-forced cleanup. Main merge6bf4a8b preserves original
-  commit ancestry. Planad6cb637-d5d7-4ee4-974e-727216f2bdd5 is integrated/version21;
-  its tree is absent in filesystem and native registry. Initial133/135 alias
-  qualification preserved assignments; each still has its original attempt/session.
-  Later133 repair uses an explicit same-attempt resume as described below. See
-  design/reviews/task136-native-completion-20261104.md.
-- **LZ133 is complete.** Original correctionac4eb1a merged at00a4a84; source review
-  clear, merged17tests347assertions+quality. Actual registered Code Mode paging:
-  94 pages/4657 unique/zero duplicates/revision589197. Root's separate12-second
-  production-reader probe observed scanner advance and exact authenticated native
-  reference retrieval; the faster registered traversal did not observe scan advance.
-  Direct before/after comparison found zero changed rows across806 input
-  dispositions/reference revisions and23 notice state/resume rows; no hashing
-  supports this evidence. Task and combined verification accepted, native integration
-  and non-forced cleanup completed: plan5a8a96ed integrated/version20, old tree absent,
-  original session/history retained. [Qualification](evidence/task133-native-qualified-20261105.md).
-  Dependent134 is admitted/running, nodequeued0attempts; actual reservations govern.
-  **135's independent native gate remains.** Source e6ab406 is landed; quiet
-  native CPU windows measured30.92%→30.16% service, inconclusive for total savings;
-  direct unchanged-recovery work/late-fact observation is still needed before its
-  performance gate. Source135's native-performance gate must remain honest. See
-  design/reviews/task135-native-cpu-observation-20261104.md.
-- **Host compaction blocker fixed.**85f942c uses retained current-input history
-  after completed compaction while preserving exact successful idle/report binding.
-  56 native/input/idle/schema tests pass with merged136. A later global reload hit
-  the already removed136 worktree; canonical plugin remains initialized with the
-  same PID95968/all six flags true. No blind reload retry or fake directory. Root's
-  quiet activation guard now checks model sessions and task/graph verification.
-- **Unfinished legacy ownership consolidation awaits user approval.** Exact58-plan
-  proposal is design/reviews/unfinished-plan-transfer-proposal-20261104.md. No new
-  transfers performed. Historical-chain owner c10fbf89 was stopped
-  at1793854357004 and confirmed interrupted/idle1793854357021. Existing approval
-  covers stopping further historical-only successors, not the pending transfer.
-  Continue already owned work while awaiting the answer. No terminal plan is listed.
-- **LZ99 source is merged; native qualification remains.** Original027e143b/
-  ses_2e7fd6bebd8d44699e381e1728ee4655 finished at1793859776335, OpenAI Luna Max.
-  Source29e291a +be50616 merged with ancestry as846e4e5. Root resolved conflicts,
-  same-tree/baseline override and performance-shortcut interactions. Final256
-  tests/3932 assertions, lint/types pass. Rootc711f89 then corrected native
-  heartbeats omitting turn details;46 related tests/574 assertions pass. Original
-  129/132 resumed at1793861931679/1661 through supported controls, versions35/22,
-  same attempts/sessions/dirty trees and OpenAI Luna Max. Both original workers
-  subsequently returned through the real state machine:129 accepted37dadd7 with
-  review findings still open,132 qualified/integrated with137 as recorded above.
-  Source inclusion does not accept99: its native idle
-  mismatch remains. The runtime still reserves tools.ts, so133 remains preparing.
-  See design/reviews/task99-current-input-failure-20261105.md.
-- **133 repair has been explicitly resumed, awaiting dispatch.** Cancellation
-  settled version11; native resume at1793855098062 set version13, original attempt
-  6ee1191f-95ef-45d0-9b90-8e96623b9841 preparing in original session9250c22e.
-  New assigned input is msg_08cba7ba9b274893916a6ec810e1caad through the supported
-  resume, not a fabricated report.99's higher-priority tools.ts reservation remains.
-  Research diagnosis and read-back advice are in canonical622b4e7; consumption is
-  not yet observed. No duplicate, replacement or58-plan ownership transfer.
-- **LZ135 native timestamp correction is merged.** Original d0930725/671fad53
-  resumed1793857764502 and finished1793859547774. Worker374a599 merged26f0825;
-  Root934c03b removed private Effect prototype/tag checks. Postmerge69 tests/
-  660 assertions, subsequent recorder20 tests/375 assertions and lint/types pass.
-  Root numeric and Effect repro both[3,0,0]. Genuine zero-background hook was
-  observed but rejected for missing listener-local start lineage after listener
-  replacement. This is a live completion-observer defect, not a source/test fail.
-  Native performance remains unqualified. Broader diagnostics wiring still touches
-  127 scope. See design/reviews/native-completion-blockers-20261105.md.
-- **Current-owner coordination works without transfer.** A keyed instruction on
-  c10fbf89 preserved its input, then it focused on99 and reconciled the cleared
-  approval hold (version13). Existing owner may handle actionable99/127 work;
-  historical-only replay remains covered by standing stop approval. Root verified
-  127 tree clean at633da56, already main ancestry; its native idle hold remains.
-  Fresh coordinator is investigating substantive original127 verification/recovery.
-  Root answered its Desktop clarification: use supported ordered native session-log
-  replay with a genuine current idle hook. Prospective implementation is authorized;
-  no historical report fabrication. The current-owner implementation brief has been
-  delivered to f58f7187 without another ownership transfer. Its owner then
-  cancelled/settled127 atv47 and resumed the SAME38e12d10 attempt at1793862974295,
-  v49, new assignedmsg_15c474d20da04ae6b1ed90b959112565. Original worker42ac41f3
-  genuinely implemented in parallel with129 and returned acceptedaf6dd111.
-  Independent source review: realistic inbox ordering/permanent regression pass,
-  empty replay fail-closed, existing cached native transport reused; focused82
-  tests and typecheck pass. Both original workers are finished. Actual empty-log
-  host behavior prevents this replay path restoring a missed start here; preserve
-  artifact and unknown history, coordinate proportional retained verification.
-  No replacement, proof turn, reload or ownership transfer was used.
-  Automatic successor04072d58 reviewed real99 work and subsequently renewed into
-  f58f7187. Its current work is being inspected before any historical-only stop. It hit native subagent depth1: renewal creates nested Architects. Luna
-  researched parentless native creation with metadata lineage; existing134 advice
-  now covers that prospective fix. No58-plan manual transfer was performed.
-  Earlier129/132 quota failures remain failed, not relabeled interrupted. Later
-  explicit same-attempt continuation and actual implementation return are separately
-  observed; neither erases historical failed inputs or usage.
-- **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
-  to the fresh coordinator, versions26/13; original workers/attempts/trees are
-  unchanged. The user subsequently approved72 transfer plus existing quarantine.
-  It moved to the fresh coordinator at1793849020944, then reached sealed source
-  quarantine at1793849032014. Native worker archive timestamp1793849032001;
-  tree exists, uncertain verification remains uncertain and88's integrated72 edge
-  is unchanged. This actually unblocked136 dispatch. No other legacy plan was
-  manually transferred. [Live qualification](../../design/reviews/task72-source-quarantine-live-20261104.md).
-- **Research route is Luna Max too.** The subsequent “Scope recorder recovery
-  optimization” delegate `ses_e5679b057ffeoNd6sRQPR2UKBb` was verified on OpenAI
-  Luna Max and completed. An earlier Explore inherited Sol High; it finished before
-  the explicit correction. Do not create further Sol research delegates.
-- **Historical-review stop did not survive automatic renewal.** Native interrupt
-  of5aa completed at1793847176491. Runtime then renewed it at1793848976947 into
-  `ses_72db8086246b4cabb6abf6f2f431dcc7`, which owns88 legacy plans and again
-  reviews old notices. Renewal`42b3b6b3-1a18-4665-8698-2c6d735de906` committed.
-  The user subsequently approved stopping this historical-only review chain,
-  including automatic successors. Native interrupt of72db returned true at
-  1793850535819; readback confirmed interrupted/idle1793850535856. Fresh Architect
-  and original136 worker were untouched. Runtime renewal after an explicit stop
-  still needs repair within existing notification/renewal work. Revalidate any
-  later successor belongs to this historical-only chain before stopping it.
-  At1793852337790 it renewed again into728b; Root verified the same historical
-  parent/readonly activity, then interrupted under existing approval at
-  1793852396456, confirmed interrupted/idle1793852396587. Only136 stayed active.
-  Latest stopped successor: `ses_c10fbf89effe4d9f9951e6a26590d7f3`.
-  Do not create another fresh Architect.
-- **Performance source repairs are integrated.** Earlier matched service CPU
-  73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
-  [Report](../../design/reviews/astra-renewal-spike-repair-20261104.md). Current
-  Tasks grouping uses a history-free read (107 plans/126 nodes/15 dependencies in
-  16ms);51 tests/331 assertions and GUI build/smoke pass. Its settled view still
-  measured26.59% service/7.48% renderer/8.56% GPU-process CPU, so no overall fix is
-  claimed. Recorder no-op insert repair9bcf77f passes22 tests/340 assertions;
-  quiet live savings remain unmeasured since model work resumed.
-  [Follow-up](../../design/reviews/astra-task-topology-repair-20261104.md).
-  Profilers and both clean Astra worktrees are removed through native cleanup;
-  original worker trees remain. Inference flags stayed true/Never unload unchanged.
-- **Compact renewal context is unfinished.** Original handoff9019 bytes plus233
-  queued references/651171 characters contradicted LZ28's small-handoff contract.
-  LZ133 provides progressive journal inspection; LZ134 will coalesce notifications
-  and explicitly reconcile legacy admissions. Preserve complete journal and
-  delivery history. [Source seams](evidence/renewal-context-repair-seams-20261105.md).
-- **Original retained recovery history is preserved.** The prior quota-input
-  failures and failed early resume attempts are historical evidence, not current
-  holds.132/137 are now integrated;129 is accepted but not source-clear for the
-  three final-review cases above. Do not restore stale stopped-worker instructions
-  from the older [129 review](../../design/reviews/task129-retained-review-20261105.md)
-  or [132 review](../../design/reviews/task132-retained-review-20261104.md).
-- **Models is unfinished, including routing.** Current Assignments is read-only;
-  saved persona mappings do not control dispatch and no approved Pareto graph is
-  delivered. All three project mappings were saved as Luna Max revision1, but that
-  receipt is not feature completion. LZ122 remains queued with zero attempts.
-  Research-role UI configuration is also missing. Keep graph, editable assignments,
-  live hierarchical dispatch and market-price provenance explicit in the roadmap.
-- **Live Trajectory has separate scope defects.** Project scope exceeds the
-  historical10000-transition ceiling and displays unavailable plus misleading
-  “No tasks” text. Current Session scope successfully showed LZ133's actual Luna
-  usage/activity. Switching scope unexpectedly changed selected task135→133.
-  A later LZ136 probe reproduced Project failure and Session silently selecting
-  unrelated old task8fb0fd83. Explicitly selecting136 works: original Luna Max
-  session, one attempt,127 tools and tokens/context. Desktop is left there. See
-  design/reviews/trajectory-scope-selection-20261104.md.
-  Old archived Main also fails observation authorization. Do not confuse these
-  failures with missing durable data. Timing/backend LZ131 remains queued.
-- **Original72 source quarantine is now observed live.** Guard, archive and seal
-  readbacks plus actual136 dispatch prove the source-isolation path. This does not
-  prove old72 check termination, task acceptance or cleanup. Preserve its uncertain
-  effect/resources, original57/58 hold and existing88/99/118 relationships.
+- Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI
+  `gpt-6.1-sol/high`. All implementors and delegated research use OpenAI
+  `gpt-6-luna/max` through the subscription. Root drives prompts in Desktop;
+  native Architects use supported SDK and LAZERS tools for orchestration.
+- **All 58 approved transfers are complete.** Native `lz-plan-command reassign`
+  moved the exact listed plans to Main. Root's direct read-only comparisons at
+  `1793877361137` found unchanged authored plans, revisions, routes, attempt/
+  worker/input/workspace identities, policies and dependencies. There were 58
+  reassignment events. Do not ask again. Nonlisted57/58,138,139,141,142 remain
+  coordinated by `ses_c59b85e3559c47a8a6f8191eb3b47eae`; that session has substantive
+  work and is not a historical-only replay loop to stop.
+  [Transfer record](../../design/reviews/unfinished-plan-transfer-proposal-20261104.md).
+- **LZ118 is the active implementation.** Task
+  `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
+  `2e5b7147-426f-45b6-934f-6da2b07205e7`, original attempt
+  `50345fa1-fccf-4cb7-9e85-e459ec1f85d9`, worker
+  `ses_8a19b036a82f42599a1d978220fb871a`. Its native tree is under the attempt ID
+  in the runner worktree directory. No final artifact is recorded yet. The latest
+  broad run passed259 tests/3608 assertions plus format/lint/types; subsequent
+  portability/legacy changes need current checks. Do not merge intermediate source.
+- Root review corrected HTTP-only versus in-process native error classification,
+  constructor identity across package copies, historical sessions mistaken for
+  active execution, and an overbroad HEAD-equals-base guard rejecting legitimate
+  committed-worker continuations. The latter targeted regressions pass. A portable
+  independent-package fixture is being corrected before integration.
+  [Findings and rechecks](../../design/reviews/task118-native-boundary-review-20261105.md).
+- Main cleared recurrent stale permission holds through native `reconcile`,
+  preserving the original118 worker/attempt. Latest observed plan is running26.
+  Existing LZ88 carries the observation-race fix; do not create another task or
+  restart a confirmed active worker because a stale label says blocked.
 
-Local usage at1793844441690–1731 confirmed native/SQLite counters agree for both
-original Luna workers:129 input577024/output49096/reasoning134798/cacheRead23348864;
-132 input218221/output23168/reasoning37669/cacheRead10573184. Keep buckets separate;
-subscription cost0 is not market cost. OpenRouter remains the default market index.
+## Actual startup recovery and visible features
 
-## New execution identities
-
-| Task                          | Plan                                   | Attempt / native session                                                        |
-| ----------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
-| LZ133 journal inspection      | `5a8a96ed-839a-41d7-9e97-ba7845174fd3` | `6ee1191f-95ef-45d0-9b90-8e96623b9841` / `ses_9250c22e68da40ff86371b407b9c3c11` |
-| LZ134 notification coalescing | `d9d4554c-44ff-4600-9a65-5de231f94205` | queued; task `ed59519e-1771-461f-9303-a8a77f9df146`                             |
-| LZ135 recorder recovery cost  | `cc65e13d-9b72-411e-a9de-41a996a3f951` | `d0930725-f837-40e7-8992-892f66ec1010` / `ses_671fad53a1b548679a7afc4472879ed2` |
-
-133 task `051be9d5-f03b-4ef8-b75e-7758fbe03d8c`;135 task
-`1ba8ca4b-0b21-4db0-8f72-162ceac48e5c`. Worktree paths use the attempt IDs under
-`/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/`.
-
-LZ136 repair: task`06fc208a-e4ed-4fe6-9b5b-33905840f8a8`, plan
-`ad6cb637-d5d7-4ee4-974e-727216f2bdd5`, attempt
-`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`, session
-`ses_48e456730db5448d89a03440b372dca5`. Native tree uses its attempt ID.
+- **LZ139 and141 have not run implementer turns.** Their preparing attempts have
+  absent reserved workers/worktrees and uncertain startup effects with original
+  receipt `{ "error": "Worktree.DirectoryUnavailableError" }`. Do not report
+  them as active implementers or successful recovery.139 repairs task-scoped
+  trajectory reads/consumer initialization;141 enables editing existing Models
+  assignments.142 is the separate queued persona-to-dispatch integration.
+- Native Luna research checked the old writer at139's2d5c550 and141'sed5cd6a:
+  direct native create plus `errorText(error)` flattening. Root selected a narrow
+  **distinct legacy classification within existing118** using settlement then
+  explicit resume. Preserve the raw receipt and missing fields, bind the operation/
+  attempt/workspace/base, and use existing fresh resource/session observations.
+  Do not fabricate modern v2 error fields, broaden to arbitrary errors/timeouts,
+  require an unavailable historical build fingerprint, or create duplicate tasks.
+  This researched decision is delivered to Main; implementation and actual
+  settlement/resumed execution remain unproven. Continue through their real use.
+- Task filters were observed working. Tasks-to-Trajectory is broken by the broad
+  project projection and its10000-transition ceiling;139 includes the consumer
+  initialization path as well as scoped server reads. Do not raise the global
+  ceiling or discard history as the fix.140 was a concurrent duplicate of139,
+  durably classified duplicate with no plan/attempt; do not revive it.
+- Models live Compare fails because `lazers.models.decision.v2` is not registered;
+  existing126→122 owns that producer. Assignments is read-only; the approved
+  Pareto graph, native narrow/wide visual qualification and actual routing remain
+  unfinished. [Visual review](../../design/reviews/models-live-visual-review-20261105.md),
+  [routing research](research/phase-planning/models.md).
 
 ## Next actions
 
-0. Monitor the actual136 worker. Once reviewed, perform coordinated activation
-   and native reconciliation of original133/135, then their actual journal/CPU
-   gates and integration. Original72 quarantine is already qualified: do not repeat
-   it or ask for approval again. User has explicitly approved129/132/72 transfers.
-   Historical review successor stop-chain approval remains pending as described
-   above. No direct TaskDB lifecycle edits or new delegation feature.
-   Task136 System One review was unavailable due to WebGPU device-loss buffer
-   download; submission continued with recorded concerns. No flag changes or
-   successful automatic GPU recovery were observed.
+1. Keep the original118 worker on the current review, portable fixture and narrow
+   legacy compatibility; obtain and review its final artifact and meaningful checks.
+   Root integrates/activates at a quiet native boundary. Do not edit watched
+   canonical source while an implementor is active or globally reload removed trees.
+2. Use native tools to settle and explicitly resume original139/141, preserve all
+   history, and observe actual worker execution. Delivery of a steer is not proof
+   of correctness or completion. Continue their normal review/integration/cleanup.
+3. Continue original57 and linked138 retained-candidate work.57's wholly unstarted
+   plan still has a cancelled58 sibling hold; unchanged reconcile is not a planning
+   solution. Existing138 replaces the genuinely changed remaining58 requirement.
+   Then use the accepted-unintegrated repair flow for original129's three concrete
+   review findings; preserve its unmerged artifact.99 source quarantine is already
+   sealed; do not repeat it or claim its old idle evidence was reconstructed.
+4. Preserve and run the broader ordered roadmap through actual scope reservations:
+   Models126→122 and141/142, LZ88, trajectory131, renewal134, retained verification,
+   Tasks/Radar consumers, recovery/handoff/live verification and release. Architect
+   decomposes plans into coherent tasks; Root does not feed it an epic per task.
+5. Continue native observations, review, integration and non-forced cleanup. All30
+   cleanup-blocked plan artifacts were independently found in main; that proves
+   source ancestry, not every old live gate or cleanup. Cleanup failures must not
+   invalidate valid implementation or erase unknown resource history.
 
-1. Continue native orchestration on the now-reset OpenAI route with current model
-   preferences. Prioritize the observed LZ28/LZ30 compact-context
-   correction and visible current-Architect route before feeding more historical
-   notices into model context. Let Architect investigate and decompose the plan;
-   use the existing task identities/contracts. Performance source/tests are landed;
-   do not repeat the repaired loops or rerun benchmarks without a new concern.
-2. Reuse observed original72 source quarantine; its check/effect is still
-   uncertain. Audit delivered behavior against original57/58's remaining amended
-   outcomes, then supported original requeue. Their zero-attempt plan is reversibly
-   cancelled as a scheduling hold.
-3. Resolve original129/132 through supported runtime recovery; Root drives Desktop
-   observations, while scheduler uses native SDK execution. Deliver concise
-   source findings/corrections through their actual task/instruction surfaces;
-   preserve useful work and identities. Review, verify in product, integrate and
-   reconcile native worktrees. No replacement tasks for already assigned work.
-4. Continue the existing ordered roadmap through the native Architect. Give the
-   feature/plan ask, let Architect research/interview/decompose it, and let runtime
-   schedule actual dependencies/reservations. Do not spoon-feed task-by-task prompts
-   or create epics disguised as tasks.
+## Qualified milestones and retained limits
 
-## Exact retained identities
-
-| Work                     | Task                                                                            | Plan                                          | Attempt / native session                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Original Main (archived) | —                                                                               | multiple                                      | `ses_e68a9ed37ffeVqzPWRXN5SB7Uw`                                                                 |
-| Renewal                  | —                                                                               | anchor `f5deb6cf-1414-4060-a65f-0b29be137450` | renewal `e7c359a6-7758-4336-85d1-6d74dbb29c74`; successor `ses_09ce60a14ec948fc8573f95912e5536a` |
-| LZ129                    | `91c6c95d-9965-421f-9b35-49da50f84979`                                          | `243f8093-7c3c-44e3-bda5-e06870e4f680`        | `58d8d699-6a12-44c3-a5af-954b2b5564bc` / `ses_aeff3e9ac5d24c6c944d35e31b050963`                  |
-| LZ132                    | `5cdc0405-0e7f-4b18-933d-d0a331b37cd5`                                          | `10964078-2262-4b2c-8f5a-101222a16e55`        | `547ae78b-1300-47fe-9aa4-d43461a54379` / `ses_f2286bc5414840b1b3fe8d5b1c037b2c`                  |
-| LZ72                     | `7473e8a5-74cc-4222-aeea-a8a01de1f9be`                                          | `0dab6e0d-6ad1-4902-a315-4066f5dee32c`        | `ed96f0b9-102b-4c64-aa8b-708a62d49fe7` / `ses_136dd90605a14fc0a6e7ce9e0edc1413`                  |
-| LZ57 → LZ58              | `853524a4-df9e-41ed-a57f-06dcb6637187` → `95f7a783-009b-4d26-9fa8-ace3cbcac0c3` | `d0ce36bb-3b8a-481b-b525-9e2b45c55cb6`        | zero attempts; reversible scheduling hold                                                        |
-
-Historical renewal owner at1793844258408 (interrupted at1793847176491): `ses_5aa94658965844ed85f4b0ebdd5266cb`,
-OpenAI Sol High, child of4e3bba; renewal `283a8271-2d0c-4f96-8554-d22c63fcf884`
-started1793844115924 and committed. The renewal title remains
-“LAZERS · Preserve genuinely received duplicate starts”. Desktop exposes the running
-child through Main's native subagent menu and its ancestor breadcrumbs. Idle
-child discoverability and archived observation scopes still need follow-through.
-
-Native worker trees are under
-`/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
-LZ72's uncertain `verify:runner` effect is
-`cd7cb493807b9dbcc552f552586351cbdb78d420baee04da31440ac86c36a8f8`.
-Its accepted source is e6a58ea; a fresh passing check cannot prove that old process
-stopped. Preserve LZ88's explicit integrated72 prerequisite and LZ99/LZ118 resources.
-[57/58 reuse pre-audit](evidence/retained57-58-reuse-preaudit-20261104.md) identifies
-remaining work; it is not post-install native authorization or completion.
+- 132/137,133 and136 are qualified, integrated and natively cleaned up. Their old
+  trees are absent and native histories retained. See
+  [132](evidence/task132-native-qualified-20261105.md),
+  [133](evidence/task133-native-qualified-20261105.md),
+  [136](../../design/reviews/task136-native-completion-20261104.md).
+- 133's real Code Mode journal traversal read94 pages/4657 unique records without
+  duplicates. A separate12-second native probe observed scanner movement; direct
+  row comparisons found unchanged input/notice dispositions. No hash evidence.
+- Root retired the removed133 location through supported `debug.location.evict`
+  after confirming no active target session. This was targeted maintenance, not a
+  global reload or proof of the139/141 failure's exact original path.118 carries
+  prospective cache-retirement behavior.
+- 127 source is landed; the installed host does not retain useful historical session
+  payload logs. Do not reconstruct missed idle events from empty replay or a fresh
+  worker turn.135's timestamp/source repair is landed; native performance savings
+  remain unqualified.129 is accepted but needs its recorded source corrections.
+- All six inference flags remain true; Never unload remains unchanged. Do not turn
+  inference off or infer successful jobs from loaded readiness. Use the retained
+  audit/reports for old exact identities instead of restoring stale instructions.
 
 ## Delivery still required
 
-- **Tasks:** authoritative runtime eligibility/order, Now/Attention/Next, state
-  filters and completed history, dependencies/grouping, exact task references and
+- **Tasks:** authoritative runtime eligibility/order, Now/Attention/Next, completed-history usability, dependencies/grouping, exact task references and
   old trajectory navigation. Held slices are in
   [the existing plan](evidence/tasks-radar-held-slices-20261104.md).
 - **Radar:** realtime managed-session monitor, actual model/effort, current tools,
@@ -341,7 +133,8 @@ remaining work; it is not post-install native authorization or completion.
   ordered whole-model market-price fallback, not subscription charges or old prices;
   preserve exact model/effort, retry effort, missing-rate/zero provenance and global
   Pareto before paging. **The approved Models graph/UI, editable assignments and
-  actual persona-to-dispatch wiring remain unfinished.** Tasks keep personas;
+  actual persona-to-dispatch wiring remain unfinished.** Existing LZ141 covers the
+  editor and LZ142 dispatch wiring; do not recreate them. Tasks keep personas;
   hierarchical model selection at dispatch is still a delivery requirement, with
   historical actual routes retained. Saved read-only mappings and route-configuration
   receipts do not deliver that feature.
