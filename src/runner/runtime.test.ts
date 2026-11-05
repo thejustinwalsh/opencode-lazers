@@ -7667,6 +7667,55 @@ test("an outcome admitted during archival is blocked then retargeted to the rene
   expect(f.notifications.every((notice) => notice.sessionID === successor)).toBe(true)
 })
 
+test("unavailable renewal successor fails before history sweeps and retries with fresh complete proofs", async () => {
+  const now = 2_000_000_370_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const attempt = await prepareIdleArchitect(f, now, 1_000)
+  const read = f.host.session
+  const page = f.host.architectInputPage!
+  let unavailable = true
+  let successorReads = 0
+  let pages = 0
+  f.host.session = async (id, options) => {
+    if (id !== "owner" && id !== attempt.session_id) {
+      successorReads++
+      if (unavailable) throw new Error("successor lookup unavailable")
+    }
+    return read(id, options)
+  }
+  f.host.architectInputPage = async (input) => {
+    pages++
+    return page(input)
+  }
+  // The first failure starts the durable renewal; later recovery attempts must
+  // remain retryable without rescanning history or publishing the same issue.
+  await expect(f.runtime.tick()).rejects.toThrow("successor lookup unavailable")
+  await expect(f.runtime.tick()).rejects.toThrow("successor lookup unavailable")
+  await expect(f.runtime.tick()).rejects.toThrow("successor lookup unavailable")
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("creating")
+  expect(successorReads).toBeGreaterThanOrEqual(3)
+  expect(pages).toBe(0)
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+
+  unavailable = false
+  await f.runtime.tick()
+  expect(pages).toBeGreaterThanOrEqual(2)
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+  expect(f.sessions.get("owner")?.archived).toBe(true)
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  expect(f.store.attempts(f.receipt.planID)[0]?.id).toBe(attempt.id)
+})
+
 test("native archive failure remains visible and retries without restoring predecessor authority", async () => {
   const now = 2_000_000_375_000
   const f = fixture({
@@ -7965,10 +8014,20 @@ test("cancellation interrupts workers while a transferred renewal still has fail
   expect(f.store.plan(plan.id)?.state).toBe("cancelling")
   expect(f.store.architectRenewalForPlan(plan.id)?.id).toBe(renewal.id)
   let failedHistoryReads = 0
+  let historyError = "retained predecessor history is temporarily unavailable"
   f.host.architectInputPage = async () => {
     failedHistoryReads++
-    throw new Error("retained predecessor history is temporarily unavailable")
+    throw new Error(historyError)
   }
+  const failureHistory = () =>
+    f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='ARCHITECT_RENEWAL_RECOVERY_FAILED' ORDER BY id",
+        )
+        .all(plan.id)
+        .map((row) => JSON.parse(row.payload)),
+    )
 
   await f.runtime.tick()
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(false)
@@ -7986,6 +8045,17 @@ test("cancellation interrupts workers while a transferred renewal still has fail
   expect(f.sessions.get("owner")?.archived).toBe(false)
   expect(archiveAttempts).toBe(1)
   expect(failedHistoryReads).toBeGreaterThanOrEqual(6)
+  expect(failureHistory()).toEqual([
+    { renewalID: renewal.id, state: "archiving", error: historyError },
+  ])
+  historyError = "retained predecessor history failed differently"
+  await f.runtime.tick()
+  expect(failureHistory()).toHaveLength(2)
+  expect(failureHistory().at(-1)?.error).toBe(historyError)
+  historyError = "retained predecessor history is temporarily unavailable"
+  await f.runtime.tick()
+  expect(failureHistory()).toHaveLength(3)
+  expect(failureHistory().at(-1)?.error).toBe(historyError)
   expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
 })
 

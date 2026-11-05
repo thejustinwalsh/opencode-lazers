@@ -1728,6 +1728,11 @@ export class TaskRuntime {
           }
         }
         if (renewal.state === "creating") {
+          // Fail unavailable/foreign successor reads before scanning all source
+          // history. Re-read after the sweep below; this is not a cached proof.
+          const available = await this.host.session(renewal.successor_session_id)
+          if (available && !this.renewalSuccessorMatches(available, renewal))
+            throw new Error("Native Architect renewal ID belongs to another session or route")
           // A checkpoint is only safe to transfer after its complete current history
           // sweep has been journaled and checked for uncovered user input.
           await this.inspectArchitectSourceSweep(renewal, fence)
@@ -2028,20 +2033,35 @@ export class TaskRuntime {
         current &&
         ["creating", "archiving", "recovering-input", "rolling-back"].includes(current.state)
       ) {
-        this.store.setArchitectRenewalState(
-          this.owner,
-          fence,
-          current.id,
-          [current.state],
-          current.state,
-          errorText(error),
-        )
-        this.renewalEvent(
-          current,
-          "ARCHITECT_RENEWAL_RECOVERY_FAILED",
-          { renewalID: current.id, state: current.state, error: errorText(error) },
-          fence,
-        )
+        const reason = errorText(error)
+        const previous = this.store.latestTransition<{
+          renewalID: string
+          state: string
+          error: string
+        }>(current.anchor_plan_id, null, "ARCHITECT_RENEWAL_RECOVERY_FAILED")
+        // Retry recovery normally, but an unchanged durable failure is not a new
+        // observation. Publishing it on every tick rebuilds all watching panels.
+        if (
+          current.error !== reason ||
+          previous?.renewalID !== current.id ||
+          previous.state !== current.state ||
+          previous.error !== reason
+        ) {
+          this.store.setArchitectRenewalState(
+            this.owner,
+            fence,
+            current.id,
+            [current.state],
+            current.state,
+            reason,
+          )
+          this.renewalEvent(
+            current,
+            "ARCHITECT_RENEWAL_RECOVERY_FAILED",
+            { renewalID: current.id, state: current.state, error: reason },
+            fence,
+          )
+        }
       }
       throw error
     }
