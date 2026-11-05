@@ -14,12 +14,13 @@ import {
   TrajectoryPanelState,
 } from "../../src/trajectory-panel/panel-state.ts"
 import {
+  createTrajectoryTransport,
   checkKey,
   detailedChecks,
   eventPayload,
   eventTitle,
 } from "../../src/trajectory-panel/projection.ts"
-import type { TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
+import type { ObservationRpc, TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
 import type { TaskTrajectoryTarget } from "../../src/trajectory-panel/panel-state.ts"
 import { firstAttemptID, makeFixture, secondAttemptID, taskID } from "../trajectory/fixture.ts"
 
@@ -318,6 +319,453 @@ test("an external historical target bypasses snapshot choices and loads its refe
       secondAttemptID,
     ])
     expect(state.data.tasks).toContainEqual(expect.objectContaining({ taskID, title: reference }))
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a historical target loads over the broad snapshot cap through the real transport", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const reads = new ObservationReads(
+    fixture.store,
+    {
+      session: (id) => fixture.host.session(id),
+      status: async (id) => {
+        const session = fixture.sessions.get(id)
+        return session
+          ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+          : null
+      },
+    },
+    "project",
+    cursorSecret,
+  )
+  let snapshotCalls = 0
+  let historyCalls = 0
+  let statusCalls = 0
+  const rpc = {
+    snapshot: async (input: { scope: ObservationScope }, options: { signal: AbortSignal }) => {
+      snapshotCalls++
+      if (options.signal.aborted) throw options.signal.reason
+      return reads.snapshot(input.scope, tracker)
+    },
+    trajectory: async (
+      input: { scope: ObservationScope; taskID: string; limit: number; cursor?: string },
+      options: { signal: AbortSignal },
+    ) => {
+      if (options.signal.aborted) throw options.signal.reason
+      return reads.trajectory(input, tracker)
+    },
+    trajectoryHistory: async (
+      input: {
+        scope: ObservationScope
+        taskID: string
+        limit: number
+        cursor?: string
+      },
+      options: { signal: AbortSignal },
+    ) => {
+      historyCalls++
+      if (options.signal.aborted) throw options.signal.reason
+      return reads.trajectoryHistory(input, tracker)
+    },
+    trajectoryStatus: async (
+      input: { scope: ObservationScope; taskID: string },
+      options: { signal: AbortSignal },
+    ) => {
+      statusCalls++
+      if (options.signal.aborted) throw options.signal.reason
+      return reads.trajectoryStatus(input, tracker)
+    },
+  } as unknown as ObservationRpc
+  const events = {
+    subscribe: ({ signal }: { signal: AbortSignal }) =>
+      (async function* () {
+        if (!signal.aborted) {
+          await new Promise<void>((resolve) =>
+            signal.addEventListener("abort", () => resolve(), { once: true }),
+          )
+        }
+        if (!signal.aborted) yield { type: "server.connected" }
+      })(),
+  }
+  const transport = createTrajectoryTransport(rpc, fixture.directory, () => true, events, "project")
+  const state = new TrajectoryPanelState(() => {})
+  const reference = fixture.repository.referenceFor(taskID)!
+  try {
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+           SELECT ?,NULL,1,'UNRELATED','{}',5000+CAST(key AS INTEGER) FROM json_each(?)`,
+        )
+        .run(
+          fixture.receipt.planID,
+          JSON.stringify(Array.from({ length: 10_001 }, (_, index) => index)),
+        ),
+    )
+    state.connect(
+      "large-history-target",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID: null,
+        selection: null,
+        target: targetFor(fixture, taskID, reference, "large-history-target"),
+      },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    expect(snapshotCalls).toBe(0)
+    expect(historyCalls).toBe(1)
+    expect(state.data.taskID).toBe(taskID)
+    expect(state.data.taskReference).toBe(reference)
+    expect(state.data.report?.task.id).toBe(taskID)
+    expect(state.data.report?.attempts.map((attempt) => attempt.id)).toEqual([
+      firstAttemptID,
+      secondAttemptID,
+    ])
+    expect(detailedChecks(state.data.report!)).toContainEqual(
+      expect.objectContaining({ id: "attempt-check", result: "failed", attemptID: firstAttemptID }),
+    )
+
+    state.selectAttempt(firstAttemptID)
+    const capturedAt = state.data.historyCapturedAt
+    await state.refresh()
+    expect(snapshotCalls).toBe(0)
+    expect(statusCalls).toBe(1)
+    expect(state.data.taskID).toBe(taskID)
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+    expect(state.data.historyCapturedAt).toBe(capturedAt)
+    expect(state.data.report?.effort.tokenUsage.totalSessions).toBe(2)
+
+    const originalHistory = transport.history
+    let failedHistoryCalls = 0
+    transport.history = async () => {
+      failedHistoryCalls++
+      throw new Error("target history read failed")
+    }
+    const failedTarget = new TrajectoryPanelState(() => {})
+    try {
+      failedTarget.connect(
+        "failed-large-history-target",
+        "project",
+        fixture.directory,
+        { kind: "project", sessionID: "ses-owner" },
+        transport,
+        {
+          taskID: null,
+          selection: null,
+          target: targetFor(fixture, taskID, reference, "failed-large-history-target"),
+        },
+      )
+      await waitFor(failedTarget, () => Boolean(failedTarget.data.historyError))
+      expect(failedTarget.data.report).toBeUndefined()
+      expect(failedTarget.data.historyError).toContain("target history read failed")
+      expect(failedTarget.data.error).toBe("")
+      for (let index = 0; index < 8; index++) await tick()
+      expect(failedHistoryCalls).toBe(1)
+      expect(snapshotCalls).toBe(0)
+    } finally {
+      failedTarget.close()
+      transport.history = originalHistory
+    }
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+for (const duringCapture of [false, true])
+  test(`target refresh ignores a covered event ${duringCapture ? "during" : "after"} capture`, async () => {
+    const fixture = makeFixture()
+    const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+    tracker.initialize()
+    for (let index = 1; index <= 10; index++)
+      tracker.native({ id: `covered-${index}`, data: { sessionID: "ses-failed" } })
+    const { transport, publish, snapshotCount } = transportFor(fixture, tracker)
+    const history = transport.history
+    const status = transport.status
+    const historyStarted = deferred<void>()
+    const releaseHistory = deferred<void>()
+    let historyCalls = 0
+    let statusCalls = 0
+    transport.history = async (...args) => {
+      const response = await history(...args)
+      historyCalls++
+      if (duringCapture) {
+        historyStarted.resolve()
+        await releaseHistory.promise
+      }
+      return response
+    }
+    transport.status = async (...args) => {
+      statusCalls++
+      return status(...args)
+    }
+    const state = new TrajectoryPanelState(() => {})
+    try {
+      state.connect(
+        "covered-target",
+        "project",
+        fixture.directory,
+        { kind: "project", sessionID: "ses-owner" },
+        transport,
+        {
+          taskID: null,
+          selection: null,
+          target: targetFor(fixture, taskID, "LZ-1", "covered-target"),
+        },
+      )
+      if (duringCapture) {
+        await historyStarted.promise
+        publish({
+          projectID: "project",
+          sequence: 10,
+          repositoryVersion: fixture.repository.version(),
+          sourceRevision: tracker.sourceRevision,
+          nativeRevision: tracker.nativeRevision,
+          cause: "native",
+          resnapshotRequired: false,
+        })
+        releaseHistory.resolve()
+      }
+      await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+      for (let index = 0; index < 3; index++) await tick()
+      if (!duringCapture)
+        publish({
+          projectID: "project",
+          sequence: 10,
+          repositoryVersion: fixture.repository.version(),
+          sourceRevision: tracker.sourceRevision,
+          nativeRevision: tracker.nativeRevision,
+          cause: "native",
+          resnapshotRequired: false,
+        })
+      for (let index = 0; index < 8; index++) await tick()
+      expect(state.data.eventSequence).toBe(10)
+      expect(snapshotCount()).toBe(0)
+      expect(historyCalls).toBe(1)
+      expect(statusCalls).toBe(0)
+    } finally {
+      releaseHistory.resolve()
+      state.close()
+      fixture.close()
+    }
+  })
+
+test("a newer event after target capture causes one scoped status refresh", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  for (let index = 1; index <= 10; index++)
+    tracker.native({ id: `covered-${index}`, data: { sessionID: "ses-failed" } })
+  const { transport, publish, snapshotCount } = transportFor(fixture, tracker)
+  const history = transport.history
+  const status = transport.status
+  let historyCalls = 0
+  let statusCalls = 0
+  transport.history = async (...args) => {
+    historyCalls++
+    return history(...args)
+  }
+  transport.status = async (...args) => {
+    statusCalls++
+    return status(...args)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "newer-target-event-after-capture",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID: null,
+        selection: null,
+        target: targetFor(fixture, taskID, "LZ-1", "newer-target-event-after-capture"),
+      },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    for (let index = 0; index < 3; index++) await tick()
+    tracker.native({ id: "newer-after-capture", data: { sessionID: "ses-failed" } })
+    publish({
+      projectID: "project",
+      sequence: 11,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: "native",
+      resnapshotRequired: false,
+    })
+    await waitFor(state, () => statusCalls === 1 && state.data.eventSequence === 11)
+    for (let index = 0; index < 8; index++) await tick()
+    expect(snapshotCount()).toBe(0)
+    expect(historyCalls).toBe(1)
+    expect(statusCalls).toBe(1)
+    expect(state.data.taskID).toBe(taskID)
+    expect(state.data.report?.task.id).toBe(taskID)
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a newer event during target capture triggers one status follow-up and preserves selection", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  for (let index = 1; index <= 10; index++)
+    tracker.native({ id: `covered-${index}`, data: { sessionID: "ses-failed" } })
+  const { transport, publish, snapshotCount } = transportFor(fixture, tracker)
+  const history = transport.history
+  const status = transport.status
+  const historyStarted = deferred<void>()
+  const releaseHistory = deferred<void>()
+  const statusStarted = deferred<void>()
+  const releaseStatus = deferred<void>()
+  let historyCalls = 0
+  let statusCalls = 0
+  transport.history = async (...args) => {
+    const response = await history(...args)
+    historyCalls++
+    historyStarted.resolve()
+    await releaseHistory.promise
+    return response
+  }
+  transport.status = async (...args) => {
+    const response = await status(...args)
+    statusCalls++
+    if (statusCalls === 1) {
+      statusStarted.resolve()
+      await releaseStatus.promise
+    }
+    return response
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "newer-target-event",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID: null,
+        selection: null,
+        target: targetFor(fixture, taskID, "LZ-1", "newer-target-event"),
+      },
+    )
+    await historyStarted.promise
+    tracker.native({ id: "newer-event", data: { sessionID: "ses-failed" } })
+    publish({
+      projectID: "project",
+      sequence: 11,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: "native",
+      resnapshotRequired: false,
+    })
+    releaseHistory.resolve()
+    await statusStarted.promise
+    state.selectAttempt(firstAttemptID)
+    releaseStatus.resolve()
+    await waitFor(
+      state,
+      () => statusCalls === 1 && state.data.eventSequence === 11 && !state.data.loading,
+    )
+    for (let index = 0; index < 8; index++) await tick()
+
+    publish({
+      projectID: "project",
+      sequence: 10,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: "native",
+      resnapshotRequired: false,
+    })
+    publish({
+      projectID: "project",
+      sequence: 11,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: "native",
+      resnapshotRequired: false,
+    })
+    for (let index = 0; index < 8; index++) await tick()
+    expect(snapshotCount()).toBe(0)
+    expect(historyCalls).toBe(1)
+    expect(statusCalls).toBe(1)
+    expect(state.data.eventSequence).toBe(11)
+    expect(state.data.taskID).toBe(taskID)
+    expect(state.data.selection).toEqual({ kind: "attempt", id: firstAttemptID })
+  } finally {
+    releaseHistory.resolve()
+    releaseStatus.resolve()
+    state.close()
+    fixture.close()
+  }
+})
+
+test("a target resnapshot request is honored even when its event sequence is covered", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  for (let index = 1; index <= 10; index++)
+    tracker.native({ id: `covered-${index}`, data: { sessionID: "ses-failed" } })
+  const { transport, publish, snapshotCount } = transportFor(fixture, tracker)
+  const history = transport.history
+  const status = transport.status
+  let historyCalls = 0
+  let statusCalls = 0
+  transport.history = async (...args) => {
+    historyCalls++
+    return history(...args)
+  }
+  transport.status = async (...args) => {
+    statusCalls++
+    return status(...args)
+  }
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "target-resnapshot",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      {
+        taskID: null,
+        selection: null,
+        target: targetFor(fixture, taskID, "LZ-1", "target-resnapshot"),
+      },
+    )
+    await waitFor(state, () => Boolean(state.data.report) && !state.data.loading)
+    for (let index = 0; index < 3; index++) await tick()
+    publish({
+      projectID: "project",
+      sequence: 10,
+      repositoryVersion: fixture.repository.version(),
+      sourceRevision: tracker.sourceRevision,
+      nativeRevision: tracker.nativeRevision,
+      cause: "gap",
+      resnapshotRequired: true,
+    })
+    await waitFor(state, () => statusCalls === 1 && !state.data.loading)
+    for (let index = 0; index < 8; index++) await tick()
+    expect(snapshotCount()).toBe(0)
+    expect(historyCalls).toBe(1)
+    expect(statusCalls).toBe(1)
+    expect(state.data.eventSequence).toBe(10)
+    expect(state.data.taskID).toBe(taskID)
   } finally {
     state.close()
     fixture.close()

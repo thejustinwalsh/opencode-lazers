@@ -35,6 +35,7 @@ export type TaskTrajectoryTarget = {
 export type PanelData = {
   key: string
   snapshot?: ProjectedSnapshot
+  eventSequence?: number | null
   tasks: TaskChoice[]
   taskID: string | null
   taskReference: string | null
@@ -72,6 +73,7 @@ export function selectedAttemptFor(data: PanelData | undefined) {
 
 const blank = (key = ""): PanelData => ({
   key,
+  eventSequence: null,
   tasks: [],
   taskID: null,
   taskReference: null,
@@ -183,6 +185,7 @@ export class TrajectoryPanelState {
   private pendingSequence = 0
   private refreshing = false
   private pendingRefresh = false
+  private pendingResnapshot = false
 
   constructor(
     private readonly changed: (data: PanelData) => void,
@@ -268,19 +271,55 @@ export class TrajectoryPanelState {
     const request = ++this.snapshotRequest
     const signal = this.controller.signal
     try {
+      if (this.target) {
+        const target = this.target
+        const taskID = target.taskID
+        const taskChanged = taskID !== this.data.taskID
+        if (taskChanged) this.beginTask(taskID)
+        const taskSignal = AbortSignal.any([signal, this.taskController.signal])
+        const taskRequest = this.taskRequest
+        if (
+          generation !== this.generation ||
+          request !== this.snapshotRequest ||
+          taskSignal.aborted
+        )
+          return
+
+        const tasks = [
+          ...this.data.tasks.filter((task) => task.taskID !== taskID),
+          {
+            taskID,
+            title: target.reference,
+            status: this.data.report?.task.status ?? "loading",
+          },
+        ]
+        this.update({ tasks, taskID, taskReference: target.reference, error: "" })
+
+        if (
+          this.data.historyError &&
+          this.data.taskID === taskID &&
+          (!this.data.report || this.data.historyCapturedAt === null)
+        ) {
+          this.update({ loading: false, stale: true, error: "" })
+        } else if (taskChanged || !this.data.report || this.data.historyCapturedAt === null) {
+          await this.captureHistory(taskID, taskSignal, !taskChanged)
+        } else {
+          await this.refreshStatus(taskID, taskSignal, generation, taskRequest)
+        }
+        return
+      }
+
       const response = await transport.snapshot(scope, signal)
       if (generation !== this.generation || request !== this.snapshotRequest || signal.aborted)
         return
       if (response.projectID !== this.projectID)
         throw new Error("Observation belongs to another project")
       const snapshot = parseProjectedSnapshot(response)
-      let tasks = taskChoices(snapshot)
+      const tasks = taskChoices(snapshot)
       const previousTaskID = this.data.taskID
-      const taskID =
-        this.target?.taskID ??
-        (tasks.some((task) => task.taskID === previousTaskID)
-          ? previousTaskID
-          : (tasks[0]?.taskID ?? null))
+      const taskID = tasks.some((task) => task.taskID === previousTaskID)
+        ? previousTaskID
+        : (tasks[0]?.taskID ?? null)
       const taskChanged = taskID !== previousTaskID
       if (taskChanged) this.beginTask(taskID)
       const taskSignal = AbortSignal.any([signal, this.taskController.signal])
@@ -288,20 +327,12 @@ export class TrajectoryPanelState {
       if (generation !== this.generation || request !== this.snapshotRequest || taskSignal.aborted)
         return
 
-      if (this.target)
-        tasks = [
-          ...tasks.filter((task) => task.taskID !== this.target?.taskID),
-          {
-            taskID: this.target.taskID,
-            title: this.target.reference,
-            status: this.data.report?.task.status ?? "loading",
-          },
-        ]
       this.update({
         snapshot,
+        eventSequence: this.observeEventSequence(snapshot.boundary.eventSequence),
         tasks,
         taskID,
-        taskReference: this.target?.reference ?? null,
+        taskReference: null,
         error: "",
       })
 
@@ -352,9 +383,15 @@ export class TrajectoryPanelState {
         if (!this.data.error) this.retryDelay = 1_000
         const pendingSequence = this.pendingSequence
         this.pendingSequence = 0
+        if (this.pendingResnapshot) {
+          this.pendingResnapshot = false
+          this.update({ eventSequence: null })
+        }
         if (
           this.pendingRefresh ||
-          pendingSequence > (this.data.snapshot?.boundary.eventSequence ?? 0)
+          (pendingSequence > 0 &&
+            (typeof this.data.eventSequence !== "number" ||
+              pendingSequence > this.data.eventSequence))
         ) {
           this.pendingRefresh = false
           void this.refresh()
@@ -389,6 +426,12 @@ export class TrajectoryPanelState {
       loadingActivity: false,
       error: "",
     })
+  }
+
+  private observeEventSequence(sequence: number) {
+    return typeof this.data.eventSequence !== "number"
+      ? sequence
+      : Math.max(this.data.eventSequence, sequence)
   }
 
   private async refreshStatus(
@@ -438,6 +481,7 @@ export class TrajectoryPanelState {
         report,
         tasks,
         liveEvents,
+        eventSequence: this.observeEventSequence(response.boundary.eventSequence),
         loading: false,
         stale: Boolean(this.data.historyError),
         error: "",
@@ -603,6 +647,7 @@ export class TrajectoryPanelState {
       this.update({
         report,
         tasks,
+        eventSequence: this.observeEventSequence(response.boundary.eventSequence),
         selection,
         selectionEventSnapshot,
         events,
@@ -874,11 +919,16 @@ export class TrajectoryPanelState {
           // A reconnect may reset the producer sequence below the old snapshot.
           // Buffer in-flight events before comparing them with that old boundary.
           if (this.refreshing) {
-            if (event.resnapshotRequired) this.pendingRefresh = true
-            else this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
+            if (event.resnapshotRequired) {
+              this.pendingRefresh = true
+              this.pendingResnapshot = true
+            } else this.pendingSequence = Math.max(this.pendingSequence, event.sequence)
+          } else if (event.resnapshotRequired) {
+            this.update({ eventSequence: null })
+            void this.refresh()
           } else if (
-            event.resnapshotRequired ||
-            event.sequence > (this.data.snapshot?.boundary.eventSequence ?? 0)
+            typeof this.data.eventSequence !== "number" ||
+            event.sequence > this.data.eventSequence
           )
             void this.refresh()
         }
@@ -906,6 +956,7 @@ export class TrajectoryPanelState {
     this.cancelRetry = undefined
     this.retryDelay = 1_000
     this.pendingSequence = 0
+    this.pendingResnapshot = false
     this.transport = undefined
     this.scope = undefined
     this.projectDirectory = ""

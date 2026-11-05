@@ -321,6 +321,42 @@ function loadProjectionSource(
   return { ...topology, transitions, attempts, checks }
 }
 
+function loadTaskObservationSource(
+  db: Database,
+  projectDirectory: string,
+  scope: ObservationScope,
+  secret: Uint8Array,
+  target: { taskID?: string; attemptID?: string },
+) {
+  const topology = loadTopologySource(db, projectDirectory, scope, secret)
+  let taskID = target.taskID
+  if (target.attemptID) {
+    const attempt = db
+      .query<{ task_id: string; plan_id: string }, [string, string]>(
+        `SELECT a.task_id,a.plan_id FROM runner_attempts a
+         JOIN runner_plans p ON p.id=a.plan_id
+         WHERE p.project_directory=? AND a.id=?`,
+      )
+      .get(projectDirectory, target.attemptID)
+    if (!attempt || !topology.associations.planIDs.has(attempt.plan_id))
+      throw new Error("No observation in this scope")
+    taskID = attempt.task_id
+  }
+  if (!taskID || !topology.associations.taskIDs.has(taskID))
+    throw new Error("No observation in this scope")
+
+  const planIDs = [...topology.associations.planIDs]
+  const transitionSequence = planIDs.length
+    ? (db
+        .query<{ sequence: number | null }, string[]>(
+          `SELECT MAX(id) AS sequence FROM runner_transitions
+           WHERE plan_id IN (${planIDs.map(() => "?").join(",")})`,
+        )
+        .get(...planIDs)?.sequence ?? 0)
+    : 0
+  return { stamp: topology.stamp, taskID, transitionSequence }
+}
+
 function projectTopology(source: ReturnType<typeof loadTopologySource>) {
   const projection = source
   const stats = privacyStats()
@@ -1812,23 +1848,16 @@ export class ObservationReads {
       this.store.repository.projectDirectory,
     )
     try {
-      const before = connection.store.atomic((db) => {
-        const source = loadProjectionSource(
+      const before = connection.store.atomic((db) =>
+        loadTaskObservationSource(
           db,
           this.store.repository.projectDirectory,
           input.scope,
           this.secret,
-        )
-        let taskID = input.taskID
-        if (input.attemptID) {
-          taskID = source.attempts.find((attempt) => attempt.id === input.attemptID)?.task_id
-          if (!taskID) throw new Error("No observation in this scope")
-        }
-        if (!taskID || !source.associations.taskIDs.has(taskID))
-          throw new Error("No observation in this scope")
-        return { source, taskID }
-      })
-      tracker.observeStamp(before.source.stamp)
+          { taskID: input.taskID, attemptID: input.attemptID },
+        ),
+      )
+      tracker.observeStamp(before.stamp)
       const nativeRevision = tracker.nativeRevision
       const report = await inspectTrajectory(
         connection.store,
@@ -1846,17 +1875,16 @@ export class ObservationReads {
       )
       tracker.observeStamp(after)
       if (
-        before.source.stamp.repositoryVersion !== after.repositoryVersion ||
-        before.source.stamp.sourceFingerprint !== after.sourceFingerprint ||
+        before.stamp.repositoryVersion !== after.repositoryVersion ||
+        before.stamp.sourceFingerprint !== after.sourceFingerprint ||
         nativeRevision !== tracker.nativeRevision
       )
         throw new Error("Observation changed while reading; restart from a fresh snapshot")
-      const transitionSequence = before.source.transitions.at(-1)?.id ?? 0
       return {
         schemaVersion: 1,
         projectID: this.projectID,
         scope: scopeView(input.scope),
-        boundary: tracker.boundary(after, transitionSequence),
+        boundary: tracker.boundary(after, before.transitionSequence),
         report,
       }
     } finally {
@@ -1874,10 +1902,14 @@ export class ObservationReads {
     )
     try {
       const source = connection.store.atomic((db) =>
-        loadProjectionSource(db, this.store.repository.projectDirectory, input.scope, this.secret),
+        loadTaskObservationSource(
+          db,
+          this.store.repository.projectDirectory,
+          input.scope,
+          this.secret,
+          { taskID: input.taskID },
+        ),
       )
-      if (!source.associations.taskIDs.has(input.taskID))
-        throw new Error("No observation in this scope")
 
       const identity = {
         projectID: this.projectID,
@@ -1908,7 +1940,7 @@ export class ObservationReads {
       )
         throw new Error("Observation changed while capturing history; recapture explicitly")
 
-      const boundary = tracker.boundary(after, source.transitions.at(-1)?.id ?? 0)
+      const boundary = tracker.boundary(after, source.transitionSequence)
       return this.history.capture(identity, report, boundary)
     } finally {
       connection.close()
@@ -1925,10 +1957,14 @@ export class ObservationReads {
     )
     try {
       const source = connection.store.atomic((db) =>
-        loadProjectionSource(db, this.store.repository.projectDirectory, input.scope, this.secret),
+        loadTaskObservationSource(
+          db,
+          this.store.repository.projectDirectory,
+          input.scope,
+          this.secret,
+          { taskID: input.taskID },
+        ),
       )
-      if (!source.associations.taskIDs.has(input.taskID))
-        throw new Error("No observation in this scope")
       tracker.observeStamp(source.stamp)
       const nativeRevision = tracker.nativeRevision
       const report = await inspectTrajectoryStatus(
@@ -1953,7 +1989,7 @@ export class ObservationReads {
         schemaVersion: 1,
         projectID: this.projectID,
         scope: scopeView(input.scope),
-        boundary: tracker.boundary(after, source.transitions.at(-1)?.id ?? 0),
+        boundary: tracker.boundary(after, source.transitionSequence),
         report,
       }
     } finally {

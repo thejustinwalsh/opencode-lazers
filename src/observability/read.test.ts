@@ -12,7 +12,7 @@ import {
 import { AssociationTaskReads } from "./task-reads.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { validProposal } from "../../test/proposal.ts"
-import type { TrajectoryHost } from "../trajectory/native.ts"
+import type { TrajectoryHost, TrajectorySession } from "../trajectory/native.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
 import { ObservationSyncState } from "./state.ts"
 
@@ -561,6 +561,189 @@ test("history and status reads leave durable audits and repository watermarks un
     fixture.close()
   }
 })
+
+test("target trajectory reads survive unrelated project transition volume and keep scope boundaries truthful", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(21)
+    const reads = new ObservationReads(fixture.store, metadataOnlyHost(fixture), "project", secret)
+    const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+    tracker.initialize()
+    const scope = { kind: "session" as const, sessionID: "ses-failed" }
+    const unrelatedTransitions = JSON.stringify(Array.from({ length: 10_001 }, (_, index) => index))
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+           SELECT ?,NULL,1,'UNRELATED','{}',5000+CAST(key AS INTEGER) FROM json_each(?)`,
+        )
+        .run(fixture.receipt.planID, unrelatedTransitions),
+    )
+    const maxSequence = () =>
+      fixture.store.atomic(
+        (db) =>
+          db
+            .query<{ sequence: number }, [string]>(
+              "SELECT MAX(id) AS sequence FROM runner_transitions WHERE plan_id=?",
+            )
+            .get(fixture.receipt.planID)!.sequence,
+      )
+    const fullScopeSequence = maxSequence()
+
+    // The broad projection remains bounded; targeted reads must not inherit its failure.
+    expect(() => reads.snapshot(scope, tracker)).toThrow(
+      "Observation scope is too large; narrow it",
+    )
+    const taskTrajectory = await reads.trajectory({ scope, taskID, limit: 20 }, tracker)
+    expect(taskTrajectory.boundary.transitionSequence).toBe(fullScopeSequence)
+    expect((taskTrajectory.report as { task: { id: string } }).task.id).toBe(taskID)
+
+    const attemptTrajectory = await reads.trajectory(
+      { scope, attemptID: firstAttemptID, limit: 20 },
+      tracker,
+    )
+    expect(attemptTrajectory.boundary.transitionSequence).toBe(fullScopeSequence)
+    expect(attemptTrajectory.report).toMatchObject({
+      task: { id: taskID },
+      focusedAttemptID: firstAttemptID,
+      attempts: [{ id: firstAttemptID }],
+    })
+
+    const firstPage = await reads.trajectoryHistory({ scope, taskID, limit: 2 }, tracker)
+    const firstTrajectory = firstPage.report.trajectory as {
+      nextCursor: string | null
+    }
+    expect(firstPage.boundary.transitionSequence).toBe(fullScopeSequence)
+    expect(firstTrajectory.nextCursor).not.toBeNull()
+    expect(JSON.stringify(firstPage.report)).not.toContain("UNRELATED")
+
+    // Unrelated writes do not change the identity or sequence of a captured page set.
+    fixture.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at)
+           VALUES(?,NULL,1,'UNRELATED','{}',20000)`,
+        )
+        .run(fixture.receipt.planID),
+    )
+    const pinnedBoundary = firstPage.boundary
+    const beforeReads = fixture.store.atomic((db) => ({
+      tasks: db.query("SELECT id,body FROM tasks ORDER BY id").all(),
+      taskChanges: db.query("SELECT id FROM task_changes ORDER BY id").all(),
+      dispositions: db.query("SELECT id FROM task_dispositions ORDER BY id").all(),
+      audits: db.query("SELECT id FROM runner_audits ORDER BY id").all(),
+      progress: db.query("SELECT seq FROM runner_progress ORDER BY seq").all(),
+      attempts: db.query("SELECT id FROM runner_attempts ORDER BY id").all(),
+      effects: db.query("SELECT id FROM runner_effects ORDER BY id").all(),
+      transitions: db.query("SELECT id FROM runner_transitions ORDER BY id").all(),
+    }))
+    const continuation = await reads.trajectoryHistory(
+      {
+        scope,
+        taskID,
+        limit: 2,
+        cursor: firstTrajectory.nextCursor!,
+      },
+      tracker,
+    )
+    const continuationTrajectory = continuation.report.trajectory as { page: number }
+    expect(continuation.capturedAt).toBe(firstPage.capturedAt)
+    expect(continuation.boundary).toEqual(pinnedBoundary)
+    expect(continuationTrajectory.page).toBe(2)
+    expect(JSON.stringify(continuation.report)).not.toContain("UNRELATED")
+
+    const status = await reads.trajectoryStatus({ scope, taskID }, tracker)
+    expect(status.boundary.transitionSequence).toBe(maxSequence())
+    expect(status.boundary.transitionSequence).toBeGreaterThan(fullScopeSequence)
+    expect(status.report).toMatchObject({
+      task: { id: taskID },
+      effort: {
+        tokenUsage: {
+          total: { uncachedInput: 30 },
+          totalSessions: 2,
+          unknownAttempts: [],
+        },
+        toolCalls: { count: 5 },
+      },
+    })
+
+    await expect(
+      reads.trajectory(
+        {
+          scope: { kind: "session", sessionID: "ses-unrelated" },
+          attemptID: firstAttemptID,
+          limit: 20,
+        },
+        tracker,
+      ),
+    ).rejects.toThrow("No observation in this scope")
+    await expect(
+      reads.trajectoryHistory({ scope, taskID: crypto.randomUUID(), limit: 2 }, tracker),
+    ).rejects.toThrow("No observation in this scope")
+    const afterReads = fixture.store.atomic((db) => ({
+      tasks: db.query("SELECT id,body FROM tasks ORDER BY id").all(),
+      taskChanges: db.query("SELECT id FROM task_changes ORDER BY id").all(),
+      dispositions: db.query("SELECT id FROM task_dispositions ORDER BY id").all(),
+      audits: db.query("SELECT id FROM runner_audits ORDER BY id").all(),
+      progress: db.query("SELECT seq FROM runner_progress ORDER BY seq").all(),
+      attempts: db.query("SELECT id FROM runner_attempts ORDER BY id").all(),
+      effects: db.query("SELECT id FROM runner_effects ORDER BY id").all(),
+      transitions: db.query("SELECT id FROM runner_transitions ORDER BY id").all(),
+    }))
+    expect(afterReads).toEqual(beforeReads)
+  } finally {
+    fixture.close()
+  }
+})
+
+for (const change of ["source", "native"] as const)
+  test(`target status rejects a ${change} change during its read`, async () => {
+    const fixture = makeFixture()
+    try {
+      const secret = new Uint8Array(32).fill(change === "source" ? 24 : 25)
+      const started = Promise.withResolvers<void>()
+      const pending = Promise.withResolvers<TrajectorySession | null>()
+      const host: TrajectoryHost = {
+        session: (id) => fixture.host.session(id),
+        status: (id) => {
+          if (id === "ses-failed") {
+            started.resolve()
+            return pending.promise
+          }
+          const session = fixture.sessions.get(id)
+          return Promise.resolve(
+            session
+              ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+              : null,
+          )
+        },
+      }
+      const reads = new ObservationReads(fixture.store, host, "project", secret)
+      const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
+      tracker.initialize()
+      const scope = { kind: "session" as const, sessionID: "ses-failed" }
+      const reading = reads.trajectoryStatus({ scope, taskID }, tracker)
+      await started.promise
+      if (change === "source") {
+        fixture.store.atomic((db) =>
+          db
+            .query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?")
+            .run(firstAttemptID),
+        )
+      } else {
+        tracker.native({ id: "native-status-change", data: { sessionID: "ses-failed" } })
+      }
+      pending.resolve({
+        ...fixture.sessions.get("ses-failed")!,
+        messages: null,
+        messageStatus: "not-read",
+        messageError: null,
+      })
+      await expect(reading).rejects.toThrow("Observation changed while reading status")
+    } finally {
+      fixture.close()
+    }
+  })
 
 test("metadata status fails explicitly instead of falling back to session context", async () => {
   const fixture = makeFixture()
