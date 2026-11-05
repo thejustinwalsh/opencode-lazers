@@ -7,6 +7,18 @@ acceptance, native observations and cleanup are separate facts.
 
 ## Active execution
 
+- Newest update is the **Current delivery update** in the
+  [delivery checkpoint](../../design/reviews/native-delivery-checkpoint-20261105.md).
+  LZ134 source is integrated as77c1b1f+d4997a4;450 runner tests/6147 assertions
+  and fmt/lint/types pass. No intentional backend reload has occurred; Main is
+  checking the newly advertised selected-message handler before considering one.
+  Original141 Luna Max is actually active at1793895802232, correcting the existing
+  split layout and provider-aware picker search from Tera's Desktop review.
+  Its previous native temporary task override save/readback/reopen/removal worked;
+  project routes are unchanged.139 product observations worked but runtime idle
+  lineage remains unresolved. df92dc4 recovers actual input metadata, not missing
+  idle history. Do not repeat stale activation/reconciliation claims below.
+
 - Latest [native delivery checkpoint](../../design/reviews/native-delivery-checkpoint-20261105.md):
   Main is active;134 stopped on disk exhaustion, then resumed substantive work on
   its same Luna session at1793891366202; new shell calls independently observed.
