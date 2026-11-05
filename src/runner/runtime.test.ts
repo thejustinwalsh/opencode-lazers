@@ -6601,6 +6601,7 @@ test.each(["failed", "interrupted"] as const)(
     const worker = f.sessions.get(attempt.session_id)!
     worker.busy = false
     worker.outcome = outcome
+    worker.idleAt = 1234
     worker.background = {
       state: "unknown",
       source: "experimental.idle",
@@ -6619,7 +6620,7 @@ test.each(["failed", "interrupted"] as const)(
     await f.runtime.tick()
     await f.runtime.tick()
     expect(freshReads).toBe(2)
-    expect(detailedReads).toBe(outcome === "interrupted" ? 2 : 0)
+    expect(detailedReads).toBe(outcome === "interrupted" ? 2 : 1)
     expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
     expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
     expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
@@ -6631,7 +6632,7 @@ test.each(["failed", "interrupted"] as const)(
       attempt.task_id,
       "WORKER_STOPPED",
     )
-    expect(stopped?.outcome).toBe(outcome === "interrupted" ? "interrupted" : undefined)
+    expect(stopped?.outcome).toBe(outcome)
   },
 )
 
@@ -7554,6 +7555,69 @@ test.each([false, true])(
     expect(f.store.attempts(planID)).toHaveLength(1)
   },
 )
+
+test("native heartbeat failures retain structured holds without repeatedly reading context", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.pendingInput = false
+  worker.outcome = "failed"
+  worker.idleAt = 1000
+  worker.turn = { inputID: attempt.message_id, state: "completed" }
+  worker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "No idle hook after failure",
+  }
+  const original = f.host.session
+  let detailReads = 0
+  f.host.session = async (id, options) => {
+    const session = await original(id, options)
+    if (id !== attempt.session_id || !session) return session
+    if (options?.messages) {
+      detailReads++
+      return session
+    }
+    return { ...session, turn: undefined, messages: [] }
+  }
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(detailReads).toBe(1)
+  expect(f.store.latestTransition(planID, null, "BLOCKED")).toMatchObject({
+    workerObservation: { inputID: attempt.message_id, outcome: "failed", idleAt: 1000 },
+  })
+  await f.runtime.command(
+    {
+      requestID: "resume-native-heartbeat-failure",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue the exact failed worker",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const resumed = f.store.attempts(planID)[0]!
+  const readsBeforeNewFailure = detailReads
+  worker.busy = false
+  worker.pendingInput = false
+  worker.outcome = "failed"
+  worker.idleAt = 2000
+  worker.turn = { inputID: resumed.message_id, state: "completed" }
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(detailReads).toBe(readsBeforeNewFailure + 1)
+  expect(f.store.latestTransition(planID, null, "BLOCKED")).toMatchObject({
+    workerObservation: { inputID: resumed.message_id, outcome: "failed", idleAt: 2000 },
+  })
+  expect(f.store.attempts(planID)).toHaveLength(1)
+})
 
 test("an explicit resume continues one process-replaced interrupted attempt without inventing idle proof", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })

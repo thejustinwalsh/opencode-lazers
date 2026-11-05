@@ -51,3 +51,21 @@ Final canonical runtime/tools/continuation checks:256 pass,0 fail,3932 assertion
 requested through Desktop; task/plan acceptance and current completion-observer
 repair remain outstanding. Root's merge corrections are driver assistance, not
 work performed by the original implementor.
+
+## Native heartbeat correction
+
+Actual129/132 resume was rejected: later generic holds had erased the structured
+failed observation. Root initially suspected mixed loaded runtimes; that remains
+unproven. Source inspection found a concrete integration error instead: native
+metadata heartbeats omit `turn`, supplying it only for `messages:true`, whereas
+the fixture returned it for both reads. The merged fast path depended on that
+absent detail and bypassed the failed-input observation.
+
+A native-shaped regression first failed with0 detail reads instead of1. The
+correction takes one detailed read for a fresh failure and caches its hold only
+while the same assignment, native idle timestamp and background observation stay
+unchanged. It preserves the structured hold and freshly validates every explicit
+resume. Changed timestamps force another read. This is timestamp-based observed
+session state, not file hashing or a new evidence gate. All46 related tests/
+574 assertions, lint/types pass. Native continuation still needs a successful
+reprobe; the prior256-test pass preceded this additional adapter correction.

@@ -2558,6 +2558,7 @@ export class TaskRuntime {
       inputID: worker.turn?.inputID,
       outcome: worker.outcome,
       turnState: worker.turn?.state,
+      idleAt: worker.idleAt,
       busy: worker.busy,
       pendingInput: worker.pendingInput ?? false,
       pendingPermissions: worker.pendingPermissions ?? 0,
@@ -3975,20 +3976,40 @@ export class TaskRuntime {
       session.turn?.inputID,
     )
     const backgroundReason = this.backgroundBlockReason(session, attempt)
-    const currentFailure =
+    const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
+      plan.id,
+      null,
+      "BLOCKED",
+    )?.workerObservation
+    const unchangedFailure =
       session.outcome === "failed" &&
-      session.turn?.state === "completed" &&
-      this.matchesWorkerInput(attempt, session.turn.inputID)
+      typeof session.idleAt === "number" &&
+      Number.isFinite(session.idleAt) &&
+      previousHold?.kind === "terminal-worker-observation" &&
+      previousHold.attemptID === attempt.id &&
+      previousHold.sessionID === session.id &&
+      previousHold.workspace === attempt.workspace &&
+      previousHold.outcome === "failed" &&
+      previousHold.idleAt === session.idleAt &&
+      (!session.turn ||
+        (previousHold.inputID === session.turn.inputID &&
+          previousHold.turnState === session.turn.state)) &&
+      JSON.stringify(previousHold.background) === JSON.stringify(session.background)
     if (
       !session.busy &&
       !session.pendingInput &&
       !session.observationUnstable &&
       backgroundReason &&
       session.outcome !== "interrupted" &&
-      !currentFailure
+      (session.outcome !== "failed" || unchangedFailure)
     ) {
       if (!priorBackground) {
-        this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"])
+        this.hold(
+          plan,
+          backgroundReason,
+          ["audit", "reconcile", "cancel"],
+          unchangedFailure ? previousHold : undefined,
+        )
         this.backgroundWait(plan, attempt, session, backgroundReason, fence)
       }
       return

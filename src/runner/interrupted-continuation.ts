@@ -18,6 +18,7 @@ export type TerminalWorkerHold = {
   inputID?: unknown
   outcome?: unknown
   turnState?: unknown
+  idleAt?: unknown
   busy?: unknown
   pendingInput?: unknown
   pendingPermissions?: unknown
