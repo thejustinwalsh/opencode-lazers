@@ -4739,6 +4739,122 @@ test("requeued unstarted work can be cancelled again before normal dispatch", as
   )
 })
 
+test("unstarted retry selects an explicit newer baseline without replacing tasks or attempts", async () => {
+  const f = fixture({ delayed: true })
+  const planID = f.receipt.planID
+  const stopped = await cancelUnstartedPlan(f)
+  const original = JSON.parse(stopped.body)
+  const tasksBefore = f.tasks.map((task) => f.repository.get(task.id))
+  writeFileSync(join(f.root, "new-baseline.txt"), "new current source\n")
+  git(f.root, ["add", "new-baseline.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "new baseline",
+  ])
+  const baseCommit = git(f.root, ["rev-parse", "HEAD"])
+  const input = {
+    requestID: "refresh-unstarted-baseline",
+    planID,
+    expectedVersion: stopped.version,
+    action: "retry" as const,
+    taskID: f.tasks[0]!.id,
+    baseCommit,
+    reason: "Continue the existing work on reviewed current source",
+  }
+  const receipt = await f.runtime.command(input, "owner")
+  expect(receipt).toMatchObject({ status: "requeued" })
+  expect(JSON.parse(f.store.plan(planID)!.body)).toEqual({ ...original, baseCommit })
+  expect(f.store.plan(planID)!.revision).toBe(stopped.revision + 1)
+  expect(f.tasks.map((task) => f.repository.get(task.id))).toEqual(tasksBefore)
+  expect(f.store.attempts(planID)).toHaveLength(0)
+  const version = f.store.plan(planID)!.version
+  expect(await f.runtime.command(input, "owner")).toEqual(receipt)
+  expect(f.store.plan(planID)!.version).toBe(version)
+  await f.runtime.tick()
+  expect(f.store.attempts(planID)[0]!.base_commit).toBe(baseCommit)
+})
+
+test("unstarted baseline selection rejects missing, unrelated and unlanded commits atomically", async () => {
+  const f = fixture()
+  const stopped = await cancelUnstartedPlan(f)
+  const commitTree = (parents: string[]) =>
+    git(f.root, [
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit-tree",
+      `${f.base}^{tree}`,
+      ...parents,
+      "-m",
+      "unlanded source",
+    ])
+  const before = f.store.plan(stopped.id)
+  const history = f.store.activity(stopped.id, f.tasks[0]!.id)
+  for (const baseCommit of ["f".repeat(40), commitTree([]), commitTree(["-p", f.base])]) {
+    await expect(
+      f.runtime.command(
+        {
+          requestID: `invalid-baseline-${baseCommit}`,
+          planID: stopped.id,
+          expectedVersion: stopped.version,
+          action: "retry",
+          taskID: f.tasks[0]!.id,
+          baseCommit,
+          reason: "Refresh unstarted source",
+        },
+        "owner",
+      ),
+    ).rejects.toThrow()
+    expect(f.store.plan(stopped.id)).toEqual(before)
+    expect(f.store.activity(stopped.id, f.tasks[0]!.id)).toEqual(history)
+    expect(f.store.attempts(stopped.id)).toHaveLength(0)
+  }
+})
+
+test("unstarted baseline selection cannot rewrite a plan with a prior worker", async () => {
+  const f = fixture({ delayed: true })
+  await runPlan(f)
+  await f.runtime.tick()
+  await f.runtime.command(
+    {
+      requestID: "cancel-prior-worker-baseline",
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  await f.runtime.tick()
+  const before = f.store.plan(f.receipt.planID)!
+  const attempts = f.store.attempts(before.id)
+  expect(attempts).toHaveLength(1)
+  expect(before.state).toBe("cancelled")
+  expect(before.artifact).toBeNull()
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "reject-rewriting-prior-worker-baseline",
+        planID: before.id,
+        expectedVersion: before.version,
+        action: "retry",
+        taskID: f.tasks[1]!.id,
+        baseCommit: "f".repeat(40),
+        reason: "Do not rewrite execution history",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("prior attempts")
+  expect(f.store.plan(before.id)).toEqual(before)
+  expect(f.store.attempts(before.id)).toEqual(attempts)
+})
+
 test("unstarted recovery rejects unauthorized, stale, missing, archived and foreign owners without writes", async () => {
   for (const denial of ["unauthorized", "stale", "missing", "archived", "foreign"] as const) {
     const f = fixture()

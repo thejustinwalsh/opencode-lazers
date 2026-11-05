@@ -190,7 +190,10 @@ export const CommandInput = z
     baseCommit: z
       .string()
       .regex(/^[a-f0-9]{40,64}$/)
-      .optional(),
+      .optional()
+      .describe(
+        "Explicit retry baseline for shared retry, or to advance a wholly unstarted plan to reviewed source on current HEAD. Existing attempts retain their baseline.",
+      ),
     targetSessionID: z.string().min(1).max(200).optional(),
     taskID: z.uuid().optional(),
     attemptID: z.uuid().optional(),

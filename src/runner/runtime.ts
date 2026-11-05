@@ -1231,6 +1231,22 @@ export class TaskRuntime {
           )
             throw new Error("Reconcile uncertain effects first")
 
+          const input = PlanInput.parse(JSON.parse(plan.body))
+          if (command.baseCommit !== undefined && command.baseCommit !== input.baseCommit) {
+            if (this.store.attempts(plan.id).length)
+              throw new Error("A plan with prior attempts cannot change its unstarted baseline")
+            const baseCommit = git(this.directory, ["rev-parse", `${command.baseCommit}^{commit}`])
+            if (baseCommit !== command.baseCommit)
+              throw new Error("An explicit baseline must identify a commit")
+            git(this.directory, ["merge-base", "--is-ancestor", input.baseCommit, baseCommit])
+            git(this.directory, ["merge-base", "--is-ancestor", baseCommit, "HEAD"])
+            this.store.revisePlan(
+              plan,
+              PlanInput.parse({ ...input, baseCommit }),
+              "UNSTARTED_BASELINE_SELECTED",
+              { from: input.baseCommit, baseCommit, caller, reason: command.reason },
+            )
+          }
           this.store.move(plan.id, node.task_id, "RETRY", command.reason)
           if (plan.state !== "running")
             db.query(
