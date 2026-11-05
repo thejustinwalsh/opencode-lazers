@@ -331,3 +331,51 @@ inspection confirmed the automatic owner continuation. Implementation/admission
 is not yet observed. Preserve active129/132 and leave canonical activation to Root
 at an idle boundary; routine supported scope amendments need no further policy
 permission, but reservations and native recovery controls remain authoritative.
+
+## LZ127 actual source-repair execution, not idle advice
+
+The user explicitly required implementation in parallel129. A real coordination
+request was admitted to current127 owner `ses_f58f7187b74c4d6da97f63335ffe7b44`
+at1793862915735, input `msg_1aa8fd65b001hIrG8qO0g5jvGb`; this did not transfer
+ownership or prompt the worker outside runtime. The owner used supported explicit
+cancellation, waited for settlement atversion47 with all effects completed, then
+resumed the same original attempt for the authorized prospective source repair.
+Atversion51 the task was running with7 completed effects, none pending/uncertain,
+and still exactly one original attempt. Historical idle mismatch remains unknown.
+
+Authenticated native observation at1793863194822 found original127 worker
+`ses_42ac41f32a83465c8a71161d511ba045` active on Luna Max in original
+`38e12d10-7fbf-4c3a-a442-cf5aae0121fd` tree. Tools advanced174→215, with actual
+public native-log API/type and existing native regression reads. A source patch
+was not yet observed at that instant. At1793863194833 original129 was also active
+with a completed `src/observability/contract.ts` patch, establishing real parallel
+work rather than just two prompt receipts. No watched-source activation occurred.
+
+Independent Luna Max workflow research `ses_e55739d81ffeqM2MJM3K6tg52U` confirmed
+cancel→settle→same-attempt resume is the supported route for this fence, preserving
+task/attempt/session/tree/usage and unknown historical idle evidence. References:
+`src/runner/runtime.ts:1093–1105,1183–1345,3727–3785` and
+`src/runner/interrupted-continuation.ts:116–141`. No runtime correction was needed.
+
+## LZ132 Code Mode correction and remaining native gate
+
+Independent final-artifact review found only the user-identified Code Mode
+registration blocker; retained lifetime20-write-cap and empty-advice findings are
+fixed. See `design/reviews/task132-final-review-20261105.md` for the nonblocking
+history-count scaling concern and check evidence.
+
+Because original132 is already task-accepted, isolated narrow LZ137
+(`0f6bb558-101b-4d57-a9d9-80428df78fce`), plan
+`181baf24-b3dc-49c5-adad-338d0ec9fe34`, supplements its accepted artifact rather
+than replacing/restarting that worker. Runtime accepted correction descendant
+`7262d827d166808a43b77f8f5e3f34920a6b2e11` over `e67fee1`, changing only
+`src/tasks/rpc.ts` and `src/tasks/rpc.test.ts`; task registration and quality checks
+passed. Independent delta review cleared the sole P1: exactly the required two
+lines, no other file changes, clean tree,8 tests/99 assertions and diff check
+passing. LZ137 task and combined checks exit0 unchanged and planversion9 is
+accepted. No canonical source integration
+or native qualification has occurred. The prepared, explicitly unexecuted
+procedure is `.agents/docs/evidence/task132-native-readback-procedure-20261105.md`:
+actual attachment and both getter calls must run through Code Mode after Root's
+quiet activation, preserving original task/worker identity and exact-artifact
+human evidence. Read availability is not model consumption.

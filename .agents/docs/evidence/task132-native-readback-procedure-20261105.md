@@ -24,6 +24,13 @@ The task is accepted; plan version25 is held only on combined
 - Record the integrated candidate ancestry, effective registration and current
   runtime version. Preserve the original task specifications, attempts, sessions,
   inputs, routes, usage, check history and retained worktrees.
+- Because the correction is a descendant rather than the original accepted
+  artifact, use supported `adopt-descendant` for original LZ132 at the reviewed
+  target-branch HEAD: exact original task/attempt, original artifact `e67fee1`
+  (full hash above), full corrected descendant commit and target branch. Let its
+  fresh task/combined checks finish without a worker turn. Inspect the resulting
+  adoption ID and exact task/combined artifact; bind subsequent native human
+  evidence to those current identities, not to stale uncorrected base evidence.
 
 ## Native walkthrough
 
@@ -57,7 +64,7 @@ The task is accepted; plan version25 is held only on combined
 Save observed receipts and both fresh getter results with timestamps, registration
 and exact-artifact identity. Do not record combined human evidence until the
 walkthrough actually succeeds. Then reread the current plan version and bind
-`native-attached-readback` evidence to the runtime's exact combined artifact via
-the supported human-evidence command. Review/integration and native non-forced
+`native-attached-readback` evidence to the runtime's exact combined artifact and
+applicable adoption ID via the supported human-evidence command. Review/integration and native non-forced
 cleanup remain separate runtime actions; never clear historical idle unknowns
 by treating this attachment walkthrough as a completion certificate.
