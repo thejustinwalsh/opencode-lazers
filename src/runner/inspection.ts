@@ -2,10 +2,17 @@ import { z } from "zod"
 import type { RunnerStore } from "./store.ts"
 import type { SourceQuarantine } from "./source-quarantine.ts"
 
-export const InspectPlanInput = z.strictObject({
+const CompactInspectPlanInput = z.strictObject({
   planID: z.uuid().optional(),
   full: z.boolean().optional().default(false),
 })
+const JournalInspectPlanInput = z.strictObject({
+  planID: z.uuid(),
+  view: z.literal("journal"),
+  limit: z.number().int().min(1).max(100).optional().default(50),
+  cursor: z.string().min(1).max(8192).optional(),
+})
+export const InspectPlanInput = z.union([CompactInspectPlanInput, JournalInspectPlanInput])
 export type InspectPlanInput = z.infer<typeof InspectPlanInput>
 
 export type CompactWaitingPlan = {
@@ -418,6 +425,8 @@ function compactAudit(store: RunnerStore) {
 }
 
 export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
+  if ("view" in input)
+    return store.architectSourceJournalPage(input.planID, input.limit, input.cursor)
   if (input.full) {
     return input.planID
       ? store.detail(input.planID)

@@ -4,7 +4,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
-import { type CompactInspectionSummary, type CompactPlanDetail, inspectPlan } from "./inspection.ts"
+import {
+  InspectPlanInput,
+  type CompactInspectionSummary,
+  type CompactPlanDetail,
+  inspectPlan,
+} from "./inspection.ts"
 import { RunnerStore } from "./store.ts"
 
 const directories: string[] = []
@@ -209,4 +214,27 @@ test("compact inspection keeps scheduling signal without serializing logs", () =
   const full = inspectPlan(f.store, { planID: receipt.planID, full: true })
   expect(JSON.stringify(full)).toContain("FULL_POLICY_CANARY")
   expect(JSON.stringify(full)).toContain("FULL_STDOUT_CANARY")
+})
+
+test("journal is an explicitly selected bounded view and leaves compact/full inputs compatible", () => {
+  const planID = crypto.randomUUID()
+  const parsed = InspectPlanInput.parse({ planID, view: "journal" })
+  expect(parsed).toEqual({ planID, view: "journal", limit: 50 })
+  expect(InspectPlanInput.parse({ planID, full: true })).toEqual({ planID, full: true })
+  expect(InspectPlanInput.parse({ planID })).toEqual({ planID, full: false })
+  expect(() => InspectPlanInput.parse({ view: "journal" })).toThrow()
+  expect(() => InspectPlanInput.parse({ planID, view: "journal", limit: 0 })).toThrow()
+  expect(() => InspectPlanInput.parse({ planID, view: "journal", limit: 1.5 })).toThrow()
+  expect(() => InspectPlanInput.parse({ planID, limit: 10 })).toThrow()
+  expect(() => InspectPlanInput.parse({ planID, view: "journal", full: true })).toThrow()
+
+  const calls: unknown[][] = []
+  const store = {
+    architectSourceJournalPage: (...args: unknown[]) => {
+      calls.push(args)
+      return { mode: "journal", planID, records: [] }
+    },
+  } as unknown as RunnerStore
+  expect(inspectPlan(store, parsed)).toMatchObject({ mode: "journal", planID })
+  expect(calls).toEqual([[planID, 50, undefined]])
 })

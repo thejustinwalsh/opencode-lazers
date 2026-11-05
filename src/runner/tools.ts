@@ -27,7 +27,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       {
         name: "lz-inspect-plan",
         description:
-          "Compact by default: inspect all project plans or one plan with IDs, authored title/objective, state/version/reason, model, schedule, node states/waiting reasons, attempt/effect/outcome counts and concise check exit status. It omits policies, transcripts and check output. Set full=true only for progressive troubleshooting; it returns the existing full plan detail, or all plan source and audit when planID is omitted.",
+          "Compact by default: inspect all project plans or one plan with IDs, authored title/objective, state/version/reason, model, schedule, node states/waiting reasons, attempt/effect/outcome counts and concise check exit status. It omits policies, transcripts and check output. Set full=true only for progressive troubleshooting; it returns the existing full plan detail, or all plan source and audit when planID is omitted. Explicitly set view='journal' with planID to page that plan's retained Architect source journal (limit 1-100, default 50, then pass nextCursor). Journal entries are metadata-only original session/message references; they contain no message bodies, do not prove transcript completeness or native consumption, and inspection does not acknowledge or advance anything. Cursor traversal is invalidated by changes to that selected plan's source journal, not unrelated project activity.",
         schema: InspectPlanInput,
         run: (input: unknown) => {
           return inspectPlan(runtime.store, InspectPlanInput.parse(input))

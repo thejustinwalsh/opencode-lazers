@@ -9,6 +9,8 @@ import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
 import type { ArchitectSourceResult } from "./host.ts"
+import { readSourceJournalPage } from "./source-journal.ts"
+import type { SourceJournalPage } from "./source-journal.ts"
 
 export type PlanRow = {
   id: string
@@ -256,6 +258,103 @@ function isGeneratedOutcome(
   } catch {
     return false
   }
+}
+
+function ensureArchitectSourceJournalRevisions(db: Database) {
+  db.exec(`CREATE TABLE IF NOT EXISTS runner_architect_journal_revisions (
+    project_directory TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    PRIMARY KEY(project_directory,plan_id)
+  )`)
+
+  const mappedRenewalPlans = (renewalID: string, anchorPlanID: string) =>
+    `SELECT mapped.project_directory,mapped.id AS plan_id
+     FROM runner_architect_renewals renewal
+     JOIN runner_architect_renewal_plans mapping ON mapping.renewal_id=renewal.id
+     JOIN runner_plans mapped ON mapped.id=mapping.plan_id
+     JOIN runner_plans anchor ON anchor.id=${anchorPlanID}
+     WHERE renewal.id=${renewalID} AND renewal.anchor_plan_id=anchor.id
+       AND mapped.project_directory=anchor.project_directory`
+
+  const mappedSourceSession = (sessionID: string) =>
+    `SELECT mapped.project_directory,mapped.id AS plan_id
+     FROM runner_architect_sources source
+     JOIN runner_architect_renewals renewal ON renewal.id=source.renewal_id
+     JOIN runner_architect_renewal_plans mapping ON mapping.renewal_id=renewal.id
+     JOIN runner_plans mapped ON mapped.id=mapping.plan_id
+     JOIN runner_plans anchor ON anchor.id=source.anchor_plan_id
+     WHERE source.session_id=${sessionID} AND renewal.anchor_plan_id=source.anchor_plan_id
+       AND renewal.previous_session_id=source.session_id
+       AND mapped.project_directory=anchor.project_directory`
+
+  const planLookup = (table: string, row: string) => {
+    switch (table) {
+      case "runner_architect_renewals":
+        return mappedRenewalPlans(`${row}.id`, `${row}.anchor_plan_id`)
+      case "runner_architect_renewal_plans":
+        return `SELECT mapped.project_directory,mapped.id AS plan_id
+          FROM runner_plans mapped
+          JOIN runner_architect_renewals renewal ON renewal.id=${row}.renewal_id
+          JOIN runner_plans anchor ON anchor.id=renewal.anchor_plan_id
+          WHERE mapped.id=${row}.plan_id AND mapped.project_directory=anchor.project_directory`
+      case "runner_architect_sources":
+        return mappedRenewalPlans(`${row}.renewal_id`, `${row}.anchor_plan_id`)
+      case "runner_architect_source_results":
+        return mappedRenewalPlans(
+          `${row}.renewal_id`,
+          `(SELECT anchor_plan_id FROM runner_architect_renewals WHERE id=${row}.renewal_id)`,
+        )
+      case "runner_architect_inputs":
+        return `${mappedRenewalPlans(
+          `${row}.renewal_id`,
+          `(SELECT anchor_plan_id FROM runner_architect_renewals WHERE id=${row}.renewal_id)`,
+        )}
+        UNION
+        ${mappedSourceSession(`${row}.session_id`)}`
+      default:
+        throw new Error(`Unsupported Architect journal table: ${table}`)
+    }
+  }
+
+  const tables = [
+    "runner_architect_renewals",
+    "runner_architect_renewal_plans",
+    "runner_architect_sources",
+    "runner_architect_inputs",
+    "runner_architect_source_results",
+  ] as const
+  for (const table of tables) {
+    const columns = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all()
+    for (const event of ["INSERT", "UPDATE", "DELETE"] as const) {
+      const changed =
+        event === "UPDATE"
+          ? `WHEN ${columns.map(({ name }) => `OLD."${name}" IS NOT NEW."${name}"`).join(" OR ")}`
+          : ""
+      const rows = event === "UPDATE" ? ["OLD", "NEW"] : [event === "DELETE" ? "OLD" : "NEW"]
+      const plans = rows.map((row) => planLookup(table, row)).join(" UNION ")
+      const name = `architect_journal_revision_${table}_${event}`
+      const definition = `CREATE TRIGGER ${name}
+        AFTER ${event} ON ${table} ${changed} BEGIN
+          INSERT INTO runner_architect_journal_revisions(project_directory,plan_id,revision)
+          SELECT project_directory,plan_id,1 FROM (${plans})
+          WHERE project_directory IS NOT NULL AND plan_id IS NOT NULL
+          GROUP BY project_directory,plan_id
+          ON CONFLICT(project_directory,plan_id) DO UPDATE SET revision=revision+1;
+        END`
+      db.exec(`DROP TRIGGER IF EXISTS observation_revision_${table}_${event}`)
+      const current = db
+        .query<{ sql: string }, [string]>(
+          "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+        )
+        .get(name)?.sql
+      const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim()
+      if (current && normalize(current) === normalize(definition)) continue
+      if (current) db.exec(`DROP TRIGGER ${name}`)
+      db.exec(definition)
+    }
+  }
+  // Journal cursors now observe only the selected plan's retained-source mappings.
 }
 
 export class RunnerStore {
@@ -575,6 +674,7 @@ export class RunnerStore {
         "UPDATE runner_outbox SET state='admitted',receipt=COALESCE(receipt,?) WHERE state='delivered'",
       ).run(JSON.stringify({ kind: "legacy-host-admitted", consumption: "unknown" }))
       ensureObservationRevision(db)
+      ensureArchitectSourceJournalRevisions(db)
     })
     new RecoveryJournal(repository)
   }
@@ -847,6 +947,11 @@ export class RunnerStore {
            ) ORDER BY observed_at,message_id`,
         )
         .all(sessionID, this.repository.projectDirectory),
+    )
+  }
+  architectSourceJournalPage(planID: string, limit: number, cursor?: string): SourceJournalPage {
+    return this.atomic((db) =>
+      readSourceJournalPage(db, this.repository.projectDirectory, planID, limit, cursor),
     )
   }
   retiredArchitectSourceForPlan(sessionID: string, planID: string) {
