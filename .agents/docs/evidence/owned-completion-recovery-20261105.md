@@ -199,3 +199,22 @@ This closes136, not133/135's independent human gates or retained recovery work.
 Root's comparable quiet native performance measurements. Existing134 waits for
 integrated133. Existing99 remains the continuation task; do not duplicate it or
 transfer its stopped owner's plans without authorization.
+
+## Focused coordination of the current LZ99 owner
+
+Root identified current owner `ses_c10fbf89effe4d9f9951e6a26590d7f3` as active
+but replaying unrelated history, while original99 worker
+`ses_2e7fd6bebd8d44699e381e1728ee4655` genuinely implements in attempt
+`027e143b-d6d3-4802-b5d9-54e1902f6943`. Under explicit Root authorization, a
+native keyed instruction-context entry was delivered/read back at1793856223141:
+`lazers.coordination.lz99.focus-current-worker-and-yield.20261105.v1`.
+
+It directs only current99 worker/approval inspection, owner-authorized reconciliation
+when fresh controls permit, actionable review and yielding instead of unrelated
+historical sweeps. It preserves unknown evidence, workers, priorities and notices;
+it is not permission to transfer58 plans or stop the genuine99 worker.
+
+Authenticated retained input lookup before/after returned the same original input
+`msg_6d0094015270407cbded1f6c4dd7bdf8`. No prompt/synthetic message, ownership
+change, worker mutation or new session was sent. Delivery/readback is observed;
+owner consumption, reconciliation and changed behavior are **not yet observed**.
