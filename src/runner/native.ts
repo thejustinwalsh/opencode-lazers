@@ -810,8 +810,8 @@ export function nativeHost(
           throw new Error("Native retained archive worker has active input or approval work")
         const authorized = repository.atomic((db) =>
           db
-            .query(
-              `SELECT 1 FROM runner_source_quarantines q
+            .query<{ state: string }, string[]>(
+              `SELECT a.state FROM runner_source_quarantines q
             JOIN runner_attempts a ON a.id=q.attempt_id
             JOIN runner_plans p ON p.id=q.plan_id
             WHERE q.phase='pending' AND q.request_id=? AND q.plan_id=?
@@ -832,6 +832,11 @@ export function nativeHost(
             ),
         )
         if (!authorized) throw new Error("Native retained archive request authority changed")
+        if (
+          authorized.state === "running" &&
+          (await retainedNativeInputID(client, input.sessionID)) !== input.assignedMessageID
+        )
+          throw new Error("Native retained archive current input changed")
         return target
       }
       if ((await validate()).time.archived !== undefined) return

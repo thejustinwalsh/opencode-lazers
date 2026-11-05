@@ -593,6 +593,7 @@ function attachNativeQuarantineHost(
     unavailable?: boolean
     loseReply?: boolean
     onUpdate?: () => void
+    onObserve?: () => void
     probe?: () => Promise<
       Partial<{
         pid: number
@@ -639,6 +640,7 @@ function attachNativeQuarantineHost(
     session: {
       get: async () => target(),
       active: async () => {
+        options.onObserve?.()
         if (options.unavailable) throw new Error("Native observation unavailable")
         return options.active ? { [f.retained.session_id]: { type: "running" } } : {}
       },
@@ -649,6 +651,15 @@ function attachNativeQuarantineHost(
         options.onUpdate?.()
         if (options.loseReply) throw new Error("Archive reply lost")
       },
+    },
+    message: {
+      list: async ({ type }: { type: string }) => ({
+        data:
+          type === "user" && f.worker.turn?.inputID
+            ? [{ type: "user", id: f.worker.turn.inputID }]
+            : [],
+        cursor: {},
+      }),
     },
     permission: { request: { list } },
     form: { list },
@@ -1007,6 +1018,61 @@ test("source quarantine isolates a completed foreground worker with unknown back
   expect(readFileSync(join(original.workspace, "shared.txt"), "utf8")).toBe("a")
   expect(f.store.nodes(f.receipt.planID)[0]!.state).not.toBe("accepted")
 })
+
+test.each(["before-update", "after-update"] as const)(
+  "native running-source archive fences a newer input %s",
+  async (when) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    await runPlan(f)
+    await f.runtime.tick()
+    const attempt = f.store.attempts(f.receipt.planID)[0]!
+    f.completeWorker(attempt.session_id)
+    const worker = f.sessions.get(attempt.session_id)!
+    Object.assign(worker, {
+      pendingInput: false,
+      pendingPermissions: 0,
+      pendingForms: 0,
+      background: { state: "unknown", source: "experimental.idle", reason: "Old idle unavailable" },
+    })
+    const guard = registerSourceGuard(f.store, attempt.workspace)
+    cleanup.push(guard)
+    await f.runtime.command(
+      {
+        requestID: `quarantine-input-race-${when}`,
+        planID: f.receipt.planID,
+        expectedVersion: f.store.plan(f.receipt.planID)!.version,
+        action: "quarantine-source",
+        attemptID: attempt.id,
+        reason: "Keep new foreground input outside the old archive request",
+      },
+      "owner",
+    )
+    const observeSession = f.host.session
+    const changeInput = () => {
+      worker.turn = { inputID: "msg_newer", state: "completed" }
+    }
+    const adapter = attachNativeQuarantineHost(
+      {
+        ...f,
+        retained: attempt,
+        worker,
+        guardID: guard.registrationID,
+      },
+      {
+        onObserve: when === "before-update" ? changeInput : undefined,
+        onUpdate: when === "after-update" ? changeInput : undefined,
+      },
+    )
+    f.host.session = observeSession
+    await f.runtime.tick()
+    expect(adapter.archives).toBe(when === "before-update" ? 0 : 1)
+    expect(sourceQuarantine(f.store, attempt.id)?.phase).toBe("pending")
+    expect(sourceReservationExcluded(f.store, attempt, { mode: "isolated" })).toBe(false)
+    expect(worker.background?.state).toBe("unknown")
+    await f.runtime.tick()
+    expect(adapter.archives).toBe(when === "before-update" ? 0 : 1)
+  },
+)
 
 test.each(["pending", "different-input", "failed", "busy", "missing-turn"] as const)(
   "running source quarantine rejects %s foreground without mutation",
