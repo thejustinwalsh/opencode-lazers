@@ -2520,6 +2520,61 @@ function reviewInputCommand(
   }
 }
 
+async function holdInterruptedAttempt(f: ReturnType<typeof fixture>) {
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: attempt.message_id, state: "interrupted" }
+  worker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "The replaced process no longer reports its idle hook state",
+  }
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.plan(planID)?.reason).toContain("Worker execution was interrupted")
+  return { planID, attempt: f.store.attempts(planID)[0]!, worker }
+}
+async function holdFailedAttempt(
+  f: ReturnType<typeof fixture>,
+  inputID?: string | null,
+  outcome: HostSession["outcome"] = "failed",
+) {
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = outcome
+  worker.turn = {
+    inputID: inputID === undefined ? attempt.message_id : inputID,
+    state: "completed",
+  }
+  worker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "The native idle-hook report is unavailable",
+  }
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  return { planID, attempt: f.store.attempts(planID)[0]!, worker }
+}
+function reopenRuntime(f: ReturnType<typeof fixture>) {
+  const repository = new TaskRepository(f.repository.path, f.root)
+  const store = new RunnerStore(repository)
+  store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const runtime = new TaskRuntime(store, f.host, "project")
+  cleanup.unshift(() => {
+    void runtime.stop()
+    repository.close()
+  })
+  return { store, runtime }
+}
 async function acceptPlan(
   f: ReturnType<typeof fixture>,
   planID: ReturnType<typeof crypto.randomUUID>,
@@ -7500,6 +7555,702 @@ test.each([false, true])(
   },
 )
 
+test("an explicit resume continues one process-replaced interrupted attempt without inventing idle proof", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  const originalMessageID = attempt.message_id
+  const originalSessionID = attempt.session_id
+  const originalWorkspace = attempt.workspace
+  const originalBase = attempt.base_commit
+  const originalPolicy = attempt.policy
+  worker.tokens = 777
+  worker.tools = 23
+  worker.cost = 2.5
+  worker.busy = false
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: originalMessageID, state: "interrupted" }
+  worker.background = {
+    state: "unknown",
+    source: "experimental.idle",
+    reason: "The replaced process no longer reports its idle hook state",
+  }
+
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: attempt.id, state: "running" })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  expect(
+    f.store.latestTransition(planID, attempt.task_id, "WORKER_BACKGROUND_UNKNOWN"),
+  ).toBeDefined()
+
+  // Reopening the runtime preserves the running attempt and still cannot infer
+  // that the retained native process is idle or authorize a continuation.
+  await f.runtime.stop()
+  const replaced = reopenRuntime(f)
+  await replaced.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+
+  const resume = {
+    requestID: "resume-interrupted-process-replacement",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "resume",
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    reason: "Explicitly continue the matching interrupted attempt after process replacement",
+  }
+  const receipt = await replaced.runtime.command(resume, "owner")
+  expect(await replaced.runtime.command(resume, "owner")).toEqual(receipt)
+  const assigned = f.store.attempts(planID)[0]!
+  expect(receipt).toMatchObject({ status: "resuming" })
+  expect(assigned).toMatchObject({
+    id: attempt.id,
+    state: "preparing",
+    session_id: originalSessionID,
+    workspace: originalWorkspace,
+    base_commit: originalBase,
+    policy: originalPolicy,
+    token_count: 777,
+    tool_count: 23,
+    cost: 2.5,
+  })
+  expect(assigned.message_id).not.toBe(originalMessageID)
+  const resumed = f.store
+    .activity(planID, attempt.task_id)
+    .filter((entry) => entry.event === "ATTEMPT_RESUMED")
+  expect(resumed).toHaveLength(1)
+  expect(JSON.parse(resumed[0]!.payload)).toMatchObject({
+    attemptID: attempt.id,
+    previousMessageID: originalMessageID,
+    messageID: assigned.message_id,
+    interruptedInputID: originalMessageID,
+    usageRetained: true,
+  })
+  expect(worker.background?.state).toBe("unknown")
+  expect(readFileSync(join(originalWorkspace, "a.txt"), "utf8")).toBe("a")
+  expect(git(originalWorkspace, ["status", "--porcelain"])).not.toBe("")
+
+  await replaced.runtime.stop()
+  const reopened = reopenRuntime(f)
+  expect(await reopened.runtime.command(resume, "owner")).toEqual(receipt)
+  await reopened.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create:")).length).toBe(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]?.message_id).toBe(assigned.message_id)
+
+  worker.busy = false
+  worker.outcome = undefined
+  worker.turn = { inputID: assigned.message_id, state: "pending" }
+  await reopened.runtime.tick()
+  expect(reopened.store.plan(planID)?.state).toBe("running")
+  expect(reopened.store.effects(planID).some((effect) => effect.kind.startsWith("verify:"))).toBe(
+    false,
+  )
+
+  // A delayed pre-resume native observation is ignored, not treated as evidence
+  // for or a new hold on the assigned continuation.
+  const nativeSession = f.host.session
+  f.host.session = async (id, options) => {
+    const session = await nativeSession(id, options)
+    if (id !== originalSessionID || !session) return session
+    return {
+      ...session,
+      busy: false,
+      outcome: "interrupted",
+      turn: { inputID: originalMessageID, state: "interrupted" },
+      background: {
+        state: "observed",
+        source: "experimental.idle",
+        observedAt: Date.now(),
+        inputID: originalMessageID,
+        executionStartSequence: 2,
+        eventSequence: 3,
+        count: 0,
+        kinds: { shell: 0, subagent: 0, image: 0 },
+      },
+    }
+  }
+  await reopened.runtime.tick()
+  expect(reopened.store.plan(planID)?.state).toBe("running")
+  expect(reopened.store.effects(planID).some((effect) => effect.kind.startsWith("verify:"))).toBe(
+    false,
+  )
+
+  f.host.session = nativeSession
+  worker.busy = false
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: assigned.message_id, state: "completed" }
+  worker.background = {
+    state: "observed",
+    source: "experimental.idle",
+    observedAt: Date.now(),
+    inputID: assigned.message_id,
+    executionStartSequence: 4,
+    eventSequence: 5,
+    count: 0,
+    kinds: { shell: 0, subagent: 0, image: 0 },
+  }
+  await drive(reopened.runtime, 8)
+  expect(reopened.store.plan(planID)?.state).toBe("accepted")
+  expect(reopened.store.attempts(planID)).toHaveLength(1)
+  expect(reopened.store.attempts(planID)[0]).toMatchObject({
+    id: attempt.id,
+    session_id: originalSessionID,
+    workspace: originalWorkspace,
+    base_commit: originalBase,
+    policy: originalPolicy,
+    token_count: 777,
+    tool_count: 23,
+    cost: 2.5,
+  })
+})
+
+test("manual continuation accepts a real failed outcome only for its completed current assigned input", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt, worker } = await holdFailedAttempt(f)
+  expect(worker.outcome).toBe("failed")
+  expect(worker.turn).toEqual({ inputID: attempt.message_id, state: "completed" })
+  expect(attempt.state).toBe("running")
+  const stopped = f.store.latestTransition<Record<string, unknown>>(
+    planID,
+    attempt.task_id,
+    "WORKER_STOPPED",
+  )
+  expect(stopped).toMatchObject({
+    attemptID: attempt.id,
+    sessionID: attempt.session_id,
+    workspace: attempt.workspace,
+    outcome: "failed",
+    inputID: attempt.message_id,
+  })
+  const blocked = f.store.latestTransition<{ workerObservation?: Record<string, unknown> }>(
+    planID,
+    null,
+    "BLOCKED",
+  )
+  expect(blocked?.workerObservation).toMatchObject({
+    kind: "terminal-worker-observation",
+    attemptID: attempt.id,
+    sessionID: attempt.session_id,
+    workspace: attempt.workspace,
+    outcome: "failed",
+    inputID: attempt.message_id,
+    turnState: "completed",
+    background: { state: "unknown" },
+  })
+  expect(f.store.plan(planID)?.reason).toContain("Worker execution failed")
+
+  const receipt = await f.runtime.command(
+    {
+      requestID: "resume-failed-foreground",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue the exact terminal failed foreground input",
+    },
+    "owner",
+  )
+  expect(receipt).toMatchObject({ status: "resuming" })
+  const resumed = f.store.attempts(planID)[0]!
+  expect(resumed).toMatchObject({ id: attempt.id, state: "preparing" })
+  expect(resumed.message_id).not.toBe(attempt.message_id)
+  const event = f.store
+    .activity(planID, attempt.task_id)
+    .find((entry) => entry.event === "ATTEMPT_RESUMED")!
+  expect(JSON.parse(event.payload)).toMatchObject({
+    attemptID: attempt.id,
+    previousMessageID: attempt.message_id,
+    messageID: resumed.message_id,
+    terminalInputID: attempt.message_id,
+    terminalOutcome: "failed",
+    usageRetained: true,
+  })
+  expect(JSON.parse(event.payload)).not.toHaveProperty("interruptedInputID")
+  expect(worker.outcome).toBe("failed")
+  await f.runtime.tick()
+  expect(f.events.filter((item) => item.startsWith("prompt:"))).toHaveLength(2)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+})
+
+test("a failed fresh continuation input is processed despite the unchanged prior unknown background", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt, worker } = await holdInterruptedAttempt(f)
+  const previousBackground = structuredClone(worker.background)
+  await f.runtime.command(
+    {
+      requestID: "resume-before-fresh-terminal-failure",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue the same attempt before observing its fresh input",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  const current = f.store.attempts(planID)[0]!
+  expect(current.id).toBe(attempt.id)
+  expect(current.message_id).not.toBe(attempt.message_id)
+  expect(worker.background).toEqual(previousBackground)
+  expect(worker.turn).toEqual({ inputID: current.message_id, state: "pending" })
+
+  worker.busy = false
+  worker.outcome = "failed"
+  worker.turn = { inputID: current.message_id, state: "completed" }
+  await f.runtime.tick()
+
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.plan(planID)?.reason).toContain("Worker execution failed")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: attempt.id,
+    state: "running",
+    message_id: current.message_id,
+  })
+  expect(
+    f.store.latestTransition<Record<string, unknown>>(planID, attempt.task_id, "WORKER_STOPPED"),
+  ).toMatchObject({ outcome: "failed", inputID: current.message_id })
+  expect(
+    f.store.latestTransition<{ workerObservation?: Record<string, unknown> }>(
+      planID,
+      null,
+      "BLOCKED",
+    )?.workerObservation,
+  ).toMatchObject({ outcome: "failed", inputID: current.message_id, turnState: "completed" })
+  expect(worker.background).toEqual(previousBackground)
+})
+
+test.each(["permission", "form"] as const)(
+  "a current-input %s hold is not suppressed by the unchanged prior unknown background",
+  async (approval) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const { planID, attempt, worker } = await holdInterruptedAttempt(f)
+    const previousBackground = structuredClone(worker.background)
+    await f.runtime.command(
+      {
+        requestID: `resume-before-current-${approval}`,
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        reason: "Continue the same attempt before observing a current approval",
+      },
+      "owner",
+    )
+    await f.runtime.tick()
+    const current = f.store.attempts(planID)[0]!
+    expect(worker.turn).toEqual({ inputID: current.message_id, state: "pending" })
+    expect(worker.background).toEqual(previousBackground)
+    if (approval === "permission") worker.pendingPermissions = 1
+    else worker.pendingForms = 1
+
+    await f.runtime.tick()
+
+    expect(f.store.plan(planID)?.state).toBe("blocked")
+    expect(f.store.plan(planID)?.reason).toContain(
+      approval === "permission" ? "permission request" : "form",
+    )
+    expect(f.store.attempts(planID)).toHaveLength(1)
+    expect(f.store.attempts(planID)[0]?.message_id).toBe(current.message_id)
+    expect(
+      f.store.latestTransition<Record<string, unknown>>(
+        planID,
+        attempt.task_id,
+        "WORKER_APPROVAL_WAIT",
+      ),
+    ).toMatchObject({
+      attemptID: attempt.id,
+      pendingPermissions: approval === "permission" ? 1 : 0,
+      pendingForms: approval === "form" ? 1 : 0,
+    })
+  },
+)
+
+test("terminal failed worker with a genuine current-input idle report can resume from failed state", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "failed"
+  worker.turn = { inputID: attempt.message_id, state: "completed" }
+  worker.background = {
+    state: "observed",
+    source: "experimental.idle",
+    observedAt: Date.now(),
+    inputID: attempt.message_id,
+    executionStartSequence: 2,
+    eventSequence: 3,
+    count: 0,
+    kinds: { shell: 0, subagent: 0, image: 0 },
+  }
+  await f.runtime.tick()
+
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.nodes(planID)[0]?.state).toBe("failed")
+  expect(f.store.attempts(planID)[0]?.state).toBe("failed")
+  expect(
+    f.store.latestTransition<Record<string, unknown>>(planID, attempt.task_id, "WORKER_STOPPED"),
+  ).toMatchObject({ outcome: "failed", inputID: attempt.message_id })
+  expect(
+    f.store.latestTransition<{ workerObservation?: Record<string, unknown> }>(
+      planID,
+      null,
+      "BLOCKED",
+    )?.workerObservation,
+  ).toMatchObject({ outcome: "failed", inputID: attempt.message_id, turnState: "completed" })
+
+  const receipt = await f.runtime.command(
+    {
+      requestID: "resume-failed-with-current-idle",
+      planID,
+      expectedVersion: f.store.plan(planID)!.version,
+      action: "resume",
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      reason: "Continue after the matching terminal failed worker was observed idle",
+    },
+    "owner",
+  )
+  expect(receipt).toMatchObject({ status: "resuming" })
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: attempt.id, state: "preparing" })
+  expect(worker.outcome).toBe("failed")
+})
+
+test.each([
+  ["a failed turn for a foreign input", "foreign-input"],
+  ["a failed turn with no native input ID", null],
+] as const)("native continuation rejects %s", async (_label, inputID) => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt } = await holdFailedAttempt(f, inputID)
+  const before = f.store.attempts(planID)[0]!
+  await expect(
+    f.runtime.command(
+      {
+        requestID: `resume-failed-invalid-${inputID ?? "missing"}`,
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        reason: "Only the current assigned failed input can continue",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow()
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: before.id,
+    state: "running",
+    message_id: before.message_id,
+  })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+})
+
+test.each(["active", "pending-input", "pending-approval", "unstable", "known-background"] as const)(
+  "failed-worker continuation rejects a %s native observation",
+  async (state) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const { planID, attempt, worker } = await holdFailedAttempt(f)
+    switch (state) {
+      case "active":
+        worker.busy = true
+        break
+      case "pending-input":
+        worker.pendingInput = true
+        break
+      case "pending-approval":
+        worker.pendingForms = 1
+        break
+      case "unstable":
+        worker.observationUnstable = true
+        break
+      case "known-background":
+        worker.background = {
+          state: "observed",
+          source: "experimental.idle",
+          observedAt: Date.now(),
+          inputID: attempt.message_id,
+          executionStartSequence: 1,
+          eventSequence: 2,
+          count: 1,
+          kinds: { shell: 1, subagent: 0, image: 0 },
+        }
+        break
+    }
+    await expect(
+      f.runtime.command(
+        {
+          requestID: `resume-failed-unsafe-${state}`,
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "resume",
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          reason: "Continue only when the current terminal observation remains safe",
+        },
+        "owner",
+      ),
+    ).rejects.toThrow()
+    expect(f.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      state: "running",
+      message_id: attempt.message_id,
+    })
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  },
+)
+
+test("a completed turn without a native failed outcome cannot authorize terminal continuation", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt, worker } = await holdFailedAttempt(f, undefined, "succeeded")
+  expect(worker.turn).toEqual({ inputID: attempt.message_id, state: "completed" })
+  await expect(
+    f.runtime.command(
+      {
+        requestID: "resume-completed-turn-not-failure",
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        reason: "A completed turn alone is not a terminal failure observation",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow()
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: attempt.id, state: "running" })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+})
+
+test.each([
+  "wrong-attempt",
+  "foreign-worker",
+  "archived-worker",
+  "route-mismatch",
+  "active-worker",
+  "pending-input",
+  "pending-approval",
+  "unstable-observation",
+  "input-lineage",
+  "known-background",
+  "unrelated-hold",
+  "uncertain-effect",
+] as const)("interrupted continuation rejects %s", async (caseName) => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt, worker } = await holdInterruptedAttempt(f)
+  let attemptID = attempt.id
+  switch (caseName) {
+    case "foreign-worker":
+      worker.projectID = "foreign-project"
+      break
+    case "archived-worker":
+      worker.archived = true
+      break
+    case "route-mismatch":
+      worker.model = { providerID: "other", id: "other" }
+      break
+    case "active-worker":
+      worker.busy = true
+      break
+    case "pending-input":
+      worker.pendingInput = true
+      break
+    case "pending-approval":
+      worker.pendingPermissions = 1
+      break
+    case "unstable-observation":
+      worker.observationUnstable = true
+      break
+    case "input-lineage":
+      worker.turn = { inputID: "msg-foreign", state: "interrupted" }
+      break
+    case "known-background":
+      worker.background = {
+        state: "observed",
+        source: "experimental.idle",
+        observedAt: Date.now(),
+        inputID: attempt.message_id,
+        executionStartSequence: 2,
+        eventSequence: 3,
+        count: 1,
+        kinds: { shell: 1, subagent: 0, image: 0 },
+      }
+      break
+    case "unrelated-hold":
+      f.store.record(planID, null, "BLOCKED", { reason: "A different hold" })
+      break
+    case "uncertain-effect":
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_effects SET state='uncertain' WHERE plan_id=? AND kind='prompt'")
+          .run(planID),
+      )
+      break
+    case "wrong-attempt":
+      attemptID = crypto.randomUUID()
+      break
+  }
+  const before = f.store.attempts(planID)[0]!
+  await expect(
+    f.runtime.command(
+      {
+        requestID: `unsafe-resume-${caseName}`,
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID,
+        reason: "Attempt explicit continuation only if every current guard passes",
+      },
+      "owner",
+    ),
+  ).rejects.toThrow()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.attempts(planID)[0]).toMatchObject({
+    id: before.id,
+    state: "running",
+    message_id: before.message_id,
+  })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+})
+
+test.each(["cancel", "reassign"] as const)(
+  "cancellation or reassignment during interrupted-worker observation wins (%s)",
+  async (race) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const { planID, attempt } = await holdInterruptedAttempt(f)
+    const originalSession = f.host.session
+    let entered!: () => void
+    let release!: () => void
+    const reading = new Promise<void>((resolve) => (entered = resolve))
+    const paused = new Promise<void>((resolve) => (release = resolve))
+    let waiting = false
+    f.host.session = async (id, options) => {
+      const session = await originalSession(id, options)
+      if (id === attempt.session_id && options?.messages && !waiting) {
+        waiting = true
+        entered()
+        await paused
+      }
+      return session
+    }
+    const resume = f.runtime.command(
+      {
+        requestID: `resume-race-${race}`,
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        reason: "Resume only if the interrupted observation remains current",
+      },
+      "owner",
+    )
+    await reading
+    if (race === "cancel") {
+      await f.runtime.command(
+        {
+          requestID: "cancel-during-interrupted-observation",
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "cancel",
+        },
+        "owner",
+      )
+    } else {
+      f.sessions.set("new-owner", { ...f.sessions.get("owner")!, id: "new-owner" })
+      await f.runtime.command(
+        {
+          requestID: "reassign-during-interrupted-observation",
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "reassign",
+          targetSessionID: "new-owner",
+          reason: "Transfer orchestration while the native observation is pending",
+        },
+        "owner",
+      )
+    }
+    release()
+    await expect(resume).rejects.toThrow("Stale plan version")
+    expect(f.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      state: "running",
+      message_id: attempt.message_id,
+    })
+    expect(
+      f.store
+        .activity(planID, attempt.task_id)
+        .filter((entry) => entry.event === "ATTEMPT_RESUMED"),
+    ).toHaveLength(0)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  },
+)
+
+test("ambiguous interrupted continuation delivery stays uncertain after runtime reopen", async () => {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const { planID, attempt } = await holdInterruptedAttempt(f)
+  const resume = {
+    requestID: "resume-ambiguous-interrupted-delivery",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "resume",
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    reason: "Continue once and retain an ambiguous delivery for reconciliation",
+  }
+  await f.runtime.command(resume, "owner")
+  const resumedMessageID = f.store.attempts(planID)[0]!.message_id
+  const prompt = f.host.prompt
+  let continuationSends = 0
+  f.host.prompt = async (input) => {
+    if (input.id === resumedMessageID) {
+      continuationSends++
+      throw new Error("native admission response lost")
+    }
+    await prompt(input)
+  }
+  await f.runtime.tick()
+  expect(continuationSends).toBe(1)
+  const effect = f.store
+    .effects(planID)
+    .find(
+      (candidate) =>
+        candidate.kind === "prompt" && JSON.parse(candidate.payload).messageID === resumedMessageID,
+    )
+  expect(effect?.state).toBe("uncertain")
+
+  await f.runtime.stop()
+  const reopened = reopenRuntime(f)
+  await reopened.runtime.tick()
+  await reopened.runtime.tick()
+  expect(continuationSends).toBe(1)
+  expect(
+    reopened.store
+      .effects(planID)
+      .find(
+        (candidate) =>
+          candidate.kind === "prompt" &&
+          JSON.parse(candidate.payload).messageID === resumedMessageID,
+      )?.state,
+  ).toBe("uncertain")
+  expect(reopened.store.attempts(planID)[0]?.message_id).toBe(resumedMessageID)
+})
+
 test("explicit cancellation after process replacement resumes the same dirty attempt exactly once", async () => {
   const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)
@@ -9268,3 +10019,63 @@ test("shared-database renewal recovery is invisible to a different canonical pro
     error: "foreign scheduler must not retry this archive",
   })
 })
+
+test.each(["workspace", "baseline"] as const)(
+  "terminal continuation preserves the retained assignment against %s changes",
+  async (change) => {
+    const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const { planID, attempt } = await holdInterruptedAttempt(f)
+    await expect(
+      f.runtime.command(
+        {
+          requestID: `preserve-terminal-${change}`,
+          planID,
+          expectedVersion: f.store.plan(planID)!.version,
+          action: "resume",
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          ...(change === "workspace"
+            ? { workspaceMode: "shared" }
+            : { baseCommit: "f".repeat(40) }),
+          reason: "Continue the retained assignment",
+        },
+        "owner",
+      ),
+    ).rejects.toThrow("preserves its workspace and baseline")
+    expect(f.store.attempts(planID)[0]).toEqual(attempt)
+    expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(1)
+  },
+)
+
+test.each([false, true])(
+  "terminal continuation retains a redundant workspace selection (shared=%s)",
+  async (shared) => {
+    const f = fixture({ shared, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+    const { planID, attempt } = await holdInterruptedAttempt(f)
+    await f.runtime.command(
+      {
+        requestID: "preserve-terminal-redundant",
+        planID,
+        expectedVersion: f.store.plan(planID)!.version,
+        action: "resume",
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        workspaceMode: shared ? "shared" : "isolated",
+        baseCommit: attempt.base_commit,
+        reason: "Continue the same workspace and baseline",
+      },
+      "owner",
+    )
+    expect(f.store.attempts(planID)[0]).toMatchObject({
+      id: attempt.id,
+      workspace: attempt.workspace,
+      base_commit: attempt.base_commit,
+      state: "preparing",
+    })
+    expect(
+      f.store
+        .activity(planID, attempt.task_id)
+        .filter((entry) => entry.event === "WORKSPACE_SELECTED"),
+    ).toHaveLength(0)
+  },
+)
