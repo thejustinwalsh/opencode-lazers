@@ -2,7 +2,7 @@
 
 Prepared procedure; **not executed and not acceptance evidence**.
 
-Candidate: `e67fee195776f6da333e44a9068444817b08c117`, original attempt
+Base candidate: `e67fee195776f6da333e44a9068444817b08c117`, original attempt
 `547ae78b-1300-47fe-9aa4-d43461a54379`, plan
 `10964078-2262-4b2c-8f5a-101222a16e55`.
 The task is accepted; plan version25 is held only on combined
@@ -12,6 +12,12 @@ The task is accepted; plan version25 is held only on combined
 
 - Independent Luna Max source review clears the exact candidate, or its findings
   are repaired and the resulting artifact is reviewed again.
+- User identified a required integration correction: the native attachment
+  registration and its test must use `codemode:true`, not `false`. Isolated
+  correction LZ137 (`0f6bb558-101b-4d57-a9d9-80428df78fce`), plan
+  `181baf24-b3dc-49c5-adad-338d0ec9fe34`, supplements the accepted base. Review the
+  delivered correction and qualify the exact corrected integrated descendant;
+  the uncorrected base is not sufficient.
 - Root chooses a genuinely quiet activation boundary. Do not merge watched
   source, reload locations, or change inference settings while129 or the native
   listener repair is active. Use Root's supported lifecycle, not a test server.
@@ -21,8 +27,9 @@ The task is accepted; plan version25 is held only on combined
 
 ## Native walkthrough
 
-1. Through the native catalog, discover the newly registered Architect attachment
-   tool and read its actual schema. Do not substitute direct SQLite writes, a
+1. Through the Code Mode catalog, discover the newly registered Architect attachment
+   tool and read its actual schema; call the discovered tool from Code Mode. Do
+   not substitute direct SQLite writes, a
    locally imported handler, RPC fixtures, repo notes or session instruction entries.
 2. Freshly read existing LZ132 through `lz-get-task`. Capture its immutable
    specification, current advice revision and original attempt/session identities;
