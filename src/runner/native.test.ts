@@ -748,6 +748,60 @@ const ownership: OutcomeOwnership = {
   lazersVersion: 7,
 }
 
+test("native host reads a non-following session log on its validated client and invalidates failures", async () => {
+  const fixture = makeTrajectoryFixture()
+  let discoveries = 0
+  let clients = 0
+  const calls: Array<{ sessionID: string; follow: boolean; client: number }> = []
+  const dependencies: NativeInboxDependencies = {
+    discover: async () => {
+      discoveries++
+      return { url: "https://opencode.localhost", auth: undefined }
+    },
+    make: () => {
+      const client = ++clients
+      return {
+        server: { info: async () => ({ pid: 42, version: "2.2.5" }) },
+        experimental: {
+          session: {
+            log: ({ sessionID, follow }: { sessionID: string; follow?: boolean }) => {
+              calls.push({ sessionID, follow: follow ?? false, client })
+              return (async function* () {
+                yield { type: "log.synced", aggregateID: sessionID }
+                if (client === 1) throw new Error("native log stream disconnected")
+              })()
+            },
+          },
+        },
+      } as unknown as NativeInboxClient
+    },
+    processID: () => 42,
+  }
+  try {
+    const host = nativeHost(
+      { app: { version: "2.2.5" } } as Plugin.Context,
+      fixture.repository,
+      dependencies,
+    )
+    const readAll = async () => {
+      const result: unknown[] = []
+      for await (const item of host.readSessionLog("ses-log")) result.push(item)
+      return result
+    }
+
+    await expect(readAll()).rejects.toThrow("native log stream disconnected")
+    expect(await readAll()).toEqual([{ type: "log.synced", aggregateID: "ses-log" }])
+    expect(discoveries).toBe(2)
+    expect(clients).toBe(2)
+    expect(calls).toEqual([
+      { sessionID: "ses-log", follow: false, client: 1 },
+      { sessionID: "ses-log", follow: false, client: 2 },
+    ])
+  } finally {
+    fixture.close()
+  }
+})
+
 test("actionable notifications use the authenticated native client with durable ownership", async () => {
   let received: unknown
   const { host } = nativeOutcomeFixture({ onSynthetic: (input) => (received = input) })

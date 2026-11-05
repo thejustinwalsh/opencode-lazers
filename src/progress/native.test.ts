@@ -225,6 +225,16 @@ function executionEvent(type: string, sessionID: string, sequence: number) {
   }
 }
 
+function sessionLog(items: readonly unknown[]) {
+  return async function* () {
+    yield* items
+  }
+}
+
+function logSynced(sessionID: string, sequence: number) {
+  return { type: "log.synced", aggregateID: sessionID, seq: sequence }
+}
+
 function inboxEvent(type: string, sessionID: string, sequence: number, inboxID: string) {
   return {
     id: `evt_${sequence}`,
@@ -1049,6 +1059,378 @@ test.each(["msg_initial", "msg_resumed"])(
         ),
       )
       expect(next.syntheticCalls()).toBe(0)
+    } finally {
+      fixture.close()
+    }
+  },
+)
+
+test("a replacement listener uses a complete native log only for its genuine idle hook", async () => {
+  const fixture = makeFixture()
+  let reopenedRepository: TaskRepository | undefined
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const old = makeContext(fixture, { liveEvents: true, messages })
+    const replacement = makeContext(fixture, { liveEvents: true, messages })
+    const store = new NativeIdleStore(fixture.repository)
+    let lateOldIdle: ReturnType<typeof old.idle>
+    let oldReplayReads = 0
+    const replayedLog = sessionLog([
+      executionEvent("session.created", sessionID, 0),
+      executionEvent("session.execution.started", sessionID, 1),
+      inboxEvent("session.inbox.delivered", sessionID, 2, "in_native"),
+      logSynced(sessionID, 2),
+    ])
+    let replayReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(old.context, recorder, "project", undefined, async () => {
+            oldReplayReads++
+            return replayedLog()
+          })
+          lateOldIdle = old.idle()
+          yield* Effect.promise(() =>
+            old.emitEvent(executionEvent("session.execution.started", sessionID, 1)),
+          )
+          yield* Effect.promise(() =>
+            old.emitEvent(inboxEvent("session.inbox.delivered", sessionID, 2, "in_native")),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                store.read(binding)?.executionStartSequence === 1 &&
+                store.read(binding)?.lastEventSequence === 2,
+            ),
+          )
+        }),
+      ),
+    )
+
+    if (lateOldIdle)
+      await Effect.runPromise(
+        lateOldIdle({ sessionID: Session.ID.make(sessionID), background: [] } as never),
+      )
+    expect(oldReplayReads).toBe(0)
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(
+            replacement.context,
+            recorder,
+            "project",
+            undefined,
+            async (requestedSessionID: string) => {
+              replayReads++
+              expect(requestedSessionID).toBe(sessionID)
+              return replayedLog()
+            },
+          )
+          expect(replayReads).toBe(0)
+          expect(store.read(binding)?.report).toBeNull()
+          yield* replacement.idle()!({
+            sessionID: Session.ID.make(sessionID),
+            background: [],
+          } as never)
+          expect(store.read(binding)?.report).toMatchObject({
+            inputID: binding.assignedMessageID,
+            executionStartSequence: 1,
+            eventSequence: 2,
+            count: 0,
+          })
+          expect(
+            nativeObservations(fixture, sessionID).some(
+              (row) => row.phase === "idle-lineage-replayed" && row.executionStartSequence === 1,
+            ),
+          ).toBe(true)
+          yield* Effect.promise(() =>
+            replacement.emitEvent(executionEvent("session.execution.succeeded", sessionID, 3)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.terminal?.sequence === 3),
+          )
+        }),
+      ),
+    )
+
+    expect(replayReads).toBe(1)
+    expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
+      state: "observed",
+      inputID: binding.assignedMessageID,
+      executionStartSequence: 1,
+      eventSequence: 2,
+      count: 0,
+      terminalSequence: 3,
+    })
+    fixture.repository.close()
+    reopenedRepository = new TaskRepository(
+      fixture.repository.path,
+      fixture.repository.projectDirectory,
+    )
+    expect(new NativeIdleStore(reopenedRepository).background(binding)).toMatchObject({
+      state: "observed",
+      inputID: binding.assignedMessageID,
+      executionStartSequence: 1,
+      terminalSequence: 3,
+    })
+  } finally {
+    reopenedRepository?.close()
+    fixture.close()
+  }
+})
+
+test("native log lineage preserves a positive background idle observation", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const old = makeContext(fixture, { liveEvents: true, messages })
+    const replacement = makeContext(fixture, { liveEvents: true, messages })
+    const store = new NativeIdleStore(fixture.repository)
+    const replayedLog = sessionLog([
+      executionEvent("session.created", sessionID, 0),
+      executionEvent("session.execution.started", sessionID, 1),
+      logSynced(sessionID, 1),
+    ])
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(old.context, recorder, "project")
+          yield* Effect.promise(() =>
+            old.emitEvent(executionEvent("session.execution.started", sessionID, 1)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.executionStartSequence === 1),
+          )
+        }),
+      ),
+    )
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(replacement.context, recorder, "project", undefined, () =>
+            replayedLog(),
+          )
+          yield* replacement.idle()!({
+            sessionID: Session.ID.make(sessionID),
+            background: [{ kind: "shell" }],
+          } as never)
+          expect(store.read(binding)?.report).toMatchObject({
+            inputID: binding.assignedMessageID,
+            executionStartSequence: 1,
+            eventSequence: 1,
+            count: 1,
+            kinds: { shell: 1, subagent: 0, image: 0 },
+          })
+          yield* Effect.promise(() =>
+            replacement.emitEvent(executionEvent("session.execution.succeeded", sessionID, 2)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => store.read(binding)?.terminal?.sequence === 2),
+          )
+        }),
+      ),
+    )
+    expect(nativeIdleBackground(fixture, sessionID)).toMatchObject({
+      state: "observed",
+      count: 1,
+      kinds: { shell: 1, subagent: 0, image: 0 },
+      terminalSequence: 2,
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test.each([
+  {
+    name: "unavailable",
+    read: async () => {
+      throw new Error("native log unavailable")
+    },
+  },
+  {
+    name: "missing sync marker",
+    read: async () =>
+      sessionLog([
+        executionEvent("session.created", "ses-accepted", 0),
+        executionEvent("session.execution.started", "ses-accepted", 1),
+      ])(),
+  },
+  {
+    name: "empty history with a nonempty sync watermark",
+    read: async () => sessionLog([logSynced("ses-accepted", 4099)])(),
+  },
+  {
+    name: "gapped",
+    read: async () =>
+      sessionLog([
+        executionEvent("session.created", "ses-accepted", 0),
+        executionEvent("session.execution.started", "ses-accepted", 2),
+        logSynced("ses-accepted", 2),
+      ])(),
+  },
+  {
+    name: "terminal after the latest start",
+    read: async () =>
+      sessionLog([
+        executionEvent("session.created", "ses-accepted", 0),
+        executionEvent("session.execution.started", "ses-accepted", 1),
+        executionEvent("session.execution.succeeded", "ses-accepted", 2),
+        logSynced("ses-accepted", 2),
+      ])(),
+  },
+  {
+    name: "unpersisted newer start",
+    read: async () =>
+      sessionLog([
+        executionEvent("session.created", "ses-accepted", 0),
+        executionEvent("session.execution.started", "ses-accepted", 1),
+        executionEvent("session.execution.started", "ses-accepted", 2),
+        logSynced("ses-accepted", 2),
+      ])(),
+  },
+])("replacement idle replay rejects $name log evidence", async ({ read }) => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const sessionID = "ses-accepted"
+    const binding = nativeIdleBinding(fixture, sessionID)!
+    const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+    const old = makeContext(fixture, { liveEvents: true, messages })
+    const replacement = makeContext(fixture, { liveEvents: true, messages })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(old.context, recorder, "project")
+          yield* Effect.promise(() =>
+            old.emitEvent(executionEvent("session.execution.started", sessionID, 1)),
+          )
+          yield* Effect.promise(() =>
+            waitForNativeState(
+              async () =>
+                new NativeIdleStore(fixture.repository).read(binding)?.executionStartSequence === 1,
+            ),
+          )
+        }),
+      ),
+    )
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(
+            replacement.context,
+            recorder,
+            "project",
+            undefined,
+            read as never,
+          )
+          yield* replacement.idle()!({
+            sessionID: Session.ID.make(sessionID),
+            background: [],
+          } as never)
+        }),
+      ),
+    )
+    expect(new NativeIdleStore(fixture.repository).read(binding)?.report).toBeNull()
+    expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+  } finally {
+    fixture.close()
+  }
+})
+
+test.each(["input", "execution"] as const)(
+  "a changed %s while log replay is pending cannot confirm its old start",
+  async (changedFact) => {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const sessionID = "ses-accepted"
+      const binding = nativeIdleBinding(fixture, sessionID)!
+      const messages: unknown[] = [{ id: binding.assignedMessageID, type: "user" }]
+      const old = makeContext(fixture, { liveEvents: true, messages })
+      const replacement = makeContext(fixture, { liveEvents: true, messages })
+      const store = new NativeIdleStore(fixture.repository)
+      const replay = Promise.withResolvers<AsyncIterable<unknown>>()
+      const replayStarted = Promise.withResolvers<void>()
+
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(old.context, recorder, "project")
+            yield* Effect.promise(() =>
+              old.emitEvent(executionEvent("session.execution.started", sessionID, 1)),
+            )
+            yield* Effect.promise(() =>
+              waitForNativeState(async () => store.read(binding)?.executionStartSequence === 1),
+            )
+          }),
+        ),
+      )
+
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* registerProgress(
+              replacement.context,
+              recorder,
+              "project",
+              undefined,
+              async () => {
+                replayStarted.resolve()
+                return replay.promise
+              },
+            )
+            const idlePending = Effect.runPromise(
+              replacement.idle()!({
+                sessionID: Session.ID.make(sessionID),
+                background: [],
+              } as never),
+            )
+            const replayWasStarted = yield* Effect.promise(() =>
+              Promise.race([replayStarted.promise.then(() => true), idlePending.then(() => false)]),
+            )
+            expect(replayWasStarted).toBe(true)
+            if (changedFact === "input") messages[0] = { id: "msg_resumed", type: "user" }
+            else {
+              yield* Effect.promise(() =>
+                replacement.emitEvent(executionEvent("session.execution.started", sessionID, 2)),
+              )
+              yield* Effect.promise(() =>
+                waitForNativeState(async () => store.read(binding)?.executionStartSequence === 2),
+              )
+            }
+            replay.resolve(
+              sessionLog([
+                executionEvent("session.created", sessionID, 0),
+                executionEvent("session.execution.started", sessionID, 1),
+                logSynced(sessionID, 1),
+              ])(),
+            )
+            yield* Effect.promise(() => idlePending)
+            expect(store.read(binding)?.report).toBeNull()
+            expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+            if (changedFact === "execution") {
+              yield* Effect.promise(() =>
+                replacement.emitEvent(executionEvent("session.execution.succeeded", sessionID, 3)),
+              )
+              yield* Effect.sleep(5)
+              expect(nativeIdleBackground(fixture, sessionID).state).toBe("unknown")
+            }
+          }),
+        ),
+      )
     } finally {
       fixture.close()
     }
