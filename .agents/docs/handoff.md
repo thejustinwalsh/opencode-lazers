@@ -44,13 +44,15 @@ cleanup are separate facts.
   clear; current owner sealed original99 quarantine at1793871137427, planversion20,
   resourceHoldsRetained:true. Native worker archived1793871137393, old tree retained;
   node/attempt remain running/unaccepted, artifact null and background unknown.
-  Original133 resumed on Luna Max with actual patch activity. No extra Root release,
+  Original133 subsequently completed its retained Luna Max repair and qualification.
+  No extra Root release,
   99 cancellation, force, old acceptance or fabricated idle report is needed.
   [Review](../../design/reviews/source-quarantine-current-input-review-20261105.md).
   Changed remaining58 scope should use a clear linked correction/supersession
   while preserving its original record—not a generic exception framework for old
-  zero-worktree wording. Existing owner received concrete task/plan authoring request
-  msg_1ab1728500019omGMxRXskWyR8; no linked replacement scope is observed submitted yet.
+  zero-worktree wording. Existing owner submitted changed-scope LZ138, task
+  0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4, plane48290a6-a871-42a2-94f1-c88f700c0d11,
+  currently queued/zero attempts. This does not by itself resolve57's sibling hold.
   [Proportional follow-through](../../design/retained-candidate-proportional-follow-through-20261105.md).
   Fresh131 plan96cc983c/version18 is running with131 queued/zero attempts and130
   task-landed; its current owner is checking real reservations, not assuming
@@ -83,17 +85,22 @@ cleanup are separate facts.
   qualification preserved assignments; each still has its original attempt/session.
   Later133 repair uses an explicit same-attempt resume as described below. See
   design/reviews/task136-native-completion-20261104.md.
-- **133/135 source is landed; independent live gates remain.** Main merged133 as
-  2b0cd50 and135 as e6ab406. Postmerge journal16 tests/260 assertions and quality
-  pass. Registered journal paging for owned129 failed cursor continuation twice
-  amid scan metadata churn (snapshot4362→6174); native-journal gate stays held.
-  Architect is investigating with Luna Max delegate ses_e55ed968fffeXvP5LZ1nxVPktq
-  and will repair the original task/worker through supported controls. Root's
-  native retained-reference lookup succeeds without acknowledgement.135's quiet
+- **LZ133 is complete.** Original correctionac4eb1a merged at00a4a84; source review
+  clear, merged17tests347assertions+quality. Actual registered Code Mode paging:
+  94 pages/4657 unique/zero duplicates/revision589197. Root's separate12-second
+  production-reader probe observed scanner advance and exact authenticated native
+  reference retrieval; the faster registered traversal did not observe scan advance.
+  Direct before/after comparison found zero changed rows across806 input
+  dispositions/reference revisions and23 notice state/resume rows; no hashing
+  supports this evidence. Task and combined verification accepted, native integration
+  and non-forced cleanup completed: plan5a8a96ed integrated/version20, old tree absent,
+  original session/history retained. [Qualification](evidence/task133-native-qualified-20261105.md).
+  Dependent134 is admitted/running, nodequeued0attempts; actual reservations govern.
+  **135's independent native gate remains.** Source e6ab406 is landed; quiet
   native CPU windows measured30.92%→30.16% service, inconclusive for total savings;
   direct unchanged-recovery work/late-fact observation is still needed before its
   performance gate. Source135's native-performance gate must remain honest. See
-  design/reviews/task135-native-cpu-observation-20261104.md.134 still waits for133.
+  design/reviews/task135-native-cpu-observation-20261104.md.
 - **Host compaction blocker fixed.**85f942c uses retained current-input history
   after completed compaction while preserving exact successful idle/report binding.
   56 native/input/idle/schema tests pass with merged136. A later global reload hit
