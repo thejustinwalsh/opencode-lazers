@@ -249,6 +249,52 @@ function fixture(requestID = "plan-title-store") {
   return { databasePath, projectDirectory, repository, store, input }
 }
 
+test("retained repair generations remain task-bound and the latest plan operation is observable", () => {
+  const f = fixture("repair-generation-store")
+  const plan = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  const otherTaskID = crypto.randomUUID()
+  f.store.record(plan.planID, taskID, "RETAINED_REPAIR_REQUESTED", {
+    operationID: "task-operation-1",
+  })
+  f.store.record(plan.planID, otherTaskID, "RETAINED_REPAIR_REQUESTED", {
+    operationID: "other-task-operation",
+  })
+  f.store.record(plan.planID, taskID, "RETAINED_REPAIR_REQUESTED", {
+    operationID: "task-operation-2",
+  })
+
+  expect(f.store.latestRetainedRepair<{ operationID: string }>(plan.planID)).toEqual({
+    operationID: "task-operation-2",
+  })
+  expect(f.store.latestRetainedRepair<{ operationID: string }>(plan.planID, taskID)).toEqual({
+    operationID: "task-operation-2",
+  })
+  expect(f.store.latestRetainedRepair(plan.planID, otherTaskID)).toEqual({
+    operationID: "other-task-operation",
+  })
+})
+
+test("plan control epochs change on owner/cancellation controls but ignore task activity", () => {
+  const f = fixture("plan-control-epoch-store")
+  const plan = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  const initial = f.store.planControlEpoch(plan.planID)
+
+  f.store.record(plan.planID, taskID, "RETAINED_REPAIR_REQUESTED", { operationID: "repair" })
+  expect(f.store.planControlEpoch(plan.planID)).toBe(initial)
+
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", { from: "owner", to: "other" })
+  const away = f.store.planControlEpoch(plan.planID)
+  expect(away).toBeGreaterThan(initial)
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", { from: "other", to: "owner" })
+  const returned = f.store.planControlEpoch(plan.planID)
+  expect(returned).toBeGreaterThan(away)
+
+  f.store.record(plan.planID, null, "CANCEL_REQUESTED", { caller: "owner" })
+  expect(f.store.planControlEpoch(plan.planID)).toBeGreaterThan(returned)
+})
+
 function seedSourceJournal(
   store: RunnerStore,
   planID: string,

@@ -87,7 +87,10 @@ function nativeRevalidationHost(
       active: async () => options.active ?? {},
       inbox: {
         list: async () => {
-          if (options.inboxError !== undefined) throw options.inboxError
+          if (options.inboxError instanceof Error) throw options.inboxError
+          if (typeof options.inboxError === "object" && options.inboxError !== null)
+            throw Object.assign(new Error("Simulated native inbox failure"), options.inboxError)
+          if (options.inboxError !== undefined) throw new Error("Simulated native inbox failure")
           return options.inbox ?? []
         },
       },
@@ -224,7 +227,7 @@ test("native adapter exposes inbox and paginated history reconciliation without 
     } as unknown as Plugin.Context,
     {} as TaskRepository,
   )
-  expect(host.architectInputPage).toBeFunction()
+  expect(typeof host.architectInputPage).toBe("function")
 })
 
 test("native worktrees use the host lifecycle with the admitted ref and returned directory", async () => {
@@ -518,6 +521,42 @@ test("child prompt uses native move and verifies location before any model work"
     text: "Continue.",
   })
   expect(calls).toEqual(["move", "wait", "prompt", "prompt"])
+})
+
+test("retained repair uses public foreground wait and refuses to move a worker", async () => {
+  const calls: string[] = []
+  const host = nativeHost(
+    {
+      session: {
+        get: () => Effect.succeed({ location: { directory: "/elsewhere" } }),
+        wait: () =>
+          Effect.sync(() => {
+            calls.push("wait")
+          }),
+        move: () => {
+          calls.push("move")
+          return Effect.void
+        },
+        instructions: { entry: { remove: () => Effect.void } },
+        prompt: () => {
+          calls.push("prompt")
+          return Effect.void
+        },
+      },
+    } as unknown as Plugin.Context,
+    {} as TaskRepository,
+  )
+  await host.waitForSession!("ses_worker")
+  await expect(
+    host.prompt({
+      sessionID: "ses_worker",
+      id: "msg_repair",
+      directory: "/worker",
+      moveIfNeeded: false,
+      text: "Concrete defect: preserve the current worker location.",
+    }),
+  ).rejects.toThrow("refusing to move")
+  expect(calls).toEqual(["wait"])
 })
 
 test("scope instructions use native durable keyed entries with lost-reply recovery and no model work", async () => {

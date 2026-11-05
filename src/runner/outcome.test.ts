@@ -23,5 +23,6 @@ test("notifications carry a concise action and identity, not full check logs", (
     })
     expect(text.split("\n")[1]).not.toContain("no automatic action")
   }
+  expect(outcomeText('{"status":"task-accepted","taskID":"task"}')).toContain("retained-repair")
   expect(outcomeText('{"status":"integrated"}')).toContain("no automatic action")
 })

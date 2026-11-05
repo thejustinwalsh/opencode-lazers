@@ -744,6 +744,9 @@ export function nativeHost(
         ],
       }
     },
+    async waitForSession(sessionID) {
+      await Effect.runPromise(ctx.session.wait({ sessionID: Session.ID.make(sessionID) }))
+    },
     async outcomeInbox(sessionID) {
       const client = await connectedClient()
       await runNative(client, () => assertArchitectTarget(ctx, client, sessionID))
@@ -1061,14 +1064,29 @@ export function nativeHost(
     async prompt(input) {
       const id = Session.ID.make(input.sessionID)
       const before = await Effect.runPromise(ctx.session.get({ sessionID: id }))
+      const matchesAttempt = (session: typeof before) =>
+        input.attemptID === undefined ||
+        (session.id === input.sessionID &&
+          session.projectID === ctx.location.project.id &&
+          session.agent === "lazers-implementor" &&
+          session.metadata?.lazersAttemptID === input.attemptID &&
+          session.time.archived === undefined &&
+          (!input.model ||
+            (session.model?.providerID === input.model.providerID &&
+              session.model.id === input.model.id &&
+              session.model.variant === input.model.variant)))
+      if (!matchesAttempt(before))
+        throw new Error("Worker prompt target is not the exact assigned session and route")
       if (before.location.directory !== input.directory) {
+        if (input.moveIfNeeded === false)
+          throw new Error("Retained worker is not in its assigned worktree; refusing to move it")
         await Effect.runPromise(
           ctx.session.move({ sessionID: id, directory: AbsolutePath.make(input.directory) }),
         )
         await Effect.runPromise(ctx.session.wait({ sessionID: id }))
       }
       const located = await Effect.runPromise(ctx.session.get({ sessionID: id }))
-      if (located.location.directory !== input.directory)
+      if (located.location.directory !== input.directory || !matchesAttempt(located))
         throw new Error("Worker session is not in its assigned worktree")
       // Remove only the entry written by the former eager skill adapter. Missing-key removal is safe.
       await Effect.runPromise(

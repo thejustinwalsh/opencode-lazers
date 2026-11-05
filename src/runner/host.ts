@@ -181,7 +181,17 @@ export interface RunnerHost {
   archiveRetainedWorker?(input: RetainedWorkerArchive): Promise<void>
   /** Demand-load and confirm the exact location's current before-tool registration. */
   ensureSourceGuard?(input: { directory: string; projectID: string }): Promise<void>
-  prompt(input: { sessionID: string; id: string; text: string; directory: string }): Promise<void>
+  /** Waits for foreground completion only; callers must still inspect active/inbox controls. */
+  waitForSession?(sessionID: string): Promise<void>
+  prompt(input: {
+    sessionID: string
+    id: string
+    text: string
+    directory: string
+    attemptID?: string
+    model?: ModelPolicy
+    moveIfNeeded?: boolean
+  }): Promise<void>
   /** Durable keyed upsert/readback only; never prompts, moves or restarts a worker. */
   updateInstruction(input: WorkerInstruction): Promise<void>
   notify(input: {

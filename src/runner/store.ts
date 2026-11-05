@@ -3063,7 +3063,24 @@ export class RunnerStore {
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
   }
-  /** High-water mark for plan-level owner/cancellation changes, excluding ordinary node activity. */
+  latestRetainedRepair<T>(planID: string, taskID?: string): T | undefined {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    const row = this.atomic((db) =>
+      taskID === undefined
+        ? db
+            .query<{ payload: string }, [string]>(
+              "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+            )
+            .get(planID)
+        : db
+            .query<{ payload: string }, [string, string]>(
+              "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+            )
+            .get(planID, taskID),
+    )
+    return row ? (JSON.parse(row.payload) as T) : undefined
+  }
+  /** High-water mark for plan-level owner/cancellation changes, excluding task activity. */
   planControlEpoch(planID: string): number {
     return this.atomic(
       (db) =>
