@@ -61,6 +61,7 @@ import {
   matchesReviewInputAlias,
   observeReviewInput,
   parseReviewInputAlias,
+  reviewMetadata,
 } from "./review-input.ts"
 import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
 import {
@@ -68,8 +69,9 @@ import {
   samePhysicalWorkspace,
   sourceQuarantine,
   sourceReservationExcluded,
+  sourceReviewBinding,
 } from "./source-quarantine.ts"
-import type { SourceQuarantine } from "./source-quarantine.ts"
+import type { SourceQuarantine, SourceReviewBinding } from "./source-quarantine.ts"
 import {
   isStartupWorktreeCandidate,
   nativeWorktreeFailureEvidence,
@@ -523,9 +525,13 @@ export class TaskRuntime {
   }
 
   private sourceWorkerWait(
-    attempt: Pick<AttemptRow, "id" | "session_id" | "workspace" | "state" | "message_id">,
+    attempt: Pick<
+      AttemptRow,
+      "id" | "task_id" | "policy" | "session_id" | "workspace" | "state" | "message_id"
+    >,
     session: HostSession | null | undefined,
     requireCompletedForeground = true,
+    review?: SourceReviewBinding,
   ) {
     if (
       !session ||
@@ -549,9 +555,25 @@ export class TaskRuntime {
       requireCompletedForeground &&
       (session.outcome !== "succeeded" ||
         session.turn?.state !== "completed" ||
-        session.turn.inputID !== attempt.message_id)
+        session.turn.inputID !== (review?.inputID ?? attempt.message_id))
     )
       return "Retained running attempt requires its current input's completed foreground execution"
+    if (review && requireCompletedForeground) {
+      const inputs = session.messages.filter((message) => message.id === review.inputID)
+      const metadata =
+        inputs.length === 1
+          ? reviewMetadata(inputs[0]!, { taskID: attempt.task_id, attemptID: attempt.id })
+          : undefined
+      const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
+      if (
+        metadata?.requestID !== review.requestID ||
+        !session.model ||
+        session.model.providerID !== model.providerID ||
+        session.model.id !== model.id ||
+        session.model.variant !== model.variant
+      )
+        return "Retained review input metadata or admitted route changed"
+    }
     return undefined
   }
 
@@ -561,7 +583,8 @@ export class TaskRuntime {
     caller: string,
     ownerSession: HostSession | null | undefined,
   ): Promise<{ binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined> {
-    if (command.reviewInputID === undefined) return undefined
+    if (command.reviewInputID === undefined || command.action === "quarantine-source")
+      return undefined
     if (command.action !== "reconcile" || !command.taskID || !command.attemptID)
       throw new Error("Review input reconciliation requires reconcile, taskID and attemptID")
     if (
@@ -1555,6 +1578,7 @@ export class TaskRuntime {
         ? await this.prepareAdoption(old, command, caller, ownerSession)
         : undefined
     let quarantineAttempt: AttemptRow | undefined
+    let quarantineReview: SourceReviewBinding | undefined
     if (command.action === "quarantine-source") {
       if (!this.validArchitect(ownerSession)) throw new Error("Active Architect owner required")
       quarantineAttempt = this.quarantineTarget(old, command)
@@ -1562,7 +1586,22 @@ export class TaskRuntime {
         quarantineAttempt.session_id,
         quarantineAttempt.state === "running" ? { messages: true } : undefined,
       )
-      const wait = this.sourceWorkerWait(quarantineAttempt, worker)
+      if (command.reviewInputID !== undefined) {
+        if (command.taskID !== quarantineAttempt.task_id || quarantineAttempt.state !== "running")
+          throw new Error("Source review must name the exact retained running task attempt")
+        const inputs =
+          worker?.messages.filter((message) => message.id === command.reviewInputID) ?? []
+        const metadata =
+          inputs.length === 1
+            ? reviewMetadata(inputs[0]!, {
+                taskID: quarantineAttempt.task_id,
+                attemptID: quarantineAttempt.id,
+              })
+            : undefined
+        if (!metadata) throw new Error("Exact tagged retained review input is unavailable")
+        quarantineReview = { inputID: command.reviewInputID, requestID: metadata.requestID }
+      }
+      const wait = this.sourceWorkerWait(quarantineAttempt, worker, true, quarantineReview)
       if (wait) throw new Error(wait)
       const worktrees = await this.host.worktrees()
       if (
@@ -1669,10 +1708,11 @@ export class TaskRuntime {
         const at = Date.now()
         db.query(
           `INSERT INTO runner_source_quarantines
-          (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,phase,hold_reason,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,'pending',NULL,?,?)
+          (attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,request_id,reason,phase,hold_reason,review_input_json,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,'pending',NULL,?,?,?)
           ON CONFLICT(attempt_id) DO UPDATE SET requested_owner=excluded.requested_owner,
-            request_id=excluded.request_id,reason=excluded.reason,hold_reason=NULL,updated_at=excluded.updated_at`,
+            request_id=excluded.request_id,reason=excluded.reason,hold_reason=NULL,
+            review_input_json=excluded.review_input_json,updated_at=excluded.updated_at`,
         ).run(
           attempt.id,
           plan.id,
@@ -1682,6 +1722,7 @@ export class TaskRuntime {
           attempt.workspace,
           command.requestID,
           command.reason!,
+          quarantineReview ? JSON.stringify(quarantineReview) : null,
           at,
           at,
         )
@@ -1692,6 +1733,7 @@ export class TaskRuntime {
           workspace: attempt.workspace,
           requestID: command.requestID,
           reason: command.reason,
+          ...(quarantineReview ? { reviewInput: quarantineReview } : {}),
           resourceHoldsRetained: true,
         })
         return {
@@ -4446,6 +4488,7 @@ export class TaskRuntime {
           !row ||
           row.phase !== quarantine.phase ||
           row.request_id !== quarantine.request_id ||
+          row.review_input_json !== quarantine.review_input_json ||
           !plan ||
           (row.phase === "pending" && plan.owner !== quarantine.requested_owner) ||
           !attempt ||
@@ -4465,10 +4508,11 @@ export class TaskRuntime {
       }
       try {
         const attempt = this.store.fenced(this.owner, fence, current)
+        const review = sourceReviewBinding(quarantine)
         const pending = quarantine.phase === "pending"
         const readOptions = pending && attempt.state === "running" ? { messages: true } : undefined
         let worker = await this.host.session(quarantine.session_id, readOptions)
-        let reason = this.sourceWorkerWait(attempt, worker, pending)
+        let reason = this.sourceWorkerWait(attempt, worker, pending, review)
         if (reason) {
           wait(reason)
           continue
@@ -4491,10 +4535,11 @@ export class TaskRuntime {
             projectID: this.projectID,
             directory: quarantine.workspace,
             assignedMessageID: quarantine.assigned_message_id,
+            ...(review ? { reviewInput: review } : {}),
           })
         }
         worker = await this.host.session(quarantine.session_id, readOptions)
-        reason = this.sourceWorkerWait(attempt, worker, pending)
+        reason = this.sourceWorkerWait(attempt, worker, pending, review)
         if (reason || (quarantine.phase === "pending" && !worker?.archived)) {
           wait(reason ?? "Native archive has not been observed")
           continue

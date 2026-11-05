@@ -22,7 +22,9 @@ import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
 import { SourceFence } from "./source-fence-rpc.ts"
-import { sourceGuardMatches } from "./source-quarantine.ts"
+import { sourceGuardMatches, sourceReviewBinding } from "./source-quarantine.ts"
+import { reviewMetadata } from "./review-input.ts"
+import { ModelPolicy } from "./schema.ts"
 import { NativeIdleStore } from "./native-idle.ts"
 import type { NativeIdleTerminal } from "./native-idle.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
@@ -359,7 +361,10 @@ export function nativeHost(
       }
     },
   })
-  return {
+  const host: RunnerHost & {
+    retainedInputID(sessionID: string): Promise<string | undefined>
+    readSessionLog(sessionID: string): AsyncIterable<unknown>
+  } = {
     retainedInputID,
     readSessionLog,
     async workerModel() {
@@ -936,8 +941,11 @@ export function nativeHost(
           throw new Error("Native retained archive worker has active input or approval work")
         const authorized = repository.atomic((db) =>
           db
-            .query<{ state: string }, string[]>(
-              `SELECT a.state FROM runner_source_quarantines q
+            .query<
+              { state: string; task_id: string; policy: string; review_input_json: string | null },
+              string[]
+            >(
+              `SELECT a.state,a.task_id,a.policy,q.review_input_json FROM runner_source_quarantines q
             JOIN runner_attempts a ON a.id=q.attempt_id
             JOIN runner_plans p ON p.id=q.plan_id
             WHERE q.phase='pending' AND q.request_id=? AND q.plan_id=?
@@ -958,11 +966,55 @@ export function nativeHost(
             ),
         )
         if (!authorized) throw new Error("Native retained archive request authority changed")
+        const review = sourceReviewBinding(authorized)
+        if (
+          review?.inputID !== input.reviewInput?.inputID ||
+          review?.requestID !== input.reviewInput?.requestID
+        )
+          throw new Error("Native retained archive review binding changed")
         if (
           authorized.state === "running" &&
-          (await retainedNativeInputID(client, input.sessionID)) !== input.assignedMessageID
+          (await retainedNativeInputID(client, input.sessionID)) !==
+            (review?.inputID ?? input.assignedMessageID)
         )
           throw new Error("Native retained archive current input changed")
+        if (review) {
+          const foreground = await host.session(input.sessionID, { messages: true })
+          if (
+            !foreground ||
+            foreground.id !== input.sessionID ||
+            foreground.projectID !== input.projectID ||
+            foreground.directory !== input.directory ||
+            foreground.agent !== "lazers-implementor" ||
+            foreground.metadata?.lazersAttemptID !== input.attemptID ||
+            foreground.busy ||
+            foreground.observationUnstable ||
+            foreground.pendingInput !== false ||
+            foreground.pendingPermissions !== 0 ||
+            foreground.pendingForms !== 0 ||
+            foreground.outcome !== "succeeded" ||
+            foreground.turn?.state !== "completed" ||
+            foreground.turn.inputID !== review.inputID
+          )
+            throw new Error("Native retained review foreground is no longer completed and clear")
+          const messages = foreground.messages.filter((message) => message.id === review.inputID)
+          const metadata =
+            messages.length === 1
+              ? reviewMetadata(messages[0]!, {
+                  taskID: authorized.task_id,
+                  attemptID: input.attemptID,
+                })
+              : undefined
+          const model = ModelPolicy.parse(JSON.parse(authorized.policy).model)
+          if (
+            metadata?.requestID !== review.requestID ||
+            !foreground.model ||
+            foreground.model.providerID !== model.providerID ||
+            foreground.model.id !== model.id ||
+            foreground.model.variant !== model.variant
+          )
+            throw new Error("Native retained archive review metadata or route changed")
+        }
         return target
       }
       if ((await validate()).time.archived !== undefined) return
@@ -1082,4 +1134,5 @@ export function nativeHost(
       await Effect.runPromise(ctx.session.interrupt({ sessionID: Session.ID.make(id) }))
     },
   }
+  return host
 }

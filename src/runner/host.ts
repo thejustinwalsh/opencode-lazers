@@ -124,6 +124,7 @@ export type RetainedWorkerArchive = {
   projectID: string
   directory: string
   assignedMessageID: string
+  reviewInput?: { inputID: string; requestID: string }
 }
 export type WorktreeLocationRetirement =
   "evicted" | "not-loaded" | "active-session" | "current-location" | "unavailable"
