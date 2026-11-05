@@ -3,7 +3,14 @@ import type { TrajectoryResponse } from "../observability/contract.ts"
 import { readTaskEffortBasis } from "./comparison-presentation.ts"
 import type { ModelEvidenceOutput } from "./source-schema.ts"
 import type { ModelComparisonOutput } from "./comparison-schema.ts"
+import { ModelMappingWriteOutputSchema } from "./contract.ts"
 import type { ModelSettingsOutput } from "./contract.ts"
+import type {
+  ModelMappingRecord,
+  ModelMappingTargetInput,
+  ModelMappingUpdate,
+} from "./mapping-schema.ts"
+import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import type {
   ModelDecisionConfigurations,
   ModelDecisionContext,
@@ -23,10 +30,23 @@ export type ModelDecisionStatus =
   | "missing-rpc"
   | "error"
 
+type ModelMappingWriteOutput = (typeof ModelMappingWriteOutputSchema)["_output"]
+
+export type ModelAssignmentWrite = {
+  status: "saving" | "verifying" | "uncertain" | "conflict" | "confirmed" | "failed"
+  persona: WorkerPersona
+  target: ModelMappingTargetInput | null
+  route: ModelPolicy | null
+  expectedRevision: number
+  revision: number | null
+  message: string
+}
+
 export type ModelComparisonTransport = {
   comparison(cursor: string | undefined, signal: AbortSignal): Promise<ModelComparisonOutput>
   refreshSources(signal: AbortSignal): Promise<ModelEvidenceOutput>
   settings(taskID: string | undefined, signal: AbortSignal): Promise<ModelSettingsOutput>
+  configure(update: ModelMappingUpdate, signal: AbortSignal): Promise<ModelMappingWriteOutput>
   queryTasks(signal: AbortSignal): Promise<TaskPage>
   getTask(taskID: string, signal: AbortSignal): Promise<TaskDetail>
   trajectoryStatus(taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
@@ -67,6 +87,22 @@ type PendingSelectedTaskLoad = {
   promise: Promise<void>
 }
 
+type PendingAssignmentWrite = {
+  request: number
+  generation: number
+  selectionRevision: number
+  taskID: string | null
+  projectDirectory: string
+  transport: ModelComparisonTransport
+  target: ModelMappingTargetInput
+  persona: WorkerPersona
+  route: ModelPolicy | null
+  expectedRevision: number
+  targetRevision: number
+  outcome: "updated" | "uncertain" | "conflict"
+  signal: AbortSignal
+}
+
 export type ModelTask = Extract<TaskDetail, { status: "found" }> | undefined
 export type ModelCandidate = ModelComparisonOutput["candidates"][number]
 
@@ -99,6 +135,7 @@ export type ModelComparisonPanelData = {
   task?: ModelTask
   effortBasis?: ReturnType<typeof readTaskEffortBasis>
   settings?: ModelSettingsOutput
+  assignmentWrite?: ModelAssignmentWrite
   comparisonLoading: boolean
   comparisonError: string
   comparisonStale: boolean
@@ -150,6 +187,36 @@ function decisionStatus(context: ModelDecisionContext, online: boolean): ModelDe
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function routesMatch(left: ModelPolicy | null, right: ModelPolicy | null) {
+  return left === null
+    ? right === null
+    : right !== null &&
+        left.providerID === right.providerID &&
+        left.id === right.id &&
+        (left.variant ?? null) === (right.variant ?? null)
+}
+
+function mappingTargetMatches(
+  record: ModelMappingRecord,
+  target: ModelMappingTargetInput,
+  projectDirectory: string,
+) {
+  switch (target.scope) {
+    case "shared":
+      return record.target.scope === "shared"
+    case "project":
+      return (
+        record.target.scope === "project" && record.target.projectDirectory === projectDirectory
+      )
+    case "task":
+      return (
+        record.target.scope === "task" &&
+        record.target.projectDirectory === projectDirectory &&
+        record.target.taskID === target.taskID
+      )
+  }
 }
 
 function missingDecisionRPC(error: unknown) {
@@ -221,6 +288,9 @@ export class ModelComparisonPanelState {
   private selectedTaskLoad?: PendingSelectedTaskLoad
   private settingsRequest = 0
   private selectionRevision = 0
+  private assignmentRequest = 0
+  private assignmentController = new AbortController()
+  private assignmentOperation?: PendingAssignmentWrite
   private transport?: ModelComparisonTransport
   private projectID = ""
   private projectDirectory = ""
@@ -864,6 +934,7 @@ export class ModelComparisonPanelState {
     const selectionRevision = ++this.selectionRevision
     this.taskController.abort()
     this.taskController = new AbortController()
+    this.invalidateAssignmentWrite()
     this.selectedTaskLoad = undefined
     this.taskRequest++
     this.settingsRequest++
@@ -876,6 +947,7 @@ export class ModelComparisonPanelState {
       effortLoading: Boolean(taskID),
       effortError: "",
       settings: undefined,
+      assignmentWrite: undefined,
       settingsLoading: true,
       settingsError: "",
     })
@@ -1075,9 +1147,9 @@ export class ModelComparisonPanelState {
     generation: number,
     taskID?: string,
     selectionRevision = this.selectionRevision,
-  ) {
+  ): Promise<ModelSettingsOutput | undefined> {
     const transport = this.transport
-    if (!transport || this.controller.signal.aborted) return
+    if (!transport || this.controller.signal.aborted) return undefined
     const request = ++this.settingsRequest
     const signal = this.controller.signal
     this.update({ settingsLoading: true, settingsError: "" })
@@ -1090,13 +1162,14 @@ export class ModelComparisonPanelState {
         taskID !== (this.data.selectedTaskID ?? undefined) ||
         signal.aborted
       )
-        return
+        return undefined
       if (
         settings.projectDirectory !== this.projectDirectory ||
         settings.taskID !== (taskID ?? null)
       )
         throw new Error("Saved model settings belong to another project or task")
       this.update({ settings, settingsLoading: false, settingsError: "" })
+      return settings
     } catch (error) {
       if (
         generation === this.generation &&
@@ -1109,7 +1182,338 @@ export class ModelComparisonPanelState {
           settingsLoading: false,
           settingsError: error instanceof Error ? error.message : String(error),
         })
+      return undefined
     }
+  }
+
+  async refreshSettings() {
+    if (this.data.assignmentWrite?.status === "uncertain") {
+      await this.recheckAssignmentWrite()
+      return this.data.settings
+    }
+    const settings = await this.loadSettings(
+      this.generation,
+      this.data.selectedTaskID ?? undefined,
+      this.selectionRevision,
+    )
+    if (
+      settings &&
+      (this.data.assignmentWrite?.status === "conflict" ||
+        this.data.assignmentWrite?.status === "failed")
+    ) {
+      this.assignmentOperation = undefined
+      this.update({ assignmentWrite: undefined })
+    }
+    return settings
+  }
+
+  clearConfirmedAssignmentWrite() {
+    if (this.data.assignmentWrite?.status !== "confirmed") return
+    this.assignmentOperation = undefined
+    this.update({ assignmentWrite: undefined })
+  }
+
+  async configureMapping(
+    persona: WorkerPersona,
+    scope: ModelMappingTargetInput["scope"],
+    route: ModelPolicy | null,
+  ) {
+    const taskID = this.data.selectedTaskID
+    const target: ModelMappingTargetInput | null =
+      scope === "task" ? (taskID ? { scope, taskID } : null) : { scope }
+    if (!target) {
+      this.update({
+        assignmentWrite: {
+          status: "failed",
+          persona,
+          target: null,
+          route,
+          expectedRevision: 0,
+          revision: null,
+          message: "Choose an existing task before editing a task override.",
+        },
+      })
+      return
+    }
+
+    const settings = this.data.settings
+    const personaSettings = settings?.personas.find((entry) => entry.persona === persona)
+    const current = personaSettings?.layers[scope] ?? null
+    const expectedRevision = current?.revision ?? 0
+    const base = {
+      persona,
+      target,
+      route,
+      expectedRevision,
+      revision: null,
+    }
+    const currentWrite = this.data.assignmentWrite
+    if (currentWrite?.status === "saving" || currentWrite?.status === "verifying") return
+    if (currentWrite?.status === "uncertain") {
+      this.update({
+        assignmentWrite: {
+          ...currentWrite,
+          message: "Check the uncertain write before submitting another mapping.",
+        },
+      })
+      return
+    }
+    if (
+      !settings ||
+      this.data.settingsLoading ||
+      this.data.settingsError ||
+      settings.projectDirectory !== this.projectDirectory ||
+      settings.taskID !== taskID
+    ) {
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "failed",
+          message: "Saved mappings are not ready. Reload current settings before saving.",
+        },
+      })
+      return
+    }
+
+    const transport = this.transport
+    if (!transport || this.controller.signal.aborted || !transport.online()) {
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "failed",
+          message:
+            "No write was sent because the project connection is offline. Reconnect and retry.",
+        },
+      })
+      return
+    }
+
+    this.assignmentController.abort()
+    this.assignmentController = new AbortController()
+    const generation = this.generation
+    const selectionRevision = this.selectionRevision
+    const request = ++this.assignmentRequest
+    const signal = AbortSignal.any([this.controller.signal, this.assignmentController.signal])
+    const operation: PendingAssignmentWrite = {
+      request,
+      generation,
+      selectionRevision,
+      taskID,
+      projectDirectory: this.projectDirectory,
+      transport,
+      target,
+      persona,
+      route,
+      expectedRevision,
+      targetRevision: expectedRevision + 1,
+      outcome: "uncertain",
+      signal,
+    }
+    this.assignmentOperation = operation
+    this.update({
+      assignmentWrite: {
+        ...base,
+        status: "saving",
+        message: "Saving the exact route…",
+      },
+    })
+
+    try {
+      const result = await transport.configure({ target, persona, expectedRevision, route }, signal)
+      if (!this.isCurrentAssignment(operation)) return
+      if (result.status === "conflict") {
+        operation.outcome = "conflict"
+        operation.targetRevision = result.currentRevision
+        this.update({
+          assignmentWrite: {
+            ...base,
+            status: "conflict",
+            revision: result.currentRevision || null,
+            message: `This mapping changed in another editor (expected revision ${expectedRevision}, current revision ${result.currentRevision}). No stale write was applied. Reload, review, then save again.`,
+          },
+        })
+        await this.reconcileAssignment(operation)
+        return
+      }
+
+      operation.outcome = "updated"
+      operation.targetRevision = result.mapping.revision
+      if (
+        result.mapping.persona !== persona ||
+        !mappingTargetMatches(result.mapping, target, this.projectDirectory) ||
+        !routesMatch(result.mapping.route, route)
+      ) {
+        operation.outcome = "uncertain"
+        operation.targetRevision = expectedRevision + 1
+        this.update({
+          assignmentWrite: {
+            ...base,
+            status: "uncertain",
+            revision: operation.targetRevision,
+            message:
+              "The write response did not match this editor. Checking authoritative settings before showing it as saved.",
+          },
+        })
+        await this.reconcileAssignment(operation)
+        return
+      }
+
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "verifying",
+          revision: result.mapping.revision,
+          message: "Write accepted; confirming the saved route with an authoritative readback…",
+        },
+      })
+      await this.reconcileAssignment(operation)
+    } catch (error) {
+      if (!this.isCurrentAssignment(operation)) return
+      operation.outcome = "uncertain"
+      operation.targetRevision = expectedRevision + 1
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "uncertain",
+          revision: operation.targetRevision,
+          message: `The write outcome is uncertain (${errorMessage(error)}). Check authoritative settings before trying again.`,
+        },
+      })
+      await this.reconcileAssignment(operation)
+    }
+  }
+
+  async recheckAssignmentWrite() {
+    const operation = this.assignmentOperation
+    if (
+      !operation ||
+      this.data.assignmentWrite?.status !== "uncertain" ||
+      !this.isCurrentAssignment(operation)
+    )
+      return
+    this.update({
+      assignmentWrite: {
+        ...this.data.assignmentWrite,
+        status: "verifying",
+        message: "Checking the exact target against authoritative settings…",
+      },
+    })
+    await this.reconcileAssignment(operation)
+  }
+
+  private isCurrentAssignment(operation: PendingAssignmentWrite) {
+    return (
+      this.assignmentOperation === operation &&
+      operation.request === this.assignmentRequest &&
+      operation.generation === this.generation &&
+      operation.selectionRevision === this.selectionRevision &&
+      operation.taskID === this.data.selectedTaskID &&
+      operation.projectDirectory === this.projectDirectory &&
+      operation.transport === this.transport &&
+      !operation.signal.aborted
+    )
+  }
+
+  private async reconcileAssignment(operation: PendingAssignmentWrite) {
+    if (!this.isCurrentAssignment(operation)) return
+    const readback = await this.loadSettings(
+      operation.generation,
+      operation.taskID ?? undefined,
+      operation.selectionRevision,
+    )
+    if (!this.isCurrentAssignment(operation)) return
+
+    const base = {
+      persona: operation.persona,
+      target: operation.target,
+      route: operation.route,
+      expectedRevision: operation.expectedRevision,
+    }
+    if (!readback) {
+      if (operation.outcome === "conflict") {
+        this.update({
+          assignmentWrite: {
+            ...base,
+            status: "conflict",
+            revision: operation.targetRevision || null,
+            message: `The stale write was rejected. Current settings could not be reloaded: ${this.data.settingsError || "readback unavailable"}. Reload before trying again.`,
+          },
+        })
+      } else {
+        this.update({
+          assignmentWrite: {
+            ...base,
+            status: "uncertain",
+            revision: operation.targetRevision,
+            message: `The write is still unconfirmed because authoritative settings could not be read: ${this.data.settingsError || "readback unavailable"}. Recheck before submitting another mapping.`,
+          },
+        })
+      }
+      return
+    }
+
+    const current =
+      readback.personas.find((entry) => entry.persona === operation.persona)?.layers[
+        operation.target.scope
+      ] ?? null
+    if (
+      operation.outcome !== "conflict" &&
+      current?.revision === operation.targetRevision &&
+      mappingTargetMatches(current, operation.target, operation.projectDirectory) &&
+      routesMatch(current.route, operation.route)
+    ) {
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "confirmed",
+          revision: operation.targetRevision,
+          message: `Saved and confirmed by authoritative settings at revision ${operation.targetRevision}.`,
+        },
+      })
+      return
+    }
+
+    if (operation.outcome === "conflict") {
+      const revision = current?.revision ?? 0
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "conflict",
+          revision: revision || null,
+          message: `No stale write was applied. Current authoritative revision is ${revision}; review it before saving again.`,
+        },
+      })
+      return
+    }
+
+    if (current && current.revision > operation.targetRevision) {
+      this.update({
+        assignmentWrite: {
+          ...base,
+          status: "conflict",
+          revision: current.revision,
+          message: `A newer authoritative revision ${current.revision} is current. The requested route is not shown as saved; review the current mapping before continuing.`,
+        },
+      })
+      return
+    }
+
+    const observed = current ? `revision ${current.revision}` : "no mapping record"
+    this.update({
+      assignmentWrite: {
+        ...base,
+        status: "uncertain",
+        revision: operation.targetRevision,
+        message: `The write remains unconfirmed: authoritative readback shows ${observed}, not the requested route at revision ${operation.targetRevision}. Recheck before submitting another mapping.`,
+      },
+    })
+  }
+
+  private invalidateAssignmentWrite() {
+    this.assignmentRequest++
+    this.assignmentController.abort()
+    this.assignmentController = new AbortController()
+    this.assignmentOperation = undefined
   }
 
   close() {
@@ -1119,6 +1523,7 @@ export class ModelComparisonPanelState {
     this.selectedTaskLoad = undefined
     this.settingsRequest++
     this.selectionRevision++
+    this.invalidateAssignmentWrite()
     this.controller.abort()
     this.taskController.abort()
     this.decisionController.abort()
