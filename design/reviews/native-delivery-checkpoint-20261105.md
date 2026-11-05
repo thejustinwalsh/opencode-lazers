@@ -263,8 +263,7 @@ actually restore source-writing authority before imposing permanent current-inpu
 checks that could reblock work. Guard restoration remains strict. Follow-up source
 clearance, integration, activation and actual owner-bound release are still open.
 
-Ordering check: admitted zero-attempt runtime LZ88 has priority2050, above LZ142's
-1800. Before claiming142 is next after release, reconcile actual ordering through
+Ordering check: admitted zero-attempt runtime LZ88 has priority2050, above LZ142's 1800. Before claiming142 is next after release, reconcile actual ordering through
 existing schedule controls; an older equal/higher-priority runtime slice can win.
 
 Latest LZ143 candidate is clean `747a386`. The follow-up reviewer retracted the
@@ -290,6 +289,18 @@ mutation. Main stored/relayed scoped advice to the same worker at1793903672618
 to test useful reads under real project activity and unrelated commits alongside
 genuine ledger changes. Do not infer success until its tests and actual producer
 reads pass. No source hashing or new daemon was introduced.
+
+LZ143 final source review clears747a386, retained in
+`design/reviews/lz143-source-release-review-final-20261105.md`. Its final full
+suite passes584 tests/7338 assertions in164.72seconds at
+`/private/tmp/lz143-final-boundary-compatibility.log`; focused40 tests/405
+assertions and quality pass. Root integrated the reviewed branch and precursor
+with real two-parent merge `97eeb50`. Canonical source is integrated, not yet
+explicitly activated or natively released. No Root reload/restart was issued.
+At1793904367512 service95968 is unchanged, original LZ122 Luna Max remains
+active, Main exists/idle and c553 is active. Fresh DB readback confirms actual
+schedule changes: LZ142 priority2075/version7; LZ88 priority1700/version14.
+Both remain unstarted; prerequisites and resource holds are retained.
 
 Actual Desktop Tasks→LZ122→Trajectory→Open worker session navigates to the exact
 original worker. Capture `/private/tmp/lz122-live-trajectory-20261105.png` records
