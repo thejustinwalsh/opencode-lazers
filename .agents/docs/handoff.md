@@ -18,11 +18,19 @@ cleanup are separate facts.
   Profilers are removed. All-thread sampling found main/allocator work and mostly
   waiting helpers; residual CPU remains material and partly unattributed.
   [Measured report](../../design/reviews/astra-renewal-spike-repair-20261104.md).
-- **Native OpenAI quota still stops work.** Main, both original workers and the
-  renewed Architects ended failed/idle with ChatGPT usage-limit errors; no task is
-  accepted from those failures. Current inventory empty1793843196863. Preserve
-  original129/132 attempts and dirty trees. No retry/replacement or provider switch.
-  User preference about waiting versus another route remains pending.
+- **OpenAI reset reported; native Architect is working again.** The user confirmed
+  the reset. New successor `ses_5aa94658965844ed85f4b0ebdd5266cb` began at
+  1793844116602 on Sol High and completed actual tool calls by1793844258408.
+  Fresh visible coordinator `ses_e568438ebffeaoFbF9nBb942XM` (“LAZERS roadmap
+  and renewal-context fix”) is also running on OpenAI Sol High at1793844861057,
+  started through Desktop from the concise roadmap/handoff ask. Original archived
+  Main is active again from Root's Desktop reset update and is coordinating; it
+  remains archived in native metadata. Automatic approval review rejected stopping
+  its in-flight turn, so it was left running. Avoid creating more Architects.
+  Coordinate ownership through existing runtime flows. Both original Luna Max
+  worker sessions remain failed from the prior quota stop;
+  resume them through existing ownership/runtime flows, preserving their dirty
+  trees and identities. No provider/model switch is authorized or needed.
 - **LZ28 renewal/context delivery is not complete.** First renewal committed,
   archived original Main and retained Sol High plus worker identities. Its handoff
   was9019UTF-8bytes, followed by233 queued source-reference notices containing
@@ -59,18 +67,32 @@ cleanup are separate facts.
   retained, but the UI lacks the distinct native outcome/blockage context. Keep
   this finding with Tasks/Radar/Trajectory follow-through; do not invent an end.
 
-- **Current Tasks project grouping is unavailable.** At1793843271896 an
+- **Tasks project grouping repair is live.** At1793843271896 an
   unarchived Architect scope reproduced native snapshot failure. Service logs say
   “Observation scope is too large; narrow it”:11047 transitions exceed the
   10000 limit, despite only107 plans/128 attempts/667 checks. The source loads all
   history before rejecting. Project list/details remain available ungrouped.
-  Astra is reviewing a bounded current-topology repair within the performance lane;
-  preserve complete history and coordinate retained129 rather than raise the cap.
+  Astra's additive history-free topology repair is now integrated3f30c3c and
+  live:107 plans/126 nodes/15 dependencies returned in16ms at1793843814881;
+  Desktop grouping is restored. Canonical51tests/331assertions and GUI build/smoke
+  pass. Full historical snapshot/Trajectory limits remain open. Current Tasks CPU
+  did not improve materially (25.92% baseline vs26.59% settled service); no overall
+  performance claim follows. Recorder no-op write repair9bcf77f also landed:
+  22tests/340assertions; live savings remain unmeasured.
+  [Report](../../design/reviews/astra-task-topology-repair-20261104.md). Astra's
+  clean integrated worktree was removed through native non-forced cleanup at
+  1793844574283 and its directory is absent; original worker trees remain.
+
+Local usage at1793844441690–1731 confirms both original workers are OpenAI
+`gpt-6-luna/max`, with native cumulative counters matching LAZERS SQLite
+usage-snapshot rows.129: input577024/output49096/reasoning134798/cacheRead23348864;
+132: input218221/output23168/reasoning37669/cacheRead10573184. Keep buckets
+separate; native subscription cost0 is not a market-price estimate.
 
 ## Next actions
 
-1. Resume native orchestration on the user's chosen available route; keep current
-   model preferences otherwise. Prioritize the observed LZ28/LZ30 compact-context
+1. Continue native orchestration on the now-reset OpenAI route with current model
+   preferences. Prioritize the observed LZ28/LZ30 compact-context
    correction and visible current-Architect route before feeding more historical
    notices into model context. Let Architect investigate and decompose the plan;
    use the existing task identities/contracts. Performance source/tests are landed;
@@ -100,9 +122,12 @@ cleanup are separate facts.
 | LZ72                     | `7473e8a5-74cc-4222-aeea-a8a01de1f9be`                                          | `0dab6e0d-6ad1-4902-a315-4066f5dee32c`        | `ed96f0b9-102b-4c64-aa8b-708a62d49fe7` / `ses_136dd90605a14fc0a6e7ce9e0edc1413`                  |
 | LZ57 → LZ58              | `853524a4-df9e-41ed-a57f-06dcb6637187` → `95f7a783-009b-4d26-9fa8-ace3cbcac0c3` | `d0ce36bb-3b8a-481b-b525-9e2b45c55cb6`        | zero attempts; reversible scheduling hold                                                        |
 
-Current Architect at1793842851607: `ses_4e3bba0f29fc4972a4d51a28409c497d`,
-OpenAI Sol High, child of09ce60; renewal `20badc71-8c03-4700-ba0d-aa773cec1f39`.
-Both newer sessions have the title “LAZERS · Preserve genuinely received duplicate starts”.
+Current Architect at1793844258408: `ses_5aa94658965844ed85f4b0ebdd5266cb`,
+OpenAI Sol High, child of4e3bba; renewal `283a8271-2d0c-4f96-8554-d22c63fcf884`
+started1793844115924 and committed. The renewal title remains
+“LAZERS · Preserve genuinely received duplicate starts”. Desktop exposes the running
+child through Main's native subagent menu and its ancestor breadcrumbs. Idle
+child discoverability and archived observation scopes still need follow-through.
 
 Native worker trees are under
 `/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
