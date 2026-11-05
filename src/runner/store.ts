@@ -3666,7 +3666,6 @@ export class RunnerStore {
         .query("SELECT * FROM runner_transitions WHERE plan_id=? ORDER BY id")
         .all(planID),
       delivery: db.query("SELECT * FROM runner_outbox WHERE plan_id=? ORDER BY rowid").all(planID),
-      audit: this.audit(),
     }))
   }
 }
