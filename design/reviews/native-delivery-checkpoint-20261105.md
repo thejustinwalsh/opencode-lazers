@@ -25,6 +25,22 @@ Native activity checked at Unix ms1793895802232. Recheck before intervention.
   `/private/tmp/lz134-integrated-verify.log`.
   Backend activation and native pointer/journal/cancellation observations remain
   pending. Keep the running141 worker intact; coordinate a quiet boundary.
+- Subsequent native observation at1793896007972 fetched original assistant
+  message `msg_1aa5f22ae001WJjicb3rE0O3rR` through the new selected-message
+  handler after a journal lookup. Service95968/root project location and active141
+  were independently read back at1793896019997. This path is effective without a
+  Root-issued reload; schema availability alone was not used as proof. Other134
+  native observations and acceptance remain open.
+- Root's `1d1d73d` repairs prospective listener replacement using a still-connected
+  same-process peer's exact live start. Actual134 diagnostics show start7175 was
+  observed by listenera09100df but idle ran in replacement74723424 and rejected
+  lineage. Process-shared registrations are scoped to DB/project, removed on
+  retirement and invalidated on stream gaps; borrowed witnesses are rechecked
+  through terminal confirmation.95 connected native/progress tests/538 assertions
+  and fmt/lint/types pass, including peer retirement after idle. Logs:
+  `/private/tmp/lz-live-peer-integrated-tests.log` and
+  `/private/tmp/lz-live-peer-final-verify.log`. Live peer handover is still unproven;
+  no historical idle reports were reconstructed or acceptance waived.
 - `df92dc4` preserves genuine review metadata omitted from compacted model
   context by fetching that exact retained input. Luna's independent review
   correctly found it does not supply missing matching idle evidence for139/141.
