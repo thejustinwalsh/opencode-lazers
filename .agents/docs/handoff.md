@@ -24,21 +24,24 @@ Broad lifecycle/cache policy consolidation stays behind visible delivery.
 
 - Main Architect: ses_e568438ebffeaoFbF9nBb942XM.
 - Retained coordinator: ses_f0d7cf74d4fb4f429b8df46f9998e9b6, successor of archived
- c160/29e2/c553. Native timeout renewal transferred ownership automatically; do
- not revive those predecessors or request transfer approval.
+  c160/29e2/c553. Native timeout renewal transferred ownership automatically; do
+  not revive those predecessors or request transfer approval.
 - Native service PID71027 after automatic crash recovery; Root did not restart it.
 - Presence helper /private/tmp/lz-native-presence-only.ts reads authoritative
- active/model/time/outcome. A timeout or changes:[] does not mean terminal.
+  active/model/time/outcome. A timeout or changes:[] does not mean terminal.
 
 ## Integrated this pass
 
-Root performance candidate29e3b32 remains isolated in native worktree
-/private/tmp/lz-trajectory-status-performance pending Main review/integration.
-It skips unused pagination identities for full trajectory captures/status;
-ordinary cursor freshness is retained. 42 trajectory tests/292 assertions and86
-observability/panel tests/748 assertions pass, with lint/full types. Paired fixture
-measurements: median10.74ms→9.61ms, identical output. This is not a battery fix:
-actual status responses still exceed2MB and resend historical worker events.
+Root performance candidate29e3b32 received native Luna source approval and Main
+integrated it as7fe152b. Root's duplicate concurrent cherry-pick was empty and
+skipped cleanly; future integration mutations have one named integrator.
+Its clean native worktree was removed using OpenCode's API. It skips unused
+pagination identities for full trajectory captures/status; ordinary cursor
+freshness is retained. Current-main128 tests/1040 assertions, lint and full types
+pass. Paired fixture measurements: median10.74ms→9.61ms, identical output.
+Desktop's mounted trajectory continued advancing and the native status RPC
+succeeded after integration. This is not a battery fix: actual status responses
+grew to3,137,297bytes and still resend historical worker events.
 Progress rows can mutate under the same sequence, so an afterSeq-only delta
 would lose updates. Preserve complete history and live updates in further work.
 
@@ -106,31 +109,32 @@ Native trees: /Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/
 followed by attempt ID. Preserve source and held resources.
 
 -57 task853524a4-df9e-41ed-a57f-06dcb6637187;
- plan d0ce36bb-3b8a-481b-b525-9e2b45c55cb6;
- attempt3b639290-ffc8-4a2c-a5dd-a550abf18da6;
- worker ses_bb2a0db8dda24991a059e5a3138fc39a; ownerc160.
- Actual persisted Systems/project-mapping/OpenAI Luna Max matched native route:
- substantive routing142 dogfood. Worker is inactive/succeeded with clean efaa923.
- Coordinator reported blockedv46: matching native idle evidence missing. Do not
- repeat reconciliation or imply background stopped. Its guarded source quarantine
- is now sealed.58 stays cancelled. Existing138 is actively implementing isolated
- candidate verification, then existing129 work; no duplicates.
+plan d0ce36bb-3b8a-481b-b525-9e2b45c55cb6;
+attempt3b639290-ffc8-4a2c-a5dd-a550abf18da6;
+worker ses_bb2a0db8dda24991a059e5a3138fc39a; ownerc160.
+Actual persisted Systems/project-mapping/OpenAI Luna Max matched native route:
+substantive routing142 dogfood. Worker is inactive/succeeded with clean efaa923.
+Coordinator reported blockedv46: matching native idle evidence missing. Do not
+repeat reconciliation or imply background stopped. Its guarded source quarantine
+is now sealed.58 stays cancelled. Existing138 is actively implementing isolated
+candidate verification, then existing129 work; no duplicates.
 -146 task7281416b-5557-4467-8426-f75e93d342e9;
- plan6b5f7053-7934-4deb-b5c5-d94c036f1dcf;
- attempt3d869ab8-2d97-42ef-8571-fb0da5039de1;
- worker ses_4f29a33638a64f7ba89530a9c3ec47b0; ownerMain.
- Inactive/succeeded, corrections integrated; native acceptance/resource closure
- remains held.145 was superseded without an attempt. No replacement worker.
+plan6b5f7053-7934-4deb-b5c5-d94c036f1dcf;
+attempt3d869ab8-2d97-42ef-8571-fb0da5039de1;
+worker ses_4f29a33638a64f7ba89530a9c3ec47b0; ownerMain.
+Inactive/succeeded, corrections integrated; native acceptance/resource closure
+remains held.145 was superseded without an attempt. No replacement worker.
 -122 taskd45bbaaf-8c7d-4750-b55b-906981b2a171;
- plan6c98bc11-0509-49b0-b8f2-f62666e05e28;
- attempt38df5475-caa8-4469-8c68-1b330f981c80;
- worker ses_4c2333ab99e14396b784425511414a08; ownerMain.
- Existing WIP matches reviewed/integrated correction; preserve until cleanup.
- Native Luna researcher ses_e5337592effeefMspoKIlcYx4F is actively researching the
- captured pricing causes. Main has not yet resumed a pricing implementation.
+plan6c98bc11-0509-49b0-b8f2-f62666e05e28;
+attempt38df5475-caa8-4469-8c68-1b330f981c80;
+worker ses_4c2333ab99e14396b784425511414a08; ownerMain.
+Existing WIP matches reviewed/integrated correction; preserve until cleanup.
+Native Luna researcher ses_e5337592effeefMspoKIlcYx4F is actively researching the
+captured pricing causes. Main has not yet resumed a pricing implementation.
+
 - Tera reviewer ses_e52a5ae04ffeObat8Bt6imz4ci completed final no-point review;
- reuse it for real priced geometry. Runner reviewer ses_e525f7986ffeedmphvnhcQ4jHB
- cleared efaa923. No duplicate local reviewers needed.
+  reuse it for real priced geometry. Runner reviewer ses_e525f7986ffeedmphvnhcQ4jHB
+  cleared efaa923. No duplicate local reviewers needed.
 
 138 plan e48290a6-a871-42a2-94f1-c88f700c0d11; original new attempt
 87c14979-917d-4495-9fa6-90bb3aaeff17; worker

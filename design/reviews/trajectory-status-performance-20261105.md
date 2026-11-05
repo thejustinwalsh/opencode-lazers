@@ -32,7 +32,17 @@ returned identical complete status output (946,176 characters). Median read
 time was 10.74 ms before versus 9.61 ms after; means were 11.12 and 9.88 ms.
 This measures a modest computation improvement. It does not measure live
 battery improvement, transport reduction or the final large-status solution.
-Native Architect review and integration remain pending.
+Native Luna source review approved the candidate, and Main integrated it as
+`7fe152b`. Root's concurrent duplicate cherry-pick was empty and skipped;
+subsequent integration mutations have one named integrator. Current-main
+integration checks passed: 128 tests / 1,040 assertions, lint and full types.
+The clean temporary worktree was removed through OpenCode's native API.
+
+After integration, the mounted Desktop trajectory continued advancing and
+three real status RPCs succeeded. The response had grown to 3,137,297 bytes
+and took 200, 214 and 198 ms. This is not a controlled before/after comparison:
+the worker history and concurrent activity grew. There is no demonstrated live
+latency or CPU improvement yet; repeated history transfer remains unresolved.
 
 ## Remaining performance work
 

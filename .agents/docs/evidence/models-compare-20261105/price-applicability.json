@@ -4,10 +4,7 @@
     "policy": {
       "schemaVersion": 1,
       "revision": 0,
-      "sources": [
-        "openrouter",
-        "opencode"
-      ],
+      "sources": ["openrouter", "opencode"],
       "fallback": "whole-model"
     },
     "access": {
@@ -42,20 +39,10 @@
           "contextTokens": 1048576,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
-          "variants": [
-            "low",
-            "high",
-            "max"
-          ],
+          "variants": ["low", "high", "max"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -79,21 +66,10 @@
           "contextTokens": 1048576,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "low",
-            "high",
-            "max"
-          ],
+          "variants": ["none", "low", "high", "max"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -117,23 +93,10 @@
           "contextTokens": 1050000,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
+          "variants": ["none", "low", "medium", "high", "xhigh", "max"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -164,23 +127,10 @@
           "contextTokens": 1000000,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
+          "variants": ["none", "low", "medium", "high", "xhigh", "max"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -204,23 +154,10 @@
           "contextTokens": 400000,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
+          "variants": ["none", "low", "medium", "high", "xhigh", "max"],
           "prices": null
         },
         {
@@ -233,23 +170,10 @@
           "contextTokens": 1050000,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
+          "variants": ["none", "low", "medium", "high", "xhigh", "max"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -280,21 +204,10 @@
           "contextTokens": 1000000,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "low",
-            "medium",
-            "xhigh"
-          ],
+          "variants": ["none", "low", "medium", "xhigh"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -318,20 +231,10 @@
           "contextTokens": 1000000,
           "capabilities": {
             "tools": true,
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
-          "variants": [
-            "none",
-            "high",
-            "max"
-          ],
+          "variants": ["none", "high", "max"],
           "prices": {
             "unit": "USD per million tokens",
             "tiers": [
@@ -371,14 +274,8 @@
           "contextLength": 1048576,
           "architecture": {
             "modality": "text+image+video->text",
-            "inputModalities": [
-              "text",
-              "image",
-              "video"
-            ],
-            "outputModalities": [
-              "text"
-            ],
+            "inputModalities": ["text", "image", "video"],
+            "outputModalities": ["text"],
             "tokenizer": "Other",
             "instructType": null
           },
@@ -427,14 +324,8 @@
           "contextLength": 1050000,
           "architecture": {
             "modality": "text+image+file->text",
-            "inputModalities": [
-              "file",
-              "image",
-              "text"
-            ],
-            "outputModalities": [
-              "text"
-            ],
+            "inputModalities": ["file", "image", "text"],
+            "outputModalities": ["text"],
             "tokenizer": "GPT",
             "instructType": null
           },
@@ -483,14 +374,8 @@
           "contextLength": 1000000,
           "architecture": {
             "modality": "text+image+video->text",
-            "inputModalities": [
-              "text",
-              "image",
-              "video"
-            ],
-            "outputModalities": [
-              "text"
-            ],
+            "inputModalities": ["text", "image", "video"],
+            "outputModalities": ["text"],
             "tokenizer": "Qwen",
             "instructType": null
           },
@@ -4621,9 +4506,7 @@
         "tokensPerAcceptedTask": 10849121,
         "currentMarketUSDPerAcceptedTask": null,
         "observationCount": 1,
-        "missing": [
-          "current-price"
-        ]
+        "missing": ["current-price"]
       }
     },
     {
@@ -4651,9 +4534,7 @@
         "tokensPerAcceptedTask": 6659714,
         "currentMarketUSDPerAcceptedTask": null,
         "observationCount": 1,
-        "missing": [
-          "current-price"
-        ]
+        "missing": ["current-price"]
       }
     },
     {
@@ -4681,10 +4562,7 @@
         "tokensPerAcceptedTask": 21072460.89215686,
         "currentMarketUSDPerAcceptedTask": null,
         "observationCount": 102,
-        "missing": [
-          "current-price",
-          "attribution"
-        ]
+        "missing": ["current-price", "attribution"]
       }
     }
   ]
