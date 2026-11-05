@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   artifactExists,
+  commitIsAncestor,
   commitArtifact,
   git,
   verificationEnvironmentIdentity,
@@ -69,6 +70,23 @@ function commitAll(root: string, message: string): string {
   git(root, ["commit", "-m", message])
   return git(root, ["rev-parse", "HEAD"])
 }
+
+test("commit ancestry distinguishes non-ancestor evidence from unavailable Git state", () => {
+  const root = initRepository("lazers-commit-ancestry-")
+  try {
+    writeFileSync(join(root, "base.txt"), "base")
+    const base = commitAll(root, "base")
+    writeFileSync(join(root, "next.txt"), "next")
+    const next = commitAll(root, "next")
+    expect(commitIsAncestor(root, base, next)).toBe(true)
+    expect(commitIsAncestor(root, next, base)).toBe(false)
+    expect(() => commitIsAncestor(root, "f".repeat(40), next)).toThrow(
+      "git merge-base --is-ancestor failed",
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 function divergentBaselineFixture() {
   const root = initRepository("lazers-divergent-artifact-")

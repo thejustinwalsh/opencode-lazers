@@ -35,6 +35,21 @@ export function git(
   return result.stdout.trimEnd()
 }
 
+/** Distinguish a normal non-ancestor result from an unavailable Git observation. */
+export function commitIsAncestor(directory: string, ancestor: string, descendant: string): boolean {
+  const result = spawnSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+    cwd: directory,
+    timeout: 30000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  })
+  if (result.status === 0) return true
+  if (result.status === 1) return false
+  const stderr = result.stderr?.toString("utf8") ?? ""
+  throw new Error(
+    `git merge-base --is-ancestor failed: ${(stderr || result.error?.message || "unknown").slice(0, 2000)}`,
+  )
+}
+
 /** Conservatively detects equal, wildcard-overlapping, and ancestor path scopes. */
 export function scopePatternsConflict(left: string[], right: string[]): boolean {
   const prefix = (pattern: string) => {

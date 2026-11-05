@@ -237,6 +237,32 @@ function fixture(requestID = "plan-title-store") {
   return { databasePath, projectDirectory, repository, store, input }
 }
 
+test("retained repair generations remain task-bound and the latest plan operation is observable", () => {
+  const f = fixture("repair-generation-store")
+  const plan = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  const otherTaskID = crypto.randomUUID()
+  f.store.record(plan.planID, taskID, "RETAINED_REPAIR_REQUESTED", {
+    operationID: "task-operation-1",
+  })
+  f.store.record(plan.planID, otherTaskID, "RETAINED_REPAIR_REQUESTED", {
+    operationID: "other-task-operation",
+  })
+  f.store.record(plan.planID, taskID, "RETAINED_REPAIR_REQUESTED", {
+    operationID: "task-operation-2",
+  })
+
+  expect(f.store.latestRetainedRepair<{ operationID: string }>(plan.planID)).toEqual({
+    operationID: "task-operation-2",
+  })
+  expect(f.store.latestRetainedRepair<{ operationID: string }>(plan.planID, taskID)).toEqual({
+    operationID: "task-operation-2",
+  })
+  expect(f.store.latestRetainedRepair(plan.planID, otherTaskID)).toEqual({
+    operationID: "other-task-operation",
+  })
+})
+
 function seedSourceJournal(
   store: RunnerStore,
   planID: string,

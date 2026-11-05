@@ -80,7 +80,7 @@ export function outcomeText(serialized: string) {
     }
     case "task-accepted":
       action =
-        "Review the accepted task artifact now; repair defects, integrate the reviewed result through runtime commands, and continue the existing backlog. Do not wait for plan finalization or disturb active workers."
+        "Review the accepted task artifact now. For a concrete defect in an unintegrated isolated artifact, use retained-repair with the latest attempt, exact artifact and defect reason; it continues the same worker and re-verifies. Otherwise integrate the reviewed result through runtime commands and continue the existing backlog. Do not disturb unrelated active workers."
       break
     case "accepted":
       action =

@@ -77,3 +77,20 @@ test("CommandInput scopes exact review-input aliases to owner reconciliation", (
     CommandInput.safeParse({ ...command, reviewInputID: undefined, extra: true }).success,
   ).toBe(false)
 })
+
+test("retained repair commands bind the exact task attempt artifact and concrete defect", () => {
+  const command = {
+    requestID: "repair-accepted-candidate",
+    planID: crypto.randomUUID(),
+    expectedVersion: 4,
+    action: "retained-repair" as const,
+    taskID: crypto.randomUUID(),
+    attemptID: crypto.randomUUID(),
+    artifact: "a".repeat(40),
+    reason: "The accepted parser candidate mishandles escaped delimiters.",
+  }
+  expect(CommandInput.parse(command)).toEqual(command)
+  expect(CommandInput.safeParse({ ...command, artifact: "short" }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, reason: "  " }).success).toBe(false)
+  expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(false)
+})

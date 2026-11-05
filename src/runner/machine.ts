@@ -40,7 +40,7 @@ export const taskMachine = createMachine({
       },
     },
     blocked: { on: { RECONCILE: "queued", CANCEL: "cancelled", RETRY: "ready" } },
-    accepted: { type: "final" },
+    accepted: { on: { RETAINED_REPAIR: "ready" } },
     failed: { on: { RESUME: "running", RETRY: "ready", ADOPT_ACCEPT: "accepted" } },
     cancelled: { on: { RESUME: "running", RETRY: "ready" } },
     exhausted: { on: { RESUME: "running", RETRY: "ready" } },

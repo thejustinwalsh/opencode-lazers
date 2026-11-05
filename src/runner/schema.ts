@@ -177,6 +177,7 @@ export const CommandInput = z
       "amend-scope",
       "adopt-descendant",
       "quarantine-source",
+      "retained-repair",
     ]),
     reason: z
       .string()
@@ -216,6 +217,21 @@ export const CommandInput = z
     targetBranch: z.string().min(1).max(200).optional(),
   })
   .superRefine((input, context) => {
+    if (input.action === "retained-repair") {
+      if (!input.taskID || !input.attemptID || !input.artifact || !input.reason?.trim())
+        context.addIssue({
+          code: "custom",
+          path: ["action"],
+          message:
+            "Retained repair requires taskID, attemptID, exact artifact and concrete defect reason",
+        })
+      if (input.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.artifact))
+        context.addIssue({
+          code: "custom",
+          path: ["artifact"],
+          message: "Retained repair requires an exact full commit identity",
+        })
+    }
     if (
       input.reviewInputID !== undefined &&
       (input.action !== "reconcile" || !input.taskID || !input.attemptID)
