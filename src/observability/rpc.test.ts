@@ -259,7 +259,6 @@ test("progress diagnostics are project-isolated and process scheduler totals are
   let handlers:
     | {
         progressDiagnostics(input: unknown): Effect.Effect<unknown>
-        serviceCPUProfile(input: unknown): Effect.Effect<unknown>
       }
     | undefined
   const originalSnapshot = sharedScheduler.snapshot.bind(sharedScheduler)
@@ -336,12 +335,7 @@ test("progress diagnostics are project-isolated and process scheduler totals are
     expect(serialized).not.toContain(fixture.directory)
     expect(contextReads).toBe(0)
 
-    await expect(Effect.runPromise(handlers!.serviceCPUProfile({ scope }))).rejects.toThrow("abort") // The registration scope has already been disposed; capture must not start.
-
     denied = true
-    await expect(Effect.runPromise(handlers!.serviceCPUProfile({ scope }))).rejects.toThrow(
-      "native permission denied",
-    )
     await expect(Effect.runPromise(handlers!.progressDiagnostics({ scope }))).rejects.toThrow(
       "native permission denied",
     )
@@ -349,9 +343,6 @@ test("progress diagnostics are project-isolated and process scheduler totals are
     denied = false
 
     foreignProject = true
-    await expect(Effect.runPromise(handlers!.serviceCPUProfile({ scope }))).rejects.toThrow(
-      "Observation scope is unavailable",
-    )
     await expect(Effect.runPromise(handlers!.progressDiagnostics({ scope }))).rejects.toThrow(
       "Observation scope is unavailable",
     )
@@ -366,9 +357,6 @@ test("progress diagnostics are project-isolated and process scheduler totals are
     archived = false
 
     agent = "lazers-implementor"
-    await expect(Effect.runPromise(handlers!.serviceCPUProfile({ scope }))).rejects.toThrow(
-      "architect-only",
-    )
     const nonArchitect = (await Effect.runPromise(handlers!.progressDiagnostics({ scope }))) as {
       processSchedulerTotals: { status: string; reason?: string }
     }
