@@ -263,3 +263,22 @@ Both native input IDs matched before/after. No model prompt, session, ownership,
 worker or acceptance/scope change occurred. Consumption and the corrected result
 remain unverified; actual retained129/132 recovery is still required after99
 integration, not inferred from a draft's failed-outcome support.
+
+### Independent final99 review: terminal continuation must retain its tree
+
+Luna final review from this root Architect (`ses_e559be590ffeoXYudBVb4zHd6h`)
+examined the complete99 increment `428c6ad..be50616`, not only the final correction.
+It found a same-tree blocker: `runtime.ts:1035–1047` still admits
+`workspaceMode: shared` for terminal continuation and rewrites the retained
+workspace/base commit. Architect source inspection confirmed that path. Reject
+terminal-continuation workspace/baseline overrides before mutation or prompt,
+without changing legacy stopped-attempt workspace selection. The fresh-current-
+input failure correction appears sound; actual129/132 qualification remains.
+
+Current99 owner is now `ses_04072d58d16c46b0a8b13f7db3e08737`, actively reviewing
+the task; leave it running. Fresh runtime inspection atversion17 remains held on
+the execution/idle mismatch, with all three effects completed. Final review advice
+was delivered/read back instruction-only at1793860367941, key
+`lazers.review.lz99.final-terminal-continuation-must-preserve-tree.20261105.v1`.
+Its retained input stayed `msg_a69c3a81bcdf40e99c629d833f37c020`; no prompt, worker
+or ownership mutation occurred. Consumption and correction are not yet observed.
