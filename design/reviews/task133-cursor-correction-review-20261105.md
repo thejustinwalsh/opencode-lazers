@@ -23,6 +23,12 @@ inventory. Runtime subsequently showed the exact artifact on a verifying attempt
 plan version15 blocked on `native-journal:human`. This is correct: source tests do
 not close the live acceptance gate.
 
+Independent native metadata at `1793873182900` confirms repair-turn busy time
+`1793871138019` and idle time `1793872228546`: 1,090,527 ms (18m10.527s).
+The exact successful terminal assistant was `msg_1ab1ddc15001dwXN8JW1SkE5sz`,
+followed by native idle message `msg_1ab1df0c2001f0QtGsAfy4GN37`. This is the
+resumed repair turn's wall time, not total attempt age or final acceptance time.
+
 Next: coordinate canonical source activation without interrupting active model or
 verification operations, exercise registered paging under actual scanner activity,
 retrieve a selected native message using its returned identity, and verify reads
