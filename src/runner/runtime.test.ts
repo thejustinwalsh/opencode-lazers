@@ -2160,6 +2160,103 @@ test("Start rejects stale, foreign and ended work without changing runtime state
   expect(f.store.plans()).toHaveLength(1) // the fixture plan only
 })
 
+test("an admitted source backlog shares only same-pass no-op target observations", async () => {
+  const f = fixture()
+  const size = 234
+  f.store.atomic((db) => {
+    const insert = db.query(
+      "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,'admitted',0)",
+    )
+    for (let index = 0; index < size; index++)
+      insert.run(
+        `reference-${index}`,
+        f.receipt.planID,
+        "owner",
+        `msg_reference_${index}`,
+        JSON.stringify({
+          status: index === 0 ? "architect-handoff" : "architect-source-reference",
+          planID: f.receipt.planID,
+          version: index,
+          sourceSessionID: "previous",
+        }),
+      )
+  })
+  const before = f.store.detail(f.receipt.planID).delivery
+  const session = f.host.session
+  let ownerReads = 0
+  f.host.session = async (id, options) => {
+    if (id === "owner") ownerReads++
+    return session(id, options)
+  }
+  await f.runtime.tick()
+  expect(ownerReads).toBe(1)
+  expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
+  expect(f.inbox.get("owner") ?? []).toHaveLength(0)
+  await f.runtime.tick()
+  expect(ownerReads).toBe(2)
+  expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
+  f.host.session = async () => {
+    throw new Error("native owner observation unavailable")
+  }
+  await expect(f.runtime.tick()).rejects.toThrow("native owner observation unavailable")
+  expect(f.store.detail(f.receipt.planID).delivery).toEqual(before)
+
+  let sent = false
+  let readsAfterAdmission = 0
+  const notify = f.host.notify
+  f.host.notify = async (input) => {
+    await notify(input)
+    sent = true
+  }
+  f.host.session = async (id, options) => {
+    if (sent && id === "owner") readsAfterAdmission++
+    return session(id, options)
+  }
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_outbox SET state='pending' WHERE id=?").run("reference-117"),
+  )
+  await f.runtime.tick()
+  expect(sent).toBe(true)
+  expect(readsAfterAdmission).toBe(1)
+  expect(f.inbox.get("owner")).toHaveLength(1)
+})
+
+test("admitted outcome rechecks durable owner after native observation awaits", async () => {
+  const f = fixture({
+    fail: true,
+    shared: true,
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await runPlan(f)
+  await drive(f.runtime)
+  const original = f.store.outboxForDelivery()[0]!
+  expect(original.state).toBe("admitted")
+  f.sessions.set("changed-owner", {
+    ...f.sessions.get("owner")!,
+    id: "changed-owner",
+    messages: [],
+  })
+  const session = f.host.session
+  let changed = false
+  f.host.session = async (id, options) => {
+    const result = await session(id, options)
+    if (!changed && id === "owner") {
+      changed = true
+      f.store.updatePlanOwner(f.receipt.planID, "owner", "changed-owner")
+    }
+    return result
+  }
+  await f.runtime.tick()
+  expect(changed).toBe(true)
+  const current = f.store.outboxForDelivery().find((row) => row.id === original.id)!
+  expect(current.session_id).toBe("changed-owner")
+  expect(current.message_id).not.toBe(original.message_id)
+  expect(current.state).toBe("admitted")
+  expect(f.inbox.get("owner") ?? []).toHaveLength(0)
+  expect(f.inbox.get("changed-owner")).toHaveLength(1)
+})
+
 test("host-admitted current outcomes follow an archived owner unless transcript consumption is proved", async () => {
   for (const consumed of [false, true]) {
     const f = fixture({
@@ -6166,11 +6263,25 @@ test.each(["interrupted", "succeeded", "missing"] as const)(
     worker.busy = false
     worker.outcome = result === "succeeded" ? "succeeded" : "interrupted"
     worker.turn = { inputID: attempt.message_id, state: "interrupted" }
-    worker.background = {
-      state: "unknown",
-      source: "experimental.idle",
-      reason: "Host restarted before observing an idle report",
-    }
+    // A succeeded session reaches detailed proof only after the fresh background
+    // prerequisite clears. Interrupted/missing cases still exercise unknown idle.
+    worker.background =
+      result === "succeeded"
+        ? {
+            state: "observed",
+            source: "experimental.idle",
+            observedAt: Date.now(),
+            inputID: attempt.message_id,
+            executionStartSequence: 2,
+            eventSequence: 3,
+            count: 0,
+            kinds: { shell: 0, subagent: 0, image: 0 },
+          }
+        : {
+            state: "unknown",
+            source: "experimental.idle",
+            reason: "Host restarted before observing an idle report",
+          }
     const originalSession = f.host.session
     let raced = false
     f.host.session = async (id, options) => {

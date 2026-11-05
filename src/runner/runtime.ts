@@ -5393,11 +5393,29 @@ export class TaskRuntime {
     return true
   }
 
-  private async deliverCurrent(message: OutboxRow, fence: number) {
+  private async deliverCurrent(
+    message: OutboxRow,
+    fence: number,
+    admittedTargets: Map<string, HostSession>,
+  ) {
     if (["consumed", "superseded", "unknown"].includes(message.state)) return
-    const plan = this.store.plan(message.plan_id)
+    let plan = this.store.plan(message.plan_id)
     if (!plan) return
-    let target = await this.host.session(message.session_id)
+    // Share only the no-op observation for already-admitted, same-owner rows in
+    // this delivery group. Never reuse it for admission, cancellation or retarget.
+    let target =
+      message.state === "admitted" && message.session_id === plan.owner
+        ? (admittedTargets.get(message.session_id) ?? (await this.host.session(message.session_id)))
+        : await this.host.session(message.session_id)
+    plan = this.store.plan(message.plan_id)
+    if (!plan) return
+    if (message.state === "admitted" && this.validArchitect(target) && target.id === plan.owner) {
+      admittedTargets.set(target.id, target)
+      return
+    }
+    // Any path that can mutate native/durable delivery invalidates this group's
+    // observations; the next admitted row obtains a fresh host observation.
+    admittedTargets.clear()
     if (!this.validArchitect(target) || target.id !== plan.owner) {
       // Admitted is not consumed. Prove consumption in the original session
       // before transferring an otherwise-current notice to its replacement.
@@ -5618,39 +5636,42 @@ export class TaskRuntime {
       const current = new Map<string, OutboxRow>()
       for (const [index, message] of ordered.entries()) {
         const older = JSON.parse(message.payload)
-        const replacement = ordered.slice(index + 1).findLast((candidate) => {
-          const next = JSON.parse(candidate.payload)
-          if (
-            older.status === "architect-handoff" ||
-            older.status === "architect-source-reference" ||
-            next.status === "architect-handoff" ||
-            next.status === "architect-source-reference"
-          )
-            return false
-          // Current outcomes include the whole accepted-artifact review set.
-          // Legacy partial notices cannot suppress a different actionable result.
-          if (older.status === "task-accepted")
-            return (
-              (Array.isArray(next.reviewableTasks) &&
-                next.reviewableTasks.some(
-                  (task: { taskID?: string; artifact?: string }) =>
-                    task.taskID === older.taskID && task.artifact === older.artifact,
-                )) ||
-              (next.status === "task-accepted" &&
-                next.taskID === older.taskID &&
-                next.artifact === older.artifact) ||
-              (["accepted", "integrated"].includes(next.status) &&
-                typeof next.artifact === "string")
-            )
-          return next.status !== "task-accepted" || Boolean(next.currentPlan)
-        })
+        const replacement =
+          older.status === "architect-handoff" || older.status === "architect-source-reference"
+            ? undefined
+            : ordered.slice(index + 1).findLast((candidate) => {
+                const next = JSON.parse(candidate.payload)
+                if (
+                  next.status === "architect-handoff" ||
+                  next.status === "architect-source-reference"
+                )
+                  return false
+                // Current outcomes include the whole accepted-artifact review set.
+                // Legacy partial notices cannot suppress a different actionable result.
+                if (older.status === "task-accepted")
+                  return (
+                    (Array.isArray(next.reviewableTasks) &&
+                      next.reviewableTasks.some(
+                        (task: { taskID?: string; artifact?: string }) =>
+                          task.taskID === older.taskID && task.artifact === older.artifact,
+                      )) ||
+                    (next.status === "task-accepted" &&
+                      next.taskID === older.taskID &&
+                      next.artifact === older.artifact) ||
+                    (["accepted", "integrated"].includes(next.status) &&
+                      typeof next.artifact === "string")
+                  )
+                return next.status !== "task-accepted" || Boolean(next.currentPlan)
+              })
         if (replacement) {
           const ok = await this.supersedeOutcome(message, replacement, plan, fence)
           ready.set(replacement.id, (ready.get(replacement.id) ?? true) && ok)
         } else current.set(message.id, message)
       }
+      const admittedTargets = new Map<string, HostSession>()
       for (const message of current.values())
-        if (ready.get(message.id) !== false) await this.deliverCurrent(message, fence)
+        if (ready.get(message.id) !== false)
+          await this.deliverCurrent(message, fence, admittedTargets)
     }
   }
 }
