@@ -79,3 +79,36 @@ unchanged. This is the new quiet backend comparison baseline; the earlier active
 workload and native text animation results remain separately labelled. Canonical
 activation, actual source-fence qualification and post-activation backend comparison
 are still pending at this source checkpoint.
+
+## Canonical installation and remaining idle work
+
+Root fast-forwarded canonical main toc44eb9b after the actual provider-limit stop;
+no process restart or inference-setting change was needed. The canonical GUI build
+and process-free bundle smoke pass. Native source-fence status at1793837989539
+confirmed the project location's current registration, and at1793838009581 confirmed
+the exact retained72 worker location's registration, both in servicePID95968 with
+the expected project/database/location binding. This proves installed native guard
+registration; the quarantine command, archive/readback and exclusion flow remain
+unexercised. At1793838415118 there were zero quarantine rows; the original72 check
+remained uncertain and its attempt verifying. No old resource or acceptance was
+released.
+
+Desktop at1793838179741 contained the owned313-character repair style and zero
+temporary experiment symbols. DevTools was closed. Native settings at1793838287566–68
+were all true, demand false, and active inventory at1793838287589 was empty.
+The first post-install CPU window1793838204001–1793838216042 measured service17.36%,
+renderer10.88%, GPU-process0.08% during GUI settling. A subsequent settled window
+1793838312074–1793838324106 measured **service17.54%, renderer0.25%, GPU-process0%**
+on the original PIDs, with no model, profiler, test, build or diagnostic traffic.
+The matched pre-install quiet service result was19.35%; this is a modest backend
+improvement, not completion of service performance work. The busy-label result
+above remains a separate controlled observation, not a claim that quiet GUI CPU
+was high before installation.
+
+Astra is continuing the residual service investigation. Root temporarily restored
+the previously reviewed bounded attribution endpoint at5e9e9be. One actual capture
+at1793838509851–1793838519882 lasted10,030ms and returned1,080 samples onPID95968;
+no other Root diagnostic traffic ran in that interval. Raw metadata is private at
+`/private/tmp/lazers-service-residual-before-20261104.json`. Attribution and the next
+fix are pending; SQL primitive names alone do not establish a cause. This temporary
+diagnostic must be removed again after the comparison.

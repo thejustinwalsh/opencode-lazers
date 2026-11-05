@@ -6,7 +6,32 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ## Immediate order and ownership
 
-### Latest coordination — supersedes earlier provisional Models policy
+### Current coordination
+
+- **c44eb9b installed; residual profiling continues:** Root combined the reviewed
+  bootstrap5d with Astra f07cc43/b420a98/96f147e, preserving5d's branch. The merge
+  retains sourceReservationExcluded after the new single reservation read.
+  Merged199tests/3181assertions/eight files, quality and GUI build/smoke pass.
+  Native SourceFence status confirmed the canonical and exact retained72 locations
+  at1793837989539/1793838009581, samePID95968/project/DB. GUI's owned313-character
+  static busy-text repair is loaded; temporary experiment state is absent.
+  [Current measured report](../../design/reviews/astra-residual-performance-20261104.md).
+  Quarantine/archive/exclusion remains **unexercised**: zero quarantine rows,
+  original72 effect uncertain/attempt verifying and old resources unchanged.
+- **Actual OpenAI provider quota stop:** Main, original129 and132 ended failed/idle
+  at1793837360–7376 with ChatGPT usage-limit errors and completed last tools;
+  native active inventory is empty. Preserve their original sessions, attempts and
+  dirty worktrees. Neither task is accepted or complete; no retry/replacement or
+  provider switch occurred. User route preference is pending. Original57/58's
+  zero-attempt scheduling hold remains until actual qualification and installed
+  reuse audit. Root can continue local review/integration without model calls.
+- **Performance remains active:** settled same-PID serviceCPU19.35→17.54% is only a
+  modest backend improvement. The separate controlled busy-label experiment gave
+  renderer23.75→0.50/GPU-process21.18→0.25%; no battery or GPU-utilization claim.
+  All six inference flags true/Never unload unchanged. Temporary bounded JSC
+  endpoint5e9e9be is currently installed for Astra's fresh residual investigation;
+  one10s/1080-sample capture is retained privately. Remove the endpoint after
+  comparison. No daemon, model prompt, extra recurring timer or lifecycle DB edit.
 
 - **57/58 source reuse pre-audit complete, NOT post-install authorization:**
   [Outcome comparison](evidence/retained57-58-reuse-preaudit-20261104.md) finds genuine
