@@ -1,4 +1,5 @@
 import { DateTime } from "effect"
+import { createHash } from "node:crypto"
 import type { Database } from "bun:sqlite"
 import type { Tool } from "@opencode/schema/tool"
 import { TaskSpecSchema } from "../task.ts"
@@ -84,6 +85,10 @@ type ToolCall = {
 }
 
 type JsonObject = Record<string, unknown>
+
+type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
+
+const MAX_RECOVERY_MEMOS = 32
 
 type TimingSource = "native-event" | "recovery" | "runtime"
 
@@ -218,6 +223,76 @@ function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
     merged[key] = oldObject && nextObject ? mergeObjects(oldObject, nextObject) : value
   }
   return merged
+}
+
+function encodeRecoveryFingerprintValue(
+  value: unknown,
+  seen: Set<object>,
+): RecoveryFingerprintValue | undefined {
+  if (value === null) return ["null"]
+  if (value === undefined) return ["undefined"]
+  if (typeof value === "string") return ["string", value]
+  if (typeof value === "boolean") return ["boolean", value]
+  if (typeof value === "number") {
+    const encoded = Number.isNaN(value)
+      ? "NaN"
+      : value === Number.POSITIVE_INFINITY
+        ? "Infinity"
+        : value === Number.NEGATIVE_INFINITY
+          ? "-Infinity"
+          : Object.is(value, -0)
+            ? "-0"
+            : String(value)
+    return ["number", encoded]
+  }
+  if (typeof value !== "object") return undefined
+  if (seen.has(value)) return undefined
+
+  seen.add(value)
+  try {
+    if (Array.isArray(value)) {
+      const entries: RecoveryFingerprintValue[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (descriptor && (descriptor.get || descriptor.set)) return undefined
+        const encoded = encodeRecoveryFingerprintValue(descriptor?.value, seen)
+        if (encoded === undefined) return undefined
+        entries.push(encoded)
+      }
+      return ["array", value.length, ...entries]
+    }
+
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return undefined
+    const entries: RecoveryFingerprintValue[] = []
+    for (const key of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor || descriptor.get || descriptor.set) return undefined
+      const encoded = encodeRecoveryFingerprintValue(descriptor.value, seen)
+      if (encoded === undefined) return undefined
+      entries.push([key, descriptor.enumerable === true, encoded])
+    }
+    return ["object", prototype === null, ...entries]
+  } finally {
+    seen.delete(value)
+  }
+}
+
+/** Hash only ordinary retained data; unusual objects fall back to full reconciliation. */
+function retainedMessagesFingerprint(
+  messages: readonly unknown[],
+  hasMoreThanBound: boolean,
+): string | undefined {
+  try {
+    const encoded = encodeRecoveryFingerprintValue(messages, new Set())
+    if (encoded === undefined) return undefined
+    return createHash("sha256")
+      .update(JSON.stringify([hasMoreThanBound, encoded]))
+      .digest("hex")
+  } catch {
+    // Proxies and malformed retained data must retain the original recovery path.
+    return undefined
+  }
 }
 
 function routeEvidenceFromModel(
@@ -751,6 +826,11 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
  * OpenCode observations, recovery and runtime verification facts.
  */
 export class ProgressRecorder {
+  private readonly recoveryMemos = new Map<
+    string,
+    { attemptID: string; revision: number; fingerprint: string }
+  >()
+
   constructor(
     readonly store: RunnerStore,
     readonly projectID: string,
@@ -813,6 +893,15 @@ export class ProgressRecorder {
       )
       .get(this.store.repository.projectDirectory, this.store.repository.projectDirectory, value)
     return row ? this.assignmentFromRow(row) : undefined
+  }
+
+  private observationRevisionIn(db: Database): number | undefined {
+    const row = db
+      .query<{ revision: number }, [string]>(
+        "SELECT revision FROM observation_revisions WHERE project_directory=?",
+      )
+      .get(this.store.repository.projectDirectory)
+    return row?.revision
   }
 
   assignmentForSession(sessionID: string): ProgressAssignment | undefined {
@@ -1443,11 +1532,31 @@ export class ProgressRecorder {
 
   /** Reconcile only retained public session messages; it never invokes execution. */
   reconcileMessages(sessionID: string, rawMessages: readonly unknown[]): void {
+    const messages = rawMessages.slice(0, 10_000)
+    const fingerprint = retainedMessagesFingerprint(messages, rawMessages.length > messages.length)
     this.reconcileReminder(sessionID, rawMessages)
     this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
-      if (!assignment) return
-      const messages = rawMessages.slice(0, 10_000)
+      if (!assignment) {
+        this.recoveryMemos.delete(sessionID)
+        return
+      }
+      const revision = this.observationRevisionIn(db)
+      const memo = this.recoveryMemos.get(sessionID)
+      if (
+        fingerprint !== undefined &&
+        revision !== undefined &&
+        memo?.attemptID === assignment.attemptID &&
+        memo.fingerprint === fingerprint &&
+        memo.revision === revision
+      ) {
+        // Keep hot sessions in the bounded per-recorder LRU. The revision fence
+        // includes same- and other-connection fact changes, including native events.
+        this.recoveryMemos.delete(sessionID)
+        this.recoveryMemos.set(sessionID, memo)
+        return
+      }
+      this.recoveryMemos.delete(sessionID)
       for (const raw of messages) {
         const message = object(raw)
         const messageID = text(message?.id)
@@ -1693,6 +1802,19 @@ export class ProgressRecorder {
             "The native event stream has no durable cursor and session.context is not guaranteed complete; facts outside retained public messages cannot be reconstructed.",
         },
       })
+      const completedRevision = this.observationRevisionIn(db)
+      if (fingerprint !== undefined && completedRevision !== undefined) {
+        this.recoveryMemos.set(sessionID, {
+          attemptID: assignment.attemptID,
+          revision: completedRevision,
+          fingerprint,
+        })
+        while (this.recoveryMemos.size > MAX_RECOVERY_MEMOS) {
+          const oldest = this.recoveryMemos.keys().next().value
+          if (oldest === undefined) break
+          this.recoveryMemos.delete(oldest)
+        }
+      }
     })
   }
 

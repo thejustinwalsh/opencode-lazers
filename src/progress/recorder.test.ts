@@ -79,6 +79,50 @@ function stableToolRow(row: ReturnType<RunnerStore["progressFacts"]>[number]) {
   }
 }
 
+function retainedToolHistory(size: number) {
+  return Array.from({ length: size }, (_, index) => ({
+    id: `msg-history-${index}`,
+    type: "assistant",
+    time: { created: 1_000 + index },
+    content: [
+      {
+        type: "tool",
+        id: `call-history-${index}`,
+        name: "Bash",
+        executed: true,
+        time: { created: 900 + index, ran: 950 + index },
+        state: { status: "running", input: { command: "private" } },
+      },
+    ],
+  }))
+}
+
+function observeReplayWork(recorder: ProgressRecorder) {
+  let appendAttempts = 0
+  let reminderReconciliations = 0
+  const instrumented = recorder as unknown as {
+    appendIn: (db: Database, assignment: unknown, fact: unknown) => number
+    reconcileReminder: (sessionID: string, messages: readonly unknown[]) => void
+  }
+  const appendIn = instrumented.appendIn
+  const reconcileReminder = instrumented.reconcileReminder
+  instrumented.appendIn = (...args) => {
+    appendAttempts++
+    return appendIn.apply(recorder, args)
+  }
+  instrumented.reconcileReminder = (...args) => {
+    reminderReconciliations++
+    return reconcileReminder.apply(recorder, args)
+  }
+  return {
+    appendAttempts: () => appendAttempts,
+    reminderReconciliations: () => reminderReconciliations,
+    resetAppendAttempts: () => {
+      appendAttempts = 0
+    },
+  }
+}
+
 function toolEvent(type: string, id: string, data: Record<string, unknown>, created: number) {
   return {
     id,
@@ -1412,6 +1456,178 @@ test("unchanged recovery performs no SQLite write while fresh and changed facts 
   } finally {
     observer?.close()
     reopened?.close()
+    fixture.close()
+  }
+})
+
+test("warm unchanged recovery skips per-message fact append and merge attempts across history sizes", () => {
+  for (const historySize of [1, 4, 16]) {
+    const fixture = makeFixture()
+    try {
+      const recorder = new ProgressRecorder(fixture.store, "project")
+      const work = observeReplayWork(recorder)
+      const history = retainedToolHistory(historySize)
+      const state = () =>
+        fixture.store.atomic((db) => ({
+          facts: db.query("SELECT * FROM runner_progress ORDER BY seq").all(),
+          sequence: db.query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'").get(),
+          revision: db
+            .query("SELECT revision FROM observation_revisions WHERE project_directory=?")
+            .get(fixture.directory),
+        }))
+
+      recorder.reconcileMessages(workerSession, history)
+      // The pre-memo repeated-replay path attempted one tool and one assistant
+      // step append per message, followed by the fixed recovery-gap append.
+      expect(work.appendAttempts()).toBe(2 * historySize + 1)
+      const durable = state()
+
+      work.resetAppendAttempts()
+      recorder.reconcileMessages(workerSession, history)
+
+      expect(work.reminderReconciliations()).toBe(2)
+      expect(work.appendAttempts()).toBe(0)
+      expect(state()).toEqual(durable)
+    } finally {
+      fixture.close()
+    }
+  }
+})
+
+test("recovery fingerprint distinguishes an absent property from an own undefined route", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const retained = {
+      id: "msg-route-ownership",
+      type: "assistant",
+      time: { created: 1_000 },
+      content: [],
+    }
+    recorder.reconcileMessages(workerSession, [retained])
+    const step = () =>
+      fixture.store.progressFacts([firstAttemptID]).find((row) => row.kind === "step")!
+    expect(JSON.parse(step().payload)).not.toHaveProperty("routeEvidence")
+
+    recorder.reconcileMessages(workerSession, [{ ...retained, model: undefined }])
+
+    expect(JSON.parse(step().payload)).toMatchObject({
+      routeEvidence: { status: "identity-unavailable" },
+      route: null,
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("retained recovery reprojects after same- and other-connection native updates", () => {
+  const fixture = makeFixture()
+  let otherRepository: TaskRepository | undefined
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const work = observeReplayWork(recorder)
+    otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
+    const otherRecorder = new ProgressRecorder(new RunnerStore(otherRepository), "project")
+    const retained = retainedToolMessage("msg-noop", "call-noop", "running", true)
+    const state = () =>
+      fixture.store.atomic((db) => ({
+        facts: db
+          .query<{ call_id: string | null; payload: string; event_ids_json: string }, []>(
+            "SELECT * FROM runner_progress ORDER BY seq",
+          )
+          .all(),
+        sequence: db.query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'").get(),
+        revision: db
+          .query("SELECT revision FROM observation_revisions WHERE project_directory=?")
+          .get(fixture.directory),
+      }))
+
+    recorder.reconcileMessages(workerSession, [retained])
+    const beforeNativeUpdate = state()
+    recorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.success",
+        "event-late-success",
+        {
+          assistantMessageID: "msg-noop",
+          id: "call-noop",
+          content: [{ type: "text", text: "done" }],
+          executed: true,
+        },
+        300,
+      ),
+    )
+    const afterNativeUpdate = state()
+    expect(afterNativeUpdate).not.toEqual(beforeNativeUpdate)
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, [retained])
+
+    expect(work.appendAttempts()).toBe(3)
+    const afterSameConnectionReplay = state()
+    expect(afterSameConnectionReplay).toEqual(afterNativeUpdate)
+    const sameConnectionTool = afterSameConnectionReplay.facts.find(
+      (row) => row.call_id === "call-noop",
+    ) as {
+      payload: string
+      event_ids_json: string
+    }
+    expect(JSON.parse(sameConnectionTool.payload)).toMatchObject({
+      status: "succeeded",
+      timing: {
+        endpoints: {
+          inputAt: { at: 90, source: "recovery" },
+          calledAt: { at: 200, source: "recovery" },
+          completedAt: { at: 300, source: "native-event" },
+        },
+      },
+    })
+
+    otherRecorder.recordNativeEvent(
+      toolEvent(
+        "session.tool.input.started",
+        "event-late-input",
+        {
+          assistantMessageID: "msg-noop",
+          id: "call-noop",
+          name: "Bash",
+        },
+        80,
+      ),
+    )
+    const afterOtherConnectionUpdate = state()
+    expect(afterOtherConnectionUpdate).not.toEqual(afterSameConnectionReplay)
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, [retained])
+
+    expect(work.appendAttempts()).toBe(3)
+    const afterRetainedReplay = state()
+    expect(afterRetainedReplay).toEqual(afterOtherConnectionUpdate)
+    const replayedTool = afterRetainedReplay.facts.find((row) => row.call_id === "call-noop") as {
+      payload: string
+      event_ids_json: string
+    }
+    expect(JSON.parse(replayedTool.payload)).toMatchObject({
+      status: "succeeded",
+      timing: {
+        endpoints: {
+          inputAt: { at: 80, source: "native-event" },
+          calledAt: { at: 200, source: "recovery" },
+          completedAt: { at: 300, source: "native-event" },
+        },
+      },
+    })
+    expect(JSON.parse(replayedTool.event_ids_json)).toEqual(
+      expect.arrayContaining(["event-late-input", "event-late-success"]),
+    )
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, [retained])
+    expect(work.appendAttempts()).toBe(0)
+    expect(state()).toEqual(afterRetainedReplay)
+  } finally {
+    otherRepository?.close()
     fixture.close()
   }
 })
