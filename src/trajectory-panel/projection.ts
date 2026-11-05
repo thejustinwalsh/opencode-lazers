@@ -415,29 +415,52 @@ export type Timeline = {
   checks: CheckTimeline[]
 }
 
-function timelineAttempts(snapshot: ProjectedSnapshot, taskID: string, report?: TrajectoryReport) {
-  const attempts = snapshot.attempts.filter((attempt) => attempt.taskID === taskID)
+function timelineAttempts(
+  snapshot: ProjectedSnapshot | undefined,
+  taskID: string,
+  report?: TrajectoryReport,
+) {
+  const attempts = snapshot?.attempts.filter((attempt) => attempt.taskID === taskID) ?? []
   if (attempts.length || !report) return attempts
-  return report.attempts.map((attempt): RecordedAttempt => ({
-    id: attempt.id,
-    planID: attempt.id,
-    taskID,
-    number: attempt.number,
-    state: attempt.state,
-    startedAt: attempt.intervals.attempt.startedAt ?? attempt.startedAt,
-    endedAt: attempt.intervals.attempt.endedAt,
-    timingBasis: attempt.intervals.attempt.basis,
-    executions: [],
-  }))
+  return report.attempts.map((attempt): RecordedAttempt => {
+    const modelActivity = attempt.intervals.modelActivity
+    const executions =
+      modelActivity.startedAt !== null || modelActivity.endedAt !== null
+        ? [
+            {
+              startedAt: modelActivity.startedAt,
+              endedAt: modelActivity.endedAt,
+              startSequence: null,
+              endSequence: null,
+              timingBasis: `Report model-activity interval: ${modelActivity.basis}`,
+            },
+          ]
+        : []
+    return {
+      id: attempt.id,
+      planID: attempt.planID,
+      taskID,
+      number: attempt.number,
+      state: attempt.state,
+      startedAt: attempt.intervals.attempt.startedAt ?? attempt.startedAt,
+      endedAt: attempt.intervals.attempt.endedAt,
+      timingBasis: `Report attempt interval: ${attempt.intervals.attempt.basis}`,
+      executions,
+    }
+  })
 }
 
-function timelineChecks(snapshot: ProjectedSnapshot, taskID: string, report?: TrajectoryReport) {
+function timelineChecks(
+  snapshot: ProjectedSnapshot | undefined,
+  taskID: string,
+  report?: TrajectoryReport,
+) {
   const allowedPlanIDs = new Set(
-    snapshot.plans
+    (snapshot?.plans ?? [])
       .filter((plan) => plan.nodes.some((node) => node.taskID === taskID))
       .map((plan) => plan.id),
   )
-  const checks = snapshot.checks.filter(
+  const checks = (snapshot?.checks ?? []).filter(
     (check) =>
       check.taskID === taskID ||
       (check.taskID === null &&
@@ -488,7 +511,7 @@ function niceMinuteStep(minutes: number) {
 }
 
 export function buildTimeline(
-  snapshot: ProjectedSnapshot,
+  snapshot: ProjectedSnapshot | undefined,
   taskID: string,
   report?: TrajectoryReport,
 ): Timeline {
@@ -514,7 +537,7 @@ export function buildTimeline(
         : [
             {
               startedAt: attempt.startedAt,
-              endedAt: null,
+              endedAt: attempt.endedAt,
               startSequence: null,
               endSequence: null,
               timingBasis: attempt.timingBasis,
