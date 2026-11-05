@@ -32,3 +32,20 @@ fields or establish that old effects have settled.
 Root sent the finding through Desktop; Architect attached blocking advice to the
 original task and notified its owner. Delivery is not proof the worker consumed
 or corrected it. Native source/behavior and final tests must establish correction.
+
+## In-progress correction recheck
+
+At `1793877427994`, Root reran the actual classifier after the worker added core
+error handling. The installed canonical `Worktree.OperationError` still returned
+`recognized: false`; a directory error with the exact pinned class name returned
+true; HTTP returned false. The classifier uses `instanceof` against the worker's
+separately installed schema package. The reproduction loads the canonical schema
+package, so constructor identity differs across real package copies. This remains
+a boundary regression; same-package unit fixtures alone cannot establish the
+host/plugin behavior. Constructor names likewise should not establish terminal
+operation identity. Preserve structured native failure information and unknown
+transport outcomes.
+
+Recheck script: `/private/tmp/lazers-startup-native-error-shape-recheck-20261105.ts`.
+Root queued this finding in Desktop for the existing same-worker review flow;
+no worker/canonical source edits or extra acceptance claims.
