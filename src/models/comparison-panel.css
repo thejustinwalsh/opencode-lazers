@@ -153,7 +153,7 @@
 }
 
 .lazers-models-sources-details {
-  padding: 4px 0 6px;
+  padding: 0;
   border-bottom: 1px solid var(--border-weak-base);
 }
 
@@ -241,7 +241,7 @@
 
 .lazers-models-decision-rows th,
 .lazers-models-decision-rows td {
-  padding: 7px 8px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--border-weak-base);
   text-align: left;
   vertical-align: middle;
@@ -283,6 +283,7 @@
   display: block;
   width: 100%;
   min-width: 0;
+  overflow: hidden;
   padding: 2px 4px;
   border: 0;
   color: var(--text-base);
@@ -292,7 +293,8 @@
   font-weight: 600;
   text-align: left;
   cursor: pointer;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lazers-models-decision-row-select[aria-pressed="true"] {
@@ -354,7 +356,7 @@
 .lazers-models-chart,
 .lazers-models-candidates {
   min-width: 0;
-  padding: 12px 0;
+  padding: 7px 0;
 }
 
 .lazers-models-chart {
@@ -367,7 +369,7 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 12px;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .lazers-models-section-heading h3 {
@@ -385,8 +387,8 @@
 .lazers-models-chart-empty {
   display: grid;
   align-content: center;
-  min-height: 84px;
-  padding: 10px 12px;
+  min-height: 68px;
+  padding: 8px 10px;
   border: 1px dashed var(--border-weak-base);
   border-radius: 6px;
   background: var(--surface-base);
@@ -398,11 +400,30 @@
 }
 
 .lazers-models-chart-empty p {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--text-weak);
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.lazers-models-comparison-chart {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 2px;
+  height: 196px;
+  min-width: 0;
+}
+
+.lazers-models-comparison-chart > [role="img"] {
+  min-height: 0;
+}
+
+.lazers-models-comparison-chart-data summary {
+  min-height: 22px;
+  color: var(--text-weak);
+  font-size: 10px;
+  cursor: pointer;
 }
 
 .lazers-models-candidate {
@@ -530,6 +551,13 @@
   color: var(--text-weak);
   font-size: 11px;
   overflow-wrap: anywhere;
+}
+
+.lazers-models-inspector-heading .lazers-models-inspector-route {
+  max-width: min(100%, 48rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lazers-models-inspector-heading .lazers-models-inspector-effort {
@@ -1079,6 +1107,10 @@
     border-bottom: 0;
   }
 
+  .lazers-models-comparison-chart {
+    height: 270px;
+  }
+
   .lazers-models-candidates {
     padding-left: 12px;
   }
@@ -1110,14 +1142,15 @@
   }
 
   .lazers-models-candidate {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    padding: 5px 2px;
   }
 
   .lazers-models-candidate-meta {
-    justify-content: flex-start;
-    padding-left: 20px;
-    text-align: left;
+    justify-content: flex-end;
+    padding-left: 0;
+    text-align: right;
   }
 
   .lazers-models-assignment-row {
@@ -1130,6 +1163,23 @@
     max-width: 100%;
     padding-left: 8px;
     text-align: left;
+  }
+}
+
+@container models-panel (max-width: 719px) {
+  .lazers-models-decision-tools {
+    gap: 4px 6px;
+    padding-top: 5px;
+  }
+
+  .lazers-models-chart,
+  .lazers-models-candidates {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .lazers-models-chart-empty {
+    min-height: 62px;
   }
 }
 

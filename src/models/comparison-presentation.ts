@@ -193,6 +193,39 @@ export function candidateLabel(candidate: ModelCandidate) {
   return routeLabel(candidate.identity)
 }
 
+type ModelDisplayRoute = { providerID: string; modelID: string; variant?: string | null }
+type CandidateDisplayMetadata = {
+  identity: ModelDisplayRoute
+  native: { name: string | null }
+}
+type CatalogDisplayMetadata = { providerID: string; id: string; name: string }
+
+/** Prefer the exact live native catalog entry, then exact cached candidate metadata. */
+export function modelDisplayName(
+  route: ModelDisplayRoute,
+  candidates: readonly CandidateDisplayMetadata[],
+  catalog: readonly CatalogDisplayMetadata[],
+) {
+  const catalogName = catalog.find(
+    (entry) => entry.providerID === route.providerID && entry.id === route.modelID,
+  )?.name
+  if (catalogName?.trim()) return catalogName.trim()
+
+  const candidateName = candidates.find(
+    (candidate) =>
+      candidate.identity.providerID === route.providerID &&
+      candidate.identity.modelID === route.modelID,
+  )?.native.name
+  return candidateName?.trim() || route.modelID
+}
+
+/** Bound visible model labels while preserving full names and routes for accessible names/tooltips. */
+export function boundedModelLabel(value: string, maximumLength = 36) {
+  const characters = Array.from(value)
+  if (characters.length <= maximumLength) return value
+  return `${characters.slice(0, Math.max(1, maximumLength - 1)).join("")}…`
+}
+
 export function sourceTitle(source: ModelSource["source"]) {
   switch (source) {
     case "native-catalog":

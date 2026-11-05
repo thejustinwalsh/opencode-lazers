@@ -10,7 +10,12 @@ const vite = await createServer({
   appType: "custom",
 })
 afterAll(() => vite.close())
-const { comparisonChartOptions, comparisonChartPointText } = (await vite.ssrLoadModule(
+const {
+  comparisonChartHasPlottablePoints,
+  comparisonChartOptions,
+  comparisonChartPointText,
+  compactTokenAxisValue,
+} = (await vite.ssrLoadModule(
   "/src/models/comparison-chart.tsx",
 )) as typeof import("./comparison-chart.tsx")
 
@@ -80,11 +85,55 @@ test("options preserve literal coordinates and only authoritative frontier membe
   expect(option.series[1]!.smooth).toBe(false)
   expect(option.series[1]!.connectNulls).toBe(false)
   expect(option.xAxis.name).toBe("Tokens / accepted task")
-  expect(option.yAxis.name).toBe("Current market USD / accepted task")
+  expect(option.yAxis.name).toBe("Market USD / accepted task")
   expect(option.textStyle.fontFamily).toBe("Native Sans")
   expect(option.xAxis.axisLabel.fontFamily).toBe("Native Mono")
+  expect(option.xAxis.axisLabel.formatter).toBe(compactTokenAxisValue)
+  expect(compactTokenAxisValue(12_345.5)).toBe("12.3K")
+  expect(compactTokenAxisValue(3_000_000)).toBe("3M")
   expect(comparisonChartPointText(points[0]!)).toContain("$0.123456")
   expect(comparisonChartPointText(points[0]!)).toContain("1 observation")
+  expect(comparisonChartHasPlottablePoints(points)).toBe(true)
+})
+
+test("synthetic crowded labels are bounded, shifted and moved away from the right plot edge", () => {
+  const synthetic: ComparisonChartPoint[] = [
+    {
+      ...points[1]!,
+      label: "Synthetic extremely long provider and model identity alpha",
+      tokensPerAcceptedTask: 30_000,
+      currentMarketUSDPerAcceptedTask: 0.2,
+    },
+    {
+      ...points[1]!,
+      configurationID: "synthetic-neighbor",
+      groupID: "synthetic-group-neighbor",
+      label: "Synthetic extremely long provider and model identity beta",
+      tokensPerAcceptedTask: 30_001,
+      currentMarketUSDPerAcceptedTask: 0.20001,
+    },
+  ]
+  const option = comparisonChartOptions({ points: synthetic, frontierConfigurationIDs: [] }, theme)
+  const series = option.series[0]!
+  const labels = series.data.map((datum) => {
+    if (Array.isArray(datum)) throw new Error("Expected scatter point data")
+    return datum.label.formatter
+  })
+  expect(labels.every((label) => typeof label === "string" && Array.from(label).length <= 18)).toBe(
+    true,
+  )
+  expect(labels[0]).toBe("Synthetic extreme…")
+  expect(series.data.map((datum) => (Array.isArray(datum) ? datum : datum.value))).toEqual([
+    [30_000, 0.2],
+    [30_001, 0.20001],
+  ])
+  expect(series.data.map((datum) => (Array.isArray(datum) ? "" : datum.label.position))).toEqual([
+    "left",
+    "left",
+  ])
+  expect(series.labelLayout).toEqual({ hideOverlap: true, moveOverlap: "shiftY" })
+  expect(option.aria.description).toContain(synthetic[0]!.label)
+  expect(option.aria.description).toContain("30,001 tokens per accepted task")
 })
 
 test("missing measurements are not converted to zero and a singleton emits no frontier line", () => {
@@ -95,18 +144,20 @@ test("missing measurements are not converted to zero and a singleton emits no fr
   expect(singleton.series[0]!.data).toHaveLength(1)
   expect(singleton.series[1]!.data).toEqual([])
 
+  const invalidPoints = [
+    { ...points[0]!, tokensPerAcceptedTask: null },
+    { ...points[1]!, currentMarketUSDPerAcceptedTask: Number.NaN },
+  ] as unknown as ComparisonChartPoint[]
   const invalid = comparisonChartOptions(
     {
-      points: [
-        { ...points[0]!, tokensPerAcceptedTask: null },
-        { ...points[1]!, currentMarketUSDPerAcceptedTask: Number.NaN },
-      ] as unknown as ComparisonChartPoint[],
+      points: invalidPoints,
       frontierConfigurationIDs: points.map((point) => point.configurationID),
     },
     theme,
   )
   expect(invalid.series[0]!.data).toEqual([])
   expect(invalid.series[1]!.data).toEqual([])
-  expect(invalid.aria.description).toContain("Unknown and zero-accepted")
+  expect(comparisonChartHasPlottablePoints(invalidPoints)).toBe(false)
+  expect(invalid.aria.description).toContain("Unknown prices and zero-accepted")
   expect(invalid.aria.description).not.toContain("0 tokens per accepted task")
 })

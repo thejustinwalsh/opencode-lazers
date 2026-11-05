@@ -13,7 +13,7 @@ import type {
   ModelDecisionRow,
   ModelDecisionTaskKind,
 } from "./decision-contract.ts"
-import { ComparisonChart } from "./comparison-chart.tsx"
+import { ComparisonChart, comparisonChartHasPlottablePoints } from "./comparison-chart.tsx"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
@@ -28,8 +28,10 @@ import type {
 import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
+  boundedModelLabel,
   candidateLabel,
   formatDate,
+  modelDisplayName,
   numericValue,
   recordReferenceLabel,
   routeLabel,
@@ -180,8 +182,24 @@ function estimateLabel(
   >["estimate"],
 ) {
   const estimate = inspection
-  if (estimate.status === "zero-accepted") return "No accepted tasks; no estimate is available."
-  if (estimate.status === "unknown") return `Estimate unavailable · ${estimate.reason}`
+  if (estimate.status === "zero-accepted") return "No accepted tasks; estimate unavailable."
+  if (estimate.status === "unknown") return "Estimate unavailable."
+  if (estimate.status === "single-observation")
+    return "Empirical observed value · n=1 accepted logical-task history"
+  if (estimate.status === "partial")
+    return `Partial empirical observed spread · n=${estimate.observationCount}`
+  return `Empirical observed spread · n=${estimate.observationCount} accepted logical-task histories`
+}
+
+function estimateValuesLabel(
+  inspection: Extract<
+    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
+    { status: "found" }
+  >["estimate"],
+) {
+  const estimate = inspection
+  if (estimate.status === "zero-accepted") return "No successful-task estimate is available."
+  if (estimate.status === "unknown") return "No complete estimate basis is available."
   const tokenRange = estimate.range.tokens
   const priceRange = estimate.range.currentMarketUSD
   const renderRange = (range: { minimum: number; maximum: number } | null) => {
@@ -190,13 +208,21 @@ function estimateLabel(
       ? formatNumber(range.minimum)
       : `${formatNumber(range.minimum)}–${formatNumber(range.maximum)}`
   }
-  const basis =
-    estimate.status === "partial"
-      ? `Partial empirical observed spread · n=${estimate.observationCount} · missing ${estimate.missing.join(", ")}`
-      : estimate.status === "single-observation"
-        ? "Empirical observed spread · n=1 accepted logical-task history (one observed value, no interval)"
-        : `Empirical observed spread · n=${estimate.observationCount} accepted logical-task histories`
-  return `${basis} · ${renderRange(tokenRange)} tokens · ${priceRange ? `${formatMoney(priceRange.minimum)}${priceRange.maximum === priceRange.minimum ? "" : `–${formatMoney(priceRange.maximum)}`}` : "current-price estimate unknown"}`
+  const price = priceRange
+    ? `${formatMoney(priceRange.minimum)}${priceRange.maximum === priceRange.minimum ? "" : `–${formatMoney(priceRange.maximum)}`}`
+    : "current market cost unknown"
+  const single = estimate.status === "single-observation" ? " · one value, no interval" : ""
+  const missing = estimate.status === "partial" ? ` · missing ${estimate.missing.join(", ")}` : ""
+  return `${renderRange(tokenRange)} tokens · ${price}${single}${missing}`
+}
+
+function estimateUnavailableReason(
+  estimate: Extract<
+    NonNullable<ModelComparisonPanelData["decisionInspection"]>,
+    { status: "found" }
+  >["estimate"],
+) {
+  return estimate.status === "unknown" ? estimate.reason : undefined
 }
 
 function estimateHistoryScopeLabel(
@@ -261,6 +287,8 @@ export function ModelCandidateRow(props: {
   onSelect: () => void
 }) {
   const candidate = () => props.candidate
+  const modelName = () => candidate().native.name?.trim() || candidate().identity.modelID
+  const fullRoute = () => candidateLabel(candidate())
   return (
     <button
       type="button"
@@ -268,7 +296,7 @@ export function ModelCandidateRow(props: {
       data-selected={props.selected}
       data-candidate-id={candidate().candidateID}
       aria-pressed={props.selected}
-      aria-label={`${candidateLabel(candidate())}. Effort ${candidateEffortLabel(candidate())}. ${candidateAvailabilityLabel(candidate())} in the native catalog.`}
+      aria-label={`${modelName()}. Exact route ${fullRoute()}. Effort ${candidateEffortLabel(candidate())}. ${candidateAvailabilityLabel(candidate())} in the native catalog.`}
       tabIndex={props.tabIndex}
       onKeyDown={props.onKeyDown}
       onClick={props.onSelect}
@@ -278,8 +306,10 @@ export function ModelCandidateRow(props: {
           {props.selected ? "●" : "○"}
         </span>
         <span class="lazers-models-candidate-identity">
-          <strong>{candidate().native.name ?? candidate().identity.modelID}</strong>
-          <small class="lazers-models-candidate-route">{candidateLabel(candidate())}</small>
+          <strong title={modelName()}>{boundedModelLabel(modelName())}</strong>
+          <small class="lazers-models-candidate-route" title={fullRoute()}>
+            {fullRoute()}
+          </small>
         </span>
       </span>
       <span class="lazers-models-candidate-meta">
@@ -293,10 +323,8 @@ export function ModelCandidateRow(props: {
 export function HistoricalChartPlaceholder() {
   return (
     <div class="lazers-models-chart-empty" role="status">
-      <strong>Comparable coordinates unavailable</strong>
-      <p>
-        No comparable completed-task cohort is projected. No sample points or frontier are shown.
-      </p>
+      <strong>No plottable comparison points</strong>
+      <p>Unknown prices and zero-accepted configurations have no coordinates.</p>
     </div>
   )
 }
@@ -580,26 +608,14 @@ function ModelPanel(
         candidate.identity.variant === configuration.route.variant,
     )
   }
-  const decisionModelLabel = (configuration: ModelDecisionConfiguration) => {
-    const nativeName = visible()?.candidates.find(
-      (candidate) =>
-        candidate.identity.providerID === configuration.route.providerID &&
-        candidate.identity.modelID === configuration.route.modelID &&
-        candidate.identity.variant === configuration.route.variant,
-    )?.native.name
-    if (nativeName) return nativeName
-    const effort = configuration.route.variant
-    if (!effort) return configuration.label
-    const suffixes = [
-      ` · ${effort}`,
-      ` • ${effort}`,
-      ` – ${effort}`,
-      ` — ${effort}`,
-      ` - ${effort}`,
-    ]
-    const suffix = suffixes.find((value) => configuration.label.endsWith(value))
-    return suffix ? configuration.label.slice(0, -suffix.length) : configuration.label
-  }
+  const decisionModelFullName = (configuration: ModelDecisionConfiguration) =>
+    modelDisplayName(
+      configuration.route,
+      visible()?.candidates ?? [],
+      visible()?.catalog?.options ?? [],
+    )
+  const decisionModelLabel = (configuration: ModelDecisionConfiguration) =>
+    boundedModelLabel(decisionModelFullName(configuration))
   const acceptedTaskValue = (row: ModelDecisionRow) =>
     new Intl.NumberFormat("en-US").format(row.cohort.acceptedTaskCount)
   const currentCostPerAcceptedTask = (row: ModelDecisionRow) => {
@@ -1591,14 +1607,19 @@ function ModelPanel(
                   }
                 >
                   {(overview) => (
-                    <ComparisonChart
-                      points={overview().graph.points}
-                      frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
-                      selectedConfigurationID={visible()?.selectedConfigurationID}
-                      onSelect={(configurationID) => state.selectConfiguration(configurationID)}
-                      appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-                      monoFontFamily={ctx.appearance.font("mono")}
-                    />
+                    <Show
+                      when={comparisonChartHasPlottablePoints(overview().graph.points)}
+                      fallback={<HistoricalChartPlaceholder />}
+                    >
+                      <ComparisonChart
+                        points={overview().graph.points}
+                        frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
+                        selectedConfigurationID={visible()?.selectedConfigurationID}
+                        onSelect={(configurationID) => state.selectConfiguration(configurationID)}
+                        appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
+                        monoFontFamily={ctx.appearance.font("mono")}
+                      />
+                    </Show>
                   )}
                 </Show>
               </section>
@@ -1673,7 +1694,8 @@ function ModelPanel(
                                     configuration().configurationID ===
                                     visible()?.selectedConfigurationID
                                   }
-                                  aria-label={`Inspect ${decisionModelLabel(configuration())}; ${acceptedTaskValue(row())} accepted tasks; ${currentCostPerAcceptedTask(row())} current market cost per accepted task`}
+                                  title={routeLabel(configuration().route)}
+                                  aria-label={`Inspect ${decisionModelFullName(configuration())}; exact route ${routeLabel(configuration().route)}; ${acceptedTaskValue(row())} accepted tasks; ${currentCostPerAcceptedTask(row())} current market cost per accepted task`}
                                   onClick={() =>
                                     state.selectConfiguration(configuration().configurationID)
                                   }
@@ -1775,7 +1797,18 @@ function ModelPanel(
                 <>
                   <div class="lazers-models-inspector-heading">
                     <div>
-                      <h2>{decisionModelLabel(configuration())}</h2>
+                      <h2
+                        title={routeLabel(configuration().route)}
+                        aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
+                      >
+                        {decisionModelLabel(configuration())}
+                      </h2>
+                      <p
+                        class="lazers-models-inspector-route"
+                        title={routeLabel(configuration().route)}
+                      >
+                        {routeLabel(configuration().route)}
+                      </p>
                     </div>
                   </div>
                   <Show when={visible()?.decisionInspectLoading}>
@@ -1812,10 +1845,7 @@ function ModelPanel(
                               ? "Estimate unavailable"
                               : estimateLabel(inspection().estimate)}
                           </strong>
-                          <span>{estimateHistoryDescription(inspection().estimate)}</span>
-                          <span class="lazers-models-history-scope">
-                            {estimateHistoryScopeLabel(inspection().estimate)}
-                          </span>
+                          <span>{estimateValuesLabel(inspection().estimate)}</span>
                         </p>
                         <details
                           class="lazers-models-evidence-details"
@@ -1824,6 +1854,13 @@ function ModelPanel(
                         >
                           <summary>Route, cohort and price evidence</summary>
                           <div class="lazers-models-evidence-content">
+                            <p>{estimateHistoryDescription(inspection().estimate)}</p>
+                            <p class="lazers-models-history-scope">
+                              {estimateHistoryScopeLabel(inspection().estimate)}
+                            </p>
+                            <Show when={estimateUnavailableReason(inspection().estimate)}>
+                              {(reason) => <p>Estimate unavailable · {reason()}</p>}
+                            </Show>
                             <section
                               class="lazers-models-decision-inspection"
                               aria-label="Producer comparison evidence"

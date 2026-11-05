@@ -137,8 +137,8 @@ const qwenConfiguration: ModelDecisionConfiguration = {
   ...highConfiguration,
   configurationID: CONFIG_SINGLE,
   groupID: "group:qwen/qwen-7",
-  label: "Qwen 7",
-  route: { providerID: "qwen", modelID: "qwen-7", variant: null },
+  label: "Unverified Qwen alias · preview-effort",
+  route: { providerID: "qwen", modelID: "qwen-7", variant: "preview-effort" },
   currentPrice: { ...highConfiguration.currentPrice, sourceRecordID: "qwen/qwen-7" },
 }
 const zeroConfiguration = fixtureDecisionRow(
@@ -221,6 +221,39 @@ const crossRouteDecisionRow: ModelDecisionRow = {
     note: "No native-reported charge is available for this exact cohort.",
   },
 }
+const unknownPriceConfiguration: ModelDecisionConfiguration = {
+  ...highConfiguration,
+  configurationID:
+    "configuration:unknown-provider/model-identity-with-a-very-long-unrecognized-name",
+  groupID: "group:unknown-provider/model-identity-with-a-very-long-unrecognized-name",
+  label: "Misleading synthesized model label · high",
+  route: {
+    providerID: "unknown-provider",
+    modelID: "model-identity-with-a-very-long-unrecognized-name",
+    variant: null,
+  },
+  currentPrice: {
+    ...highConfiguration.currentPrice,
+    source: null,
+    sourceRecordID: null,
+    snapshotID: null,
+    retrievedAt: null,
+    semantics: "unknown",
+    freshness: "unavailable",
+  },
+}
+const unknownPriceDecisionRow: ModelDecisionRow = {
+  ...highDecisionRow,
+  configuration: unknownPriceConfiguration,
+  cohort: { ...highDecisionRow.cohort, acceptedTaskCount: 1 },
+  efficiency: {
+    status: "partial",
+    tokensPerAcceptedTask: 24_000,
+    currentMarketUSDPerAcceptedTask: null,
+    observationCount: 1,
+    missing: ["current-price"],
+  },
+}
 const crossRouteEstimate: ModelDecisionEstimate = {
   status: "single-observation",
   basis: "empirical-observed-spread",
@@ -290,6 +323,17 @@ const nativeModelCatalog = ModelCatalogOutputSchema.parse({
       capabilities: { tools: true, input: ["text"], output: ["text"] },
       pricesUSDPerMillionTokens: null,
       variants: ["max"],
+    },
+    {
+      providerID: "qwen",
+      id: "qwen-7",
+      name: "Qwen 7",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: ["high"],
     },
     {
       providerID: "anthropic",
@@ -652,6 +696,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       [CONFIG_SINGLE, qwenConfiguration],
       [CONFIG_ZERO, zeroConfiguration],
       [CONFIG_CROSS_ROUTE, crossRouteConfiguration],
+      [unknownPriceConfiguration.configurationID, unknownPriceConfiguration],
     ])
     const decisionRowsByID = new Map<string, ModelDecisionRow>([
       [CONFIG_ONE, highDecisionRow],
@@ -659,6 +704,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       [CONFIG_SINGLE, qwenDecisionRow],
       [CONFIG_ZERO, zeroDecisionRow],
       [CONFIG_CROSS_ROUTE, crossRouteDecisionRow],
+      [unknownPriceConfiguration.configurationID, unknownPriceDecisionRow],
     ])
     const deltaForSnapshot = (snapshotID: string) => decisionDeltas.get(snapshotID) ?? 0
     const decisionRowForSnapshot = (configurationID: string, snapshotID: string) => {
@@ -793,43 +839,46 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               decisionDeltas.set(snapshotID, delta)
               record(directory, "lazers.models.decision.v2", "overview", input, options.signal)
               const base = fixtureDecisionOverview()
-              const points = base.graph.points.map((point) => {
-                const row = decisionRowForSnapshot(point.configurationID, snapshotID)
-                const tokens = row.efficiency.tokensPerAcceptedTask
-                const cost = row.efficiency.currentMarketUSDPerAcceptedTask
-                if (tokens === null || cost === null)
-                  throw new Error("Fixture graph points need matching measured row coordinates")
-                return {
-                  ...point,
-                  label: row.configuration.label,
-                  tokensPerAcceptedTask: tokens,
-                  currentMarketUSDPerAcceptedTask: cost,
-                  observationCount: row.efficiency.observationCount,
-                  acceptedTaskCount: row.cohort.acceptedTaskCount,
-                }
-              })
-              points.push({
-                configurationID: CONFIG_CROSS_ROUTE,
-                groupID: crossRouteConfiguration.groupID,
-                label: crossRouteConfiguration.label,
-                tokensPerAcceptedTask: 50,
-                currentMarketUSDPerAcceptedTask: 0.00005,
-                observationCount: 1,
-                acceptedTaskCount: 1,
-                partial: false,
-              })
+              const noComparablePoints = input.filters.taskKind === "maintenance"
+              const points = noComparablePoints
+                ? []
+                : base.graph.points.map((point) => {
+                    const row = decisionRowForSnapshot(point.configurationID, snapshotID)
+                    const tokens = row.efficiency.tokensPerAcceptedTask
+                    const cost = row.efficiency.currentMarketUSDPerAcceptedTask
+                    if (tokens === null || cost === null)
+                      throw new Error("Fixture graph points need matching measured row coordinates")
+                    return {
+                      ...point,
+                      label: row.configuration.label,
+                      tokensPerAcceptedTask: tokens,
+                      currentMarketUSDPerAcceptedTask: cost,
+                      observationCount: row.efficiency.observationCount,
+                      acceptedTaskCount: row.cohort.acceptedTaskCount,
+                    }
+                  })
+              if (!noComparablePoints)
+                points.push({
+                  configurationID: CONFIG_CROSS_ROUTE,
+                  groupID: crossRouteConfiguration.groupID,
+                  label: crossRouteConfiguration.label,
+                  tokensPerAcceptedTask: 50,
+                  currentMarketUSDPerAcceptedTask: 0.00005,
+                  observationCount: 1,
+                  acceptedTaskCount: 1,
+                  partial: false,
+                })
               return ModelDecisionOverviewOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID, revision),
                 graph: {
                   scope: "global-filtered-snapshot",
                   points,
-                  frontierConfigurationIDs: [
-                    ...base.graph.frontierConfigurationIDs,
-                    CONFIG_CROSS_ROUTE,
-                  ],
+                  frontierConfigurationIDs: noComparablePoints
+                    ? []
+                    : [...base.graph.frontierConfigurationIDs, CONFIG_CROSS_ROUTE],
                 },
-                configurationCount: decisionConfigs.size,
-                groupCount: 4,
+                configurationCount: noComparablePoints ? 1 : decisionConfigs.size,
+                groupCount: noComparablePoints ? 1 : 4,
               })
             },
             rows: async (
@@ -845,16 +894,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const directory = options.location.directory
               record(directory, "lazers.models.decision.v2", "rows", input, options.signal)
               const snapshotID = decisionSnapshot(directory, input.filters)
-              return ModelDecisionRowsOutputSchema.parse({
-                context: decisionContext(directory, input.filters, snapshotID),
-                rows: (input.cursor
+              const noPriceCase = input.filters.taskKind === "maintenance"
+              const pageRows = noPriceCase
+                ? [unknownPriceDecisionRow]
+                : input.cursor
                   ? [qwenDecisionRow, zeroDecisionRow, crossRouteDecisionRow]
                   : [highDecisionRow, lowDecisionRow]
-                ).map((row) =>
+              return ModelDecisionRowsOutputSchema.parse({
+                context: decisionContext(directory, input.filters, snapshotID),
+                rows: pageRows.map((row) =>
                   decisionRowForSnapshot(row.configuration.configurationID, snapshotID),
                 ),
-                totalCount: decisionConfigs.size,
-                nextCursor: input.cursor ? null : "rows-next",
+                totalCount: noPriceCase ? 1 : decisionConfigs.size,
+                nextCursor: noPriceCase || input.cursor ? null : "rows-next",
               })
             },
             configurations: async (
@@ -876,13 +928,16 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                 options.signal,
               )
               const snapshotID = decisionSnapshot(directory, input.filters)
+              const noPriceCase = input.filters.taskKind === "maintenance"
               return ModelDecisionConfigurationsOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID),
-                configurations: input.cursor
-                  ? [qwenConfiguration, zeroConfiguration, crossRouteConfiguration]
-                  : [highConfiguration, lowConfiguration],
-                totalCount: decisionConfigs.size,
-                nextCursor: input.cursor ? null : "configurations-next",
+                configurations: noPriceCase
+                  ? [unknownPriceConfiguration]
+                  : input.cursor
+                    ? [qwenConfiguration, zeroConfiguration, crossRouteConfiguration]
+                    : [highConfiguration, lowConfiguration],
+                totalCount: noPriceCase ? 1 : decisionConfigs.size,
+                nextCursor: noPriceCase || input.cursor ? null : "configurations-next",
               })
             },
             inspect: async (
@@ -1251,13 +1306,16 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           ?.includes("Objective A initial") === true,
     )
     await until(
-      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6",
+      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6 cached",
     )
     await until(
       () =>
         containerA
           .querySelector(".lazers-models-history-scope")
           ?.textContent?.includes("Route scope · same-route") === true,
+    )
+    expect(containerA.querySelector(".lazers-models-history-scope")?.closest("details")?.open).toBe(
+      false,
     )
 
     const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
@@ -1334,7 +1392,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     ).toEqual(["Model", "Accepted", "Cost / task"])
     const initialRow = comparePanel.querySelector(".lazers-models-decision-row")!
-    expect(initialRow.querySelector("th[scope=row]")?.textContent).toBe("GPT-6")
+    expect(initialRow.querySelector("th[scope=row]")?.textContent).toBe("GPT-6 cached")
     expect(initialRow.querySelector("td:nth-child(2)")?.textContent).toBe("9")
     expect(initialRow.querySelector("td:nth-child(3)")?.textContent).toBe("$0.127206")
     expect(initialRow.querySelector("td:nth-child(3)")?.getAttribute("title")).toBe(
@@ -1415,7 +1473,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const beforePointSelectionSVG = globalGraphSVG
     qwenPoint.click()
     await until(
-      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "Qwen 7",
+      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "qwen-7",
     )
     await until(() => qwenPoint.getAttribute("aria-pressed") === "true")
     await until(() => chartSVGMarkup() !== beforePointSelectionSVG)
@@ -1480,29 +1538,29 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(
       containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
-    ).toContain("one observed value, no interval")
+    ).toContain("one value, no interval")
+    const routeEvidence = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-inspector .lazers-models-evidence-details",
+    )!
+    expect(routeEvidence.open).toBe(false)
     const unknownHistoryLabel =
-      containerA.querySelector(".lazers-models-history-scope")?.textContent ?? ""
+      routeEvidence.querySelector(".lazers-models-history-scope")?.textContent ?? ""
     expect(unknownHistoryLabel).toContain("Accepted-task retry-history completeness unknown")
     expect(unknownHistoryLabel).toContain("Route scope · unknown")
     expect(unknownHistoryLabel).not.toContain("same-route")
-    expect(
-      containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
-    ).toContain("Accepted-task retry-history completeness is unknown")
+    routeEvidence.open = true
+    routeEvidence.dispatchEvent(new Event("toggle"))
+    expect(routeEvidence.textContent).toContain(
+      "Accepted-task retry-history completeness is unknown",
+    )
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "Current price",
     )
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "native-reported",
     )
-    const routeEvidence = containerA.querySelector<HTMLDetailsElement>(
-      ".lazers-models-inspector .lazers-models-evidence-details",
-    )!
-    expect(routeEvidence.open).toBe(false)
     expect(routeEvidence.textContent).toContain("Exact route")
     expect(routeEvidence.textContent).toContain("Native reported charges")
-    routeEvidence.open = true
-    routeEvidence.dispatchEvent(new Event("toggle"))
     expect(routeEvidence.open).toBe(true)
     const unknownContributorDetails = routeEvidence.querySelector<HTMLDetailsElement>(
       ".lazers-models-contributor-details",
@@ -1690,7 +1748,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () => modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID === CONFIG_SINGLE,
     )
-    expect(containerA.querySelector(".lazers-models-inspector h2")?.textContent).toBe("Qwen 7")
+    expect(containerA.querySelector(".lazers-models-inspector h2")?.textContent).toBe("qwen-7")
 
     const zeroProviderTrigger = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
@@ -1729,12 +1787,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent ??
       ""
     expect(crossRouteEstimateText).toContain("n=1 accepted logical-task history")
-    expect(crossRouteEstimateText).toContain("one observed value, no interval")
+    expect(crossRouteEstimateText).toContain("one value, no interval")
     expect(crossRouteEstimateText).toContain("150 tokens")
-    expect(crossRouteEstimateText).toContain("Complete accepted-task retry history")
-    expect(crossRouteEstimateText).toContain(
-      "The producer reports complete accepted-task histories, including retries.",
-    )
     const crossRouteInspection = containerA.querySelector<HTMLElement>(
       ".lazers-models-decision-inspection",
     )!
@@ -1746,6 +1800,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ".lazers-models-inspector .lazers-models-evidence-details",
     )!
     crossRouteEvidence.open = true
+    expect(crossRouteEvidence.textContent).toContain("Complete accepted-task retry history")
+    expect(crossRouteEvidence.textContent).toContain(
+      "The producer reports complete accepted-task histories, including retries.",
+    )
     const crossRouteContributorDetails = crossRouteEvidence.querySelector<HTMLDetailsElement>(
       ".lazers-models-contributor-details",
     )!
@@ -1812,6 +1870,35 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         )
         .at(-1)?.input,
     ).toMatchObject({ filters: { persona: "systems", taskKind: "testing" } })
+    taskKindFilter.click()
+    menuItemWithText(containerA, "Maintenance")?.click()
+    await until(
+      () =>
+        containerA.querySelector(".lazers-models-chart-empty strong")?.textContent ===
+          "No plottable comparison points" &&
+        containerA.querySelector(`[data-group-id="${unknownPriceConfiguration.groupID}"]`) !== null,
+    )
+    const unknownPriceRow = containerA.querySelector<HTMLElement>(
+      `[data-group-id="${unknownPriceConfiguration.groupID}"]`,
+    )!
+    const unknownPriceName = unknownPriceRow.querySelector<HTMLButtonElement>("button")!
+    expect(unknownPriceName.textContent?.length).toBeLessThanOrEqual(36)
+    expect(unknownPriceName.textContent?.endsWith("…")).toBe(true)
+    expect(unknownPriceName.textContent).not.toContain("Misleading synthesized")
+    expect(unknownPriceName.title).toBe(
+      "unknown-provider / model-identity-with-a-very-long-unrecognized-name",
+    )
+    expect(unknownPriceName.getAttribute("aria-label")).toContain(
+      "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
+    )
+    expect(unknownPriceRow.querySelector("td:nth-child(3)")?.textContent).toBe("Unknown")
+    expect(
+      containerA.querySelector(".lazers-models-chart .lazers-models-comparison-chart"),
+    ).toBeNull()
+    expect(containerA.querySelector(".lazers-models-chart svg")).toBeNull()
+    taskKindFilter.click()
+    menuItemWithText(containerA, "All task kinds")?.click()
+    await until(() => containerA.querySelector(".lazers-models-comparison-chart") !== null)
     expect(
       calls.some(
         (call) =>
@@ -2070,6 +2157,49 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     manualRouteDetailsWhileLoading.open = false
     pendingNativeCatalogA.resolve(nativeModelCatalog)
     await until(() => containerA.querySelector(".lazers-models-catalog-status") === null)
+    const compareTab = containerA.querySelector<HTMLButtonElement>(
+      '[role="tab"][aria-controls="lazers-models-compare-panel"]',
+    )!
+    compareTab.click()
+    await until(() => containerA.querySelector(".lazers-models-decision-tools") !== null)
+    buttonWithText(containerA, "Load more model groups")?.click()
+    await until(() => containerA.querySelector('[data-group-id="group:qwen/qwen-7"]') !== null)
+    buttonWithText(containerA, "Load more exact configurations")?.click()
+    await until(() =>
+      calls.some(
+        (call) =>
+          call.method === "configurations" &&
+          Boolean((call.input as { cursor?: string }).cursor) &&
+          (call.input as { filters?: ModelDecisionFilters }).filters?.persona === "systems",
+      ),
+    )
+    const cachedNameProvider = [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+    ].find((button) => button.textContent?.includes("Provider"))!
+    cachedNameProvider.click()
+    const qwenOption = menuItemWithText(containerA, "qwen / qwen-7")
+    if (!qwenOption) throw new Error("Missing exact qwen route in the provider selector")
+    qwenOption.click()
+    await until(
+      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "Qwen 7",
+    )
+    expect(
+      containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
+    ).toContain("Exact route qwen / qwen-7 · preview-effort")
+    expect(
+      [
+        ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
+      ].find((button) => button.textContent?.includes("Effort"))?.textContent,
+    ).toContain("preview-effort")
+    const restoreHighSelection = containerA.querySelector<HTMLButtonElement>(
+      `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
+    )!
+    restoreHighSelection.click()
+    await until(
+      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6",
+    )
+    assignmentTab.click()
+    await until(() => containerA.querySelector(".lazers-models-assignment-editor") !== null)
     const assignmentLayers = () =>
       containerA.querySelector<HTMLDetailsElement>(".lazers-models-assignment-layers")!
     expect(assignmentLayers().open).toBe(false)
@@ -2122,6 +2252,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           title: "GPT-6 Luna",
           description: "openai gpt-6-luna · chat",
           group: "openai",
+        },
+        {
+          title: "Qwen 7",
+          description: "qwen qwen-7 · chat",
+          group: "qwen",
         },
         { title: "Claude 4 Sonnet", group: "anthropic" },
       ],
@@ -2686,7 +2821,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ) !== null && containerB.textContent?.includes("Objective B project only") === true,
     )
     expect(containerB.querySelector(".lazers-models-project")?.textContent).toContain("project-b")
-    expect(containerB.querySelector(".lazers-models-decision-rows")?.textContent).toContain("GPT-6")
+    expect(containerB.querySelector(".lazers-models-decision-rows")?.textContent).toContain("gpt-6")
     const assignmentsTabB = containerB.querySelector<HTMLButtonElement>(
       '[role="tab"][aria-controls="lazers-models-assignments-panel"]',
     )
