@@ -20,12 +20,14 @@ cleanup are separate facts.
   `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. Following authorized72 quarantine,136
   dispatched at1793849034879: attempt`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`,
   session`ses_48e456730db5448d89a03440b372dca5`, OpenAI Luna Max in its native
-  isolated worktree. The corrected draft passes195 runtime/schema tests and3401
-  assertions plus format/type checks at1793851022328. Independent native Luna
-  review then found an admission race and sequence-validation mismatch; Architect
-  delivered these through instruction context at1793851211935, with no new worker
-  input. Both remain unverified. No activation/integration/acceptance yet. LZ134
-  waits for133 integration. See the native-shape/review report in design/reviews.
+  isolated worktree. After independent Luna review, corrected admission-race and
+  sequence-bound regressions pass200 runtime/schema tests/3469 assertions at 1793851696638. Full compatibility then passed400 tests but one inherited
+  artifact-evidence test timed out at Bun's5-second test deadline, with a follow-on
+  error. Same-worker rerun began1793851878210 and remains active. Root autoformatted
+  the inherited Astra evidence note in that tree and canonical (b310b7f); Architect
+  amended exactly that file into the existing scope, planversion9. No new worker
+  input, attempt, activation, integration or acceptance. LZ134 waits for133.
+  Final-candidate review and native qualification remain required.
   [Actual order and evidence](../../design/reviews/execution-order-20261104.md).
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are
