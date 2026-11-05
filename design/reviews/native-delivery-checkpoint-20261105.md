@@ -2,6 +2,15 @@
 
 ## Current delivery update
 
+Latest:126 natively integrated/v30 and cleaned up; original artifactbb26ab2 now
+has real ancestry through3999968. Native124→119/125→120 links are each revision1,
+four endpoint inspections at correction identity2.77 focused/compatibility tests
+and quality checks pass; merge changed no source. Original126 history retained,
+worktree removed through native cleanup. Worker-specific post-write probe remains
+unobserved. Existing122 dependency release started its first actual Luna Max worker
+ses_4c2333ab99e14396b784425511414a08, attempt38df5475-caa8-4469-8c68-1b330f981c80,
+baseline3999968, native start1793898969416.142 is still queued.
+
 Newest: LZ141 correction is integrated in569f2e0, with45 tests/1017 assertions,
 quality checks/build and actual wide/narrow Desktop/Tera review passing.
 Provider search, split keyboard/scroll, native theme/font change and restoration

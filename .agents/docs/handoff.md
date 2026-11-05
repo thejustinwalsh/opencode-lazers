@@ -14,7 +14,7 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
 - All58 approved plan transfers are done. Nonlisted57/58,138,139,141,142 remain
   with `ses_c55347be4cfb42a59fd168de6728bb77`, last observed idle. No new transfer
   approvals or direct production SQL edits. Read ownership before commanding.
-- Main is clean at9cbbb55. GUI was rebuilt after569f2e0. Service95968 remains;
+- Reviewed source is merged at3999968. GUI was rebuilt after569f2e0. Service95968 remains;
   no Root-issued reload/restart in this pass. New134 selected-message handler
   was independently exercised live, so do not assume all backend code is stale.
 
@@ -50,7 +50,8 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
 
 ## Next delivery
 
-1. Main now owns126 native qualification: plan c64e0231-b47c-4432-96a9-5e5e39fe6a6b,
+1. **126 is natively integrated/v30 and cleaned up.** Plan
+   c64e0231-b47c-4432-96a9-5e5e39fe6a6b;
    original worker `ses_5cb41dc1d06e4ae3a4f5c6a978f33fdc`, attempt
    a805c93f-0f01-4d18-92d2-a5ee5399cc3e. The previous handoff incorrectly said
    bb26ab2 was integrated; it was not. Root integrated it asef0b591 after independent
@@ -61,11 +62,18 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
    zero-background report1793898152834/start1146/event1148, terminal1296,
    evt_1aca98389001Zc06FY3yljyQ29, invalidationnull. Use supported explicit
    reviewInputID reconciliation for this observation, not an old-input mismatch.
-   Explicit user-approved correction pairs119+124 and120+125 still need supported
-   native controls and producer-readable verification. Real unfinished product
-   verification is useful work; proof-only model turns are not.
-2. Existing122 producer plan6c98bc11-0509-49b0-b8f2-f62666e05e28 remains unstarted
-   behind126 and three integrated accepted prerequisites. Build the approved
+   Native controls recorded124→119 and125→120, each revision1; all4 endpoint
+   inspections showed correction identity2. Native acceptance, task integration,
+   plan integration and non-forced worktree removal completed; session retained,
+   private tree/cache location absent. Root3999968 merged originalbb26ab2 ancestry,
+   preserving the tested Code Mode changes without changing the tree. A separate
+   worker-specific post-write probe was not observed; do not claim one.
+2. **122 producer is actually running:** plan6c98bc11-0509-49b0-b8f2-f62666e05e28,
+   attempt38df5475-caa8-4469-8c68-1b330f981c80,
+   worker `ses_4c2333ab99e14396b784425511414a08`, OpenAI Luna Max, parentMain,
+   native started1793898969416, workspace under native runner/worktrees/attemptID,
+   baseline3999968. Bounded index discovery, source research and actual RPC-doc
+   webfetch were observed. Keep source stable while it implements. Build the approved
    Compare/Pareto graph with real cohorts/current market prices. Assignments UI
    is not completion of Compare. Reference design/models-panel/models-approved.png.
 3. Existing142 plan6948fd6a-1b1e-4ec4-8738-0888c41e7be3 remains unstarted: actual
@@ -94,6 +102,14 @@ then propose observation-based improvements. Do not narrow it to these checkpoin
 - All6 inference flags stay on, unloadNever. Available was visible after settings
   navigation; no new inference job in this pass. Recurring model-cache ownership
   error remains existing128 work. Do not disable inference/delete models.
+- Root sampled real-work CPU without restarting anything: service55.8→68.4%,
+  renderer13.1→14.1%, helper31.5→31.2%. This is not a quiet comparison or a fixed
+  performance claim.5-second stack files are `/private/tmp/lz-service-active-producer-20261105.sample.txt`,
+  `/private/tmp/lz-renderer-active-producer-20261105.sample.txt`, and
+  `/private/tmp/lz-gpu-helper-active-producer-20261105.sample.txt`. Service shows
+  SQLite JSON parsing/preparation plus unsymbolicated JIT work; helper includes
+  Metal rendering. These do not identify an exact plugin call site or prove ONNX
+  caused CPU use. Preserve evidence for existing performance qualification.
 - Work is retained in native worktrees. Preserve quarantines99/72 and unknown
   resource history. Cleanup failures do not erase legitimate work. Evidence is
   tests and actual behavior; no source hashes/fingerprints as proof.
