@@ -1,12 +1,17 @@
 # LZ132 native attachment/readback qualification
 
-Prepared procedure; **not executed and not acceptance evidence**.
+Executed through actual Code Mode and runtime integration. Both132/137 are now
+integrated with native non-forced cleanup verified. Exact observations and
+artifact-bound evidence: [qualification record](task132-native-qualified-20261105.md).
+The procedure below is retained for reproducibility, not as a claim that its prose
+alone supplied evidence.
 
 Base candidate: `e67fee195776f6da333e44a9068444817b08c117`, original attempt
 `547ae78b-1300-47fe-9aa4-d43461a54379`, plan
 `10964078-2262-4b2c-8f5a-101222a16e55`.
-The task is accepted; plan version25 is held only on combined
-`native-attached-readback` human evidence. Automated checks are not that evidence.
+At the start, planversion25 was held on combined `native-attached-readback` human
+evidence. Actual observations subsequently closed that gate;132 is integrated32
+and137 integrated12. Automated checks did not substitute for the native walkthrough.
 
 ## Preconditions
 

@@ -54,13 +54,18 @@ Response history size is bounded, but this query's work grows with accumulated
 history. Do not claim constant-work reads from the response bound, and do not
 restore an arbitrary lifetime write ceiling to avoid this concern.
 
-## Native gate remains open
+## Native gate qualified and integration complete
 
-After review of the corrected artifact and Root-coordinated quiet activation,
-perform the actual native attachment and fresh structured/readable getter calls
-through Code Mode. Procedure:
+Root landed base then correction, preserving the recorded task source baseline.
+Adoption `044eb65e-6fed-413b-b638-b86dad63f8fd` passed fresh task and combined
+checks on `cf46320948d04e4932fe09305dc5a9c1a49ddf81`. Actual Code Mode attachment,
+exact receipt retry and both fresh getters passed with immutable task/worker
+identity retained; bound human evidence closed the native gate.132 is integrated32,
+137 integrated12; native `force:false` cleanup removed their original/adoption
+worktrees and preserved original sessions/history. See
+`.agents/docs/evidence/task132-native-qualified-20261105.md`.
+
+The actual walkthrough followed this procedure:
 `.agents/docs/evidence/task132-native-readback-procedure-20261105.md`.
-No watched source integration/reload while129 or the listener repair is active;
-no fixture results, repo notes or session advice substitute for this gate. Read
-availability is not model consumption. Record exact integrated/artifact identity
-before supported combined human evidence and final integration/cleanup actions.
+No fixture result, repo note or session instruction substituted for native
+attachment/readback. Read availability is not model consumption.
