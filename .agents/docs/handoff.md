@@ -7,27 +7,36 @@ cleanup are separate facts.
 
 ## Current state
 
-- **Astra's remaining performance plan is executing.** Root sent the complete
-  [plan](../../design/reviews/astra-performance-luna-tasks-20261104.md) through
-  Desktop to `ses_e568438ebffeaoFbF9nBb942XM` (“LAZERS roadmap and renewal-context
-  fix”), OpenAI Sol High. It submitted LZ133/134/135 through native tools. LZ133
-  and LZ135 are running concurrently in separate native worktrees on verified
-  OpenAI `gpt-6-luna/max`; LZ134 waits for journal integration. See new identities
-  below. No new task is accepted yet. The coordinator handled a stale approval
-  notice by checking the current plan and preserving the active attempt, then
-  returned idle. Existing scheduler notification/wake behavior was observed.
+- **Current delivery blocker is owned steering reconciliation.** LZ133 journal
+  inspection is committed asf5f7af4;16 tests/quality and Root's migrated actual-data
+  copy probe pass (4657 distinct records/95 pages; unrelated activity preserves
+  the cursor, selected-journal changes invalidate it). LZ135 commits3a85ecd and
+  335cd57 pass66 tests/624 assertions; Root's40-session replay changed append
+  counts[120,120,120]→[120,0,0]. Both original workers finished their correction
+  turns, but runtime holds completion because genuine review steering is not an
+  admitted input alias. Neither is accepted/integrated yet. Fresh coordinator
+  `ses_e568438ebffeaoFbF9nBb942XM` created LZ136 for that narrow repair, priority2300,
+  plan`ad6cb637-d5d7-4ee4-974e-727216f2bdd5`, task
+  `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. It is queued with no attempt; its only
+  overlapping write reservation is retained LZ72. LZ134 waits for133 integration.
+  [Actual order and evidence](../../design/reviews/execution-order-20261104.md).
+- **Selected legacy ownership transfer completed with explicit user approval.**
+  LZ129/LZ132 are now owned by the fresh coordinator, versions26/13 at
+  1793848404029; original workers, attempts and worktrees are unchanged. No other
+  legacy plan was transferred. Root has separately requested approval for72
+  ownership transfer plus the existing source-quarantine/archive flow, preserving
+  its unresolved verification effect and resources. Do not infer that approval.
 - **Research route is Luna Max too.** The subsequent “Scope recorder recovery
   optimization” delegate `ses_e5679b057ffeoNd6sRQPR2UKBb` was verified on OpenAI
   Luna Max and completed. An earlier Explore inherited Sol High; it finished before
   the explicit correction. Do not create further Sol research delegates.
-- **Old renewal owner still reviews historical notices.**
-  `ses_5aa94658965844ed85f4b0ebdd5266cb` remains active on Sol High. Original Main
-  `ses_e68a9ed37ffeVqzPWRXN5SB7Uw` completed its coordination turn and remains
-  natively archived. A request for approval to stop only the old review loop is
-  pending; do not infer approval. Automatic review previously rejected stopping
-  an in-flight parent turn; no indirect interruption was attempted. Avoid more
-  Architects. New plans belong to the fresh coordinator; legacy ownership remains
-  with5aa pending supported coordination.
+- **Old historical-review loop stopped with explicit user approval.** Native
+  interrupt of `ses_5aa94658965844ed85f4b0ebdd5266cb` returned true; outcome became
+  `interrupted`, idle at1793847176491. At1793847191037 the only active sessions
+  were the original LZ133/135 workers. Fresh coordinator e568 was already idle
+  after relaying both review corrections. No plans, history, worktrees or workers
+  were cancelled. Original Main e68 remains archived. Preserve legacy ownership
+  records; do not resume the historical loop merely to consume old notices.
 - **Performance source repairs are integrated.** Earlier matched service CPU
   73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
   [Report](../../design/reviews/astra-renewal-spike-repair-20261104.md). Current
@@ -44,7 +53,7 @@ cleanup are separate facts.
   LZ133 provides progressive journal inspection; LZ134 will coalesce notifications
   and explicitly reconcile legacy admissions. Preserve complete journal and
   delivery history. [Source seams](evidence/renewal-context-repair-seams-20261105.md).
-- **Original LZ129/132 remain stopped retained work.** Their native OpenAI Luna
+- **Original LZ129/132 remain stopped retained work under the new owner.** Their native OpenAI Luna
   sessions failed at the prior quota limit; resetting usage did not resume them.
   Runtime records still say running with unknown background lineage. Current
   resume rejects these attempt states; this is a concrete recovery gap, not a
@@ -90,6 +99,17 @@ subscription cost0 is not market cost. OpenRouter remains the default market ind
 
 ## Next actions
 
+0. Continue the current fresh Architect. LZ136 is submitted/queued; identify
+   current72 approval before any additional transfer, then qualify its existing
+   native source-quarantine flow and dispatch136. Do not build another delegation
+   feature or manually mutate TaskDB lifecycle state. Its repair must recognize
+   actual same-attempt steering without another worker prompt or fabricated idle
+   report. Review/integrate133/135, activate the exact candidates and perform native
+   journal/CPU checks. Root probe reports are in design/reviews/task133* and task135*.
+   System One task136 review returned unavailable due to a new ONNX WebGPU
+   device-loss buffer-download error; submission continued with recorded concerns.
+   No inference flag change or proven automatic recovery occurred.
+
 1. Continue native orchestration on the now-reset OpenAI route with current model
    preferences. Prioritize the observed LZ28/LZ30 compact-context
    correction and visible current-Architect route before feeding more historical
@@ -122,7 +142,7 @@ subscription cost0 is not market cost. OpenRouter remains the default market ind
 | LZ72                     | `7473e8a5-74cc-4222-aeea-a8a01de1f9be`                                          | `0dab6e0d-6ad1-4902-a315-4066f5dee32c`        | `ed96f0b9-102b-4c64-aa8b-708a62d49fe7` / `ses_136dd90605a14fc0a6e7ce9e0edc1413`                  |
 | LZ57 → LZ58              | `853524a4-df9e-41ed-a57f-06dcb6637187` → `95f7a783-009b-4d26-9fa8-ace3cbcac0c3` | `d0ce36bb-3b8a-481b-b525-9e2b45c55cb6`        | zero attempts; reversible scheduling hold                                                        |
 
-Current Architect at1793844258408: `ses_5aa94658965844ed85f4b0ebdd5266cb`,
+Historical renewal owner at1793844258408 (interrupted at1793847176491): `ses_5aa94658965844ed85f4b0ebdd5266cb`,
 OpenAI Sol High, child of4e3bba; renewal `283a8271-2d0c-4f96-8554-d22c63fcf884`
 started1793844115924 and committed. The renewal title remains
 “LAZERS · Preserve genuinely received duplicate starts”. Desktop exposes the running

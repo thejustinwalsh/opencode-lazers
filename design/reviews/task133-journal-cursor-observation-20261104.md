@@ -24,3 +24,24 @@ Root sent the reproduction through Desktop to the original worker's Architect,
 requesting scoped freshness and an unrelated-activity regression before integration.
 No source/task state was modified by the probe. Script:
 `/private/tmp/lazers-journal-draft-cursor-probe-20261104.ts`.
+
+## Correction reprobe
+
+At1793847391277, Root exercised the corrected draft against a consistent SQLite
+backup of the actual database, applying the worker's real store migration only to
+that disposable copy. Production was opened read-only and was not modified.
+
+- Store initialization/migration:26.33ms; traversal and mutation checks:55.52ms.
+- Traversed4657 distinct retained records across95 pages without omissions caused
+  by duplicate record IDs.
+- An unrelated project observation-revision change preserved the journal cursor
+  and returned the next five records; selected journal revision remained0.
+- Updating a retained input in the selected journal correctly invalidated its
+  prior cursor with the journal-change message.
+- The disposable backup directory was removed and its absence confirmed.
+
+This addresses the reproduced cursor defect at component/migration level. It is
+not registered native tool observation or runtime acceptance. The reader now
+requires the new journal-revision table; the original read-only production probe
+cannot exercise that draft before its migration is installed. Script:
+`/private/tmp/lazers-journal-migrated-clone-probe-20261104.ts`.
