@@ -15,6 +15,7 @@ import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { registerModelsServer } from "./server.ts"
+import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 type ModelRPC = {
@@ -28,6 +29,10 @@ type ModelRPC = {
   priceSources(input: unknown): Effect.Effect<unknown, unknown>
   configurePriceSources(input: unknown): Effect.Effect<unknown, unknown>
   refreshSources(input: unknown): Effect.Effect<unknown, unknown>
+  overview(input: unknown): Effect.Effect<unknown, unknown>
+  rows(input: unknown): Effect.Effect<unknown, unknown>
+  configurations(input: unknown): Effect.Effect<unknown, unknown>
+  inspect(input: unknown): Effect.Effect<unknown, unknown>
 }
 type NativeSession = {
   id: string
@@ -122,11 +127,15 @@ function modelContext(options: {
     priceSources: () => Effect.die(new Error("RPC not registered")),
     configurePriceSources: () => Effect.die(new Error("RPC not registered")),
     refreshSources: () => Effect.die(new Error("RPC not registered")),
+    overview: () => Effect.die(new Error("RPC not registered")),
+    rows: () => Effect.die(new Error("RPC not registered")),
+    configurations: () => Effect.die(new Error("RPC not registered")),
+    inspect: () => Effect.die(new Error("RPC not registered")),
   }
   let registered: ModelRPC | undefined
   const rpc = {
     register: (_contract: unknown, methods: ModelRPC) => {
-      registered = methods
+      registered = Object.assign(registered ?? ({} as ModelRPC), methods)
       Object.assign(server, methods)
       return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
     },
@@ -1603,6 +1612,114 @@ test("Models group RPC cancellation after source reads cannot publish a successf
     expect(exit._tag).toBe("Failure")
     expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("ModelsDecision registers and serves coherent production overview, rows, configurations and inspect", async () => {
+  const fixture = makeLedgerFixture()
+  const sourceWriter = new Database(fixture.path, { strict: true })
+  sourceWriter
+    .query("UPDATE runner_progress SET message_id='decision-server-' || seq WHERE kind='step'")
+    .run()
+  sourceWriter.close()
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository)
+  repository.close()
+  try {
+    const input = {
+      sessionID: "ses-native",
+      scope: { projectDirectory: fixture.projectDirectory },
+      filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+    }
+    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string; availability: string }
+      graph: { scope: string; points: unknown[] }
+      configurationCount: number
+    }
+    expect(overview.context.availability).toBe("partial")
+    expect(overview.graph.scope).toBe("global-filtered-snapshot")
+
+    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
+      context: { snapshotID: string }
+      rows: Array<{ configuration: { configurationID: string } }>
+      totalCount: number
+    }
+    const configurations = (await Effect.runPromise(
+      harness.methods().configurations({ ...input, limit: 100 }),
+    )) as {
+      context: { snapshotID: string }
+      configurations: Array<{ configurationID: string }>
+      totalCount: number
+    }
+    expect(rows.context.snapshotID).toBe(overview.context.snapshotID)
+    expect(configurations.context.snapshotID).toBe(overview.context.snapshotID)
+    expect(rows.totalCount).toBe(overview.configurationCount)
+    expect(configurations.totalCount).toBe(overview.configurationCount)
+    expect(rows.rows.length).toBeGreaterThan(0)
+
+    const inspection = await Effect.runPromise(
+      harness.methods().inspect({
+        ...input,
+        snapshotID: overview.context.snapshotID,
+        configurationID: rows.rows[0]!.configuration.configurationID,
+        selectedTaskID: null,
+        contributorLimit: 100,
+      }),
+    )
+    expect(inspection).toMatchObject({ status: "found" })
+    expect(harness.permissionCalls).toHaveLength(4)
+    expect(harness.permissionCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "lz-read-model-decision",
+          resources: [fixture.projectDirectory],
+        }),
+      ]),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test("ModelsDecision foreign scope, denial and pre-abort do not read price sources", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  let denied = false
+  const harness = await register(repository, { denied: () => denied })
+  repository.close()
+  const input = {
+    sessionID: "ses-native",
+    scope: { projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+  try {
+    await expect(
+      Effect.runPromise(
+        harness.methods().overview({
+          ...input,
+          scope: { projectDirectory: `${projectDirectory}/foreign` },
+        }),
+      ),
+    ).rejects.toThrow()
+    expect(harness.permissionCalls).toHaveLength(0)
+
+    denied = true
+    await expect(Effect.runPromise(harness.methods().overview(input))).rejects.toThrow(
+      "native permission denied",
+    )
+    expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(harness.storageCalls.get).toBe(0)
+
+    denied = false
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      Effect.runPromise(harness.methods().overview(input), { signal: controller.signal }),
+    ).rejects.toThrow()
+    expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
