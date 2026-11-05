@@ -12,11 +12,22 @@ outcome receipts, or notices.
   exercises compact/full compatibility, limit and cursor validation, permission
   denial before store access, a complete traversal of 3,839 results plus 804
   inputs, non-anchor renewal-plan mapping, read-only state, replay/scope checks,
-  and stale-cursor rejection after an in-place result revision change.
-- The registered-tool regression in `src/runner/tools.test.ts` reads page one,
-  inserts progress for a separate worker plan, verifies that the project-wide
-  observation revision advances while the selected journal revision and records
-  stay unchanged, then traverses the remaining pages without gaps or duplicates.
+  and stale-cursor rejection after in-place input and result changes.
+- The retained-volume traversal runs a fenced `claim()` /
+  `recordArchitectSourcePage()` no-op scan between pages. It returns every
+  distinct record once while scan cursor/sweep/timestamps change and the selected
+  journal revision and content remain unchanged.
+- The registered-tool regression reads page one, inserts progress for a separate
+  worker plan, verifies the project-wide observation revision advances without
+  changing the selected journal, then runs repeated fenced no-op source scans
+  between registered pages and completes traversal without gaps or duplicates.
+- Trigger-reopen coverage replaces an installed broad legacy trigger through a
+  second database connection, reopens `RunnerStore`, verifies the durable
+  per-plan revision counter is retained, and confirms no-op scan diagnostics do
+  not invalidate cursors under the installed meaningful-field trigger.
+- Scan cursor, sweep, and timestamps are explicitly labeled live diagnostics,
+  not snapshot-pinned data. Changes to selected journal content invalidate
+  cursors; unrelated project progress and no-op scan metadata do not.
 - `bun run verify` runs Bun formatting, linting, and strict typechecking.
 
 ## Native gate remains open
