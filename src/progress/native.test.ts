@@ -1267,6 +1267,10 @@ test.each([
       ])(),
   },
   {
+    name: "empty history with a nonempty sync watermark",
+    read: async () => sessionLog([logSynced("ses-accepted", 4099)])(),
+  },
+  {
     name: "gapped",
     read: async () =>
       sessionLog([
