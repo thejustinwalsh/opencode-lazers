@@ -340,7 +340,12 @@ export function nativeHost(
                   typeof error === "object" &&
                   error !== null &&
                   "_tag" in error &&
-                  error._tag === "SessionNotFoundError"
+                  // The in-process host exposes the core tag; the HTTP client
+                  // uses the protocol tag. Neither means a different ID is absent.
+                  (error._tag === "Session.NotFoundError" ||
+                    error._tag === "SessionNotFoundError") &&
+                  "sessionID" in error &&
+                  error.sessionID === id
                 )
                   return Effect.succeed(null)
                 return Effect.fail(error)

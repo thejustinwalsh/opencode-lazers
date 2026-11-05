@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { DateTime, Effect } from "effect"
+import { DateTime, Effect, Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { TaskRepository } from "../storage.ts"
@@ -16,6 +16,7 @@ import { makeFixture as makeTrajectoryFixture } from "../../test/trajectory/fixt
 
 type NativeRevalidationOptions = {
   messages?: unknown[]
+  sessionError?: unknown
   contextAt?: (read: number, messages: unknown[]) => unknown[]
   sessionAt?: (read: number, session: Record<string, unknown>) => Record<string, unknown>
   active?: Record<string, { type: "running" }>
@@ -111,6 +112,7 @@ function nativeRevalidationHost(
     location: { directory: repository.projectDirectory, project: { id: binding.projectID } },
     session: {
       get: () => {
+        if (options.sessionError !== undefined) return Effect.fail(options.sessionError)
         const read = sessionReads++
         const current = options.sessionAt?.(read, baseSession) ?? baseSession
         return Effect.succeed(current as never)
@@ -1189,6 +1191,45 @@ test("native adapter fails closed when durable idle persistence is unavailable",
     source: "experimental.idle",
     reason: "Durable native idle observation is unavailable",
   })
+})
+
+// Pinned core session/error.ts uses this tag, unlike the HTTP protocol error.
+class CoreSessionNotFound extends Schema.TaggedError<CoreSessionNotFound>()(
+  "Session.NotFoundError",
+  { sessionID: Schema.String },
+) {}
+
+test("native session absence accepts the pinned core and protocol tags only for the requested ID", async () => {
+  const fixture = makeTrajectoryFixture()
+  try {
+    for (const sessionError of [
+      new CoreSessionNotFound({ sessionID: "ses-absent" }),
+      { _tag: "SessionNotFoundError", sessionID: "ses-absent", message: "absent" },
+    ]) {
+      const adapter = nativeRevalidationHost(fixture.repository, { sessionError })
+      expect(await adapter.host.session("ses-absent")).toBeNull()
+      expect(adapter.contextReads).toBe(0)
+    }
+    for (const sessionError of [
+      new CoreSessionNotFound({ sessionID: "ses-different" }),
+      { _tag: "SessionNotFoundError", sessionID: "ses-different", message: "absent" },
+      new Error("transport unavailable"),
+      { _tag: "UnauthorizedError", message: "unauthorized" },
+    ]) {
+      const adapter = nativeRevalidationHost(fixture.repository, { sessionError })
+      await expect(adapter.host.session("ses-absent")).rejects.toBeDefined()
+      expect(adapter.contextReads).toBe(0)
+    }
+    const active = nativeRevalidationHost(fixture.repository, {
+      sessionError: new CoreSessionNotFound({ sessionID: "ses-absent" }),
+      active: { "ses-absent": { type: "running" } },
+    })
+    await expect(active.host.session("ses-absent")).rejects.toThrow(
+      "absent while execution or input is observed",
+    )
+  } finally {
+    fixture.close()
+  }
 })
 
 test("fresh native reads confirm the separate pinned idle terminal marker after reopening context twice", async () => {
