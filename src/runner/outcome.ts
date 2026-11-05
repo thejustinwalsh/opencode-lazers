@@ -29,7 +29,7 @@ export function outcomeText(serialized: string) {
         `Predecessor: ${String(payload.predecessorSessionID ?? "unknown")} (archived; linked as parent).`,
         `Plan IDs: ${planIDs.join(", ") || "none recorded"}.`,
         `Predecessor input-history scan: ${coverage.complete === true ? "complete for the recorded pass" : `continuing at cursor ${String(coverage.cursor ?? "unknown")}`}; later scans remain required.`,
-        "Native input IDs and dispositions remain in the durable predecessor source journal; bounded reference-only updates are delivered separately as they are reconciled.",
+        "Native input IDs, dispositions and assistant-result changes remain in the durable predecessor source journal. Compact source-change pointers are delivered separately; page the metadata journal and explicitly fetch selected original messages when needed.",
         ...(decisions.length
           ? ["Recorded decisions:", ...decisions.map((item) => `- ${item}`)]
           : ["Recorded decisions: none."]),
@@ -78,6 +78,14 @@ export function outcomeText(serialized: string) {
         "Inspect current durable plan state and the original source session before deciding what to do.",
       ].join("\n")
     }
+    case "architect-source-change":
+      return [
+        "LAZERS Architect source changed",
+        `Source session: ${String(payload.sourceSessionID ?? "unknown")} (journal revision ${String(payload.sourceRevision ?? "unknown")}).`,
+        "The durable source journal is progressively inspectable with lz-inspect-plan view='journal'. It contains metadata and original message IDs, not transcript bodies or proof of completeness/consumption.",
+        "Use the authenticated selected-message view only for relevant user/synthetic inputs or assistant results. Pending, steering and unknown input dispositions remain blockers; this notice does not replay input or authorize execution.",
+        "Existing workers continue unchanged.",
+      ].join("\n")
     case "task-accepted":
       action =
         "Review the accepted task artifact now; repair defects, integrate the reviewed result through runtime commands, and continue the existing backlog. Do not wait for plan finalization or disturb active workers."

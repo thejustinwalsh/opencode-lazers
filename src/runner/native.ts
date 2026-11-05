@@ -26,6 +26,7 @@ import { sourceGuardMatches } from "./source-quarantine.ts"
 import { NativeIdleStore } from "./native-idle.ts"
 import type { NativeIdleTerminal } from "./native-idle.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
+import { privacyStats, safeText } from "../trajectory/privacy.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -778,6 +779,43 @@ export function nativeHost(
           }
         }),
         nextCursor: page.cursor.next ?? null,
+      }
+    },
+    async architectSourceMessage(sessionID, messageID) {
+      const client = await connectedClient()
+      await runNative(client, () => assertArchitectTarget(ctx, client, sessionID))
+      const message = await runNative(client, () =>
+        client.session.message.get({ sessionID, messageID: SessionMessage.ID.make(messageID) }),
+      )
+      if (message.id !== messageID)
+        throw new Error("Native source message read returned a different message ID")
+      const privacy = privacyStats()
+      if (message.type === "user" || message.type === "synthetic") {
+        if (message.type === "user")
+          privacy.omittedAttachments +=
+            (message.files?.length ?? 0) +
+            (message.agents?.length ?? 0) +
+            (message.skills?.length ?? 0)
+        return {
+          id: message.id,
+          type: message.type,
+          text: safeText(message.text, privacy, 4_000),
+          privacy,
+        }
+      }
+      if (message.type !== "assistant")
+        throw new Error("Selected source message is not a user, synthetic or assistant message")
+      const text: string[] = []
+      for (const part of message.content) {
+        if (part.type === "text") text.push(part.text)
+        else if (part.type === "reasoning") privacy.omittedReasoning++
+        else privacy.omittedUnsupportedParts++
+      }
+      return {
+        id: message.id,
+        type: "assistant",
+        text: safeText(text.join("\n"), privacy, 4_000),
+        privacy,
       }
     },
     async cancelOutcome(input) {

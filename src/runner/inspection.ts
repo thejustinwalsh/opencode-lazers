@@ -12,8 +12,26 @@ const JournalInspectPlanInput = z.strictObject({
   limit: z.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().min(1).max(8192).optional(),
 })
-export const InspectPlanInput = z.union([CompactInspectPlanInput, JournalInspectPlanInput])
+export const SourceMessagesInspectPlanSchema = z.strictObject({
+  planID: z.uuid(),
+  view: z.literal("source-messages"),
+  sourceSessionID: z.string().min(1).max(200),
+  messageIDs: z
+    .array(z.string().min(1).max(2048))
+    .min(1)
+    .max(10)
+    .refine(
+      (messageIDs) => new Set(messageIDs).size === messageIDs.length,
+      "Select each native message ID once",
+    ),
+})
+export const InspectPlanInput = z.union([
+  CompactInspectPlanInput,
+  JournalInspectPlanInput,
+  SourceMessagesInspectPlanSchema,
+])
 export type InspectPlanInput = z.infer<typeof InspectPlanInput>
+export type SourceMessagesInspectPlanInput = z.infer<typeof SourceMessagesInspectPlanSchema>
 
 export type CompactWaitingPlan = {
   planID: string
@@ -425,8 +443,10 @@ function compactAudit(store: RunnerStore) {
 }
 
 export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
-  if ("view" in input)
+  if ("view" in input && input.view === "journal")
     return store.architectSourceJournalPage(input.planID, input.limit, input.cursor)
+  if ("view" in input)
+    throw new Error("Selected source messages require an authenticated active Architect read")
   if (input.full) {
     return input.planID
       ? store.detail(input.planID)

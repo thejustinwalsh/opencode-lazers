@@ -165,6 +165,7 @@ test("journal inspection is permission-gated before bounded store reads", async 
   }
   const permissionChecks: string[] = []
   const reads: unknown[][] = []
+  const sourceReads: unknown[][] = []
   let denied = true
   const ctx = {
     location: { directory: "/project" },
@@ -183,6 +184,10 @@ test("journal inspection is permission-gated before bounded store reads", async 
     },
   } as unknown as Plugin.Context
   const runtime = {
+    inspectArchitectSourceMessages: (...args: unknown[]) => {
+      sourceReads.push(args)
+      return { mode: "source-messages", selected: 1, messages: [] }
+    },
     store: {
       architectSourceJournalPage: (...args: unknown[]) => {
         reads.push(args)
@@ -217,6 +222,20 @@ test("journal inspection is permission-gated before bounded store reads", async 
     records: [],
   })
   expect(reads).toEqual([[input.planID, 25, undefined]])
+  const sourceInput = {
+    planID: input.planID,
+    view: "source-messages",
+    sourceSessionID: "ses_predecessor",
+    messageIDs: ["msg_original"],
+  }
+  const sourceResult = await Effect.runPromise(
+    inspection.execute(sourceInput, callContext("architect")),
+  )
+  expect(JSON.parse(String(sourceResult.content))).toMatchObject({
+    mode: "source-messages",
+    selected: 1,
+  })
+  expect(sourceReads).toEqual([[sourceInput, "ses_test"]])
   await expect(
     Effect.runPromise(
       inspection.execute({ ...input, limit: 101 }, callContext("lazers-implementor")),
@@ -230,8 +249,19 @@ test("journal inspection is permission-gated before bounded store reads", async 
       ),
     ),
   ).rejects.toThrow()
+  await expect(
+    Effect.runPromise(
+      inspection.execute(
+        { ...sourceInput, messageIDs: ["duplicate", "duplicate"] },
+        callContext("architect"),
+      ),
+    ),
+  ).rejects.toThrow()
   expect(reads).toHaveLength(1)
+  expect(sourceReads).toHaveLength(1)
   expect(permissionChecks).toEqual([
+    "lz-inspect-plan",
+    "lz-inspect-plan",
     "lz-inspect-plan",
     "lz-inspect-plan",
     "lz-inspect-plan",

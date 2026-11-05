@@ -1,5 +1,6 @@
 import type { ModelPolicy } from "./schema.ts"
 import type { OutcomeOwnership, OutcomeInboxEntry } from "./inbox.ts"
+import type { PrivacyStats } from "../trajectory/privacy.ts"
 
 export type HostMessage = {
   id: string
@@ -23,6 +24,13 @@ export type ArchitectInputPage = {
     result?: ArchitectSourceResult
   }>
   nextCursor: string | null
+}
+
+export type ArchitectSourceMessage = {
+  id: string
+  type: "user" | "synthetic" | "assistant"
+  text: string
+  privacy: PrivacyStats
 }
 
 export type HostBackgroundObservation =
@@ -139,6 +147,8 @@ export interface RunnerHost {
   outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
   /** One ordered page of original Architect inputs plus the current native inbox. */
   architectInputPage?(sessionID: string, cursor?: string): Promise<ArchitectInputPage>
+  /** Read one selected original message from an authenticated same-project Architect session. */
+  architectSourceMessage?(sessionID: string, messageID: string): Promise<ArchitectSourceMessage>
   /** Revalidates ownership and queued state immediately before native cancellation. */
   cancelOutcome?(input: {
     sessionID: string

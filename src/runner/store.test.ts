@@ -8,6 +8,7 @@ import { fingerprint } from "../identity.ts"
 import { TaskRepository } from "../storage.ts"
 import { PlanInput } from "./schema.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
+import { outcomeText } from "./outcome.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -517,6 +518,384 @@ test("Architect source journal pages traverse large retained sources and invalid
   expect(() =>
     f.store.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!),
   ).toThrow("Journal changed since this page; restart the journal view")
+})
+
+test("804-input/3839-result and doubled journals keep handoff and current pointer bytes compact", () => {
+  const f = fixture("architect-compact-source-growth")
+  const anchor = f.store.submit(f.input, "owner")
+  const source = seedSourceJournal(f.store, anchor.planID, 804, 3_839)
+  f.store.atomic((db) =>
+    db
+      .query(
+        `UPDATE runner_plans SET owner=?,version=version+1
+         WHERE id IN (SELECT plan_id FROM runner_architect_renewal_plans WHERE renewal_id=?)`,
+      )
+      .run(source.successorSessionID, source.renewalID),
+  )
+  const currentPlan = f.store.plan(anchor.planID)!
+  const handoffPayload = {
+    status: "architect-handoff",
+    planID: anchor.planID,
+    planIDs: [anchor.planID, source.mappedPlanID],
+    version: 1,
+    label: "Continue the existing project work",
+    predecessorSessionID: source.sourceSessionID,
+    sourceCoverage: { complete: true, cursor: null },
+    continuity: { decisions: ["Preserve the current accepted work."], unresolvedQuestions: [] },
+  }
+  const handoffMetadata = {
+    lazersKind: "runner-outcome",
+    lazersProjectID: "project",
+    lazersProjectDirectory: f.projectDirectory,
+    lazersPlanID: anchor.planID,
+    lazersOutboxID: "handoff-fixture",
+    lazersMessageID: "msg_handoff_fixture",
+    lazersSessionID: source.successorSessionID,
+    lazersStatus: "architect-handoff",
+    lazersVersion: 1,
+  }
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_outbox(
+           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
+         ) VALUES(?,?,?,? ,?,'admitted',0,?,?)`,
+      )
+      .run(
+        "handoff-fixture",
+        anchor.planID,
+        source.successorSessionID,
+        "msg_handoff_fixture",
+        JSON.stringify(handoffPayload),
+        JSON.stringify(handoffMetadata),
+        JSON.stringify({ history: [{ kind: "native-admission" }] }),
+      ),
+  )
+
+  const measure = (expectedRecords: number) => {
+    const handoff = f.store
+      .outboxForDelivery(f.projectDirectory)
+      .find((row) => JSON.parse(row.payload).status === "architect-handoff")!
+    const activePointers = f.store
+      .architectSourceNoticeRows(source.sourceSessionID)
+      .filter((row) => JSON.parse(row.payload).status === "architect-source-change")
+      .filter((row) => !["consumed", "superseded"].includes(row.state))
+    expect(activePointers).toHaveLength(1)
+    const pointer = activePointers[0]!
+    const handoffText = outcomeText(handoff.payload)
+    const pointerText = outcomeText(pointer.payload)
+    const nativeInboxEntryBytes = (row: (typeof activePointers)[number], text: string) =>
+      Buffer.byteLength(
+        JSON.stringify({
+          id: row.message_id,
+          type: "synthetic",
+          delivery: "queue",
+          payload: { text, metadata: row.metadata ? JSON.parse(row.metadata) : null },
+        }),
+      )
+    const nativeSyntheticRequestBytes = (row: (typeof activePointers)[number], text: string) =>
+      Buffer.byteLength(
+        JSON.stringify({
+          sessionID: row.session_id,
+          id: row.message_id,
+          text,
+          ...(row.metadata ? { metadata: JSON.parse(row.metadata) } : {}),
+          resume: false,
+          delivery: "queue",
+          description: "LAZERS task outcome",
+        }),
+      )
+    let records: ReturnType<typeof f.store.architectSourceJournalPage>["records"] = []
+    let cursor: string | undefined
+    do {
+      const page = f.store.architectSourceJournalPage(anchor.planID, 100, cursor)
+      records = records.concat(page.records)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    expect(records).toHaveLength(expectedRecords)
+    expect(
+      new Set(
+        records.filter((record) => record.kind !== "source").map((record) => record.messageID),
+      ).size,
+    ).toBe(expectedRecords - 1)
+    return {
+      handoffTextBytes: Buffer.byteLength(handoffText),
+      pointerTextBytes: Buffer.byteLength(pointerText),
+      combinedTextBytes: Buffer.byteLength(handoffText) + Buffer.byteLength(pointerText),
+      handoffInboxEntryBytes: nativeInboxEntryBytes(handoff, handoffText),
+      pointerInboxEntryBytes: nativeInboxEntryBytes(pointer, pointerText),
+      combinedInboxEntryBytes:
+        nativeInboxEntryBytes(handoff, handoffText) + nativeInboxEntryBytes(pointer, pointerText),
+      handoffSyntheticRequestBytes: nativeSyntheticRequestBytes(handoff, handoffText),
+      pointerSyntheticRequestBytes: nativeSyntheticRequestBytes(pointer, pointerText),
+      combinedSyntheticRequestBytes:
+        nativeSyntheticRequestBytes(handoff, handoffText) +
+        nativeSyntheticRequestBytes(pointer, pointerText),
+      nativeNoticeCount: 2,
+      sourcePointerCount: activePointers.length,
+      journalRecordCount: records.length,
+      inputDispositionCounts: {
+        pending: records.filter(
+          (record) => record.kind === "input" && record.disposition === "pending",
+        ).length,
+        steering: records.filter(
+          (record) => record.kind === "input" && record.disposition === "steering",
+        ).length,
+        unknown: records.filter(
+          (record) => record.kind === "input" && record.disposition === "unknown",
+        ).length,
+      },
+      text: pointerText,
+    }
+  }
+
+  const initial = f.store.ensureArchitectSourceChangeNotices({
+    planID: anchor.planID,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: currentPlan.owner,
+    expectedPlanVersion: currentPlan.version,
+    projectID: "project",
+  })
+  expect(initial.notices).toHaveLength(1)
+  const baseline = measure(4_644)
+  expect(baseline).toMatchObject({
+    handoffTextBytes: 880,
+    pointerTextBytes: 572,
+    combinedTextBytes: 1_452,
+    handoffInboxEntryBytes: 1_388,
+    pointerInboxEntryBytes: 1_164,
+    combinedInboxEntryBytes: 2_552,
+    handoffSyntheticRequestBytes: 1_450,
+    pointerSyntheticRequestBytes: 1_226,
+    combinedSyntheticRequestBytes: 2_676,
+    nativeNoticeCount: 2,
+    sourcePointerCount: 1,
+    journalRecordCount: 4_644,
+  })
+  expect(baseline.inputDispositionCounts).toEqual({ pending: 201, steering: 201, unknown: 201 })
+  expect(baseline.text).not.toContain("msg_input_")
+  expect(baseline.text).not.toContain("msg_result_")
+
+  f.store.atomic((db) => {
+    const inputInsert = db.query(
+      `INSERT INTO runner_architect_inputs(
+         session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
+         metadata_json,last_seen_sweep,referenced_revision,updated_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    for (let index = 0; index < 804; index++) {
+      const id = `msg_double_input_${String(index).padStart(4, "0")}`
+      const disposition = ["pending", "steering", "delivered", "unknown"][index % 4]!
+      inputInsert.run(
+        source.sourceSessionID,
+        id,
+        2_000 + index,
+        source.renewalID,
+        "user",
+        disposition === "steering" ? "steer" : null,
+        disposition,
+        JSON.stringify({ privateBodyCanary: "SECOND_ORIGINAL_MESSAGE_BODY" }),
+        10,
+        1,
+        2_000 + index,
+      )
+    }
+    const resultInsert = db.query(
+      `INSERT INTO runner_architect_source_results(
+         session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
+         tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
+       ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,1,?)`,
+    )
+    for (let index = 0; index < 3_839; index++) {
+      const id = `msg_double_result_${String(index).padStart(4, "0")}`
+      resultInsert.run(
+        source.sourceSessionID,
+        source.renewalID,
+        id,
+        `double-fingerprint-${index}`,
+        3_000 + index,
+      )
+    }
+    db.query(
+      `UPDATE runner_architect_source_results
+       SET state='failed',finish='error',tool_completed=0,tool_failed=1,
+           result_fingerprint=?,result_revision=2,referenced_revision=0,updated_at=?
+       WHERE session_id=? AND message_id='msg_result_0000'`,
+    ).run("changed-result-fingerprint", 9_000, source.sourceSessionID)
+    db.query("UPDATE runner_architect_sources SET revision=13 WHERE session_id=?").run(
+      source.sourceSessionID,
+    )
+  })
+  f.store.ensureArchitectSourceChangeNotices({
+    planID: anchor.planID,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: currentPlan.owner,
+    expectedPlanVersion: currentPlan.version,
+    projectID: "project",
+  })
+  const doubled = measure(9_287)
+  expect(doubled).toMatchObject({
+    handoffTextBytes: 880,
+    pointerTextBytes: 572,
+    combinedTextBytes: 1_452,
+    handoffInboxEntryBytes: 1_388,
+    pointerInboxEntryBytes: 1_164,
+    combinedInboxEntryBytes: 2_552,
+    handoffSyntheticRequestBytes: 1_450,
+    pointerSyntheticRequestBytes: 1_226,
+    combinedSyntheticRequestBytes: 2_676,
+    nativeNoticeCount: 2,
+    sourcePointerCount: 1,
+    journalRecordCount: 9_287,
+  })
+  expect(doubled.inputDispositionCounts).toEqual({ pending: 402, steering: 402, unknown: 402 })
+  expect(doubled.nativeNoticeCount).toBe(baseline.nativeNoticeCount)
+  expect(doubled.sourcePointerCount).toBe(baseline.sourcePointerCount)
+  expect(doubled.handoffTextBytes).toBe(baseline.handoffTextBytes)
+  expect(doubled.pointerTextBytes).toBe(baseline.pointerTextBytes)
+  expect(doubled.combinedInboxEntryBytes).toBe(baseline.combinedInboxEntryBytes)
+  expect(doubled.text).not.toContain("msg_result_0000")
+  let cursor: string | undefined
+  let changedResult:
+    ReturnType<typeof f.store.architectSourceJournalPage>["records"][number] | undefined
+  do {
+    const journal = f.store.architectSourceJournalPage(anchor.planID, 100, cursor)
+    changedResult = journal.records.find(
+      (record) => record.kind === "result" && record.messageID === "msg_result_0000",
+    )
+    cursor = journal.nextCursor ?? undefined
+  } while (!changedResult && cursor)
+  expect(changedResult).toMatchObject({
+    kind: "result",
+    messageID: "msg_result_0000",
+    state: "failed",
+    resultRevision: 2,
+  })
+})
+
+test("an in-progress source-notice reconciliation claim survives store reopen without replacing receipts", () => {
+  const f = fixture("architect-source-notice-reopen")
+  const anchor = f.store.submit(f.input, "owner")
+  const source = seedSourceJournal(f.store, anchor.planID, 1, 1)
+  f.store.atomic((db) =>
+    db
+      .query(
+        `UPDATE runner_plans SET owner=?,version=version+1
+         WHERE id IN (SELECT plan_id FROM runner_architect_renewal_plans WHERE renewal_id=?)`,
+      )
+      .run(source.successorSessionID, source.renewalID),
+  )
+  const current = f.store.plan(anchor.planID)!
+  f.store.ensureArchitectSourceChangeNotices({
+    planID: anchor.planID,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: current.owner,
+    expectedPlanVersion: current.version,
+    projectID: "project",
+  })
+  const outboxID = "legacy-source-notice-reopen"
+  const messageID = "msg_legacy_source_notice_reopen"
+  const payload = {
+    status: "architect-source-reference",
+    version: 12,
+    sourceSessionID: source.sourceSessionID,
+    sourceRevision: 12,
+    inputIDs: [{ id: "msg_disjoint_old_input", type: "user", disposition: "pending" }],
+    results: [],
+    planID: anchor.planID,
+  }
+  const metadata = {
+    lazersKind: "runner-outcome",
+    lazersProjectID: "project",
+    lazersProjectDirectory: f.projectDirectory,
+    lazersPlanID: anchor.planID,
+    lazersOutboxID: outboxID,
+    lazersMessageID: messageID,
+    lazersSessionID: current.owner,
+    lazersStatus: payload.status,
+    lazersVersion: payload.version,
+  }
+  const originalReceipt = JSON.stringify({
+    history: [{ kind: "native-admission", messageID, sessionID: current.owner, retained: true }],
+  })
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_outbox(
+           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
+         ) VALUES(?,?,?,?,?,'admitted',0,?,?)`,
+      )
+      .run(
+        outboxID,
+        anchor.planID,
+        current.owner,
+        messageID,
+        JSON.stringify(payload),
+        JSON.stringify(metadata),
+        originalReceipt,
+      ),
+  )
+  const firstClaimID = "claim-before-reopen"
+  const first = f.store.beginArchitectSourceNoticeReconciliation({
+    planID: anchor.planID,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: current.owner,
+    expectedPlanVersion: current.version,
+    projectID: "project",
+    outboxID,
+    requestID: "request-before-reopen",
+    claimID: firstClaimID,
+  })
+  expect(first.status).toBe("claimed")
+  expect(f.store.architectSourceNoticeClaimCurrent(outboxID, firstClaimID)).toBe(true)
+
+  f.repository.close()
+  const reopenedRepository = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(reopenedRepository)
+  const reopened = new RunnerStore(reopenedRepository)
+  const page = reopened.architectLegacySourceNoticePage(source.sourceSessionID)
+  expect(page).toMatchObject({
+    total: 1,
+    rows: [{ id: outboxID, state: "reconciling", payload: JSON.stringify(payload) }],
+  })
+  const retryClaimID = "claim-after-reopen"
+  const retry = reopened.beginArchitectSourceNoticeReconciliation({
+    planID: anchor.planID,
+    sourceSessionID: source.sourceSessionID,
+    expectedOwner: current.owner,
+    expectedPlanVersion: current.version,
+    projectID: "project",
+    outboxID,
+    requestID: "request-after-reopen",
+    claimID: retryClaimID,
+  })
+  expect(retry.status).toBe("claimed")
+  expect(reopened.architectSourceNoticeClaimCurrent(outboxID, firstClaimID)).toBe(false)
+  expect(reopened.architectSourceNoticeClaimCurrent(outboxID, retryClaimID)).toBe(true)
+  expect(
+    reopened.finishArchitectSourceNoticeReconciliation({
+      outboxID,
+      claimID: retryClaimID,
+      state: "superseded",
+      receipt: { kind: "source-notice-cancellation-confirmed-by-native-readback" },
+      event: "ARCHITECT_SOURCE_NOTICE_CANCELLED",
+    }),
+  ).toBe(true)
+  const final = reopened
+    .architectSourceNoticeRows(source.sourceSessionID)
+    .find((row) => row.id === outboxID)!
+  expect(final).toMatchObject({
+    state: "superseded",
+    message_id: messageID,
+    payload: JSON.stringify(payload),
+  })
+  const history = JSON.parse(final.receipt!).history as Array<Record<string, unknown>>
+  expect(history[0]).toEqual(JSON.parse(originalReceipt).history[0])
+  expect(history.map((entry) => entry.claimID)).toContain(firstClaimID)
+  expect(history.map((entry) => entry.claimID)).toContain(retryClaimID)
+  expect(history.map((entry) => entry.kind)).toContain(
+    "source-notice-cancellation-confirmed-by-native-readback",
+  )
 })
 
 test("journal revision triggers are replaced on a second connection without resetting counters", () => {

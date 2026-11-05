@@ -168,6 +168,7 @@ export const CommandInput = z
       "cancel",
       "audit",
       "reconcile",
+      "reconcile-source-notices",
       "reassign",
       "human-evidence",
       "resume",
@@ -196,6 +197,14 @@ export const CommandInput = z
         "Explicit retry baseline for shared retry, or to advance a wholly unstarted plan to reviewed source on current HEAD. Existing attempts retain their baseline.",
       ),
     targetSessionID: z.string().min(1).max(200).optional(),
+    sourceSessionID: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        "For explicit reconciliation of positively owned queued legacy Architect source notices.",
+      ),
     taskID: z.uuid().optional(),
     attemptID: z.uuid().optional(),
     reviewInputID: z
@@ -225,6 +234,26 @@ export const CommandInput = z
         code: "custom",
         path: ["reviewInputID"],
         message: "Review input reconciliation requires action reconcile, taskID and attemptID",
+      })
+  })
+  .superRefine((input, context) => {
+    if (input.sourceSessionID !== undefined && input.action !== "reconcile-source-notices")
+      context.addIssue({
+        code: "custom",
+        path: ["sourceSessionID"],
+        message: "Source notice reconciliation requires action reconcile-source-notices",
+      })
+    if (input.action === "reconcile-source-notices" && !input.sourceSessionID)
+      context.addIssue({
+        code: "custom",
+        path: ["sourceSessionID"],
+        message: "Source notice reconciliation requires sourceSessionID",
+      })
+    if (input.action === "reconcile-source-notices" && input.reviewInputID !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["reviewInputID"],
+        message: "Source notice reconciliation cannot reconcile worker review input",
       })
   })
   .superRefine((command, context) => {

@@ -888,6 +888,10 @@ function nativeOutcomeFixture(options: {
     }[]
     cursor: { next?: string | null }
   }
+  sourceMessage?: (input: {
+    sessionID: string
+    messageID: string
+  }) => Record<string, unknown> | Promise<Record<string, unknown>>
   onUpdate?: (input: { sessionID: string; archived: boolean }) => void
   onCancel?: (inboxID: string) => void
   onSynthetic?: (input: unknown) => void
@@ -954,6 +958,10 @@ function nativeOutcomeFixture(options: {
           if (index >= 0) entries.splice(index, 1)
         },
       },
+      message: {
+        get: async (input: { sessionID: string; messageID: string }) =>
+          options.sourceMessage?.(input),
+      },
     },
     message: {
       list: async (input: {
@@ -1018,6 +1026,87 @@ const ownership: OutcomeOwnership = {
   lazersStatus: "accepted",
   lazersVersion: 7,
 }
+
+test("native selected source-message reads are authenticated, bounded and privacy-filtered", async () => {
+  const calls: string[] = []
+  const fixture = nativeOutcomeFixture({
+    sourceMessage: ({ sessionID, messageID }) => {
+      calls.push(`${sessionID}:${messageID}`)
+      if (messageID === "msg_private_input")
+        return {
+          id: messageID,
+          type: "user",
+          text: "Keep https://private.example/path and ghp_ABCDEFGHIJKLMNOPQRSTUVWX out of history",
+          files: [{ name: "private.txt" }],
+          agents: [{ name: "private-agent" }],
+          skills: [{ name: "private-skill" }],
+          metadata: { authorization: "private metadata" },
+        }
+      if (messageID === "msg_private_result")
+        return {
+          id: messageID,
+          type: "assistant",
+          metadata: { secret: "do not expose" },
+          content: [
+            { type: "text", text: "A useful answer with token=private12345678901234567890" },
+            { type: "reasoning", text: "private chain of thought" },
+            { type: "tool", callID: "call_private", state: { status: "completed" } },
+            { type: "file", name: "private-attachment.txt" },
+          ],
+        }
+      if (messageID === "msg_long_input")
+        return { id: messageID, type: "synthetic", text: "x".repeat(4_100) }
+      if (messageID === "msg_long_result")
+        return {
+          id: messageID,
+          type: "assistant",
+          content: [
+            { type: "text", text: "a".repeat(3_995) },
+            { type: "text", text: "b".repeat(100) },
+          ],
+        }
+      return { id: messageID, type: "system", text: "not a supported source message" }
+    },
+  })
+
+  const input = await fixture.host.architectSourceMessage!("ses_owner", "msg_private_input")
+  expect(calls[0]).toBe("ses_owner:msg_private_input")
+  expect(input).toMatchObject({ id: "msg_private_input", type: "user" })
+  expect(input.text).toContain("[REDACTED]")
+  expect(input.text).not.toContain("private.example")
+  expect(input.text).not.toContain("ghp_ABCDEFGHIJKLMNOP")
+  expect(input).not.toHaveProperty("metadata")
+  expect(input.privacy).toMatchObject({ omittedAttachments: 3 })
+
+  const result = await fixture.host.architectSourceMessage!("ses_owner", "msg_private_result")
+  expect(result).toMatchObject({ id: "msg_private_result", type: "assistant" })
+  expect(result.text).toContain("A useful answer")
+  expect(result.text).toContain("[REDACTED]")
+  expect(result.text).not.toContain("private chain of thought")
+  expect(result.text).not.toContain("call_private")
+  expect(result.text).not.toContain("private-attachment")
+  expect(result).not.toHaveProperty("metadata")
+  expect(result.privacy).toMatchObject({ omittedReasoning: 1, omittedUnsupportedParts: 2 })
+
+  const long = await fixture.host.architectSourceMessage!("ses_owner", "msg_long_input")
+  expect(Array.from(long.text).length).toBeLessThanOrEqual(4_012)
+  expect(long.text).toContain("[truncated]")
+  expect(long.privacy.truncated).toBe(1)
+  const longResult = await fixture.host.architectSourceMessage!("ses_owner", "msg_long_result")
+  expect(Array.from(longResult.text).length).toBeLessThanOrEqual(4_012)
+  expect(longResult.text).toContain("[truncated]")
+  expect(longResult.privacy.truncated).toBe(1)
+  await expect(
+    fixture.host.architectSourceMessage!("ses_owner", "msg_unsupported"),
+  ).rejects.toThrow("not a user, synthetic or assistant message")
+  expect(calls).toEqual([
+    "ses_owner:msg_private_input",
+    "ses_owner:msg_private_result",
+    "ses_owner:msg_long_input",
+    "ses_owner:msg_long_result",
+    "ses_owner:msg_unsupported",
+  ])
+})
 
 test("native host reads a non-following session log on its validated client and invalidates failures", async () => {
   const fixture = makeTrajectoryFixture()

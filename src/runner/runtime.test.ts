@@ -41,6 +41,7 @@ import {
   sourceReservationExcluded,
 } from "./source-quarantine.ts"
 import { inspectPlan } from "./inspection.ts"
+import { privacyStats } from "../trajectory/privacy.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -8802,6 +8803,575 @@ async function prepareIdleArchitect(f: ReturnType<typeof fixture>, now: number, 
   return f.store.attempts(f.receipt.planID)[0]!
 }
 
+async function prepareSourceChangeFixture(now: number) {
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "source-notice.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  if (renewal.state !== "committed") throw new Error("Source fixture renewal did not commit")
+  const input = {
+    id: `msg_source_fixture_${now}`,
+    type: "user",
+    delivery: "queue",
+    metadata: { source: "test" },
+  }
+  f.inbox.set(renewal.previous_session_id, [input])
+  await f.runtime.tick()
+  const pointer = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .find(
+      (row) =>
+        row.session_id === renewal.successor_session_id &&
+        JSON.parse(row.payload).status === "architect-source-change",
+    )
+  if (!pointer) throw new Error("Source fixture compact pointer was not created")
+  return { f, renewal, input, pointer }
+}
+
+function seedLegacySourceNotice(
+  f: ReturnType<typeof fixture>,
+  sourceSessionID: string,
+  owner: string,
+  options: { state?: string; suffix?: string; foreign?: boolean; queue?: boolean } = {},
+) {
+  const planID = f.receipt.planID
+  const sourceRevision = f.store.architectSource(sourceSessionID)!.revision
+  const outboxID = `legacy-source-reference-${options.suffix ?? "one"}`
+  const messageID = `msg_legacy_source_reference_${options.suffix ?? "one"}`
+  const payload = {
+    status: "architect-source-reference",
+    version: sourceRevision,
+    sourceSessionID,
+    sourceRevision,
+    inputIDs: [{ id: `msg_old_${options.suffix ?? "one"}`, type: "user", disposition: "pending" }],
+    results: [],
+    planID,
+  }
+  const metadata = {
+    lazersKind: "runner-outcome",
+    lazersProjectID: options.foreign ? "another-project" : "project",
+    lazersProjectDirectory: f.repository.projectDirectory,
+    lazersPlanID: planID,
+    lazersOutboxID: outboxID,
+    lazersMessageID: messageID,
+    lazersSessionID: owner,
+    lazersStatus: payload.status,
+    lazersVersion: sourceRevision,
+  }
+  const receipt = JSON.stringify({
+    history: [{ kind: "native-admission", sessionID: owner, messageID, retained: true }],
+  })
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_outbox(
+           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
+         ) VALUES(?,?,?,?,?,?,0,?,?)`,
+      )
+      .run(
+        outboxID,
+        planID,
+        owner,
+        messageID,
+        JSON.stringify(payload),
+        options.state ?? "admitted",
+        JSON.stringify(metadata),
+        receipt,
+      ),
+  )
+  if (options.queue !== false) {
+    f.inbox.set(owner, [
+      ...(f.inbox.get(owner) ?? []),
+      {
+        id: messageID,
+        type: "synthetic",
+        delivery: "queue",
+        metadata,
+      },
+    ])
+  }
+  return { outboxID, messageID, payload: JSON.stringify(payload), metadata, receipt }
+}
+
+function reconcileSourceNotice(
+  f: ReturnType<typeof fixture>,
+  owner: string,
+  sourceSessionID: string,
+  requestID: string,
+) {
+  const plan = f.store.plan(f.receipt.planID)!
+  return f.runtime.command(
+    {
+      requestID,
+      planID: plan.id,
+      expectedVersion: plan.version,
+      action: "reconcile-source-notices",
+      sourceSessionID,
+    },
+    owner,
+  )
+}
+
+test("explicit reconciliation cancels disjoint equal-revision notices only after pointer coverage", async () => {
+  const now = 2_000_000_240_000
+  const { f, renewal, pointer } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
+  const secondLegacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
+    suffix: "disjoint",
+  })
+  f.inbox.set(owner, [
+    ...(f.inbox.get(owner) ?? []),
+    { id: "msg_unrelated_user_input", type: "user", delivery: "queue" },
+  ])
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_outbox(
+           id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
+         ) VALUES(?,?,?,?,?,'admitted',0,NULL,?)`,
+      )
+      .run(
+        "independent-worker-outcome",
+        f.receipt.planID,
+        owner,
+        "msg_independent_worker_outcome",
+        JSON.stringify({ status: "task-accepted", taskID: "independent-task" }),
+        JSON.stringify({ history: [{ kind: "native-admission", retained: true }] }),
+      ),
+  )
+  const independentSnapshot = () =>
+    (
+      f.store.detail(f.receipt.planID).delivery as {
+        id: string
+        message_id: string
+        state: string
+        payload: string
+        receipt: string | null
+      }[]
+    )
+      .filter((row) => {
+        const status = JSON.parse(row.payload).status
+        return !["architect-source-reference", "architect-source-change"].includes(status)
+      })
+      .map(({ id, message_id, state, payload, receipt }) => ({
+        id,
+        message_id,
+        state,
+        payload,
+        receipt,
+      }))
+  const baselineIndependent = independentSnapshot()
+  const cancel = f.host.cancelOutcome!
+  let entered!: () => void
+  let release!: () => void
+  const cancellationRead = new Promise<void>((resolve) => (entered = resolve))
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  const outcomeInbox = f.host.outcomeInbox!
+  f.host.outcomeInbox = async (sessionID) => {
+    const entries = await outcomeInbox(sessionID)
+    if (entries.some((entry) => [legacy.messageID, secondLegacy.messageID].includes(entry.id))) {
+      entered()
+      await gate
+    }
+    return entries
+  }
+  f.host.cancelOutcome = async (input) => {
+    expect([legacy.messageID, secondLegacy.messageID]).toContain(input.inboxID)
+    expect(f.inbox.get(owner)?.some((entry) => entry.id === pointer.message_id)).toBe(true)
+    await cancel(input)
+  }
+  const first = reconcileSourceNotice(f, owner, renewal.previous_session_id, "reconcile-legacy-one")
+  await cancellationRead
+  const concurrent = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-legacy-concurrent",
+  )
+  expect(concurrent).toMatchObject({ status: "deferred" })
+  release()
+  const result = await first
+
+  expect(result).toMatchObject({
+    status: "reconciled",
+    legacyNoticeCount: 2,
+    processedLegacyNoticeCount: 2,
+    remainingLegacyNoticeCount: 0,
+    results: [
+      {
+        outboxID: legacy.outboxID,
+        state: "superseded",
+        disposition: "cancelled-and-read-back-absent",
+      },
+      {
+        outboxID: secondLegacy.outboxID,
+        state: "superseded",
+        disposition: "cancelled-and-read-back-absent",
+      },
+    ],
+  })
+  for (const expected of [legacy, secondLegacy]) {
+    const row = f.store
+      .architectSourceNoticeRows(renewal.previous_session_id)
+      .find((candidate) => candidate.id === expected.outboxID)!
+    expect(row).toMatchObject({ message_id: expected.messageID, state: "superseded" })
+    expect(row.payload).toBe(expected.payload)
+    const receipt = JSON.parse(row.receipt!) as { history: Array<Record<string, unknown>> }
+    expect(receipt.history[0]).toMatchObject({
+      kind: "native-admission",
+      sessionID: owner,
+      messageID: expected.messageID,
+      retained: true,
+    })
+    expect(receipt.history.map((entry) => entry.kind)).toContain(
+      "source-notice-cancellation-confirmed-by-native-readback",
+    )
+    expect(f.inbox.get(owner)?.some((entry) => entry.id === expected.messageID)).toBe(false)
+  }
+  expect(independentSnapshot()).toEqual(baselineIndependent)
+  expect(f.inbox.get(owner)?.some((entry) => entry.id === "msg_unrelated_user_input")).toBe(true)
+  expect(
+    f.events.filter((event) => event.startsWith("cancel:msg_legacy_source_reference")),
+  ).toHaveLength(2)
+})
+
+test("foreign and ambiguously absent legacy notices remain visible and are never cancelled", async () => {
+  const now = 2_000_000_241_000
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const foreign = seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
+    suffix: "foreign",
+    foreign: true,
+  })
+  const foreignResult = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-foreign-source",
+  )
+  expect(foreignResult).toMatchObject({ status: "deferred" })
+  expect(foreignResult).toMatchObject({
+    results: [
+      {
+        outboxID: foreign.outboxID,
+        state: "ownership-unavailable",
+        disposition: "ownership-unavailable",
+      },
+    ],
+  })
+  expect(
+    f.store
+      .architectSourceNoticeRows(renewal.previous_session_id)
+      .find((row) => row.id === foreign.outboxID)?.payload,
+  ).toBe(foreign.payload)
+  expect(f.events).not.toContain(`cancel:${foreign.messageID}`)
+
+  const absent = seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
+    suffix: "ambiguous",
+    queue: false,
+  })
+  const absentResult = (await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-ambiguous-absence",
+  )) as { status: string; results: Array<{ outboxID: string; state: string; disposition: string }> }
+  expect(absentResult).toMatchObject({ status: "deferred" })
+  expect(absentResult.results).toContainEqual({
+    outboxID: absent.outboxID,
+    state: "unknown",
+    disposition: "missing",
+  })
+  const absentRow = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .find((row) => row.id === absent.outboxID)!
+  expect(absentRow.payload).toBe(absent.payload)
+  expect(
+    JSON.parse(absentRow.receipt!).history.map((entry: { kind: string }) => entry.kind),
+  ).toContain("source-notice-absence-ambiguous")
+  expect(f.events).not.toContain(`cancel:${absent.messageID}`)
+})
+
+test("source-notice cancellation API unavailability is recoverable without altering legacy receipts", async () => {
+  const now = 2_000_000_242_000
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
+  const cancel = f.host.cancelOutcome!
+  f.host.cancelOutcome = undefined
+  const deferred = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-without-cancel-api",
+  )
+  expect(deferred).toMatchObject({
+    status: "deferred",
+    results: [
+      { outboxID: legacy.outboxID, state: "reconciling", disposition: "cancellation-unavailable" },
+    ],
+  })
+  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(true)
+  f.host.cancelOutcome = cancel
+  const recovered = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "retry-with-cancel-api",
+  )
+  expect(recovered).toMatchObject({
+    status: "reconciled",
+    results: [{ outboxID: legacy.outboxID, state: "superseded" }],
+  })
+  const finalRow = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .find((row) => row.id === legacy.outboxID)!
+  expect(finalRow.payload).toBe(legacy.payload)
+  expect(JSON.parse(finalRow.receipt!).history[0]).toEqual(JSON.parse(legacy.receipt).history[0])
+  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(false)
+})
+
+test("source-notice reconciliation processes only a bounded batch and resumes remaining legacy notices", async () => {
+  const now = 2_000_000_242_500
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const legacy = Array.from({ length: 21 }, (_, index) =>
+    seedLegacySourceNotice(f, renewal.previous_session_id, owner, {
+      suffix: `bounded-${String(index).padStart(2, "0")}`,
+    }),
+  )
+  const first = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-bounded-first-page",
+  )
+  expect(first).toMatchObject({
+    status: "deferred",
+    legacyNoticeCount: 21,
+    processedLegacyNoticeCount: 20,
+    remainingLegacyNoticeCount: 1,
+  })
+  const firstPageRows = f.store.architectLegacySourceNoticePage(renewal.previous_session_id, 20)
+  expect(firstPageRows.total).toBe(1)
+  expect(firstPageRows.rows).toHaveLength(1)
+  expect(firstPageRows.rows[0]?.id).toBe(legacy[20]?.outboxID)
+
+  const second = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-bounded-second-page",
+  )
+  expect(second).toMatchObject({
+    status: "reconciled",
+    legacyNoticeCount: 1,
+    processedLegacyNoticeCount: 1,
+    remainingLegacyNoticeCount: 0,
+  })
+  for (const expected of legacy) {
+    const row = f.store
+      .architectSourceNoticeRows(renewal.previous_session_id)
+      .find((candidate) => candidate.id === expected.outboxID)!
+    expect(row).toMatchObject({ message_id: expected.messageID, state: "superseded" })
+    expect(row.payload).toBe(expected.payload)
+    expect(JSON.parse(row.receipt!).history[0]).toMatchObject({
+      kind: "native-admission",
+      messageID: expected.messageID,
+    })
+  }
+  expect(
+    f.events.filter((event) => event.startsWith("cancel:msg_legacy_source_reference")),
+  ).toHaveLength(21)
+})
+
+test("reconciliation keeps separate current-owner pointers and receipts for multiple retained sources", async () => {
+  const now = 2_000_000_242_625
+  const { f, renewal: firstRenewal, pointer: firstPointer } = await prepareSourceChangeFixture(now)
+  const firstOwner = firstRenewal.successor_session_id
+  const firstOwnerSession = f.sessions.get(firstOwner)!
+  f.inbox.set(
+    firstOwner,
+    (f.inbox.get(firstOwner) ?? []).filter((entry) => entry.id !== firstPointer.message_id),
+  )
+  firstOwnerSession.messages.push({
+    id: firstPointer.message_id,
+    type: "synthetic",
+    text: "The first source pointer was read.",
+    metadata: JSON.parse(firstPointer.metadata!),
+  })
+  firstOwnerSession.busy = false
+  firstOwnerSession.idleAt = now - 1_000
+  await f.runtime.tick()
+  const secondRenewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(secondRenewal.state).toBe("committed")
+  expect(secondRenewal.previous_session_id).toBe(firstOwner)
+  const currentOwner = secondRenewal.successor_session_id
+
+  f.inbox.set(firstOwner, [{ id: "msg_second_source_input", type: "user", delivery: "queue" }])
+  await f.runtime.tick()
+  for (const sourceSessionID of [
+    firstRenewal.previous_session_id,
+    secondRenewal.previous_session_id,
+  ]) {
+    const pointers = f.store
+      .architectSourceNoticeRows(sourceSessionID)
+      .filter((row) => row.session_id === currentOwner)
+      .filter((row) => JSON.parse(row.payload).status === "architect-source-change")
+    expect(pointers).toHaveLength(1)
+    const legacy = seedLegacySourceNotice(f, sourceSessionID, currentOwner, {
+      suffix: `multi-${sourceSessionID}`,
+    })
+    const result = await reconcileSourceNotice(
+      f,
+      currentOwner,
+      sourceSessionID,
+      `reconcile-${sourceSessionID}`,
+    )
+    expect(result).toMatchObject({ status: "reconciled", legacyNoticeCount: 1 })
+    const row = f.store
+      .architectSourceNoticeRows(sourceSessionID)
+      .find((candidate) => candidate.id === legacy.outboxID)!
+    expect(row).toMatchObject({ state: "superseded", message_id: legacy.messageID })
+    expect(row.payload).toBe(legacy.payload)
+  }
+  expect(
+    f.inbox
+      .get(currentOwner)
+      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change"),
+  ).toHaveLength(2)
+})
+
+test("lost native cancellation response remains unknown and never becomes a false cancellation claim", async () => {
+  const now = 2_000_000_242_750
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
+  const cancel = f.host.cancelOutcome!
+  f.host.cancelOutcome = async (input) => {
+    await cancel(input)
+    throw new Error("native cancellation response was lost")
+  }
+  const result = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-lost-cancel-response",
+  )
+  expect(result).toMatchObject({
+    status: "deferred",
+    results: [
+      { outboxID: legacy.outboxID, state: "unknown", disposition: "cancel-failed-missing" },
+    ],
+  })
+  const row = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .find((candidate) => candidate.id === legacy.outboxID)!
+  expect(row).toMatchObject({
+    state: "unknown",
+    message_id: legacy.messageID,
+    payload: legacy.payload,
+  })
+  const history = JSON.parse(row.receipt!).history as Array<{ kind: string }>
+  expect(history[0]?.kind).toBe("native-admission")
+  expect(history.map((entry) => entry.kind)).toContain(
+    "source-notice-cancellation-absence-ambiguous",
+  )
+  expect(history.map((entry) => entry.kind)).not.toContain(
+    "source-notice-cancellation-confirmed-by-native-readback",
+  )
+  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(false)
+  expect(f.events.filter((event) => event === `cancel:${legacy.messageID}`)).toHaveLength(1)
+})
+
+test("ownership changes during native observation defer cancellation and establish a pointer for the new owner", async () => {
+  const now = 2_000_000_243_000
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
+  const nextOwner = "owner_after_source_notice_race"
+  f.sessions.set(nextOwner, {
+    ...structuredClone(f.sessions.get(owner)!),
+    id: nextOwner,
+  })
+  const outcomeInbox = f.host.outcomeInbox!
+  let transferred = false
+  let legacyReads = 0
+  f.host.outcomeInbox = async (sessionID) => {
+    const entries = await outcomeInbox(sessionID)
+    if (entries.some((entry) => entry.id === legacy.messageID)) legacyReads++
+    if (!transferred && legacyReads > 1) {
+      transferred = f.store.updatePlanOwner(f.receipt.planID, owner, nextOwner)
+    }
+    return entries
+  }
+  await expect(
+    reconcileSourceNotice(f, owner, renewal.previous_session_id, "owner-changes-during-read"),
+  ).rejects.toThrow("Stale plan version")
+  expect(transferred).toBe(true)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(nextOwner)
+  expect(f.inbox.get(owner)?.some((entry) => entry.id === legacy.messageID)).toBe(true)
+  expect(f.events).not.toContain(`cancel:${legacy.messageID}`)
+  const legacyRow = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .find((row) => row.id === legacy.outboxID)!
+  expect(legacyRow).toMatchObject({ state: "reconciling", payload: legacy.payload })
+  const pointers = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .filter((row) => row.session_id === nextOwner)
+    .filter((row) => JSON.parse(row.payload).status === "architect-source-change")
+  expect(pointers).toHaveLength(1)
+})
+
+test("source-notice cancellation racing with consumption records consumption, not cancellation", async () => {
+  const now = 2_000_000_244_000
+  const { f, renewal } = await prepareSourceChangeFixture(now)
+  const owner = renewal.successor_session_id
+  const legacy = seedLegacySourceNotice(f, renewal.previous_session_id, owner)
+  f.host.cancelOutcome = async () => {
+    f.inbox.set(
+      owner,
+      (f.inbox.get(owner) ?? []).filter((entry) => entry.id !== legacy.messageID),
+    )
+    f.sessions.get(owner)!.messages.push({
+      id: legacy.messageID,
+      type: "synthetic",
+      metadata: legacy.metadata,
+      text: "The legacy source notice was consumed during cancellation.",
+    })
+    throw new Error("cancel response lost during native consumption")
+  }
+  const result = await reconcileSourceNotice(
+    f,
+    owner,
+    renewal.previous_session_id,
+    "reconcile-consumption-race",
+  )
+  expect(result).toMatchObject({
+    status: "reconciled",
+    results: [
+      { outboxID: legacy.outboxID, state: "consumed", disposition: "cancel-failed-consumed" },
+    ],
+  })
+  const row = f.store
+    .architectSourceNoticeRows(renewal.previous_session_id)
+    .find((candidate) => candidate.id === legacy.outboxID)!
+  expect(row).toMatchObject({ state: "consumed", payload: legacy.payload })
+  expect(JSON.parse(row.receipt!).history.map((entry: { kind: string }) => entry.kind)).toContain(
+    "source-notice-cancellation-raced-with-consumption",
+  )
+  expect(
+    JSON.parse(row.receipt!).history.map((entry: { kind: string }) => entry.kind),
+  ).not.toContain("source-notice-cancellation-confirmed-by-native-readback")
+})
+
 test("the registered scheduler reuses recent/busy Architects and renews at the default threshold", async () => {
   const now = 2_000_000_000_000
   const f = fixture({
@@ -8885,6 +9455,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(owner.messages).toEqual([
     { id: "old-transcript", text: "SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY" },
   ])
+  await f.runtime.tick()
   const wake = f.notifications.find(
     (notice) =>
       notice.sessionID === successor.id && notice.text.includes("Architect continuity handoff"),
@@ -8895,10 +9466,17 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(wake.text).not.toContain("SECRET_TRANSCRIPT_SHOULD_NOT_REPLAY")
   expect(f.inbox.get(successor.id)).toHaveLength(2)
   expect(
-    f.notifications.find((notice) => notice.text.includes("retained Architect input update")),
+    f.notifications.find(
+      (notice) =>
+        notice.sessionID === successor.id &&
+        notice.text.includes("LAZERS Architect source changed"),
+    ),
   ).toMatchObject({
     resume: false,
   })
+  expect(f.store.architectSourceInputs("owner").map((input) => input.message_id)).toContain(
+    "old-transcript",
+  )
   expect(wake.resume).toBe(true)
   const committed = f.store.latestTransition<{ wakeContext: { bytes: number; tokens: null } }>(
     f.receipt.planID,
@@ -9013,8 +9591,13 @@ test("renewal requires an explicit checkpoint and retains queued native inputs b
     expect.objectContaining({ message_id: foreign.id, disposition: "pending" }),
   )
   expect(
-    reconciledHost.notifications.some((notification) => notification.text.includes(foreign.id)),
+    reconciledHost.notifications.some((notification) =>
+      notification.text.includes("LAZERS Architect source changed"),
+    ),
   ).toBe(true)
+  expect(
+    reconciledHost.notifications.some((notification) => notification.text.includes(foreign.id)),
+  ).toBe(false)
 })
 
 test("one successor receives every live plan owned by the same Architect", async () => {
@@ -9191,8 +9774,16 @@ test("native queued synthetic input is retained and referenced across creation, 
         (row) => JSON.parse(row.payload).status === "architect-handoff",
       )?.state,
     ).toBe("admitted")
+    expect(
+      f.notifications.some((notification) =>
+        notification.text.includes("LAZERS Architect source changed"),
+      ),
+    ).toBe(true)
     expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(
-      true,
+      false,
+    )
+    expect(f.store.architectSourceInputs("owner").map((input) => input.message_id)).toContain(
+      foreign.id,
     )
   }
 })
@@ -9229,13 +9820,23 @@ test("late input on an archived predecessor is reconciled to the current owner w
   expect(f.store.architectSourceInputs("owner")).toContainEqual(
     expect.objectContaining({ message_id: late.id, disposition: "pending" }),
   )
-  const reference = f.notifications
+  const sourceChange = f.notifications
     .slice(before)
-    .find((notification) => notification.text.includes(late.id))
-  expect(reference).toMatchObject({ sessionID: currentOwner, resume: false })
+    .find((notification) => notification.text.includes("LAZERS Architect source changed"))
+  if (sourceChange) expect(sourceChange).toMatchObject({ sessionID: currentOwner, resume: false })
+  expect(
+    f.inbox
+      .get(currentOwner)
+      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change"),
+  ).toHaveLength(1)
+  expect(
+    f.notifications.slice(before).some((notification) => notification.text.includes(late.id)),
+  ).toBe(false)
   await f.runtime.tick()
   expect(
-    f.notifications.filter((notification) => notification.text.includes(late.id)),
+    f.inbox
+      .get(currentOwner)
+      ?.filter((entry) => entry.metadata?.lazersStatus === "architect-source-change"),
   ).toHaveLength(1)
 })
 
@@ -9276,11 +9877,105 @@ test("predecessor reconciliation persists native message pagination across sched
     expect.objectContaining({ message_id: "msg_page_two_input", disposition: "delivered" }),
   )
   expect(
-    f.notifications.some((notification) => notification.text.includes("msg_page_two_input")),
+    f.notifications.some(
+      (notification) =>
+        notification.sessionID === renewal.successor_session_id &&
+        notification.text.includes("LAZERS Architect source changed"),
+    ),
   ).toBe(true)
+  expect(
+    f.notifications.some((notification) => notification.text.includes("msg_page_two_input")),
+  ).toBe(false)
 })
 
-test("large predecessor histories produce bounded reference-only notification batches", async () => {
+test("selected source-message retrieval is current-owner authorized and journal-ID bounded", async () => {
+  const now = 2_000_000_280_500
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "selected-source-message.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  f.host.architectInputPage = async () => ({
+    inbox: [],
+    messages: [
+      { id: "msg_selected_source_input", type: "user" },
+      {
+        id: "msg_selected_source_result",
+        type: "assistant",
+        result: {
+          state: "completed",
+          finish: "stop",
+          toolCounts: { running: 0, completed: 1, failed: 0, other: 0 },
+        },
+      },
+    ],
+    nextCursor: null,
+  })
+  await f.runtime.tick()
+  const calls: string[] = []
+  f.host.architectSourceMessage = async (sessionID, messageID) => {
+    calls.push(`${sessionID}:${messageID}`)
+    return {
+      id: messageID,
+      type: messageID.endsWith("input") ? "user" : "assistant",
+      text: messageID.endsWith("input") ? "selected safe input" : "selected safe result",
+      privacy: { ...privacyStats() },
+    }
+  }
+  const response = await f.runtime.inspectArchitectSourceMessages(
+    {
+      planID: f.receipt.planID,
+      view: "source-messages",
+      sourceSessionID: renewal.previous_session_id,
+      messageIDs: ["msg_selected_source_input", "msg_selected_source_result"],
+    },
+    renewal.successor_session_id,
+  )
+  expect(calls).toEqual(["owner:msg_selected_source_input", "owner:msg_selected_source_result"])
+  expect(response).toMatchObject({
+    mode: "source-messages",
+    selected: 2,
+    coverage: {
+      authenticatedNativeRead: true,
+      privacyFiltered: true,
+      transcriptCompleteness: "unknown",
+      nativeConsumption: "unknown",
+    },
+    messages: [
+      { id: "msg_selected_source_input", kind: "input", type: "user" },
+      { id: "msg_selected_source_result", kind: "result", type: "assistant" },
+    ],
+  })
+  await expect(
+    f.runtime.inspectArchitectSourceMessages(
+      {
+        planID: f.receipt.planID,
+        view: "source-messages",
+        sourceSessionID: renewal.previous_session_id,
+        messageIDs: ["msg_not_in_journal"],
+      },
+      renewal.successor_session_id,
+    ),
+  ).rejects.toThrow("Every selected message ID must identify a journaled source input or result")
+  await expect(
+    f.runtime.inspectArchitectSourceMessages(
+      {
+        planID: f.receipt.planID,
+        view: "source-messages",
+        sourceSessionID: renewal.previous_session_id,
+        messageIDs: ["msg_selected_source_input"],
+      },
+      "owner",
+    ),
+  ).rejects.toThrow("current plan owner")
+})
+
+test("large predecessor histories coalesce to a compact progressive source-change pointer", async () => {
   const now = 2_000_000_281_000
   const f = fixture({
     delayed: true,
@@ -9302,32 +9997,38 @@ test("large predecessor histories produce bounded reference-only notification ba
 
   await f.runtime.tick()
   let rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
-  let references = rows
+  let notices = rows
     .map((row) => JSON.parse(row.payload))
-    .filter((payload) => payload.status === "architect-source-reference")
-  expect(references.length).toBeGreaterThanOrEqual(1)
-  expect(references.every((payload) => payload.inputIDs.length <= 20)).toBe(true)
+    .filter((payload) => payload.status === "architect-source-change")
+  expect(notices).toHaveLength(1)
+  expect(JSON.stringify(notices)).not.toContain(ids[0]!)
+  expect(JSON.stringify(notices)).not.toContain("inputIDs")
+  expect(JSON.stringify(notices)).not.toContain("results")
+  expect(JSON.stringify(notices).length).toBeLessThan(600)
   await f.runtime.tick()
   await f.runtime.tick()
 
   rows = f.store.detail(f.receipt.planID).delivery as { payload: string }[]
-  references = rows
+  notices = rows
     .map((row) => JSON.parse(row.payload))
-    .filter((payload) => payload.status === "architect-source-reference")
-  const referencedIDs = references.flatMap((payload) =>
-    payload.inputIDs.map((input: { id: string }) => input.id),
-  )
-  expect(referencedIDs.toSorted()).toEqual(ids.toSorted())
-  expect(references.every((payload) => payload.inputIDs.length <= 20)).toBe(true)
+    .filter((payload) => payload.status === "architect-source-change")
+  expect(notices).toHaveLength(1)
   const handoff = rows
     .map((row) => JSON.parse(row.payload))
     .find((payload) => payload.status === "architect-handoff")
   expect(handoff).not.toHaveProperty("inputSources")
   expect(
     f.notifications.filter((notification) =>
-      notification.text.includes("retained Architect input update"),
+      notification.text.includes("LAZERS Architect source changed"),
     ),
-  ).toHaveLength(references.length)
+  ).toHaveLength(1)
+  expect(f.notifications.some((notification) => notification.text.includes(ids[0]!))).toBe(false)
+  const journal = f.store.architectSourceJournalPage(f.receipt.planID, 100)
+  expect(journal.page.hasMore).toBe(false)
+  expect(journal.records).toHaveLength(46)
+  expect(
+    journal.records.some((record) => record.kind === "input" && record.messageID === ids[0]),
+  ).toBe(true)
 })
 
 test("a previously seen pending input that disappears without history stays unknown, never cancelled or replayed", async () => {
@@ -9361,9 +10062,10 @@ test("a previously seen pending input that disappears without history stays unkn
   )
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
   expect(f.sessions.get("owner")?.archived).toBe(true)
-  expect(
-    f.notifications.filter((notification) => notification.text.includes(late.id)),
-  ).toHaveLength(2)
+  expect(f.notifications.some((notification) => notification.text.includes(late.id))).toBe(false)
+  expect(f.notifications.some((notification) => notification.text.includes("source changed"))).toBe(
+    true,
+  )
   expect(f.notifications.at(-1)?.resume).toBe(false)
 })
 
@@ -9465,6 +10167,7 @@ test("input racing native archival remains on the retained source and is referen
   f.sessions.get("owner")!.messages.push({ id: "input-during-archive", text: "Keep this input" })
   releaseArchive()
   await tick
+  await f.runtime.tick()
 
   const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
   const handoff = f.store.detail(f.receipt.planID).delivery as { state: string; payload: string }[]
@@ -9473,12 +10176,20 @@ test("input racing native archival remains on the retained source and is referen
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
   expect(f.sessions.get("owner")?.archived).toBe(true)
   expect(f.sessions.get("owner")?.messages.at(-1)?.id).toBe("input-during-archive")
+  expect(f.store.architectSourceInputs("owner")).toContainEqual(
+    expect.objectContaining({ message_id: "input-during-archive", disposition: "delivered" }),
+  )
   expect(handoff.find((row) => JSON.parse(row.payload).status === "architect-handoff")?.state).toBe(
     "admitted",
   )
   expect(
-    f.notifications.some((notification) => notification.text.includes("input-during-archive")),
+    f.notifications.some((notification) =>
+      notification.text.includes("LAZERS Architect source changed"),
+    ),
   ).toBe(true)
+  expect(
+    f.notifications.some((notification) => notification.text.includes("input-during-archive")),
+  ).toBe(false)
   expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(1)
   expect(f.events.filter((event) => event === "update-session:owner:false")).toHaveLength(0)
 })
@@ -9972,7 +10683,12 @@ test("a reopened two-scheduler runtime archives only after durable transfer and 
   expect(reopenedStore.architectSourceInputs(predecessor.id)).toContainEqual(
     expect.objectContaining({ message_id: foreign.id, disposition: "pending" }),
   )
-  expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(true)
+  expect(
+    f.notifications.some((notification) =>
+      notification.text.includes("LAZERS Architect source changed"),
+    ),
+  ).toBe(true)
+  expect(f.notifications.some((notification) => notification.text.includes(foreign.id))).toBe(false)
 })
 
 test("cancellation interrupts workers while a transferred renewal still has failed archival recovery", async () => {
@@ -10135,7 +10851,7 @@ test("renewal finishes all preparation pages before transferring a checkpoint", 
   expect(f.events.filter((event) => event === "update-session:owner:true")).toHaveLength(0)
 })
 
-test("late and mutable assistant tool results are durably referenced by safe revision", async () => {
+test("late and mutable assistant tool results are signalled through the progressive source journal", async () => {
   const now = 2_000_000_520_000
   const f = fixture({
     delayed: true,
@@ -10174,6 +10890,21 @@ test("late and mutable assistant tool results are durably referenced by safe rev
     finish: "stop",
     toolCounts: { running: 0, completed: 1, failed: 0, other: 0 },
   }
+  const predecessor = renewal.previous_session_id
+  const successor = renewal.successor_session_id
+  const firstPointer = f.store
+    .architectSourceNoticeRows(predecessor)
+    .find((row) => JSON.parse(row.payload).status === "architect-source-change")!
+  f.inbox.set(
+    successor,
+    (f.inbox.get(successor) ?? []).filter((entry) => entry.id !== firstPointer.message_id),
+  )
+  f.sessions.get(successor)!.messages.push({
+    id: firstPointer.message_id,
+    type: "synthetic",
+    metadata: JSON.parse(firstPointer.metadata!),
+    text: "The preceding compact source-change pointer was read.",
+  })
   await f.runtime.tick()
 
   const stored = f.store.atomic((db) =>
@@ -10198,19 +10929,25 @@ test("late and mutable assistant tool results are durably referenced by safe rev
     referenced_revision: expect.any(Number),
   })
   expect(stored.referenced_revision).toEqual(2)
-  const references = (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+  const notices = (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
     .map((row) => JSON.parse(row.payload))
-    .filter((payload) => payload.status === "architect-source-reference")
-  expect(references.flatMap((payload) => payload.results)).toEqual([
-    expect.objectContaining({ id: "msg_late_tool_result", revision: 1, state: "running" }),
-    expect.objectContaining({ id: "msg_late_tool_result", revision: 2, state: "completed" }),
-  ])
+    .filter((payload) => payload.status === "architect-source-change")
+  expect(notices).toHaveLength(2)
+  const journal = f.store.architectSourceJournalPage(f.receipt.planID, 100)
+  expect(journal.records).toContainEqual(
+    expect.objectContaining({
+      kind: "result",
+      messageID: "msg_late_tool_result",
+      state: "completed",
+      resultRevision: 2,
+    }),
+  )
   const resultNotices = f.notifications.filter((notice) =>
-    notice.text.includes("assistant result msg_late_tool_result"),
+    notice.text.includes("LAZERS Architect source changed"),
   )
   expect(resultNotices).toHaveLength(2)
   expect(resultNotices.every((notice) => notice.resume === false)).toBe(true)
-  expect(JSON.stringify(references)).not.toContain(privateCanary)
+  expect(JSON.stringify(notices)).not.toContain(privateCanary)
   expect(JSON.stringify(resultNotices)).not.toContain(privateCanary)
   expect(f.store.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)

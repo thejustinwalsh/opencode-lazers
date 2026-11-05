@@ -11,6 +11,7 @@ import type { Execution, Finding, TaskState } from "./schema.ts"
 import type { ArchitectSourceResult } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
+import { parseOutcomeOwnership } from "./inbox.ts"
 
 export type PlanRow = {
   id: string
@@ -202,6 +203,203 @@ export type OutboxRow = {
   receipt: string | null
   version: number
   sequence: number
+}
+
+export type ArchitectSourceNoticeTarget = {
+  owner: string
+  planID: string
+  planIDs: string[]
+}
+
+type ArchitectSourceNoticeSource = Pick<
+  ArchitectSourceRow,
+  "session_id" | "renewal_id" | "revision"
+>
+
+function architectSourceJournalExists(db: Database, sessionID: string) {
+  return Boolean(
+    db
+      .query<{ present: number }, [string, string]>(
+        `SELECT 1 AS present
+         WHERE EXISTS(SELECT 1 FROM runner_architect_inputs WHERE session_id=?)
+            OR EXISTS(SELECT 1 FROM runner_architect_source_results WHERE session_id=?)`,
+      )
+      .get(sessionID, sessionID),
+  )
+}
+
+function architectSourceNoticeTargets(
+  db: Database,
+  projectDirectory: string,
+  renewalID: string,
+): ArchitectSourceNoticeTarget[] {
+  const plans = db
+    .query<{ plan_id: string; owner: string }, [string, string]>(
+      `SELECT p.id AS plan_id,p.owner
+       FROM runner_architect_renewal_plans rp
+       JOIN runner_plans p ON p.id=rp.plan_id
+       JOIN runner_architect_renewals r ON r.id=rp.renewal_id
+       WHERE rp.renewal_id=? AND rp.transferred=1 AND p.project_directory=?
+         AND r.state IN ('archiving','committed')
+       ORDER BY p.owner,p.id`,
+    )
+    .all(renewalID, projectDirectory)
+  const targets = new Map<string, ArchitectSourceNoticeTarget>()
+  for (const plan of plans) {
+    const target = targets.get(plan.owner)
+    if (target) {
+      target.planIDs.push(plan.plan_id)
+      continue
+    }
+    targets.set(plan.owner, {
+      owner: plan.owner,
+      planID: plan.plan_id,
+      planIDs: [plan.plan_id],
+    })
+  }
+  return [...targets.values()]
+}
+
+function ensureArchitectSourceChangeNotices(
+  db: Database,
+  input: {
+    projectDirectory: string
+    projectID: string
+    source: ArchitectSourceNoticeSource
+  },
+) {
+  const targets = architectSourceNoticeTargets(db, input.projectDirectory, input.source.renewal_id)
+  const notices: Array<{ id: string; sessionID: string; planIDs: string[] }> = []
+  const created: Array<{ id: string; sessionID: string; planIDs: string[] }> = []
+  for (const target of targets) {
+    const latest = db
+      .query<
+        { id: string; payload: string; state: string; receipt: string | null },
+        [string, string, string]
+      >(
+        `SELECT o.id,o.payload,o.state,o.receipt FROM runner_outbox o
+         JOIN runner_plans p ON p.id=o.plan_id
+         WHERE p.project_directory=? AND o.session_id=?
+           AND json_extract(o.payload,'$.status')='architect-source-change'
+           AND json_extract(o.payload,'$.sourceSessionID')=?
+         ORDER BY o.rowid DESC LIMIT 1`,
+      )
+      .get(input.projectDirectory, target.owner, input.source.session_id)
+    let latestRevision = -1
+    if (latest) {
+      try {
+        const payload = JSON.parse(latest.payload) as { sourceRevision?: unknown }
+        if (Number.isSafeInteger(payload.sourceRevision))
+          latestRevision = payload.sourceRevision as number
+      } catch {
+        // A corrupt prior notice is not coverage. Preserve it and issue a fresh pointer.
+      }
+    }
+    const pendingStale =
+      latest?.state === "pending" && latestRevision >= 0 && latestRevision < input.source.revision
+    if (pendingStale) {
+      const receipt = appendOutboxReceipt(latest.receipt ?? null, {
+        kind: "source-change-pointer-superseded-before-native-admission",
+        previousSourceRevision: latestRevision,
+        currentSourceRevision: input.source.revision,
+      })
+      db.query(
+        "UPDATE runner_outbox SET state='superseded',receipt=? WHERE id=? AND state='pending'",
+      ).run(receipt, latest.id)
+    }
+    const unresolved = latest && !pendingStale && !["consumed", "superseded"].includes(latest.state)
+    const alreadyCovered = latest?.state === "consumed" && latestRevision >= input.source.revision
+    if (unresolved || alreadyCovered) {
+      notices.push({ id: latest.id, sessionID: target.owner, planIDs: target.planIDs })
+      continue
+    }
+
+    const id = fingerprint({
+      kind: "architect-source-change",
+      sourceSessionID: input.source.session_id,
+      owner: target.owner,
+      sourceRevision: input.source.revision,
+    })
+    const messageID = `msg_${fingerprint({ outboxID: id, owner: target.owner }).slice(0, 32)}`
+    const payload = {
+      status: "architect-source-change",
+      version: input.source.revision,
+      sourceSessionID: input.source.session_id,
+      sourceRevision: input.source.revision,
+      planID: target.planID,
+      planIDs: target.planIDs,
+      preserveOriginalInput: true,
+    }
+    const metadata = {
+      lazersKind: "runner-outcome",
+      lazersProjectID: input.projectID,
+      lazersProjectDirectory: input.projectDirectory,
+      lazersPlanID: target.planID,
+      lazersOutboxID: id,
+      lazersMessageID: messageID,
+      lazersSessionID: target.owner,
+      lazersStatus: "architect-source-change",
+      lazersVersion: input.source.revision,
+    }
+    const inserted = db
+      .query(
+        `INSERT OR IGNORE INTO runner_outbox(
+        id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
+      ) VALUES(?,?,?,?,?,'pending',0,?,NULL)`,
+      )
+      .run(
+        id,
+        target.planID,
+        target.owner,
+        messageID,
+        JSON.stringify(payload),
+        JSON.stringify(metadata),
+      ).changes
+    notices.push({ id, sessionID: target.owner, planIDs: target.planIDs })
+    if (inserted) created.push({ id, sessionID: target.owner, planIDs: target.planIDs })
+  }
+  return { targets, notices, created }
+}
+
+function hasArchitectSourceReferenceOwnership(
+  row: OutboxRow,
+  sourceSessionID: string,
+  projectID: string,
+  projectDirectory: string,
+) {
+  try {
+    const payload = JSON.parse(row.payload) as Record<string, unknown>
+    const ownership = parseOutcomeOwnership(row.metadata ? JSON.parse(row.metadata) : null)
+    return Boolean(
+      payload.status === "architect-source-reference" &&
+      payload.sourceSessionID === sourceSessionID &&
+      ownership &&
+      ownership.lazersProjectID === projectID &&
+      ownership.lazersProjectDirectory === projectDirectory &&
+      ownership.lazersPlanID === row.plan_id &&
+      ownership.lazersOutboxID === row.id &&
+      ownership.lazersMessageID === row.message_id &&
+      ownership.lazersSessionID === row.session_id &&
+      ownership.lazersStatus === payload.status &&
+      ownership.lazersVersion === payload.version,
+    )
+  } catch {
+    return false
+  }
+}
+
+function sourceNoticeClaimMatches(receipt: string | null, claimID: string) {
+  if (!receipt) return false
+  try {
+    const parsed = JSON.parse(receipt) as { history?: unknown[] }
+    const claim = parsed.history?.toReversed().find((entry) => {
+      const candidate = entry as { kind?: unknown }
+      return candidate.kind === "source-notice-reconciliation-claimed"
+    }) as { kind?: unknown; claimID?: unknown } | undefined
+    return claim?.kind === "source-notice-reconciliation-claimed" && claim.claimID === claimID
+  } catch {
+    return false
+  }
 }
 
 export type ProgressRow = {
@@ -988,6 +1186,338 @@ export class RunnerStore {
         .get(sessionID, this.repository.projectDirectory),
     )
   }
+  architectSourceNoticeTargets(sessionID: string) {
+    return this.atomic((db) => {
+      const source = db
+        .query<{ renewal_id: string }, [string, string]>(
+          `SELECT s.renewal_id FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND anchor.project_directory=?`,
+        )
+        .get(sessionID, this.repository.projectDirectory)
+      return source
+        ? architectSourceNoticeTargets(db, this.repository.projectDirectory, source.renewal_id)
+        : []
+    })
+  }
+  architectSourceNoticeRows(sessionID: string) {
+    return this.atomic((db) =>
+      db
+        .query<OutboxRow, [string, string]>(
+          `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
+             o.rowid AS sequence
+           FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+           WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
+             AND json_extract(o.payload,'$.status') IN (
+               'architect-source-reference','architect-source-change'
+             )
+           ORDER BY o.rowid`,
+        )
+        .all(this.repository.projectDirectory, sessionID),
+    )
+  }
+  architectLegacySourceNoticePage(sessionID: string, limit = 20) {
+    const boundedLimit = Math.min(20, Math.max(1, Math.floor(limit)))
+    return this.atomic((db) => ({
+      rows: db
+        .query<OutboxRow, [string, string, number]>(
+          `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
+             o.rowid AS sequence
+           FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+           WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
+             AND json_extract(o.payload,'$.status')='architect-source-reference'
+             AND o.state NOT IN ('consumed','superseded')
+           ORDER BY o.rowid LIMIT ?`,
+        )
+        .all(this.repository.projectDirectory, sessionID, boundedLimit),
+      total: db
+        .query<{ total: number }, [string, string]>(
+          `SELECT COUNT(*) AS total FROM runner_outbox o
+           JOIN runner_plans p ON p.id=o.plan_id
+           WHERE p.project_directory=? AND json_extract(o.payload,'$.sourceSessionID')=?
+             AND json_extract(o.payload,'$.status')='architect-source-reference'
+             AND o.state NOT IN ('consumed','superseded')`,
+        )
+        .get(this.repository.projectDirectory, sessionID)!.total,
+    }))
+  }
+  architectSourceNoticeContext(input: {
+    planID: string
+    sourceSessionID: string
+    expectedOwner: string
+    expectedPlanVersion: number
+  }) {
+    return this.atomic((db) => {
+      const plan = db
+        .query<{ owner: string; version: number }, [string, string]>(
+          "SELECT owner,version FROM runner_plans WHERE id=? AND project_directory=?",
+        )
+        .get(input.planID, this.repository.projectDirectory)
+      if (!plan || plan.owner !== input.expectedOwner || plan.version !== input.expectedPlanVersion)
+        return null
+      const source = db
+        .query<ArchitectSourceRow, [string, string, string]>(
+          `SELECT s.* FROM runner_architect_sources s
+           JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
+             AND s.state='active' AND anchor.project_directory=?`,
+        )
+        .get(input.sourceSessionID, input.planID, this.repository.projectDirectory)
+      if (!source) return null
+      const targets = architectSourceNoticeTargets(
+        db,
+        this.repository.projectDirectory,
+        source.renewal_id,
+      )
+      return targets.some((target) => target.owner === input.expectedOwner)
+        ? { sourceRevision: source.revision, targets }
+        : null
+    })
+  }
+  ensureArchitectSourceChangeNotices(input: {
+    planID: string
+    sourceSessionID: string
+    expectedOwner: string
+    expectedPlanVersion: number
+    projectID: string
+  }) {
+    return this.atomic((db) => {
+      const plan = db
+        .query<{ owner: string; version: number }, [string, string]>(
+          "SELECT owner,version FROM runner_plans WHERE id=? AND project_directory=?",
+        )
+        .get(input.planID, this.repository.projectDirectory)
+      if (!plan || plan.owner !== input.expectedOwner || plan.version !== input.expectedPlanVersion)
+        throw new Error("Architect source notice owner changed before journal coverage")
+      const source = db
+        .query<ArchitectSourceRow, [string, string, string]>(
+          `SELECT s.* FROM runner_architect_sources s
+           JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
+             AND s.state='active' AND anchor.project_directory=?`,
+        )
+        .get(input.sourceSessionID, input.planID, this.repository.projectDirectory)
+      if (!source) throw new Error("Architect source is not current durable journal for this plan")
+      if (!architectSourceJournalExists(db, input.sourceSessionID))
+        throw new Error("Architect source has no durable journal records to replace legacy notices")
+      const targets = architectSourceNoticeTargets(
+        db,
+        this.repository.projectDirectory,
+        source.renewal_id,
+      )
+      if (!targets.some((target) => target.owner === input.expectedOwner))
+        throw new Error("Architect source notice target is no longer a current plan owner")
+      const ensured = ensureArchitectSourceChangeNotices(db, {
+        projectDirectory: this.repository.projectDirectory,
+        projectID: input.projectID,
+        source,
+      })
+      if (ensured.targets.length) {
+        const inputMarkers = db
+          .query(
+            "UPDATE runner_architect_inputs SET referenced_revision=? WHERE session_id=? AND referenced_revision=0",
+          )
+          .run(source.revision, source.session_id)
+        const resultMarkers = db
+          .query(
+            "UPDATE runner_architect_source_results SET referenced_revision=? WHERE session_id=? AND referenced_revision=0",
+          )
+          .run(source.revision, source.session_id)
+        if (ensured.created.length || inputMarkers.changes || resultMarkers.changes)
+          this.record(source.anchor_plan_id, null, "ARCHITECT_SOURCE_CHANGE_NOTICE_CREATED", {
+            sourceSessionID: source.session_id,
+            sourceRevision: source.revision,
+            requestPlanID: input.planID,
+            currentOwners: ensured.targets.map((target) => ({
+              sessionID: target.owner,
+              planIDs: target.planIDs,
+            })),
+            outboxIDs: ensured.notices.map((notice) => notice.id),
+            createdOutboxIDs: ensured.created.map((notice) => notice.id),
+            markedInputCount: inputMarkers.changes,
+            markedResultCount: resultMarkers.changes,
+          })
+        if (ensured.created.length || inputMarkers.changes || resultMarkers.changes)
+          this.repository.changed()
+      }
+      return {
+        sourceRevision: source.revision,
+        targets: ensured.targets,
+        notices: ensured.notices,
+      }
+    })
+  }
+  recordArchitectSourceChangeObservation(input: {
+    outboxID: string
+    expectedState: string
+    state: "admitted" | "consumed" | "unknown"
+    receipt: unknown
+    event: string
+  }) {
+    return this.atomic((db) => {
+      const current = db
+        .query<{ plan_id: string; state: string; receipt: string | null }, [string, string]>(
+          `SELECT o.plan_id,o.state,o.receipt FROM runner_outbox o
+           JOIN runner_plans p ON p.id=o.plan_id
+           WHERE o.id=? AND p.project_directory=?
+             AND json_extract(o.payload,'$.status')='architect-source-change'`,
+        )
+        .get(input.outboxID, this.repository.projectDirectory)
+      if (!current || current.state !== input.expectedState) return false
+      const receipt = appendOutboxReceipt(current.receipt, input.receipt)
+      const changed = db
+        .query("UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state=?")
+        .run(input.state, receipt, input.outboxID, input.expectedState).changes
+      if (!changed) return false
+      this.record(current.plan_id, null, input.event, {
+        outboxID: input.outboxID,
+        from: current.state,
+        to: input.state,
+        receipt: input.receipt,
+      })
+      this.repository.changed()
+      return true
+    })
+  }
+  beginArchitectSourceNoticeReconciliation(input: {
+    planID: string
+    sourceSessionID: string
+    expectedOwner: string
+    expectedPlanVersion: number
+    projectID: string
+    outboxID: string
+    requestID: string
+    claimID: string
+  }) {
+    return this.atomic((db) => {
+      const plan = db
+        .query<{ owner: string; version: number }, [string, string]>(
+          "SELECT owner,version FROM runner_plans WHERE id=? AND project_directory=?",
+        )
+        .get(input.planID, this.repository.projectDirectory)
+      if (!plan || plan.owner !== input.expectedOwner || plan.version !== input.expectedPlanVersion)
+        throw new Error("Architect source notice owner changed before reconciliation")
+      const source = db
+        .query<Pick<ArchitectSourceRow, "anchor_plan_id">, [string, string, string]>(
+          `SELECT s.anchor_plan_id FROM runner_architect_sources s
+           JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
+             AND s.state='active' AND anchor.project_directory=?`,
+        )
+        .get(input.sourceSessionID, input.planID, this.repository.projectDirectory)
+      if (!source) throw new Error("Architect source is not current durable journal for this plan")
+      const row = db
+        .query<OutboxRow, [string, string, string, string]>(
+          `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
+             o.rowid AS sequence
+           FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+           JOIN runner_architect_sources s ON s.session_id=? AND s.anchor_plan_id=o.plan_id
+           WHERE o.id=? AND p.project_directory=?
+             AND json_extract(o.payload,'$.sourceSessionID')=?
+             AND json_extract(o.payload,'$.status')='architect-source-reference'
+             AND s.state='active'`,
+        )
+        .get(
+          input.sourceSessionID,
+          input.outboxID,
+          this.repository.projectDirectory,
+          input.sourceSessionID,
+        )
+      if (!row) return { status: "not-found" as const }
+      if (
+        !hasArchitectSourceReferenceOwnership(
+          row,
+          input.sourceSessionID,
+          input.projectID,
+          this.repository.projectDirectory,
+        )
+      )
+        return { status: "ownership-unavailable" as const, row }
+      if (["consumed", "superseded"].includes(row.state))
+        return { status: "terminal" as const, row }
+      if (
+        ![
+          "pending",
+          "sending",
+          "uncertain",
+          "admitted",
+          "delivered",
+          "unknown",
+          "reconciling",
+        ].includes(row.state)
+      )
+        return { status: "unavailable-state" as const, row }
+      const receipt = appendOutboxReceipt(row.receipt, {
+        kind: "source-notice-reconciliation-claimed",
+        requestID: input.requestID,
+        claimID: input.claimID,
+        originalState: row.state === "reconciling" ? undefined : row.state,
+      })
+      const changed = db
+        .query("UPDATE runner_outbox SET state='reconciling',receipt=? WHERE id=? AND state=?")
+        .run(receipt, row.id, row.state).changes
+      if (!changed) return { status: "claim-lost" as const, row }
+      this.record(row.plan_id, null, "ARCHITECT_SOURCE_NOTICE_RECONCILING", {
+        sourceSessionID: input.sourceSessionID,
+        outboxID: row.id,
+        messageID: row.message_id,
+        requestID: input.requestID,
+        claimID: input.claimID,
+        originalState: row.state,
+      })
+      this.repository.changed()
+      return {
+        status: "claimed" as const,
+        row: { ...row, state: "reconciling", receipt },
+      }
+    })
+  }
+  architectSourceNoticeClaimCurrent(outboxID: string, claimID: string) {
+    return this.atomic((db) => {
+      const row = db
+        .query<{ state: string; receipt: string | null }, [string, string]>(
+          `SELECT o.state,o.receipt FROM runner_outbox o
+           JOIN runner_plans p ON p.id=o.plan_id
+           WHERE o.id=? AND p.project_directory=?`,
+        )
+        .get(outboxID, this.repository.projectDirectory)
+      return row?.state === "reconciling" && sourceNoticeClaimMatches(row.receipt, claimID)
+    })
+  }
+  finishArchitectSourceNoticeReconciliation(input: {
+    outboxID: string
+    claimID: string
+    state: "reconciling" | "consumed" | "superseded" | "unknown"
+    receipt: unknown
+    event: string
+  }) {
+    return this.atomic((db) => {
+      const row = db
+        .query<{ plan_id: string; state: string; receipt: string | null }, [string, string]>(
+          `SELECT o.plan_id,o.state,o.receipt FROM runner_outbox o
+           JOIN runner_plans p ON p.id=o.plan_id
+           WHERE o.id=? AND p.project_directory=?`,
+        )
+        .get(input.outboxID, this.repository.projectDirectory)
+      if (row?.state !== "reconciling" || !sourceNoticeClaimMatches(row.receipt, input.claimID))
+        return false
+      const receipt = appendOutboxReceipt(row.receipt, input.receipt)
+      const changed = db
+        .query("UPDATE runner_outbox SET state=?,receipt=? WHERE id=? AND state='reconciling'")
+        .run(input.state, receipt, input.outboxID).changes
+      if (!changed) return false
+      this.record(row.plan_id, null, input.event, {
+        outboxID: input.outboxID,
+        state: input.state,
+        receipt: input.receipt,
+      })
+      this.repository.changed()
+      return true
+    })
+  }
   architectSourceInputs(sessionID: string) {
     return this.atomic((db) =>
       db
@@ -1008,6 +1538,56 @@ export class RunnerStore {
         )
         .all(sessionID, this.repository.projectDirectory),
     )
+  }
+  architectSourceMessageReferences(planID: string, sourceSessionID: string, messageIDs: string[]) {
+    return this.atomic((db) => {
+      const source = db
+        .query<{ renewal_id: string }, [string, string, string]>(
+          `SELECT s.renewal_id FROM runner_architect_sources s
+           JOIN runner_architect_renewal_plans rp ON rp.renewal_id=s.renewal_id
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND rp.plan_id=? AND rp.transferred=1
+             AND s.state='active' AND anchor.project_directory=?`,
+        )
+        .get(sourceSessionID, planID, this.repository.projectDirectory)
+      if (!source) throw new Error("Source session is not an active journal for this plan")
+      if (!messageIDs.length) return []
+      const placeholders = messageIDs.map(() => "?").join(",")
+      const params = [sourceSessionID, ...messageIDs]
+      const inputs = db
+        .query<{ message_id: string; native_type: string | null }, string[]>(
+          `SELECT message_id,native_type FROM runner_architect_inputs
+           WHERE session_id=? AND message_id IN (${placeholders})`,
+        )
+        .all(...params)
+      const results = db
+        .query<{ message_id: string }, string[]>(
+          `SELECT message_id FROM runner_architect_source_results
+           WHERE session_id=? AND renewal_id=? AND message_id IN (${placeholders})`,
+        )
+        .all(sourceSessionID, source.renewal_id, ...messageIDs)
+      const references = new Map<
+        string,
+        { messageID: string; kind: "input" | "result"; type: string }
+      >()
+      for (const input of inputs)
+        if (input.native_type === "user" || input.native_type === "synthetic")
+          references.set(input.message_id, {
+            messageID: input.message_id,
+            kind: "input",
+            type: input.native_type,
+          })
+      for (const result of results)
+        references.set(result.message_id, {
+          messageID: result.message_id,
+          kind: "result",
+          type: "assistant",
+        })
+      return messageIDs.flatMap((messageID) => {
+        const reference = references.get(messageID)
+        return reference ? [reference] : []
+      })
+    })
   }
   architectSourceJournalPage(planID: string, limit: number, cursor?: string): SourceJournalPage {
     return this.atomic((db) =>
@@ -1306,155 +1886,13 @@ export class RunnerStore {
          WHERE session_id=? AND renewal_id=?`,
       ).run(input.nextCursor, sweep, revision, input.now, input.sessionID, source.renewal_id)
 
-      if (source.state === "active") {
-        const plan = db
-          .query<{ owner: string; version: number }, [string]>(
-            "SELECT owner,version FROM runner_plans WHERE id=?",
-          )
-          .get(source.anchor_plan_id)
-        if (plan) {
-          // Keep each native notice bounded. Any remaining IDs stay unreferenced
-          // in the durable source journal and are emitted by a later scan tick.
-          const pendingReferences = db
-            .query<
-              | {
-                  kind: "input"
-                  message_id: string
-                  native_type: string | null
-                  disposition: string
-                  updated_at: number
-                }
-              | {
-                  kind: "result"
-                  message_id: string
-                  state: string
-                  finish: string | null
-                  tool_running: number
-                  tool_completed: number
-                  tool_failed: number
-                  tool_other: number
-                  result_revision: number
-                  updated_at: number
-                },
-              [string, string]
-            >(
-              `SELECT * FROM (
-                 SELECT 'input' AS kind,message_id,native_type,disposition,NULL AS state,
-                   NULL AS finish,NULL AS tool_running,NULL AS tool_completed,NULL AS tool_failed,
-                   NULL AS tool_other,NULL AS result_revision,updated_at
-                 FROM runner_architect_inputs
-                 WHERE session_id=? AND referenced_revision=0
-                 UNION ALL
-                 SELECT 'result' AS kind,message_id,NULL AS native_type,NULL AS disposition,state,
-                   finish,tool_running,tool_completed,tool_failed,tool_other,result_revision,updated_at
-                 FROM runner_architect_source_results
-                 WHERE session_id=? AND referenced_revision=0
-               ) ORDER BY updated_at,message_id LIMIT 20`,
-            )
-            .all(input.sessionID, input.sessionID)
-          if (pendingReferences.length) {
-            const inputIDs = pendingReferences.flatMap((row) =>
-              row.kind === "input"
-                ? [
-                    {
-                      id: row.message_id,
-                      type: row.native_type ?? "input",
-                      disposition: row.disposition,
-                    },
-                  ]
-                : [],
-            )
-            const results = pendingReferences.flatMap((row) =>
-              row.kind === "result"
-                ? [
-                    {
-                      id: row.message_id,
-                      revision: row.result_revision,
-                      state: row.state,
-                      finish: row.finish,
-                      toolCounts: {
-                        running: row.tool_running,
-                        completed: row.tool_completed,
-                        failed: row.tool_failed,
-                        other: row.tool_other,
-                      },
-                    },
-                  ]
-                : [],
-            )
-            const outboxID = fingerprint({
-              kind: "architect-source-reference",
-              sourceSessionID: input.sessionID,
-              revision,
-              inputIDs,
-              results,
-            })
-            const nativeMessageID = `msg_${fingerprint({ outboxID, owner: plan.owner }).slice(0, 32)}`
-            const payload = {
-              status: "architect-source-reference",
-              version: revision,
-              sourceSessionID: input.sessionID,
-              sourceRevision: revision,
-              inputIDs,
-              results,
-              preserveOriginalInput: true,
-              planID: source.anchor_plan_id,
-              currentPlanVersion: plan.version,
-            }
-            const metadata = {
-              lazersKind: "runner-outcome",
-              lazersProjectID: input.projectID,
-              lazersProjectDirectory: this.repository.projectDirectory,
-              lazersPlanID: source.anchor_plan_id,
-              lazersOutboxID: outboxID,
-              lazersMessageID: nativeMessageID,
-              lazersSessionID: plan.owner,
-              lazersStatus: "architect-source-reference",
-              lazersVersion: revision,
-            }
-            db.query(
-              `INSERT OR IGNORE INTO runner_outbox(
-                id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt
-              ) VALUES(?,?,?,?,?,'pending',0,?,NULL)`,
-            ).run(
-              outboxID,
-              source.anchor_plan_id,
-              plan.owner,
-              nativeMessageID,
-              JSON.stringify(payload),
-              JSON.stringify(metadata),
-            )
-            const inputRows = pendingReferences.filter((row) => row.kind === "input")
-            if (inputRows.length) {
-              const placeholders = inputRows.map(() => "?").join(",")
-              db.query(
-                `UPDATE runner_architect_inputs SET referenced_revision=?
-                 WHERE session_id=? AND message_id IN (${placeholders}) AND referenced_revision=0`,
-              ).run(revision, input.sessionID, ...inputRows.map((row) => row.message_id))
-            }
-            const resultRows = pendingReferences.filter((row) => row.kind === "result")
-            if (resultRows.length) {
-              const placeholders = resultRows.map(() => "?").join(",")
-              db.query(
-                `UPDATE runner_architect_source_results SET referenced_revision=?
-                 WHERE session_id=? AND message_id IN (${placeholders}) AND referenced_revision=0`,
-              ).run(revision, input.sessionID, ...resultRows.map((row) => row.message_id))
-            }
-            this.record(source.anchor_plan_id, null, "ARCHITECT_SOURCE_RECONCILED", {
-              sourceSessionID: input.sessionID,
-              sourceRevision: revision,
-              inputIDs,
-              results,
-              currentOwner: plan.owner,
-            })
-          }
-        }
-      }
       this.repository.changed()
       return {
         revision,
+        hasJournal: architectSourceJournalExists(db, input.sessionID),
         changedInputs: [...changes.values()],
         changedResults: [...changedResults.values()],
+        sourceNotices: [],
         nextCursor: input.nextCursor,
         sweep,
         staleCheckpoint,
@@ -2291,7 +2729,7 @@ export class RunnerStore {
                row_number() OVER (PARTITION BY o.plan_id
                  ORDER BY CAST(json_extract(o.payload,'$.version') AS INTEGER) DESC,o.rowid DESC) AS position
              FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
-             WHERE p.project_directory=?
+             WHERE p.project_directory=? AND o.state<>'reconciling'
            )
            SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence
            FROM candidates c JOIN runner_outbox o ON o.rowid=c.sequence
