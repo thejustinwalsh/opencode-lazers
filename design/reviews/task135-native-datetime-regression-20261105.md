@@ -30,6 +30,14 @@ active alongside99 in a separate native worktree. The fix and regression fit
 recorder.ts/test scope; broader diagnostics wiring remains separate behind127.
 No performance or acceptance claim is made before correction and native reprobe.
 
+Root independently tested the worker's revised, uncommitted recorder candidate at
+1793859163285/9163304 using the same disposable reproducer, importing the worker
+recorder while retaining the canonical Effect timestamp producer. Both numeric
+and Effect DateTime representations now produce append attempts[3,0,0]. No
+production writes occurred. This establishes the original representation repro
+is corrected in that draft; final review, changed/late-fact regressions, source
+integration and actual native performance qualification remain outstanding.
+
 Separate native fact check at1793856175726/728: original129/132 are inactive with
 outcome failed and idle timestamps later than busy. An interrupted-only99 branch
 does not establish their recovery. That scope gap and the draft's human-reason
