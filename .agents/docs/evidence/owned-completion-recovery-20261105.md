@@ -106,3 +106,33 @@ persona-to-dispatch wiring. Saved read-only mappings do not deliver those featur
 All subsequent research/implementors remain OpenAI `gpt-6-luna/max`; Architect
 stays Sol High. Root owns Desktop and native verification. Local authoring review
 hit WebGPU device loss and supplies no semantic acceptance.
+
+## LZ136 final candidate review and remaining native hold
+
+Original136 committed `4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1`
+(parent `7d2eacf2e56277631c6524c6937519a2cd5a6e3f`). Independent Luna Max
+review `ses_e560d6997ffexfId3QjKfNupkQ` found no blocking source issue:
+persisted review metadata compatibility, strict alias provenance, race rejection
+without recording an alias, owner handoff, reopen/matching and negative sequence
+coverage were checked. The inherited performance-file diff is table formatting
+only. The reviewer did not rerun tests or take native/session actions.
+
+Native shell message `msg_1a9edd8ba001s5BwbfXhXWpTnM` records the exact registered
+combined command passing with401 tests/5257 assertions in128.06s, followed by
+format/lint/typecheck, without a CLI timeout override. This is candidate evidence,
+not a runtime acceptance receipt or live qualification.
+
+Planversion12 remains blocked on the host adapter's exact successful-idle marker
+check; all four effects are completed, none uncertain, and verification has not
+started. Root's context probe at1793852605945 found the genuine successful marker
+`msg_1a9f08e110010fCmsU3YVNIg3x` and its zero-background report, but completed
+compaction had removed all user/synthetic inputs. Root owns the separate canonical
+`native.ts`/`native.test.ts` repair and quiet reload, preserving retained input
+binding, the exact latest marker and fresh inventory checks. Probe reference:
+`/private/tmp/lazers-current-idle-context-probe-20261104.ts`.
+
+Keep136's original session, input and commit unchanged. After Root's tested fix
+and coordinated activation, use supported reconciliation and ordinary runtime
+verification. Do not fabricate idle evidence, re-prompt for a certificate or repeat
+unchanged manual preflight. Actual133/135 reconciliation and Root-owned native
+qualification remain outstanding.
