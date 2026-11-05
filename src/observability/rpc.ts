@@ -9,7 +9,6 @@ import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { Observability, type ObservationChange } from "./contract.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
-import { captureServiceCPU } from "./service-cpu-profile.ts"
 import { databaseChanges } from "../database-events.ts"
 
 type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
@@ -93,8 +92,6 @@ export function registerObservability(
   projectID: string,
 ) {
   return Effect.gen(function* () {
-    const lifetime = new AbortController()
-    yield* Effect.addFinalizer(() => Effect.sync(() => lifetime.abort()))
     const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
     const rpc = yield* ctx.rpc.register(Observability, {
       snapshot: (input) =>
@@ -108,21 +105,6 @@ export function registerObservability(
               "read",
             )
             return reads.snapshot(input.scope, tracker)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
-      serviceCPUProfile: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const agent = await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            if (agent !== "architect") throw new Error("Service CPU capture is architect-only")
-            return captureServiceCPU(AbortSignal.any([signal, lifetime.signal]))
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
