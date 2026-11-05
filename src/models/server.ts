@@ -28,7 +28,22 @@ import { ModelEvidenceRefresher } from "./source-refresh.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { readModelComparison } from "./comparison-read.ts"
 import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
+import { buildCurrentPriceIndex } from "./current-price-index.ts"
+import type { CurrentPriceApplicability } from "./current-price-index.ts"
+import { createModelDecisionReader } from "./decision-read.ts"
+import {
+  ModelsDecision,
+  ModelDecisionConfigurationsOutputSchema,
+  ModelDecisionConfigurationsRPCInputSchema,
+  ModelDecisionInspectOutputSchema,
+  ModelDecisionInspectRPCInputSchema,
+  ModelDecisionOverviewOutputSchema,
+  ModelDecisionOverviewRPCInputSchema,
+  ModelDecisionRowsOutputSchema,
+  ModelDecisionRowsRPCInputSchema,
+} from "./decision-contract.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
+import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { ModelSettingsService } from "./service.ts"
 import {
   ModelPriceSourceSettingsSchema,
@@ -178,6 +193,57 @@ export function registerModelsServer(
   const failure = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
   return Effect.gen(function* () {
+    const decisionReader = createModelDecisionReader({
+      projectDirectory,
+      openLedger: () => openReadOnlyObservationLedger(path, projectDirectory),
+      readPriceState: async (routes: readonly CurrentPriceApplicability[], signal) => {
+        signal?.throwIfAborted()
+        const policy = await priceSourceSettings.read(signal)
+        const [openrouter, opencode] = await Promise.all([
+          configuredAccess(ctx, "openrouter", signal ?? new AbortController().signal),
+          configuredAccess(ctx, "opencode", signal ?? new AbortController().signal),
+        ])
+        signal?.throwIfAborted()
+        const settings = ModelPriceSourceSettingsSchema.parse({
+          policy,
+          access: { openrouter, opencode },
+        })
+        const state = withEvidenceReadStore((store) => {
+          const sources = store.readComparisonSources()
+          const index = buildCurrentPriceIndex({
+            sourceStore: { readComparisonSources: () => sources },
+            priceSources: settings,
+            observedRoutes: routes,
+          })
+          const stale = index.pins.some((pin) => {
+            const source = sources.find(
+              (candidate) => candidate.snapshot?.snapshotID === pin.provenance.snapshotID,
+            )
+            return Boolean(
+              source?.refresh &&
+              (source.refresh.state === "failed" ||
+                source.refresh.state === "cancelled" ||
+                source.refresh.state === "refreshing"),
+            )
+          })
+          return {
+            index,
+            freshness: index.pins.length
+              ? stale
+                ? ("stale" as const)
+                : ("current" as const)
+              : ("unknown" as const),
+          }
+        })
+        signal?.throwIfAborted()
+        return {
+          settings,
+          index: state.index,
+          freshness: state.freshness,
+          note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
+        }
+      },
+    })
     yield* ctx.rpc.register(Models, {
       settings: (input) =>
         Effect.tryPromise({
@@ -414,6 +480,130 @@ export function registerModelsServer(
                 new ModelEvidenceRefresher(ctx, store, fetcher).refresh(signal),
               ),
             )
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+    })
+
+    yield* ctx.rpc.register(ModelsDecision, {
+      overview: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelDecisionOverviewRPCInputSchema.parse(input)
+            if (request.scope.projectDirectory !== projectDirectory)
+              throw new Error("Models scope is unavailable")
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-decision",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const output = await decisionReader.overview(
+              {
+                schemaVersion: request.schemaVersion,
+                scope: request.scope,
+                filters: request.filters,
+              },
+              { signal },
+            )
+            signal.throwIfAborted()
+            return ModelDecisionOverviewOutputSchema.parse(output)
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      rows: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelDecisionRowsRPCInputSchema.parse(input)
+            if (request.scope.projectDirectory !== projectDirectory)
+              throw new Error("Models scope is unavailable")
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-decision",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const output = await decisionReader.rows(
+              {
+                schemaVersion: request.schemaVersion,
+                scope: request.scope,
+                filters: request.filters,
+                cursor: request.cursor,
+                limit: request.limit,
+              },
+              { signal },
+            )
+            signal.throwIfAborted()
+            return ModelDecisionRowsOutputSchema.parse(output)
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      configurations: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelDecisionConfigurationsRPCInputSchema.parse(input)
+            if (request.scope.projectDirectory !== projectDirectory)
+              throw new Error("Models scope is unavailable")
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-decision",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const output = await decisionReader.configurations(
+              {
+                schemaVersion: request.schemaVersion,
+                scope: request.scope,
+                filters: request.filters,
+                cursor: request.cursor,
+                limit: request.limit,
+              },
+              { signal },
+            )
+            signal.throwIfAborted()
+            return ModelDecisionConfigurationsOutputSchema.parse(output)
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      inspect: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelDecisionInspectRPCInputSchema.parse(input)
+            if (request.scope.projectDirectory !== projectDirectory)
+              throw new Error("Models scope is unavailable")
+            await authorize(
+              ctx,
+              request.sessionID,
+              projectID,
+              "lz-read-model-decision",
+              [projectDirectory],
+              signal,
+            )
+            signal.throwIfAborted()
+            const output = await decisionReader.inspect(
+              {
+                schemaVersion: request.schemaVersion,
+                scope: request.scope,
+                filters: request.filters,
+                snapshotID: request.snapshotID,
+                configurationID: request.configurationID,
+                selectedTaskID: request.selectedTaskID,
+                contributorCursor: request.contributorCursor,
+                contributorLimit: request.contributorLimit,
+              },
+              { signal },
+            )
+            signal.throwIfAborted()
+            return ModelDecisionInspectOutputSchema.parse(output)
           },
           catch: failure,
         }).pipe(Effect.orDie),

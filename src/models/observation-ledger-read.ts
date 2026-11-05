@@ -36,6 +36,12 @@ export const OBSERVATION_LEDGER_LIMITS = {
   observationsPerFact: 25,
 } as const
 
+// Decision reads keep only retained usage measurements and route-bearing step
+// observations. The bounded SQL projection is intentionally separate from the
+// public ledger's richer progress view.
+const DECISION_PROGRESS_FACT_LIMIT = 15_000
+const DECISION_PROGRESS_BATCH_SIZE = 512
+
 type SourceStatus = ObservationLedgerOutput["completeness"]["sources"][number]
 type RawTask = { id: string; created_at: string; body: string }
 type RawReference = { task_id: string; reference: string }
@@ -83,6 +89,68 @@ type RawCapture = {
   fingerprint: string
   effectiveClassifications: Map<string, TaskClassificationSnapshot | null>
 }
+
+export type ObservationLedgerDecisionAttempt = {
+  accounting: AccountingAttempt
+  number: number
+  retryCount: number
+  startedAt: number
+}
+
+export type ObservationLedgerDecisionTask = {
+  taskID: string
+  taskReference: string | null
+  createdAt: string
+  submittedStatus: string | null
+  classification: {
+    kind: TaskKindV1 | null
+    revision: number | null
+    provenance: TaskClassificationSnapshot["current"]["provenance"] | null
+    history: TaskClassificationSnapshot["history"]
+    status: "available" | "unavailable"
+  }
+  acceptance: {
+    accepted: boolean
+    acceptedAt: number | null
+    evidence: ObservationLedgerOutput["tasks"][number]["logicalOutcome"]["evidence"]
+  }
+  attempts: ObservationLedgerDecisionAttempt[]
+  terminal: boolean
+}
+
+export type ObservationLedgerDecisionCapture = {
+  status: "captured"
+  projectDirectory: string
+  capturedAt: number
+  sourceFingerprint: string
+  sourceRevision: number
+  sources: SourceStatus[]
+  notes: string[]
+  tasks: ObservationLedgerDecisionTask[]
+  progressFacts: Record<string, unknown>[]
+  classificationCoverage: {
+    classifiedTaskCount: number
+    unclassifiedTaskCount: number
+    unavailableTaskCount: number
+    totalTaskCount: number
+  }
+}
+
+export type ObservationLedgerDecisionRead =
+  | ObservationLedgerDecisionCapture
+  | {
+      status: "incomplete"
+      projectDirectory: string
+      reason: string
+      sources: SourceStatus[]
+      notes: string[]
+    }
+  | {
+      status: "unavailable"
+      projectDirectory: string
+      reason: "database-missing" | "database-unavailable" | "task-table-missing"
+      sources: SourceStatus[]
+    }
 
 type CaptureResult =
   | { status: "captured"; capture: RawCapture }
@@ -326,6 +394,112 @@ function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
+function fingerprintAndSize(value: Record<string, unknown>) {
+  const digest = createHash("sha256")
+  let bytes = 0
+  const write = (part: string) => {
+    digest.update(part)
+    bytes += Buffer.byteLength(part, "utf8")
+  }
+  write("{")
+  for (const [index, [key, field]] of Object.entries(value).entries()) {
+    if (index) write(",")
+    write(JSON.stringify(key))
+    write(":")
+    if (Array.isArray(field)) {
+      write("[")
+      for (const [rowIndex, row] of field.entries()) {
+        if (rowIndex) write(",")
+        write(JSON.stringify(row))
+      }
+      write("]")
+    } else write(JSON.stringify(field))
+  }
+  write("}")
+  return { fingerprint: digest.digest("hex"), bytes }
+}
+
+const DECISION_PROGRESS_SQL = `
+  SELECT r.seq,r.project_id,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
+         r.source,r.sources_json,r.kind,r.event_ids_json,r.call_id,r.message_id,r.dedupe_key,
+         json_object(
+           'measurementBasis',json_extract(r.payload,'$.measurementBasis'),
+           'usage',CASE WHEN json_type(r.payload,'$.usage')='object'
+             THEN json(json_extract(r.payload,'$.usage')) ELSE NULL END,
+           'route',CASE WHEN json_type(r.payload,'$.route')='object'
+             THEN json(json_extract(r.payload,'$.route')) ELSE NULL END,
+           'routeEvidence',CASE WHEN json_type(r.payload,'$.routeEvidence')='object'
+             THEN json(json_extract(r.payload,'$.routeEvidence')) ELSE NULL END,
+           'observations',json(COALESCE((
+             SELECT json_group_array(json_object(
+               'source',json_extract(o.value,'$.source'),
+               'eventType',json_extract(o.value,'$.eventType'),
+               'at',json_extract(o.value,'$.at'),
+               'messageID',json_extract(o.value,'$.messageID'),
+               'eventID',json_extract(o.value,'$.eventID'),
+               'route',CASE WHEN json_type(o.value,'$.route')='object'
+                 THEN json(json_extract(o.value,'$.route')) ELSE NULL END,
+               'routeEvidence',CASE WHEN json_type(o.value,'$.routeEvidence')='object'
+                 THEN json(json_extract(o.value,'$.routeEvidence')) ELSE NULL END
+             ))
+             FROM json_each(r.payload,'$.observations') o
+             WHERE json_extract(o.value,'$.source') IN ('native-event','recovery')
+               AND json_type(o.value,'$.eventType')='text'
+           ),'[]')),
+           'timing',CASE
+             WHEN json_type(r.payload,'$.timing.endpoints.completedAt')='object'
+             THEN json_object('endpoints',json_object('completedAt',
+               json(json_extract(r.payload,'$.timing.endpoints.completedAt'))))
+             ELSE NULL END
+         ) AS payload
+  FROM runner_progress r
+  JOIN runner_plans p ON p.id=r.plan_id
+  JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
+  WHERE r.project_directory=? AND p.project_directory=? AND r.seq>?
+    AND r.kind IN ('step','usage-snapshot') AND json_valid(r.payload)
+  ORDER BY r.seq LIMIT ?`
+
+function rowCount(db: Database, sql: string, values: [string, string]): number {
+  const row = db.query<{ count: number }, [string, string]>(sql).get(...values)
+  if (!row || !Number.isSafeInteger(row.count) || row.count < 0)
+    throw new Error("Observation ledger row count is unavailable")
+  return row.count
+}
+
+function readDecisionProgress(
+  db: Database,
+  projectDirectory: string,
+  signal?: AbortSignal,
+): { rows: RawProgress[]; invalidCount: number; overflow: boolean } {
+  const invalidCount = rowCount(
+    db,
+    `SELECT COUNT(*) AS count FROM runner_progress r
+     JOIN runner_plans p ON p.id=r.plan_id
+     JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
+     WHERE r.project_directory=? AND p.project_directory=?
+       AND r.kind IN ('step','usage-snapshot') AND NOT json_valid(r.payload)`,
+    [projectDirectory, projectDirectory],
+  )
+  const rows: RawProgress[] = []
+  let afterSequence = 0
+  while (true) {
+    signal?.throwIfAborted()
+    const remaining = DECISION_PROGRESS_FACT_LIMIT + 1 - rows.length
+    const limit = Math.min(DECISION_PROGRESS_BATCH_SIZE, remaining)
+    if (limit <= 0) return { rows, invalidCount, overflow: true }
+    const batch = db
+      .query<RawProgress, [string, string, number, number]>(DECISION_PROGRESS_SQL)
+      .all(projectDirectory, projectDirectory, afterSequence, limit)
+    for (const row of batch) {
+      if (rows.length >= DECISION_PROGRESS_FACT_LIMIT) return { rows, invalidCount, overflow: true }
+      rows.push(row)
+      afterSequence = row.seq
+    }
+    if (batch.length < limit) break
+  }
+  return { rows, invalidCount, overflow: false }
+}
+
 function boundedNotes(values: string[]) {
   const unique = [...new Set(values)]
   if (unique.length <= 100) return unique
@@ -335,7 +509,12 @@ function boundedNotes(values: string[]) {
   ]
 }
 
-function readCapture(db: Database, projectDirectory: string): CaptureResult {
+function readCapture(
+  db: Database,
+  projectDirectory: string,
+  options: { decision?: boolean; signal?: AbortSignal } = {},
+): CaptureResult {
+  options.signal?.throwIfAborted()
   const statuses: SourceStatus[] = []
   const notes: string[] = []
   const tableInfo: Record<string, TableInfo> = {
@@ -376,6 +555,7 @@ function readCapture(db: Database, projectDirectory: string): CaptureResult {
       "SELECT id,created_at,body FROM tasks WHERE project_directory=? ORDER BY created_at,id LIMIT ?",
     )
     .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.tasks + 1)
+  options.signal?.throwIfAborted()
   if (tasks.length > OBSERVATION_LEDGER_LIMITS.tasks)
     return incompleteResult(
       `Task membership exceeds the ${OBSERVATION_LEDGER_LIMITS.tasks} task capture limit.`,
@@ -543,22 +723,39 @@ function readCapture(db: Database, projectDirectory: string): CaptureResult {
   } else notes.push("Descendant-adoption history is unavailable in this database schema.")
 
   if (plansAvailable && sourceAvailable(statuses, "runner_progress")) {
-    progress = db
-      .query<RawProgress, [string, string, number]>(
-        `SELECT r.* FROM runner_progress r
-         JOIN runner_plans p ON p.id=r.plan_id
-         JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
-         WHERE r.project_directory=? AND p.project_directory=?
-         ORDER BY r.seq LIMIT ?`,
-      )
-      .all(projectDirectory, projectDirectory, OBSERVATION_LEDGER_LIMITS.progressFacts + 1)
-    if (progress.length > OBSERVATION_LEDGER_LIMITS.progressFacts)
-      return incompleteResult(
-        `Retained progress exceeds the ${OBSERVATION_LEDGER_LIMITS.progressFacts} fact capture limit.`,
-        statuses,
-        notes,
-      )
+    if (options.decision) {
+      const retained = readDecisionProgress(db, projectDirectory, options.signal)
+      progress = retained.rows
+      if (retained.overflow)
+        return incompleteResult(
+          `Retained decision usage and route history exceeds the ${DECISION_PROGRESS_FACT_LIMIT} compact fact limit.`,
+          statuses,
+          notes,
+        )
+      if (retained.invalidCount)
+        notes.push(
+          `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
+        )
+    } else {
+      progress = db
+        .query<RawProgress, [string, string, number]>(
+          `SELECT r.* FROM runner_progress r
+           JOIN runner_plans p ON p.id=r.plan_id
+           JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
+           WHERE r.project_directory=? AND p.project_directory=?
+           ORDER BY r.seq LIMIT ?`,
+        )
+        .all(projectDirectory, projectDirectory, OBSERVATION_LEDGER_LIMITS.progressFacts + 1)
+      if (progress.length > OBSERVATION_LEDGER_LIMITS.progressFacts)
+        return incompleteResult(
+          `Retained progress exceeds the ${OBSERVATION_LEDGER_LIMITS.progressFacts} fact capture limit.`,
+          statuses,
+          notes,
+        )
+    }
   } else notes.push("Retained progress observations are unavailable in this database schema.")
+
+  options.signal?.throwIfAborted()
 
   const sourceData = {
     projectDirectory,
@@ -574,13 +771,6 @@ function readCapture(db: Database, projectDirectory: string): CaptureResult {
     adoptions,
     progress,
   }
-  const bytes = Buffer.byteLength(JSON.stringify(sourceData), "utf8")
-  if (bytes > OBSERVATION_LEDGER_LIMITS.captureBytes)
-    return incompleteResult(
-      `Retained observation capture exceeds the ${OBSERVATION_LEDGER_LIMITS.captureBytes} byte bound.`,
-      statuses,
-      notes,
-    )
 
   const snapshots = new Map<string, TaskClassificationSnapshot | null>()
   for (const row of tasks) {
@@ -612,42 +802,64 @@ function readCapture(db: Database, projectDirectory: string): CaptureResult {
     }
   }
 
-  for (const row of progress) {
-    const payload = parseObject(row.payload)
-    if (!payload) notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
-    const rawObservations = payload?.observations
-    if (rawObservations !== undefined && !Array.isArray(rawObservations))
-      notes.push(`Progress fact progress:${row.seq} has a non-array observation collection.`)
-    if (Array.isArray(rawObservations)) {
-      const candidates = rawObservations
-        .slice(-OBSERVATION_LEDGER_LIMITS.observationsPerFact)
-        .filter((raw) => {
-          const observation = object(raw)
-          return (
-            observation &&
-            (observation.source === "native-event" || observation.source === "recovery") &&
-            typeof observation.eventType === "string"
+  options.signal?.throwIfAborted()
+  const { fingerprint, bytes } = fingerprintAndSize({
+    ...sourceData,
+    effectiveClassifications: [...snapshots.entries()],
+  })
+  if (bytes > OBSERVATION_LEDGER_LIMITS.captureBytes)
+    return incompleteResult(
+      `Retained observation capture is ${bytes} serialized bytes, above the ${OBSERVATION_LEDGER_LIMITS.captureBytes} byte bound.`,
+      statuses,
+      notes,
+    )
+
+  if (options.decision) {
+    for (const row of progress) {
+      if (!parseObject(row.payload))
+        notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
+      if (!parseArray(row.sources_json))
+        notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
+      if (!parseArray(row.event_ids_json))
+        notes.push(`Progress fact progress:${row.seq} has unreadable event lineage.`)
+    }
+  } else
+    for (const row of progress) {
+      const payload = parseObject(row.payload)
+      if (!payload) notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
+      const rawObservations = payload?.observations
+      if (rawObservations !== undefined && !Array.isArray(rawObservations))
+        notes.push(`Progress fact progress:${row.seq} has a non-array observation collection.`)
+      if (Array.isArray(rawObservations)) {
+        const candidates = rawObservations
+          .slice(-OBSERVATION_LEDGER_LIMITS.observationsPerFact)
+          .filter((raw) => {
+            const observation = object(raw)
+            return (
+              observation &&
+              (observation.source === "native-event" || observation.source === "recovery") &&
+              typeof observation.eventType === "string"
+            )
+          }).length
+        const omitted = rawObservations.length - candidates
+        if (omitted > 0)
+          notes.push(
+            `Progress fact progress:${row.seq} omits ${omitted} observations beyond the retained projection.`,
           )
-        }).length
-      const omitted = rawObservations.length - candidates
-      if (omitted > 0)
-        notes.push(
-          `Progress fact progress:${row.seq} omits ${omitted} observations beyond the retained projection.`,
-        )
+      }
+      const projected = projectProgressFact(row)
+      for (const key of ["sources", "eventIDs"] as const) {
+        const values = list(projected[key])
+        if (values.length > 100)
+          notes.push(
+            `Progress fact progress:${row.seq} omits ${values.length - 100} ${key} beyond the output bound.`,
+          )
+      }
+      if (!parseArray(row.sources_json))
+        notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
+      if (!parseArray(row.event_ids_json))
+        notes.push(`Progress fact progress:${row.seq} has unreadable event lineage.`)
     }
-    const projected = projectProgressFact(row)
-    for (const key of ["sources", "eventIDs"] as const) {
-      const values = list(projected[key])
-      if (values.length > 100)
-        notes.push(
-          `Progress fact progress:${row.seq} omits ${values.length - 100} ${key} beyond the output bound.`,
-        )
-    }
-    if (!parseArray(row.sources_json))
-      notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
-    if (!parseArray(row.event_ids_json))
-      notes.push(`Progress fact progress:${row.seq} has unreadable event lineage.`)
-  }
 
   for (const row of dispositions) {
     for (const [field, raw, maximum] of [
@@ -663,7 +875,6 @@ function readCapture(db: Database, projectDirectory: string): CaptureResult {
     }
   }
 
-  const fingerprint = hash({ ...sourceData, effectiveClassifications: [...snapshots.entries()] })
   return {
     status: "captured",
     capture: {
@@ -1610,6 +1821,249 @@ function taskAccountingAttempt(
   }
 }
 
+function decisionProgressFact(row: RawProgress, stats: ReturnType<typeof privacyStats>) {
+  const payload = parseObject(row.payload)
+  if (!payload) return null
+  const usageValue = object(payload.usage)
+  const usage = usageValue
+    ? {
+        input: nonnegativeOrNull(usageValue.input),
+        output: nonnegativeOrNull(usageValue.output),
+        reasoning: nonnegativeOrNull(usageValue.reasoning),
+        cacheRead: nonnegativeOrNull(usageValue.cacheRead),
+        cacheWrite: nonnegativeOrNull(usageValue.cacheWrite),
+        costUSD: nonnegativeOrNull(usageValue.costUSD),
+      }
+    : null
+  const routeEvidence = object(payload.routeEvidence)
+  const projectedRouteEvidence = routeEvidence
+    ? {
+        status:
+          typeof routeEvidence.status === "string"
+            ? safeText(routeEvidence.status, stats, 80)
+            : "identity-unavailable",
+        ...(routeEvidence.status === "observed"
+          ? { route: safeRoute(routeEvidence.route, stats) }
+          : {}),
+      }
+    : null
+  const rawRoute = routeEvidence
+    ? routeEvidence.status === "observed"
+      ? routeEvidence.route
+      : null
+    : payload.route
+  const route = safeRoute(rawRoute, stats)
+  const rawObservations = list(payload.observations)
+  const observations = rawObservations.flatMap((raw) => {
+    const observation = object(raw)
+    if (
+      !observation ||
+      (observation.source !== "native-event" && observation.source !== "recovery") ||
+      typeof observation.eventType !== "string"
+    )
+      return []
+    const evidence = object(observation.routeEvidence)
+    const rawObservationRoute = evidence
+      ? evidence.status === "observed"
+        ? evidence.route
+        : null
+      : observation.route
+    const projectedEvidence = evidence
+      ? {
+          status:
+            typeof evidence.status === "string"
+              ? safeText(evidence.status, stats, 80)
+              : "identity-unavailable",
+          ...(evidence.status === "observed" ? { route: safeRoute(evidence.route, stats) } : {}),
+        }
+      : null
+    return [
+      {
+        source: observation.source,
+        eventType: safeText(observation.eventType, stats, 160),
+        at: numberOrNull(observation.at),
+        messageID: typeof observation.messageID === "string" ? observation.messageID : null,
+        eventID: typeof observation.eventID === "string" ? observation.eventID : null,
+        route: safeRoute(rawObservationRoute, stats),
+        ...(projectedEvidence ? { routeEvidence: projectedEvidence } : {}),
+      },
+    ]
+  })
+  const timing = object(payload.timing)
+  const endpoints = object(timing?.endpoints)
+  const completedAt = object(endpoints?.completedAt)
+  const sourceTypes = parseArray(row.sources_json)
+  const eventIDs = parseArray(row.event_ids_json)
+  return {
+    id: `progress:${row.seq}`,
+    sequence: row.seq,
+    attemptID: row.attempt_id,
+    sessionID: row.session_id,
+    messageID: row.message_id,
+    source: safeText(row.source, stats, 80),
+    sources: sourceTypes
+      ? stringList(sourceTypes).map((source) => safeText(source, stats, 80))
+      : [safeText(row.source, stats, 80)],
+    eventIDs: eventIDs ? stringList(eventIDs) : [],
+    kind: row.kind === "step" ? "worker-step" : "worker-usage-snapshot",
+    at: row.at,
+    recordedAt: numberOrNull(row.recorded_at),
+    measurementBasis:
+      typeof payload.measurementBasis === "string"
+        ? safeText(payload.measurementBasis, stats, 160)
+        : null,
+    usage,
+    route,
+    ...(projectedRouteEvidence ? { routeEvidence: projectedRouteEvidence } : {}),
+    observations,
+    timing: {
+      endpoints: {
+        completedAt: {
+          at: numberOrNull(completedAt?.at),
+          sourceType:
+            typeof completedAt?.sourceType === "string"
+              ? safeText(completedAt.sourceType, stats, 160)
+              : null,
+        },
+      },
+    },
+  }
+}
+
+function decisionProjection(
+  capture: RawCapture,
+  projectDirectory: string,
+  sourceRevision: number,
+): ObservationLedgerDecisionCapture {
+  const stats = privacyStats()
+  const references = new Map(capture.references.map((item) => [item.task_id, item.reference]))
+  const plansByID = new Map(capture.plans.map((plan) => [plan.id, plan]))
+  const attemptsByTask = new Map<string, AttemptRow[]>()
+  const attemptsByPlan = new Map<string, Set<string>>()
+  const nodesByTask = new Map<string, RawNode[]>()
+  const transitionsByTask = new Map<string, RawTransition[]>()
+  const adoptionsByTask = new Map<string, AdoptionRow[]>()
+  for (const node of capture.nodes) {
+    const values = nodesByTask.get(node.task_id) ?? []
+    values.push(node)
+    nodesByTask.set(node.task_id, values)
+    const taskIDs = attemptsByPlan.get(node.plan_id) ?? new Set<string>()
+    taskIDs.add(node.task_id)
+    attemptsByPlan.set(node.plan_id, taskIDs)
+  }
+  for (const attempt of capture.attempts) {
+    const values = attemptsByTask.get(attempt.task_id) ?? []
+    values.push(attempt)
+    attemptsByTask.set(attempt.task_id, values)
+    const taskIDs = attemptsByPlan.get(attempt.plan_id) ?? new Set<string>()
+    taskIDs.add(attempt.task_id)
+    attemptsByPlan.set(attempt.plan_id, taskIDs)
+  }
+  for (const transition of capture.transitions) {
+    const values = transitionsByTask.get(transition.task_id) ?? []
+    values.push(transition)
+    transitionsByTask.set(transition.task_id, values)
+  }
+  for (const adoption of capture.adoptions) {
+    const values = adoptionsByTask.get(adoption.task_id) ?? []
+    values.push(adoption)
+    adoptionsByTask.set(adoption.task_id, values)
+  }
+
+  const accountingByID = new Map(
+    capture.attempts.map((attempt) => [
+      attempt.id,
+      taskAccountingAttempt(attempt, plansByID.get(attempt.plan_id), attempt.task_id, stats),
+    ]),
+  )
+  const tasks = capture.tasks.map((row): ObservationLedgerDecisionTask => {
+    const classification = capture.effectiveClassifications.get(row.id) ?? null
+    const taskAttempts = attemptsByTask.get(row.id) ?? []
+    let submittedStatus: string | null = null
+    try {
+      const parsed = TaskSpecSchema.safeParse(JSON.parse(row.body))
+      if (
+        parsed.success &&
+        parsed.data.id === row.id &&
+        parsed.data.provenance.projectDirectory === projectDirectory
+      )
+        submittedStatus = parsed.data.status
+    } catch {
+      // Existing ledger notes already disclose invalid immutable task bodies.
+    }
+    const rawReference = references.get(row.id)
+    const reference = rawReference ? TaskReferenceSchema.safeParse(rawReference) : null
+    const effective = classification?.current
+    const acceptance = taskAcceptance(
+      row.id,
+      taskAttempts,
+      transitionsByTask.get(row.id) ?? [],
+      adoptionsByTask.get(row.id) ?? [],
+      stats,
+    )
+    const attempts = taskAttempts.map((attempt) => ({
+      accounting: accountingByID.get(attempt.id)!,
+      number: attempt.number,
+      retryCount: attempt.retry_count,
+      startedAt: attempt.started_at,
+    }))
+    const terminalStates = new Set(["accepted", "failed", "cancelled", "exhausted", "incorporated"])
+    const terminal =
+      acceptance.accepted ||
+      (nodesByTask.get(row.id) ?? []).some((node) => terminalStates.has(node.state))
+    return {
+      taskID: row.id,
+      taskReference: reference?.success ? reference.data : null,
+      createdAt: row.created_at,
+      submittedStatus,
+      classification: {
+        kind: effective?.classification?.primaryKind ?? null,
+        revision: effective?.revision ?? null,
+        provenance: effective?.provenance ?? null,
+        history: classification?.history ?? [],
+        status: classification ? "available" : "unavailable",
+      },
+      acceptance,
+      attempts,
+      terminal,
+    }
+  })
+  const progressFacts = capture.progress.flatMap((row) => {
+    const fact = decisionProgressFact(row, stats)
+    return fact ? [fact] : []
+  })
+  const classifiedTaskCount = tasks.filter(
+    (task) => task.classification.status === "available" && task.classification.kind !== null,
+  ).length
+  const unclassifiedTaskCount = tasks.filter(
+    (task) => task.classification.status === "available" && task.classification.kind === null,
+  ).length
+  const unavailableTaskCount = tasks.filter(
+    (task) => task.classification.status === "unavailable",
+  ).length
+  return {
+    status: "captured",
+    projectDirectory,
+    capturedAt: Date.now(),
+    sourceFingerprint: hash({
+      capture: capture.fingerprint,
+      sourceRevision,
+      projectedProgressCount: progressFacts.length,
+    }),
+    sourceRevision,
+    sources: capture.sourceStatuses,
+    notes: boundedNotes(capture.notes),
+    tasks,
+    progressFacts,
+    classificationCoverage: {
+      classifiedTaskCount,
+      unclassifiedTaskCount,
+      unavailableTaskCount,
+      totalTaskCount: tasks.length,
+    },
+  }
+}
+
 function outputFromCapture(
   capture: RawCapture,
   projectDirectory: string,
@@ -1914,6 +2368,8 @@ function buildUnavailable(
 
 export type ReadOnlyObservationLedger = {
   read(input?: ObservationLedgerReadInput | unknown): ObservationLedgerOutput
+  readDecision(signal?: AbortSignal): ObservationLedgerDecisionRead
+  decisionRevision(): number | null
   close(): void
 }
 
@@ -1932,6 +2388,25 @@ export function openReadOnlyObservationLedger(
   }
   const secret = options.cursorSecret ? new Uint8Array(options.cursorSecret) : randomBytes(32)
   let closed = false
+
+  const currentDecisionRevision = () => {
+    if (!db || closed) throw new Error("Observation ledger reader is closed")
+    const exists = db
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='observation_revisions'",
+      )
+      .get()
+    if (!exists) return null
+    const row = db
+      .query<{ revision: number }, [string]>(
+        "SELECT revision FROM observation_revisions WHERE project_directory=?",
+      )
+      .get(projectDirectory)
+    const revision = row?.revision ?? 0
+    if (!Number.isSafeInteger(revision) || revision < 0)
+      throw new Error("Project observation revision is invalid")
+    return revision
+  }
 
   return {
     read(input: ObservationLedgerReadInput | unknown = {}) {
@@ -1979,6 +2454,62 @@ export function openReadOnlyObservationLedger(
       }
       return outputFromCapture(capture, projectDirectory, parsed, secret, parsed.cursor)
     },
+    readDecision(signal) {
+      if (closed) throw new Error("Observation ledger reader is closed")
+      signal?.throwIfAborted()
+      if (!db)
+        return {
+          status: "unavailable",
+          projectDirectory,
+          reason: openError ?? "database-unavailable",
+          sources: [],
+        }
+      if (currentDecisionRevision() === null)
+        return {
+          status: "incomplete",
+          projectDirectory,
+          reason: "Project-scoped observation revision tracking is unavailable.",
+          sources: [],
+          notes: [
+            "A coherent decision snapshot cannot be pinned without project-scoped revisions.",
+          ],
+        }
+      const result = db
+        .transaction(() => {
+          const sourceRevision = currentDecisionRevision()
+          if (sourceRevision === null)
+            throw new Error("Project-scoped observation revision tracking is unavailable")
+          return {
+            sourceRevision,
+            capture: readCapture(db!, projectDirectory, { decision: true, signal }),
+          }
+        })
+        .deferred()
+      signal?.throwIfAborted()
+      if (result.capture.status === "unavailable")
+        return {
+          status: "unavailable",
+          projectDirectory,
+          reason: result.capture.reason,
+          sources: result.capture.sources,
+        }
+      if (result.capture.status === "incomplete")
+        return {
+          status: "incomplete",
+          projectDirectory,
+          reason: result.capture.reason,
+          sources: result.capture.sources,
+          notes: result.capture.notes,
+        }
+      const projection = decisionProjection(
+        result.capture.capture,
+        projectDirectory,
+        result.sourceRevision,
+      )
+      signal?.throwIfAborted()
+      return projection
+    },
+    decisionRevision: currentDecisionRevision,
     close() {
       if (closed) return
       closed = true
