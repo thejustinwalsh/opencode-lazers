@@ -159,8 +159,11 @@ remaining work; it is not post-install native authorization or completion.
   mockup is `design/models-panel/models-approved.png`. Use OpenRouter→OpenCode
   ordered whole-model market-price fallback, not subscription charges or old prices;
   preserve exact model/effort, retry effort, missing-rate/zero provenance and global
-  Pareto before paging. Tasks keep personas; hierarchical persona/model selection
-  resolves at dispatch, with historical actual routes retained.
+  Pareto before paging. **The approved Models graph/UI, editable assignments and
+  actual persona-to-dispatch wiring remain unfinished.** Tasks keep personas;
+  hierarchical model selection at dispatch is still a delivery requirement, with
+  historical actual routes retained. Saved read-only mappings and route-configuration
+  receipts do not deliver that feature.
 - **Recovery/verification:** finish R2–R6, H3–H5, V3–V6/N1: struggle detection,
   evidence-backed Architect intervention, same-worker steering/reassessment,
   reviewed handoff/correction consumption, full owned Desktop verification and two
@@ -190,9 +193,10 @@ The [116-record audit](evidence/backlog-reconciliation-20261104.md) and retained
 checkpoint carry old source/receipt/cleanup partitions; inspect current DB state
 before acting on them.
 
-All model prompts use Desktop Computer Use. Architect remains OpenAI Sol High;
-implementors OpenAI Luna Max unless the user chooses otherwise. Use supported
-SDK/worktree/control flows, no custom daemon or lifecycle SQL mutation. Tests,
+Root owns Desktop interaction and visual verification. Other Architects coordinate
+through the supported OpenCode SDK and LAZERS tools. Architect remains OpenAI Sol
+High; all subsequent research delegates and implementors use OpenAI gpt-6-luna/max.
+Use supported SDK/worktree/control flows, no custom daemon or lifecycle SQL mutation. Tests,
 compiling code and actual product probes are evidence; no file-hash ceremony,
 model approval substitution, arbitrary spend budgets or invented task gates.
 Preserve native permissions, schema validation and SystemOne task/handoff review.
