@@ -155,6 +155,11 @@ The [debug handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e
 uses the request's location key and does not explicitly boot a replacement. Check
 active session placement and the target's completed cleanup before retiring it.
 
+`ctx.worktree.create` forwards to the in-process core service; its typed failures
+are not necessarily the HTTP protocol `WorktreeError` envelope. Check the
+[plugin bridge](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/plugin/host.ts#L573)
+and exercise actual Effect/core error shapes when preserving native failure data.
+
 Local server-plugin module identity is not shared state: the pinned [local source loader](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/plugin/src/source.bun.ts) evicts its local import graph when preparing each location. Two loaders of the same canonical entry can retain different module-local objects. Use explicit process-shared or durable state when coordinating locations; one configured path alone does not establish sharing.
 
 ## Complete HTTP operation index
