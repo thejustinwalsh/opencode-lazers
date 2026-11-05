@@ -158,50 +158,62 @@ export const PlanInput = z
   })
 export type PlanInput = z.infer<typeof PlanInput>
 
-export const CommandInput = z.strictObject({
-  requestID: z.string().trim().min(1).max(200),
-  planID: z.uuid(),
-  expectedVersion: z.int().positive(),
-  action: z.enum([
-    "run",
-    "cancel",
-    "audit",
-    "reconcile",
-    "reassign",
-    "human-evidence",
-    "resume",
-    "retry",
-    "integrated",
-    "schedule",
-    "amend-scope",
-    "adopt-descendant",
-  ]),
-  reason: z
-    .string()
-    .min(1)
-    .max(2000)
-    .describe("Brief user-facing explanation; keep detailed evidence in linked notes.")
-    .optional(),
-  priority: z.int().optional(),
-  afterPlans: z.array(z.uuid()).optional(),
-  workspaceMode: z.enum(["shared", "isolated"]).optional(),
-  baseCommit: z
-    .string()
-    .regex(/^[a-f0-9]{40,64}$/)
-    .optional(),
-  targetSessionID: z.string().min(1).max(200).optional(),
-  taskID: z.uuid().optional(),
-  attemptID: z.uuid().optional(),
-  scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
-  assertionID: z.string().max(64).optional(),
-  artifact: z.string().max(128).optional(),
-  descendantCommit: z
-    .string()
-    .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
-    .optional(),
-  adoptionID: z.uuid().optional(),
-  targetBranch: z.string().min(1).max(200).optional(),
-})
+export const CommandInput = z
+  .strictObject({
+    requestID: z.string().trim().min(1).max(200),
+    planID: z.uuid(),
+    expectedVersion: z.int().positive(),
+    action: z.enum([
+      "run",
+      "cancel",
+      "audit",
+      "reconcile",
+      "reassign",
+      "human-evidence",
+      "resume",
+      "retry",
+      "integrated",
+      "schedule",
+      "amend-scope",
+      "adopt-descendant",
+      "settle-startup",
+    ]),
+    reason: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe("Brief user-facing explanation; keep detailed evidence in linked notes.")
+      .optional(),
+    priority: z.int().optional(),
+    afterPlans: z.array(z.uuid()).optional(),
+    workspaceMode: z.enum(["shared", "isolated"]).optional(),
+    baseCommit: z
+      .string()
+      .regex(/^[a-f0-9]{40,64}$/)
+      .optional(),
+    targetSessionID: z.string().min(1).max(200).optional(),
+    taskID: z.uuid().optional(),
+    attemptID: z.uuid().optional(),
+    scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
+    assertionID: z.string().max(64).optional(),
+    artifact: z.string().max(128).optional(),
+    descendantCommit: z
+      .string()
+      .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+      .optional(),
+    adoptionID: z.uuid().optional(),
+    targetBranch: z.string().min(1).max(200).optional(),
+  })
+  .superRefine((command, context) => {
+    if (command.action !== "settle-startup") return
+    for (const field of ["taskID", "attemptID", "reason"] as const)
+      if (!command[field])
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `Startup settlement requires ${field}`,
+        })
+  })
 export type CommandInput = z.infer<typeof CommandInput>
 
 export type Finding = {

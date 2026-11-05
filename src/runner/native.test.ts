@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test"
-import { DateTime, Effect } from "effect"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { DateTime, Effect, Schema } from "effect"
+import { Worktree } from "@opencode/schema/worktree"
+import { AbsolutePath } from "@opencode/schema/schema"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
@@ -13,6 +19,7 @@ import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
 import type { RunnerStore } from "./store.ts"
 import { nativeLivenessFixture } from "../../test/runner-native-liveness/fixture.ts"
+import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 
 test("native adapter exposes inbox and paginated history reconciliation without claiming a sealed cutover", () => {
   const host = nativeHost(
@@ -30,7 +37,10 @@ test("native worktrees use the host lifecycle with the admitted ref and returned
   let refreshed = false
   const host = nativeHost(
     {
-      location: { directory: "/project", project: { id: "project" } },
+      location: {
+        directory: "/project",
+        project: { id: "project", canonical: "/canonical-project" },
+      },
       worktree: {
         create: (input: unknown) =>
           Effect.sync(() => {
@@ -48,14 +58,14 @@ test("native worktrees use the host lifecycle with the admitted ref and returned
           }),
       },
     } as unknown as Plugin.Context,
-    {} as TaskRepository,
+    { projectDirectory: "/canonical-project" } as TaskRepository,
   )
   expect(await host.worktree({ directory: "/work/attempt", base: "a".repeat(40) })).toBe(
     "/work/attempt-2",
   )
   expect(created).toEqual({
     projectID: "project",
-    from: "/project",
+    from: "/canonical-project",
     directory: "/work",
     name: "attempt",
     branch: "a".repeat(40),
@@ -64,6 +74,212 @@ test("native worktrees use the host lifecycle with the admitted ref and returned
   expect(refreshed).toBe(true)
   await host.removeWorktree("/work/attempt-2")
   expect(removed).toEqual({ projectID: "project", directory: "/work/attempt-2", force: false })
+})
+
+test("native worktree creation preserves typed terminal failure and uses canonical project source", async () => {
+  let created: unknown
+  class DirectoryUnavailableError extends Schema.TaggedError<DirectoryUnavailableError>()(
+    "Worktree.DirectoryUnavailableError",
+    { directory: AbsolutePath },
+  ) {}
+
+  const invoke = async (failureEffect: Effect.Effect<never, unknown>) => {
+    const host = nativeHost(
+      {
+        location: {
+          directory: "/removed-participant",
+          project: { id: "project", canonical: "/canonical-project" },
+        },
+        worktree: {
+          create: (input: unknown) => {
+            created = input
+            return failureEffect
+          },
+        },
+      } as unknown as Plugin.Context,
+      { projectDirectory: "/canonical-project" } as TaskRepository,
+    )
+    try {
+      await host.worktree({ directory: "/work/attempt", base: "a".repeat(40) })
+    } catch (error) {
+      return error
+    }
+    throw new Error("Expected native worktree creation to fail")
+  }
+
+  const operationFailure = new Worktree.OperationError({
+    message: "Native setup failed",
+    forceRequired: false,
+  })
+  const operationError = await invoke(Effect.fail(operationFailure))
+  expect(created).toEqual({
+    projectID: "project",
+    from: "/canonical-project",
+    directory: "/work",
+    name: "attempt",
+    branch: "a".repeat(40),
+  })
+  expect(operationError).toBeInstanceOf(NativeWorktreeCreationFailure)
+  expect(nativeWorktreeFailureEvidence(operationError)).toEqual({
+    schema: "lazers-native-worktree-failure/v2",
+    api: "worktree.create",
+    nativeTag: "Worktree.OperationError",
+    message: "Native setup failed",
+    forceRequired: false,
+  })
+
+  const directoryError = await invoke(
+    Effect.fail(new DirectoryUnavailableError({ directory: AbsolutePath.make("/missing-source") })),
+  )
+  expect(directoryError).toBeInstanceOf(NativeWorktreeCreationFailure)
+  expect(nativeWorktreeFailureEvidence(directoryError)).toEqual({
+    schema: "lazers-native-worktree-failure/v2",
+    api: "worktree.create",
+    nativeTag: "Worktree.DirectoryUnavailableError",
+    directory: "/missing-source",
+  })
+})
+
+test("native adapter leaves defects, interruption, lost responses and lookalikes uncertain", async () => {
+  const lookalike = Object.assign(new Error("message only"), {
+    _tag: "Worktree.OperationError",
+    message: 42,
+    forceRequired: false,
+  })
+  const httpEnvelope = {
+    _tag: "WorktreeError",
+    name: "WorktreeError",
+    data: { message: "HTTP only" },
+  }
+  const directoryLookalike = Object.assign(new Error(""), {
+    _tag: "Worktree.DirectoryUnavailableError",
+    directory: "relative/source",
+  })
+  const defects = [
+    Effect.fail(new Error("response lost")),
+    Effect.fail(lookalike),
+    Effect.fail(httpEnvelope),
+    Effect.fail(directoryLookalike),
+    Effect.die(new Worktree.OperationError({ message: "Defect, not a typed failure" })),
+    Effect.interrupt,
+  ]
+  for (const failureEffect of defects) {
+    const host = nativeHost(
+      {
+        location: { directory: "/project", project: { id: "project", canonical: "/project" } },
+        worktree: { create: () => failureEffect },
+      } as unknown as Plugin.Context,
+      { projectDirectory: "/project" } as TaskRepository,
+    )
+    let failure: unknown
+    try {
+      await host.worktree({ directory: "/work/attempt", base: "a".repeat(40) })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeDefined()
+    expect(failure).not.toBeInstanceOf(NativeWorktreeCreationFailure)
+    expect(nativeWorktreeFailureEvidence(failure)).toBeUndefined()
+  }
+})
+
+test("native adapter recognizes tagged failures from an independent temporary schema module", async () => {
+  const sourceURL = import.meta.resolve("@opencode/schema/worktree")
+  const sourcePath = fileURLToPath(sourceURL)
+  const schemaDirectory = dirname(sourcePath)
+  const independentDirectory = mkdtempSync(join(tmpdir(), "lazers-independent-schema-"))
+  try {
+    let independentSource = readFileSync(sourcePath, "utf8")
+    const selfExport = 'export * as Worktree from "./worktree.js";\n'
+    expect(independentSource.startsWith(selfExport)).toBe(true)
+    independentSource = independentSource.slice(selfExport.length)
+    expect(independentSource).toContain('from "effect";')
+    independentSource = independentSource.replace(
+      'from "effect";',
+      `from ${JSON.stringify(import.meta.resolve("effect"))};`,
+    )
+    for (const dependency of ["event.js", "schema.js", "project.js"]) {
+      const importPath = `from "./${dependency}";`
+      expect(independentSource).toContain(importPath)
+      independentSource = independentSource.replace(
+        importPath,
+        `from ${JSON.stringify(pathToFileURL(join(schemaDirectory, dependency)).href)};`,
+      )
+    }
+    const implementationPath = join(independentDirectory, "worktree-copy-implementation.mjs")
+    const modulePath = join(independentDirectory, "worktree-copy.mjs")
+    writeFileSync(
+      implementationPath,
+      `${independentSource}\nexport class DirectoryUnavailableError extends Schema.TaggedError()("Worktree.DirectoryUnavailableError", { directory: AbsolutePath }) {}\n`,
+    )
+    writeFileSync(
+      modulePath,
+      'export * as Worktree from "./worktree-copy-implementation.mjs";\nexport { DirectoryUnavailableError } from "./worktree-copy-implementation.mjs";\n',
+    )
+    const independentSchema = await import(pathToFileURL(modulePath).href)
+    const operationFailure = new independentSchema.Worktree.OperationError({
+      message: "Independent strategy failure",
+      forceRequired: true,
+    })
+    expect(operationFailure).not.toBeInstanceOf(Worktree.OperationError)
+    operationFailure.name = "Untrusted constructor name"
+
+    const directoryFailure = new independentSchema.DirectoryUnavailableError({
+      directory: "/removed-source",
+    })
+    directoryFailure.name = "Untrusted constructor name"
+    expect(directoryFailure).not.toBeInstanceOf(independentSchema.Worktree.OperationError)
+    expect(nativeWorktreeFailureEvidence(operationFailure)).toEqual({
+      schema: "lazers-native-worktree-failure/v2",
+      api: "worktree.create",
+      nativeTag: "Worktree.OperationError",
+      message: "Independent strategy failure",
+      forceRequired: true,
+    })
+    expect(nativeWorktreeFailureEvidence(directoryFailure)).toEqual({
+      schema: "lazers-native-worktree-failure/v2",
+      api: "worktree.create",
+      nativeTag: "Worktree.DirectoryUnavailableError",
+      directory: "/removed-source",
+    })
+
+    const runAdapter = async (typedFailure: unknown) => {
+      const host = nativeHost(
+        {
+          location: {
+            directory: "/removed-participant",
+            project: { id: "project", canonical: "/canonical-project" },
+          },
+          worktree: {
+            create: () => Effect.fail(typedFailure),
+          },
+        } as unknown as Plugin.Context,
+        { projectDirectory: "/canonical-project" } as TaskRepository,
+      )
+      try {
+        await host.worktree({ directory: "/work/attempt", base: "a".repeat(40) })
+      } catch (error) {
+        return error
+      }
+      throw new Error("Expected native worktree creation to fail")
+    }
+
+    expect(nativeWorktreeFailureEvidence(await runAdapter(operationFailure))).toEqual({
+      schema: "lazers-native-worktree-failure/v2",
+      api: "worktree.create",
+      nativeTag: "Worktree.OperationError",
+      message: "Independent strategy failure",
+      forceRequired: true,
+    })
+    expect(nativeWorktreeFailureEvidence(await runAdapter(directoryFailure))).toEqual({
+      schema: "lazers-native-worktree-failure/v2",
+      api: "worktree.create",
+      nativeTag: "Worktree.DirectoryUnavailableError",
+      directory: "/removed-source",
+    })
+  } finally {
+    rmSync(independentDirectory, { recursive: true, force: true })
+  }
 })
 
 test("child prompt uses native move and verifies location before any model work", async () => {
@@ -451,6 +667,10 @@ function nativeOutcomeFixture(options: {
   unavailable?: boolean
   archiveReadback?: boolean
   loseUpdateResponse?: boolean
+  loadedLocations?: string[]
+  retainedSessionDirectories?: string[]
+  activeSessionDirectories?: string[]
+  activeInventoryUnavailable?: boolean
   inbox?: OutcomeInboxEntry[]
   messagePage?: (cursor?: string) => {
     data: {
@@ -469,6 +689,14 @@ function nativeOutcomeFixture(options: {
   onSynthetic?: (input: unknown) => void
 }) {
   const entries = options.inbox ?? []
+  const loadedLocations = options.loadedLocations ?? []
+  const evictedLocations: string[] = []
+  const activeSessions = new Map(
+    (options.activeSessionDirectories ?? []).map((directory, index) => [
+      `ses_active_${index}`,
+      directory,
+    ]),
+  )
   let listCalls = 0
   let archived = false
   const messageQueries: { sessionID?: string; cursor?: string; order?: string; limit?: number }[] =
@@ -476,17 +704,34 @@ function nativeOutcomeFixture(options: {
   const client = {
     server: { info: async () => ({ pid: options.pid ?? 42, version: "2.2.5" }) },
     session: {
-      get: async () => ({
+      get: async (input?: { sessionID?: string }) => ({
         projectID: "project",
-        agent: "architect",
+        agent: activeSessions.has(input?.sessionID ?? "") ? "lazers-implementor" : "architect",
+        location: { directory: activeSessions.get(input?.sessionID ?? "") ?? "/project" },
         time: { ...(archived ? { archived: 1 } : {}) },
       }),
+      active: async () => {
+        if (options.activeInventoryUnavailable)
+          throw new Error("Active execution inventory unavailable")
+        return Object.fromEntries(
+          Array.from(activeSessions.keys(), (sessionID) => [sessionID, { type: "running" }]),
+        )
+      },
       synthetic: async (input: unknown) => options.onSynthetic?.(input),
       update: async (input: { sessionID: string; archived: boolean }) => {
         options.onUpdate?.(input)
         if (options.archiveReadback !== false) archived = input.archived
         if (options.loseUpdateResponse) throw new Error("update response lost")
       },
+      list: async (input?: { directory?: string; cursor?: string }) => ({
+        data: [
+          ...(options.retainedSessionDirectories ?? []),
+          ...(options.activeSessionDirectories ?? []),
+        ]
+          .filter((directory) => !input?.directory || directory === input.directory)
+          .map((directory, index) => ({ id: `listed-${index}`, location: { directory } })),
+        cursor: {},
+      }),
       inbox: {
         list: async () => {
           listCalls++
@@ -519,6 +764,18 @@ function nativeOutcomeFixture(options: {
         return options.messagePage?.(input.cursor) ?? { data: [], cursor: { next: null } }
       },
     },
+    debug: {
+      location: {
+        list: async () => loadedLocations.map((directory) => ({ directory })),
+        evict: async (input?: { location?: { directory?: string } }) => {
+          const directory = input?.location?.directory
+          if (!directory) throw new Error("Missing explicit location for eviction")
+          evictedLocations.push(directory)
+          const index = loadedLocations.indexOf(directory)
+          if (index >= 0) loadedLocations.splice(index, 1)
+        },
+      },
+    },
   } as unknown as NativeInboxClient
   const dependencies = {
     discover: async () =>
@@ -529,7 +786,7 @@ function nativeOutcomeFixture(options: {
   const host = nativeHost(
     {
       app: { version: "2.2.5" },
-      location: { project: { id: "project" } },
+      location: { directory: "/project", project: { id: "project" } },
     } as unknown as Plugin.Context,
     { projectDirectory: "/project" } as TaskRepository,
     dependencies,
@@ -541,6 +798,8 @@ function nativeOutcomeFixture(options: {
       return listCalls
     },
     messageQueries,
+    evictedLocations,
+    client,
   }
 }
 
@@ -622,6 +881,41 @@ test("native inbox refuses a discovered service owned by another process", async
     "not this OpenCode host process",
   )
   expect(fixture.listCalls).toBe(0)
+})
+
+test("native cache retirement ignores retained history but refuses active or unknown execution", async () => {
+  const clean = nativeOutcomeFixture({
+    loadedLocations: ["/work/clean"],
+    retainedSessionDirectories: ["/work/clean"],
+  })
+  expect(
+    (await clean.client.session.list({ directory: "/work/clean", archived: false })).data,
+  ).toHaveLength(1)
+  expect(await clean.client.session.active()).toEqual({})
+  expect(await clean.host.retireWorktreeLocation!("/work/clean")).toBe("evicted")
+  expect(clean.evictedLocations).toEqual(["/work/clean"])
+
+  const active = nativeOutcomeFixture({
+    loadedLocations: ["/work/active"],
+    activeSessionDirectories: ["/work/active"],
+  })
+  expect(await active.host.retireWorktreeLocation!("/work/active")).toBe("active-session")
+  expect(active.evictedLocations).toEqual([])
+
+  const unknown = nativeOutcomeFixture({
+    loadedLocations: ["/work/unknown"],
+    activeInventoryUnavailable: true,
+  })
+  expect(await unknown.host.retireWorktreeLocation!("/work/unknown")).toBe("unavailable")
+  expect(unknown.evictedLocations).toEqual([])
+
+  const absent = nativeOutcomeFixture({ loadedLocations: [] })
+  expect(await absent.host.retireWorktreeLocation!("/work/absent")).toBe("not-loaded")
+  expect(absent.evictedLocations).toEqual([])
+
+  const current = nativeOutcomeFixture({ loadedLocations: ["/project"] })
+  expect(await current.host.retireWorktreeLocation!("/project")).toBe("current-location")
+  expect(current.evictedLocations).toEqual([])
 })
 
 test("native inbox does not start or substitute an unavailable service", async () => {
