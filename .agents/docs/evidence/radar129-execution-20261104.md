@@ -70,3 +70,38 @@ hits, terminal enrichment/concurrent calls, cancellation/reset/scope races and
 privacy/foreign decoys. Source/fixture acceptance does not complete later Radar B
 consumer/Desktop narrow/wide/Tera gates. No implementation check has run yet in
 this evidence note.
+
+## Approval-only outcome reconciled, original work preserved
+
+The native outcome reported planv10 blocked on six permissions/zero forms. At
+1793833410343 an exact project/agent/attempt/location-bound native read instead
+found **zero pending permissions, zero forms**, unarchived session and running
+native execution. No permission replies or policy changes were made.
+
+Compact inspection showed all three effects complete, no pending effects and no
+reviewable candidate/checks. Allowed audit retainedv10; then allowed reconcile
+advanced tov11. Follow-up inspection confirmed **plan and original node running,
+reason null**, same58d8d699 attempt/session/worktree and three completed effects.
+No retry, cancel, replacement, source mutation, effect replay or acceptance override
+was used. This resolves that recorded hold, not implementation acceptance or proof
+that future permission observations cannot recur.
+
+## Root's actual connected Desktop observation
+
+Root observed Project Open show129 **Running without Start**. Open trajectory
+selected original LZ129 correctly, with **one attempt / 55 tool calls / updates
+connected**. Actual native API routes were Architect
+`openai/gpt-6.1-sol#high` and implementor `openai/gpt-6-luna#max` in its correct
+owned native worktree. This is Root's live observation, not an inference from
+fixtures, usage or task state. No backend attempt end is supplied or invented;
+131 retains that boundary. Keep original129 cooking. Root candidate stays offline
+while workers are active, independently of its remaining source-review blocker.
+
+## Source findings and scope steer
+
+The user requested review of long research intervals without treating elapsed time
+as failure. [Concise task-linked guidance](radar129-source-guidance-20261104.md)
+retains observed public activity, the let-continue decision and three actual source
+findings. Selected history remains a small separate persisted-observation read in
+the original129 boundary, not complete native conversation history or a UI rewrite.
+Immutable task/acceptance and original worker are preserved.

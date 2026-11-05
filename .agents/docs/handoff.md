@@ -8,6 +8,81 @@ The [previous checkpoint](evidence/handoff-20261103-retained.md) retains histori
 
 ### Latest coordination — supersedes earlier provisional Models policy
 
+- **5d485d13 SOURCE-CLEAR for the named72→original57/58 route:** original native
+  follow-up completed; prior bounded runtime clearance preserved. First-effect
+  location reservation, binding only on hook install, invalidation before hook
+  teardown and full-plugin borrowed-A/early-failed-B regression repair the last P1.
+  Architect read frozen repair paths. [Current combined assessment](../../design/reviews/retained-source-bootstrap-independent-20261104.md).
+  Completed195tests/3102assertions/7suites/64.86s plus quality retained; no duplicate
+  tests. Source clearance is NOT native proof or activation permission. Root owns
+  eventual installation after actual quiet coordination; **no activation while129
+  or other workers active**. Preserve72uncertain effects/resources/unknown-child,
+  88integrationedge and58independentverification. All review agents now complete.
+- **Exact early-setup correction5d485d1 under native follow-up review:** Root supplied
+  clean `5d485d13d4e2a6dc7cdc57627a1cf372e66cc3b0`; original native reviewer
+  `ses_e576d7ecfffeHyxWcUXLddebyV` is checking only the early-generation correction
+  and affected native capability lifetime. Preserve prior bounded runtime clearance
+  unless a new delta concern appears. Candidate reserves location generation as
+  first effect before option/repository/ProjectIndex, binds DB only on hook install,
+  invalidates before hook removal. Completed logs inspected: old late-order fault
+  injection fails expectedfalse/receivedtrue; corrected focused3tests/30assertions
+  pass; full195tests/3102assertions/7files/64.86s/zero failures. Root reports quality
+  pass/unchanged clean. No test duplicated, Root-tree edit or activation;129continues.
+  Cached pinned RPC/core activation/identifier evidence remains available; no live
+  capability probe is needed for this source follow-up. Await reviewer notification.
+- **129 concise guidance actually delivered/read back:** original session key
+  `lazers.architect.radar129.source-findings.20261104.v2`,1243characters,
+  1793834273290; exact binding before/after. Older1854-character v1 superseded only
+  after v2 confirmation, not stacked as another policy block. Three source findings,
+  selected persisted-history interpretation and a next-natural-boundary progress
+  check-in; no new turn/interrupt/retry. Availability is not consumption/response.
+- **129 activity checked; one concise steer, then let it cook:** exact native
+  metadata1793834104797 shows running/zero permissions and continuing completed
+  reads/greps; clean tree is not failure. No private reasoning was read/exported.
+  [Task-linked source findings and scope decision](evidence/radar129-source-guidance-20261104.md)
+  replace predecessor-ID-only guidance with three real starting seams/pitfalls.
+  Selected history stays the small on-demand pageable persisted-observation read
+  needed to prove live/history separation—not native conversation/Trajectory/UI
+  expansion. No scope/acceptance rewrite, restart, replacement or proof-only turn.
+  The durable proposal is immutable; guidance is retained alongside the task and
+  delivered through its original native worker instructions, not a database rewrite.
+- **e699793 final review NOT source-clear: one early-generation P1:** both original
+  reviews complete. Runtime recovery is clear, real V2 location RPC activation and
+  own-token binding confirmed, but beginSourceGuard occurs only in registerWorker
+  atindex105 after fallible setup40–104. Borrowed guarded A survives; routed B can
+  fail in ProjectIndex before reserving, leaving A falsely current and healthy
+  sealed exclusion enabled. Root should reserve before fallible setup and cover
+  full-plugin borrowed-A/early-failed-B; no new controller/certificate. [Exact review](../../design/reviews/retained-source-guard-lifecycle-20261104.md).
+  Root's merged194tests/3081assertions/7suites/68.40s/zero failures confirmed in log;
+  quality passes reported/candidate unchanged. No duplicate tests, Root edits or
+  activation. Actual Desktop129Running/noStart, correct trajectory1attempt/55tools/
+  updatesconnected and native SolHigh/LunaMax routes retained; attempt ends stay
+  unknown pending131. Keep129 cooking; no activation while workers active.
+- **e699793 runtime boundary source-clear; deep native review still pending:**
+  Original runtime reviewer found no P1/P2 in initial/pending/sealed recovery,
+  scheduler lease order, after-await authority/enforcement, no healthy sealed
+  recurring probe, or preserved resource/prerequisite boundaries. Architect read
+  the frozen admission/recovery paths independently. Deep V2 RPC/token review and
+  Root's merged seven-suite result remain pending. No duplicate test or activation;
+  original129 continues. [Lifecycle assessment](../../design/reviews/retained-source-guard-lifecycle-20261104.md).
+- **Exact lifecycle candidatee699793 under the original two reviewers:** Root
+  supplied clean `e699793a3c04ff733c81ac7b5b0d3a456ac5b3f2` in its isolated tree,
+  reconciled with main/performance. Read-only reviewers
+  `ses_e576d7ecfffeHyxWcUXLddebyV` / `ses_e576d378affeuXd3g4C12KTaRQ` are reused
+  for prior lifecycle P1, actual V2 location RPC activation and initial/pending/
+  sealed recovery/lease/fence semantics. Root reports193tests/3077assertions before
+  main reconciliation; its merged seven-suite run is underway and Root will supply
+  the result. **Do not duplicate it**, edit Root's tree or activate while129runs.
+  Candidate source/plan read only; no native capability probe was invoked here.
+  129plan remainsv13running/reasonnull/same58d8d699 with all3effectscomplete. Root
+  independently confirmed Main SolHigh and129 OpenAI LunaMax routes. Continue
+  nonoverlapping authoring; source clearance is not permission for mid-worker rollout.
+- **129 approval-only outcome resolved via allowed audit/reconcile:** v10reported
+  six permissions; exact native observation1793833410343 found0permissions/0forms
+  and same unarchived worker running. All3effects complete/no pending effects.
+  Allowed audit then reconcile advancedplan243f8093tov11; follow-up plan/node both
+  running/reasonnull, original58d8d699/session/tree unchanged. No permission reply,
+  retry/cancel/replacement/effect replay/acceptance override. [Retained evidence](evidence/radar129-execution-20261104.md).
 - **Original129 now executing; residual performance stays in existing lanes:**
   research confirms Astra did not fulfill bounded-live129. Native isolated plan
   `243f8093-7c3c-44e3-bda5-e06870e4f680` runs the original129/attempt58d8d699,

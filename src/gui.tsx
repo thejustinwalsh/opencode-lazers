@@ -27,6 +27,7 @@ import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
+import { nativeBusyStyles } from "./native-busy-styles.ts"
 
 const formatBytes = (bytes: number) => `${(bytes / 1_000_000_000).toFixed(2)} GB`
 
@@ -76,6 +77,7 @@ export default Plugin.define({
     }
   },
   setup(ctx) {
+    ctx.add(Style, nativeBusyStyles)
     const openTaskTrajectory: TaskTrajectoryOpener = (session, request) => {
       const target = { ...request, requestID: crypto.randomUUID() }
       ctx.stores.trajectoryView(session).update((draft) => {

@@ -1,5 +1,78 @@
 # Retained source fence: lifecycle recovery boundary
 
+## Current follow-up 5d485d13 — early-generation P1 repaired
+
+Original native reviewer clears exact
+`5d485d13d4e2a6dc7cdc57627a1cf372e66cc3b0`, retaining prior bounded runtime
+clearance. Reservation is first plugin effect before options/database/ProjectIndex,
+binding attaches only with actual hook installation, and installed capability
+invalidates before hook teardown. Failed replacements cannot bless/resurrect a
+borrowed predecessor; current generation, database and project checks fail closed.
+Architect independently read the frozen paths. The full-plugin regression covers
+borrowed A and early-failed B, with the demonstrated old-order red result retained.
+
+[Combined bounded source assessment](retained-source-bootstrap-independent-20261104.md)
+records the195/3102 passing completed receipts without a rerun. Real V2 routed
+activation semantics remain confirmed. This clears the source P1, not old-child
+containment, resource uncertainty, LZ88's prerequisite or live-native qualification.
+Root retains installation ownership; no activation while workers are active.
+
+## Final e699793 assessment: NOT source-clear, one generation P1
+
+Both original reviewers completed. The runtime boundary below is clear, but native
+review found a concrete full-plugin setup hole at exact
+`e699793a3c04ff733c81ac7b5b0d3a456ac5b3f2`:
+
+- `beginSourceGuard` reserves a generation only inside `registerWorker`
+  (`roles.ts:19–22`). The plugin reaches it at `index.ts:105`, after repository/
+  ProjectIndex creation and many fallible registrations (`40–104`).
+- Pinned V2 permits a running step to retain predecessor A's borrowed graph while
+  replacement B becomes routed. If B fails during ProjectIndex construction before
+  reaching registerWorker, B never reserves a generation. A remains registry-current
+  and installed (`source-quarantine.ts:70–80`).
+- Healthy sealed recovery skips probing (`runtime.ts:2235–2240`) and exclusion can
+  still succeed (`source-quarantine.ts:120`), despite replacement routing lacking
+  the quarantine hook. Existing tests reserve B explicitly; they miss failure
+  **before** reservation. Architect independently read these frozen source paths.
+
+Root's minimal correction: reserve the location generation before preceding
+fallible plugin setup, keeping reservation separate from actual hook lifetime and
+invalidating capability before hook removal. Add the full-plugin borrowed-A /
+early-failed-B regression: sealed exclusion must remain false. No new controller,
+certificate, old-child containment claim or resource-release mechanism is required.
+Root owns this fix; no edits or activation were performed in its tree.
+
+Native review confirms the real V2 client forwards location, server middleware
+demand-loads it and RPC awaits plugin activation. The callback attests its own
+registration (`source-fence-rpc.ts:34–43`); native705–727 validates process/project/
+location/database/token. Reachable initial/pending/sealed recovery and post-
+reservation disposal/supersession protections are improvements, not a cure for
+the earlier setup boundary above.
+
+Root's exact merged run completed **194 tests / 3,081 assertions across seven
+suites, 68.40s**, zero failures; log
+`/private/tmp/lazers-bootstrap-lifecycle-merged-20261104.log` inspected for totals.
+Root reports formatter/lint/types/diff pass and unchanged clean candidate. No
+duplicate run occurred. These legitimate passes do not cover the new counterexample.
+
+## Lifecycle candidate e699793: runtime review complete
+
+The original runtime reviewer clears the bounded runtime boundary of exact clean
+`e699793a3c04ff733c81ac7b5b0d3a456ac5b3f2`, finding no P1/P2 blocker. Initial
+admission activates the guard; pending/sealed recovery restores it after scheduler
+lease acquisition, revalidating request/assignment and installed enforcement after
+awaits. Healthy sealed rows skip recurring native probes. Sealed restoration does
+not replay archival; failed observations retain old holds. The original three
+boundary repairs remain present. Architect independently read the frozen admission
+and recovery paths at `runtime.ts:530–575,2222–2346`.
+
+Deep native review is now complete with the P1 above; this runtime-only clearance
+is retained without promotion to overall clearance. It is not native qualification,
+resource settlement, or authority to activate while original LZ129 runs. Root
+retains installation ownership.
+
+## Earlier lifecycle assessment and proposal
+
 Read-only follow-up to the independent cb6d447 review. Root owns implementation;
 no edits to its tree, native calls, activation or resource release were performed.
 Corrected clean candidate `79ceb78c063b49381c5a61c56029c3c2b6758295` is now under

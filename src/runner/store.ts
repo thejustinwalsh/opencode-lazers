@@ -2472,6 +2472,23 @@ export class RunnerStore {
         .all(planID),
     )
   }
+  /** Current reservations in the same project/priority window used by plans(). */
+  activeProjectAttempts(): AttemptRow[] {
+    return this.atomic((db) =>
+      db
+        .query<AttemptRow, [string]>(
+          `WITH plans AS MATERIALIZED (
+           SELECT id,rowid AS sequence,COALESCE(json_extract(body,'$.priority'),0) AS priority
+           FROM runner_plans WHERE project_directory=?
+           ORDER BY priority DESC,rowid LIMIT 1000
+         )
+         SELECT a.* FROM runner_attempts a CROSS JOIN plans p ON a.plan_id=p.id
+         WHERE a.state IN ('preparing','running','verifying')
+         ORDER BY p.priority DESC,p.sequence,a.started_at,a.number`,
+        )
+        .all(this.repository.projectDirectory),
+    )
+  }
   progressFacts(attemptIDs: readonly string[], limit = 10_001): ProgressRow[] {
     if (!attemptIDs.length) return []
     const bounded = Math.max(1, Math.min(limit, 10_001))
