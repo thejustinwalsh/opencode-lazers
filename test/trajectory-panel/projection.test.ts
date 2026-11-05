@@ -14,6 +14,7 @@ import type {
   ProjectedSnapshot,
   RecordedAttempt,
   RecordedCheck,
+  TrajectoryReport,
 } from "../../src/trajectory-panel/projection.ts"
 
 const taskA = "11111111-1111-4111-8111-111111111111"
@@ -132,6 +133,101 @@ test("attempt timeline shares first-reservation origin and leaves recorded end u
     },
   ])
   expect(timeline.attempts[0]?.attempt.endedAt).toBeNull()
+})
+
+test("target timeline renders from the scoped report when no broad snapshot exists", () => {
+  const report = {
+    effort: { firstAttemptAt: 1_000 },
+    plans: [],
+    attempts: [
+      {
+        id: "target-attempt",
+        planID: "target-plan",
+        number: 1,
+        state: "failed",
+        startedAt: 1_000,
+        intervals: {
+          attempt: {
+            startedAt: 1_000,
+            endedAt: null,
+            basis: "runner reservation start; attempt end unavailable",
+          },
+          modelActivity: {
+            startedAt: 1_100,
+            endedAt: 2_000,
+            basis: "recorded report busy/idle endpoints",
+          },
+        },
+        checks: [
+          {
+            id: "target-check",
+            scope: "attempt",
+            attemptID: "target-attempt",
+            state: "completed",
+            result: "failed",
+            startedAt: 1_100,
+            endedAt: 1_500,
+            timingBasis: "scoped report check interval",
+          },
+        ],
+      },
+    ],
+  } as unknown as TrajectoryReport
+
+  const timeline = buildTimeline(undefined, taskA, report)
+  expect(timeline.origin).toBe(1_000)
+  expect(timeline.attempts).toHaveLength(1)
+  expect(timeline.attempts[0]?.attempt.id).toBe("target-attempt")
+  expect(timeline.attempts[0]?.attempt.planID).toBe("target-plan")
+  expect(timeline.attempts[0]?.segments[0]).toMatchObject({ visible: true, pointOnly: false })
+  expect(timeline.attempts[0]?.segments[0]?.width).toBeGreaterThan(0)
+  expect(timeline.attempts[0]?.segments[0]?.basis).toBe(
+    "Report model-activity interval: recorded report busy/idle endpoints",
+  )
+  expect(timeline.checks).toHaveLength(1)
+  expect(timeline.checks[0]).toMatchObject({
+    checkID: "target-check",
+    attemptID: "target-attempt",
+    visible: true,
+    pointOnly: false,
+  })
+  expect(timeline.checks[0]?.width).toBeGreaterThan(0)
+
+  const reportWithActivity = (startedAt: number | null, endedAt: number | null) =>
+    ({
+      ...report,
+      attempts: report.attempts.map((attempt) => ({
+        ...attempt,
+        intervals: {
+          ...attempt.intervals,
+          modelActivity: {
+            startedAt,
+            endedAt,
+            basis: "recorded report busy/idle endpoints",
+          },
+        },
+      })),
+    }) as TrajectoryReport
+  const missingStart = buildTimeline(undefined, taskA, reportWithActivity(null, 1_500))
+  expect(missingStart.attempts[0]?.segments[0]).toMatchObject({
+    visible: true,
+    pointOnly: true,
+    basis: "Report model-activity interval: recorded report busy/idle endpoints",
+  })
+  expect(missingStart.attempts[0]?.segments[0]?.left).toBeGreaterThan(0)
+  const missingEnd = buildTimeline(undefined, taskA, reportWithActivity(1_200, null))
+  expect(missingEnd.attempts[0]?.segments[0]).toMatchObject({
+    visible: true,
+    pointOnly: true,
+    basis: "Report model-activity interval: recorded report busy/idle endpoints",
+  })
+  expect(missingEnd.attempts[0]?.segments[0]?.left).toBeGreaterThan(0)
+  const bothUnknown = buildTimeline(undefined, taskA, reportWithActivity(null, null))
+  expect(bothUnknown.attempts[0]?.segments[0]).toMatchObject({
+    visible: true,
+    pointOnly: true,
+    basis: "Report attempt interval: runner reservation start; attempt end unavailable",
+  })
 })
 
 test("plan and attempt checks project only recorded intervals and preserve all endpoint states", () => {

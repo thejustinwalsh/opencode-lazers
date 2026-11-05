@@ -334,7 +334,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   const timelineInput = createMemo(
     () => {
       const value = currentData()
-      return value?.snapshot && value.taskID
+      return value?.taskID && (value.snapshot || value.report)
         ? { snapshot: value.snapshot, taskID: value.taskID, report: value.report }
         : undefined
     },
