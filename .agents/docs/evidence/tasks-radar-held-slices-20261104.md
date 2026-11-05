@@ -1,26 +1,23 @@
 # Held Tasks/Radar increments
 
-Authoring proposals only: **not submitted tasks, admitted plans or implementation
-assignments**. Preserve current native recovery, Models, timing and Astra performance
-ownership. LZ129 remains the existing submitted Radar live-read task; do not clone
-it. Finish source coordination before final verification/submission of overlapping
-work. Do not launch local authoring inference into an announced profiling capture
-without Root/Astra coordination.
+Authoring proposals, not submitted tasks. Reconcile them with current delivered
+interfaces before writing small implementation tasks; the detailed source notes
+below are research from November 4, not current ownership or dispatch holds.
 
-Before final task submission, reconcile these drafts and existing LZ129 against
-Root's installed bootstrap and Astra's actual source handoff. Reuse already-delivered
-outcomes rather than assigning a second implementation of a fulfilled boundary.
+As of November 5, Astra's performance pass is integrated and its clean tree has
+been removed. Root's bootstrap is installed; no extra Root release or global hold
+remains. LZ132/137 are complete. Original LZ129 is accepted but unmerged pending
+three corrections in `design/reviews/task129-final-review-20261105.md`; reuse it.
+LZ133 is actively repairing journal pagination in its original isolated worktree.
+Coordinate actual overlapping reservations; keep canonical source/activation
+quiet while that worker runs.
 
-Current coordination: Astra's first repairs are integrated at8aed4ea; the original
-Astra agent now owns the remaining measured runner Git/prerequisite/session/attempt
-performance repair in a native isolated tree. Reserve those seams. These four drafts
-remain unsubmitted;129 and already-started durable-advice132 continue. The next
-natural global quiet boundary is reserved for Root's first bootstrap installation/
-control qualification; no further long-running Architect dispatch before it.
-
-Evidence: Repomix`6c782a4a-bf24-40bc-8ff1-4a7a7cab3083`, as-of1793824414267.
-Read-only Tasks researcher verified the ten inspected production files still match
-that snapshot. No behavior tests or runtime actions were performed for these drafts.
+Native Tasks state filters now work. Completed includes accepted work with open
+combined gates, and historical trajectory navigation fails above the project
+history ceiling. Current findings and grounded repair seams are in
+`design/reviews/tasks-trajectory-native-read-failure-20261105.md`. Preserve exact
+selection and show read errors distinctly from empty data. Do not repeat already
+delivered filters or treat old source line numbers as implementation mandates.
 
 ## Tasks A — runtime-owned ordering and eligibility
 
