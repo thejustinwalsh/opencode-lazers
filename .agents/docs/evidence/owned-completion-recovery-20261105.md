@@ -136,3 +136,32 @@ and coordinated activation, use supported reconciliation and ordinary runtime
 verification. Do not fabricate idle evidence, re-prompt for a certificate or repeat
 unchanged manual preflight. Actual133/135 reconciliation and Root-owned native
 qualification remain outstanding.
+
+### Registered native review-input qualification
+
+Root integrated reviewed136 as canonical `58485ba` after the host fix `85f942c`.
+Root reported post-merge check/lint and56 native/input/idle/schema tests passing.
+The reload request timed out, but subsequent Root diagnostics showed the same
+PID95968, initialized module `d03778a8-cd4b-4e3f-8921-cfed5b9e544b`, all six
+inference flags true, and136's compacted idle hold cleared. No reload was repeated.
+
+The exposed registered `lz-plan-command` schema includes `reviewInputID`. Using
+that control—not a native prompt—this Architect reconciled original133 at
+planversion5→6 with its actual review message
+`msg_c9ffde5810784b15b6b62006616426e4`. The response confirmed
+`relationshipRecorded: true`. Subsequent runtime inspection atversion8 showed
+the original attempt verifying, `verify:journal` and `verify:quality` completed
+with exit0, no timeouts and unchanged artifacts. It is held on
+`native-journal:human`; alias admission and passing checks are not acceptance of
+the journal's still-required registered native observation.
+
+Only after those133 checks completed, original135 was reconciled atversion7→8
+with actual message `msg_118166ff437e4ce6b18e68161896467b`; its response also
+confirmed `relationshipRecorded: true`. Initial inspection atversion9 showed the
+original attempt verifying and `verify:recovery` intended. Its check result is
+not yet evidence here.136's human gate remains held until real135 verification
+finishes and the qualification results can be recorded accurately.
+
+Both commands retained the original task/attempt/session/worktree and assignment;
+no replacement, certificate/review prompt, historical-owner wake, ownership
+transfer or reload was requested. No acceptance follows merely from delivery.
