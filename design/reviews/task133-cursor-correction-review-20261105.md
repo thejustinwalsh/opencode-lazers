@@ -64,3 +64,26 @@ observe scanner advancement; the separate Root probe above did. These are
 complementary observed scopes, not a claim of scanner movement within that fast
 registered call. Root's direct row comparisons establish unchanged dispositions
 and notices for the supplemental probe. Hashes are not acceptance evidence.
+
+## Final native outcome
+
+The earlier pending gate is now closed. Architect repeated registered traversal
+and directly compared 806 input rows and 23 notice rows before/after: zero changed
+rows, without hashes or bodies. Its actual qualification is recorded in
+`.agents/docs/evidence/task133-native-qualified-20261105.md`.
+
+Independent DB read after the native controls found plan
+`5a8a96ed-839a-41d7-9e97-ba7845174fd3` integrated/version20, reason null, exact
+artifact `ac4eb1a02905c29ebf7c8ef573e0984a28f05ee0`. Combined
+`graph-verify:journal-integration` and `worktree-remove` effects are completed.
+The original attempt directory is absent on disk; attempt/session history remains.
+This closes LZ133, not the rest of the roadmap or other historical live gates.
+
+The scheduler also started an independent actual Luna Max implementer
+`ses_8a19b036a82f42599a1d978220fb871a`, attempt
+`50345fa1-fccf-4cb7-9e85-e459ec1f85d9`, task
+`e52de935-9519-4167-a7b6-e2390a7280d7` in plan
+`2e5b7147-426f-45b6-934f-6da2b07205e7`, for failed native startup-worktree recovery.
+Route and isolated directory were independently confirmed at `1793873617762`.
+It was actively reading source at `1793873693452`; implementation acceptance is
+not yet established. Canonical source edits remain quiet while it runs.
