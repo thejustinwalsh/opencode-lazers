@@ -23,13 +23,29 @@ Broad lifecycle/cache policy consolidation stays behind visible delivery.
 ## Current actors
 
 - Main Architect: ses_e568438ebffeaoFbF9nBb942XM.
-- Retained coordinator: ses_c160aaf520a445b3821428498a712e9f, successor of archived
- 29e2/c553. Do not revive those predecessors or request transfer approval.
+- Retained coordinator: ses_f0d7cf74d4fb4f429b8df46f9998e9b6, successor of archived
+ c160/29e2/c553. Native timeout renewal transferred ownership automatically; do
+ not revive those predecessors or request transfer approval.
 - Native service PID71027 after automatic crash recovery; Root did not restart it.
 - Presence helper /private/tmp/lz-native-presence-only.ts reads authoritative
  active/model/time/outcome. A timeout or changes:[] does not mean terminal.
 
 ## Integrated this pass
+
+Root performance candidate29e3b32 remains isolated in native worktree
+/private/tmp/lz-trajectory-status-performance pending Main review/integration.
+It skips unused pagination identities for full trajectory captures/status;
+ordinary cursor freshness is retained. 42 trajectory tests/292 assertions and86
+observability/panel tests/748 assertions pass, with lint/full types. Paired fixture
+measurements: median10.74ms→9.61ms, identical output. This is not a battery fix:
+actual status responses still exceed2MB and resend historical worker events.
+Progress rows can mutate under the same sequence, so an afterSeq-only delta
+would lose updates. Preserve complete history and live updates in further work.
+
+Main authored/dispatched150 for endpoint pricing evidence;151 known-usage
+values/ranges and152 inspector display are queued in order. Keep existing
+whole-model quote provenance and unavailable-price honesty. 138 and147 remain
+active Luna Max workers; recheck native presence before intervention.
 
 Root fixed a reproduced indexing crash in1bd08da. Installed oh-my-openagent5.1.60
 observes process worker events and assumes Node .on/.once, but our Repomix global
