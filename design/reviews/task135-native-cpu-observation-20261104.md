@@ -24,3 +24,12 @@ reload health is not claimed. Public client location API has get/reload only; no
 unload endpoint was found. Do not recreate fake worktrees or blindly repeat reload.
 Capture this lifecycle defect in existing cleanup/activation work. Remaining host
 load needs profiling; prior temporary profiler RPCs are no longer registered.
+
+## Later active-operation sample
+
+After the native timestamp source correction, a12,034ms sample at1793861008013–
+1793861020048 measured service33.24%, renderer13.88%, GPU-process11.97%. Tasks/
+Project/LZ99 was selected and Architect was active. This differs from the quiet
+Trajectory view above and does not establish a before/after change or attribute
+load to inference. All six inference settings stayed enabled; no reload or model
+unload occurred. Native performance acceptance remains open.

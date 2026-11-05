@@ -42,8 +42,12 @@ cleanup are separate facts.
   ses_2e7fd6bebd8d44699e381e1728ee4655 finished at1793859776335, OpenAI Luna Max.
   Source29e291a +be50616 merged with ancestry as846e4e5. Root resolved conflicts,
   same-tree/baseline override and performance-shortcut interactions. Final256
-  tests/3932 assertions, lint/types pass. Original129/132 real continuation was
-  requested through Desktop. Source inclusion does not accept99: its native idle
+  tests/3932 assertions, lint/types pass. Rootc711f89 then corrected native
+  heartbeats omitting turn details;46 related tests/574 assertions pass. Original
+  129/132 resumed at1793861931679/1661 through supported controls, versions35/22,
+  same attempts/sessions/dirty trees and OpenAI Luna Max.132 is patching;129 resumed
+  tools but hit a120s home-wide guidance search, and Architect received the exact
+  canonical review-note path. Source inclusion does not accept99: its native idle
   mismatch remains. The runtime still reserves tools.ts, so133 remains preparing.
   See design/reviews/task99-current-input-failure-20261105.md.
 - **133 repair has been explicitly resumed, awaiting dispatch.** Cancellation
@@ -68,8 +72,12 @@ cleanup are separate facts.
   historical-only replay remains covered by standing stop approval. Root verified
   127 tree clean at633da56, already main ancestry; its native idle hold remains.
   Fresh coordinator is investigating substantive original127 verification/recovery.
-  Current automatic successor04072d58 is reviewing real99 work, so it was not
-  stopped. It hit native subagent depth1: renewal creates nested Architects. Luna
+  Root answered its Desktop clarification: use supported ordered native session-log
+  replay with a genuine current idle hook. Prospective implementation is authorized;
+  no historical report fabrication. The current-owner implementation brief has been
+  delivered to f58f7187 without another ownership transfer.
+  Automatic successor04072d58 reviewed real99 work and subsequently renewed into
+  f58f7187. Its current work is being inspected before any historical-only stop. It hit native subagent depth1: renewal creates nested Architects. Luna
   researched parentless native creation with metadata lineage; existing134 advice
   now covers that prospective fix. No58-plan manual transfer was performed.
   Root129/132 fact check shows native failed outcomes, not interrupted;99's narrow

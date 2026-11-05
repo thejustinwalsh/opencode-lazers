@@ -69,3 +69,20 @@ resume. Changed timestamps force another read. This is timestamp-based observed
 session state, not file hashing or a new evidence gate. All46 related tests/
 574 assertions, lint/types pass. Native continuation still needs a successful
 reprobe; the prior256-test pass preceded this additional adapter correction.
+
+## Actual failed-worker continuation observed
+
+At1793861829381 both current native holds included their exact input and native
+idle timestamp, unchanged since1793861676007/6212 across later heartbeats.
+No global reload was performed. Supported resume succeeded at1793861931679 for
+129 (planversion35) and1793861931661 for132 (version22). Each DB attempt remains
+the single original attempt, session and worktree; only the journaled assigned
+input advanced. Native readback at1793861964337/4368 confirms both OpenAI Luna Max.
+
+Actual continuation inputs are129 msg_3bddb1faedae407f9df4f5032cb59826 and132
+msg_f23a6ddb3e9746529e30ee31a6f39957. Native active inventory included both at
+1793861947607 and1793862114249. LZ132 patched advice.ts and instructions files at 1793862055075. LZ129 resumed tools but spent120s searching the home directory for
+a review note absent from its old worktree; Root gave Architect the canonical
+absolute path for a same-worker steer. Delivery/consumption of that path still
+needs observation. This is real failed-outcome continuation, not proof of the
+separate host-restart interrupted path, final worker acceptance or cleanup.
