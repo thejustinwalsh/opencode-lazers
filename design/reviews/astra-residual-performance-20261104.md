@@ -26,7 +26,7 @@ Verification: new evaluator3 tests/73 assertions cover unchanged Git command seq
 
 Root's offline bootstrap also filters occupied reservations through `sourceReservationExcluded`; when both candidates are integrated, that exact filter must follow `activeProjectAttempts()` so the existing exclusion guard is retained. Root owns that integration and the source-clear bootstrap remains separately controlled.
 
-## Renderer attribution in progress
+## Renderer attribution and repair
 
 Root drove a same-PID, 12-second A/B/A observation while native workers continued. Main with Trajectory129 measured service/renderer/GPU-process35.07/29.33/27.34%; a completed Sol chat with its session-scoped panel closed measured20.61/25.26/21.85%; returning to Main measured64.95/34.14/30.56%. The changing service workload prevents a causal panel comparison. GUI process CPU remained material with the completed chat selected. Exact windows are retained in `/private/tmp/lazers-panel-cpu-windows-20261104.jsonl`; GPU-process CPU is not GPU utilization.
 
@@ -45,3 +45,37 @@ The revised focused candidate uses the public [Style registry](https://github.co
 | Native busy text animates background position continuously; an opacity-only replacement still consumes GPU-process CPU | Static readable status text alongside unchanged native busy spinners | Remove measured redundant continuous text animation while retaining activity feedback, theme colors, state transitions and native reduced-motion behavior |
 
 Static candidate verification: native formatter/linter/typechecker pass (355 linted/345 typechecked files), GUI build and process-free bundle evaluation pass. Build reports the existing Vite inlineDynamicImports deprecation and ONNX CommonJS import.meta warnings. No behavior tests were added for a single reversible CSS rule; actual native animation inventory, visual readability and process CPU checks exercise the change directly. Backend regression results above remain valid; no broad suites were repeated.
+
+## Root integration verification
+
+Root preserved the original source-clear bootstrap branch at5d485d13 and combined it
+with Astra's f07cc43/b420a98/96f147e on `feat/retained-bootstrap-performance` in the
+existing isolated bootstrap worktree. The only source conflict was the occupied
+reservation projection: it now reads `activeProjectAttempts()`, then retains the
+bootstrap's exact `sourceReservationExcluded` filter before projecting scopes.
+Current native roadmap/handoff changes were reconciled at5713490.
+
+The merged candidate passes **199 tests / 3,181 assertions / eight files /57.27s**,
+including the full source-fence/native/roles/runtime suites and the added
+reservation/proof regressions. Formatter, lint358, typecheck348 and diff checks
+pass. Its exact GUI build and process-free bundle smoke pass with the existing
+warnings above. Logs are `/private/tmp/lazers-bootstrap-performance-merged-tests-20261104.log`
+and `/private/tmp/lazers-bootstrap-performance-merged-gui-20261104.log`.
+
+Native OpenCode then hit the actual ChatGPT provider usage limit, independently
+confirmed in Desktop and the exact three session outcomes. At1793837499164–9178,
+Main and both original workers had terminal failed outcomes and native idle
+messages carrying that error; their last tools were completed. Active inventory
+at1793837484027 was empty. LZ129/132 worktrees and original attempts remain
+preserved; neither task is accepted or complete. Both plans report the retained
+idle/background-observation blockage, not a passing product result. No replacement
+worker or route change was made.
+
+Before canonical activation, a no-model/test/build/diagnostic-traffic12.094s window
+at1793837563827–1793837575921 measured the unchanged servicePID95968 at19.35%,
+renderer54076 at0.33%, and GPU-process54072 at0.25%, Main selected. All six inference
+settings read back true at1793837541024–1026; demand was false and Never unload was
+unchanged. This is the new quiet backend comparison baseline; the earlier active
+workload and native text animation results remain separately labelled. Canonical
+activation, actual source-fence qualification and post-activation backend comparison
+are still pending at this source checkpoint.
