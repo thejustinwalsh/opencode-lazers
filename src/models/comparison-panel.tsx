@@ -20,7 +20,11 @@ import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener } from "../tasks/panel.tsx"
 import type { TaskTrajectoryRequest } from "../tasks/panel.tsx"
 import { registerModelsPanel } from "./registration.ts"
-import type { ModelComparisonPanelData, ModelComparisonTransport } from "./comparison-state.ts"
+import type {
+  ModelCatalogOutput,
+  ModelComparisonPanelData,
+  ModelComparisonTransport,
+} from "./comparison-state.ts"
 import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
@@ -349,6 +353,7 @@ function ModelPanel(
     id: "",
     variant: "",
   })
+  let assignmentPickerRequest = 0
   let root: HTMLDivElement | undefined
   let topPane: HTMLDivElement | undefined
   let inspector: HTMLDivElement | undefined
@@ -425,6 +430,7 @@ function ModelPanel(
   const visible = () => (data().key === expectedKey() ? data() : undefined)
 
   onCleanup(() => {
+    assignmentPickerRequest++
     state.close()
     endDrag?.()
   })
@@ -464,6 +470,8 @@ function ModelPanel(
             { sessionID: value.session, ...(taskID ? { taskID } : {}) },
             { ...location, signal: timed(signal) },
           ),
+        catalog: (signal) =>
+          models.catalog({ sessionID: value.session }, { ...location, signal: timed(signal) }),
         configure: (update, signal) =>
           models.configure(
             { sessionID: value.session, ...update },
@@ -694,6 +702,34 @@ function ModelPanel(
   const assignmentSettings = () =>
     personas().find((persona) => persona.persona === assignmentPersona())
   const assignmentLayer = () => assignmentSettings()?.layers[assignmentScope()] ?? null
+  const catalogOptions = () =>
+    (visible()?.catalog?.options ?? []).filter((option) => option.enabled !== false)
+  const selectedCatalogModel = () =>
+    catalogOptions().find(
+      (option) =>
+        option.providerID === assignmentRoute().providerID && option.id === assignmentRoute().id,
+    )
+  const catalogOptionKey = (
+    option: Pick<ModelCatalogOutput["options"][number], "providerID" | "id">,
+  ) => JSON.stringify([option.providerID, option.id])
+  const modelSelectionCaption = () => {
+    const model = selectedCatalogModel()
+    if (model) return `${model.providerID} / ${model.id}`
+    const route = assignmentRoute()
+    return route.providerID && route.id
+      ? `Not in catalog · ${route.providerID} / ${route.id}`
+      : "Choose a model from the native catalog"
+  }
+  const modelPickerButtonLabel = () => {
+    const model = selectedCatalogModel()
+    return model
+      ? `${model.name || model.id} · ${model.providerID}`
+      : assignmentRoute().providerID && assignmentRoute().id
+        ? "Custom route"
+        : "Choose model"
+  }
+  const assignmentVariantChoices = () => selectedCatalogModel()?.variants ?? []
+  const assignmentVariantLabel = () => assignmentRoute().variant || "No variant"
   const assignmentEditorTitleID = () =>
     `lazers-models-assignment-editor-title-${encodeURIComponent(visible()?.key ?? "panel")}`
   const assignmentScopeLabel = (scope: ModelMappingTargetInput["scope"]) =>
@@ -704,14 +740,17 @@ function ModelPanel(
         : "Task override"
   const clearConfirmedAssignmentWrite = () => state.clearConfirmedAssignmentWrite()
   const selectAssignmentPersona = (persona: WorkerPersona) => {
+    assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
     setAssignmentPersona(persona)
   }
   const selectAssignmentScope = (scope: ModelMappingTargetInput["scope"]) => {
+    assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
     setAssignmentScope(scope)
   }
   const updateAssignmentRoute = (change: Partial<ReturnType<typeof assignmentRoute>>) => {
+    assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
     setAssignmentRoute((previous) => ({ ...previous, ...change }))
   }
@@ -784,6 +823,63 @@ function ModelPanel(
       variant: layer.route.variant ?? null,
     })} · revision ${layer.revision}`
   }
+  const openAssignmentModelPicker = async () => {
+    const panel = visible()
+    const persona = assignmentPersona()
+    if (
+      !panel ||
+      !persona ||
+      assignmentBlocked() ||
+      panel.catalogStatus !== "ready" ||
+      !catalogOptions().length
+    )
+      return
+
+    const scope = assignmentScope()
+    const taskID = panel.selectedTaskID
+    const panelKey = panel.key
+    const options = catalogOptions()
+    const request = ++assignmentPickerRequest
+    const selectedOption = selectedCatalogModel()
+    let chosenKey: string | undefined
+    try {
+      chosenKey = await ctx.dialogs.select({
+        title: "Choose a model",
+        placeholder: "Search model name, provider, or ID",
+        current: selectedOption ? catalogOptionKey(selectedOption) : undefined,
+        options: options.map((option) => ({
+          title: option.name || option.id,
+          value: catalogOptionKey(option),
+          group: option.providerID,
+          description: `${option.id}${option.type ? ` · ${option.type}` : ""}`,
+        })),
+      })
+    } catch {
+      return
+    }
+
+    const currentPanel = visible()
+    if (
+      chosenKey === undefined ||
+      request !== assignmentPickerRequest ||
+      assignmentBlocked() ||
+      currentPanel?.key !== panelKey ||
+      currentPanel.selectedTaskID !== taskID ||
+      assignmentPersona() !== persona ||
+      assignmentScope() !== scope
+    )
+      return
+
+    const option = options.find((candidate) => catalogOptionKey(candidate) === chosenKey)
+    if (!option) return
+    const previous = assignmentRoute()
+    const sameModel = previous.providerID === option.providerID && previous.id === option.id
+    updateAssignmentRoute({
+      providerID: option.providerID,
+      id: option.id,
+      variant: sameModel ? previous.variant : "",
+    })
+  }
   const sourceWarning = () => {
     const sources = visible()?.comparison?.sources ?? []
     if (sources.some((source) => source.refresh?.state === "failed"))
@@ -821,7 +917,10 @@ function ModelPanel(
   }
 
   const selectTab = (tab: Tab) => save({ tab })
-  const selectTask = (taskID: string) => state.selectTask(taskID)
+  const selectTask = (taskID: string) => {
+    assignmentPickerRequest++
+    state.selectTask(taskID)
+  }
   const tabKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
     event.preventDefault()
@@ -1155,35 +1254,106 @@ function ModelPanel(
                           Choose a task from the toolbar before editing a task override.
                         </p>
                       </Show>
+                      <Show when={visible()?.catalogStatus === "loading"}>
+                        <p class="lazers-models-catalog-status" role="status">
+                          <Ui.Loader size="small" /> Loading native models…
+                        </p>
+                      </Show>
+                      <Show when={visible()?.catalogStatus === "unavailable"}>
+                        <div class="lazers-models-catalog-status" role="status">
+                          <span>Model catalog unavailable. Custom routes remain available.</span>
+                          <Ui.Button
+                            size="small"
+                            variant="ghost-muted"
+                            onClick={() => void state.refreshCatalog()}
+                          >
+                            Retry catalog
+                          </Ui.Button>
+                          <details class="lazers-models-catalog-error">
+                            <summary>Catalog details</summary>
+                            <p>{visible()?.catalogError}</p>
+                          </details>
+                        </div>
+                      </Show>
+                      <Show when={visible()?.catalogStatus === "ready" && !catalogOptions().length}>
+                        <p class="lazers-models-catalog-status" role="status">
+                          No models are listed. Custom routes remain available.
+                        </p>
+                      </Show>
                       <div class="lazers-models-assignment-fields">
-                        <div class="lazers-models-assignment-field">
-                          <span>Provider ID</span>
-                          <Ui.TextInput
-                            label="Provider ID"
-                            value={assignmentRoute().providerID}
-                            onInput={(providerID) => updateAssignmentRoute({ providerID })}
-                            disabled={assignmentBlocked()}
-                          />
+                        <div class="lazers-models-assignment-choice">
+                          <span>Model</span>
+                          <Ui.Button
+                            size="small"
+                            disabled={
+                              assignmentBlocked() ||
+                              visible()?.catalogStatus !== "ready" ||
+                              !catalogOptions().length
+                            }
+                            onClick={() => void openAssignmentModelPicker()}
+                          >
+                            {modelPickerButtonLabel()}
+                          </Ui.Button>
+                          <small>{modelSelectionCaption()}</small>
                         </div>
-                        <div class="lazers-models-assignment-field">
-                          <span>Model ID</span>
-                          <Ui.TextInput
-                            label="Model ID"
-                            value={assignmentRoute().id}
-                            onInput={(id) => updateAssignmentRoute({ id })}
-                            disabled={assignmentBlocked()}
+                        <div class="lazers-models-assignment-choice">
+                          <span>Effort / variant</span>
+                          <Ui.Menu
+                            label={`Effort · ${assignmentVariantLabel()}`}
+                            trigger="button"
+                            icon="chevron-down"
+                            disabled={assignmentBlocked() || !selectedCatalogModel()}
+                            items={[
+                              {
+                                label: "No variant",
+                                onSelect: () => updateAssignmentRoute({ variant: "" }),
+                              },
+                              ...assignmentVariantChoices().map((variant) => ({
+                                label: variant,
+                                onSelect: () => updateAssignmentRoute({ variant }),
+                              })),
+                            ]}
                           />
-                        </div>
-                        <div class="lazers-models-assignment-field">
-                          <span>Variant / effort (optional)</span>
-                          <Ui.TextInput
-                            label="Variant / effort (optional)"
-                            value={assignmentRoute().variant}
-                            onInput={(variant) => updateAssignmentRoute({ variant })}
-                            disabled={assignmentBlocked()}
-                          />
+                          <small>
+                            {selectedCatalogModel()
+                              ? `For ${selectedCatalogModel()!.name || selectedCatalogModel()!.id}`
+                              : "Custom variants can be entered below"}
+                          </small>
                         </div>
                       </div>
+                      <details class="lazers-models-assignment-manual-route">
+                        <summary>Custom route (manual IDs)</summary>
+                        <p>Use exact IDs when a route is missing from the native catalog.</p>
+                        <div class="lazers-models-assignment-manual-fields">
+                          <div class="lazers-models-assignment-field">
+                            <span>Provider ID</span>
+                            <Ui.TextInput
+                              label="Provider ID"
+                              value={assignmentRoute().providerID}
+                              onInput={(providerID) => updateAssignmentRoute({ providerID })}
+                              disabled={assignmentBlocked()}
+                            />
+                          </div>
+                          <div class="lazers-models-assignment-field">
+                            <span>Model ID</span>
+                            <Ui.TextInput
+                              label="Model ID"
+                              value={assignmentRoute().id}
+                              onInput={(id) => updateAssignmentRoute({ id })}
+                              disabled={assignmentBlocked()}
+                            />
+                          </div>
+                          <div class="lazers-models-assignment-field">
+                            <span>Variant / effort (optional)</span>
+                            <Ui.TextInput
+                              label="Variant / effort (optional)"
+                              value={assignmentRoute().variant}
+                              onInput={(variant) => updateAssignmentRoute({ variant })}
+                              disabled={assignmentBlocked()}
+                            />
+                          </div>
+                        </div>
+                      </details>
                       <p class="lazers-models-assignment-current">
                         <strong>Current override:</strong>{" "}
                         {assignmentLayer()?.route

@@ -12,7 +12,7 @@ import {
 import type { ModelEvidenceOutput } from "./source-schema.ts"
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import type { ModelComparisonOutput } from "./comparison-schema.ts"
-import { ModelSettingsOutputSchema } from "./contract.ts"
+import { ModelCatalogOutputSchema, ModelSettingsOutputSchema } from "./contract.ts"
 import type { ModelSettingsOutput } from "./contract.ts"
 import { TaskEffortBasisSchema } from "./comparison-presentation.ts"
 import {
@@ -253,6 +253,29 @@ function settingsWithTaskRoute(
   })
 }
 
+function catalog() {
+  return ModelCatalogOutputSchema.parse({
+    source: "Live native OpenCode model catalog",
+    observedAt: "2026-11-05T00:00:00Z",
+    advisoryOnly: true,
+    note: "Catalog choices do not change active dispatch.",
+    configuredImplementor: null,
+    options: [
+      {
+        providerID: "openai",
+        id: "gpt-6",
+        name: "GPT-6",
+        enabled: true,
+        type: "chat",
+        contextTokens: 128_000,
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        pricesUSDPerMillionTokens: null,
+        variants: ["high", "xhigh"],
+      },
+    ],
+  })
+}
+
 const evidence = (): ModelEvidenceOutput =>
   ModelEvidenceOutputSchema.parse({
     sources: sources.map((source) => ({
@@ -393,6 +416,7 @@ function transport(overrides: Partial<ModelComparisonTransport> = {}): ModelComp
     comparison: async () => comparison(["gpt-6"]),
     refreshSources: async () => evidence(),
     settings: async (taskID) => settings(taskID),
+    catalog: async () => catalog(),
     configure: async (update) => ({
       status: "conflict",
       expectedRevision: update.expectedRevision,
@@ -1583,6 +1607,72 @@ test("selected task effort stays unknown when a valid response omits categorized
     expect(state.data.selectedTaskID).toBe(idB)
     expect(state.data.effortBasis).toBeUndefined()
     expect(state.data.effortError).toContain("Categorized task effort is unavailable")
+  } finally {
+    state.close()
+  }
+})
+
+test("native catalog loading and failure do not block exact manual mapping writes", async () => {
+  const pendingCatalog = deferred<ReturnType<typeof catalog>>()
+  const requestedRoute = { providerID: "manual-provider", id: "manual-model" }
+  let revision = 1
+  let latest = settingsWithTaskRoute(idA, revision, { providerID: "openai", id: "route-1" })
+  let catalogRequests = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      catalog: async () => {
+        catalogRequests++
+        if (catalogRequests === 1) return pendingCatalog.promise
+        throw new Error("native catalog offline")
+      },
+      settings: async () => latest,
+      configure: async (update) => {
+        revision++
+        latest = settingsWithTaskRoute(idA, revision, update.route)
+        return {
+          status: "updated",
+          mapping: {
+            schemaVersion: 1,
+            target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+            persona: update.persona,
+            revision,
+            route: update.route,
+            updatedAt: revision,
+          },
+        }
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings !== undefined)
+    expect(state.data.catalogStatus).toBe("loading")
+
+    await state.configureMapping("ui", "task", requestedRoute)
+    expect(state.data.assignmentWrite).toMatchObject({ status: "confirmed", route: requestedRoute })
+
+    pendingCatalog.reject(new Error("native catalog request timed out"))
+    await until(() => state.data.catalogStatus === "unavailable")
+    expect(state.data.catalogError).toContain("native catalog request timed out")
+    await state.refreshCatalog()
+    expect(catalogRequests).toBe(2)
+    expect(state.data.catalogStatus).toBe("unavailable")
+
+    const laterManualRoute = {
+      providerID: "provider-not-in-catalog",
+      id: "custom/model",
+      variant: "native/xhigh",
+    }
+    await state.configureMapping("ui", "task", laterManualRoute)
+    expect(state.data.assignmentWrite).toMatchObject({
+      status: "confirmed",
+      route: laterManualRoute,
+    })
+    expect(state.data.settings?.personas[0]?.layers.task?.route).toEqual(laterManualRoute)
   } finally {
     state.close()
   }

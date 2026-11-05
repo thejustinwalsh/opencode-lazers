@@ -3,7 +3,7 @@ import type { TrajectoryResponse } from "../observability/contract.ts"
 import { readTaskEffortBasis } from "./comparison-presentation.ts"
 import type { ModelEvidenceOutput } from "./source-schema.ts"
 import type { ModelComparisonOutput } from "./comparison-schema.ts"
-import { ModelMappingWriteOutputSchema } from "./contract.ts"
+import { ModelCatalogOutputSchema, ModelMappingWriteOutputSchema } from "./contract.ts"
 import type { ModelSettingsOutput } from "./contract.ts"
 import type {
   ModelMappingRecord,
@@ -31,6 +31,7 @@ export type ModelDecisionStatus =
   | "error"
 
 type ModelMappingWriteOutput = (typeof ModelMappingWriteOutputSchema)["_output"]
+export type ModelCatalogOutput = (typeof ModelCatalogOutputSchema)["_output"]
 
 export type ModelAssignmentWrite = {
   status: "saving" | "verifying" | "uncertain" | "conflict" | "confirmed" | "failed"
@@ -46,6 +47,7 @@ export type ModelComparisonTransport = {
   comparison(cursor: string | undefined, signal: AbortSignal): Promise<ModelComparisonOutput>
   refreshSources(signal: AbortSignal): Promise<ModelEvidenceOutput>
   settings(taskID: string | undefined, signal: AbortSignal): Promise<ModelSettingsOutput>
+  catalog(signal: AbortSignal): Promise<ModelCatalogOutput>
   configure(update: ModelMappingUpdate, signal: AbortSignal): Promise<ModelMappingWriteOutput>
   queryTasks(signal: AbortSignal): Promise<TaskPage>
   getTask(taskID: string, signal: AbortSignal): Promise<TaskDetail>
@@ -135,6 +137,9 @@ export type ModelComparisonPanelData = {
   task?: ModelTask
   effortBasis?: ReturnType<typeof readTaskEffortBasis>
   settings?: ModelSettingsOutput
+  catalog?: ModelCatalogOutput
+  catalogStatus: "loading" | "ready" | "unavailable"
+  catalogError: string
   assignmentWrite?: ModelAssignmentWrite
   comparisonLoading: boolean
   comparisonError: string
@@ -266,6 +271,8 @@ function blank(
     effortError: "",
     settingsLoading: true,
     settingsError: "",
+    catalogStatus: "loading",
+    catalogError: "",
     tasksLoading: true,
     tasksError: "",
     sourceRefresh: "idle",
@@ -287,6 +294,7 @@ export class ModelComparisonPanelState {
   private taskRequest = 0
   private selectedTaskLoad?: PendingSelectedTaskLoad
   private settingsRequest = 0
+  private catalogRequest = 0
   private selectionRevision = 0
   private assignmentRequest = 0
   private assignmentController = new AbortController()
@@ -344,6 +352,7 @@ export class ModelComparisonPanelState {
     void this.refreshComparison(generation)
     void this.loadTasks(generation, preferences.selectedTaskID ?? undefined)
     void this.loadSettings(generation, preferences.selectedTaskID ?? undefined, selectionRevision)
+    void this.loadCatalog(generation)
     void this.refreshSources(generation)
     void this.refreshDecisionSnapshot(generation)
   }
@@ -1186,6 +1195,31 @@ export class ModelComparisonPanelState {
     }
   }
 
+  async refreshCatalog() {
+    return this.loadCatalog(this.generation)
+  }
+
+  private async loadCatalog(generation: number) {
+    const transport = this.transport
+    if (!transport || this.controller.signal.aborted) return
+    const request = ++this.catalogRequest
+    const signal = this.controller.signal
+    this.update({ catalogStatus: "loading", catalogError: "" })
+    try {
+      const catalog = await transport.catalog(signal)
+      if (generation !== this.generation || request !== this.catalogRequest || signal.aborted)
+        return
+      this.update({ catalog, catalogStatus: "ready", catalogError: "" })
+    } catch (error) {
+      if (generation === this.generation && request === this.catalogRequest && !signal.aborted)
+        this.update({
+          catalog: undefined,
+          catalogStatus: "unavailable",
+          catalogError: errorMessage(error),
+        })
+    }
+  }
+
   async refreshSettings() {
     if (this.data.assignmentWrite?.status === "uncertain") {
       await this.recheckAssignmentWrite()
@@ -1522,6 +1556,7 @@ export class ModelComparisonPanelState {
     this.taskRequest++
     this.selectedTaskLoad = undefined
     this.settingsRequest++
+    this.catalogRequest++
     this.selectionRevision++
     this.invalidateAssignmentWrite()
     this.controller.abort()
