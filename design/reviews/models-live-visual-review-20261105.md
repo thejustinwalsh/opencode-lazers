@@ -1,5 +1,42 @@
 # Models live review
 
+## Integrated UI correction and connected review
+
+LZ-146 committed9b3f9d7 after supported `resume` continued its original attempt,
+session and worktree. Luna independently cleared the source and passed37 tests/
+905 assertions. Root merged it as92bb445 and passed171 tests/2663 assertions on
+current main, full formatting/lint/types/diff and GUI bundle evaluation. Logs:
+`/private/tmp/lz146-current-main-tests.log` and
+`/private/tmp/lz146-current-main-gui-build.log`.
+
+Desktop loaded the rebuilt bundle without a forced restart. Actual narrow and
+wide captures are retained in
+`.agents/docs/evidence/models-compare-20261105/{narrow,wide}.png`.
+Selecting Qwen updated the inspector and effort to its exact medium route;
+Root restored Kimi and the normal narrow width. All3 rows now show Unknown cost,
+and the compact no-point state replaces the empty giant chart. Readable native
+catalog names appear. This completes the false-zero display reprobe.
+
+Visual acceptance remains open: at the restored narrow width and existing56%
+split, only part of the first row fits above the divider. Multiple rows still
+do not fit. The wide view puts rows alongside the no-point state. Root queued
+the actual captures and approved image to the existing native Tera High reviewer
+through Architect. Real plotted-point geometry remains unproven because the
+production price index has no applicable pins; do not invent values to qualify it.
+
+The panel recovered from its earlier timeouts. Sequential real read-only RPC
+timings were comparison68ms/settings7ms/catalog15ms/decisionRows5264ms; the actual
+parallel overview/rows/configurations batch returned one shared snapshot in
+6779–6784ms. These are active-system observations, not a quiet performance
+qualification or proof of the timeout's cause. The fixed8-second deadline has
+little measured headroom; preserve the discrepancy for existing performance work.
+
+User-requested b0548ba removed the320-character cap from findings and advice,
+without truncation. Long prose survives record/replay/readable worker fetch;
+8 advice/RPC tests and lint/types passed. The earlier invalid-argument failures
+were oversized advice; shortened retries persisted122 revision14 and146 revision1.
+No paid inference or production advice write was needed for this regression.
+
 ## Remaining logical-task accounting gap
 
 Read-only production inspection on November5 confirmed the saved correction

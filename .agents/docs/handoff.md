@@ -7,11 +7,11 @@ cleaned up, followed by an observation-based improvement plan for review.
 ## Current actors
 
 - Main Architect `ses_e568438ebffeaoFbF9nBb942XM`: OpenAI `gpt-6.1-sol/high`.
-- Retained-plan coordinator is now `ses_29e2c628f68148d8a8fd73d38744a003`, same
-  route. Runtime renewal4810d3ae committed after30 minutes idle and archived old
-  c553 at1793910566536. Ownership of57/141 and related plans transferred
-  automatically; the running57 worker was preserved. Do not wake archived
-  `ses_c55347be4cfb42a59fd168de6728bb77` or request another transfer approval.
+- Retained-plan coordinator is `ses_c160aaf520a445b3821428498a712e9f`, same route,
+  automatic successor of29e2. Root independently checked identity and57's DB
+  owner.29e2 is archived. Do not revive archived29e2/c553 or request another
+  transfer approval. Missing-owner recovery and idle renewal already exist;
+  provider/model-aware cache policy remains deferred behind visible delivery.
 - All implementors/research use OpenAI `gpt-6-luna/max`. Native Tera High is the
   explicit visual-review exception. Desktop prompts use CUA; Root can fix
   blockers, review, merge and clean up. No production SQL mutations, custom
@@ -24,18 +24,42 @@ delta. Current-main160 tests/2511 assertions and full fmt/lint/types/diff pass;
 log `/private/tmp/lz122-pricing-current-main-tests.log`. Real authenticated rows
 at1793912948665 now return null costs for all3 routes, fixing false-zero prices.
 No applicable price pins exist yet: market availability is still unresolved.
-Desktop Refresh still times out. Panel has a fixed8000ms transport deadline;
-the successful direct probe allows20000ms. This discrepancy is a concrete lead,
-not a full causal diagnosis. Keep it in existing UI-state/performance planning.
+The panel later recovered from timeouts. Sequential real RPC timing was
+comparison68ms/settings7ms/catalog15ms/decisionRows5264ms; actual3-way decision
+reads coalesced to one snapshot in6779–6784ms. Panel deadline is8000ms; direct
+probe allows20000ms. This is an active-system observation, not a full causal or
+quiet performance diagnosis. Keep it in existing UI-state/performance planning.
 
-At1793913213869 original146 worker was inactive after interruption, with its
-retained8-file UI delta and no commit. Main is investigating supported same-worker
-continuation. Its37-test/905-assertion focused suite and GUI build passed, but
-browser tools were disconnected. Do not mistake stale approval notices or old
-Running badges for live worker activity. Do not reset/reimplement this source.
-57 remains active; its414-test runner pass preceded further changes, so fresh
-final verification remains necessary. A native sessionc160 was also active;
-its identity/purpose has not yet been checked by Root.
+146 continued through supported `resume` at planv14, preserving original attempt/
+session/tree and unknown-background state. Worker committed9b3f9d7; native Luna
+cleared source and independently passed37 tests/905 assertions. Root merged as
+92bb445. Current-main171 tests/2663 assertions, full fmt/lint/types/diff and GUI
+build pass; logs `/private/tmp/lz146-current-main-{tests,gui-build}.log`. Desktop
+loaded the bundle without forced restart. Names are readable, no-price state is
+compact, all3 costs stay Unknown. Actual Qwen row selection updated inspector/
+route/effort correctly; restored Kimi/narrow width. Remaining visual failure:
+only part of first row fits above normal narrow/default split. Root queued
+captures to existing native Tera High reviewer e52a via Main; minimal correction
+and recapture remain. Captures are durably copied to
+`.agents/docs/evidence/models-compare-20261105/{narrow,wide}.png`; original temp
+paths `/private/tmp/lz146-compact-{narrow,wide}-live-20261105.png` still exist.
+
+57 committed7b49633:17 runner files,1846 insertions/40 deletions. Final416 runner
+tests/5514 assertions, scoped typecheck/fmt/diff and lint(warnings only) passed.
+Not integrated: needs independent source review, meaningful current-main checks,
+native repair walkthrough and cleanup. Original worker now inactive. Preserve
+all retained work. Existing138 is the next isolated-candidate verification lane;
+do not duplicate it or revive129 directly. Main can coordinate with currentc160.
+
+Read-only DB at1793914445670:57 blocked/v39 (ownerc160),146 blocked/v15 and122
+blocked/v34 (ownerMain). Source integration is real; native acceptance/resource
+closure remains unproven. Do not infer background stopped or force acceptance.
+
+User explicitly rejected320-character advice cap. Root removed it inb0548ba;
+long findings/advice survive persistence/replay/worker instructions.8 tests/
+101 assertions and lint/types pass. No truncation/replacement prose cap added.
+Earlier invalid calls recovered as122 advice14 and146 advice1; Main was told
+about cap removal through Desktop. No need another mandatory-skill instruction.
 
 Root verified actual Tasks State: Completed → LZ130 → historical Trajectory,
 with8422ms and470ms check durations and exact Unix-ms endpoints. Recorded in the
