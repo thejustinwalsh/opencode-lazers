@@ -407,16 +407,26 @@ function ModelPanel(
   let inspector: HTMLDivElement | undefined
   let endDrag: (() => void) | undefined
 
-  const locationRequest = createMemo(() => {
-    if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
-    return {
-      lookup: Symbol("models-location"),
-      client: props.session.server.client,
-      server: props.session.server.id,
-      session: props.session.id,
-      directory: props.session.directory,
-    }
-  })
+  const locationRequest = createMemo(
+    () => {
+      if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
+      return {
+        lookup: Symbol("models-location"),
+        client: props.session.server.client,
+        server: props.session.server.id,
+        session: props.session.id,
+        directory: props.session.directory,
+      }
+    },
+    undefined,
+    {
+      equals: (previous, next) =>
+        previous?.client === next?.client &&
+        previous?.server === next?.server &&
+        previous?.session === next?.session &&
+        previous?.directory === next?.directory,
+    },
+  )
   const source = createLatest(locationRequest, async (value, signal) => {
     const location = await value.client.location.get(
       { location: { directory: value.directory } },

@@ -1130,6 +1130,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const sessionScope = host.createReactiveStore({
       id: "ses-models-panel",
       directory: DIRECTORY_A,
+      activity: 0,
     })
     const sessionA = {
       get id() {
@@ -1316,6 +1317,21 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(containerA.querySelector(".lazers-models-history-scope")?.closest("details")?.open).toBe(
       false,
+    )
+
+    const locationReadsBeforeActivity = calls.filter((call) => call.service === "location").length
+    const comparisonRowsBeforeActivity = containerA.querySelector(".lazers-models-decision-rows")
+    for (let activity = 1; activity <= 3; activity++) {
+      sessionScope.update((draft: { activity: number }) => {
+        draft.activity = activity
+      })
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    expect(calls.filter((call) => call.service === "location")).toHaveLength(
+      locationReadsBeforeActivity,
+    )
+    expect(containerA.querySelector(".lazers-models-decision-rows")).toBe(
+      comparisonRowsBeforeActivity,
     )
 
     const topPaneA = containerA.querySelector<HTMLElement>(".lazers-models-top")!
