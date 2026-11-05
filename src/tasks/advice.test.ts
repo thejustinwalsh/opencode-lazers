@@ -74,7 +74,15 @@ test("advice persists append-only with exact replay, correction, conflicts, prov
     (db) =>
       db.query<{ body: string }, [string]>("SELECT body FROM tasks WHERE id=?").get(task.id)!.body,
   )
-  const firstInput = input(task.id, "advice-request-1")
+  const firstInput = {
+    ...input(task.id, "advice-request-1"),
+    findings: [
+      "The original worker is interrupted, but its checkout still contains the implementation and focused tests. Reconciliation only rechecks the current hold; it does not continue an interrupted model turn. The existing resume action can continue the same attempt without discarding its workspace, usage or history, while keeping unknown background activity explicitly unknown.",
+    ],
+    implementationAdvice: [
+      "Inspect the current plan, assigned worker and pending input before resuming. Use the supported resume action for the existing attempt, retain the checkout and baseline, and let runtime recheck eligibility. After continuing, finish the outstanding typecheck, commit the tested changes and report the actual artifact and remaining verification gaps. Keep product verification separate from the fact that the continuation request was delivered.",
+    ],
+  }
   const first = recordTaskAdvice(repository, firstInput, {
     sessionID: "trusted-architect-session",
     agent: "architect",
@@ -87,11 +95,16 @@ test("advice persists append-only with exact replay, correction, conflicts, prov
     specRevision: 1,
     requestID: firstInput.requestID,
     revision: 1,
+    findings: firstInput.findings,
+    implementationAdvice: firstInput.implementationAdvice,
     provenance: {
       sessionID: "trusted-architect-session",
       agent: "architect",
     },
   })
+  const instructions = taskInstructions(new TaskReads(repository).get({ taskID: task.id }))
+  expect(instructions).toContain(firstInput.findings[0]!)
+  expect(instructions).toContain(firstInput.implementationAdvice[0]!)
   const replay = recordTaskAdvice(repository, firstInput, {
     sessionID: "replacement-architect-session",
     agent: "architect",

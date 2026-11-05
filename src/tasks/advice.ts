@@ -7,7 +7,6 @@ import { TaskSpecSchema } from "../task.ts"
 const AdviceLine = z
   .string()
   .min(1)
-  .max(320)
   .regex(/\S/, "Advice must contain non-whitespace text")
   .regex(/^[^\r\n]+$/, "Advice entries must be a single line")
 
