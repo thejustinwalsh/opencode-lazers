@@ -20,8 +20,12 @@ cleanup are separate facts.
   `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. Following authorized72 quarantine,136
   dispatched at1793849034879: attempt`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`,
   session`ses_48e456730db5448d89a03440b372dca5`, OpenAI Luna Max in its native
-  isolated worktree. Native activity/streaming confirms it is live; no candidate
-  yet at1793849245262. LZ134 waits for133 integration.
+  isolated worktree. The corrected draft passes195 runtime/schema tests and3401
+  assertions plus format/type checks at1793851022328. Independent native Luna
+  review then found an admission race and sequence-validation mismatch; Architect
+  delivered these through instruction context at1793851211935, with no new worker
+  input. Both remain unverified. No activation/integration/acceptance yet. LZ134
+  waits for133 integration. See the native-shape/review report in design/reviews.
   [Actual order and evidence](../../design/reviews/execution-order-20261104.md).
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are
@@ -82,6 +86,10 @@ cleanup are separate facts.
   historical10000-transition ceiling and displays unavailable plus misleading
   “No tasks” text. Current Session scope successfully showed LZ133's actual Luna
   usage/activity. Switching scope unexpectedly changed selected task135→133.
+  A later LZ136 probe reproduced Project failure and Session silently selecting
+  unrelated old task8fb0fd83. Explicitly selecting136 works: original Luna Max
+  session, one attempt,127 tools and tokens/context. Desktop is left there. See
+  design/reviews/trajectory-scope-selection-20261104.md.
   Old archived Main also fails observation authorization. Do not confuse these
   failures with missing durable data. Timing/backend LZ131 remains queued.
 - **Original72 source quarantine is now observed live.** Guard, archive and seal
