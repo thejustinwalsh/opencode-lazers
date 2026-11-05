@@ -1,0 +1,4691 @@
+{
+  "at": 1793916948119,
+  "settings": {
+    "policy": {
+      "schemaVersion": 1,
+      "revision": 0,
+      "sources": [
+        "openrouter",
+        "opencode"
+      ],
+      "fallback": "whole-model"
+    },
+    "access": {
+      "openrouter": "configured",
+      "opencode": "not-configured"
+    }
+  },
+  "quotes": [
+    {
+      "source": "native-catalog",
+      "snapshotID": "2595d466-0ac1-48b2-acd7-9610c5746a01",
+      "refresh": {
+        "source": "native-catalog",
+        "state": "succeeded",
+        "generation": 144,
+        "startedAt": "2026-11-05T22:06:59.385Z",
+        "completedAt": "2026-11-05T22:07:03.374Z",
+        "latestSnapshotID": "2595d466-0ac1-48b2-acd7-9610c5746a01",
+        "latestRetrievedAt": "2026-11-05T22:06:59.388Z",
+        "latestRecordCount": 472,
+        "errorCode": null,
+        "httpStatus": null
+      },
+      "records": [
+        {
+          "kind": "native-model",
+          "providerID": "opencode-go",
+          "id": "kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1048576,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "low",
+            "high",
+            "max"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 2,
+                "output": 10,
+                "cacheRead": 0.2,
+                "cacheWrite": 2
+              }
+            ]
+          }
+        },
+        {
+          "kind": "native-model",
+          "providerID": "openrouter",
+          "id": "moonshotai/kimi-k3.1-pro",
+          "name": "Kimi K3.1 Pro",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1048576,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "low",
+            "high",
+            "max"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 2,
+                "output": 10,
+                "cacheRead": 0.2,
+                "cacheWrite": 0
+              }
+            ]
+          }
+        },
+        {
+          "kind": "native-model",
+          "providerID": "opencode-go",
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1050000,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 0.1,
+                "output": 0.5,
+                "cacheRead": 0.01,
+                "cacheWrite": 0.125
+              },
+              {
+                "contextTierTokens": 272000,
+                "input": 0.2,
+                "output": 0.75,
+                "cacheRead": 0.02,
+                "cacheWrite": 0.25
+              }
+            ]
+          }
+        },
+        {
+          "kind": "native-model",
+          "providerID": "github-copilot",
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "enabled": true,
+          "type": null,
+          "contextTokens": 1000000,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 0.1,
+                "output": 0.5,
+                "cacheRead": 0.01,
+                "cacheWrite": 0
+              }
+            ]
+          }
+        },
+        {
+          "kind": "native-model",
+          "providerID": "openai",
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 400000,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "prices": null
+        },
+        {
+          "kind": "native-model",
+          "providerID": "openrouter",
+          "id": "openai/gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1050000,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 0.1,
+                "output": 0.5,
+                "cacheRead": 0.01,
+                "cacheWrite": 0.125
+              },
+              {
+                "contextTierTokens": 272000,
+                "input": 0.2,
+                "output": 0.75,
+                "cacheRead": 0.02,
+                "cacheWrite": 0.25
+              }
+            ]
+          }
+        },
+        {
+          "kind": "native-model",
+          "providerID": "opencode-go",
+          "id": "qwen3.8-flash",
+          "name": "Qwen3.8 Flash",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1000000,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "low",
+            "medium",
+            "xhigh"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 0.15,
+                "output": 0.47,
+                "cacheRead": 0.016,
+                "cacheWrite": 0.2
+              }
+            ]
+          }
+        },
+        {
+          "kind": "native-model",
+          "providerID": "openrouter",
+          "id": "qwen/qwen3.8-flash",
+          "name": "Qwen3.8 Flash",
+          "enabled": true,
+          "type": "chat",
+          "contextTokens": 1000000,
+          "capabilities": {
+            "tools": true,
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": [
+            "none",
+            "high",
+            "max"
+          ],
+          "prices": {
+            "unit": "USD per million tokens",
+            "tiers": [
+              {
+                "contextTierTokens": null,
+                "input": 0.15,
+                "output": 0.47,
+                "cacheRead": 0.016,
+                "cacheWrite": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source": "openrouter-models",
+      "snapshotID": "14d5107c-bc44-44b7-9974-9fda91d863cb",
+      "refresh": {
+        "source": "openrouter-models",
+        "state": "succeeded",
+        "generation": 144,
+        "startedAt": "2026-11-05T22:06:59.385Z",
+        "completedAt": "2026-11-05T22:07:03.465Z",
+        "latestSnapshotID": "14d5107c-bc44-44b7-9974-9fda91d863cb",
+        "latestRetrievedAt": "2026-11-05T22:07:03.329Z",
+        "latestRecordCount": 418,
+        "errorCode": null,
+        "httpStatus": null
+      },
+      "records": [
+        {
+          "kind": "openrouter-model",
+          "id": "moonshotai/kimi-k3.1-pro",
+          "canonicalSlug": "moonshotai/kimi-k3.1-pro-20261023",
+          "name": "MoonshotAI: Kimi K3.1 Pro",
+          "contextLength": 1048576,
+          "architecture": {
+            "modality": "text+image+video->text",
+            "inputModalities": [
+              "text",
+              "image",
+              "video"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "tokenizer": "Other",
+            "instructType": null
+          },
+          "supportedParameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logit_bias",
+            "logprobs",
+            "max_tokens",
+            "min_p",
+            "presence_penalty",
+            "reasoning",
+            "reasoning_effort",
+            "repetition_penalty",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ],
+          "prices": {
+            "unit": "USD per token",
+            "tiers": [
+              {
+                "minPromptTokens": null,
+                "utcStart": null,
+                "utcEnd": null,
+                "prompt": "0.000002",
+                "completion": "0.00001",
+                "inputCacheRead": "0.0000002",
+                "inputCacheWrite": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "openrouter-model",
+          "id": "openai/gpt-6-luna",
+          "canonicalSlug": "openai/gpt-6-luna-20260922",
+          "name": "OpenAI: GPT-6 Luna",
+          "contextLength": 1050000,
+          "architecture": {
+            "modality": "text+image+file->text",
+            "inputModalities": [
+              "file",
+              "image",
+              "text"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "tokenizer": "GPT",
+            "instructType": null
+          },
+          "supportedParameters": [
+            "include_reasoning",
+            "max_completion_tokens",
+            "max_tokens",
+            "reasoning",
+            "reasoning_effort",
+            "response_format",
+            "seed",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "verbosity"
+          ],
+          "prices": {
+            "unit": "USD per token",
+            "tiers": [
+              {
+                "minPromptTokens": null,
+                "utcStart": null,
+                "utcEnd": null,
+                "prompt": "0.0000001",
+                "completion": "0.0000005",
+                "inputCacheRead": "0.00000001",
+                "inputCacheWrite": "0.000000125"
+              },
+              {
+                "minPromptTokens": 272000,
+                "utcStart": null,
+                "utcEnd": null,
+                "prompt": "0.0000002",
+                "completion": "0.00000075",
+                "inputCacheRead": "0.00000002",
+                "inputCacheWrite": "0.00000025"
+              }
+            ]
+          }
+        },
+        {
+          "kind": "openrouter-model",
+          "id": "qwen/qwen3.8-flash",
+          "canonicalSlug": "qwen/qwen3.8-flash-20260826",
+          "name": "Qwen: Qwen3.8 Flash",
+          "contextLength": 1000000,
+          "architecture": {
+            "modality": "text+image+video->text",
+            "inputModalities": [
+              "text",
+              "image",
+              "video"
+            ],
+            "outputModalities": [
+              "text"
+            ],
+            "tokenizer": "Qwen",
+            "instructType": null
+          },
+          "supportedParameters": [
+            "frequency_penalty",
+            "include_reasoning",
+            "logprobs",
+            "max_tokens",
+            "presence_penalty",
+            "reasoning",
+            "response_format",
+            "seed",
+            "stop",
+            "structured_outputs",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_k",
+            "top_logprobs",
+            "top_p"
+          ],
+          "prices": {
+            "unit": "USD per token",
+            "tiers": [
+              {
+                "minPromptTokens": null,
+                "utcStart": null,
+                "utcEnd": null,
+                "prompt": "0.00000015",
+                "completion": "0.00000047",
+                "inputCacheRead": "0.000000016",
+                "inputCacheWrite": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "source": "openrouter-benchmarks",
+      "snapshotID": "e224c46b-01dc-4def-bcd6-113b818d209a",
+      "refresh": {
+        "source": "openrouter-benchmarks",
+        "state": "succeeded",
+        "generation": 144,
+        "startedAt": "2026-11-05T22:06:59.385Z",
+        "completedAt": "2026-11-05T22:07:03.491Z",
+        "latestSnapshotID": "e224c46b-01dc-4def-bcd6-113b818d209a",
+        "latestRetrievedAt": "2026-11-05T22:07:03.316Z",
+        "latestRecordCount": 152,
+        "errorCode": null,
+        "httpStatus": null
+      },
+      "records": []
+    }
+  ],
+  "exactApplicabilityInputs": [
+    {
+      "route": {
+        "providerID": "opencode-go",
+        "modelID": "kimi-k3.1-pro",
+        "variant": "high"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 11363,
+          "status": "observed"
+        },
+        "output": {
+          "value": 31426,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 15032,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10592553,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 161024,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "opencode-go",
+        "modelID": "kimi-k3.1-pro",
+        "variant": "high"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 266,
+          "status": "observed"
+        },
+        "output": {
+          "value": 730,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 119,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2816,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 33792,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "opencode-go",
+        "modelID": "qwen3.8-flash",
+        "variant": "medium"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 582,
+          "status": "observed"
+        },
+        "output": {
+          "value": 52040,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 0,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 6330547,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 276545,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 262339,
+          "status": "observed"
+        },
+        "output": {
+          "value": 26228,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 51843,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10003840,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1855798,
+          "status": "observed"
+        },
+        "output": {
+          "value": 191882,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 419386,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 100332672,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 232923,
+          "status": "observed"
+        },
+        "output": {
+          "value": 30768,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 70295,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10037376,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 205410,
+          "status": "observed"
+        },
+        "output": {
+          "value": 28475,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 44674,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10045952,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 196484,
+          "status": "observed"
+        },
+        "output": {
+          "value": 16002,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 40607,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10234880,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1714117,
+          "status": "observed"
+        },
+        "output": {
+          "value": 137273,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 360148,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 103330048,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 63628,
+          "status": "observed"
+        },
+        "output": {
+          "value": 5069,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 13270,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1035520,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 968524,
+          "status": "observed"
+        },
+        "output": {
+          "value": 31687,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 50523,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10831488,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 350990,
+          "status": "observed"
+        },
+        "output": {
+          "value": 20821,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 53813,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 10850304,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 106728,
+          "status": "observed"
+        },
+        "output": {
+          "value": 2700,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 6915,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1092736,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1218504,
+          "status": "observed"
+        },
+        "output": {
+          "value": 22336,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 57152,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 11145856,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 334832,
+          "status": "observed"
+        },
+        "output": {
+          "value": 15719,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 64523,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 11524736,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 50672,
+          "status": "observed"
+        },
+        "output": {
+          "value": 3290,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 4011,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1153536,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 341137,
+          "status": "observed"
+        },
+        "output": {
+          "value": 21669,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 52194,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 11676160,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 240471,
+          "status": "observed"
+        },
+        "output": {
+          "value": 28634,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 43249,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 12388480,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 102320,
+          "status": "observed"
+        },
+        "output": {
+          "value": 8417,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 15004,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1241088,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 215872,
+          "status": "observed"
+        },
+        "output": {
+          "value": 35054,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 54764,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 12586624,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 374120,
+          "status": "observed"
+        },
+        "output": {
+          "value": 15782,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 55589,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 12794880,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 68272,
+          "status": "observed"
+        },
+        "output": {
+          "value": 3982,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 13268,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1295488,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 94508,
+          "status": "observed"
+        },
+        "output": {
+          "value": 3373,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 11648,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1328384,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 325487,
+          "status": "observed"
+        },
+        "output": {
+          "value": 24948,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 60443,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 13490304,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 747747,
+          "status": "observed"
+        },
+        "output": {
+          "value": 32810,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 95723,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 13568256,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 717967,
+          "status": "observed"
+        },
+        "output": {
+          "value": 29724,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 61669,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 13600256,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 291259,
+          "status": "observed"
+        },
+        "output": {
+          "value": 5404,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 14695,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1383424,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 963308,
+          "status": "observed"
+        },
+        "output": {
+          "value": 29519,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 65756,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 14582144,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 296294,
+          "status": "observed"
+        },
+        "output": {
+          "value": 21693,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 50215,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 14685056,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 855618,
+          "status": "observed"
+        },
+        "output": {
+          "value": 39603,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 104372,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 14696064,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 449278,
+          "status": "observed"
+        },
+        "output": {
+          "value": 18031,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 65160,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 14778624,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 567017,
+          "status": "observed"
+        },
+        "output": {
+          "value": 41056,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 73281,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 14951168,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 241308,
+          "status": "observed"
+        },
+        "output": {
+          "value": 25732,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 51734,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 14999552,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 530914,
+          "status": "observed"
+        },
+        "output": {
+          "value": 45719,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 80080,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 15033728,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 394855,
+          "status": "observed"
+        },
+        "output": {
+          "value": 42532,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 79323,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 15413120,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 729294,
+          "status": "observed"
+        },
+        "output": {
+          "value": 35557,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 108930,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 15532672,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 405011,
+          "status": "observed"
+        },
+        "output": {
+          "value": 23218,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 52351,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 15811072,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 70973,
+          "status": "observed"
+        },
+        "output": {
+          "value": 6628,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 7454,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1598336,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 440910,
+          "status": "observed"
+        },
+        "output": {
+          "value": 28205,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 45279,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 16077568,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 115138,
+          "status": "observed"
+        },
+        "output": {
+          "value": 9416,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 18257,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1609216,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 337088,
+          "status": "observed"
+        },
+        "output": {
+          "value": 24269,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 47043,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 16494592,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 481889,
+          "status": "observed"
+        },
+        "output": {
+          "value": 22856,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 56523,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 16516096,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 335494,
+          "status": "observed"
+        },
+        "output": {
+          "value": 31021,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 86941,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 16655744,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 82508,
+          "status": "observed"
+        },
+        "output": {
+          "value": 6144,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 12292,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1667072,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 106635,
+          "status": "observed"
+        },
+        "output": {
+          "value": 8041,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 21550,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1684864,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 83326,
+          "status": "observed"
+        },
+        "output": {
+          "value": 6844,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 21281,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1735680,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 233911,
+          "status": "observed"
+        },
+        "output": {
+          "value": 35738,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 61592,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 17551488,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 477158,
+          "status": "observed"
+        },
+        "output": {
+          "value": 36998,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 111592,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 18509056,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 376405,
+          "status": "observed"
+        },
+        "output": {
+          "value": 34188,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 74369,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 18673792,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 88952,
+          "status": "observed"
+        },
+        "output": {
+          "value": 7094,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 11511,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 1879040,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 368439,
+          "status": "observed"
+        },
+        "output": {
+          "value": 34531,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 57031,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 19010560,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 553642,
+          "status": "observed"
+        },
+        "output": {
+          "value": 35706,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 93235,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 19670656,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 95296,
+          "status": "observed"
+        },
+        "output": {
+          "value": 9860,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 26131,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2022528,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 592936,
+          "status": "observed"
+        },
+        "output": {
+          "value": 57995,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 124643,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 20647040,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 108425,
+          "status": "observed"
+        },
+        "output": {
+          "value": 6918,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 14676,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2069888,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 310112,
+          "status": "observed"
+        },
+        "output": {
+          "value": 7081,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 17004,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2090880,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 525953,
+          "status": "observed"
+        },
+        "output": {
+          "value": 38286,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 85793,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 20980736,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 414916,
+          "status": "observed"
+        },
+        "output": {
+          "value": 44694,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 93422,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 21321344,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 133444,
+          "status": "observed"
+        },
+        "output": {
+          "value": 5621,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 16620,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2226816,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 441806,
+          "status": "observed"
+        },
+        "output": {
+          "value": 59496,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 85233,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 23208320,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 456512,
+          "status": "observed"
+        },
+        "output": {
+          "value": 42263,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 111171,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 23557760,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 565890,
+          "status": "observed"
+        },
+        "output": {
+          "value": 63166,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 109132,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 23828352,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 635939,
+          "status": "observed"
+        },
+        "output": {
+          "value": 47209,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 74925,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 24517504,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 103840,
+          "status": "observed"
+        },
+        "output": {
+          "value": 9043,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 22353,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2471168,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 735832,
+          "status": "observed"
+        },
+        "output": {
+          "value": 53217,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 107394,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 25002496,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 431365,
+          "status": "observed"
+        },
+        "output": {
+          "value": 58413,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 59036,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 25070208,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 107872,
+          "status": "observed"
+        },
+        "output": {
+          "value": 9668,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 28214,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2507904,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 659285,
+          "status": "observed"
+        },
+        "output": {
+          "value": 34245,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 119651,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 25609344,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 81945,
+          "status": "observed"
+        },
+        "output": {
+          "value": 4929,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 13709,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2564224,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 195041,
+          "status": "observed"
+        },
+        "output": {
+          "value": 8521,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 21222,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2567040,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 90569,
+          "status": "observed"
+        },
+        "output": {
+          "value": 8435,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 14141,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2616960,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 113677,
+          "status": "observed"
+        },
+        "output": {
+          "value": 7552,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 31982,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2635264,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 210258,
+          "status": "observed"
+        },
+        "output": {
+          "value": 14791,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 28120,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2704384,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 454015,
+          "status": "observed"
+        },
+        "output": {
+          "value": 36797,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 97693,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 27163648,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 122931,
+          "status": "observed"
+        },
+        "output": {
+          "value": 10047,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 18976,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 2801152,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 581468,
+          "status": "observed"
+        },
+        "output": {
+          "value": 75952,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 108113,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 28190208,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 570830,
+          "status": "observed"
+        },
+        "output": {
+          "value": 37901,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 86931,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 28299904,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 734496,
+          "status": "observed"
+        },
+        "output": {
+          "value": 45421,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 189284,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 28500608,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 624618,
+          "status": "observed"
+        },
+        "output": {
+          "value": 70632,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 107798,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 29443968,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 421567,
+          "status": "observed"
+        },
+        "output": {
+          "value": 37365,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 92218,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 29476608,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 126107,
+          "status": "observed"
+        },
+        "output": {
+          "value": 6946,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 20609,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3089664,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 115016,
+          "status": "observed"
+        },
+        "output": {
+          "value": 10648,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 31328,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3126784,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 127808,
+          "status": "observed"
+        },
+        "output": {
+          "value": 8473,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 23807,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3143040,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 506890,
+          "status": "observed"
+        },
+        "output": {
+          "value": 53354,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 127264,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 32379136,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 795041,
+          "status": "observed"
+        },
+        "output": {
+          "value": 58668,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 159678,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 33015552,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 160633,
+          "status": "observed"
+        },
+        "output": {
+          "value": 6903,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 22978,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3386496,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 790319,
+          "status": "observed"
+        },
+        "output": {
+          "value": 63744,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 126774,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 34440448,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 576889,
+          "status": "observed"
+        },
+        "output": {
+          "value": 63101,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 127158,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 35670400,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 112244,
+          "status": "observed"
+        },
+        "output": {
+          "value": 11508,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 24411,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3591808,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 166216,
+          "status": "observed"
+        },
+        "output": {
+          "value": 13258,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 28908,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3632128,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 152501,
+          "status": "observed"
+        },
+        "output": {
+          "value": 13004,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 30403,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3696128,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 148589,
+          "status": "observed"
+        },
+        "output": {
+          "value": 14217,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 27762,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3722240,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 193468,
+          "status": "observed"
+        },
+        "output": {
+          "value": 10155,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 21350,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3740288,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 924940,
+          "status": "observed"
+        },
+        "output": {
+          "value": 5190,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 12272,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3921152,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 155808,
+          "status": "observed"
+        },
+        "output": {
+          "value": 9503,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 30778,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 3979520,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 113432,
+          "status": "observed"
+        },
+        "output": {
+          "value": 13339,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 22751,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4077312,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 133263,
+          "status": "observed"
+        },
+        "output": {
+          "value": 11169,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 36790,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4104832,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 115927,
+          "status": "observed"
+        },
+        "output": {
+          "value": 11336,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 30686,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4171904,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 116040,
+          "status": "observed"
+        },
+        "output": {
+          "value": 9274,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 14670,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4208768,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 204202,
+          "status": "observed"
+        },
+        "output": {
+          "value": 12447,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 28638,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4307584,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 966898,
+          "status": "observed"
+        },
+        "output": {
+          "value": 80356,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 181068,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 43955840,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 86011,
+          "status": "observed"
+        },
+        "output": {
+          "value": 1447,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 2978,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 468608,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 703301,
+          "status": "observed"
+        },
+        "output": {
+          "value": 71226,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 156913,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 47435136,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 139000,
+          "status": "observed"
+        },
+        "output": {
+          "value": 14991,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 23521,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4847232,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 806033,
+          "status": "observed"
+        },
+        "output": {
+          "value": 64801,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 126974,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 48570624,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1376609,
+          "status": "observed"
+        },
+        "output": {
+          "value": 84566,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 245734,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 48929792,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 17474,
+          "status": "observed"
+        },
+        "output": {
+          "value": 214,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 1227,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 49024,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 184126,
+          "status": "observed"
+        },
+        "output": {
+          "value": 17600,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 38279,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 4984448,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 156493,
+          "status": "observed"
+        },
+        "output": {
+          "value": 22315,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 40146,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5016320,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 124368,
+          "status": "observed"
+        },
+        "output": {
+          "value": 12477,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 24641,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5149312,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1063756,
+          "status": "observed"
+        },
+        "output": {
+          "value": 82749,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 206250,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 51749632,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 118789,
+          "status": "observed"
+        },
+        "output": {
+          "value": 17227,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 30388,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5320320,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 161262,
+          "status": "observed"
+        },
+        "output": {
+          "value": 19303,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 31027,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5353088,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 932626,
+          "status": "observed"
+        },
+        "output": {
+          "value": 88362,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 124029,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 54150400,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 162340,
+          "status": "observed"
+        },
+        "output": {
+          "value": 12631,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 28688,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5456896,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 278317,
+          "status": "observed"
+        },
+        "output": {
+          "value": 18573,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 47708,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5557888,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 178444,
+          "status": "observed"
+        },
+        "output": {
+          "value": 13826,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 38907,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 5572480,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 27218,
+          "status": "observed"
+        },
+        "output": {
+          "value": 1618,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 3860,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 563584,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1064605,
+          "status": "observed"
+        },
+        "output": {
+          "value": 85904,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 159899,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 60656640,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1244722,
+          "status": "observed"
+        },
+        "output": {
+          "value": 92143,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 159267,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 60955392,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 10125,
+          "status": "observed"
+        },
+        "output": {
+          "value": 91,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 171,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 6144,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 153848,
+          "status": "observed"
+        },
+        "output": {
+          "value": 11480,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 27898,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 6168576,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1258349,
+          "status": "observed"
+        },
+        "output": {
+          "value": 102823,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 250882,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 67160832,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 180511,
+          "status": "observed"
+        },
+        "output": {
+          "value": 22196,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 48688,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 6890112,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 407518,
+          "status": "observed"
+        },
+        "output": {
+          "value": 28283,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 49424,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 7185280,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1862783,
+          "status": "observed"
+        },
+        "output": {
+          "value": 92008,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 191360,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 73397120,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 164509,
+          "status": "observed"
+        },
+        "output": {
+          "value": 17285,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 27169,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 7412096,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 175439,
+          "status": "observed"
+        },
+        "output": {
+          "value": 17513,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 33711,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 7945984,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 56452,
+          "status": "observed"
+        },
+        "output": {
+          "value": 2061,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 2202,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 820992,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 184235,
+          "status": "observed"
+        },
+        "output": {
+          "value": 27119,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 49763,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 8399872,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 1569851,
+          "status": "observed"
+        },
+        "output": {
+          "value": 111672,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 250915,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 86747904,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 84233,
+          "status": "observed"
+        },
+        "output": {
+          "value": 2421,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 5624,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 920192,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 184336,
+          "status": "observed"
+        },
+        "output": {
+          "value": 25857,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 42798,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 9288576,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 304533,
+          "status": "observed"
+        },
+        "output": {
+          "value": 21865,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 46901,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 9315072,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 202995,
+          "status": "observed"
+        },
+        "output": {
+          "value": 12564,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 52159,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 9347072,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 360124,
+          "status": "observed"
+        },
+        "output": {
+          "value": 12806,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 32179,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 9475456,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 368511,
+          "status": "observed"
+        },
+        "output": {
+          "value": 13017,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 32483,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 977664,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 79193,
+          "status": "observed"
+        },
+        "output": {
+          "value": 2170,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 5315,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 987904,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6-luna",
+        "variant": "max"
+      },
+      "usage": {
+        "uncachedInput": {
+          "value": 546771,
+          "status": "observed"
+        },
+        "output": {
+          "value": 17757,
+          "status": "observed"
+        },
+        "reasoning": {
+          "value": 42493,
+          "status": "observed"
+        },
+        "cacheRead": {
+          "value": 9880064,
+          "status": "observed"
+        },
+        "cacheWrite": {
+          "value": 0,
+          "status": "observed"
+        }
+      }
+    },
+    {
+      "route": {
+        "providerID": "openai",
+        "modelID": "gpt-6.1-sol",
+        "variant": "high"
+      }
+    }
+  ],
+  "priceIndex": {
+    "source": "unavailable",
+    "sourcePolicyRevision": 0,
+    "pins": [],
+    "freshness": "unavailable",
+    "semantics": "unknown",
+    "note": "No configured ordered source supplied an exact applicable quote; market values remain unknown. This decision snapshot pins retained facts at project observation revision 453464; freshness is evaluated at capture time and its market values use only the listed source snapshots. Page continuations remain on this identity; new reads refresh to newer data."
+  },
+  "rows": [
+    {
+      "configuration": {
+        "configurationID": "configuration:11:opencode-go|13:kimi-k3.1-pro|4:high",
+        "groupID": "route:11:opencode-go|13:kimi-k3.1-pro|4:high",
+        "label": "opencode-go/kimi-k3.1-pro · high",
+        "route": {
+          "providerID": "opencode-go",
+          "modelID": "kimi-k3.1-pro",
+          "variant": "high"
+        },
+        "currentPrice": {
+          "source": null,
+          "sourcePolicyRevision": 0,
+          "sourceRecordID": null,
+          "snapshotID": null,
+          "retrievedAt": null,
+          "semantics": "unknown",
+          "freshness": "unavailable"
+        }
+      },
+      "efficiency": {
+        "status": "partial",
+        "tokensPerAcceptedTask": 10849121,
+        "currentMarketUSDPerAcceptedTask": null,
+        "observationCount": 1,
+        "missing": [
+          "current-price"
+        ]
+      }
+    },
+    {
+      "configuration": {
+        "configurationID": "configuration:11:opencode-go|13:qwen3.8-flash|6:medium",
+        "groupID": "route:11:opencode-go|13:qwen3.8-flash|6:medium",
+        "label": "opencode-go/qwen3.8-flash · medium",
+        "route": {
+          "providerID": "opencode-go",
+          "modelID": "qwen3.8-flash",
+          "variant": "medium"
+        },
+        "currentPrice": {
+          "source": null,
+          "sourcePolicyRevision": 0,
+          "sourceRecordID": null,
+          "snapshotID": null,
+          "retrievedAt": null,
+          "semantics": "unknown",
+          "freshness": "unavailable"
+        }
+      },
+      "efficiency": {
+        "status": "partial",
+        "tokensPerAcceptedTask": 6659714,
+        "currentMarketUSDPerAcceptedTask": null,
+        "observationCount": 1,
+        "missing": [
+          "current-price"
+        ]
+      }
+    },
+    {
+      "configuration": {
+        "configurationID": "configuration:6:openai|10:gpt-6-luna|3:max",
+        "groupID": "route:6:openai|10:gpt-6-luna|3:max",
+        "label": "openai/gpt-6-luna · max",
+        "route": {
+          "providerID": "openai",
+          "modelID": "gpt-6-luna",
+          "variant": "max"
+        },
+        "currentPrice": {
+          "source": null,
+          "sourcePolicyRevision": 0,
+          "sourceRecordID": null,
+          "snapshotID": null,
+          "retrievedAt": null,
+          "semantics": "unknown",
+          "freshness": "unavailable"
+        }
+      },
+      "efficiency": {
+        "status": "partial",
+        "tokensPerAcceptedTask": 21072460.89215686,
+        "currentMarketUSDPerAcceptedTask": null,
+        "observationCount": 102,
+        "missing": [
+          "current-price",
+          "attribution"
+        ]
+      }
+    }
+  ]
+}

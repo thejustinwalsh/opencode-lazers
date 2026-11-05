@@ -1,5 +1,47 @@
 # Models live review
 
+## Latest verified state
+
+The original LZ-146 worker corrected the narrow first-fold layout in627ca7d,
+merged as83f465c. Current-main171 tests/2673 assertions, formatting, lint,
+typechecking and GUI build passed. At the normal narrow width and unchanged56%
+divider, all three complete model rows now fit. Root selected Qwen: the inspector
+updated to its exact provider/model and medium effort. Scrolling the lower
+inspector left the upper rows fixed. Final captures:
+`.agents/docs/evidence/models-compare-20261105/final-narrow.png` and
+`.agents/docs/evidence/models-compare-20261105/final-wide.png`.
+Native Tera High reviewed those captures against the approved image and cleared
+both no-point compositions. Its review is
+`.agents/docs/evidence/models-compare-20261105/final-terra-review.txt`.
+Screenshots alone do not prove the
+interactions; Root observed them directly. Real plotted-point geometry and the
+retained filter-control visibility edge remain unqualified.
+
+Root reproduced metadata-only session updates causing four Models location
+reads instead of one. Commit ff33c17 compares stable location/client identity;
+the registered GUI regression now retains the rows with one read. Commit
+fc086e3 removes the plugin's arbitrary8000ms RPC deadline and passes native
+cancellation through. Close/scope/refresh cancellation remains tested. Ten GUI
+tests/817 assertions and the bundle build passed. Actual Desktop row selection
+and inspector scrolling then worked while Architect activity continued. This
+does not establish a full latency, CPU or battery qualification.
+
+At Unix ms1793916948119, Root captured native price-source settings, current
+cached quotes and the exact inputs produced by the current read-only decision
+ledger in `.agents/docs/evidence/models-compare-20261105/price-applicability.json`.
+OpenRouter is configured and first in revision0 policy; OpenCode is not
+configured. Snapshot14d5107c-bc44-44b7-9974-9fda91d863cb includes exact Kimi,
+Qwen and Luna records. Both Kimi inputs and the Qwen input have positive observed
+cache-write usage, while their OpenRouter quotes omit that rate. All136 Luna
+inputs have observed zero cache writes, but its quote has base and272000-token
+tiers and the inputs lack a prompt-tier selector. These concretely explain the
+unavailable pins under current applicability rules. Do not substitute invented
+rates or subscription charges. Architect received the full capture to continue
+the existing pricing investigation with Luna and define usable market valuation.
+
+The sections below retain earlier observations, including failures corrected
+above; they do not describe the current visual acceptance status.
+
 ## Integrated UI correction and connected review
 
 LZ-146 committed9b3f9d7 after supported `resume` continued its original attempt,

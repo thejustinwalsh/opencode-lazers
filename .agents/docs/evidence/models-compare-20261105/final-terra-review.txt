@@ -1,0 +1,8 @@
+**The current narrow/default-split and wide no-point compositions clear the visual review** against the approved direction. I found no remaining visual blocker in these captures.
+
+- **Narrow:** All three complete model rows now appear above the divider, compared with only part of the first row in the prior capture. The no-point and unknown-price messages are concise. The selected Qwen inspector visibly shows its exact route, medium effort, and provider/effort controls.
+- **Wide:** The no-point state and readable model rows sit side by side; the selected inspector and collapsed evidence are below the split.
+- **Interaction evidence:** Root reports that selecting Qwen updated the inspector and that scrolling the inspector left the upper rows fixed. The still images show the selected state but do not independently prove those interactions or control operation.
+- **Still unqualified:** No real priced points are present, so plotted-chart geometry, tick collisions and point-label behavior remain unreviewed. The separately retained filter-control visibility edge is not resolved by these screenshots.
+
+I read the final narrow and wide captures, the prior narrow failure capture, and `design/models-panel/models-approved.png`. No new implementation or broader redesign is recommended from this no-point review.
