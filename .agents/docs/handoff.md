@@ -37,6 +37,18 @@ cleanup are separate facts.
   at1793854357004 and confirmed interrupted/idle1793854357021. Existing approval
   covers stopping further historical-only successors, not the pending transfer.
   Continue already owned work while awaiting the answer. No terminal plan is listed.
+- **LZ99 actually dispatched.** Task33cecb88-0e64-4c7f-88da-9e1dbf45a1d5,
+  plan86b248c6-fee7-4c80-beba-0de10a529e2a, attempt027e143b-d6d3-4802-b5d9-54e1902f6943,
+  session ses_2e7fd6bebd8d44699e381e1728ee4655 started1793854747685. OpenAI Luna Max,
+  native isolated tree; parent is stopped historical owner c10fbf89. Preserve this
+  real implementation: standing stop approval applies only historical-only turns,
+  not this worker or a coordinator handling its actionable completion.99 and133
+  scopes overlap src/runner/tools.ts; account for that reservation.
+- **133 repair is intentionally paused via native controls.** Cancellation settled
+  version11, preserving original attempt/session/clean tree. Deliver Luna diagnosis
+  as concise task advice, then explicitly resume that same worker; do not create a
+  duplicate or infer abandonment from the cancelled runtime state. Research is
+  ses_e55ed968fffeXvP5LZ1nxVPktq, verified OpenAI Luna Max. No58 transfers approved.
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are
   unchanged. The user subsequently approved72 transfer plus existing quarantine.

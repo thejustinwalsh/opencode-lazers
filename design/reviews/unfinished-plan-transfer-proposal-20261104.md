@@ -13,6 +13,11 @@ the existing approval. The proposed set remains exactly these58 plan IDs. At
 execution, accept only the listed source owner or a verified automatic descendant
 of this same chain; never expand the plan list.
 
+LZ99 subsequently dispatched its genuine Luna Max worker in native attempt
+027e143b-d6d3-4802-b5d9-54e1902f6943, session
+ses_2e7fd6bebd8d44699e381e1728ee4655. Its ongoing work must remain untouched by any
+approved ownership transfer.
+
 Only coordinator ownership changes. Preserve task/attempt/session identities,
 workers, worktrees, source, outcomes, all history, priorities/dependencies, unknown
 background and pending human/live acceptance gates. Do not auto-accept, interrupt,
