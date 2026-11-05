@@ -29,8 +29,12 @@ authorized. The historical owner remains stopped, natively interrupted/idle at
 - 135 corrected artifact `335cd57` atop `3a85ecd` is clean. Root's reprobe produced
   `[24,0,0]` for8 sessions and `[120,0,0]` for40; the expanded fixture covers122
   sessions and unrelated external writes. Architect reran66 tests/624 assertions
-  and format/lint/typecheck successfully. Independent Luna review is pending.
-  Native quiet CPU benefit remains unmeasured.
+  and format/lint/typecheck successfully. Independent Luna review found no
+  blocking source issue. Non-blocking follow-ups are an explicit post-warm A→B
+  route-change regression and eviction coverage past256 memos. Memos retain
+  fingerprints/revision metadata, not histories; temporary encoding/JSON peak
+  allocations and native quiet CPU benefit remain unmeasured. Avoided append
+  attempts alone are not total performance acceptance.
 - Native review steers were genuine:133
   `msg_c9ffde5810784b15b6b62006616426e4`;135
   `msg_118166ff437e4ce6b18e68161896467b`. Both were `delivery:steer`, `resume:false`.
