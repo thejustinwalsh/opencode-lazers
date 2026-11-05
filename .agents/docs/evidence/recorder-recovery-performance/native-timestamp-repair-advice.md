@@ -50,3 +50,21 @@ The original worker's assigned input remained
 `msg_b86cf7dcc9af417abb54ebf23481fe6c` before/after; no extra prompt was sent.
 Consumption and final correction are not yet verified. Existing symbol-key handling
 is a separate boundary to document/test rather than silently broaden in this fix.
+
+## Proportionality review: supported semantics, not a private validator
+
+Root's draft observation found roughly110 lines inspecting private Effect
+DateTime/timezone prototypes and caches. Prefer the existing supported timestamp
+semantics and small correct normalization; the brand-guard research is not an
+authentication requirement or justification for a private Effect validator.
+Preserve unsafe-object fallback and meaningful payload/time changes without adding
+an unrelated security gate. Acceptance remains native warm reuse plus correct
+changed/late facts, followed by Root's actual native qualification.
+
+This advice was delivered/read back through instruction context at1793858848152,
+key `lazers.review.lz135.proportionate-supported-timestamp-semantics.20261105.v1`.
+The original assigned input stayed `msg_b86cf7dcc9af417abb54ebf23481fe6c`; no
+prompt or worker mutation occurred. Independent Luna provisional draft review is
+running as `ses_e55aeb8cbffeBEO3CpWmM70vZe`; no final source clearance is claimed.
+Root observes c10 idle with an empty inbox and only original99/135 implementors
+active; preserve them and133's queued repair. No new owner input was sent.
