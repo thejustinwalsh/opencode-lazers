@@ -7,6 +7,7 @@ import type { TaskPage, TaskSummary } from "./contract.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { effectiveTaskStateFilter } from "./state-filter.ts"
+import { taskAdviceSnapshot } from "./advice.ts"
 
 const Cursor = z.strictObject({
   filter: z.string(),
@@ -143,6 +144,7 @@ export class TaskReads {
     if (!classifications) throw new Error("Task classification is missing from this repository")
     const reference = this.repository.referenceFor(task.id)
     if (!reference) throw new Error("Task reference is missing from this repository")
+    const advice = taskAdviceSnapshot(this.repository, task.id)
     const execution = this.effectiveExecution(task.id)
     if (!execution)
       return GetOutput.parse({
@@ -150,6 +152,7 @@ export class TaskReads {
         task,
         classification: classifications.current,
         classificationHistory: classifications.history,
+        advice,
         ...(query.classificationRevision !== undefined
           ? {
               classificationAtRevision:
@@ -185,6 +188,7 @@ export class TaskReads {
       task,
       classification: classifications.current,
       classificationHistory: classifications.history,
+      advice,
       ...(query.classificationRevision !== undefined
         ? {
             classificationAtRevision:

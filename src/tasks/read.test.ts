@@ -8,6 +8,7 @@ import { TaskRepository } from "../storage.ts"
 import { TaskReads } from "./read.ts"
 import { Schema } from "effect"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
+import { recordTaskAdvice } from "./advice.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -166,6 +167,82 @@ test("unplanned detail is encodable by the native JSON RPC boundary", () => {
   const detail = new TaskReads(repository).get({ taskID: task.id })
   expect(Schema.is(Schema.Json)(detail)).toBe(true)
   expect(Object.hasOwn(detail, "execution")).toBe(false)
+  expect(detail).toHaveProperty("advice", null)
+})
+
+test("task advice is explicit without legacy attachments and shared by planned and unplanned reads", () => {
+  const repository = fixture().open()
+  const unplannedTask = insert(repository, "Unplanned task advice fixture")
+  const reads = new TaskReads(repository)
+  expect(reads.get({ taskID: unplannedTask.id })).toMatchObject({
+    status: "found",
+    advice: null,
+  })
+  expect(
+    repository.atomic((db) =>
+      Boolean(
+        db
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='task_advice'",
+          )
+          .get(),
+      ),
+    ),
+  ).toBe(false)
+
+  const adviceInput = (taskID: string, requestID: string) => ({
+    taskID,
+    specRevision: 1,
+    requestID,
+    expectedRevision: 0,
+    findings: ["Use the current shared task read boundary."],
+    implementationAdvice: ["Keep attachments separate from approved task bytes."],
+    references: [],
+  })
+  const unplannedAdvice = recordTaskAdvice(
+    repository,
+    adviceInput(unplannedTask.id, "read-unplanned-advice"),
+    { sessionID: "architect-session", agent: "architect" },
+  )
+  expect(unplannedAdvice.status).toBe("recorded")
+  expect(reads.get({ taskID: unplannedTask.id })).toMatchObject({
+    status: "found",
+    advice: {
+      current: {
+        revision: 1,
+        projectDirectory: "/project",
+        taskID: unplannedTask.id,
+        specRevision: 1,
+        provenance: { sessionID: "architect-session", agent: "architect" },
+      },
+      history: [{ revision: 1 }],
+    },
+  })
+
+  const plannedTask = insert(repository, "Planned task advice fixture")
+  recordTaskAdvice(repository, adviceInput(plannedTask.id, "read-planned-advice"), {
+    sessionID: "architect-session",
+    agent: "architect",
+  })
+  const proposal = validProposal()
+  reads.runner.submit(
+    {
+      requestID: "planned-advice-fixture",
+      objective: plannedTask.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: plannedTask.id, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [plannedTask.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "owner-session",
+  )
+  expect(reads.get({ taskID: plannedTask.id })).toMatchObject({
+    status: "found",
+    execution: { taskID: plannedTask.id },
+    advice: { current: { revision: 1, taskID: plannedTask.id } },
+  })
 })
 
 test("get, query, history and exact classification revisions agree and mutations stale cursors", () => {
