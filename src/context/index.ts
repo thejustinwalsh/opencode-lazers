@@ -18,6 +18,7 @@ import {
 } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import { spawnSync } from "node:child_process"
+import { Worker } from "node:worker_threads"
 import ignore from "ignore"
 import type { Ignore } from "ignore"
 import type { TaskRepository } from "../storage.ts"
@@ -399,7 +400,7 @@ export class ProjectIndex {
     started: number,
   ): Promise<Packed> {
     return await new Promise<Packed>((resolve, reject) => {
-      const worker = new Worker(new URL("./processor.ts", import.meta.url).href, { type: "module" })
+      const worker = new Worker(new URL("./processor.ts", import.meta.url))
       const timer = setTimeout(
         () => {
           worker.terminate()
@@ -407,24 +408,25 @@ export class ProjectIndex {
         },
         Math.max(1, 30000 - (Date.now() - started)),
       )
-      worker.onmessage = (
-        event: MessageEvent<{
+      worker.on(
+        "message",
+        (data: {
           ok: boolean
           error?: string
           files: { path: string; content: string }[]
           denied: string[]
           tokens: number
-        }>,
-      ) => {
+        }) => {
+          clearTimeout(timer)
+          worker.terminate()
+          data.ok ? resolve(data) : reject(new Error(data.error))
+        },
+      )
+      worker.on("error", (error) => {
         clearTimeout(timer)
         worker.terminate()
-        event.data.ok ? resolve(event.data) : reject(new Error(event.data.error))
-      }
-      worker.onerror = (event) => {
-        clearTimeout(timer)
-        worker.terminate()
-        reject(new Error(event.message))
-      }
+        reject(error instanceof Error ? error : new Error(String(error)))
+      })
       worker.postMessage({ root: this.root, files })
     })
   }

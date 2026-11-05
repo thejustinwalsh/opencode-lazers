@@ -71,6 +71,32 @@ function fixture() {
 const architect = { sessionID: "architect-session", agent: "architect" }
 const worker = { sessionID: "worker-session", agent: "lazers-implementor" }
 
+test("index refresh supports native process worker observers", async () => {
+  const f = fixture()
+  let observed = 0
+  let observerError: unknown
+  const observe: Parameters<typeof process.on<"worker">>[1] = (thread) => {
+    observed++
+    try {
+      thread.on("message", () => {})
+      thread.once("exit", () => {})
+    } catch (error) {
+      observerError = error
+    }
+  }
+  process.on("worker", observe)
+  try {
+    await f.index.refresh(architect)
+    expect(observed).toBeGreaterThan(0)
+    expect(observerError).toBeUndefined()
+    expect(
+      (await f.index.manifest(architect)).files.some((file) => file.path === "src/feature.ts"),
+    ).toBe(true)
+  } finally {
+    process.off("worker", observe)
+  }
+})
+
 function cacheState(f: ReturnType<typeof fixture>) {
   return {
     files: readdirSync(f.cacheDirectory)

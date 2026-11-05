@@ -1,21 +1,19 @@
 import { mergeConfigs, processFiles, runSecurityCheck, setLogLevel, TokenCounter } from "repomix"
+import { parentPort } from "node:worker_threads"
 type Source = { path: string; content: string; level?: "compress" | "directory-only" }
 
-declare const self: {
-  onmessage: (event: MessageEvent<{ root: string; files: Source[] }>) => Promise<void>
-  postMessage: (value: unknown) => void
-  close: () => void
-}
+if (!parentPort) throw new Error("Project index processor requires a worker thread")
+const port = parentPort
 setLogLevel(-1)
-self.onmessage = async (event: MessageEvent<{ root: string; files: Source[] }>) => {
+port.on("message", async (data: { root: string; files: Source[] }) => {
   const counter = new TokenCounter("o200k_base")
   try {
     await counter.init()
-    const suspicious = await runSecurityCheck(event.data.files, () => {})
+    const suspicious = await runSecurityCheck(data.files, () => {})
     const denied = new Set(suspicious.map((item) => item.filePath))
-    const files = event.data.files.filter((file) => !denied.has(file.path))
+    const files = data.files.filter((file) => !denied.has(file.path))
     const config = mergeConfigs(
-      event.data.root,
+      data.root,
       {
         output: {
           compress: true,
@@ -38,7 +36,7 @@ self.onmessage = async (event: MessageEvent<{ root: string; files: Source[] }>) 
     const tokens = counter.countTokens(JSON.stringify(processed))
     if (tokens > 256000)
       throw new Error("Index exceeds 256,000 packed tokens; narrow the project selection")
-    self.postMessage({
+    port.postMessage({
       ok: true,
       files: processed,
       denied: [...denied],
@@ -47,9 +45,9 @@ self.onmessage = async (event: MessageEvent<{ root: string; files: Source[] }>) 
       encoding: "o200k_base",
     })
   } catch (error) {
-    self.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) })
+    port.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) })
   } finally {
     counter.free()
-    self.close()
+    port.close()
   }
-}
+})
