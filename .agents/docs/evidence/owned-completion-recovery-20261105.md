@@ -408,3 +408,35 @@ Root's `32f9d0c` readback-procedure correction is verified: at the quiet boundar
 land accepted132 base and record **task-only** integration first, keeping its
 combined live gate open; then merge137 and adopt the corrected descendant against
 that recorded baseline, rather than including unrelated historical main changes.
+
+## Realistic127 replay ordering regression
+
+Root supplied external repro
+`/private/tmp/lazers-native-replay-realistic-20261105/native.test.ts`, unchanged
+worker/production source. This Architect independently ran:
+
+```sh
+bun test /private/tmp/lazers-native-replay-realistic-20261105/native.test.ts -t "root realistic inbox"
+```
+
+Observed exit1,0 pass/1 fail/47 filtered out/5 assertions. Atline3436 the report
+is null rather than matching the expected report. The exact replacement sequence
+is created0→execution.started1→inbox.delivered2→log.synced2, then genuine new idle
+hook→success3. The draft clears start lineage for all background-invalidating
+events and requires last event sequence equal to the start, excluding normal
+inbox delivery within the same unfinished execution. The motivating135 start1455
+also had later inbox event1648 within that execution.
+
+Exact repro command/path and required correction were delivered/read back to
+original127 worker at1793865037703, then current owner at1793865067363, key
+`lazers.advice.lz127.realistic-inbox-replay-regression.20261105.v1`. Worker input
+stayed `msg_15c474d20da04ae6b1ed90b959112565`; owner input stayed
+`msg_2528506ddda74b6cb9eca670ed3b55b9`. No prompt/restart/source edit was sent.
+
+Required behavior: preserve the latest unfinished replayed execution through
+ordinary input delivery, pair it with a genuine fresh hook and current input/
+binding checks, and add this sequence to permanent registered regressions. Later
+terminal/new execution, replay gaps/incomplete watermarks and stale/racing input
+must still reject unsafe lineage. This authorizes no historical135 certificate.
+Consumption/correction is not yet observed. Runtime127 is running atversion54,
+304tools,8 completed effects and none pending/uncertain; original identity retained.
