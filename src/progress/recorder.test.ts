@@ -1682,6 +1682,282 @@ test("recovery fingerprint distinguishes an absent property from an own undefine
   }
 })
 
+test("fresh native UTC and zoned timestamps reuse recovery by their recorded epoch millis", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const work = observeReplayWork(recorder)
+    const timestamp = (millis: number, zone: "numeric" | "utc" | "zoned" | "offset") => {
+      if (zone === "numeric") return millis
+      if (zone === "utc") return DateTime.makeUnsafe(millis)
+      return DateTime.makeZonedUnsafe(millis, {
+        timeZone: zone === "offset" ? 0 : "America/Los_Angeles",
+      })
+    }
+    const retained = (
+      zone: "numeric" | "utc" | "zoned" | "offset",
+      values: {
+        created: number
+        toolCreated: number
+        ran: number
+        streamed?: number
+        completed?: number
+        toolCompleted?: number
+      },
+    ) => {
+      const terminal = values.completed !== undefined
+      return [
+        {
+          id: "msg-native-datetime",
+          type: "assistant",
+          time: {
+            created: timestamp(values.created, zone),
+            ...(values.streamed !== undefined
+              ? { streamed: timestamp(values.streamed, zone) }
+              : {}),
+            ...(values.completed !== undefined
+              ? { completed: timestamp(values.completed, zone) }
+              : {}),
+          },
+          content: [
+            {
+              type: "tool",
+              id: "call-native-datetime",
+              name: "Bash",
+              executed: true,
+              time: {
+                created: timestamp(values.toolCreated, zone),
+                ran: timestamp(values.ran, zone),
+                ...(values.toolCompleted !== undefined
+                  ? { completed: timestamp(values.toolCompleted, zone) }
+                  : {}),
+              },
+              state: {
+                status: terminal ? "completed" : "running",
+                input: { command: "private" },
+                ...(terminal ? { content: [{ type: "text", text: "done" }] } : {}),
+              },
+            },
+          ],
+        },
+      ]
+    }
+    const state = () =>
+      fixture.store.atomic((db) => ({
+        facts: db
+          .query<
+            {
+              kind: string
+              at: number
+              payload: string
+              call_id: string | null
+              event_ids_json: string
+            },
+            []
+          >("SELECT * FROM runner_progress ORDER BY seq")
+          .all(),
+        sequence: db.query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'").get(),
+      }))
+    const initial = { created: 10_000, toolCreated: 9_000, ran: 9_500 }
+
+    recorder.reconcileMessages(workerSession, retained("numeric", initial))
+    expect(work.appendAttempts()).toBe(3)
+    const cold = state()
+    const initialStep = cold.facts.find((row) => row.kind === "step")!
+    const initialTool = cold.facts.find((row) => row.call_id === "call-native-datetime")!
+    expect(initialStep.at).toBe(initial.created)
+    expect(JSON.parse(initialStep.payload).timing.endpoints.startedAt.at).toBe(initial.created)
+    expect(JSON.parse(initialTool.payload).timing.endpoints).toMatchObject({
+      inputAt: { at: initial.toolCreated },
+      calledAt: { at: initial.ran },
+    })
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("utc", initial))
+    expect(work.appendAttempts()).toBe(0)
+    expect(state()).toEqual(cold)
+
+    // A zone changes calendar presentation, but the recorder projects both
+    // DateTime variants to the same truncated safe epoch-millisecond instant.
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("zoned", initial))
+    expect(work.appendAttempts()).toBe(0)
+    expect(state()).toEqual(cold)
+
+    const changed = {
+      created: initial.created - 1,
+      toolCreated: initial.toolCreated - 1,
+      ran: initial.ran - 1,
+    }
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("utc", changed))
+    expect(work.appendAttempts()).toBe(3)
+    const changedState = state()
+    const changedStep = changedState.facts.find((row) => row.kind === "step")!
+    const changedTool = changedState.facts.find((row) => row.call_id === "call-native-datetime")!
+    expect(changedStep.at).toBe(initial.created)
+    expect(JSON.parse(changedStep.payload).timing.endpoints.startedAt.at).toBe(changed.created)
+    expect(JSON.parse(changedTool.payload).timing.endpoints).toMatchObject({
+      inputAt: { at: changed.toolCreated },
+      calledAt: { at: changed.ran },
+    })
+    expect(changedTool.at).toBe(initial.created)
+
+    const late = {
+      ...changed,
+      streamed: changed.created + 20,
+      completed: changed.created + 30,
+      toolCompleted: changed.ran + 10,
+    }
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("zoned", late))
+    expect(work.appendAttempts()).toBe(3)
+    const lateState = state()
+    const lateStep = lateState.facts.find((row) => row.kind === "step")!
+    const lateTool = lateState.facts.find((row) => row.call_id === "call-native-datetime")!
+    expect(JSON.parse(lateStep.payload)).toMatchObject({
+      status: "ended",
+      timing: {
+        endpoints: {
+          streamedAt: { at: late.streamed },
+          completedAt: { at: late.completed },
+        },
+      },
+    })
+    expect(JSON.parse(lateTool.payload)).toMatchObject({
+      status: "succeeded",
+      timing: { endpoints: { completedAt: { at: late.toolCompleted } } },
+    })
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("offset", late))
+    expect(work.appendAttempts()).toBe(0)
+    expect(state()).toEqual(lateState)
+
+    const nativeInputAt = late.toolCreated - 2
+    recorder.recordNativeEvent({
+      id: "evt-native-datetime-input",
+      type: "session.tool.input.started",
+      created: DateTime.makeZonedUnsafe(nativeInputAt, { timeZone: "America/New_York" }),
+      data: {
+        sessionID: workerSession,
+        assistantMessageID: "msg-native-datetime",
+        id: "call-native-datetime",
+        name: "Bash",
+      },
+    })
+    const afterNativeEvent = state()
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("utc", late))
+    expect(work.appendAttempts()).toBe(3)
+    const replayedTool = state().facts.find((row) => row.call_id === "call-native-datetime")!
+    expect(JSON.parse(replayedTool.payload).timing.endpoints.inputAt).toMatchObject({
+      at: nativeInputAt,
+      source: "native-event",
+    })
+    expect(JSON.parse(replayedTool.event_ids_json)).toContain("evt-native-datetime-input")
+    expect(state()).toEqual(afterNativeEvent)
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, retained("zoned", late))
+    expect(work.appendAttempts()).toBe(0)
+    expect(state()).toEqual(afterNativeEvent)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("unsafe timestamp lookalikes, getters, and cycles never warm recovery fingerprints", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const work = observeReplayWork(recorder)
+    let lookalikeToJSONCalls = 0
+    class TimestampLookalike {
+      epochMilliseconds = 20_000
+      toJSON() {
+        lookalikeToJSONCalls++
+        return { epochMilliseconds: this.epochMilliseconds }
+      }
+    }
+    const lookalike = new TimestampLookalike()
+    const fakeDateTimeMessage = {
+      ...retainedToolMessage("msg-fake-datetime", "call-fake-datetime", "running", true),
+      time: { created: lookalike },
+    }
+    const cyclicMessage = retainedToolMessage("msg-cyclic", "call-cyclic", "running", true) as {
+      [key: string]: unknown
+    }
+    cyclicMessage.self = cyclicMessage
+    let getterReads = 0
+    const getterMessage = retainedToolMessage("msg-getter", "call-getter", "running", true)
+    Object.defineProperty(getterMessage, "unsafe", {
+      enumerable: true,
+      get: () => {
+        getterReads++
+        return "do not read"
+      },
+    })
+
+    for (const message of [fakeDateTimeMessage, cyclicMessage, getterMessage]) {
+      recorder.reconcileMessages(workerSession, [message])
+      expect(work.appendAttempts()).toBe(3)
+      work.resetAppendAttempts()
+
+      recorder.reconcileMessages(workerSession, [message])
+      expect(work.appendAttempts()).toBe(3)
+      work.resetAppendAttempts()
+    }
+    expect(getterReads).toBe(0)
+    expect(lookalikeToJSONCalls).toBe(0)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("DateTime values in non-timestamp payloads do not normalize away meaningful route changes", () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const work = observeReplayWork(recorder)
+    const message = (modelID: string) => {
+      const model = Object.assign(DateTime.makeUnsafe(20_000), {
+        providerID: "openai",
+        id: modelID,
+      })
+      return [
+        {
+          ...retainedToolMessage(
+            "msg-non-timestamp-datetime",
+            "call-non-timestamp-datetime",
+            "running",
+            true,
+          ),
+          model,
+        },
+      ]
+    }
+
+    recorder.reconcileMessages(workerSession, message("model-a"))
+    expect(work.appendAttempts()).toBe(3)
+    const step = () =>
+      fixture.store.progressFacts([firstAttemptID]).find((row) => row.kind === "step")!
+    expect(JSON.parse(step().payload).routeEvidence).toMatchObject({
+      status: "observed",
+      route: { providerID: "openai", modelID: "model-a" },
+    })
+
+    work.resetAppendAttempts()
+    recorder.reconcileMessages(workerSession, message("model-b"))
+    expect(work.appendAttempts()).toBe(3)
+    expect(JSON.parse(step().payload).routeEvidence).toMatchObject({
+      status: "identity-unavailable",
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
 test("retained recovery reprojects after same- and other-connection native updates", () => {
   const fixture = makeFixture()
   let otherRepository: TaskRepository | undefined
