@@ -15,9 +15,13 @@ including permission-before-access and native caller identity behavior.
 Verification: **22 tests / 199 assertions pass** across core task, runner,
 WebGPU inference-tool and task-review-tool tests. Bun formatting, lint,
 typecheck and diff checks pass. No explicit `codemode:false` remains in `src`.
-The active Desktop Architect was asked to verify catalog discovery and perform
-a small read through Code Mode; native observation is pending at report creation.
-Discovery alone must not invoke local inference or mutate task state.
+The active Desktop Architect discovered the newly eligible tools through native
+Code Mode, then called `lz-inspect-plan` and parsed its string JSON result before
+projecting only identity/version/state and two task summaries. Native execution
+completed at Unix milliseconds `1793868040597`: the existing retained57/58 plan
+remained cancelled/version16, owned by its actual coordinator, with both original
+tasks and zero attempts. No inference was invoked. The temporary activation hold
+was explicitly lifted through Desktop after this successful native read.
 
 ## Visible / hidden / visible Tasks comparison
 
