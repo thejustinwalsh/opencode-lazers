@@ -2,6 +2,32 @@
 
 Research and reviewed product direction; implementation remains separate from this note. Sources checked 2026-11-01. Existing `.agents/docs/implementor-profiles.md` and its four `research/implementors/` notes are the starting evidence, not model rankings. The original brief and README prioritize completed, accepted work per dollar and hour; README explicitly requires measured usage, no invented budgets, and native host authority.
 
+## Implementation reconciliation — 2026-11-05
+
+Native Luna Max research `ses_e54c7ba62ffehWyvxhFebjVUsz` checked current source
+and task records:
+
+- Reuse the current mapping schema/store/resolver and accepted LZ67 settings
+  authority. Cancelled LZ64 is not an acceptance claim; superseded LZ68's rejected
+  editor should not be revived.
+- Add editing to the existing comparison panel's Assignments tab: compact persona
+  rows and one selected editor, using existing `Models.configure`. The current
+  transport only reads settings. Reuse LZ108's panel; no second registration.
+- Wire accepted/integrated LZ94 `resolveDispatchRoute` into real runtime dispatch
+  and retain its decision in attempt policy. Explicit plan choice wins over the
+  task/project/shared mapping, then native implementor fallback. Keep earlier
+  attempts immutable; catalog absence does not prohibit an explicit route.
+- `startTask()` currently copies `host.workerModel()` into `PlanInput.workerModel`,
+  which `run` treats as explicit. Preserve deliberate override versus inherited
+  fallback; calling the helper alone is insufficient.
+- These are two linked increments, separate from126→122's decision producer.
+  Existing missing-RPC and native narrow/wide/Tera gates remain open. Editor
+  read/write tests and actual native readback, plus real runtime dispatch tests,
+  must demonstrate behavior rather than stored settings alone.
+
+Research performed no edits, tests, model inference or worker changes. These are
+source findings for tasking, not delivered capabilities.
+
 ## Decisions and current gap
 
 - A persona is a model-independent capability/guidance overlay; task class describes the work and its acceptance surface; provider/model/native variant is a route. These are separate dimensions. Existing overlays are UI, Systems, and Small task/refactoring. A design-heavy role could be a fourth persona only if its execution guidance and acceptance differ materially from UI; retain it as a user decision, not an implied requirement. Task class should be explicit and revisable with provenance rather than inferred permanently from persona.
