@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { DateTime } from "effect"
 import { TaskRepository } from "../storage.ts"
 import { RunnerStore } from "../runner/store.ts"
@@ -1358,6 +1359,59 @@ test("native synthetic admission event completes only its owned reminder claim",
     expect(JSON.parse(row.sources_json)).toContain("native-event")
     expect(recorder.finishReminder(claim, "unknown")).toBe(false)
   } finally {
+    fixture.close()
+  }
+})
+
+test("unchanged recovery performs no SQLite write while fresh and changed facts remain durable across connections", () => {
+  const fixture = makeFixture()
+  let observer: Database | undefined
+  let reopened: TaskRepository | undefined
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const running = retainedToolMessage("msg-noop", "call-noop", "running", true)
+    recorder.reconcileMessages(workerSession, [running])
+    observer = new Database(fixture.repository.path, { readonly: true })
+    const state = () => ({
+      dataVersion: observer!.query("PRAGMA data_version").get(),
+      sequence: observer!
+        .query("SELECT seq FROM sqlite_sequence WHERE name='runner_progress'")
+        .get(),
+      facts: observer!.query("SELECT * FROM runner_progress ORDER BY seq").all(),
+      revisions: observer!
+        .query("SELECT * FROM observation_revisions ORDER BY project_directory")
+        .all(),
+    })
+    const first = state()
+    expect(first.facts.length).toBeGreaterThan(0)
+    recorder.reconcileMessages(workerSession, [running])
+    expect(state()).toEqual(first)
+
+    // Another connection's material update must be read afresh, never cached.
+    reopened = new TaskRepository(fixture.repository.path, fixture.directory)
+    const otherRecorder = new ProgressRecorder(new RunnerStore(reopened), "project")
+    const completed = retainedToolMessage("msg-noop", "call-noop", "completed", true)
+    const beforeChange = state()
+    otherRecorder.reconcileMessages(workerSession, [completed])
+    const changed = state()
+    expect(changed.facts).not.toEqual(beforeChange.facts)
+    expect(changed.dataVersion).not.toEqual(beforeChange.dataVersion)
+    expect(changed.sequence).toEqual(beforeChange.sequence)
+    expect(changed.revisions).not.toEqual(beforeChange.revisions)
+    recorder.reconcileMessages(workerSession, [completed])
+    expect(state()).toEqual(changed)
+
+    const newMessage = retainedToolMessage("msg-new", "call-new", "completed", true)
+    recorder.reconcileMessages(workerSession, [completed, newMessage])
+    const inserted = state()
+    expect(inserted.facts.length).toBeGreaterThan(changed.facts.length)
+    expect(inserted.sequence).not.toEqual(changed.sequence)
+    expect(inserted.dataVersion).not.toEqual(changed.dataVersion)
+    otherRecorder.reconcileMessages(workerSession, [completed, newMessage])
+    expect(state()).toEqual(inserted)
+  } finally {
+    observer?.close()
+    reopened?.close()
     fixture.close()
   }
 })

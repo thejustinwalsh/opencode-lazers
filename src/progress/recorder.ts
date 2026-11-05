@@ -899,36 +899,6 @@ export class ProgressRecorder {
     if (execution) factPayload.execution = execution
     if (fact.kind === "step") normalizeStepRouteEvidence(factPayload)
     const payload = JSON.stringify(factPayload)
-    const insertedAt = Date.now()
-    const inserted = db
-      .query(
-        `INSERT OR IGNORE INTO runner_progress
-         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
-          sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        directory,
-        assignment.projectID,
-        assignment.planID,
-        assignment.taskID,
-        assignment.attemptID,
-        assignment.sessionID,
-        factAt,
-        insertedAt,
-        fact.source,
-        JSON.stringify([fact.source]),
-        fact.kind,
-        JSON.stringify(fact.eventID ? [fact.eventID] : []),
-        fact.callID ?? null,
-        fact.messageID ?? null,
-        fact.dedupeKey,
-        payload,
-      )
-    if (inserted.changes) {
-      return db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
-    }
-
     const existing = db
       .query<
         {
@@ -948,7 +918,40 @@ export class ProgressRecorder {
         "SELECT seq,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,payload FROM runner_progress WHERE project_directory=? AND dedupe_key=?",
       )
       .get(directory, fact.dedupeKey)
-    if (!existing) throw new Error("Progress fact disappeared during append")
+    // All callers hold the repository's immediate transaction. Check the durable
+    // key first: an ignored AUTOINCREMENT insert still writes sqlite_sequence.
+    if (!existing) {
+      const insertedAt = Date.now()
+      const inserted = db
+        .query(
+          `INSERT OR IGNORE INTO runner_progress
+           (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
+            sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          directory,
+          assignment.projectID,
+          assignment.planID,
+          assignment.taskID,
+          assignment.attemptID,
+          assignment.sessionID,
+          factAt,
+          insertedAt,
+          fact.source,
+          JSON.stringify([fact.source]),
+          fact.kind,
+          JSON.stringify(fact.eventID ? [fact.eventID] : []),
+          fact.callID ?? null,
+          fact.messageID ?? null,
+          fact.dedupeKey,
+          payload,
+        )
+      if (inserted.changes) {
+        return db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
+      }
+      throw new Error("Progress fact disappeared during append")
+    }
     let priorPayload: JsonObject = {}
     try {
       priorPayload = object(JSON.parse(existing.payload)) ?? {}
