@@ -12,10 +12,32 @@ Warm unchanged replays report zero fact append/merge attempts at all three sizes
 
 The warm replay still invokes reminder reconciliation once, fingerprints the
 bounded retained history, performs the assignment/revision reads, and enters the
-database transaction. An owned reminder retains its separate reconciliation
-work. These fixed checks are not counted as per-message fact projections. The
-counter establishes avoided append/merge attempts only; it does not establish
-CPU savings or wall-clock improvement.
+database transaction. If the project revision advanced, it hashes only that
+attempt's durable progress rows before deciding whether retained-message
+projection is still reusable. That digest streams durable rows and retains no
+full progress history in the memo. An owned reminder retains its separate
+reconciliation work. These checks are reported separately from per-message fact
+projection. The counter establishes avoided append/merge attempts only; it does
+not establish CPU savings or wall-clock improvement.
+
+The 122-session round-robin fixture runs cold recovery for 122 terminal
+assignments (366 append attempts and 122 per-attempt durable-fact hashes). The
+first unchanged pass reports 0 append attempts and 121 per-attempt hashes to
+account for the project revision changes caused by the preceding cold writes;
+the next unchanged pass reports 0 append attempts and 0 per-attempt hashes. A
+native progress fact is then recorded through another connection for an
+unrelated worker. The following 122-session replay still reports 0 append
+attempts (with 122 per-attempt hashes to refresh the changed project fence), and
+the next replay reports 0 append attempts and 0 per-attempt hashes. Tracked
+sessions' durable facts remain unchanged throughout the warm passes.
+
+The per-recorder LRU is capped at 256 entries. The test retains all 122 session
+memos across the round-robin passes and checks that each memo contains only an
+assignment fingerprint, retained-history fingerprint, durable-progress
+fingerprint, and project revision; it retains no messages or contexts. Each
+fingerprint is a 64-character SHA-256 digest. The actual 122-session warm-reuse
+checks, rather than the cap increase itself, establish the observed working-set
+coverage.
 
 The unchanged-history test compares all durable progress rows, the
 `sqlite_sequence` value, and the observation revision before and after the warm
@@ -33,7 +55,7 @@ The prescribed recovery suite passed:
 
 ```text
 bun test src/progress/recorder.test.ts src/progress/native.test.ts src/progress/reconstruction.test.ts
-65 pass, 0 fail (593 assertions)
+66 pass, 0 fail (624 assertions)
 ```
 
 Existing recorder cases cover changed/new messages, retained tool transitions,

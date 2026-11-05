@@ -88,7 +88,14 @@ type JsonObject = Record<string, unknown>
 
 type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
 
-const MAX_RECOVERY_MEMOS = 32
+const MAX_RECOVERY_MEMOS = 256
+
+type RecoveryMemo = {
+  assignmentFingerprint: string
+  fingerprint: string
+  progressFingerprint: string
+  revision: number
+}
 
 type TimingSource = "native-event" | "recovery" | "runtime"
 
@@ -293,6 +300,22 @@ function retainedMessagesFingerprint(
     // Proxies and malformed retained data must retain the original recovery path.
     return undefined
   }
+}
+
+function recoveryAssignmentFingerprint(assignment: ProgressAssignment): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        assignment.projectID,
+        assignment.taskID,
+        assignment.planID,
+        assignment.attemptID,
+        assignment.sessionID,
+        assignment.assignedMessageID,
+        assignment.workspace,
+      ]),
+    )
+    .digest("hex")
 }
 
 function routeEvidenceFromModel(
@@ -826,10 +849,7 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
  * OpenCode observations, recovery and runtime verification facts.
  */
 export class ProgressRecorder {
-  private readonly recoveryMemos = new Map<
-    string,
-    { attemptID: string; revision: number; fingerprint: string }
-  >()
+  private readonly recoveryMemos = new Map<string, RecoveryMemo>()
 
   constructor(
     readonly store: RunnerStore,
@@ -902,6 +922,62 @@ export class ProgressRecorder {
       )
       .get(this.store.repository.projectDirectory)
     return row?.revision
+  }
+
+  private progressFingerprintIn(db: Database, assignment: ProgressAssignment): string {
+    const rows = db
+      .query<
+        {
+          seq: number
+          project_id: string
+          plan_id: string
+          task_id: string
+          attempt_id: string
+          session_id: string
+          at: number
+          recorded_at: number | null
+          source: string
+          sources_json: string
+          kind: string
+          event_ids_json: string
+          call_id: string | null
+          message_id: string | null
+          dedupe_key: string
+          payload: string
+        },
+        [string, string, string]
+      >(
+        `SELECT seq,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
+                sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload
+         FROM runner_progress
+         WHERE project_directory=? AND attempt_id=? AND session_id=? ORDER BY seq`,
+      )
+      .iterate(this.store.repository.projectDirectory, assignment.attemptID, assignment.sessionID)
+    const hash = createHash("sha256")
+    for (const row of rows)
+      hash
+        .update(
+          JSON.stringify([
+            row.seq,
+            row.project_id,
+            row.plan_id,
+            row.task_id,
+            row.attempt_id,
+            row.session_id,
+            row.at,
+            row.recorded_at,
+            row.source,
+            row.sources_json,
+            row.kind,
+            row.event_ids_json,
+            row.call_id,
+            row.message_id,
+            row.dedupe_key,
+            row.payload,
+          ]),
+        )
+        .update("\0")
+    return hash.digest("hex")
   }
 
   assignmentForSession(sessionID: string): ProgressAssignment | undefined {
@@ -1542,16 +1618,23 @@ export class ProgressRecorder {
         return
       }
       const revision = this.observationRevisionIn(db)
+      const assignmentFingerprint = recoveryAssignmentFingerprint(assignment)
       const memo = this.recoveryMemos.get(sessionID)
-      if (
+      const reusable =
         fingerprint !== undefined &&
         revision !== undefined &&
-        memo?.attemptID === assignment.attemptID &&
-        memo.fingerprint === fingerprint &&
-        memo.revision === revision
-      ) {
+        memo?.assignmentFingerprint === assignmentFingerprint &&
+        memo.fingerprint === fingerprint
+      let reusableProgressFingerprint: string | undefined
+      if (reusable && memo.revision !== revision) {
+        const currentProgressFingerprint = this.progressFingerprintIn(db, assignment)
+        if (currentProgressFingerprint === memo.progressFingerprint) memo.revision = revision
+        else reusableProgressFingerprint = currentProgressFingerprint
+      }
+      if (reusable && memo.revision === revision) {
         // Keep hot sessions in the bounded per-recorder LRU. The revision fence
-        // includes same- and other-connection fact changes, including native events.
+        // notices writes anywhere in this project. When it advances, compare only
+        // this attempt's durable facts so unrelated sessions do not evict a warm hit.
         this.recoveryMemos.delete(sessionID)
         this.recoveryMemos.set(sessionID, memo)
         return
@@ -1804,10 +1887,15 @@ export class ProgressRecorder {
       })
       const completedRevision = this.observationRevisionIn(db)
       if (fingerprint !== undefined && completedRevision !== undefined) {
+        const progressFingerprint =
+          revision === completedRevision && reusableProgressFingerprint !== undefined
+            ? reusableProgressFingerprint
+            : this.progressFingerprintIn(db, assignment)
         this.recoveryMemos.set(sessionID, {
-          attemptID: assignment.attemptID,
+          assignmentFingerprint,
           revision: completedRevision,
           fingerprint,
+          progressFingerprint,
         })
         while (this.recoveryMemos.size > MAX_RECOVERY_MEMOS) {
           const oldest = this.recoveryMemos.keys().next().value
