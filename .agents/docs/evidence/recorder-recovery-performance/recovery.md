@@ -49,13 +49,25 @@ preserves the terminal success and higher-authority native timing, and leaves
 rows and sequence unchanged. Its following warm replay returns to zero append
 attempts.
 
+The DateTime regression starts with numeric retained timestamps, then replays
+fresh Effect UTC instances and same-instant named/offset Zoned instances. These
+warm passes produce zero append attempts and identical stored timestamp values,
+matching the recorder's `dateMillis` projection. Earlier changed timestamps are
+reprojected, late streamed/completed message and tool endpoints are recovered,
+and a DateTime-stamped native input event recorded after memoization remains
+authoritative after retained-history replay. DateTime values outside the known
+`time.*` and `retry.at` timestamp positions are not normalized: a model route
+change carried on such a value is reprojected. Class lookalikes, getters and
+cycles continue to take the conservative full-recovery path; no `toJSON` method
+is called.
+
 ## Recovery completeness checks
 
 The prescribed recovery suite passed:
 
 ```text
 bun test src/progress/recorder.test.ts src/progress/native.test.ts src/progress/reconstruction.test.ts
-66 pass, 0 fail (624 assertions)
+69 pass, 0 fail (660 assertions)
 ```
 
 Existing recorder cases cover changed/new messages, retained tool transitions,

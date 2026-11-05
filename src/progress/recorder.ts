@@ -232,9 +232,47 @@ function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
   return merged
 }
 
+const RECOVERY_TIME_FIELDS = new Set(["created", "streamed", "completed", "ran"])
+
+function encodeEffectDateTime(value: object): RecoveryFingerprintValue | undefined {
+  if (!DateTime.isDateTime(value)) return undefined
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype === null || Object.hasOwn(value, "_tag")) return undefined
+  const tagDescriptor = Object.getOwnPropertyDescriptor(prototype, "_tag")
+  if (
+    !tagDescriptor ||
+    !("value" in tagDescriptor) ||
+    (tagDescriptor.value !== "Utc" && tagDescriptor.value !== "Zoned")
+  )
+    return undefined
+  if (
+    (tagDescriptor.value === "Utc" && !DateTime.isUtc(value)) ||
+    (tagDescriptor.value === "Zoned" && !DateTime.isZoned(value))
+  )
+    return undefined
+
+  const epochDescriptor = Object.getOwnPropertyDescriptor(value, "epochMilliseconds")
+  if (
+    !epochDescriptor ||
+    !("value" in epochDescriptor) ||
+    typeof epochDescriptor.value !== "number"
+  )
+    return undefined
+  for (const key of Object.getOwnPropertyNames(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !("value" in descriptor)) return undefined
+  }
+  const normalizedMillis = dateMillis(value)
+  if (normalizedMillis === undefined) return undefined
+
+  return encodeRecoveryFingerprintValue(normalizedMillis, new Set())
+}
+
 function encodeRecoveryFingerprintValue(
   value: unknown,
   seen: Set<object>,
+  timestampField = false,
+  timestampContainer?: "time" | "retry",
 ): RecoveryFingerprintValue | undefined {
   if (value === null) return ["null"]
   if (value === undefined) return ["undefined"]
@@ -269,13 +307,24 @@ function encodeRecoveryFingerprintValue(
       return ["array", value.length, ...entries]
     }
 
+    if (DateTime.isDateTime(value)) return timestampField ? encodeEffectDateTime(value) : undefined
+
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== null) return undefined
     const entries: RecoveryFingerprintValue[] = []
     for (const key of Object.getOwnPropertyNames(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (!descriptor || descriptor.get || descriptor.set) return undefined
-      const encoded = encodeRecoveryFingerprintValue(descriptor.value, seen)
+      const isTimestampField =
+        (timestampContainer === "time" && RECOVERY_TIME_FIELDS.has(key)) ||
+        (timestampContainer === "retry" && key === "at")
+      const childContainer = key === "time" || key === "retry" ? key : undefined
+      const encoded = encodeRecoveryFingerprintValue(
+        descriptor.value,
+        seen,
+        isTimestampField,
+        childContainer,
+      )
       if (encoded === undefined) return undefined
       entries.push([key, descriptor.enumerable === true, encoded])
     }
