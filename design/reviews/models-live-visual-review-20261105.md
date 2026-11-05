@@ -23,6 +23,28 @@ overdue Tasks/Trajectory/Radar order.
 
 ## Current connected observation
 
+Correction `5a34617` passed independent native Luna review and was merged as
+`8c1b161`. Root current-main verification passed160 tests/2511 assertions plus
+formatting, lint, typechecking and diff checks. Authenticated production rows at
+1793912948665 now return null market USD/task for all3 configurations: the
+false-zero defect is fixed in the real handler. The price index still has no
+applicable pins; usable pricing remains unresolved, despite exact cached model
+records. Do not equate null costs with successful market-price availability.
+
+The connected panel subsequently timed out, including a Refresh retry. Its
+transport applies a fixed8000ms deadline to every operation in
+`comparison-panel.tsx`; the successful direct production probe allows20000ms.
+This identifies a concrete deadline discrepancy, not a complete performance
+diagnosis. Source/decision reload churn is also previously observed. Preserve
+these in the existing UI-state/performance lane, without broadening146's visual
+scope or treating the app timeout as proof of a pricing semantic regression.
+
+The Data volume reached131MiB free while an image capture failed. Root removed
+four unopened, old investigation-only SQLite snapshot copies from `/private/tmp`
+after checking handles; free space became992MiB. Production DBs, worker source,
+logs and model files were preserved. Disk pressure is an observed environmental
+problem; causation of the panel timeout is not established.
+
 Root integrated LZ-122 `04fe393` as `3a07387` after158 current-main tests/2477
 assertions, formatting, lint and typechecking. Independent native Luna review
 continued in parallel. The actual Desktop Compare now renders cohorts and an SVG

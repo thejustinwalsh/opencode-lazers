@@ -17,7 +17,40 @@ cleaned up, followed by an observation-based improvement plan for review.
   blockers, review, merge and clean up. No production SQL mutations, custom
   daemons, arbitrary model budgets or source hashes as work evidence.
 
-## Three real implementors
+## Current implementation and review state
+
+Root merged pricing correction5a34617 as8c1b161 after native Luna cleared the
+delta. Current-main160 tests/2511 assertions and full fmt/lint/types/diff pass;
+log `/private/tmp/lz122-pricing-current-main-tests.log`. Real authenticated rows
+at1793912948665 now return null costs for all3 routes, fixing false-zero prices.
+No applicable price pins exist yet: market availability is still unresolved.
+Desktop Refresh still times out. Panel has a fixed8000ms transport deadline;
+the successful direct probe allows20000ms. This discrepancy is a concrete lead,
+not a full causal diagnosis. Keep it in existing UI-state/performance planning.
+
+At1793913213869 original146 worker was inactive after interruption, with its
+retained8-file UI delta and no commit. Main is investigating supported same-worker
+continuation. Its37-test/905-assertion focused suite and GUI build passed, but
+browser tools were disconnected. Do not mistake stale approval notices or old
+Running badges for live worker activity. Do not reset/reimplement this source.
+57 remains active; its414-test runner pass preceded further changes, so fresh
+final verification remains necessary. A native sessionc160 was also active;
+its identity/purpose has not yet been checked by Root.
+
+Root verified actual Tasks State: Completed → LZ130 → historical Trajectory,
+with8422ms and470ms check durations and exact Unix-ms endpoints. Recorded in the
+delivery checkpoint; screenshot `/private/tmp/lz130-completed-navigation-live-20261105.png`.
+Restored Tasks State: All and Models tab. This is scoped live evidence, not all
+task/trajectory acceptance. Root also recorded the explicit124→119 logical-task
+accounting gap; Architect retained it in existing ledger follow-up, behind the
+overdue delivery order. Main99bdb55 records the navigation check.
+
+Data volume reached131MiB free. Root removed four unopened investigation-only
+temporary SQLite snapshot copies (Nov2/4), preserving original DBs/logs/source/
+models/worktrees; space became992MiB. CUA image capture had failed; AX still
+worked. Never infer that a failed screenshot means a click was not delivered.
+
+### Earlier worker identities and implementation history
 
 Verified at1793911046136; native worktrees are beneath
 `/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/<attemptID>`.
