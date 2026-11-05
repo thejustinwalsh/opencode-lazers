@@ -2,6 +2,18 @@
 
 ## Current delivery update
 
+Newest: LZ141 correction is integrated in569f2e0, with45 tests/1017 assertions,
+quality checks/build and actual wide/narrow Desktop/Tera review passing.
+Provider search, split keyboard/scroll, native theme/font change and restoration
+were observed. [Detailed review](task141-native-visual-20261105.md). Runtime idle
+lineage and cleanup remain unresolved; Models126→122 and142 are still next.
+
+The134 native source4229 walkthrough processed all3 remaining admitted legacy
+records as already consumed, verified the replacement pointer in native history,
+and read back no exact IDs queued. It retained9048 legacy payload bytes and1539
+replacement bytes. No cancellation occurred; the positive cancellation branch
+remains unproven. DB now retains308 consumed legacy records. No SQL mutations.
+
 Native activity checked at Unix ms1793895802232. Recheck before intervention.
 
 - Main Architect `ses_e568438ebffeaoFbF9nBb942XM` is active on OpenAI Sol High.
