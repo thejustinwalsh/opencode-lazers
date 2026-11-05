@@ -7,6 +7,15 @@ acceptance, native observations and cleanup are separate facts.
 
 ## Active execution
 
+- Latest [native delivery checkpoint](../../design/reviews/native-delivery-checkpoint-20261105.md):
+  Main is active;134 stopped on disk exhaustion with unfinished work preserved.
+  Clearing regenerable compile caches recovered1.3GiB.139 is source-integrated
+  (`7a9eba2`,84 assigned tests pass), but its targeted Desktop timeline is blank
+  because rendering still requires the absent broad snapshot.141 committedf65697d,
+  but still uses raw-ID fields as its primary editor; catalog-picker correction
+  and genuine Desktop acceptance remain open. Main received both corrections.
+  Older “running” statements below describe startup observations, not live status.
+
 - Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI
   `gpt-6.1-sol/high`. All implementors and delegated research use OpenAI
   `gpt-6-luna/max` through the subscription. Root drives prompts in Desktop;
