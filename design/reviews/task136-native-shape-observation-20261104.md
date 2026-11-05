@@ -44,3 +44,14 @@ Luna review subsequently found an admission race and sequence-validation mismatc
 Architect delivered those findings through instruction context at1793851211935,
 without changing the original input. These findings remain unresolved at this
 checkpoint; passing tests do not establish final correctness or activation.
+
+After corrections, the focused suite reached200 passing tests/3469 assertions.
+Two compatibility runs timed out in different inherited fixtures; an isolated
+reprobe passed. At1793852177856 the actual plain command
+`bun test src/runner src/progress test/runner` passed401 tests/5257 assertions in
+114.30s. Root inspected its native tool input at1793852227670 and confirmed no
+per-test timeout override. Separate formatter/linter/typechecker runs passed.
+The combined check is running on the same worker at this checkpoint; final
+artifact/native qualification remain unproven. Root explicitly rejected further
+manual preflight repetition after that check; ordinary runtime verification will
+produce the candidate receipt after commit.

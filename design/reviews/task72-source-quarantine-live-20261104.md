@@ -45,3 +45,11 @@ afterward contained only the original LZ136 worker. The fresh coordinator was
 untouched and subsequently received this result through Desktop. Automatic
 renewal after an explicit stop remains a runtime defect to address in the existing
 notification/renewal work; this stop does not prove a persistent repair.
+
+A second automatic renewal committed at1793852337790: renewal
+9c0422d7-2ff8-47ff-aac9-531e77e2b878,72db→
+`ses_728b844b477c4a569402cfdbcc5423e2`. Native parent/role/route matched the old
+chain and observed tools only inspected legacy records. Root used the existing
+explicit chain-stop approval: interrupt:true at1793852396456, independently
+confirmed interrupted/idle1793852396587. Only the original136 worker remained
+active. This reproduces the persistent-stop defect; prevention is still134 work.

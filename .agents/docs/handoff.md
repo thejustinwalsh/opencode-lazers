@@ -51,6 +51,10 @@ cleanup are separate facts.
   and original136 worker were untouched. Runtime renewal after an explicit stop
   still needs repair within existing notification/renewal work. Revalidate any
   later successor belongs to this historical-only chain before stopping it.
+  At1793852337790 it renewed again into728b; Root verified the same historical
+  parent/readonly activity, then interrupted under existing approval at
+  1793852396456, confirmed interrupted/idle1793852396587. Only136 stayed active.
+  Latest stopped successor: `ses_728b844b477c4a569402cfdbcc5423e2`.
   Do not create another fresh Architect.
 - **Performance source repairs are integrated.** Earlier matched service CPU
   73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
