@@ -90,3 +90,14 @@ source validation must remain scoped to creation/recovery; it must not become a
 general attempt freshness gate. Preserve these regression expectations and old
 attempt baselines. Root sent this diagnosis through Desktop's existing review
 flow. Subsequent source and test results must establish the correction.
+
+## Cross-package test portability
+
+The added `native.test.ts` cross-package fixture derives canonical `node_modules`
+from `git-common-dir`, then asserts its error constructor differs from the local
+one. In a normal main checkout those paths identify the same package, so this
+assertion fails after integration. Use a real independent temporary fixture in
+either checkout, with ordinary cleanup; do not skip it on main. Root also verified
+that Bun resolves a file URL with a query suffix to the same module/constructor,
+so a query suffix alone does not create an independent copy here. Sent through
+Desktop for the existing review.
