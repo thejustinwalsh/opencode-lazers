@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { fingerprint } from "../identity.ts"
 import { TaskRepository } from "../storage.ts"
@@ -30,7 +30,7 @@ afterEach(async () => {
 })
 
 function fixture() {
-  const temporary = mkdtempSync(join(tmpdir(), "lazers-startup-recovery-"))
+  const temporary = realpathSync(mkdtempSync(join(tmpdir(), "lazers-startup-recovery-")))
   roots.push(temporary)
   const root = join(temporary, "project")
   mkdirSync(root)
@@ -247,6 +247,345 @@ function assertSettlementWasNonMutating(
   )
   expect(f.calls).toEqual({ worktree: 1, create: 0, prompt: 0 })
 }
+
+function insertProgressFact(
+  f: ReturnType<typeof fixture>,
+  attempt: Awaited<ReturnType<typeof createTerminalFailure>>["attempt"],
+  input: {
+    source: string
+    kind: string
+    reason?: string
+    eventIDs?: string[]
+    callID?: string | null
+    messageID?: string | null
+  },
+) {
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_progress(
+           project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,
+           sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload,recorded_at
+         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        f.root,
+        "project",
+        f.planID,
+        attempt.task_id,
+        attempt.id,
+        attempt.session_id,
+        Date.now(),
+        input.source,
+        JSON.stringify(input.source === "recovery" ? [] : [input.source]),
+        input.kind,
+        JSON.stringify(input.eventIDs ?? []),
+        input.callID ?? null,
+        input.messageID ?? null,
+        `startup-review:${attempt.id}:${input.kind}:${crypto.randomUUID()}`,
+        JSON.stringify({ ...(input.reason ? { reason: input.reason } : {}) }),
+        Date.now(),
+      ),
+  )
+}
+
+async function reopenFixture(f: ReturnType<typeof fixture>) {
+  const databasePath = f.repository.path
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  f.repository.close()
+  const repository = new TaskRepository(databasePath, f.root)
+  repositories.push(repository)
+  const store = new RunnerStore(repository)
+  const runtime = new TaskRuntime(store, f.host, "project")
+  runtimes.push(runtime)
+  f.repository = repository
+  f.store = store
+  f.runtime = runtime
+}
+
+function explicitResumeCommand(f: ReturnType<typeof fixture>, attemptID: string) {
+  return {
+    requestID: "explicit-startup-resume-after-gap",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "resume" as const,
+    taskID: f.taskID,
+    attemptID,
+    reason: "Explicitly continue after confirmed startup failure.",
+  }
+}
+
+test("recovery-only unavailable-session telemetry survives settlement and reopen, then permits explicit resume and safe cleanup", async () => {
+  const f = fixture()
+  const { attempt, effect } = await createTerminalFailure(f)
+  insertProgressFact(f, attempt, {
+    source: "recovery",
+    kind: "gap",
+    reason: "Assigned native session is unavailable: Session.NotFoundError",
+  })
+  const originalFact = f.store.progressFacts([attempt.id])[0]!
+  const originalFailure = nativeWorktreeFailureFromReceipt(effect.receipt)
+
+  const settled = await f.runtime.command(settlementCommand(f, attempt.id), "owner")
+  expect(settled).toMatchObject({
+    status: "startup-failure-settled-absent",
+    attemptID: attempt.id,
+    effectID: effect.id,
+  })
+  const settledReceipt = f.store
+    .effects(f.planID)
+    .find((candidate) => candidate.id === effect.id)!.receipt!
+  expect(nativeWorktreeFailureFromReceipt(settledReceipt)).toEqual(originalFailure)
+  expect(f.store.progressFacts([attempt.id])).toEqual([originalFact])
+  expect(f.store.effects(f.planID).find((candidate) => candidate.id === effect.id)?.state).toBe(
+    "failed",
+  )
+
+  await reopenFixture(f)
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.calls).toEqual({ worktree: 1, create: 0, prompt: 0 })
+  const resume = explicitResumeCommand(f, attempt.id)
+  expect(await f.runtime.command(resume, "owner")).toMatchObject({
+    status: "startup-recovery-authorized",
+    attemptID: attempt.id,
+  })
+
+  f.host.worktree = async ({ directory, base }) => {
+    f.calls.worktree++
+    git(f.root, ["worktree", "add", "--detach", directory, base])
+    return directory
+  }
+  await f.runtime.tick()
+  expect(f.calls).toEqual({ worktree: 2, create: 1, prompt: 1 })
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+    message_id: attempt.message_id,
+    state: "running",
+  })
+  const recovery = f.store
+    .effects(f.planID)
+    .find((candidate) => candidate.kind === "worktree-recovery")!
+  expect(recovery.state).toBe("completed")
+  expect(f.store.progressFacts([attempt.id])).toEqual([originalFact])
+
+  const workspace = attempt.workspace
+  const canonicalWorkspace = realpathSync(workspace)
+  writeFileSync(join(workspace, "result.txt"), "reviewed result\n")
+  git(workspace, ["add", "result.txt"])
+  git(workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "recovered result",
+  ])
+  const artifact = git(workspace, ["rev-parse", "HEAD"])
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.turn = { inputID: attempt.message_id, state: "completed" }
+  worker.outcome = "succeeded"
+  worker.background = {
+    state: "observed",
+    source: "experimental.idle",
+    observedAt: Date.now(),
+    inputID: attempt.message_id,
+    executionStartSequence: 1,
+    eventSequence: 1,
+    count: 0,
+    kinds: { shell: 0, subagent: 0, image: 0 },
+    projectDirectory: f.root,
+    projectID: "project",
+    attemptID: attempt.id,
+    sessionID: attempt.session_id,
+    workspace,
+    assignedMessageID: attempt.message_id,
+  }
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='accepted',artifact=? WHERE id=?").run(
+      artifact,
+      attempt.id,
+    )
+    db.query(
+      "UPDATE runner_nodes SET state='accepted',artifact=? WHERE plan_id=? AND task_id=?",
+    ).run(artifact, f.planID, f.taskID)
+    db.query(
+      "UPDATE runner_plans SET state='accepted',artifact=?,reason=NULL,version=version+1 WHERE id=?",
+    ).run(artifact, f.planID)
+  })
+  git(f.root, ["merge", "--ff-only", artifact])
+  const integrate = (requestID: string) => ({
+    requestID,
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "integrated" as const,
+    artifact,
+    targetBranch: "main",
+    reason: "Review the recovered attempt and verify safe cleanup.",
+  })
+
+  worker.busy = true
+  await f.runtime.command(integrate("active-recovered-worker-cleanup"), "owner")
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("cleanup-blocked")
+  expect((await f.host.worktrees()).map((directory) => resolve(directory))).toContain(
+    canonicalWorkspace,
+  )
+  expect(f.store.effects(f.planID).find((candidate) => candidate.id === recovery.id)?.receipt).toBe(
+    recovery.receipt,
+  )
+
+  worker.busy = false
+  await f.runtime.command(integrate("retry-recovered-worker-cleanup"), "owner")
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("integrated")
+  expect((await f.host.worktrees()).map((directory) => resolve(directory))).not.toContain(
+    canonicalWorkspace,
+  )
+  expect(f.store.effects(f.planID).find((candidate) => candidate.id === recovery.id)?.receipt).toBe(
+    recovery.receipt,
+  )
+  expect(f.store.effects(f.planID).find((candidate) => candidate.id === effect.id)?.receipt).toBe(
+    settledReceipt,
+  )
+  expect(f.store.progressFacts([attempt.id])).toEqual([originalFact])
+})
+
+test("recovery-only GAP telemetry cannot authorize a changed recovered workspace without a prompt", async () => {
+  const f = fixture()
+  const { attempt } = await createTerminalFailure(f)
+  insertProgressFact(f, attempt, {
+    source: "recovery",
+    kind: "gap",
+    reason: "Assigned native session is unavailable: Session.NotFoundError",
+  })
+  await f.runtime.command(settlementCommand(f, attempt.id), "owner")
+  await f.runtime.command(explicitResumeCommand(f, attempt.id), "owner")
+
+  f.host.worktree = async ({ directory, base }) => {
+    f.calls.worktree++
+    git(f.root, ["worktree", "add", "--detach", directory, base])
+    return directory
+  }
+  const create = f.host.create
+  f.host.create = async (input) => {
+    await create(input)
+    throw new Error("worker-session creation response lost")
+  }
+  await f.runtime.tick()
+  expect(f.calls).toEqual({ worktree: 2, create: 1, prompt: 0 })
+  expect(
+    f.store.effects(f.planID).find((candidate) => candidate.kind === "worktree-recovery")?.state,
+  ).toBe("completed")
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+
+  await f.runtime.tick()
+  expect(f.store.effects(f.planID).find((candidate) => candidate.kind === "session")?.state).toBe(
+    "completed",
+  )
+  expect(f.calls).toEqual({ worktree: 2, create: 1, prompt: 0 })
+
+  writeFileSync(join(attempt.workspace, "result.txt"), "unexpected unadmitted change\n")
+  git(attempt.workspace, ["add", "result.txt"])
+  git(attempt.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "unadmitted change",
+  ])
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='running',reason=NULL,version=version+1 WHERE id=?")
+      .run(f.planID),
+  )
+  await f.runtime.tick()
+
+  expect(f.store.plan(f.planID)?.state).toBe("running")
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({ id: attempt.id, state: "preparing" })
+  expect(f.calls).toEqual({ worktree: 2, create: 1, prompt: 0 })
+  expect(f.store.progressFacts([attempt.id])).toHaveLength(1)
+})
+
+test("meaningful execution facts still refuse startup settlement", async () => {
+  const f = fixture()
+  const { attempt, effect } = await createTerminalFailure(f)
+  insertProgressFact(f, attempt, {
+    source: "recovery",
+    kind: "tool",
+    eventIDs: ["evt_worker_tool"],
+    callID: "call_worker_tool",
+    messageID: "msg_worker_tool",
+  })
+  const plan = structuredClone(f.store.plan(f.planID)!)
+
+  await expect(f.runtime.command(settlementCommand(f, attempt.id), "owner")).rejects.toThrow(
+    "Startup settlement is unsafe after downstream work or conflicting ownership",
+  )
+  assertSettlementWasNonMutating(f, effect.id, plan.version)
+  expect(f.store.progressFacts([attempt.id])).toHaveLength(1)
+})
+
+test("an independent conflicting reservation still refuses startup settlement", async () => {
+  const f = fixture()
+  const { attempt, effect } = await createTerminalFailure(f)
+  const originalTask = f.repository.get(f.taskID)!
+  const conflictingTask = f.repository.insert({
+    ...originalTask,
+    id: crypto.randomUUID(),
+    proposal: {
+      ...originalTask.proposal,
+      objective: "A separate task conflicting with the startup reservation",
+      writeScope: ["result.txt"],
+    },
+  })
+  const other = f.store.submit(
+    {
+      requestID: "independent-conflicting-reservation",
+      objective: conflictingTask.proposal.objective,
+      baseCommit: f.base,
+      workspaceMode: "isolated",
+      nodes: [{ taskID: conflictingTask.id, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [conflictingTask.id],
+      verification: conflictingTask.proposal.verification,
+      acceptance: conflictingTask.proposal.acceptance,
+    },
+    "owner",
+  )
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_attempts(
+           id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at
+         ) VALUES(?,?,?,?,?,?,?,?,?,'preparing',?)`,
+      )
+      .run(
+        crypto.randomUUID(),
+        other.planID,
+        conflictingTask.id,
+        1,
+        "ses_independent_active_reservation",
+        "msg_independent_active_reservation",
+        join(f.temporary, "independent-worktree-not-created"),
+        f.base,
+        "{}",
+        attempt.started_at - 1,
+      ),
+  )
+  const plan = structuredClone(f.store.plan(f.planID)!)
+
+  await expect(f.runtime.command(settlementCommand(f, attempt.id), "owner")).rejects.toThrow(
+    "Startup settlement is unsafe after downstream work or conflicting ownership",
+  )
+  assertSettlementWasNonMutating(f, effect.id, plan.version)
+})
 
 test("typed native failure settles only after fresh absence and resumes the same reservation after reopen", async () => {
   const f = fixture()

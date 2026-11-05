@@ -44,6 +44,7 @@ import type {
   AdoptionRow,
   AdoptionCheckRow,
   ArchitectRenewalRow,
+  ProgressRow,
 } from "./store.ts"
 import { appendOutboxReceipt, appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
@@ -95,6 +96,31 @@ const isCommitID = (value: unknown): value is string =>
   typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
+function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
+  if (
+    fact.kind !== "gap" ||
+    fact.source !== "recovery" ||
+    fact.call_id !== null ||
+    fact.message_id !== null
+  )
+    return false
+  try {
+    const sources: unknown = JSON.parse(fact.sources_json)
+    const eventIDs: unknown = JSON.parse(fact.event_ids_json)
+    const payload: unknown = JSON.parse(fact.payload)
+    return (
+      Array.isArray(sources) &&
+      sources.every((source) => source === "recovery") &&
+      Array.isArray(eventIDs) &&
+      eventIDs.length === 0 &&
+      isRecord(payload) &&
+      typeof payload.reason === "string" &&
+      payload.reason.startsWith("Assigned native session is unavailable:")
+    )
+  } catch {
+    return false
+  }
+}
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message || String(error) : String(error)
 export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
@@ -795,13 +821,19 @@ export class TaskRuntime {
             candidate.kind.startsWith("verify:") ||
             candidate.kind.startsWith("graph-verify:")),
       ) ||
-      this.store.progressFacts([attemptID]).length > 0 ||
+      this.hasMeaningfulWorkerProgress(attemptID) ||
       this.store.latestTransition<{ attemptID?: string }>(plan.id, taskID, "WORKER_STARTED")
         ?.attemptID === attemptID ||
       !this.preparationAllowed(attempt)
     )
       throw new Error("Startup settlement is unsafe after downstream work or conflicting ownership")
     return { attempt, effect, failure }
+  }
+
+  private hasMeaningfulWorkerProgress(attemptID: string) {
+    return this.store
+      .progressFacts([attemptID])
+      .some((fact) => !isUnavailableSessionRecoveryGap(fact))
   }
 
   private startupSettlementForEffect(
@@ -1317,7 +1349,7 @@ export class TaskRuntime {
               effect.kind === "prompt" &&
               effect.state === "completed" &&
               effect.attempt_id === attempt.id,
-          ) || this.store.progressFacts([attempt.id]).length > 0
+          ) || this.hasMeaningfulWorkerProgress(attempt.id)
         return workerWasAdmitted || head === attempt.base_commit
       } catch {
         return false
@@ -1365,7 +1397,7 @@ export class TaskRuntime {
           effect.attempt_id === attempt.id &&
           (effect.kind === "session" || effect.kind === "prompt"),
       )
-    if (workerEffects || this.store.progressFacts([attempt.id]).length > 0) return false
+    if (workerEffects || this.hasMeaningfulWorkerProgress(attempt.id)) return false
 
     const candidates = startupWorktreeCandidates(attempt.workspace)
     try {
@@ -2159,7 +2191,7 @@ export class TaskRuntime {
             )
           if (
             workerEffects ||
-            this.store.progressFacts([attempt!.id]).length > 0 ||
+            this.hasMeaningfulWorkerProgress(attempt!.id) ||
             !this.preparationAllowed(attempt!)
           )
             throw new Error(
@@ -6502,6 +6534,7 @@ export class TaskRuntime {
             (effect) =>
               [
                 "worktree",
+                "worktree-recovery",
                 "graph-worktree",
                 "adoption-task-worktree",
                 "adoption-combined-worktree",
@@ -6532,6 +6565,7 @@ export class TaskRuntime {
             if (
               ![
                 "worktree",
+                "worktree-recovery",
                 "graph-worktree",
                 "adoption-task-worktree",
                 "adoption-combined-worktree",
