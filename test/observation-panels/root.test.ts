@@ -1,9 +1,16 @@
 import { expect, test } from "bun:test"
 import { Window } from "happy-dom"
+import { Agent } from "@opencode/plugin/effect"
+import type { Plugin } from "@opencode/plugin/effect"
+import type { ToolEditor } from "@opencode/plugin/effect/tool"
+import { Effect, Schema } from "effect"
 import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { join } from "node:path"
 import {
   CANDIDATE_C,
   DIRECTORY_A,
@@ -29,6 +36,7 @@ import {
   decisionRows as fixtureDecisionRows,
   singleEstimate,
 } from "../models-decision/fixtures/decision.ts"
+import { ModelCatalogOutputSchema } from "../../src/models/contract.ts"
 import type {
   ModelDecisionConfiguration,
   ModelDecisionEstimate,
@@ -36,6 +44,10 @@ import type {
   ModelDecisionInspect,
   ModelDecisionRow,
 } from "../../src/models/decision-contract.ts"
+import type { ModelMappingUpdate } from "../../src/models/mapping-schema.ts"
+import { ModelSettingsService } from "../../src/models/service.ts"
+import { registerModelTools } from "../../src/models/tools.ts"
+import { TaskRepository } from "../../src/storage.ts"
 import {
   ModelDecisionConfigurationsOutputSchema,
   ModelDecisionInspectOutputSchema,
@@ -47,6 +59,24 @@ type Deferred<T> = {
   promise: Promise<T>
   resolve(value: T): void
   reject(reason: unknown): void
+}
+
+type RegisteredModelTool = Parameters<ToolEditor["add"]>[0]
+
+function modelToolContext() {
+  return {
+    sessionID: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("SessionID")))(
+      "ses_models_panel",
+    ),
+    agent: Agent.ID.make("architect"),
+    messageID: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("Session.Message.ID")))(
+      "msg_models_panel",
+    ),
+    id: Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("Tool.CallID")))(
+      "call_models_panel",
+    ),
+    progress: () => Effect.void,
+  } satisfies Parameters<RegisteredModelTool["execute"]>[1]
 }
 
 type PanelLocation = {
@@ -79,6 +109,13 @@ function menuItemWithText(container: ParentNode, text: string) {
   return [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((button) =>
     button.textContent?.includes(text),
   )
+}
+
+function fillTextInput(container: ParentNode, label: string, value: string) {
+  const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+  if (!input) throw new Error(`Missing text input: ${label}`)
+  input.value = value
+  input.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
 const sourceHighDecisionRow = fixtureDecisionRows().rows[0]!
@@ -225,6 +262,45 @@ const crossRouteBContributor = {
   observedAt: "2026-11-03T10:05:00.000Z",
 }
 
+const nativeModelCatalog = ModelCatalogOutputSchema.parse({
+  source: "Live native OpenCode model catalog",
+  observedAt: "2026-11-05T12:00:00Z",
+  advisoryOnly: true,
+  note: "Catalog choices do not change active dispatch.",
+  configuredImplementor: null,
+  options: [
+    {
+      providerID: "openai",
+      id: "gpt-6",
+      name: "GPT-6",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: ["high", "xhigh"],
+    },
+    {
+      providerID: "anthropic",
+      id: "claude-4",
+      name: "Claude 4 Sonnet",
+      enabled: true,
+      type: "chat",
+      contextTokens: 200_000,
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: [],
+    },
+  ],
+})
+
+type NativePickerOptions = {
+  title: string
+  placeholder?: string
+  current?: string
+  options: readonly { title: string; value: string; description?: string; group?: string }[]
+}
+
 function decisionContextFor(
   filters: ModelDecisionFilters,
   directory: string,
@@ -356,6 +432,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
   const inferenceRuntimeModule = "\0lazers-test-unused-inference-runtime"
   let replacedInferenceRuntime = false
   let disposeSetup: (() => void) | undefined
+  let assignmentAuthorityDirectory: string | undefined
+  let assignmentAuthorityRepository: TaskRepository | undefined
   const mounts: Array<{ dispose(): void }> = []
   try {
     await rm(outputDirectory, { recursive: true, force: true })
@@ -396,6 +474,56 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(replacedInferenceRuntime).toBe(true)
 
+    assignmentAuthorityDirectory = mkdtempSync(join(tmpdir(), "lazers-models-panel-settings-"))
+    assignmentAuthorityRepository = new TaskRepository(
+      join(assignmentAuthorityDirectory, "tasks.sqlite"),
+      DIRECTORY_A,
+    )
+    const authorityTask = taskDetail(TASK_A, PROJECT_A, DIRECTORY_A, "LZ-17", "Objective A")
+    if (authorityTask.status !== "found")
+      throw new Error("Expected task fixture for settings authority")
+    assignmentAuthorityRepository.insert(authorityTask.task)
+    const settingsAuthority = new ModelSettingsService(assignmentAuthorityRepository)
+    settingsAuthority.configure({
+      target: { scope: "project" },
+      persona: "ui",
+      expectedRevision: 0,
+      route: { providerID: "openai", id: "project-ui-route" },
+    })
+    settingsAuthority.configure({
+      target: { scope: "task", taskID: TASK_A },
+      persona: "ui",
+      expectedRevision: 0,
+      route: { providerID: "openai", id: "route-1" },
+    })
+
+    const modelTools = new Map<string, RegisteredModelTool>()
+    const modelToolEditor: ToolEditor = {
+      add: (tool) => modelTools.set(tool.name, tool),
+      list: () => [],
+      get: () => undefined,
+      namespace: () => {},
+      update: () => {},
+      remove: () => {},
+    }
+    const modelToolRegistrationContext = {
+      permission: { assert: () => Effect.void },
+      tool: {
+        transform: (callback: (editor: ToolEditor) => void) =>
+          Effect.sync(() => {
+            callback(modelToolEditor)
+            return { dispose: Effect.void }
+          }),
+      },
+    } as unknown as Pick<Plugin.Context, "tool" | "permission">
+    await Effect.runPromise(
+      Effect.scoped(
+        registerModelTools(modelToolRegistrationContext, assignmentAuthorityRepository),
+      ),
+    )
+    const modelSettingsTool = modelTools.get("lz-get-model-settings")
+    if (!modelSettingsTool) throw new Error("Model settings tool was not registered")
+
     const calls: Array<{
       directory: string
       service: string
@@ -403,6 +531,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       input: unknown
       signal?: AbortSignal
     }> = []
+    const nativePickerCalls: NativePickerOptions[] = []
+    let nextNativePickerSelection: string | undefined
+    let pendingNativePickerSelection: Deferred<string | undefined> | undefined
+    const pendingNativeCatalogA = deferred<typeof nativeModelCatalog>()
     const counts = new Map<string, number>()
     const sourceSignals = new Map<string, AbortSignal[]>()
     const locationSignals = new Map<string, AbortSignal[]>()
@@ -587,7 +719,47 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const directory = options.location.directory
               const count = nextCount(`${directory}:settings`)
               record(directory, "lazers.models", "settings", input, options.signal)
-              return settings(directory, input.taskID, count)
+              return directory === DIRECTORY_A
+                ? settingsAuthority.settings({ taskID: input.taskID })
+                : settings(directory, input.taskID, count)
+            },
+            catalog: async (
+              input: { sessionID: string },
+              options: { location: { directory: string }; signal: AbortSignal },
+            ) => {
+              const directory = options.location.directory
+              const requestNumber = nextCount(`${directory}:catalog`)
+              record(directory, "lazers.models", "catalog", input, options.signal)
+              if (directory === DIRECTORY_A && requestNumber === 1)
+                return pendingNativeCatalogA.promise
+              if (directory === DIRECTORY_B) throw new Error("catalog offline for project B")
+              return nativeModelCatalog
+            },
+            configure: async (
+              input: {
+                sessionID: string
+                target: ModelMappingUpdate["target"]
+                persona: ModelMappingUpdate["persona"]
+                expectedRevision: number
+                route: ModelMappingUpdate["route"]
+              },
+              options: { location: { directory: string }; signal: AbortSignal },
+            ) => {
+              const directory = options.location.directory
+              record(directory, "lazers.models", "configure", input, options.signal)
+              if (directory !== DIRECTORY_A)
+                return {
+                  status: "conflict" as const,
+                  expectedRevision: input.expectedRevision,
+                  currentRevision: 0,
+                  current: null,
+                }
+              return settingsAuthority.configure({
+                target: input.target,
+                persona: input.persona,
+                expectedRevision: input.expectedRevision,
+                route: input.route,
+              })
             },
           }
         if (definition.id === "lazers.models.decision.v2")
@@ -921,6 +1093,29 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       app: { platform: "web" },
       signal: new AbortController().signal,
       ui: host.createTestUI(),
+      dialogs: {
+        select: async <T>(options: {
+          title: string
+          placeholder?: string
+          current?: T
+          options: readonly {
+            title: string
+            value: T
+            description?: string
+            group?: string
+          }[]
+        }) => {
+          nativePickerCalls.push(options as unknown as NativePickerOptions)
+          if (pendingNativePickerSelection) {
+            const pending = pendingNativePickerSelection
+            pendingNativePickerSelection = undefined
+            return (await pending.promise) as T | undefined
+          }
+          const choice = nextNativePickerSelection
+          nextNativePickerSelection = undefined
+          return choice as T | undefined
+        },
+      },
       appearance: {
         mode: () => appearanceStore.value.mode,
         font: (_kind: "mono") => appearanceStore.value.font,
@@ -1767,6 +1962,254 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     assignmentTab.click()
     await until(() => containerA.textContent?.includes("openai / route-1") === true)
+    await until(() =>
+      calls.some(
+        (call) =>
+          call.directory === DIRECTORY_A &&
+          call.service === "lazers.models" &&
+          call.method === "catalog",
+      ),
+    )
+    expect(
+      calls.some(
+        (call) =>
+          call.directory === DIRECTORY_A &&
+          call.service === "lazers.models" &&
+          call.method === "catalog" &&
+          JSON.stringify(call.input) === JSON.stringify({ sessionID: sessionA.id }),
+      ),
+    ).toBe(true)
+    const assignmentRows = () => [
+      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-assignment-row"),
+    ]
+    const rowForPersona = (label: string) =>
+      assignmentRows().find((row) => row.querySelector("strong")?.textContent === label)!
+    expect(assignmentRows()).toHaveLength(3)
+    expect(assignmentRows().map((row) => row.textContent)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("UI"),
+        expect.stringContaining("Systems"),
+        expect.stringContaining("Small task / refactoring"),
+      ]),
+    )
+    rowForPersona("UI").click()
+    const assignmentEditor = containerA.querySelector<HTMLElement>(
+      ".lazers-models-assignment-editor",
+    )!
+    expect(containerA.querySelectorAll(".lazers-models-assignment-editor")).toHaveLength(1)
+    expect(assignmentEditor.getAttribute("aria-labelledby")).toBe(
+      assignmentEditor.querySelector("h3")!.id,
+    )
+    expect(rowForPersona("UI").getAttribute("aria-pressed")).toBe("true")
+    expect(rowForPersona("Systems").getAttribute("aria-pressed")).toBe("false")
+    expect(
+      containerA.querySelector(".lazers-models-catalog-status")?.textContent?.includes("Loading"),
+    ).toBe(true)
+    const manualRouteDetailsWhileLoading = assignmentEditor.querySelector<HTMLDetailsElement>(
+      ".lazers-models-assignment-manual-route",
+    )!
+    manualRouteDetailsWhileLoading.open = true
+    expect(
+      [...manualRouteDetailsWhileLoading.querySelectorAll<HTMLInputElement>("input")].every(
+        (input) => !input.disabled,
+      ),
+    ).toBe(true)
+    expect(buttonWithText(assignmentEditor, "Save route")?.disabled).toBe(false)
+    expect(
+      assignmentEditor.querySelector<HTMLButtonElement>(".lazers-models-assignment-choice > button")
+        ?.disabled,
+    ).toBe(true)
+    manualRouteDetailsWhileLoading.open = false
+    pendingNativeCatalogA.resolve(nativeModelCatalog)
+    await until(() => containerA.querySelector(".lazers-models-catalog-status") === null)
+    const assignmentLayers = () =>
+      containerA.querySelector<HTMLDetailsElement>(".lazers-models-assignment-layers")!
+    expect(assignmentLayers().open).toBe(false)
+
+    const scopeMenu = () =>
+      [
+        ...containerA.querySelectorAll<HTMLButtonElement>(
+          ".lazers-models-assignment-editor button",
+        ),
+      ].find((button) => button.textContent?.includes("Target · "))
+    const catalogSelection = JSON.stringify(["openai", "gpt-6"])
+    const currentAssignmentEditor = () =>
+      containerA.querySelector<HTMLElement>(".lazers-models-assignment-editor")!
+    const modelPicker = () =>
+      [...currentAssignmentEditor().querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+        ["Custom route", "Choose model", "GPT-6 · openai"].includes(button.textContent ?? ""),
+      )
+    const pickerCallCount = () => nativePickerCalls.length
+    const chooseCatalogModel = async () => {
+      const before = pickerCallCount()
+      nextNativePickerSelection = catalogSelection
+      modelPicker()?.click()
+      await until(() => pickerCallCount() === before + 1)
+      await until(() => buttonWithText(currentAssignmentEditor(), "GPT-6 · openai") !== undefined)
+    }
+    const chooseVariant = (variant: string) => {
+      const editor = currentAssignmentEditor()
+      const trigger = buttonWithText(editor, "Effort ·")
+      if (!trigger) throw new Error(`Missing effort trigger: ${editor.innerHTML}`)
+      trigger.click()
+      const item = menuItemWithText(containerA, variant)
+      if (!item) throw new Error(`Missing variant ${variant}: ${editor.innerHTML}`)
+      item.click()
+    }
+
+    const beforeCancelledPicker = pickerCallCount()
+    modelPicker()?.click()
+    await until(() => pickerCallCount() === beforeCancelledPicker + 1)
+    expect(nativePickerCalls.at(-1)).toMatchObject({
+      title: "Choose a model",
+      placeholder: "Search model name, provider, or ID",
+      options: [
+        {
+          title: "GPT-6",
+          value: catalogSelection,
+          description: "gpt-6 · chat",
+          group: "openai",
+        },
+        { title: "Claude 4 Sonnet", group: "anthropic" },
+      ],
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(modelPicker()?.textContent).toBe("Custom route")
+
+    const lateCatalogSelection = deferred<string | undefined>()
+    pendingNativePickerSelection = lateCatalogSelection
+    const beforeLatePicker = pickerCallCount()
+    modelPicker()?.click()
+    await until(() => pickerCallCount() === beforeLatePicker + 1)
+    scopeMenu()?.click()
+    menuItemWithText(containerA, "Project override")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("project-ui-route") === true,
+    )
+    lateCatalogSelection.resolve(catalogSelection)
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(modelPicker()?.textContent).toBe("Custom route")
+
+    scopeMenu()?.click()
+    menuItemWithText(containerA, "Project override")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("project-ui-route") === true,
+    )
+    await chooseCatalogModel()
+    chooseVariant("high")
+    buttonWithText(currentAssignmentEditor(), "Save route")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.textContent?.includes("Saved") === true &&
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("openai / gpt-6 · high") === true,
+    )
+    const projectToolReadback = await Effect.runPromise(
+      modelSettingsTool.execute({ taskID: TASK_A }, modelToolContext()),
+    )
+    const projectSettings = settingsAuthority.settings({ taskID: TASK_A })
+    expect(projectToolReadback.output).toEqual(projectSettings)
+    expect(projectSettings.personas[0]).toMatchObject({
+      layers: {
+        project: {
+          revision: 2,
+          route: { providerID: "openai", id: "gpt-6", variant: "high" },
+        },
+      },
+    })
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "configure" &&
+          JSON.stringify(call.input) ===
+            JSON.stringify({
+              sessionID: sessionA.id,
+              target: { scope: "project" },
+              persona: "ui",
+              expectedRevision: 1,
+              route: { providerID: "openai", id: "gpt-6", variant: "high" },
+            }),
+      ),
+    ).toBe(true)
+    rowForPersona("Systems").click()
+    rowForPersona("UI").click()
+    await until(() => buttonWithText(currentAssignmentEditor(), "Effort · high") !== undefined)
+    scopeMenu()?.click()
+    menuItemWithText(containerA, "Task override")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("route-1") === true,
+    )
+    await chooseCatalogModel()
+    chooseVariant("xhigh")
+    await until(() => buttonWithText(currentAssignmentEditor(), "Effort · xhigh") !== undefined)
+    buttonWithText(currentAssignmentEditor(), "Save route")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.textContent?.includes("Saved") === true &&
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("openai / gpt-6 · xhigh") === true,
+    )
+    assignmentLayers().open = true
+    expect(assignmentLayers().textContent).toContain(
+      "Task override: openai / gpt-6 · xhigh · revision 2",
+    )
+    expect(assignmentLayers().textContent).toContain(
+      "Project override: openai / gpt-6 · high · revision 2",
+    )
+    assignmentLayers().open = false
+    expect(
+      calls.some(
+        (call) =>
+          call.directory === DIRECTORY_A &&
+          call.service === "lazers.models" &&
+          call.method === "configure" &&
+          JSON.stringify(call.input) ===
+            JSON.stringify({
+              sessionID: sessionA.id,
+              target: { scope: "task", taskID: TASK_A },
+              persona: "ui",
+              expectedRevision: 1,
+              route: { providerID: "openai", id: "gpt-6", variant: "xhigh" },
+            }),
+      ),
+    ).toBe(true)
+    const uiToolReadback = await Effect.runPromise(
+      modelSettingsTool.execute({ taskID: TASK_A }, modelToolContext()),
+    )
+    const uiServiceReadback = settingsAuthority.settings({ taskID: TASK_A })
+    expect(uiToolReadback.output).toEqual(uiServiceReadback)
+    expect(uiServiceReadback.personas[0]).toMatchObject({
+      persona: "ui",
+      layers: {
+        task: {
+          revision: 2,
+          route: { providerID: "openai", id: "gpt-6", variant: "xhigh" },
+        },
+      },
+      resolution: {
+        status: "assigned",
+        route: { providerID: "openai", id: "gpt-6", variant: "xhigh" },
+        provenance: { target: { scope: "task", taskID: TASK_A }, revision: 2 },
+      },
+    })
+    expect(
+      containerA.querySelector(".lazers-models-assignment-row[aria-pressed='true']")?.textContent,
+    ).toContain("openai / gpt-6 · xhigh")
     expect(
       calls.some(
         (call) =>
@@ -1807,7 +2250,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         containerA
           .querySelector(".lazers-models-task-objective")
           ?.textContent?.includes("Objective A refreshed") === true &&
-        containerA.textContent?.includes("openai / route-2") === true,
+        containerA.textContent?.includes("openai / gpt-6") === true,
     )
     expect(topPaneBeforeRefresh.scrollTop).toBe(42)
     expect(inspectorBeforeRefresh.scrollTop).toBe(55)
@@ -1861,6 +2304,122 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
             JSON.stringify({ scope: { kind: "project", sessionID: sessionA.id }, taskID: TASK_A }),
       ),
     ).toBe(true)
+
+    buttonWithText(containerA, "Remove override")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.textContent?.includes("Saved") === true &&
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("Removed") === true &&
+        rowForPersona("UI").textContent?.includes("openai / gpt-6 · high") === true,
+    )
+    const removedUIReadback = await Effect.runPromise(
+      modelSettingsTool.execute({ taskID: TASK_A }, modelToolContext()),
+    )
+    const removedUISettings = settingsAuthority.settings({ taskID: TASK_A })
+    expect(removedUIReadback.output).toEqual(removedUISettings)
+    expect(removedUISettings.personas[0]).toMatchObject({
+      layers: {
+        task: { revision: 3, route: null },
+        project: {
+          revision: 2,
+          route: { providerID: "openai", id: "gpt-6", variant: "high" },
+        },
+      },
+      resolution: {
+        status: "assigned",
+        route: { providerID: "openai", id: "gpt-6", variant: "high" },
+        provenance: { target: { scope: "project", projectDirectory: DIRECTORY_A }, revision: 2 },
+      },
+    })
+    assignmentLayers().open = true
+    expect(assignmentLayers().textContent).toContain("Task override: Removed · revision 3")
+    expect(assignmentLayers().textContent).toContain(
+      "Project override: openai / gpt-6 · high · revision 2",
+    )
+    assignmentLayers().open = false
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "configure" &&
+          JSON.stringify(call.input) ===
+            JSON.stringify({
+              sessionID: sessionA.id,
+              target: { scope: "task", taskID: TASK_A },
+              persona: "ui",
+              expectedRevision: 2,
+              route: null,
+            }),
+      ),
+    ).toBe(true)
+
+    rowForPersona("Systems").click()
+    scopeMenu()?.click()
+    menuItemWithText(containerA, "Shared default")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("Not set") === true,
+    )
+    const sharedRoute = {
+      providerID: "provider-not-in-catalog",
+      id: "manual/model-id",
+      variant: "native/xhigh",
+    }
+    const manualRouteDetails = assignmentEditor.querySelector<HTMLDetailsElement>(
+      ".lazers-models-assignment-manual-route",
+    )!
+    manualRouteDetails.open = true
+    fillTextInput(containerA, "Provider ID", sharedRoute.providerID)
+    fillTextInput(containerA, "Model ID", sharedRoute.id)
+    fillTextInput(containerA, "Variant / effort (optional)", sharedRoute.variant)
+    buttonWithText(containerA, "Save route")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.textContent?.includes("Saved") === true &&
+        rowForPersona("Systems").textContent?.includes(
+          "provider-not-in-catalog / manual/model-id · native/xhigh",
+        ) === true,
+    )
+    const systemsToolReadback = await Effect.runPromise(
+      modelSettingsTool.execute({ taskID: TASK_A }, modelToolContext()),
+    )
+    const systemsSettings = settingsAuthority.settings({ taskID: TASK_A })
+    expect(systemsToolReadback.output).toEqual(systemsSettings)
+    expect(systemsSettings.personas[1]).toMatchObject({
+      layers: { shared: { revision: 1, route: sharedRoute } },
+      resolution: {
+        status: "assigned",
+        route: sharedRoute,
+        provenance: { target: { scope: "shared" }, revision: 1 },
+      },
+    })
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "configure" &&
+          JSON.stringify(call.input) ===
+            JSON.stringify({
+              sessionID: sessionA.id,
+              target: { scope: "shared" },
+              persona: "systems",
+              expectedRevision: 0,
+              route: sharedRoute,
+            }),
+      ),
+    ).toBe(true)
+    rowForPersona("Small task / refactoring").click()
+    expect(
+      assignmentRows().filter((row) => row.getAttribute("aria-pressed") === "true"),
+    ).toHaveLength(1)
+    expect(containerA.querySelectorAll(".lazers-models-assignment-editor")).toHaveLength(1)
+    expect(containerA.textContent).toContain("Saved assignments do not change worker dispatch")
 
     const chartBeforeCompareTab = chartDescription()
     containerA
@@ -2049,6 +2608,31 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(containerB.querySelector(".lazers-models-project")?.textContent).toContain("project-b")
     expect(containerB.querySelector(".lazers-models-decision-rows")?.textContent).toContain("GPT-6")
+    const assignmentsTabB = containerB.querySelector<HTMLButtonElement>(
+      '[role="tab"][aria-controls="lazers-models-assignments-panel"]',
+    )
+    if (!assignmentsTabB) throw new Error(`Missing assignments tab in B: ${containerB.innerHTML}`)
+    assignmentsTabB.click()
+    await until(() => containerB.querySelectorAll(".lazers-models-assignment-row").length === 3)
+    const uiAssignmentRowB = containerB.querySelector<HTMLButtonElement>(
+      ".lazers-models-assignment-row",
+    )!
+    uiAssignmentRowB.click()
+    await until(() => containerB.textContent?.includes("Model catalog unavailable") === true)
+    const manualRouteDetailsB = containerB.querySelector<HTMLDetailsElement>(
+      ".lazers-models-assignment-manual-route",
+    )!
+    manualRouteDetailsB.open = true
+    expect(
+      [...manualRouteDetailsB.querySelectorAll<HTMLInputElement>("input")].every(
+        (input) => !input.disabled,
+      ),
+    ).toBe(true)
+    expect(buttonWithText(containerB, "Retry catalog")).toBeDefined()
+    expect(
+      containerB.querySelector<HTMLButtonElement>(".lazers-models-assignment-choice > button")
+        ?.disabled,
+    ).toBe(true)
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
     expect(modelStore.snapshot().projects[DIRECTORY_B]?.selectedTaskID).toBe(TASK_B)
     expect(
@@ -2078,6 +2662,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
   } finally {
     for (const mount of mounts.reverse()) mount.dispose()
     disposeSetup?.()
+    assignmentAuthorityRepository?.close()
+    if (assignmentAuthorityDirectory)
+      rmSync(assignmentAuthorityDirectory, { recursive: true, force: true })
     await rm(outputDirectory, { recursive: true, force: true })
     await dom.happyDOM.abort()
     for (const name of globalNames) {

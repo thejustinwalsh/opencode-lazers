@@ -12,7 +12,7 @@ import {
 import type { ModelEvidenceOutput } from "./source-schema.ts"
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import type { ModelComparisonOutput } from "./comparison-schema.ts"
-import { ModelSettingsOutputSchema } from "./contract.ts"
+import { ModelCatalogOutputSchema, ModelSettingsOutputSchema } from "./contract.ts"
 import type { ModelSettingsOutput } from "./contract.ts"
 import { TaskEffortBasisSchema } from "./comparison-presentation.ts"
 import {
@@ -206,6 +206,76 @@ function settings(taskID: string | undefined, revision = 1): ModelSettingsOutput
   })
 }
 
+function settingsWithTaskRoute(
+  taskID: string,
+  revision: number,
+  route: { providerID: string; id: string; variant?: string } | null,
+): ModelSettingsOutput {
+  const output = settings(taskID, revision)
+  const target = { scope: "task" as const, projectDirectory: "/repo", taskID }
+  return ModelSettingsOutputSchema.parse({
+    ...output,
+    personas: output.personas.map((persona) =>
+      persona.persona !== "ui"
+        ? persona
+        : {
+            ...persona,
+            layers: {
+              ...persona.layers,
+              task: {
+                schemaVersion: 1,
+                target,
+                persona: "ui",
+                revision,
+                route,
+                updatedAt: revision,
+              },
+            },
+            resolution: route
+              ? {
+                  schemaVersion: 1,
+                  status: "assigned",
+                  persona: "ui",
+                  personaLabel: "ui",
+                  route,
+                  provenance: { target, revision },
+                }
+              : {
+                  schemaVersion: 1,
+                  status: "unassigned",
+                  persona: "ui",
+                  personaLabel: "ui",
+                  route: null,
+                  provenance: null,
+                },
+          },
+    ),
+  })
+}
+
+function catalog() {
+  return ModelCatalogOutputSchema.parse({
+    source: "Live native OpenCode model catalog",
+    observedAt: "2026-11-05T00:00:00Z",
+    advisoryOnly: true,
+    note: "Catalog choices do not change active dispatch.",
+    configuredImplementor: null,
+    options: [
+      {
+        providerID: "openai",
+        id: "gpt-6",
+        name: "GPT-6",
+        enabled: true,
+        type: "chat",
+        contextTokens: 128_000,
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        pricesUSDPerMillionTokens: null,
+        variants: ["high", "xhigh"],
+      },
+    ],
+  })
+}
+
 const evidence = (): ModelEvidenceOutput =>
   ModelEvidenceOutputSchema.parse({
     sources: sources.map((source) => ({
@@ -346,6 +416,13 @@ function transport(overrides: Partial<ModelComparisonTransport> = {}): ModelComp
     comparison: async () => comparison(["gpt-6"]),
     refreshSources: async () => evidence(),
     settings: async (taskID) => settings(taskID),
+    catalog: async () => catalog(),
+    configure: async (update) => ({
+      status: "conflict",
+      expectedRevision: update.expectedRevision,
+      currentRevision: update.expectedRevision,
+      current: null,
+    }),
     queryTasks: async () => tasks([defaultTaskID]),
     getTask: async () => ({ status: "not_found" }),
     trajectoryStatus: async (taskID) => trajectory(taskID),
@@ -1530,6 +1607,285 @@ test("selected task effort stays unknown when a valid response omits categorized
     expect(state.data.selectedTaskID).toBe(idB)
     expect(state.data.effortBasis).toBeUndefined()
     expect(state.data.effortError).toContain("Categorized task effort is unavailable")
+  } finally {
+    state.close()
+  }
+})
+
+test("native catalog loading and failure do not block exact manual mapping writes", async () => {
+  const pendingCatalog = deferred<ReturnType<typeof catalog>>()
+  const requestedRoute = { providerID: "manual-provider", id: "manual-model" }
+  let revision = 1
+  let latest = settingsWithTaskRoute(idA, revision, { providerID: "openai", id: "route-1" })
+  let catalogRequests = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      catalog: async () => {
+        catalogRequests++
+        if (catalogRequests === 1) return pendingCatalog.promise
+        throw new Error("native catalog offline")
+      },
+      settings: async () => latest,
+      configure: async (update) => {
+        revision++
+        latest = settingsWithTaskRoute(idA, revision, update.route)
+        return {
+          status: "updated",
+          mapping: {
+            schemaVersion: 1,
+            target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+            persona: update.persona,
+            revision,
+            route: update.route,
+            updatedAt: revision,
+          },
+        }
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings !== undefined)
+    expect(state.data.catalogStatus).toBe("loading")
+
+    await state.configureMapping("ui", "task", requestedRoute)
+    expect(state.data.assignmentWrite).toMatchObject({ status: "confirmed", route: requestedRoute })
+
+    pendingCatalog.reject(new Error("native catalog request timed out"))
+    await until(() => state.data.catalogStatus === "unavailable")
+    expect(state.data.catalogError).toContain("native catalog request timed out")
+    await state.refreshCatalog()
+    expect(catalogRequests).toBe(2)
+    expect(state.data.catalogStatus).toBe("unavailable")
+
+    const laterManualRoute = {
+      providerID: "provider-not-in-catalog",
+      id: "custom/model",
+      variant: "native/xhigh",
+    }
+    await state.configureMapping("ui", "task", laterManualRoute)
+    expect(state.data.assignmentWrite).toMatchObject({
+      status: "confirmed",
+      route: laterManualRoute,
+    })
+    expect(state.data.settings?.personas[0]?.layers.task?.route).toEqual(laterManualRoute)
+  } finally {
+    state.close()
+  }
+})
+
+test("mapping writes use exact routes and are saved only after matching settings readback", async () => {
+  const route = {
+    providerID: "provider-not-in-catalog",
+    id: "manual/model-id",
+    variant: "native/xhigh",
+  }
+  let latest = settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "route-1" })
+  const writes: unknown[] = []
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      settings: async () => latest,
+      configure: async (update) => {
+        writes.push(update)
+        latest = settingsWithTaskRoute(idA, 2, update.route)
+        return {
+          status: "updated",
+          mapping: {
+            schemaVersion: 1,
+            target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+            persona: "ui",
+            revision: 2,
+            route: update.route,
+            updatedAt: 2,
+          },
+        }
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings !== undefined)
+    await state.configureMapping("ui", "task", route)
+
+    expect(writes).toEqual([
+      {
+        target: { scope: "task", taskID: idA },
+        persona: "ui",
+        expectedRevision: 1,
+        route,
+      },
+    ])
+    expect(state.data.settings?.personas[0]?.layers.task).toMatchObject({
+      revision: 2,
+      route,
+    })
+    expect(state.data.settings?.personas[0]?.resolution).toMatchObject({
+      status: "assigned",
+      route,
+      provenance: { target: { scope: "task", taskID: idA }, revision: 2 },
+    })
+    expect(state.data.assignmentWrite).toMatchObject({
+      status: "confirmed",
+      revision: 2,
+      route,
+    })
+  } finally {
+    state.close()
+  }
+})
+
+test("uncertain writes stay unconfirmed until an exact authoritative readback arrives", async () => {
+  const route = {
+    providerID: "manual-provider",
+    id: "manual-model",
+    variant: "native/effort",
+  }
+  let latest = settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "route-1" })
+  let settingsReads = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      settings: async () => {
+        settingsReads++
+        return latest
+      },
+      configure: async () => {
+        throw new Error("connection closed after send")
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings !== undefined)
+    await state.configureMapping("ui", "task", route)
+
+    expect(settingsReads).toBe(2)
+    expect(state.data.assignmentWrite).toMatchObject({
+      status: "uncertain",
+      route,
+      revision: 2,
+    })
+    expect(state.data.settings?.personas[0]?.layers.task?.route?.id).toBe("route-1")
+
+    latest = settingsWithTaskRoute(idA, 2, route)
+    await state.recheckAssignmentWrite()
+
+    expect(state.data.assignmentWrite).toMatchObject({ status: "confirmed", revision: 2, route })
+    expect(state.data.settings?.personas[0]?.layers.task?.route).toEqual(route)
+    expect(settingsReads).toBe(3)
+  } finally {
+    state.close()
+  }
+})
+
+test("stale mapping revisions show the newer authoritative route without retrying", async () => {
+  const currentRoute = { providerID: "other-editor", id: "route-2" }
+  let configureCount = 0
+  let latest = settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "route-1" })
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      settings: async () => latest,
+      configure: async (update) => {
+        configureCount++
+        latest = settingsWithTaskRoute(idA, 2, currentRoute)
+        return {
+          status: "conflict",
+          expectedRevision: update.expectedRevision,
+          currentRevision: 2,
+          current: {
+            schemaVersion: 1,
+            target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+            persona: "ui",
+            revision: 2,
+            route: currentRoute,
+            updatedAt: 2,
+          },
+        }
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings !== undefined)
+    await state.configureMapping("ui", "task", {
+      providerID: "stale-editor",
+      id: "never-current",
+    })
+
+    expect(configureCount).toBe(1)
+    expect(state.data.assignmentWrite).toMatchObject({ status: "conflict", revision: 2 })
+    expect(state.data.settings?.personas[0]?.layers.task?.route).toEqual(currentRoute)
+  } finally {
+    state.close()
+  }
+})
+
+test("late mapping responses cannot replace a newly selected task", async () => {
+  const pending = deferred<Awaited<ReturnType<ModelComparisonTransport["configure"]>>>()
+  let configureSignal: AbortSignal | undefined
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([idA, idB]),
+      settings: async (taskID) =>
+        settingsWithTaskRoute(taskID ?? idA, taskID === idB ? 20 : 1, {
+          providerID: "openai",
+          id: taskID === idB ? "route-20" : "route-1",
+        }),
+      configure: async (_update, signal) => {
+        configureSignal = signal
+        return pending.promise
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings?.taskID === idA)
+    const save = state.configureMapping("ui", "task", {
+      providerID: "provider-a",
+      id: "route-a-new",
+    })
+    await until(() => state.data.assignmentWrite?.status === "saving")
+
+    state.selectTask(idB)
+    await until(() => state.data.settings?.taskID === idB)
+    expect(configureSignal?.aborted).toBe(true)
+
+    pending.resolve({
+      status: "updated",
+      mapping: {
+        schemaVersion: 1,
+        target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+        persona: "ui",
+        revision: 2,
+        route: { providerID: "provider-a", id: "route-a-new" },
+        updatedAt: 2,
+      },
+    })
+    await save
+
+    expect(state.data.selectedTaskID).toBe(idB)
+    expect(state.data.settings?.taskID).toBe(idB)
+    expect(state.data.settings?.personas[0]?.layers.task?.route?.id).toBe("route-20")
+    expect(state.data.assignmentWrite).toBeUndefined()
   } finally {
     state.close()
   }

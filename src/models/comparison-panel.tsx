@@ -4,6 +4,8 @@ import { Schema } from "effect"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
+import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
+import type { ModelMappingTargetInput } from "./mapping-schema.ts"
 import { ModelsDecision } from "./decision-contract.ts"
 import type {
   ModelDecisionConfiguration,
@@ -18,7 +20,11 @@ import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener } from "../tasks/panel.tsx"
 import type { TaskTrajectoryRequest } from "../tasks/panel.tsx"
 import { registerModelsPanel } from "./registration.ts"
-import type { ModelComparisonPanelData, ModelComparisonTransport } from "./comparison-state.ts"
+import type {
+  ModelCatalogOutput,
+  ModelComparisonPanelData,
+  ModelComparisonTransport,
+} from "./comparison-state.ts"
 import { ModelComparisonPanelState } from "./comparison-state.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import {
@@ -298,8 +304,7 @@ export function HistoricalChartPlaceholder() {
 export function RoutingNotActiveNotice() {
   return (
     <p class="lazers-models-routing-notice" role="note">
-      Saved assignments are read-only here. Routing is not active; these saved routes do not change
-      worker dispatch.
+      Routing is not active. Saved assignments do not change worker dispatch.
     </p>
   )
 }
@@ -340,6 +345,15 @@ function ModelPanel(
   )
   const [split, setSplit] = createSignal(initial.split)
   const [decisionEvidenceOpen, setDecisionEvidenceOpen] = createSignal(false)
+  const [assignmentPersona, setAssignmentPersona] = createSignal<WorkerPersona | null>(null)
+  const [assignmentScope, setAssignmentScope] =
+    createSignal<ModelMappingTargetInput["scope"]>("task")
+  const [assignmentRoute, setAssignmentRoute] = createSignal({
+    providerID: "",
+    id: "",
+    variant: "",
+  })
+  let assignmentPickerRequest = 0
   let root: HTMLDivElement | undefined
   let topPane: HTMLDivElement | undefined
   let inspector: HTMLDivElement | undefined
@@ -416,6 +430,7 @@ function ModelPanel(
   const visible = () => (data().key === expectedKey() ? data() : undefined)
 
   onCleanup(() => {
+    assignmentPickerRequest++
     state.close()
     endDrag?.()
   })
@@ -453,6 +468,13 @@ function ModelPanel(
         settings: (taskID, signal) =>
           models.settings(
             { sessionID: value.session, ...(taskID ? { taskID } : {}) },
+            { ...location, signal: timed(signal) },
+          ),
+        catalog: (signal) =>
+          models.catalog({ sessionID: value.session }, { ...location, signal: timed(signal) }),
+        configure: (update, signal) =>
+          models.configure(
+            { sessionID: value.session, ...update },
             { ...location, signal: timed(signal) },
           ),
         queryTasks: (signal) =>
@@ -677,6 +699,187 @@ function ModelPanel(
   }
   const projectLabel = () => current()?.project.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project"
   const personas = () => visible()?.settings?.personas ?? []
+  const assignmentSettings = () =>
+    personas().find((persona) => persona.persona === assignmentPersona())
+  const assignmentLayer = () => assignmentSettings()?.layers[assignmentScope()] ?? null
+  const catalogOptions = () =>
+    (visible()?.catalog?.options ?? []).filter((option) => option.enabled !== false)
+  const selectedCatalogModel = () =>
+    catalogOptions().find(
+      (option) =>
+        option.providerID === assignmentRoute().providerID && option.id === assignmentRoute().id,
+    )
+  const catalogOptionKey = (
+    option: Pick<ModelCatalogOutput["options"][number], "providerID" | "id">,
+  ) => JSON.stringify([option.providerID, option.id])
+  const modelSelectionCaption = () => {
+    const model = selectedCatalogModel()
+    if (model) return `${model.providerID} / ${model.id}`
+    const route = assignmentRoute()
+    return route.providerID && route.id
+      ? `Not in catalog · ${route.providerID} / ${route.id}`
+      : "Choose a model from the native catalog"
+  }
+  const modelPickerButtonLabel = () => {
+    const model = selectedCatalogModel()
+    return model
+      ? `${model.name || model.id} · ${model.providerID}`
+      : assignmentRoute().providerID && assignmentRoute().id
+        ? "Custom route"
+        : "Choose model"
+  }
+  const assignmentVariantChoices = () => selectedCatalogModel()?.variants ?? []
+  const assignmentVariantLabel = () => assignmentRoute().variant || "No variant"
+  const assignmentEditorTitleID = () =>
+    `lazers-models-assignment-editor-title-${encodeURIComponent(visible()?.key ?? "panel")}`
+  const assignmentScopeLabel = (scope: ModelMappingTargetInput["scope"]) =>
+    scope === "shared"
+      ? "Shared default"
+      : scope === "project"
+        ? "Project override"
+        : "Task override"
+  const clearConfirmedAssignmentWrite = () => state.clearConfirmedAssignmentWrite()
+  const selectAssignmentPersona = (persona: WorkerPersona) => {
+    assignmentPickerRequest++
+    clearConfirmedAssignmentWrite()
+    setAssignmentPersona(persona)
+  }
+  const selectAssignmentScope = (scope: ModelMappingTargetInput["scope"]) => {
+    assignmentPickerRequest++
+    clearConfirmedAssignmentWrite()
+    setAssignmentScope(scope)
+  }
+  const updateAssignmentRoute = (change: Partial<ReturnType<typeof assignmentRoute>>) => {
+    assignmentPickerRequest++
+    clearConfirmedAssignmentWrite()
+    setAssignmentRoute((previous) => ({ ...previous, ...change }))
+  }
+  const assignmentWrite = () => visible()?.assignmentWrite
+  const assignmentBusy = () =>
+    assignmentWrite()?.status === "saving" || assignmentWrite()?.status === "verifying"
+  const assignmentBlocked = () =>
+    assignmentBusy() ||
+    assignmentWrite()?.status === "uncertain" ||
+    assignmentWrite()?.status === "conflict" ||
+    assignmentWrite()?.status === "failed"
+  const assignmentCanSave = () => {
+    const route = assignmentRoute()
+    return Boolean(
+      assignmentPersona() &&
+      visible()?.settings &&
+      !visible()?.settingsLoading &&
+      !visible()?.settingsError &&
+      !(assignmentScope() === "task" && !visible()?.selectedTaskID) &&
+      route.providerID.trim() &&
+      route.id.trim() &&
+      !assignmentBlocked(),
+    )
+  }
+  let lastAssignmentDraftKey = ""
+  createEffect(() => {
+    const panel = visible()
+    const persona = assignmentPersona()
+    const scope = assignmentScope()
+    const setting = assignmentSettings()
+    if (!panel?.settings || !persona || !setting) {
+      lastAssignmentDraftKey = ""
+      return
+    }
+    const layer = setting.layers[scope]
+    const key = `${panel.key}:${panel.settings.taskID ?? "project"}:${persona}:${scope}:${layer?.revision ?? 0}`
+    if (key === lastAssignmentDraftKey) return
+    lastAssignmentDraftKey = key
+    setAssignmentRoute({
+      providerID: layer?.route?.providerID ?? "",
+      id: layer?.route?.id ?? "",
+      variant: layer?.route?.variant ?? "",
+    })
+  })
+  const saveAssignmentRoute = () => {
+    const persona = assignmentPersona()
+    if (!persona || !assignmentCanSave()) return
+    const draft = assignmentRoute()
+    const route: ModelPolicy = {
+      providerID: draft.providerID,
+      id: draft.id,
+      ...(draft.variant.length ? { variant: draft.variant } : {}),
+    }
+    void state.configureMapping(persona, assignmentScope(), route)
+  }
+  const removeAssignmentRoute = () => {
+    const persona = assignmentPersona()
+    if (!persona || !assignmentLayer()?.route || assignmentBlocked()) return
+    void state.configureMapping(persona, assignmentScope(), null)
+  }
+  const assignmentLayerLabel = (
+    label: string,
+    layer: NonNullable<ReturnType<typeof assignmentSettings>>["layers"]["task"],
+  ) => {
+    if (!layer) return `${label}: Not set`
+    if (!layer.route) return `${label}: Removed · revision ${layer.revision}`
+    return `${label}: ${routeLabel({
+      providerID: layer.route.providerID,
+      modelID: layer.route.id,
+      variant: layer.route.variant ?? null,
+    })} · revision ${layer.revision}`
+  }
+  const openAssignmentModelPicker = async () => {
+    const panel = visible()
+    const persona = assignmentPersona()
+    if (
+      !panel ||
+      !persona ||
+      assignmentBlocked() ||
+      panel.catalogStatus !== "ready" ||
+      !catalogOptions().length
+    )
+      return
+
+    const scope = assignmentScope()
+    const taskID = panel.selectedTaskID
+    const panelKey = panel.key
+    const options = catalogOptions()
+    const request = ++assignmentPickerRequest
+    const selectedOption = selectedCatalogModel()
+    let chosenKey: string | undefined
+    try {
+      chosenKey = await ctx.dialogs.select({
+        title: "Choose a model",
+        placeholder: "Search model name, provider, or ID",
+        current: selectedOption ? catalogOptionKey(selectedOption) : undefined,
+        options: options.map((option) => ({
+          title: option.name || option.id,
+          value: catalogOptionKey(option),
+          group: option.providerID,
+          description: `${option.id}${option.type ? ` · ${option.type}` : ""}`,
+        })),
+      })
+    } catch {
+      return
+    }
+
+    const currentPanel = visible()
+    if (
+      chosenKey === undefined ||
+      request !== assignmentPickerRequest ||
+      assignmentBlocked() ||
+      currentPanel?.key !== panelKey ||
+      currentPanel.selectedTaskID !== taskID ||
+      assignmentPersona() !== persona ||
+      assignmentScope() !== scope
+    )
+      return
+
+    const option = options.find((candidate) => catalogOptionKey(candidate) === chosenKey)
+    if (!option) return
+    const previous = assignmentRoute()
+    const sameModel = previous.providerID === option.providerID && previous.id === option.id
+    updateAssignmentRoute({
+      providerID: option.providerID,
+      id: option.id,
+      variant: sameModel ? previous.variant : "",
+    })
+  }
   const sourceWarning = () => {
     const sources = visible()?.comparison?.sources ?? []
     if (sources.some((source) => source.refresh?.state === "failed"))
@@ -714,7 +917,10 @@ function ModelPanel(
   }
 
   const selectTab = (tab: Tab) => save({ tab })
-  const selectTask = (taskID: string) => state.selectTask(taskID)
+  const selectTask = (taskID: string) => {
+    assignmentPickerRequest++
+    state.selectTask(taskID)
+  }
   const tabKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
     event.preventDefault()
@@ -980,52 +1186,291 @@ function ModelPanel(
                 </p>
               </Show>
               <Show when={!visible()?.settingsLoading && !visible()?.settingsError}>
-                <For each={personas()}>
+                <div class="lazers-models-assignment-rows" role="group" aria-label="Persona routes">
+                  <For each={personas()}>
+                    {(persona) => (
+                      <button
+                        type="button"
+                        class="lazers-models-assignment-row"
+                        aria-pressed={assignmentPersona() === persona.persona}
+                        disabled={assignmentBlocked()}
+                        onClick={() => selectAssignmentPersona(persona.persona)}
+                      >
+                        <span class="lazers-models-assignment-identity">
+                          <strong>{persona.personaLabel}</strong>
+                          <span>
+                            {persona.resolution.status === "assigned"
+                              ? routeLabel({
+                                  providerID: persona.resolution.route.providerID,
+                                  modelID: persona.resolution.route.id,
+                                  variant: persona.resolution.route.variant ?? null,
+                                })
+                              : "No saved route"}
+                          </span>
+                        </span>
+                        <small>
+                          {persona.resolution.status === "assigned"
+                            ? `From ${persona.resolution.provenance.target.scope}`
+                            : "Unassigned"}
+                        </small>
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <Show when={assignmentSettings()}>
                   {(persona) => (
-                    <article class="lazers-models-assignment">
-                      <h3>{persona.personaLabel}</h3>
-                      <p>
-                        Effective saved route:{" "}
-                        {persona.resolution.status === "assigned"
-                          ? routeLabel({
-                              providerID: persona.resolution.route.providerID,
-                              modelID: persona.resolution.route.id,
-                              variant: persona.resolution.route.variant ?? null,
-                            })
-                          : "No saved route"}
-                      </p>
-                      <p class="lazers-models-source-meta">
-                        {persona.resolution.status === "assigned"
-                          ? `Resolved from ${persona.resolution.provenance.target.scope} assignment · revision ${persona.resolution.provenance.revision}`
-                          : "No applicable task, project, or shared assignment."}
-                      </p>
-                      <div class="lazers-models-assignment-layers">
-                        <For
-                          each={
-                            [
-                              ["Task override", persona.layers.task],
-                              ["Project default", persona.layers.project],
-                              ["Shared default", persona.layers.shared],
-                            ] as const
-                          }
-                        >
-                          {([label, layer]) => (
-                            <p>
-                              <strong>{label}:</strong>{" "}
-                              {layer?.route
-                                ? `${routeLabel({
-                                    providerID: layer.route.providerID,
-                                    modelID: layer.route.id,
-                                    variant: layer.route.variant ?? null,
-                                  })} · revision ${layer.revision} · updated ${new Date(layer.updatedAt).toLocaleString()}`
-                                : "Not set"}
-                            </p>
-                          )}
-                        </For>
+                    <section
+                      class="lazers-models-assignment-editor"
+                      aria-labelledby={assignmentEditorTitleID()}
+                    >
+                      <header class="lazers-models-assignment-editor-heading">
+                        <div>
+                          <h3 id={assignmentEditorTitleID()}>Edit {persona().personaLabel}</h3>
+                          <p>Exact native route</p>
+                        </div>
+                        <Ui.Menu
+                          label={`Target · ${assignmentScopeLabel(assignmentScope())}`}
+                          trigger="button"
+                          icon="chevron-down"
+                          disabled={assignmentBlocked()}
+                          items={[
+                            {
+                              label: "Shared default",
+                              onSelect: () => selectAssignmentScope("shared"),
+                            },
+                            {
+                              label: "Project override",
+                              onSelect: () => selectAssignmentScope("project"),
+                            },
+                            {
+                              label: "Task override",
+                              onSelect: () => selectAssignmentScope("task"),
+                            },
+                          ]}
+                        />
+                      </header>
+                      <Show when={assignmentScope() === "task" && !visible()?.selectedTaskID}>
+                        <p class="lazers-models-note" role="status">
+                          Choose a task from the toolbar before editing a task override.
+                        </p>
+                      </Show>
+                      <Show when={visible()?.catalogStatus === "loading"}>
+                        <p class="lazers-models-catalog-status" role="status">
+                          <Ui.Loader size="small" /> Loading native models…
+                        </p>
+                      </Show>
+                      <Show when={visible()?.catalogStatus === "unavailable"}>
+                        <div class="lazers-models-catalog-status" role="status">
+                          <span>Model catalog unavailable. Custom routes remain available.</span>
+                          <Ui.Button
+                            size="small"
+                            variant="ghost-muted"
+                            onClick={() => void state.refreshCatalog()}
+                          >
+                            Retry catalog
+                          </Ui.Button>
+                          <details class="lazers-models-catalog-error">
+                            <summary>Catalog details</summary>
+                            <p>{visible()?.catalogError}</p>
+                          </details>
+                        </div>
+                      </Show>
+                      <Show when={visible()?.catalogStatus === "ready" && !catalogOptions().length}>
+                        <p class="lazers-models-catalog-status" role="status">
+                          No models are listed. Custom routes remain available.
+                        </p>
+                      </Show>
+                      <div class="lazers-models-assignment-fields">
+                        <div class="lazers-models-assignment-choice">
+                          <span>Model</span>
+                          <Ui.Button
+                            size="small"
+                            disabled={
+                              assignmentBlocked() ||
+                              visible()?.catalogStatus !== "ready" ||
+                              !catalogOptions().length
+                            }
+                            onClick={() => void openAssignmentModelPicker()}
+                          >
+                            {modelPickerButtonLabel()}
+                          </Ui.Button>
+                          <small>{modelSelectionCaption()}</small>
+                        </div>
+                        <div class="lazers-models-assignment-choice">
+                          <span>Effort / variant</span>
+                          <Ui.Menu
+                            label={`Effort · ${assignmentVariantLabel()}`}
+                            trigger="button"
+                            icon="chevron-down"
+                            disabled={assignmentBlocked() || !selectedCatalogModel()}
+                            items={[
+                              {
+                                label: "No variant",
+                                onSelect: () => updateAssignmentRoute({ variant: "" }),
+                              },
+                              ...assignmentVariantChoices().map((variant) => ({
+                                label: variant,
+                                onSelect: () => updateAssignmentRoute({ variant }),
+                              })),
+                            ]}
+                          />
+                          <small>
+                            {selectedCatalogModel()
+                              ? `For ${selectedCatalogModel()!.name || selectedCatalogModel()!.id}`
+                              : "Custom variants can be entered below"}
+                          </small>
+                        </div>
                       </div>
-                    </article>
+                      <details class="lazers-models-assignment-manual-route">
+                        <summary>Custom route (manual IDs)</summary>
+                        <p>Use exact IDs when a route is missing from the native catalog.</p>
+                        <div class="lazers-models-assignment-manual-fields">
+                          <div class="lazers-models-assignment-field">
+                            <span>Provider ID</span>
+                            <Ui.TextInput
+                              label="Provider ID"
+                              value={assignmentRoute().providerID}
+                              onInput={(providerID) => updateAssignmentRoute({ providerID })}
+                              disabled={assignmentBlocked()}
+                            />
+                          </div>
+                          <div class="lazers-models-assignment-field">
+                            <span>Model ID</span>
+                            <Ui.TextInput
+                              label="Model ID"
+                              value={assignmentRoute().id}
+                              onInput={(id) => updateAssignmentRoute({ id })}
+                              disabled={assignmentBlocked()}
+                            />
+                          </div>
+                          <div class="lazers-models-assignment-field">
+                            <span>Variant / effort (optional)</span>
+                            <Ui.TextInput
+                              label="Variant / effort (optional)"
+                              value={assignmentRoute().variant}
+                              onInput={(variant) => updateAssignmentRoute({ variant })}
+                              disabled={assignmentBlocked()}
+                            />
+                          </div>
+                        </div>
+                      </details>
+                      <p class="lazers-models-assignment-current">
+                        <strong>Current override:</strong>{" "}
+                        {assignmentLayer()?.route
+                          ? routeLabel({
+                              providerID: assignmentLayer()!.route!.providerID,
+                              modelID: assignmentLayer()!.route!.id,
+                              variant: assignmentLayer()!.route!.variant ?? null,
+                            })
+                          : assignmentLayer()
+                            ? "Removed"
+                            : "Not set"}
+                      </p>
+                      <div class="lazers-models-assignment-actions">
+                        <Ui.Button
+                          size="small"
+                          disabled={!assignmentCanSave()}
+                          busy={assignmentBusy()}
+                          onClick={saveAssignmentRoute}
+                        >
+                          Save route
+                        </Ui.Button>
+                        <Ui.Button
+                          size="small"
+                          variant="ghost-muted"
+                          disabled={!assignmentLayer()?.route || assignmentBlocked()}
+                          onClick={removeAssignmentRoute}
+                        >
+                          Remove override
+                        </Ui.Button>
+                      </div>
+                      <Show when={assignmentWrite()}>
+                        {(write) => {
+                          const alert = () =>
+                            ["uncertain", "conflict", "failed"].includes(write().status)
+                          const statusLabel = () => {
+                            switch (write().status) {
+                              case "saving":
+                              case "verifying":
+                                return "Saving…"
+                              case "confirmed":
+                                return "Saved"
+                              case "uncertain":
+                                return "Write unconfirmed"
+                              case "conflict":
+                                return "Updated elsewhere"
+                              case "failed":
+                                return "Could not save"
+                            }
+                          }
+                          const targetLabel = () => {
+                            const target = write().target
+                            if (!target) return "No target"
+                            return target.scope === "task"
+                              ? `Task override · ${visible()?.settings?.projectDirectory ?? "current project"} · ${target.taskID}`
+                              : target.scope === "project"
+                                ? `Project override · ${visible()?.settings?.projectDirectory ?? "current project"}`
+                                : assignmentScopeLabel(target.scope)
+                          }
+                          const requestRouteLabel = () => {
+                            const route = write().route
+                            return route
+                              ? `${route.providerID} / ${route.id}${route.variant ? ` · ${route.variant}` : ""}`
+                              : "remove override"
+                          }
+                          return (
+                            <div
+                              class="lazers-models-assignment-feedback"
+                              data-status={write().status}
+                              role={alert() ? "alert" : "status"}
+                              aria-live={alert() ? "assertive" : "polite"}
+                            >
+                              <p>{statusLabel()}</p>
+                              <Show when={write().status === "uncertain"}>
+                                <Ui.Button
+                                  size="small"
+                                  variant="ghost-muted"
+                                  busy={assignmentBusy()}
+                                  onClick={() => void state.recheckAssignmentWrite()}
+                                >
+                                  Check saved settings
+                                </Ui.Button>
+                              </Show>
+                              <Show
+                                when={write().status === "conflict" || write().status === "failed"}
+                              >
+                                <Ui.Button
+                                  size="small"
+                                  variant="ghost-muted"
+                                  busy={visible()?.settingsLoading}
+                                  onClick={() => void state.refreshSettings()}
+                                >
+                                  Reload current settings
+                                </Ui.Button>
+                              </Show>
+                              <details class="lazers-models-assignment-write-details">
+                                <summary>Write details</summary>
+                                <p>{write().message}</p>
+                                <p>
+                                  {modelPersonaLabels[write().persona]} · {targetLabel()} · expected
+                                  revision {write().expectedRevision} · observed revision{" "}
+                                  {write().revision ?? "unknown"}
+                                </p>
+                                <p>Requested route: {requestRouteLabel()}</p>
+                              </details>
+                            </div>
+                          )
+                        }}
+                      </Show>
+                      <details class="lazers-models-assignment-layers">
+                        <summary>Mapping layers and revisions</summary>
+                        <p>{assignmentLayerLabel("Task override", persona().layers.task)}</p>
+                        <p>{assignmentLayerLabel("Project override", persona().layers.project)}</p>
+                        <p>{assignmentLayerLabel("Shared default", persona().layers.shared)}</p>
+                      </details>
+                    </section>
                   )}
-                </For>
+                </Show>
               </Show>
             </section>
           }

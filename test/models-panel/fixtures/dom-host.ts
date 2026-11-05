@@ -93,6 +93,21 @@ export function createTestUI() {
       element.textContent = props.name
       return element
     },
+    TextInput: (props: {
+      label: string
+      value: string
+      onInput: (value: string) => void
+      disabled?: boolean
+    }) => {
+      const input = document.createElement("input")
+      input.setAttribute("aria-label", props.label)
+      input.addEventListener("input", () => props.onInput(input.value))
+      createEffect(() => {
+        if (input.value !== props.value) input.value = props.value
+        input.disabled = Boolean(props.disabled)
+      })
+      return input
+    },
     Loader: () => {
       const element = document.createElement("span")
       element.textContent = "Loading"
