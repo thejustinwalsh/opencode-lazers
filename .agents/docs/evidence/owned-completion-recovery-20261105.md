@@ -282,3 +282,52 @@ was delivered/read back instruction-only at1793860367941, key
 `lazers.review.lz99.final-terminal-continuation-must-preserve-tree.20261105.v1`.
 Its retained input stayed `msg_a69c3a81bcdf40e99c629d833f37c020`; no prompt, worker
 or ownership mutation occurred. Consumption and correction are not yet observed.
+
+## Original quota-failed129/132 continuation observed
+
+Root integrated99 as `846e4e5`, preserving original ancestry and fixing terminal
+workspace/baseline selection. The first qualification attempt safely rejected both
+resumes: later generic holds lacked the structured worker observation. Root found
+and fixed the concrete absent-turn heartbeat bug in `c711f89`, with a native-shaped
+regression and stable failed-observation caching using native idle time. Related
+46tests/574 assertions, lint/types passed. The earlier mixed-runtime explanation
+remains unproven; no reload was required or performed by this Architect.
+
+After one reconcile per plan, Root confirmed the correct current-input/idle-time
+holds survived later normal heartbeats and explicitly lifted the pause. Supported
+resume then succeeded on original129 atversion34→35 and original132 at21→22,
+each naming its exact retained attempt, with no workspace/baseline override,
+cancellation workaround or replacement. The original dirty source, sessions,
+Luna Max routes, history and usage remain; unknown background was not changed into
+successful idle evidence.
+
+Authenticated native observation at1793862057261/266 found both original sessions
+active.129 was executing scoped repair preparation tools in its retained tree;
+tool count advanced214→218.132 had completed an actual patch; tool count advanced
+110→122. This establishes resumed implementation activity, not merely prompt
+admission and not task acceptance, cleanup or completion.
+
+Retained correction advice was delivered before resume at1793861066938/946 with
+unchanged inputs.129's five-source-finding review and132's lifetime20-cap/empty-
+advice corrections remain required. An exact canonical review-file path was also
+provided instruction-only to129 at1793862128248 to avoid a broad home search.
+After Root confirmed that search timed out, both the exact review path and
+canonical `.agents/docs/evidence/radar129-source-guidance-20261104.md` path were
+delivered/read back at1793862261264 under
+`lazers.advice.lz129.canonical-review-and-guidance-paths.20261105.v1`. Assigned
+input stayed `msg_3bddb1faedae407f9df4f5032cb59826`; consumption is not yet proved.
+
+## Authorized prospective native-log implementation coordination
+
+The user explicitly authorized ordered native-log replay for current-start lineage
+paired with a genuine prospective idle hook. Historical missing reports stay
+unknown. A small implementation brief was delivered/read back at1793862110690/696
+to current127 owner `ses_f58f7187b74c4d6da97f63335ffe7b44` and original worker
+`ses_42ac41f32a83465c8a71161d511ba045`, key
+`lazers.advice.lz127.authorized-prospective-native-log-implementation.20261105.v1`.
+Both inputs stayed unchanged; no model prompt, ownership or worker mutation was
+sent. The prior-owner target was rejected as unavailable before any write; runtime
+inspection confirmed the automatic owner continuation. Implementation/admission
+is not yet observed. Preserve active129/132 and leave canonical activation to Root
+at an idle boundary; routine supported scope amendments need no further policy
+permission, but reservations and native recovery controls remain authoritative.
