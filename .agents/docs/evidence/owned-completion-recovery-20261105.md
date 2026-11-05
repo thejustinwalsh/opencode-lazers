@@ -440,3 +440,45 @@ terminal/new execution, replay gaps/incomplete watermarks and stale/racing input
 must still reject unsafe lineage. This authorizes no historical135 certificate.
 Consumption/correction is not yet observed. Runtime127 is running atversion54,
 304tools,8 completed effects and none pending/uncertain; original identity retained.
+
+## Real-host native log is not yet qualified as replay recovery
+
+Root observed completed137 returning no events plus `log.synced` sequence223
+from public session.log with follow:false; explicit after0 and after1 were the
+same. Active127 after0 returned no events plus synced4099. Raw authenticated GET
+returned HTTP200, text/event-stream, exactly one data line containing log.synced,
+so SDK filtering does not explain the result. Root's metadata-only scripts are
+`/private/tmp/lazers-native-log-{metadata-probe,from-zero-metadata-probe,after-one-metadata-probe,active-metadata-probe,raw-metadata-probe}-20261105.ts`.
+No bodies were exported. Retention, pruning or configuration are not established
+causes and must not be presented as a diagnosis.
+
+This real-host warning and exact script paths were delivered/read back to original
+worker and current owner at1793865339985/995 under
+`lazers.advice.lz127.real-host-empty-native-log.20261105.v1`, with unchanged inputs.
+Useful implementation/tests are preserved; fixtures cannot establish deployable
+recovery when the actual host supplies no start events. Missing identity remains
+fail-closed; a sync watermark is not a start identity or historical certificate.
+
+Public server.info at1793865386645 confirms real host2.2.5. Separate bounded,
+metadata-only public shape inspection at1793865516345 found session metadata only
+`lazersAttemptID`, latest assistant metadata absent/native keys only
+`responseId,serviceTier`, and latest user input unchanged with no metadata/native
+keys. These observed headers expose no execution-start sequence; this is not a
+claim about all other supported APIs. Probe:
+`/private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lz127-public-identity-shape-probe-20261105.ts`.
+It exported no message bodies and made no inference or state mutations.
+
+Original127 has meanwhile returned through runtime with accepted source artifact
+`af6dd111b8e33940cf03f51205cdc1bfb59fe533`,329tools; task verification passed.
+Acceptance does not establish actual native recovery or authorize activation.
+Explicit source-only/not-native-qualified steering was delivered to current owner
+at1793865637946 under
+`lazers.advice.lz127.accepted-source-not-native-qualified.20261105.v1`.
+
+Two independent Luna Max investigations are running: pinned host retention/read/
+write behavior and a supported exact current-start source
+(`ses_e554abce2ffepW80B70Gm20QSC`), and accepted repair delta review including
+permanent realistic-inbox regression and empty replay failure safety
+(`ses_e5546f0aeffeVg5LUEi27cLgrr`). No supported alternative is yet confirmed.
+No canonical source activation, worker replacement, replay certificate or private
+database workaround has been performed.
