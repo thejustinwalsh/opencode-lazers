@@ -59,3 +59,28 @@ No amendment was admitted and no135 cancellation/resume or implementation starte
 Preserve127,99 and133, their reservations and priorities. Wait for legitimate
 scope release; do not invent another registry/wiring path to bypass admission.
 The58 ownership transfers remain pending approval.
+
+Root confirmed the research checkout's `09c7e62` caveat is docs-only drift;
+`git diff 09c7e62 HEAD -- src/progress src/observability` is empty. The diagnosed
+counter gap therefore remains applicable without a source-drift detour.
+
+## Current127 dependency coordination
+
+Root found retained127 tree clean at `633da56`, an ancestor ofmain. Fresh runtime
+inspection atversion42 still shows the original attempt running/held because
+execution success does not match current `experimental.idle` execution, with all
+five effects completed. Source inclusion does not establish completion.
+
+Under Root's direction, current owner `ses_c10fbf89effe4d9f9951e6a26590d7f3`
+received keyed instruction context at1793856966659:
+`lazers.coordination.lz127.actual-live-dependency-without-certificate.20261105.v1`.
+It requests meaningful received-duplicate-start verification, truthful fresh native
+and journal facts, and supported same-worker recovery only for actual work while
+preserving99. Missing/stale evidence stays unknown; no retrospective certificate,
+proof-only inference, source-based acceptance or scope bypass is authorized.
+
+Native readback confirmed the entry and unchanged owner input
+`msg_78267ff167e04a5aaf50a169d0678664`. No prompt, ownership or worker mutation
+occurred. Consumption, live qualification and reservation release remain
+unobserved. This is current127→135 dependency work, not historical replay or an
+approved58-plan transfer;135's instrumentation amendment remains unadmitted.
