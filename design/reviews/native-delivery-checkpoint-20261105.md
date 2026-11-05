@@ -1,5 +1,34 @@
 # Native delivery checkpoint
 
+## November 5 evening update
+
+Current state is in `.agents/docs/handoff.md`. Root integrated reviewed retained
+repair as0a4d43b and passed515 runner tests/6909 assertions plus quality checks.
+Existing LZ138 then dispatched normally on OpenAI Luna Max in its isolated native
+worktree: attempt87c14979-917d-4495-9fa6-90bb3aaeff17,
+session ses_28780d1d92544da880d3db3496c8a29d. Native WORKER_STARTED timestamp
+1793917824960; implementation is ongoing, not accepted.
+
+Root observed Tasks Open filter working and copied LZ146's task link into the
+Architect composer. It pasted readable Markdown with reference LZ146 and the
+project-scoped `.lazers/tasks/.../LZ-146` destination; the temporary draft was
+cleared without submission. This verifies copy/paste, not click interception.
+Filters currently offer Open/Completed/Failed/Cancelled/All. Root also observed
+Running/green activity indicators on natively inactive, reconciliation-blocked
+workers; Main's existing Luna Tasks review received the screenshot and finding.
+
+Models' final narrow/wide no-point layout passed native Tera High review. Actual
+row selection and independent inspector scroll worked. Pricing gaps and the
+remaining populated-graph qualification are in the Models live review.
+
+An automatic service restart was traced to a reproduced Repomix/oh-my-openagent
+worker-observer incompatibility. Fix1bd08da passed17 context tests/131 assertions,
+quality checks and a real native project refresh:782files/170789tokens at
+1793918423650, service PID71027 unchanged before/after. See
+`design/reviews/repomix-worker-observer-crash-20261105.md`.
+
+Older checkpoints below retain historical observations, not current activity.
+
 ## Latest observed state, November 5 afternoon
 
 This section supersedes older activity and delivery statements below. Native

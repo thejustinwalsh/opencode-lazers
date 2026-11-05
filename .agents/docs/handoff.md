@@ -38,8 +38,10 @@ an actual ProjectIndex regression. Both parent and processor now use native
 worker_threads/parentPort, still off-thread, without third-party/global patches.
 Seventeen context tests/131 assertions and final quality checks passed. Service
 auto-restarted95968→71027 at22:26:27Z; panels disappeared temporarily and returned.
-Main has a queued Desktop request for one actual project-refresh with PID
-before/after. Live fix qualification is pending. Report:
+Native c160 then ran the actual project refresh successfully at1793918423650:
+782files/170789tokens, untruncated. Service PID71027 before/after. Live reprobe
+passes this crash correction; no further activation research or restart needed.
+Report:
 design/reviews/repomix-worker-observer-crash-20261105.md.
 
 LZ-57 worker committed7b49633 plus owner-control ABA correctionefaa923. Native

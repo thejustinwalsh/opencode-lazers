@@ -36,7 +36,16 @@ full TypeScript check and diff checks passed. Logs:
 - `/private/tmp/lz-worker-observer-regression-after.log`
 - `/private/tmp/lz-context-native-worker-qualified-tests.log`
 
-Native production refresh after loading the correction remains unproven. Root
-queued that actual work-driven reprobe through Desktop to Architect, requesting
-successful output and service PID before/after. Do not infer live success from
-these tests. Existing workers and their histories remain intact.
+Native production reprobe passed through coordinator c160. Its genuine
+`lz-project-refresh` returned snapshot `b30d5576-8658-4f46-aeff-ebb692dff29d`,
+refreshedAt Unix ms1793918423650:782 files,170789 packed tokens, untruncated,
+Repomix1.18.1/o200k_base, actual project workspace. Native service info before
+(22:40:10Z) and after (22:40:32Z) both reported PID71027. Root independently read
+those native tool results. No global restart or settings change was used.
+
+Normal local-plugin source watching loaded the correction. The initial request
+for loaded-module provenance caused unnecessary extra investigation; the pinned
+supervisor's dependency watcher plus actual post-edit loading events were enough
+to proceed with the real reprobe. Do not make source-provenance checks a standing
+feature gate. This successful refresh qualifies this crash correction, not all
+performance, GPU or indexing behavior. Existing workers and histories remain.
