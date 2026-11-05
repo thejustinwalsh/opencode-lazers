@@ -218,3 +218,27 @@ Authenticated retained input lookup before/after returned the same original inpu
 `msg_6d0094015270407cbded1f6c4dd7bdf8`. No prompt/synthetic message, ownership
 change, worker mutation or new session was sent. Delivery/readback is observed;
 owner consumption, reconciliation and changed behavior are **not yet observed**.
+
+### Real failed-foreground recovery is not interrupted-only recovery
+
+Root's `/private/tmp/lazers-quota-stopped-native-facts-20261105.ts` observed129/132
+at1793856175726/728: both inactive, `outcome: failed`, with idle timestamps after
+busy. These are quota-failed foregrounds, not post-restart interrupted ones.
+The original99 draft's `interrupted-continuation.ts` at104–125 gates on human
+`plan.reason` prefixes;152–157 also requires native outcome/turn `interrupted`.
+That observed draft does not deliver129/132 recovery.
+
+Root's concise findings were delivered/read back on current99 owner at1793856472183
+as `lazers.review.lz99.real-quota-failure-and-structured-eligibility.20261105.v1`.
+The advice requires structured native/journal eligibility and exact current-input
+correlation, an explicit coherent failed-foreground boundary in99 or an explicit
+link to the undelivered increment, without relabelling failure. Continuation stays
+manual and distinct from acceptance/cleanup; unknown background stays unknown and
+all known-positive/active/input/approval/uncertain-effect guards remain.
+
+Retained owner input was unchanged before/after
+(`msg_e451bd75142e402dbb844a0ef57e20fe`). No prompt, replacement or ownership
+transfer occurred; consumption and implementation remain unobserved. A separate
+fresh runtime inspection showed99 atversion13 running with its approval reason
+cleared and a reconciliation recorded; that does not establish these later review
+findings were consumed or that129/132 are eligible.
