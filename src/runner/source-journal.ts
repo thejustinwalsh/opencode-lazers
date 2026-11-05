@@ -109,6 +109,7 @@ export type SourceJournalPage = {
     nativeConsumption: "unknown"
     checkpointCoverage: "not-asserted"
     unresolvedInputDispositions: ["pending", "steering", "unknown"]
+    diagnostics: "scan-and-timestamps-live-not-snapshot-pinned"
     scanCursorMeaning: "scanner-state-only; not-transcript-completeness"
   }
 }
@@ -456,6 +457,7 @@ export function readSourceJournalPage(
       nativeConsumption: "unknown",
       checkpointCoverage: "not-asserted",
       unresolvedInputDispositions: ["pending", "steering", "unknown"],
+      diagnostics: "scan-and-timestamps-live-not-snapshot-pinned",
       scanCursorMeaning: "scanner-state-only; not-transcript-completeness",
     },
   }

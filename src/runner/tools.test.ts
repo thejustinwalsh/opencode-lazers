@@ -9,8 +9,10 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
+import { fingerprint } from "../identity.ts"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import type { ArchitectObservedMessage } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 import { registerRunnerTools } from "./tools.ts"
 import type { TaskRuntime } from "./runtime.ts"
@@ -285,6 +287,11 @@ test("registered journal traversal survives unrelated worker progress in the sam
     )
     const renewalID = crypto.randomUUID()
     const sourceSessionID = "ses_architect_predecessor"
+    const originalResult = {
+      state: "completed" as const,
+      finish: "stop" as const,
+      toolCounts: { running: 0, completed: 0, failed: 0, other: 0 },
+    }
     store.atomic((db) => {
       db.query(
         `INSERT INTO runner_architect_renewals(
@@ -314,16 +321,28 @@ test("registered journal traversal survives unrelated worker progress in the sam
         `INSERT INTO runner_architect_inputs(
            session_id,message_id,observed_at,renewal_id,native_type,delivery,disposition,
            metadata_json,last_seen_sweep,referenced_revision,updated_at
-         ) VALUES(?,?,4,?,'user',NULL,'pending','{}',1,0,4)`,
+         ) VALUES(?,?,4,?,'user',NULL,'pending',NULL,1,1,4)`,
       ).run(sourceSessionID, "msg_architect_input", renewalID)
       const result = db.query(
         `INSERT INTO runner_architect_source_results(
            session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
            tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
-         ) VALUES(?,?,?,'completed','stop',0,0,0,0,?,1,0,?)`,
+          ) VALUES(?,?,?,'completed','stop',0,0,0,0,?,1,1,?)`,
       )
-      result.run(sourceSessionID, renewalID, "msg_architect_result_1", "result-1", 5)
-      result.run(sourceSessionID, renewalID, "msg_architect_result_2", "result-2", 6)
+      result.run(
+        sourceSessionID,
+        renewalID,
+        "msg_architect_result_1",
+        fingerprint(originalResult),
+        5,
+      )
+      result.run(
+        sourceSessionID,
+        renewalID,
+        "msg_architect_result_2",
+        fingerprint(originalResult),
+        6,
+      )
     })
 
     const tools = new Map<string, RegisteredTool>()
@@ -369,18 +388,30 @@ test("registered journal traversal survives unrelated worker progress in the sam
                WHERE project_directory=? AND plan_id=?`,
             )
             .get(projectDirectory, plan.planID)?.revision ?? 0,
-        source: db
-          .query(
-            "SELECT revision,scan_sweep,scan_cursor,updated_at FROM runner_architect_sources WHERE session_id=?",
+        sourceRevision: db
+          .query<{ revision: number }, [string]>(
+            "SELECT revision FROM runner_architect_sources WHERE session_id=?",
           )
           .get(sourceSessionID),
-        inputCount: db
-          .query("SELECT count(*) AS count FROM runner_architect_inputs WHERE session_id=?")
+        input: db
+          .query(
+            "SELECT message_id,native_type,delivery,disposition,referenced_revision FROM runner_architect_inputs WHERE session_id=?",
+          )
           .get(sourceSessionID),
-        resultCount: db
-          .query("SELECT count(*) AS count FROM runner_architect_source_results WHERE session_id=?")
-          .get(sourceSessionID),
+        results: db
+          .query(
+            "SELECT message_id,state,finish,tool_running,tool_completed,tool_failed,tool_other,result_fingerprint,result_revision,referenced_revision FROM runner_architect_source_results WHERE session_id=? ORDER BY message_id",
+          )
+          .all(sourceSessionID),
       }))
+    const scanDiagnostics = () =>
+      store.atomic((db) =>
+        db
+          .query(
+            "SELECT scan_cursor,scan_sweep,updated_at FROM runner_architect_sources WHERE session_id=?",
+          )
+          .get(sourceSessionID),
+      )
     const projectRevision = () =>
       store.atomic(
         (db) =>
@@ -426,6 +457,44 @@ test("registered journal traversal survives unrelated worker progress in the sam
     expect(projectRevision()).toBeGreaterThan(beforeProjectRevision)
     expect(journalSnapshot()).toEqual(beforeJournal)
 
+    const beforeNoOpScanDiagnostics = scanDiagnostics()
+    const runScan = (
+      cursor: string | null,
+      nextCursor: string | null,
+      now: number,
+      inputDelivery?: "steer",
+      result: NonNullable<ArchitectObservedMessage["result"]> = originalResult,
+    ) => {
+      const schedulerOwner = "journal-scan-test"
+      const fence = store.claim(schedulerOwner, now)
+      expect(fence).not.toBeNull()
+      return store.recordArchitectSourcePage({
+        schedulerOwner,
+        fence: fence!,
+        sessionID: sourceSessionID,
+        cursor,
+        nextCursor,
+        inbox: [
+          {
+            id: "msg_architect_input",
+            type: "user",
+            ...(inputDelivery ? { delivery: inputDelivery } : {}),
+          },
+        ],
+        messages: [
+          { id: "msg_architect_input", type: "user" },
+          { id: "msg_architect_result_1", type: "assistant", result },
+          { id: "msg_architect_result_2", type: "assistant", result },
+        ],
+        now,
+        projectID: "project",
+      })
+    }
+    runScan(null, "native-cursor-1", 10)
+    runScan("native-cursor-1", "native-cursor-2", 11)
+    expect(journalSnapshot()).toEqual(beforeJournal)
+    expect(scanDiagnostics()).not.toEqual(beforeNoOpScanDiagnostics)
+
     const recordIDs = first.records.map((record) => record.recordID)
     let cursor: string | undefined = first.nextCursor ?? undefined
     while (cursor) {
@@ -442,6 +511,34 @@ test("registered journal traversal survives unrelated worker progress in the sam
     ])
     expect(new Set(recordIDs).size).toBe(recordIDs.length)
     expect(journalSnapshot()).toEqual(beforeJournal)
+
+    const inputCursorPage = await read({ planID: plan.planID, view: "journal", limit: 1 })
+    expect(inputCursorPage.nextCursor).toBeString()
+    runScan("native-cursor-2", "native-cursor-3", 12, "steer")
+    await expect(
+      read({
+        planID: plan.planID,
+        view: "journal",
+        limit: 1,
+        cursor: inputCursorPage.nextCursor,
+      }),
+    ).rejects.toThrow("Journal changed since this page; restart the journal view")
+
+    const resultCursorPage = await read({ planID: plan.planID, view: "journal", limit: 1 })
+    expect(resultCursorPage.nextCursor).toBeString()
+    runScan("native-cursor-3", "native-cursor-4", 13, "steer", {
+      state: "running",
+      finish: null,
+      toolCounts: { running: 1, completed: 0, failed: 0, other: 0 },
+    })
+    await expect(
+      read({
+        planID: plan.planID,
+        view: "journal",
+        limit: 1,
+        cursor: resultCursorPage.nextCursor,
+      }),
+    ).rejects.toThrow("Journal changed since this page; restart the journal view")
   } finally {
     repository.close()
     rmSync(directory, { recursive: true, force: true })

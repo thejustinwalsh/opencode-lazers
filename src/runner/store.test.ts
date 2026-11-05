@@ -300,7 +300,7 @@ function seedSourceJournal(
         disposition,
         JSON.stringify({ privateBodyCanary: "ORIGINAL_MESSAGE_BODY" }),
         9,
-        index % 2,
+        1,
         400 + index,
       )
     }
@@ -309,7 +309,7 @@ function seedSourceJournal(
       `INSERT INTO runner_architect_source_results(
          session_id,renewal_id,message_id,state,finish,tool_running,tool_completed,tool_failed,
          tool_other,result_fingerprint,result_revision,referenced_revision,updated_at
-       ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,0,?)`,
+      ) VALUES(?,?,?,'completed','stop',0,2,0,0,?,1,1,?)`,
     )
     for (let index = 0; index < resultCount; index++) {
       const id = `msg_result_${String(index).padStart(4, "0")}`
@@ -338,9 +338,7 @@ test("Architect source journal pages traverse large retained sources and invalid
           )
           .get(f.projectDirectory, source.mappedPlanID)?.revision ?? 0,
       source: db
-        .query(
-          "SELECT scan_cursor,scan_sweep,revision,state,updated_at FROM runner_architect_sources WHERE session_id=?",
-        )
+        .query("SELECT revision,state FROM runner_architect_sources WHERE session_id=?")
         .get(source.sourceSessionID),
       inputs: db
         .query(
@@ -356,7 +354,16 @@ test("Architect source journal pages traverse large retained sources and invalid
         .query("SELECT count(*) AS count FROM runner_outbox WHERE session_id=?")
         .get(source.sourceSessionID),
     }))
+  const scanDiagnostics = () =>
+    f.store.atomic((db) =>
+      db
+        .query(
+          "SELECT scan_cursor,scan_sweep,updated_at FROM runner_architect_sources WHERE session_id=?",
+        )
+        .get(source.sourceSessionID),
+    )
   const before = snapshot()
+  const beforeScanDiagnostics = scanDiagnostics()
   const first = f.store.architectSourceJournalPage(source.mappedPlanID, 73)
   expect(first.records[0]).toMatchObject({
     kind: "source",
@@ -379,7 +386,26 @@ test("Architect source journal pages traverse large retained sources and invalid
 
   const records = [...first.records]
   let cursor = first.nextCursor ?? undefined
+  let scanCursor: string | null = null
+  let scan = 0
   while (cursor) {
+    const schedulerOwner = "large-journal-noop-scan"
+    const now = 1_000 + scan
+    const fence = f.store.claim(schedulerOwner, now)
+    expect(fence).not.toBeNull()
+    const nextScanCursor = `noop-scan-${++scan}`
+    f.store.recordArchitectSourcePage({
+      schedulerOwner,
+      fence: fence!,
+      sessionID: source.sourceSessionID,
+      cursor: scanCursor,
+      nextCursor: nextScanCursor,
+      inbox: [],
+      messages: [],
+      now,
+      projectID: "project",
+    })
+    scanCursor = nextScanCursor
     const page = f.store.architectSourceJournalPage(source.mappedPlanID, 73, cursor)
     expect(page.page.snapshotRevision).toBe(first.page.snapshotRevision)
     expect(page.page.hasMore).toBe(page.nextCursor !== null)
@@ -404,18 +430,20 @@ test("Architect source journal pages traverse large retained sources and invalid
     kind: "input",
     messageID: "msg_input_0000",
     disposition: "pending",
-    referencedSourceRevision: 0,
+    referencedSourceRevision: 1,
   })
   expect(records.find((record) => record.recordID === resultIDs[0])).toMatchObject({
     kind: "result",
     messageID: "msg_result_0000",
     sourceRevision: 12,
     resultRevision: 1,
-    referencedSourceRevision: 0,
+    referencedSourceRevision: 1,
     toolCounts: { completed: 2 },
   })
   expect(JSON.stringify(records)).not.toContain("ORIGINAL_MESSAGE_BODY")
   expect(snapshot()).toEqual(before)
+  expect(scanDiagnostics()).not.toEqual(beforeScanDiagnostics)
+  expect(scan).toBeGreaterThan(1)
 
   const cursorPage = f.store.architectSourceJournalPage(source.mappedPlanID, 2)
   expect(cursorPage.nextCursor).toBeString()
@@ -478,6 +506,85 @@ test("Architect source journal pages traverse large retained sources and invalid
   expect(() =>
     f.store.architectSourceJournalPage(source.mappedPlanID, 2, cursorPage.nextCursor!),
   ).toThrow("Journal changed since this page; restart the journal view")
+})
+
+test("journal revision triggers are replaced on a second connection without resetting counters", () => {
+  const f = fixture("architect-journal-trigger-reopen")
+  const anchor = f.store.submit(f.input, "owner")
+  const source = seedSourceJournal(f.store, anchor.planID, 0, 0)
+  const revision = (store: RunnerStore) =>
+    store.atomic(
+      (db) =>
+        db
+          .query<{ revision: number }, [string, string]>(
+            `SELECT revision FROM runner_architect_journal_revisions
+             WHERE project_directory=? AND plan_id=?`,
+          )
+          .get(f.projectDirectory, source.mappedPlanID)?.revision ?? 0,
+    )
+  const initialRevision = revision(f.store)
+  expect(initialRevision).toBeGreaterThan(0)
+
+  f.store.atomic((db) => {
+    db.exec(`
+      DROP TRIGGER architect_journal_revision_runner_architect_sources_UPDATE;
+      CREATE TRIGGER architect_journal_revision_runner_architect_sources_UPDATE
+      AFTER UPDATE ON runner_architect_sources BEGIN
+        INSERT INTO runner_architect_journal_revisions(project_directory,plan_id,revision)
+        SELECT mapped.project_directory,mapped.id,1
+        FROM runner_architect_sources source
+        JOIN runner_architect_renewal_plans mapping ON mapping.renewal_id=source.renewal_id
+        JOIN runner_plans mapped ON mapped.id=mapping.plan_id
+        WHERE source.session_id=NEW.session_id
+        ON CONFLICT(project_directory,plan_id) DO UPDATE SET revision=revision+1;
+      END;
+      CREATE TRIGGER observation_revision_runner_architect_sources_UPDATE
+      AFTER UPDATE ON runner_architect_sources BEGIN
+        UPDATE observation_revisions SET revision=revision+1
+        WHERE project_directory=(
+          SELECT project_directory FROM runner_plans WHERE id=NEW.anchor_plan_id
+        );
+      END;
+    `)
+  })
+
+  const reopenedRepository = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(reopenedRepository)
+  const reopenedStore = new RunnerStore(reopenedRepository)
+  expect(revision(reopenedStore)).toBe(initialRevision)
+  const triggerState = reopenedStore.atomic((db) => ({
+    current: db
+      .query<{ sql: string }, [string]>(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+      )
+      .get("architect_journal_revision_runner_architect_sources_UPDATE")?.sql,
+    obsolete: db
+      .query<{ present: number }, [string]>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type='trigger' AND name=?",
+      )
+      .get("observation_revision_runner_architect_sources_UPDATE"),
+  }))
+  expect(triggerState.current).toBeString()
+  expect(triggerState.current).not.toContain("scan_cursor")
+  expect(triggerState.current).toContain('OLD."revision" IS NOT NEW."revision"')
+  expect(triggerState.obsolete).toBeNull()
+
+  const schedulerOwner = "trigger-reopen-scheduler"
+  const fence = reopenedStore.claim(schedulerOwner, 10_000)!
+  reopenedStore.recordArchitectSourcePage({
+    schedulerOwner,
+    fence,
+    sessionID: source.sourceSessionID,
+    cursor: "native-history-cursor",
+    nextCursor: "live-scan-cursor",
+    inbox: [],
+    messages: [],
+    now: 10_001,
+    projectID: "project",
+  })
+  expect(revision(reopenedStore)).toBe(initialRevision)
+  reopenedRepository.close()
+  repositories.splice(repositories.indexOf(reopenedRepository), 1)
 })
 
 test("active project reservations preserve priority and attempt order and refresh across transitions and reopen", () => {

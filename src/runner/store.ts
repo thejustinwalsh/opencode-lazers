@@ -274,8 +274,7 @@ function ensureArchitectSourceJournalRevisions(db: Database) {
      JOIN runner_architect_renewal_plans mapping ON mapping.renewal_id=renewal.id
      JOIN runner_plans mapped ON mapped.id=mapping.plan_id
      JOIN runner_plans anchor ON anchor.id=${anchorPlanID}
-     WHERE renewal.id=${renewalID} AND renewal.anchor_plan_id=anchor.id
-       AND mapped.project_directory=anchor.project_directory`
+     WHERE renewal.id=${renewalID} AND mapped.project_directory=anchor.project_directory`
 
   const mappedSourceSession = (sessionID: string) =>
     `SELECT mapped.project_directory,mapped.id AS plan_id
@@ -324,12 +323,48 @@ function ensureArchitectSourceJournalRevisions(db: Database) {
     "runner_architect_inputs",
     "runner_architect_source_results",
   ] as const
+  const meaningfulUpdates: Record<(typeof tables)[number], readonly string[]> = {
+    runner_architect_renewals: [
+      "id",
+      "anchor_plan_id",
+      "previous_session_id",
+      "successor_session_id",
+      "state",
+      "started_at",
+    ],
+    runner_architect_renewal_plans: ["renewal_id", "plan_id"],
+    runner_architect_sources: ["session_id", "renewal_id", "anchor_plan_id", "revision", "state"],
+    runner_architect_inputs: [
+      "session_id",
+      "message_id",
+      "renewal_id",
+      "native_type",
+      "delivery",
+      "disposition",
+      "referenced_revision",
+    ],
+    runner_architect_source_results: [
+      "session_id",
+      "renewal_id",
+      "message_id",
+      "state",
+      "finish",
+      "tool_running",
+      "tool_completed",
+      "tool_failed",
+      "tool_other",
+      "result_fingerprint",
+      "result_revision",
+      "referenced_revision",
+    ],
+  }
   for (const table of tables) {
-    const columns = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all()
     for (const event of ["INSERT", "UPDATE", "DELETE"] as const) {
       const changed =
         event === "UPDATE"
-          ? `WHEN ${columns.map(({ name }) => `OLD."${name}" IS NOT NEW."${name}"`).join(" OR ")}`
+          ? `WHEN ${meaningfulUpdates[table]
+              .map((column) => `OLD."${column}" IS NOT NEW."${column}"`)
+              .join(" OR ")}`
           : ""
       const rows = event === "UPDATE" ? ["OLD", "NEW"] : [event === "DELETE" ? "OLD" : "NEW"]
       const plans = rows.map((row) => planLookup(table, row)).join(" UNION ")
