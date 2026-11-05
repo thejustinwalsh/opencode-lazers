@@ -388,3 +388,20 @@ view then showed native context compaction. Separately, blocked retained plans
 the already-proposed Tasks status upgrade; persisted attempt phase is not live
 native activity. Unknown market pricing remains visible; no cost estimate is
 inferred from subscription use or incomplete price provenance.
+
+## Connected completed-task navigation recheck
+
+Root used Desktop Computer Use to select Tasks → State: Completed → LZ-130 →
+Open trajectory on November5, then restored State: All and the Models tab.
+The connected trajectory displayed the correct LZ-130 identity, Luna Max,
+one accepted attempt and118 calls. Its timing check showed start1793827117743,
+end1793827126165 and8422ms; its quality check showed470ms. Check output and
+captured activity remained collapsed. Capture:
+`/private/tmp/lz130-completed-navigation-live-20261105.png`.
+
+This verifies the completed filter and this historical navigation/check-timing
+path in the actual product. It does not qualify all state filters, every old
+task, copy-link contents, missing attempt endpoints, grouping correctness or
+the queued lifecycle timestamp work. During initial panel entry a transient
+topology-unavailable fallback appeared and then cleared as rows arrived; no
+permanent topology failure was established.
