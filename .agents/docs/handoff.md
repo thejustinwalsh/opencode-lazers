@@ -7,87 +7,86 @@ cleanup are separate facts.
 
 ## Current state
 
-- **Measured performance pass landed.** Canonical includes the reservation,
-  prerequisite, outbox/query/event-filter, static busy-text, blocked-context and
-  history-index repairs. Native absence/inbox handling and duplicate renewal-error
-  writes are corrected. Already-admitted source notices now share one no-op target
-  observation per group/pass; mutation paths retain fresh proofs. Complete
-  runtime/native suites:187pass/3072assertions/63.23s. Actual same-PID comparable
-  serviceCPU73.05→22.52%, renderer0.50%, GPU-process0% in the final warm window
-  1793842165881–1793842177914. Inference flags stayed true/Never unload unchanged.
-  Profilers are removed. All-thread sampling found main/allocator work and mostly
-  waiting helpers; residual CPU remains material and partly unattributed.
-  [Measured report](../../design/reviews/astra-renewal-spike-repair-20261104.md).
-- **OpenAI reset reported; native Architect is working again.** The user confirmed
-  the reset. New successor `ses_5aa94658965844ed85f4b0ebdd5266cb` began at
-  1793844116602 on Sol High and completed actual tool calls by1793844258408.
-  Fresh visible coordinator `ses_e568438ebffeaoFbF9nBb942XM` (“LAZERS roadmap
-  and renewal-context fix”) is also running on OpenAI Sol High at1793844861057,
-  started through Desktop from the concise roadmap/handoff ask. Original archived
-  Main is active again from Root's Desktop reset update and is coordinating; it
-  remains archived in native metadata. Automatic approval review rejected stopping
-  its in-flight turn, so it was left running. Avoid creating more Architects.
-  Coordinate ownership through existing runtime flows. Both original Luna Max
-  worker sessions remain failed from the prior quota stop;
-  resume them through existing ownership/runtime flows, preserving their dirty
-  trees and identities. No provider/model switch is authorized or needed.
-- **LZ28 renewal/context delivery is not complete.** First renewal committed,
-  archived original Main and retained Sol High plus worker identities. Its handoff
-  was9019UTF-8bytes, followed by233 queued source-reference notices containing
-  651171characters. Metadata-only notices still defeat the fresh-context goal;
-  no additional model work or future token cost is inferred. Preserve the journal,
-  add progressive inspection and compact/coalesced notifications through existing
-  LZ28/LZ30 flows; reconcile admitted notices explicitly rather than silently delete
-  them. [Contract-grounded findings](evidence/renewal-context-observation-20261104.md).
-  A second automatic renewal started at1793842310725 and later committed,
-  archiving09ce60 at1793842311038. Its successor4e3bba again failed quota
-  at1793842315008 without
-  productive work. Current-owner identity can change on the idle timer: inspect
-  latest renewals/plan owner before reusing a helper scope. Sidebar/search did not
-  readily expose the child Architect. Archived Main's observation scope now fails,
-  so its open Trajectory pane is unavailable rather than showing no actual tasks.
-- **Source-fence bootstrap is installed, native control flow still unexercised.**
-  Merged199tests/3181assertions/eight files, quality and actual GUI build/smoke pass.
-  Canonical and retained72 native guard registrations were observed onPID95968,
-  same project/DB. Zero quarantine rows at1793838415118; original72 old check
-  remains uncertain/attempt verifying. No old resources were released. The original
-  source-clear branch `feat/retained-source-bootstrap` at5d485d13 is preserved.
-- **LZ129 is unfinished retained work.** Its native Luna Max worker wrote the
-  bounded live-read contract and separate history reader. Final source/test review,
-  native proof, commit/integration and cleanup remain. Last full native tests
-  preceded further edits; do not treat them as current acceptance.
-- **LZ132 is unfinished retained work.** Its last completed checks passed18tests/
-  230assertions and91tests/779assertions plus quality; Root's actual GUI build/smoke
-  also passes. Before integration, original worker must remove its arbitrary
-  lifetime20-advice-revision ceiling and omit empty-advice prose. Retain history
-  and bound the read projection instead. Actual native attach and both getters
-  remain unobserved. [Review](../../design/reviews/task132-retained-review-20261104.md).
-- **Historical UI observation1793840144230:** Trajectory129 displayed Running/unknown
-  attempt end while Main visibly reports quota failure. Durable attempt state is
-  retained, but the UI lacks the distinct native outcome/blockage context. Keep
-  this finding with Tasks/Radar/Trajectory follow-through; do not invent an end.
+- **Astra's remaining performance plan is executing.** Root sent the complete
+  [plan](../../design/reviews/astra-performance-luna-tasks-20261104.md) through
+  Desktop to `ses_e568438ebffeaoFbF9nBb942XM` (“LAZERS roadmap and renewal-context
+  fix”), OpenAI Sol High. It submitted LZ133/134/135 through native tools. LZ133
+  and LZ135 are running concurrently in separate native worktrees on verified
+  OpenAI `gpt-6-luna/max`; LZ134 waits for journal integration. See new identities
+  below. No new task is accepted yet. The coordinator handled a stale approval
+  notice by checking the current plan and preserving the active attempt, then
+  returned idle. Existing scheduler notification/wake behavior was observed.
+- **Research route is Luna Max too.** The subsequent “Scope recorder recovery
+  optimization” delegate `ses_e5679b057ffeoNd6sRQPR2UKBb` was verified on OpenAI
+  Luna Max and completed. An earlier Explore inherited Sol High; it finished before
+  the explicit correction. Do not create further Sol research delegates.
+- **Old renewal owner still reviews historical notices.**
+  `ses_5aa94658965844ed85f4b0ebdd5266cb` remains active on Sol High. Original Main
+  `ses_e68a9ed37ffeVqzPWRXN5SB7Uw` completed its coordination turn and remains
+  natively archived. A request for approval to stop only the old review loop is
+  pending; do not infer approval. Automatic review previously rejected stopping
+  an in-flight parent turn; no indirect interruption was attempted. Avoid more
+  Architects. New plans belong to the fresh coordinator; legacy ownership remains
+  with5aa pending supported coordination.
+- **Performance source repairs are integrated.** Earlier matched service CPU
+  73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
+  [Report](../../design/reviews/astra-renewal-spike-repair-20261104.md). Current
+  Tasks grouping uses a history-free read (107 plans/126 nodes/15 dependencies in
+  16ms);51 tests/331 assertions and GUI build/smoke pass. Its settled view still
+  measured26.59% service/7.48% renderer/8.56% GPU-process CPU, so no overall fix is
+  claimed. Recorder no-op insert repair9bcf77f passes22 tests/340 assertions;
+  quiet live savings remain unmeasured since model work resumed.
+  [Follow-up](../../design/reviews/astra-task-topology-repair-20261104.md).
+  Profilers and both clean Astra worktrees are removed through native cleanup;
+  original worker trees remain. Inference flags stayed true/Never unload unchanged.
+- **Compact renewal context is unfinished.** Original handoff9019 bytes plus233
+  queued references/651171 characters contradicted LZ28's small-handoff contract.
+  LZ133 provides progressive journal inspection; LZ134 will coalesce notifications
+  and explicitly reconcile legacy admissions. Preserve complete journal and
+  delivery history. [Source seams](evidence/renewal-context-repair-seams-20261105.md).
+- **Original LZ129/132 remain stopped retained work.** Their native OpenAI Luna
+  sessions failed at the prior quota limit; resetting usage did not resume them.
+  Runtime records still say running with unknown background lineage. Current
+  resume rejects these attempt states; this is a concrete recovery gap, not a
+  requirement for Root to manually prompt a child in Desktop. Use supported native
+  runtime recovery, or task the missing increment. Preserve source/identities and
+  do not invent idle evidence. LZ129 has five reproduced source-review findings
+  [here](../../design/reviews/task129-retained-review-20261105.md); LZ132 must remove
+  its lifetime20-advice-revision ceiling and empty-advice prose, then complete
+  actual attach/getter observation. [LZ132 review](../../design/reviews/task132-retained-review-20261104.md).
+- **Models is unfinished, including routing.** Current Assignments is read-only;
+  saved persona mappings do not control dispatch and no approved Pareto graph is
+  delivered. All three project mappings were saved as Luna Max revision1, but that
+  receipt is not feature completion. LZ122 remains queued with zero attempts.
+  Research-role UI configuration is also missing. Keep graph, editable assignments,
+  live hierarchical dispatch and market-price provenance explicit in the roadmap.
+- **Live Trajectory has separate scope defects.** Project scope exceeds the
+  historical10000-transition ceiling and displays unavailable plus misleading
+  “No tasks” text. Current Session scope successfully showed LZ133's actual Luna
+  usage/activity. Switching scope unexpectedly changed selected task135→133.
+  Old archived Main also fails observation authorization. Do not confuse these
+  failures with missing durable data. Timing/backend LZ131 remains queued.
+- **Source quarantine is installed but unexercised.** Original72 old verification
+  effect/resources remain uncertain; no release or acceptance was fabricated.
+  Guard registration is not control-flow qualification. Preserve original57/58's
+  reversible zero-attempt scheduling hold and existing88/99/118 relationships.
 
-- **Tasks project grouping repair is live.** At1793843271896 an
-  unarchived Architect scope reproduced native snapshot failure. Service logs say
-  “Observation scope is too large; narrow it”:11047 transitions exceed the
-  10000 limit, despite only107 plans/128 attempts/667 checks. The source loads all
-  history before rejecting. Project list/details remain available ungrouped.
-  Astra's additive history-free topology repair is now integrated3f30c3c and
-  live:107 plans/126 nodes/15 dependencies returned in16ms at1793843814881;
-  Desktop grouping is restored. Canonical51tests/331assertions and GUI build/smoke
-  pass. Full historical snapshot/Trajectory limits remain open. Current Tasks CPU
-  did not improve materially (25.92% baseline vs26.59% settled service); no overall
-  performance claim follows. Recorder no-op write repair9bcf77f also landed:
-  22tests/340assertions; live savings remain unmeasured.
-  [Report](../../design/reviews/astra-task-topology-repair-20261104.md). Astra's
-  clean integrated worktree was removed through native non-forced cleanup at
-  1793844574283 and its directory is absent; original worker trees remain.
+Local usage at1793844441690–1731 confirmed native/SQLite counters agree for both
+original Luna workers:129 input577024/output49096/reasoning134798/cacheRead23348864;
+132 input218221/output23168/reasoning37669/cacheRead10573184. Keep buckets separate;
+subscription cost0 is not market cost. OpenRouter remains the default market index.
 
-Local usage at1793844441690–1731 confirms both original workers are OpenAI
-`gpt-6-luna/max`, with native cumulative counters matching LAZERS SQLite
-usage-snapshot rows.129: input577024/output49096/reasoning134798/cacheRead23348864;
-132: input218221/output23168/reasoning37669/cacheRead10573184. Keep buckets
-separate; native subscription cost0 is not a market-price estimate.
+## New execution identities
+
+| Task                          | Plan                                   | Attempt / native session                                                        |
+| ----------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
+| LZ133 journal inspection      | `5a8a96ed-839a-41d7-9e97-ba7845174fd3` | `6ee1191f-95ef-45d0-9b90-8e96623b9841` / `ses_9250c22e68da40ff86371b407b9c3c11` |
+| LZ134 notification coalescing | `d9d4554c-44ff-4600-9a65-5de231f94205` | queued; task `ed59519e-1771-461f-9303-a8a77f9df146`                             |
+| LZ135 recorder recovery cost  | `cc65e13d-9b72-411e-a9de-41a996a3f951` | `d0930725-f837-40e7-8992-892f66ec1010` / `ses_671fad53a1b548679a7afc4472879ed2` |
+
+133 task `051be9d5-f03b-4ef8-b75e-7758fbe03d8c`;135 task
+`1ba8ca4b-0b21-4db0-8f72-162ceac48e5c`. Worktree paths use the attempt IDs under
+`/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/`.
 
 ## Next actions
 
@@ -102,7 +101,8 @@ separate; native subscription cost0 is not a market-price estimate.
    registration alone is not that exercise. Audit delivered behavior against
    original57/58's remaining amended outcomes, then supported original requeue.
    Their zero-attempt plan is reversibly cancelled as a scheduling hold.
-3. Resume original129/132 through Desktop when the route is usable. Deliver concise
+3. Resolve original129/132 through supported runtime recovery; Root drives Desktop
+   observations, while scheduler uses native SDK execution. Deliver concise
    source findings/corrections through their actual task/instruction surfaces;
    preserve useful work and identities. Review, verify in product, integrate and
    reconcile native worktrees. No replacement tasks for already assigned work.
