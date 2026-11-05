@@ -290,7 +290,7 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
     )
     const attach = registeredTools.get("lz-attach-task-advice")!
     expect(attach.options).toMatchObject({
-      codemode: false,
+      codemode: true,
       permission: "lz-attach-task-advice",
     })
     const original = {
