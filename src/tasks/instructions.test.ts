@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { validProposal } from "../../test/proposal.ts"
 import { GetOutput } from "./contract.ts"
 import { taskInstructions } from "./instructions.ts"
+import { TaskAdviceRecord } from "./advice.ts"
 
 const detail = GetOutput.parse({
   status: "found",
@@ -25,6 +26,7 @@ const detail = GetOutput.parse({
       },
     },
   ],
+  advice: null,
   reference: "LZ-1",
   task: {
     schemaVersion: 1,
@@ -96,8 +98,66 @@ test("task instructions preserve goal, acceptance, boundaries, guidance, verific
 })
 
 test("task instructions retain readable missing-task and unavailable-revision outcomes", () => {
+  expect(taskInstructions(detail)).not.toContain("Task-attached advice")
   expect(taskInstructions({ status: "not_found" })).toBe("Task not_found.")
   expect(taskInstructions({ status: "revision_unavailable", revision: 1 })).toBe(
     "Task revision_unavailable.",
   )
+})
+
+test("task instructions render only concise effective advice with its provenance and inert references", () => {
+  const earlier = TaskAdviceRecord.parse({
+    projectDirectory: "/repo",
+    taskID: "11111111-1111-4111-8111-111111111111",
+    specRevision: 1,
+    requestID: "advice-1",
+    revision: 1,
+    findings: ["Old finding that should remain history only."],
+    implementationAdvice: ["Old advice that should remain history only."],
+    references: [],
+    provenance: {
+      sessionID: "old-session",
+      agent: "architect",
+      createdAt: "2026-10-31T12:00:00.000Z",
+    },
+  })
+  const current = TaskAdviceRecord.parse({
+    ...earlier,
+    requestID: "advice-2",
+    revision: 2,
+    findings: ["Read the existing transaction seam before adding persistence."],
+    implementationAdvice: ["Keep the attachment separate from the immutable task body."],
+    references: [
+      {
+        kind: "mini-skill",
+        reference: "sqlite-transactions",
+        description: "Optional notes; retrieve only if useful.",
+      },
+    ],
+    provenance: {
+      sessionID: "replacement-architect",
+      agent: "architect",
+      createdAt: "2026-11-04T12:00:00.000Z",
+    },
+  })
+  const detailWithAdvice = GetOutput.parse({
+    ...detail,
+    advice: {
+      current,
+      history: [earlier, current],
+      historyCount: 2,
+      historyTruncated: false,
+    },
+  })
+  const instructions = taskInstructions(detailWithAdvice)
+
+  expect(instructions).toContain("## Task-attached advice (advisory, revision 2)")
+  expect(instructions).toContain("session replacement-architect")
+  expect(instructions).toContain("Read the existing transaction seam")
+  expect(instructions).toContain("Keep the attachment separate")
+  expect(instructions).toContain("mini-skill: sqlite-transactions")
+  expect(instructions).toContain("Optional references (not retrieved)")
+  expect(instructions).not.toContain("Old finding")
+  expect(instructions).not.toContain("Old advice")
+  expect(instructions).not.toContain('"history"')
 })

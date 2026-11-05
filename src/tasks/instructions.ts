@@ -34,6 +34,20 @@ export function taskInstructions(detail: TaskDetail): string {
       rawDescription || "Description unavailable (legacy suggestion stores only a name)."
     return `${name}: ${description}`
   })
+  const advice = detail.advice?.current
+  const attachedAdvice = advice
+    ? `\n\n## Task-attached advice (advisory, revision ${advice.revision})\n` +
+      `Recorded by ${advice.provenance.agent} in session ${advice.provenance.sessionID} at ${advice.provenance.createdAt}. This does not change approved requirements, acceptance, or scope.` +
+      section("Research findings", advice.findings) +
+      section("Implementation advice", advice.implementationAdvice) +
+      section(
+        "Optional references (not retrieved)",
+        advice.references.map(
+          (reference) =>
+            `${reference.kind}: ${reference.reference}${reference.description ? ` — ${reference.description}` : ""}`,
+        ),
+      )
+    : ""
   return (
     `# Task ${task.id} (${detail.reference}), revision ${task.revision}\n\n${proposal.objective}` +
     (detail.disposition
@@ -55,6 +69,7 @@ export function taskInstructions(detail: TaskDetail): string {
     section("Constraints", proposal.constraints) +
     section("Assumptions", proposal.assumptions) +
     (proposal.guidance ? `\n\n## Implementation guidance (advisory)\n${proposal.guidance}` : "") +
+    attachedAdvice +
     section(
       "Verification",
       proposal.verification.map(

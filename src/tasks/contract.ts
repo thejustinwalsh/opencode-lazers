@@ -4,6 +4,7 @@ import { TaskReferenceSchema, TaskSpecSchema } from "../task.ts"
 import { TaskState } from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
 import { TaskClassificationRevision } from "../task-classification.ts"
+import { TaskAdviceSnapshot } from "./advice.ts"
 import { TaskStateFilter } from "./state-filter.ts"
 
 export const QueryInput = z.strictObject({
@@ -80,6 +81,7 @@ export const GetOutput = z.discriminatedUnion("status", [
     classification: TaskClassificationRevision,
     classificationHistory: z.array(TaskClassificationRevision),
     classificationAtRevision: TaskClassificationRevision.nullable().optional(),
+    advice: TaskAdviceSnapshot.nullable().default(null),
     reference: TaskReferenceSchema,
     disposition: TaskDispositionRecord.optional(),
     execution: Execution.optional(),
