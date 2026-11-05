@@ -34,3 +34,20 @@ and no longer returns early on background equality before processing a current
 terminal outcome. Permanent worker regression coverage, final review/integration
 and native retained-worker qualification remain pending; no production lifecycle
 state was changed by this fixture test.
+
+## Source integration
+
+Root merged29e291a +be50616 with ancestry as846e4e5. Three conflicts were resolved
+while preserving main's quarantine, progressive journal and review-input support.
+The integration preview exposed a main performance shortcut bypassing the new
+failed-input path; it now retains the shortcut for unbound observations and takes
+the detailed path for an exact completed failed input. Luna's final source review
+also found a workspace/baseline override: terminal continuation now preserves the
+retained assignment, rejecting changed selections while accepting unchanged ones
+without rewriting the base. Four regression cases cover those selections.
+
+Final canonical runtime/tools/continuation checks:256 pass,0 fail,3932 assertions
+(96.89s). Lint and typecheck pass. Native qualification on original129/132 was
+requested through Desktop; task/plan acceptance and current completion-observer
+repair remain outstanding. Root's merge corrections are driver assistance, not
+work performed by the original implementor.

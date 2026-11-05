@@ -1,6 +1,6 @@
 # LAZERS current handoff
 
-Updated 2026-11-04. Read current native state before acting. This file is the
+Updated 2026-11-05. Read current native state before acting. This file is the
 resumption summary; [the retained checkpoint](evidence/handoff-20261104-retained.md)
 contains historical detail. Source landing, task acceptance, live observations and
 cleanup are separate facts.
@@ -34,17 +34,18 @@ cleanup are separate facts.
   quiet activation guard now checks model sessions and task/graph verification.
 - **Unfinished legacy ownership consolidation awaits user approval.** Exact58-plan
   proposal is design/reviews/unfinished-plan-transfer-proposal-20261104.md. No new
-  transfers performed. Current verified historical-chain owner is c10fbf89; stopped
+  transfers performed. Historical-chain owner c10fbf89 was stopped
   at1793854357004 and confirmed interrupted/idle1793854357021. Existing approval
   covers stopping further historical-only successors, not the pending transfer.
   Continue already owned work while awaiting the answer. No terminal plan is listed.
-- **LZ99 actually dispatched.** Task33cecb88-0e64-4c7f-88da-9e1dbf45a1d5,
-  plan86b248c6-fee7-4c80-beba-0de10a529e2a, attempt027e143b-d6d3-4802-b5d9-54e1902f6943,
-  session ses_2e7fd6bebd8d44699e381e1728ee4655 started1793854747685. OpenAI Luna Max,
-  native isolated tree; parent is stopped historical owner c10fbf89. Preserve this
-  real implementation: standing stop approval applies only historical-only turns,
-  not this worker or a coordinator handling its actionable completion.99 and133
-  scopes overlap src/runner/tools.ts; account for that reservation.
+- **LZ99 source is merged; native qualification remains.** Original027e143b/
+  ses_2e7fd6bebd8d44699e381e1728ee4655 finished at1793859776335, OpenAI Luna Max.
+  Source29e291a +be50616 merged with ancestry as846e4e5. Root resolved conflicts,
+  same-tree/baseline override and performance-shortcut interactions. Final256
+  tests/3932 assertions, lint/types pass. Original129/132 real continuation was
+  requested through Desktop. Source inclusion does not accept99: its native idle
+  mismatch remains. The runtime still reserves tools.ts, so133 remains preparing.
+  See design/reviews/task99-current-input-failure-20261105.md.
 - **133 repair has been explicitly resumed, awaiting dispatch.** Cancellation
   settled version11; native resume at1793855098062 set version13, original attempt
   6ee1191f-95ef-45d0-9b90-8e96623b9841 preparing in original session9250c22e.
@@ -52,20 +53,25 @@ cleanup are separate facts.
   resume, not a fabricated report.99's higher-priority tools.ts reservation remains.
   Research diagnosis and read-back advice are in canonical622b4e7; consumption is
   not yet observed. No duplicate, replacement or58-plan ownership transfer.
-- **135 native timestamp bug is reproduced; original worker is active again.**
-  Native context contains Effect DateTime objects, which the memo encoder rejects
-  as non-plain. Same-message three-pass repro: numbers[3,0,0] append attempts versus
-  DateTime[3,3,3]. Architect independently reproduced, advised and resumed135 at
-  1793857764502, version15. Original d0930725/671fad53 worker is active on OpenAI
-  Luna Max alongside99; recorder-only fix avoids127 reservation. Broader per-
-  participant diagnostics research is complete, but wiring still touches127 scope.
-  See design/reviews/task135-native-datetime-regression-20261105.md.
+- **LZ135 native timestamp correction is merged.** Original d0930725/671fad53
+  resumed1793857764502 and finished1793859547774. Worker374a599 merged26f0825;
+  Root934c03b removed private Effect prototype/tag checks. Postmerge69 tests/
+  660 assertions, subsequent recorder20 tests/375 assertions and lint/types pass.
+  Root numeric and Effect repro both[3,0,0]. Genuine zero-background hook was
+  observed but rejected for missing listener-local start lineage after listener
+  replacement. This is a live completion-observer defect, not a source/test fail.
+  Native performance remains unqualified. Broader diagnostics wiring still touches
+  127 scope. See design/reviews/native-completion-blockers-20261105.md.
 - **Current-owner coordination works without transfer.** A keyed instruction on
   c10fbf89 preserved its input, then it focused on99 and reconciled the cleared
   approval hold (version13). Existing owner may handle actionable99/127 work;
   historical-only replay remains covered by standing stop approval. Root verified
   127 tree clean at633da56, already main ancestry; its native idle hold remains.
-  Fresh coordinator is coordinating substantive original127 verification/recovery.
+  Fresh coordinator is investigating substantive original127 verification/recovery.
+  Current automatic successor04072d58 is reviewing real99 work, so it was not
+  stopped. It hit native subagent depth1: renewal creates nested Architects. Luna
+  researched parentless native creation with metadata lineage; existing134 advice
+  now covers that prospective fix. No58-plan manual transfer was performed.
   Root129/132 fact check shows native failed outcomes, not interrupted;99's narrow
   draft does not yet prove their quota recovery. Do not relabel those native facts.
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
