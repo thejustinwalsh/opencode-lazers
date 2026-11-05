@@ -16,9 +16,9 @@ acceptance, native observations and cleanup are separate facts.
   `1793877361137` found unchanged authored plans, revisions, routes, attempt/
   worker/input/workspace identities, policies and dependencies. There were 58
   reassignment events. Do not ask again. Nonlisted57/58,138,139,141,142 remain
-  coordinated by automatic successor `ses_422903914b434fc5be0f805659788e8f`
-  (parent5920, which is now archived). The current native successor exists and has substantive
-  work and is not a historical-only replay loop to stop.
+  coordinated by automatic successor `ses_c55347be4cfb42a59fd168de6728bb77`
+  (parent4229, now archived). Query current ownership before sending; idle renewal
+  continues. It has substantive work. Steer away from unchanged historical replay.
   [Transfer record](../../design/reviews/unfinished-plan-transfer-proposal-20261104.md).
 - **LZ118 source is integrated in main44e313b.** Task
   `e52de935-9519-4167-a7b6-e2390a7280d7`, plan
@@ -29,7 +29,8 @@ acceptance, native observations and cleanup are separate facts.
   the runtime accepted the plan/version41. Root integrated both commits, preserving
   newer review-input/quarantine behavior. Combined source passed424 runner tests/
   5764 assertions plus format/lint/types. Runtime is integrated/v43; native non-forced cleanup removed its tree and cache
-  location while retaining session/history. Real139/141 recovery is still unproven.
+  location while retaining session/history. Follow-up startup repairs and native
+  recovery of139/141 are recorded below.
 - Root independently checked repeated failure, dependency-derived bases and
   replacement-Architect recovery; all three cases pass. Broad current main tests
   also preserve native idle and retained-work behavior.
@@ -42,8 +43,9 @@ acceptance, native observations and cleanup are separate facts.
 - LZ134 compact-renewal work auto-started after118 acceptance: attempt
   `27727aaf-1b81-4d77-963e-9b906f757bfb`, Luna session
   `ses_246a295ccf11456c9e582e383131978d`. Preserve it.139/141 have separate
-  source scopes and can execute in parallel after real startup recovery. Main
-  received the44e313b activation and original-attempt recovery direction in Desktop.
+  source scopes and are now executing in parallel with it. Its focused0a15077
+  gap/cleanup commit is integrated byfec1008; this does not accept whole134.
+  It continues the separate notification increment.
 - Main cleared recurrent stale permission holds through native `reconcile`,
   preserving the original118 worker/attempt. The observed review-input lineage hold has an existing explicit `reconcile`
   `reviewInputID` control; use real completed-review observations. Native
@@ -54,29 +56,32 @@ acceptance, native observations and cleanup are separate facts.
 
 ## Actual startup recovery and visible features
 
-- Live139/141 settlement currently rejects their recovery-only trajectory gaps
-  as execution: each has one kind=gap/source=recovery row for the absent native
-  session. Root reproduced this on main in /private/tmp/lazers-startup-gap-review-20261105.test.ts.
-  Preserve history; distinguish actual downstream work. Main is coordinating the
-  minimal correction with active134 runtime scope. A native reviewer also found
-  cleanupWorktrees omits worktree-recovery from its two creation-effect lists.
-  Do not claim those recovered resources cleaned until the lifecycle is exercised.
-
-- **LZ139 and141 have not run implementer turns.** Their preparing attempts have
-  absent reserved workers/worktrees and uncertain startup effects with original
-  receipt `{ "error": "Worktree.DirectoryUnavailableError" }`. Do not report
-  them as active implementers or successful recovery.139 repairs task-scoped
-  trajectory reads/consumer initialization;141 enables editing existing Models
-  assignments.142 is the separate queued persona-to-dispatch integration.
-- Native Luna research checked the old writer at139's2d5c550 and141'sed5cd6a:
-  direct native create plus `errorText(error)` flattening. Root selected a narrow
-  **distinct legacy classification within existing118** using settlement then
-  explicit resume. Preserve the raw receipt and missing fields, bind the operation/
-  attempt/workspace/base, and use existing fresh resource/session observations.
-  Do not fabricate modern v2 error fields, broaden to arbitrary errors/timeouts,
-  require an unavailable historical build fingerprint, or create duplicate tasks.
-  Implementation is integrated in44e313b. Actual settlement/resumed execution
-  remain unproven. Continue through their real use using the current owner4229.
+- **LZ139 and141 are actually running on their original attempts.** At1793887191022,
+  native active inventory and exact model metadata confirmed OpenAI gpt-6-luna/max:
+  -139 task873b7617-e895-486d-bdba-7e89b07dee07; attempt
+  dd65c71f-4864-4bdd-a412-03856c5c72c4; session
+  ses_620c358ef5094d448751694fd5b7e898. Scoped trajectory reads/consumer startup.
+  -141 task89646906-1d2e-4027-b28d-bdd6be580fe9; attempt
+  d63243f2-4f6c-4a14-b26b-4a72200d073b; session
+  ses_9f38dcf3886440938e167596f2517a32. Existing Models assignment editor.
+  Native settlement preserved original legacy error receipts and telemetry gaps;
+  explicit resume created linked worktrees/sessions/prompts. No replacement attempts.
+- Mainfec1008 contains134's focused gap classification and recovered-worktree cleanup
+  repair:436 workflow tests/5893 assertions plus fmt/lint/types. Actual retry then
+  exposed samePhysicalWorkspace treating every missing path as the retained tree.
+  Root fixed canonical existing-ancestor/missing-suffix comparison in8d9182f, with
+  symlink/error tests and full startup beside retained-source regression;39 relevant
+  tests pass. This repair enabled actual native139/141 startup. Their features and
+  eventual recovery-resource cleanup still need review and live qualification.
+- Both new workers initially saw an unavailable source index. Existing publicationFor
+  selects worker.parentID; Main's e568 publication cannot supply c553-owned workers.
+  c553 published snapshot d46cbc14-84e1-499e-b1f2-bc0869c57219 at1793887377826.
+  Root read back139 using that exact shared root snapshot;141 was notified but a
+  successful reread is not yet observed. No per-worktree build or new cache feature
+  is needed. Avoid loading huge full runtime/test files when a
+  search/range suffices. Root observed an unnecessary153k-token old snapshot read.
+- Legacy classification remains distinct inference, not fabricated typed fields or
+  source-build fingerprints. Keep raw failure history. No source hashing evidence.
 - Task filters were observed working. Tasks-to-Trajectory is broken by the broad
   project projection and its10000-transition ceiling;139 includes the consumer
   initialization path as well as scoped server reads. Do not raise the global
@@ -90,13 +95,15 @@ acceptance, native observations and cleanup are separate facts.
 
 ## Next actions
 
-1. Keep the original118 worker on the current review, portable fixture and narrow
-   legacy compatibility; obtain and review its final artifact and meaningful checks.
-   Root integrates/activates at a quiet native boundary. Do not edit watched
-   canonical source while an implementor is active or globally reload removed trees.
-2. Use native tools to settle and explicitly resume original139/141, preserve all
-   history, and observe actual worker execution. Delivery of a steer is not proof
-   of correctness or completion. Continue their normal review/integration/cleanup.
+1. Monitor/review/integrate the actual139/141 feature workers and ongoing134.
+   Confirm the owning Architect publishes their shared index and workers can read it.
+   Qualify trajectory navigation and Models editing in Desktop; passing source tests
+   or an active session does not establish working features.
+2. Keep model prompts in Desktop; native Architects orchestrate with supported tools.
+   Preserve attempts, useful work and current reviewer-input lineage. Root may repair
+   concrete blockers directly, coordinating source activation with native work.
+   Do not create proof-only model turns or restart confirmed active workers for
+   transient observation labels. Use real completed inputs for explicit reconciliation.
 3. Continue original57 and linked138 retained-candidate work.57 is wholly unstarted
    with cancelled58 downstream. `runtime.step` selects ready tasks before aggregate
    cancelled-node handling; after118 releases overlapping runtime files, check real

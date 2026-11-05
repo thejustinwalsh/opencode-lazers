@@ -274,3 +274,35 @@ matching attempt27727aaf, and distinguished the absent141 reserved session as
 unavailable. The diagram still uses oversized/truncated cards and dense
 relationship details; this observation is not visual acceptance of the planned
 agent monitor. Root closed its temporary Radar tab after inspection.
+
+## Real recovery achieved
+
+Luna134's focused0a15077 was integrated byfec1008 after436 workflow tests/5893
+assertions and format/lint/types. Its broader notification work continues; no
+whole134 acceptance was claimed. The real retry still rejected because
+samePhysicalWorkspace returnedtrue for a nonexistent139 reservation versus an
+existing quarantined checkout. Root reproduced this directly on actual paths.
+
+Root8d9182f resolves existing ancestors and appends missing path suffixes, preserving
+symlink aliases and conservative failure behavior. Three path tests plus a full
+startup-next-to-retained-source regression cover the defect.39 relevant tests/592
+assertions and fmt/lint/types passed. No production SQL lifecycle writes or forced
+cleanup were used.
+
+At1793887191022, native active inventory contained134 and both original139/141
+workers. Their attempt IDs, reserved session IDs and Luna/max OpenAI routes were
+read back independently. Plans and attempts are running. Initial tools fetched
+formatted tasks and began source discovery. This proves actual recovery/startup,
+not successful implementation, live feature verification or eventual cleanup.
+
+Their first shared-index reads failed because their current parent Architect c553
+had no publication; Main's e568 publication belongs to another owner. Existing
+publicationFor selects the worker parent. Root asked Main to have c553 refresh once
+and let workers reuse that readonly snapshot. This remains to be read back.
+
+The current owning Architect c553 published d46cbc14-84e1-499e-b1f2-bc0869c57219
+at1793887377826. Root independently parsed139's completed native index response
+msg_1ac0569bf001UihFdy2TodTK0W: exact same snapshot, root workspace and refresh
+timestamp. This verifies shared readonly reuse across that private worktree.141
+was notified; its successful reread is not yet observed. Both workers continued
+source discovery without restart or an index-admission gate.
