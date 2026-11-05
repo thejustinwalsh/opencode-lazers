@@ -374,6 +374,7 @@ test("Architect correction controls record, replay, revise, retract, and inspect
   const correction = tools.get("lz-correct-task")!
   const inspect = tools.get("lz-inspect-task-corrections")!
   expect(correction.options?.permission).toBe("lz-correct-task")
+  expect(correction.options?.codemode).toBe(true)
   expect(correction.output).toBeUndefined()
   expect(inspect.options).toMatchObject({
     codemode: true,

@@ -206,7 +206,7 @@ export function registerTaskTools(ctx: TaskToolContext, repository: TaskReposito
       description:
         "Architect-only explicit same-original-goal correction link. taskID is the correction task; originalTaskID is the task it corrects. Set originalTaskID to null to explicitly separate/retract the link. Supply the current per-task correction revision and a requestID; inspect membership first and resolve stale conflicts manually. No relation is inferred from supplements, kind, ancestry, scope, or prose.",
       input: z.toJSONSchema(TaskCorrectionInput, { io: "input" }),
-      options: { codemode: false, permission: "lz-correct-task" },
+      options: { codemode: true, permission: "lz-correct-task" },
       execute: (input, context) =>
         ctx.permission
           .assert({
