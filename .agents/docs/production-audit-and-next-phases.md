@@ -2,6 +2,12 @@
 
 Observed 2026-11-01, 04:41 UTC. Audited source: 53a6e69. Runtime and source can advance after this checkpoint.
 
+**Historical audit.** Counts, active work, defects and proposed ordering below
+describe November 1, not the current runtime. Use the
+[current handoff](handoff.md) and [roadmap delivery front](../../design/roadmap.md)
+for present status. Preserve this audit as dated evidence, not current agent
+instructions or a reason to recreate already-delivered work.
+
 ## Assessment
 
 The execution platform works and has landed real product changes. We have not yet demonstrated the original mission of consistently affordable, minimally supervised feature delivery in a large existing application. The next work should close reliability and measurement gaps, then use the plugin on real application features. More orchestration machinery is not the goal.
