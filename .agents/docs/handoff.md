@@ -7,29 +7,33 @@ cleanup are separate facts.
 
 ## Current state
 
-- **Current delivery blocker is owned steering reconciliation.** LZ133 journal
-  inspection is committed asf5f7af4;16 tests/quality and Root's migrated actual-data
-  copy probe pass (4657 distinct records/95 pages; unrelated activity preserves
-  the cursor, selected-journal changes invalidate it). LZ135 commits3a85ecd and
-  335cd57 pass66 tests/624 assertions; Root's40-session replay changed append
-  counts[120,120,120]→[120,0,0]. Both original workers finished their correction
-  turns, but runtime holds completion because genuine review steering is not an
-  admitted input alias. Neither is accepted/integrated yet. Fresh coordinator
-  `ses_e568438ebffeaoFbF9nBb942XM` created LZ136 for that narrow repair, priority2300,
-  plan`ad6cb637-d5d7-4ee4-974e-727216f2bdd5`, task
-  `06fc208a-e4ed-4fe6-9b5b-33905840f8a8`. Following authorized72 quarantine,136
-  dispatched at1793849034879: attempt`62eae3ff-0dda-4eb7-9c6d-297bd40744dc`,
-  session`ses_48e456730db5448d89a03440b372dca5`, OpenAI Luna Max in its native
-  isolated worktree. Candidate4a9a8d6 is committed;200 focused tests and the exact
-  combined401-test/quality command pass. Final native Luna review is running in
-  ses_e560d6997ffexfId3QjKfNupkQ. Runtime completion is blocked by a separate
-  compacted-context adapter bug: the exact successful idle marker survives but
-  every input was compacted out, while the old validator requires input presence.
-  Root fixed native.ts/native.test.ts,52 tests/334 assertions plus quality pass;
-  quiet activation and actual136 verification remain pending. Original worker and
-  input are unchanged. See design/reviews/native-compaction-idle-confirmation-20261104.md.
-  No136 activation/integration/acceptance yet;133/135 remain blocked and134 waits.
-  [Actual order and evidence](../../design/reviews/execution-order-20261104.md).
+- **LZ136 is complete.** Candidate4a9a8d6 passed final native Luna review, task and
+  combined checks, actual original133/135 review-input reconciliation, source
+  integration and native non-forced cleanup. Main merge6bf4a8b preserves original
+  commit ancestry. Planad6cb637-d5d7-4ee4-974e-727216f2bdd5 is integrated/version21;
+  its tree is absent in filesystem and native registry. Original133/135 assignments
+  remain unchanged with one attempt each; their ordinary checks pass. See
+  design/reviews/task136-native-completion-20261104.md.
+- **133/135 source is landed; independent live gates remain.** Main merged133 as
+  2b0cd50 and135 as e6ab406. Postmerge journal16 tests/260 assertions and quality
+  pass. Architect is qualifying registered journal paging for owned129. Root's
+  native retained-reference lookup succeeds without acknowledgement.135's quiet
+  native CPU windows measured30.92%→30.16% service, inconclusive for total savings;
+  direct unchanged-recovery work/late-fact observation is still needed before its
+  performance gate. Source135's native-performance gate must remain honest. See
+  design/reviews/task135-native-cpu-observation-20261104.md.134 still waits for133.
+- **Host compaction blocker fixed.**85f942c uses retained current-input history
+  after completed compaction while preserving exact successful idle/report binding.
+  56 native/input/idle/schema tests pass with merged136. A later global reload hit
+  the already removed136 worktree; canonical plugin remains initialized with the
+  same PID95968/all six flags true. No blind reload retry or fake directory. Root's
+  quiet activation guard now checks model sessions and task/graph verification.
+- **Unfinished legacy ownership consolidation awaits user approval.** Exact58-plan
+  proposal is design/reviews/unfinished-plan-transfer-proposal-20261104.md. No new
+  transfers performed. Current verified historical-chain owner is c10fbf89; stopped
+  at1793854357004 and confirmed interrupted/idle1793854357021. Existing approval
+  covers stopping further historical-only successors, not the pending transfer.
+  Continue already owned work while awaiting the answer. No terminal plan is listed.
 - **Explicitly approved legacy transfers are complete.** LZ129/LZ132 now belong
   to the fresh coordinator, versions26/13; original workers/attempts/trees are
   unchanged. The user subsequently approved72 transfer plus existing quarantine.
@@ -55,7 +59,7 @@ cleanup are separate facts.
   At1793852337790 it renewed again into728b; Root verified the same historical
   parent/readonly activity, then interrupted under existing approval at
   1793852396456, confirmed interrupted/idle1793852396587. Only136 stayed active.
-  Latest stopped successor: `ses_728b844b477c4a569402cfdbcc5423e2`.
+  Latest stopped successor: `ses_c10fbf89effe4d9f9951e6a26590d7f3`.
   Do not create another fresh Architect.
 - **Performance source repairs are integrated.** Earlier matched service CPU
   73.05→22.52%, renderer0.50%, GPU-process0%;187 runtime/native tests pass.
