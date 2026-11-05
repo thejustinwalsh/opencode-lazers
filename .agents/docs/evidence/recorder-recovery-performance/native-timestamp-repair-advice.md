@@ -109,3 +109,34 @@ certificate prompt, replacement or fabricated idle was used.
 Independent final-artifact Luna review `ses_e55a2bb57ffeCH4USt7r0t1031` is running.
 Final source clearance, native completion proof and Root's actual post-activation
 recovery/performance observations remain separate outstanding requirements.
+
+### Root integration and observed live listener replacement
+
+Root merged `374a599` as `26f0825`; post-merge recovery69tests/660 assertions,
+lint and types passed. Independent final Luna review confirmed timestamp-position
+restriction and changed/late/unsafe-input coverage. It still flags manual Effect
+prototype/tag/descriptor validation at `recorder.ts:237–265` as a proportionality
+concern. Keep that advice visible without inventing an additional acceptance gate
+or waking the finished worker for a certificate turn.
+
+Root identified concrete live proof loss:135 recorded a genuine idle-entered
+hook with backgroundCount0 at1793859547643, followed by idle-lineage-unavailable
+at1793859547760 for current input `msg_b86cf7dcc9af417abb54ebf23481fe6c`, start1455.
+The worktree listener changed from `d9633764` at1793857963626 to `a48b967b` at
+final idle. `runner_native_idle` retained the old start7/input118166 report; new
+success2860 invalidated it. A zero hook alone is not a historical replacement
+certificate. Investigate supported host identity/lifecycle APIs first, then safe
+preservation of genuinely live lineage across replacement within existing native
+progress/127 follow-through; cold/gapped/missing-start states must remain unknown.
+Root coordinates canonical activation only when workers are idle.
+
+Root subsequently resolved the remaining source-review proportionality advice in
+canonical `934c03b`: private Effect prototype/tag checks were removed, retaining
+the supported DateTime guard, safe data-property reads, `dateMillis` and timestamp
+slots. Root reports recorder20tests/375 assertions, lint/types and the original
+numeric/Effect `[3,0,0]` repro passing. No additional135 worker repair turn is
+needed. Continue only real listener-lifecycle investigation and the native
+performance gate; timings and proof-loss facts are recorded separately in
+`design/reviews/native-completion-blockers-20261105.md`. Listener replacement's
+trigger remains unproven; do not assume the observed local-map loss explains why
+replacement occurred or grants historical proof.

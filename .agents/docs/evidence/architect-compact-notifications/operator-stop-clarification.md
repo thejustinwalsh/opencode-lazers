@@ -25,6 +25,23 @@ this recurrence into the same134 boundary; it does not authorize the pending
 proposal to transfer58 unfinished plans. No such transfer is approved or performed
 by this Architect.
 
+## Fresh coordinator lineage must not become subagent depth
+
+Root observed current renewed owner
+`ses_04072d58d16c46b0a8b13f7db3e08737` actively reviewing99; leave it running.
+Its subagent tool failed with “Subagent depth limit reached (1)”. Root identified
+renewal creation with `parentID = previous_session_id` and a matching parent
+requirement in `renewalSuccessorMatches`, turning successive coordinators into
+nested agents rather than fresh top-level Architects.
+
+Carry this into existing renewal follow-through: use the supported native session
+API for fresh top-level coordinators and retain predecessor/renewal/plan lineage
+in metadata and the durable journal. Preserve existing nested sessions and their
+history; do not rewrite active parents or treat this as approval to transfer58
+plans. Research must check native creation and lost-reply/identity compatibility,
+then cover a genuinely fresh coordinator's ability to delegate—not metadata alone.
+Root's active99 reviewer is current work, not a historical loop to stop.
+
 Carry this observed failure into **LZ134**, alongside its original LZ28/LZ30 seams:
 
 - Honor explicit operator stop of this historical-review chain across the idle
