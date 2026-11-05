@@ -11,6 +11,7 @@ import { Cause, DateTime, Effect, Exit } from "effect"
 import type {
   ArchitectInputPage,
   ArchitectSourceResult,
+  HostMessage,
   HostBackgroundObservation,
   RunnerHost,
   WorktreeLocationRetirement,
@@ -34,8 +35,10 @@ export type NativeInboxClient = {
   permission: Pick<ReturnType<typeof OpenCode.make>["permission"], "request">
   session: Pick<
     ReturnType<typeof OpenCode.make>["session"],
-    "active" | "get" | "synthetic" | "inbox" | "update" | "list"
-  >
+    "active" | "get" | "synthetic" | "inbox" | "update" | "list" | "message"
+  > & {
+    message: Pick<ReturnType<typeof OpenCode.make>["session"]["message"], "get">
+  }
   experimental: {
     session: Pick<ReturnType<typeof OpenCode.make>["experimental"]["session"], "log">
   }
@@ -499,6 +502,28 @@ export function nativeHost(
       const currentInputID = detailed
         ? await resolveNativeInputID(messages, () => retainedInputID(id))
         : undefined
+      let retainedCurrentInput: HostMessage | undefined
+      if (
+        options?.messages &&
+        session.agent === "lazers-implementor" &&
+        currentInputID &&
+        !messages.some((message) => message.id === currentInputID)
+      ) {
+        const input = await runNative(client, () =>
+          client.session.message.get({
+            sessionID: id,
+            messageID: SessionMessage.ID.make(currentInputID),
+          }),
+        )
+        if (input.id !== currentInputID || (input.type !== "user" && input.type !== "synthetic"))
+          throw new Error("Retained current input does not match the native worker input")
+        retainedCurrentInput = {
+          id: input.id,
+          type: input.type,
+          text: input.text ?? "",
+          ...(input.metadata ? { metadata: input.metadata } : {}),
+        }
+      }
       const latest = detailed ? await readSession() : session
       if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       const idleAfter = binding ? idleStore?.read(binding) : undefined
@@ -692,20 +717,25 @@ export function nativeHost(
         ),
         // Subscription billing is not a dated equivalent API estimate.
         cost: null,
-        messages: messages.map((message) => ({
-          id: message.id,
-          ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
-          ...(message.metadata ? { metadata: message.metadata } : {}),
-          text:
-            message.type === "user" || message.type === "synthetic"
-              ? message.text
-              : message.type === "assistant"
-                ? message.content
-                    .filter((part) => part.type === "text")
-                    .map((part) => part.text)
-                    .join("\n")
-                : "",
-        })),
+        // A compacted window can omit the real input's review binding. Read that
+        // exact retained input without replaying history or changing turn evidence.
+        messages: [
+          ...(retainedCurrentInput ? [retainedCurrentInput] : []),
+          ...messages.map((message) => ({
+            id: message.id,
+            ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
+            ...(message.metadata ? { metadata: message.metadata } : {}),
+            text:
+              message.type === "user" || message.type === "synthetic"
+                ? message.text
+                : message.type === "assistant"
+                  ? message.content
+                      .filter((part) => part.type === "text")
+                      .map((part) => part.text)
+                      .join("\n")
+                  : "",
+          })),
+        ],
       }
     },
     async outcomeInbox(sessionID) {

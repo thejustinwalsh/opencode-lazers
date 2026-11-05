@@ -13,6 +13,7 @@ import workerInstructions from "../implementor.md" with { type: "text" }
 import { nativeHost } from "./native.ts"
 import type { NativeInboxClient, NativeInboxDependencies } from "./native.ts"
 import { NativeIdleStore } from "./native-idle.ts"
+import { observeReviewInput } from "./review-input.ts"
 import type { NativeIdleBinding } from "./native-idle.ts"
 import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
@@ -36,6 +37,7 @@ type NativeRevalidationOptions = {
   formDirectory?: (requested: string) => string
   shellDirectory?: (requested: string) => string
   omitShellList?: boolean
+  retainedMessageAt?: (id: string, message: unknown) => unknown
 }
 
 function nativeRevalidationHost(
@@ -73,6 +75,15 @@ function nativeRevalidationHost(
   const nativeClient = {
     server: { info: async () => ({ pid: 42, version: "2.2.5" }) },
     session: {
+      message: {
+        get: async ({ messageID }: { messageID: string }) => {
+          const message = (options.history ?? messages).find(
+            (entry) => testNativeObject(entry)?.id === messageID,
+          )
+          if (!message) throw new Error("Retained input is unavailable")
+          return options.retainedMessageAt?.(messageID, message) ?? message
+        },
+      },
       active: async () => options.active ?? {},
       inbox: {
         list: async () => {
@@ -1725,6 +1736,79 @@ test("compacted native idle confirmation uses retained input without accepting s
         fixture.close()
       }
     }
+  }
+})
+
+test("compacted completed review keeps its exact retained input binding", async () => {
+  const fixture = makeTrajectoryFixture()
+  try {
+    const idleStore = new NativeIdleStore(fixture.repository)
+    const binding = idleStore.assignmentForSession("ses-accepted")!
+    const attempt = fixture.store
+      .attempts(fixture.receipt.planID)
+      .find((row) => row.id === binding.attemptID)!
+    const terminal = persistNativeIdle(idleStore, binding, 0)!
+    const now = DateTime.nowUnsafe()
+    const input = {
+      id: "msg_current_input",
+      type: "synthetic",
+      text: "Repair the actual task defect",
+      metadata: {
+        lazersReview: {
+          taskID: attempt.task_id,
+          attemptID: binding.attemptID,
+          requestID: "substantive-correction",
+        },
+      },
+    }
+    const messages = [
+      { id: "msg_compaction", type: "compaction", status: "completed" },
+      {
+        id: "msg_completed_response",
+        type: "assistant",
+        time: { created: now, completed: now },
+        finish: "stop",
+        content: [],
+      },
+      { id: terminal.messageID, type: "idle", outcome: "succeeded", time: { created: now } },
+    ]
+    for (const scenario of ["matching", "wrong-id", "unavailable"] as const) {
+      let reads = 0
+      const adapter = nativeRevalidationHost(fixture.repository, {
+        messages,
+        history: [input],
+        retainedMessageAt: (id, message) => {
+          reads++
+          expect(id).toBe(input.id)
+          if (scenario === "unavailable") throw new Error("Retained read unavailable")
+          return scenario === "wrong-id" ? { ...input, id: "different-input" } : message
+        },
+      })
+      if (scenario !== "matching") {
+        await expect(adapter.host.session(binding.sessionID, { messages: true })).rejects.toThrow(
+          scenario === "wrong-id" ? "does not match" : "Retained read unavailable",
+        )
+        continue
+      }
+      const worker = await adapter.host.session(binding.sessionID, { messages: true })
+      expect(reads).toBe(1)
+      expect(worker?.messages[0]).toEqual(input)
+      expect(messages.some((message) => message.id === input.id)).toBe(false)
+      const evidence = observeReviewInput(worker!, {
+        ...binding,
+        taskID: attempt.task_id,
+        planID: attempt.plan_id,
+        reviewInputID: input.id,
+        ownerSessionID: "ses-owner",
+        commandRequestID: "reconcile-completed-correction",
+        expectedPlanVersion: 1,
+        model: { providerID: "openai", id: "gpt-6-luna" },
+      })
+      expect(evidence.reviewRequestID).toBe("substantive-correction")
+      expect(evidence.observation.turnState).toBe("completed")
+    }
+  } finally {
+    fixture.close()
   }
 })
 

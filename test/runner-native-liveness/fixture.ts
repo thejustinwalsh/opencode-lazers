@@ -89,6 +89,13 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
         },
       },
       session: {
+        message: {
+          get: async ({ messageID }: { messageID: string }) => {
+            const message = options.history?.find((entry) => entry.id === messageID)
+            if (!message) throw new Error("Retained input is unavailable")
+            return message
+          },
+        },
         active: async () => {
           const error =
             typeof options.activeError === "function" ? options.activeError() : options.activeError
