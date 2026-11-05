@@ -136,6 +136,34 @@ and events13–25 reconnect invalidation. Keep LZ17/26/32 accepted behavior inta
 tests plus quality, followed by Root-coordinated actual connected Desktop review.
 No real delivery, healthy-idle RPC-count or CPU/battery claim is made by these drafts.
 
+### Native trajectory capacity/navigation regression (later observation)
+
+Root's `design/reviews/trajectory-scope-selection-20261104.md` (commit `cabb6fa`)
+records Tasks Session scope → LZ136 → Open trajectory retaining Project scope and
+failing refresh, followed by a misleading no-tasks message. Switching to Session
+silently selected old accepted task `8fb0fd83` although136 remained available;
+explicitly choosing136 restored its actual Luna Max worker and running attempt.
+
+Carry this into the existing Tasks B navigation and trajectory capacity/consumer
+follow-through, not a duplicate task or unrelated addition to136/131:
+
+- Opening a task and switching to an available authorized scope retain its exact
+  identity. Test136 alongside an older accepted task so a default-first selection
+  cannot pass. Scope failure or an unavailable selection must not silently select
+  an unrelated task.
+- A failed refresh is unavailable/error, not proof of an empty scope. Preserve the
+  requested task and truthful stale/error state while recovery is offered.
+- Project history requires bounded progressive reads at actual retained volume;
+  keep full-history compatibility/coverage promises. Reuse reviewed129 producer
+  work where applicable rather than adding another reader implementation.
+- Root's correct136 Session trajectory showed one running original attempt,
+ 127tool calls, tokens/context and an honestly unknown unfinished end. This is not
+  a missing-timestamp repair or proof that Project navigation is fixed.
+
+Desktop was left on the correct136 Session trajectory. Do not distract its original
+worker, change its input, or reset Root's view to reproduce this while136 is under
+review. These are observed acceptance cases for the existing held work.
+
 ## Radar remainder
 
 Existing LZ129 supplies the bounded live-read increment. The held remainder is
