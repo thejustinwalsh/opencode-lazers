@@ -10,11 +10,14 @@ acceptance, native observations and cleanup are separate facts.
 - Latest [native delivery checkpoint](../../design/reviews/native-delivery-checkpoint-20261105.md):
   Main is active;134 stopped on disk exhaustion, then resumed substantive work on
   its same Luna session at1793891366202; new shell calls independently observed.
-  Clearing regenerable compile caches recovered1.3GiB.139 is source-integrated
-  (`7a9eba2`,84 assigned tests pass), but its targeted Desktop timeline is blank
-  because rendering still requires the absent broad snapshot.141 committedf65697d,
-  but still uses raw-ID fields as its primary editor; catalog-picker correction
-  and genuine Desktop acceptance remain open. Main received both corrections.
+  Clearing regenerable compile caches recovered1.3GiB.139 rendering is now merged
+  in`d0fdafa`;87 tests/879 assertions, fmt/lint/types/build pass. Actual Desktop
+  completed-task navigation, duration selection, history continuation50→98 and
+  Models selected-task effort all worked. See
+  [native observations](evidence/task139-native-observed-20261105.md). Main received
+  these for native acceptance/integration/cleanup; do not claim runtime closure yet.
+  141's same original worker is actively replacing raw-ID editing with the native
+  searchable model dialog/catalog; correction and Desktop acceptance remain open.
   Older “running” statements below describe startup observations, not live status.
 
 - Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI
@@ -92,10 +95,9 @@ acceptance, native observations and cleanup are separate facts.
   search/range suffices. Root observed an unnecessary153k-token old snapshot read.
 - Legacy classification remains distinct inference, not fabricated typed fields or
   source-build fingerprints. Keep raw failure history. No source hashing evidence.
-- Task filters were observed working. Tasks-to-Trajectory is broken by the broad
-  project projection and its10000-transition ceiling;139 includes the consumer
-  initialization path as well as scoped server reads. Do not raise the global
-  ceiling or discard history as the fix.140 was a concurrent duplicate of139,
+- Task filters and Tasks-to-Trajectory were observed working on reviewed main139
+  after scoped reads and report-driven rendering. The unrelated10000-transition
+  broad-project ceiling remains unchanged.140 was a concurrent duplicate of139,
   durably classified duplicate with no plan/attempt; do not revive it.
 - Models live Compare fails because `lazers.models.decision.v2` is not registered;
   existing126→122 owns that producer. Assignments is read-only; the approved
@@ -152,6 +154,10 @@ acceptance, native observations and cleanup are separate facts.
 - All six inference flags remain true; Never unload remains unchanged. Do not turn
   inference off or infer successful jobs from loaded readiness. Use the retained
   audit/reports for old exact identities instead of restoring stale instructions.
+- A recurring cache-ownership error was operationally recovered by Desktop-only
+  quit/relaunch (main8893→43129); service95968 and original workers continued.
+  Actual local chat19 input/4 output tokens and a boolean d1 decision succeeded.
+  This does not close queued128's permanent generation-retirement repair.
 
 ## Delivery still required
 
@@ -216,7 +222,8 @@ compiling code and actual product probes are evidence; no file-hash ceremony,
 model approval substitution, arbitrary spend budgets or invented task gates.
 Preserve native permissions, schema validation and SystemOne task/handoff review.
 
-Current service last observed PID95968, renderer8902, GPU-process8898. DB:
+Current service last observed PID95968; Desktop main43129 after recovery. Recheck
+process identities before acting. DB:
 `/Users/tjw/.local/share/opencode/plugins/lazers/tasks.sqlite`. Raw CPU/profile
 captures stay under `/private/tmp`; review reports are in `design/reviews`.
 Root owns canonical activation and source-control integration. Astra's performance
