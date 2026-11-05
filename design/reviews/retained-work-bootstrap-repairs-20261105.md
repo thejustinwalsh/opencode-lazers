@@ -53,13 +53,22 @@ and lack of old acceptance. Negative cases include busy, pending, failed,
 missing and wrong-input foreground observations; existing permission, reassignment,
 restart, lost-response and physical/shared exclusion tests remain passing.
 
-**Native operation remains pending at report creation.** Architect was asked to
-obtain a focused Luna Max source review, then have the existing LZ99 owner use
-the supported control and observe actual scheduling. Before-operation state is
-saved at `/private/tmp/lazers-lz99-before-source-isolation-20261105.json`:
-LZ99 planblocked/version19, original attempt running, three effects retained.
-No source-quarantine success, task completion, old cleanup or resumed worker is
-claimed by these test results.
+**Observed natively:** existing owner used request
+`lz99-completed-input-source-isolation-20261105-v1`; quarantine sealed at Unix
+milliseconds `1793871137426`, with native archival at `1793871137393`.
+Independent before/after inspection found the original attempt metadata/state
+and three original effects unchanged; the original tree remains. LZ99 remains
+unaccepted with background status unknown. This releases independent source
+admission, not task completion or resource cleanup.
+
+The scheduler resumed original LZ133 attempt
+`6ee1191f-95ef-45d0-9b90-8e96623b9841`, same worker
+`ses_9250c22e68da40ff86371b407b9c3c11`, on OpenAI `gpt-6-luna/max`.
+Its instruction read completed at `1793871146135`; subsequent native shell and
+patch calls changed the source journal/store pagination implementation and tests.
+Root observed ongoing work at `1793871761962`; acceptance and native reprobe are
+still pending. Before-operation snapshot:
+`/private/tmp/lazers-lz99-before-source-isolation-20261105.json`.
 
 ## Review corrections
 
