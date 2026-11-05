@@ -32,3 +32,21 @@ the exact artifact/results. Root will activate at a coordinated boundary and
 remeasure actual native recovery afterward. `native-performance:human` remains
 held: the earlier30.92%→30.16% CPU comparison is inconclusive, and a fixture pass
 alone is not native qualification. No certificate prompt or ownership transfer.
+
+## Installed API findings delivered during the same repair
+
+Luna's read-only check found Effect4.0.6: public DateTime is UTC or Zoned, both
+with epoch milliseconds. `isDateTime` checks the presence of `~effect/DateTime`;
+it is not an authenticity check, and `toEpochMillis` directly reads the epoch
+property. Guard unsafe lookalikes/accessors, while preserving legitimate native
+host instances; exact prototype identity across module instances is not proven.
+Do not blindly turn a conservative prototype suggestion into another native miss.
+Test UTC/zoned equivalents, changed instants and late native fact retention, not
+just same-instance repeats. No dependency source or production data was changed.
+
+This advice was delivered/read back through native instruction context at
+1793858041682, key `lazers.review.lz135.datetime-public-api-and-fallback.20261105.v1`.
+The original worker's assigned input remained
+`msg_b86cf7dcc9af417abb54ebf23481fe6c` before/after; no extra prompt was sent.
+Consumption and final correction are not yet verified. Existing symbol-key handling
+is a separate boundary to document/test rather than silently broaden in this fix.
