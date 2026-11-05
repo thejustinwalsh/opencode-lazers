@@ -48,6 +48,19 @@ facts, and avoid requiring a write-free projection window. Live correction and
 reprobe remain required. These measurements cover one reader call, not the full
 RPC/UI path or a statistically established latency/memory distribution.
 
+At1793907098001 the same read-only call, after the worker's capture correction,
+succeeded on the active DB:143 tasks,13831 accounting facts,3311.75ms and
+150290528 bytes RSS growth. This proves the original reader-layer failure was
+corrected in that WIP; higher-level decision checks, paging, production RPC and
+rendered Compare still need qualification. It is not a performance-fix claim.
+
+Root answered the LZ-142 worker's native scope question in Desktop. Keep the
+current increment on explicitly persona-bearing plans and preserve legacy manual
+Start fallback. Task kind is not persona authority. Explicit task-persona storage
+and manual Start consumption remain a small linked follow-up for Architect;
+do not claim this gap is already implemented. The same worker resumed, added
+boundary tests and continued broader verification. No implementation was restarted.
+
 ## Current delivery update
 
 Latest:126 natively integrated/v30 and cleaned up; original artifactbb26ab2 now
