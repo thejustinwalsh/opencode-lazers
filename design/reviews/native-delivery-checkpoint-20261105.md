@@ -106,3 +106,196 @@ Keep overdue Models, Tasks and Radar delivery ahead of lifecycle consolidation.
 Missing-owner continuation exists; idle renewal is a fixed 30-minute default.
 Later consolidation should separate session existence, native activity, useful
 progress and model/provider cache reuse. No new foundation epic was dispatched.
+
+## Architect presence check, 12:32 EST
+
+Read-only native observations at Unix ms1793899933100 and1793899961251:
+both current Sol High Architects remain present and idle; the LZ-122 Luna Max
+worker is active, with a completed patch followed by another streaming patch.
+Neither an idle coordinator nor a retained `succeeded` outcome proves a session
+is lost; use native active state and current turn/tool observations together.
+
+Runtime `step` already replaces a missing/archived owner through
+`ensureArchitectOwner`. Existing-session validity only checks presence, archive
+state, agent and project. It does not establish wake responsiveness or useful
+progress. Idle renewal defaults to30 minutes, with a plugin override; it requires
+an explicit continuity checkpoint and native reconciliation/archival support.
+It is not a model/provider prompt-cache TTL and cannot promise a cache hit.
+
+Consolidate those lifecycle decisions later into one explicit policy covering
+missing, archived, responsive idle, busy, failed wake and cache-expired owners.
+Keep this behind overdue Models, Tasks and Radar delivery; fix a concrete wake
+blocker in place if it prevents that delivery. No new refactor task was dispatched.
+
+## Native continuation, 12:36 EST
+
+At1793900167813 both Main Architect and the original LZ-122 worker were natively
+active. Desktop's subagent menu opens that exact Luna Max worker and displays its
+live patch transcript and running duration. Its first focused check reported
+4 passing tests/70 assertions; this is not full task verification. Current edits
+include the ledger reader/schema beyond the submitted file scope. Main received
+a Desktop correction to investigate that dependency seam, steer/amend through
+existing flows and preserve useful work. LZ-142 remains next as scope permits.
+
+Desktop automation exposed two input hazards: AX `setValue` changed the visible
+composer but Send submitted the old draft; multiline `typeText` submitted each
+newline. Root stopped the resulting Architect turns and verified the final
+single-line LAZERS correction in the transcript. The unrelated original draft
+is preserved at `/private/tmp/lz-preserved-main-composer-draft.txt`; it is not
+restored to the composer. Do not repeat either unsafe input method. No worker
+was stopped. Main is now reading the actual task/plan and source.
+
+The source-notice SQL hypothesis was tested against a consistent in-memory copy
+of actual production tables. A partial index returned identical rows and changed
+median lookup0.009625ms→0.003417ms across15 reads. That absolute cost does not
+explain the observed service CPU, so no index/source/live DB change was made.
+Result: `/private/tmp/lz-source-notice-query-probe-result.json`.
+
+## Parallel delivery follow-up, 12:39 EST
+
+Main attached focused advice to LZ-122 and messaged the same active worker at
+1793900265845 without restarting it. Its existing plan amendment already includes
+the ledger reader/schema/tests; no duplicate scope amendment is needed. Main's
+read-only performance reviewer `ses_e5337592effeefMspoKIlcYx4F` independently uses
+OpenAI Luna Max and is checking the actual production capture, not model scores.
+Root asked Main through Desktop to evaluate the existing LZ-129 retained-worker
+repair alongside Models, preserving normal reservations and original identity.
+Dispatch is not yet observed.
+
+One observed context/performance defect merits a small later tool repair:
+Main's three selected `lz-inspect-plan(full:true)` results included35,136 lines.
+`RunnerStore.detail` unconditionally calls the project-wide `audit()`, which
+performs pairwise task comparisons. Repeating selected plan detail repeats that
+global computation/payload. Compact selected-plan inspection avoids the audit;
+full detail should make unrelated project audit opt-in and expose findings
+progressively. Preserve real duplicate detection on submission; this is a read
+ergonomics/cost issue, not a reason to remove validation. No backend edit or
+new task was made while the producer and review were active.
+
+At1793900447519, LZ-122's own read-only production capture measured6007.7ms,
+RSS delta508,216,064 bytes, heap delta222,241,732 bytes and output40,199,869 bytes
+for100/142 tasks and99 sessions (partial output). These are one-shot capture
+measurements, not steady service CPU or a completed production RPC measurement.
+The same worker reported that the first preflight approach was not a performance
+fix and is replacing count-sized full materialization/repeated scans. Preserve
+this baseline for its later comparable run; final improvement is unproven.
+
+Root's actual Desktop Compare check still shows `Decision read failed`, no graph
+and no estimate. Its error detail renders `[object Object]`; record a small error
+presentation correction with the delivery review. Three saved source snapshots
+do not establish a working production producer. Do not count Assignments visual
+qualification as Compare acceptance.
+
+## Focused bootstrap follow-up
+
+Native c553 inspection established that original-input-only source quarantine
+rejects LZ-139/134 after their completed tagged review inputs. Their reservations
+block LZ-129 and the existing LZ-57 repair lane. Main received a Desktop request
+to specify a narrow actual-review-input binding repair; its read-only Luna Max
+research session is `ses_e53298d3affeRmvKVgDgJZBLfY`. This is a delivery blocker,
+not authorization for the broad lifecycle refactor. Missing background completion
+evidence must remain unknown; guarded source release must not accept the task or
+release other retained resources.
+
+Root fast-forwarded the clean existing native bootstrap tree
+`/private/tmp/lazers-retained-bootstrap` to8acc55c, preserving live canonical source.
+Isolated commit `bf54cdd` removes the global audit from `RunnerStore.detail` and
+clarifies progressive tool usage. Its regression proves selected full detail
+does not invoke the audit while explicit full project inspection still does.
+19 tests/344 assertions, formatter/linter/typechecker and diff checks pass.
+Logs: `/private/tmp/lz-selected-inspection-audit-tests.log` and
+`/private/tmp/lz-selected-inspection-audit-quality.log`. Not yet reviewed by native
+Architect, integrated or activated; no CPU improvement is claimed from source alone.
+The completed native producer review is retained in
+`design/reviews/lz122-native-performance-review-20261105.md`; Main attached its
+focused findings as advice revision3 and steered the same active producer worker.
+
+## LZ-143 isolated candidate
+
+Native Architect submitted task `c6067dd0-c586-49c4-8d4a-456b105297e9` / LZ-143,
+plan `204d4ebc-6192-4b8a-8e98-8f17b3c891fd`, without dispatching a competing
+implementor. Root implemented candidate `2e9a8dd` after `bf54cdd` in the clean
+existing bootstrap tree. The current owner explicitly supplies reviewInputID;
+the source-quarantine row persists its exact review input/request separately from
+unchanged original assignment. Runtime and the actual native archive adapter
+revalidate metadata, completed foreground, exact route, ownership and current
+input; source release creates no completion alias or background proof. Legacy
+NULL binding preserves existing behavior; the additive migration is covered.
+
+Focused tagged-review adapter/race tests passed16 tests/159 assertions before the
+final extra malformed-input/migration cases. First full compatibility run passed
+568 tests and failed only the new migration fixture: its raw command supplied
+an explicit undefined property, which the JSON command identity rejects.
+Fixture-only correction `71fbf4a` omits that field; its targeted migration check
+passes1 test/7 assertions. Product code is identical to2e9a8dd. The next full
+run passed568 and hit the existing restart-recovery test's default5-second Bun
+harness timeout. That test passed alone in3.8seconds. With an explicit15-second
+Bun harness timeout, all569 tests/7185 assertions passed in155.64seconds;
+verification-command deadlines/assertions were unchanged. Logs are
+`/private/tmp/lz143-bootstrap-compatibility-final.log`,
+`/private/tmp/lz143-adoption-restart-recheck.log` and
+`/private/tmp/lz143-bootstrap-compatibility-loaded.log`. Quality checks pass in
+`/private/tmp/lz143-bootstrap-quality.log`. Original failed run is retained at
+`/private/tmp/lz143-bootstrap-compatibility.log` (159.69 seconds).
+Root sent the clean candidate and exact fixture delta through Desktop. Main
+launched read-only native Luna Max review `ses_e531a6772ffeFNHHqaY3iIEwjQ`.
+Do not modify the candidate while it is reviewed. Canonical
+backend source is unchanged, no reload/activation occurred, and actual source
+release/old-task repair remain unproven. The Models worker remains active and
+has resumed ledger patches after its production measurement.
+
+Independent first review found admission-after-await and sealed-pin recovery
+gaps; exact report is `design/reviews/lz143-source-release-review-round1-20261105.md`.
+Root corrected them in clean isolated commit `fdadbf3`: fresh owner/worker reads
+after admission awaits, malformed persisted pins cannot exclude source, and guard
+restoration rechecks the exact review foreground/tag/route. A fresh version-bound
+owner command may explicitly supersede a pending pin with recorded prior request
+identity; replay cannot retarget it. Focused35 tests/340 assertions pass.
+Current full compatibility passes581 tests/7303 assertions in156.15seconds:
+`/private/tmp/lz143-review-correction-compatibility.log` (Bun harness timeout15s).
+Formatter/lint/types pass in `/private/tmp/lz143-review-correction-quality.log`.
+No checks remain running in exec31811.
+
+Main received the exact corrected candidate through Desktop; its same Luna reviewer
+is assessing the remaining boundary. Healthy installed source guards still avoid
+per-tick native polling. Root asked whether later legitimate handoff reads can
+actually restore source-writing authority before imposing permanent current-input
+checks that could reblock work. Guard restoration remains strict. Follow-up source
+clearance, integration, activation and actual owner-bound release are still open.
+
+Ordering check: admitted zero-attempt runtime LZ88 has priority2050, above LZ142's
+1800. Before claiming142 is next after release, reconcile actual ordering through
+existing schedule controls; an older equal/higher-priority runtime slice can win.
+
+Latest LZ143 candidate is clean `747a386`. The follow-up reviewer retracted the
+healthy sealed-input concern: the installed guard still denies source writes
+independently of later input metadata. It instead found that fdadbf3's guard
+recovery required the historical review to stay current and could strand a later
+handoff.747a386 removes that overconstraint after sealing while retaining fresh
+pending archive/seal validation, durable pin structure and exact replacement
+guard/assignment checks.40 focused tests/405 assertions plus quality pass;
+full rerun is exec39037 at `/private/tmp/lz143-final-boundary-compatibility.log`.
+Main received this final two-file delta and the actual queue-priority finding.
+Same native reviewer is assigned; no source clearance, integration, activation
+or old-worker release yet. Round2 is retained in
+`design/reviews/lz143-source-release-review-round2-20261105.md`.
+
+Root resolved Main's stale-notice interview through Desktop as "Older notice";
+the latest explicit pending supersession/source-write-safety direction stands.
+LZ122 now has a new production decision-read.ts and modified ledger reader/server.
+Root's isolated two-connection WAL probe showed database-wide data_version2→3
+after an unrelated commit while transaction ledger values stayed42→42. This
+matches https://www.sqlite.org/pragma.html#pragma_data_version, not a production
+mutation. Main stored/relayed scoped advice to the same worker at1793903672618
+to test useful reads under real project activity and unrelated commits alongside
+genuine ledger changes. Do not infer success until its tests and actual producer
+reads pass. No source hashing or new daemon was introduced.
+
+Actual Desktop Tasks→LZ122→Trajectory→Open worker session navigates to the exact
+original worker. Capture `/private/tmp/lz122-live-trajectory-20261105.png` records
+211 calls, observed usage and an ongoing attempt with no invented end; the worker
+view then showed native context compaction. Separately, blocked retained plans
+139/141 still present their node's Running badge. Preserve this observation for
+the already-proposed Tasks status upgrade; persisted attempt phase is not live
+native activity. Unknown market pricing remains visible; no cost estimate is
+inferred from subscription use or incomplete price provenance.
