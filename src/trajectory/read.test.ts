@@ -8,6 +8,10 @@ import { openReadOnlyTrajectoryStore } from "./store.ts"
 import { createTaskValuationReader } from "../models/task-valuation.ts"
 import { nativeMillionTokenIndex } from "../../test/models-valuation/fixtures/current-indexes.ts"
 import type { CurrentPriceIndex } from "../models/valuation-schema.ts"
+import {
+  lz137ValuationProvider,
+  prepareLz137RetainedData,
+} from "../../test/trajectory-panel/lz137-market-fixture.ts"
 
 const pricingRoute = { providerID: "openrouter", modelID: "vendor/model", variant: null }
 const pricingModel = {
@@ -706,6 +710,69 @@ test("market valuation shares unique-session usage, exposes source provenance, a
         { taskValuationProvider: provider },
       ),
     ).rejects.toThrow("Stale trajectory cursor")
+  } finally {
+    fixture.close()
+  }
+})
+
+test("configured trajectory valuation exposes the sourced 19-call LZ-137 observed estimate despite recovery gaps", async () => {
+  const fixture = makeFixture()
+  prepareLz137RetainedData(fixture)
+  const provider = lz137ValuationProvider()
+  try {
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 20 }),
+      cursorSecret,
+      { taskValuationProvider: provider },
+    )
+    const market = report.effort.marketEquivalentCost
+    expect(report.effort.recordedCost.apiEquivalentTotalUsd).toBeNull()
+    expect(report.effort.recordedCost.apiEquivalentSubtotalUsd).toBe(0)
+    expect(market).toMatchObject({
+      valueUSD: null,
+      subtotalUSD: 0,
+      observedUsageEstimate: {
+        label: "Current-market observed-usage estimate",
+        status: "estimate",
+        valueUSD: 0.01598662,
+        rangeUSD: null,
+        basis: "deduplicated-retained-token-usage-at-published-current-rates",
+        sources: [
+          {
+            source: "openrouter-models",
+            priceBasis: "average",
+            snapshotID: expect.any(String),
+            generation: expect.any(Number),
+            freshness: "current",
+          },
+        ],
+        tierAttribution: {
+          status: "resolved-per-call",
+          basis: "complete-per-call-prompt-usage",
+          callCount: 19,
+          selectedTierIDs: ["base"],
+          promptThresholds: [272_000],
+        },
+        retainedCallCount: 19,
+        recoveryGapCount: 2,
+      },
+    })
+    expect(market?.observedUsageEstimate?.categories).toMatchObject({
+      uncachedInput: { tokens: 56_452, status: "observed" },
+      cacheRead: { tokens: 820_992, status: "observed" },
+      cacheWrite: { tokens: 0, status: "observed" },
+      output: { tokens: 2_061, status: "observed" },
+      reasoning: { tokens: 2_202, status: "observed" },
+    })
+    expect(market?.observedUsageEstimate?.assumptions.join(" ")).toContain(
+      "does not guarantee full historical call coverage",
+    )
+    expect(market?.observedUsageEstimate?.sources[0]?.sourceURL).toBe(
+      "https://openrouter.ai/api/v1/models",
+    )
   } finally {
     fixture.close()
   }

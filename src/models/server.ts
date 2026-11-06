@@ -208,7 +208,12 @@ export function createModelsTaskValuationProvider(
         priceSources: settings,
         observedRoutes: routes,
       })
-      return { index, freshness: currentPriceIndexFreshness(index, sources) }
+      return {
+        index,
+        freshness: currentPriceIndexFreshness(index, sources),
+        settings,
+        sources,
+      }
     } finally {
       store.close()
     }
@@ -315,6 +320,7 @@ export function registerModelsServer(
             (source) => source.source === "openrouter-models",
           ),
           identityNativeSource: state.sources.find((source) => source.source === "native-catalog"),
+          sources: state.sources,
           freshness: state.freshness,
           note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${state.opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
         }

@@ -33,7 +33,7 @@ import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
 import type { ModelPriceSourceSettings } from "./price-source-settings.ts"
 import type { EndpointPricingRead } from "./endpoint-pricing.ts"
-import { calculateKnownUsageMarket } from "./market-range.ts"
+import { calculateConfiguredKnownUsageMarket, calculateKnownUsageMarket } from "./market-range.ts"
 import type { KnownUsageMarket, KnownUsageMarketSession } from "./market-range.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
@@ -43,7 +43,7 @@ import type {
   ObservationLedgerDecisionTask,
   ReadOnlyObservationLedger,
 } from "./observation-ledger-read.ts"
-import { projectTaskValuation } from "./valuation.ts"
+import { projectTaskValuation, taskValuationPerCallUsage } from "./valuation.ts"
 import { calculateModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import type { ReferenceEstimateSession } from "./reference-estimate.ts"
 import {
@@ -67,6 +67,7 @@ export type ModelDecisionPriceState = {
   endpointPricing?: EndpointPricingRead
   identityCatalogSource?: ModelEvidenceComparisonSourceRead
   identityNativeSource?: ModelEvidenceComparisonSourceRead
+  sources?: readonly ModelEvidenceComparisonSourceRead[]
   freshness: "current" | "stale" | "unknown"
   note?: string
 }
@@ -965,13 +966,13 @@ function buildSnapshotData(
   const attempts = selectedTasks.flatMap((task) =>
     task.attempts.map((attempt) => attempt.accounting),
   )
-  const valuation = projectTaskValuation({
+  const valuationRequest = {
     attempts,
     progressFacts: capture.progressFacts,
     progressTruncated: false,
     truncatedContextSessionIDs: [],
-    currentIndex: priceState.index,
-  })
+  }
+  const valuation = projectTaskValuation({ ...valuationRequest, currentIndex: priceState.index })
   const bySession = buildSessionData(capture, valuation, selectedTasks)
   const sessionsByTask = taskSessions(selectedTasks, bySession)
   const selectedTaskByID = taskByID(capture)
@@ -1237,15 +1238,27 @@ function buildSnapshotData(
       referenceEstimate,
     }
     rows.push(row)
-    knownUsageMarkets.set(
-      key,
-      calculateKnownUsageMarket({
-        route: cohort.route,
-        identity: resolveMarketIdentity(cohort.route, priceState),
-        endpointPricing: priceState.endpointPricing,
-        sessions: knownUsageSessionsForTasks(cohort.taskIDs, sessionsByTask),
-      }),
-    )
+    const knownUsageSessions = knownUsageSessionsForTasks(cohort.taskIDs, sessionsByTask)
+    const knownUsageMarket = priceState.sources
+      ? (() => {
+          const perCall = taskValuationPerCallUsage(valuationRequest, cohort.route)
+          return calculateConfiguredKnownUsageMarket({
+            route: cohort.route,
+            identity: resolveMarketIdentity(cohort.route, priceState),
+            settings: priceState.settings,
+            sources: priceState.sources,
+            sessions: knownUsageSessions,
+            perCallUsage: perCall.calls,
+            perCallCoverageComplete: perCall.complete,
+          })
+        })()
+      : calculateKnownUsageMarket({
+          route: cohort.route,
+          identity: resolveMarketIdentity(cohort.route, priceState),
+          endpointPricing: priceState.endpointPricing,
+          sessions: knownUsageSessions,
+        })
+    knownUsageMarkets.set(key, knownUsageMarket)
     const acceptedHistories = [...cohort.acceptedTaskIDs].flatMap((taskID) => {
       const task = selectedTaskByID.get(taskID)
       if (!task) return []

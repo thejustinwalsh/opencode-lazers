@@ -324,7 +324,12 @@ function writeCapturedModelEvidence(path: string) {
 function writeMarketIdentityEvidence(
   path: string,
   projectDirectory: string,
-  options: { duplicateLuna?: boolean; includeKimi?: boolean; promptRate?: string } = {},
+  options: {
+    duplicateLuna?: boolean
+    includeKimi?: boolean
+    promptRate?: string
+    withoutPrices?: readonly string[]
+  } = {},
 ) {
   const directNative = ModelEvidenceSnapshotSchema.parse(captured.native.snapshot)
   const directCatalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
@@ -358,17 +363,18 @@ function writeMarketIdentityEvidence(
   ]
   if (options.duplicateLuna)
     catalogRecords.push(catalogRecords.find((record) => record.id === "openai/gpt-6-luna")!)
-  const savedCatalogRecords = catalogRecords.map((record) =>
-    record.id === "openai/gpt-6-luna" && record.prices && options.promptRate
-      ? {
-          ...record,
-          prices: {
-            ...record.prices,
-            tiers: record.prices.tiers.map((tier) => ({ ...tier, prompt: options.promptRate! })),
-          },
-        }
-      : record,
-  )
+  const savedCatalogRecords = catalogRecords.map((record) => {
+    if (options.withoutPrices?.includes(record.id)) return { ...record, prices: null }
+    if (record.id === "openai/gpt-6-luna" && record.prices && options.promptRate)
+      return {
+        ...record,
+        prices: {
+          ...record.prices,
+          tiers: record.prices.tiers.map((tier) => ({ ...tier, prompt: options.promptRate! })),
+        },
+      }
+    return record
+  })
 
   const store = new ModelEvidenceStore(path, projectDirectory)
   try {
@@ -2460,7 +2466,7 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
         status: "range",
         scenarios: [
           {
-            id: "luna-openai-standard",
+            id: "configured-current-market",
             status: "range",
             freshness: "current",
             tierAttribution: {
@@ -2469,12 +2475,10 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
               promptThresholds: [272_000],
             },
             provenance: {
-              source: "openrouter-endpoints",
+              source: "openrouter-models",
               productID: "openai/gpt-6-luna",
-              snapshotGeneration: endpointEvidence.generation,
-              providerName: "OpenAI",
-              tag: "openai",
-              serviceTier: null,
+              priceBasis: "average",
+              snapshotGeneration: expect.any(Number),
             },
             coverage: {
               scope: "known-route-matched-retained-usage",
@@ -2797,7 +2801,9 @@ test("registered inspector maps exact configured Go routes to independently sour
     },
   ])
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository)
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
   repository.close()
   const input = {
     sessionID: "ses-native",
@@ -2816,14 +2822,14 @@ test("registered inspector maps exact configured Go routes to independently sour
       {
         route: kimiRoute,
         productID: "moonshotai/kimi-k3.1-pro",
-        scenarioID: "kimi-moonshot-mxfp4",
+        scenarioID: "configured-current-market",
         selectedTaskID: fixture.tasks.retry!.id,
         value: 0.00006,
       },
       {
         route: qwenRoute,
         productID: "qwen/qwen3.8-flash",
-        scenarioID: "qwen-alibaba",
+        scenarioID: "configured-current-market",
         selectedTaskID: fixture.tasks.adoption!.id,
         value: 0.000003,
       },
@@ -2866,9 +2872,10 @@ test("registered inspector maps exact configured Go routes to independently sour
               id: item.scenarioID,
               status: "exact",
               provenance: {
-                source: "openrouter-endpoints",
+                source: "openrouter-models",
                 productID: item.productID,
-                snapshotGeneration: endpointEvidence.generations[item.productID],
+                priceBasis: "average",
+                snapshotGeneration: expect.any(Number),
               },
             },
           ],
@@ -3040,9 +3047,11 @@ test("registered inspector pins scenario pages across retained writes and repric
     [20, 30],
   )
   writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
-  const endpointEvidence = writeLunaEndpointSnapshot(fixture.path, fixture.projectDirectory)
+  const sourceEvidenceStore = new ModelEvidenceStore(fixture.path, fixture.projectDirectory)
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository)
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
   repository.close()
   const input = {
     sessionID: "ses-native",
@@ -3103,8 +3112,7 @@ test("registered inspector pins scenario pages across retained writes and repric
     const contributorCursor = firstInspection.contributorPage.nextCursor
     expect(contributorCursor).not.toBeNull()
 
-    const staleGeneration =
-      endpointEvidence.store.beginEndpointPricingRefresh()[endpointEvidence.productID]
+    const staleGeneration = sourceEvidenceStore.beginRefresh()["openrouter-models"]
     rewriteAttemptForMarket(
       fixture.path,
       fixture.projectID,
@@ -3167,9 +3175,8 @@ test("registered inspector pins scenario pages across retained writes and repric
       12,
     )
 
-    saveLunaEndpointSnapshot(endpointEvidence.store, fixture.projectDirectory, staleGeneration, {
-      prompt: "0.0000002",
-      overridePrompt: "0.0000004",
+    writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory, {
+      promptRate: "0.0000002",
     })
     const refreshedOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
       context: { snapshotID: string }
@@ -3190,8 +3197,8 @@ test("registered inspector pins scenario pages across retained writes and repric
             status: "range",
             freshness: "current",
             provenance: {
-              snapshotGeneration: staleGeneration,
-              currentGeneration: staleGeneration,
+              snapshotGeneration: staleGeneration + 1,
+              currentGeneration: staleGeneration + 1,
             },
             coverage: { categories: { uncachedInput: { tokens: 200 } } },
           },
@@ -3204,7 +3211,7 @@ test("registered inspector pins scenario pages across retained writes and repric
         12,
       )
       expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
-        0.00008,
+        0.00004,
         12,
       )
     }
@@ -3212,12 +3219,12 @@ test("registered inspector pins scenario pages across retained writes and repric
     expect(refreshedRow?.nativeReportedCost).toEqual(staleRow?.nativeReportedCost)
     expect(firstRow?.efficiency).not.toEqual(staleRow?.efficiency)
   } finally {
-    endpointEvidence.store.close()
+    sourceEvidenceStore.close()
     fixture.close()
   }
 })
 
-test("registered inspector reports missing retained endpoint evidence without fabricating a value", async () => {
+test("registered inspector omits an amount when the configured source has no published prices", async () => {
   const fixture = makeLedgerFixture()
   const route = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
   rewriteAttemptForMarket(fixture.path, fixture.projectID, fixture.attempts.failed.id, route, [100])
@@ -3228,9 +3235,13 @@ test("registered inspector reports missing retained endpoint evidence without fa
     route,
     [20, 30],
   )
-  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory, {
+    withoutPrices: ["openai/gpt-6-luna"],
+  })
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository)
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
   repository.close()
   try {
     const input = {
@@ -3266,21 +3277,9 @@ test("registered inspector reports missing retained endpoint evidence without fa
     expect(inspection).toMatchObject({
       status: "found",
       knownUsageMarket: {
+        identity: { status: "exact", productID: "openai/gpt-6-luna" },
         status: "unavailable",
-        scenarios: [
-          {
-            status: "unavailable",
-            freshness: "unavailable",
-            valueUSD: null,
-            rangeUSD: null,
-            provenance: {
-              source: "openrouter-endpoints",
-              refreshState: "never",
-              snapshotID: null,
-            },
-            coverage: { wholeTaskBound: false },
-          },
-        ],
+        scenarios: [],
       },
     })
     expect(tableExists(fixture.path, "model_endpoint_pricing_refreshes")).toBe(true)
