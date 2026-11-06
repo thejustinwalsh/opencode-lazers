@@ -3,6 +3,11 @@
 Reviewer: OpenAI gpt-6.1-terra/high, session ses_e52a5ae04ffeObat8Bt6imz4ci.
 Received three inline PNGs through the native Architect delegation.
 
+Implementation authority: current [DESIGN.md](../../DESIGN.md) incorporates the
+user's subsequent correction: full-width chart, tooltips and brief selected cost,
+details below, no right-hand table or internal review copy. It supersedes the
+layout and copy suggestions in this original review.
+
 ## Verdict: visual acceptance fails
 
 I viewed all three requested images: `/private/tmp/lz-models-live-narrow-first.png`, `/private/tmp/lz-models-live-wide-first.png`, and `design/models-panel/models-approved.png`. I also inspected source at `d1b0c5f` and `DESIGN.md`.

@@ -49,6 +49,16 @@ Do not reuse that deleted checkout. Native worker trees remain preserved.
 
 ## Current native Models work
 
+Latest user direction is committed in DESIGN.md at b9311ec: full-width chart at
+all widths, no persistent model table, tooltips and one/two-line selected market
+cost, detailed stats below. Consumer copy excludes internal review labels; truly
+unpriced costs are omitted. Exact historical billing is not a prerequisite for
+current OpenRouter estimates. LZ-167 (85cb5955…) was superseded natively BEFORE
+execution; no attempt was created. Replacement LZ-168
+852db621-e77d-48a9-96bb-fd3935b2d188 is submitted with this direction. Main is
+specifying its dependent chart/tooltip correction; verify native plan/dispatch.
+Do not use the older original Tera review to restore the removed side table.
+
 Main Architect: ses_e568438ebffeaoFbF9nBb942XM, Sol High.
 Current visual reviewer: ses_e52a5ae04ffeObat8Bt6imz4ci, general agent,
 OpenAI gpt-6.1-terra/high, canonical repository location. Main resumed this
@@ -77,8 +87,12 @@ VISUAL ACCEPTANCE FAILED in actual Desktop: Accepted header wraps across lines;
 rows become paragraphs; raw provider-ID chart labels truncate; multiple verbose
 pricing cards bury the primary estimate. Visible controls/provenance overwhelm
 compact hierarchy. Keep honest partial/range/unknown semantics with concise
-labels and progressive disclosure. Chart above rows narrow, beside rows wide;
-selected estimate below a resizable horizontal split. Need new actual captures
+labels and progressive disclosure. LATEST user direction supersedes the mockup’s side-by-side layout: full-width
+chart at every width, no persistent model table, point tooltips, one- or two-line
+selected current-market summary, stats below the horizontal split. No internal
+review labels such as Partial evidence; omit truly unpriced costs rather than
+Cost unavailable. Current OpenRouter market estimates do not require exact
+historical billing. DESIGN.md is committed in b9311ec. Need new actual captures
 and Tera review after corrections, plus assignments and theme/font walkthroughs.
 
 The integrated panel DOES render real chart points and live OpenRouter references.
