@@ -9,6 +9,8 @@ export type ExecutionListRow = {
   title: string
   status: string
   reason: string | null
+  waiting: boolean
+  holdReason: string | null
   ordinal: number
   reference?: string
   contextOnly: boolean
@@ -36,7 +38,7 @@ export type ExecutionPlanGroup = {
   planRevision: number
   title: string
   hasRecordedTitle: boolean
-  activeCount: number
+  nonterminalCount: number
   totalCount: number
   rows: ExecutionListRow[]
 }
@@ -53,7 +55,7 @@ type ForkBlock = {
   branches: string[][]
 }
 
-const completed = new Set(["accepted", "incorporated", "cancelled"])
+const terminal = new Set(["accepted", "incorporated", "failed", "exhausted", "cancelled"])
 
 function adjacency(plan: Plan) {
   const nodes = [...plan.nodes].toSorted((left, right) => left.ordinal - right.ordinal)
@@ -208,15 +210,19 @@ function row(
   contextOnly: boolean,
   relations: ReturnType<typeof relationMap>,
 ): ExecutionListRow {
+  const waiting =
+    plan.state !== "cancelled" &&
+    !terminal.has(node.state) &&
+    (node.state === "blocked" || plan.state === "blocked")
   return {
     taskID: node.taskID,
     title: summary?.objective ?? node.objective,
-    status:
-      summary?.status ??
-      (plan.state === "blocked" && ["queued", "ready"].includes(node.state)
-        ? "blocked"
-        : node.state),
-    reason: summary?.reason ?? node.reason ?? (plan.state === "blocked" ? plan.reason : null),
+    status: summary?.recordedState ?? node.state,
+    reason: waiting
+      ? (node.reason ?? plan.reason ?? summary?.reason ?? null)
+      : (node.reason ?? summary?.reason ?? null),
+    waiting,
+    holdReason: waiting ? (node.reason ?? plan.reason ?? summary?.reason ?? null) : null,
     ordinal: node.ordinal,
     ...(summary?.reference ? { reference: summary.reference } : {}),
     contextOnly,
@@ -243,8 +249,10 @@ export function buildExecutionList(input: {
       unplanned: input.tasks.map((task, ordinal) => ({
         taskID: task.taskID,
         title: task.objective,
-        status: task.status,
+        status: task.recordedState ?? task.status,
         reason: task.reason,
+        waiting: false,
+        holdReason: null,
         ordinal,
         ...(task.reference ? { reference: task.reference } : {}),
         contextOnly: false,
@@ -330,14 +338,14 @@ export function buildExecutionList(input: {
     })
     if (!rootRows.length) continue
 
-    const activeCount = nodes.filter((node) => !completed.has(node.state)).length
+    const nonterminalCount = nodes.filter((node) => !terminal.has(node.state)).length
     planGroups.push({
       planID: plan.id,
       planVersion: plan.version,
       planRevision: plan.revision,
       title: plan.title ?? `Plan ${plan.id.slice(0, 8)}`,
       hasRecordedTitle: plan.title !== null,
-      activeCount,
+      nonterminalCount,
       totalCount: nodes.length,
       rows: rootRows,
     })
@@ -358,8 +366,10 @@ export function buildExecutionList(input: {
       {
         taskID,
         title: summary?.objective ?? projected!.title,
-        status: summary?.status ?? projected!.status,
+        status: summary?.recordedState ?? summary?.status ?? projected!.status,
         reason: summary?.reason ?? null,
+        waiting: false,
+        holdReason: null,
         ordinal,
         ...(summary?.reference ? { reference: summary.reference } : {}),
         contextOnly: !summary,

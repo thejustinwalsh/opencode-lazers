@@ -1,6 +1,15 @@
 import { z } from "zod"
 
-export const TaskStateFilter = z.enum(["open", "completed", "failed", "cancelled", "all"])
+export const TaskStateFilter = z.enum([
+  "open",
+  "queued",
+  "running",
+  "blocked",
+  "completed",
+  "failed",
+  "cancelled",
+  "all",
+])
 export type TaskStateFilter = z.infer<typeof TaskStateFilter>
 export type TaskQueryState = TaskStateFilter | "legacy"
 
@@ -20,7 +29,7 @@ export function preferredTaskStateFilter(
   return state ?? (history ? "all" : "open")
 }
 
-/** SQL predicate for a correlated `tasks` (or `t`) row; plan-level terminal states are effective. */
+/** SQL predicate for a correlated `tasks` (or `t`) row. */
 export function taskStatePredicate(state: TaskQueryState, taskAlias: "tasks" | "t"): string {
   if (state === "all") return ""
   if (state === "legacy")
@@ -42,6 +51,12 @@ export function taskStatePredicate(state: TaskQueryState, taskAlias: "tasks" | "
     WHERE n.task_id=${taskAlias}.id AND p.project_directory=${taskAlias}.project_directory
       AND (${predicate})
   )`
+  if (state === "queued" || state === "running")
+    return matchingExecution(`n.state='${state}' AND p.state!='cancelled'`)
+  if (state === "blocked")
+    return matchingExecution(
+      `p.state!='cancelled' AND (n.state='blocked' OR (p.state='blocked' AND n.state NOT IN ('accepted','incorporated','failed','exhausted','cancelled')))`,
+    )
   if (state === "completed") return matchingExecution(`${effective} IN ('accepted','incorporated')`)
   if (state === "failed") return matchingExecution(`${effective} IN ('failed','exhausted')`)
   if (state === "cancelled") return matchingExecution(`${effective}='cancelled'`)

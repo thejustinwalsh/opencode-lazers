@@ -391,3 +391,161 @@ test("open, failed and cancelled filters separate effective plan and node states
     }
   expect(reads.get({ taskID: tasks[0]!.id })).toMatchObject({ status: "found" })
 })
+
+test("queued, running and blocked filters use recorded node and plan states across pages", () => {
+  const repository = fixture().open()
+  const reads = new TaskReads(repository)
+  const cases = [
+    { name: "queued under hold", node: "queued", plan: "blocked", state: "queued" },
+    { name: "running under hold", node: "running", plan: "blocked", state: "running" },
+    { name: "node blocked", node: "blocked", plan: "running", state: "blocked" },
+    { name: "accepted under hold", node: "accepted", plan: "blocked", state: "completed" },
+    { name: "incorporated under hold", node: "incorporated", plan: "blocked", state: "completed" },
+  ] as const
+  const ids = new Map<string, string>()
+  for (const item of cases) {
+    const task = insert(repository, `Filter ${item.name}`)
+    const proposal = validProposal()
+    const plan = reads.runner.submit(
+      {
+        requestID: `filter-${item.name.replaceAll(" ", "-")}`,
+        objective: task.proposal.objective,
+        baseCommit: "a".repeat(40),
+        nodes: [{ taskID: task.id, revision: 1 }],
+        dependencies: [],
+        integrationOrder: [task.id],
+        verification: proposal.verification,
+        acceptance: proposal.acceptance,
+      },
+      "architect",
+    )
+    repository.atomic((db) => {
+      db.query("UPDATE runner_plans SET state=?,reason='reconciliation hold' WHERE id=?").run(
+        item.plan,
+        plan.planID,
+      )
+      db.query("UPDATE runner_nodes SET state=?,reason='node hold' WHERE plan_id=?").run(
+        item.node,
+        plan.planID,
+      )
+    })
+    ids.set(item.name, task.id)
+  }
+
+  const expected = {
+    queued: [ids.get("queued under hold")!],
+    running: [ids.get("running under hold")!],
+    blocked: [
+      ids.get("queued under hold")!,
+      ids.get("running under hold")!,
+      ids.get("node blocked")!,
+    ],
+    completed: [ids.get("accepted under hold")!, ids.get("incorporated under hold")!],
+  }
+  for (const reader of [reads, new AssociationTaskReads(repository)]) {
+    for (const [state, taskIDs] of Object.entries(expected)) {
+      const first = reader.query({ state: state as "queued", sessionID: "session-a", limit: 1 })
+      expect(first.count).toBe(taskIDs.length)
+      const received = [...first.tasks.map((task) => task.taskID)]
+      let cursor = first.nextCursor
+      while (cursor) {
+        const next = reader.query({
+          state: state as "queued",
+          sessionID: "session-a",
+          limit: 1,
+          cursor,
+        })
+        expect(next.snapshot).toBe(first.snapshot)
+        expect(next.count).toBe(taskIDs.length)
+        received.push(...next.tasks.map((task) => task.taskID))
+        cursor = next.nextCursor
+      }
+      expect(new Set(received)).toEqual(new Set(taskIDs))
+    }
+    expect(reader.query({ state: "blocked", sessionID: "session-a", limit: 1 }).tasks.length).toBe(
+      1,
+    )
+    expect(reader.query({ state: "running", sessionID: "session-a" }).tasks[0]).toMatchObject({
+      taskID: ids.get("running under hold"),
+      status: "running",
+      recordedState: "running",
+    })
+    expect(
+      new Set(
+        reader
+          .query({ state: "completed", sessionID: "session-a" })
+          .tasks.map((task) => task.status),
+      ),
+    ).toEqual(new Set(["accepted", "incorporated"]))
+  }
+})
+
+test("current activity candidates are limited to requested, authorized latest attempt rows", () => {
+  const repository = fixture().open()
+  const reads = new TaskReads(repository)
+  const task = insert(repository, "Held current worker")
+  const foreign = insert(repository, "Foreign session task", "session-b")
+  const proposal = validProposal()
+  const plan = reads.runner.submit(
+    {
+      requestID: "current-activity-plan",
+      objective: task.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: task.id, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [task.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "architect",
+  )
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='blocked',reason='reconcile' WHERE id=?").run(
+      plan.planID,
+    )
+    db.query("UPDATE runner_nodes SET state='running',reason=NULL WHERE plan_id=?").run(plan.planID)
+    const addAttempt = (id: string, number: number, sessionID: string) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts
+          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          id,
+          plan.planID,
+          task.id,
+          number,
+          sessionID,
+          `message-${number}`,
+          "/worktree",
+          "a".repeat(40),
+          null,
+          "{}",
+          "accepted",
+          number,
+        )
+    addAttempt(crypto.randomUUID(), 1, "stale-worker")
+    addAttempt(crypto.randomUUID(), 2, "latest-worker")
+  })
+
+  expect(reads.currentActivityTargets([task.id], "session-a")[0]).toMatchObject({
+    authorized: true,
+    attempt: { sessionID: "latest-worker", workspace: "/worktree", state: "accepted" },
+    recordedState: "running",
+    waiting: true,
+    holdReason: "reconcile",
+  })
+  expect(reads.currentActivityTargets([foreign.id], "session-a")[0]).toMatchObject({
+    authorized: false,
+    attempt: null,
+    recordedState: null,
+  })
+  expect(reads.currentActivityTargets([foreign.id])[0]).toMatchObject({
+    authorized: true,
+    attempt: null,
+  })
+  expect(() =>
+    reads.currentActivityTargets(Array.from({ length: 41 }, () => crypto.randomUUID())),
+  ).toThrow("invalid")
+})

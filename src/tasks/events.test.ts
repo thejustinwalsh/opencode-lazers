@@ -20,15 +20,49 @@ test("native connection announcements resnapshot; only valid scoped task changes
           type: "rpc.lazers.tasks.changed",
           data: { projectDirectory: "/project", version: 9 },
         }
+        yield { type: "session.status", data: { sessionID: "worker-a", status: { type: "busy" } } }
+        yield { type: "session.execution.succeeded", data: { sessionID: "worker-a" } }
+        yield { type: "permission.asked", data: { sessionID: "worker-a", message: "private" } }
+        yield { type: "form.created", data: { form: { sessionID: "worker-a", title: "private" } } }
+        yield { type: "session.execution.started", data: { sessionID: "" } }
+        yield { type: "session.tool.called", data: { sessionID: "worker-a" } }
         yield { type: "server.connected", data: {} }
       })()
     },
   }
   const changes = await Array.fromAsync(taskChanges(source, "/project", controller.signal))
-  expect(subscribed).toEqual({ types: ["rpc.lazers.tasks.changed"], signal: controller.signal })
+  expect(subscribed).toEqual({
+    types: [
+      "rpc.lazers.tasks.changed",
+      "session.created",
+      "session.deleted",
+      "session.moved",
+      "session.archived",
+      "session.unarchived",
+      "session.status",
+      "session.execution.started",
+      "session.execution.succeeded",
+      "session.execution.failed",
+      "session.execution.interrupted",
+      "session.inbox.enqueued",
+      "session.inbox.delivered",
+      "session.inbox.cancelled",
+      "session.inbox.delivery.changed",
+      "permission.asked",
+      "permission.replied",
+      "form.created",
+      "form.replied",
+      "form.cancelled",
+    ],
+    signal: controller.signal,
+  })
   expect(changes).toEqual([
     { projectDirectory: "/project", version: 0, resnapshotRequired: true },
     { projectDirectory: "/project", version: 9 },
+    { projectDirectory: "/project", version: 0, activitySessionID: "worker-a" },
+    { projectDirectory: "/project", version: 0, activitySessionID: "worker-a" },
+    { projectDirectory: "/project", version: 0, activitySessionID: "worker-a" },
+    { projectDirectory: "/project", version: 0, activitySessionID: "worker-a" },
     { projectDirectory: "/project", version: 0, resnapshotRequired: true },
   ])
 })

@@ -31,6 +31,8 @@ export const TaskSummary = z.strictObject({
   reference: TaskReferenceSchema,
   revision: z.literal(1),
   status: z.union([z.literal("submitted"), TaskState]),
+  /** Raw task-node lifecycle, distinct from a plan-level effective hold. */
+  recordedState: TaskState.optional(),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
   classification: TaskClassificationRevision,
@@ -74,6 +76,38 @@ export const TaskAttempt = z.strictObject({
   tokenCount: z.number().nullable(),
   toolCount: z.int().nonnegative(),
 })
+export const CurrentActivityInput = z
+  .strictObject({
+    sessionID: z.string().min(1).max(200),
+    scope: z.enum(["session", "project"]),
+    taskIDs: z.array(z.uuid()).min(1).max(40),
+  })
+  .superRefine((input, context) => {
+    if (new Set(input.taskIDs).size !== input.taskIDs.length)
+      context.addIssue({ code: "custom", path: ["taskIDs"], message: "Task IDs must be unique" })
+  })
+export const CurrentTaskActivity = z.strictObject({
+  taskID: z.uuid(),
+  /** Authorized exact worker association used to scope native activity notifications. */
+  workerSessionID: z.string().min(1).optional(),
+  attemptID: z.uuid().nullable(),
+  foreground: z.enum(["active", "inactive", "unknown"]),
+  unknownReason: z.enum(["no-current-attempt", "unavailable"]).nullable(),
+  recordedState: TaskState.nullable(),
+  waiting: z.boolean(),
+  holdReason: z.string().nullable(),
+  pendingInput: z.boolean().nullable(),
+  pendingPermissions: z.int().nonnegative().nullable(),
+  pendingForms: z.int().nonnegative().nullable(),
+  outcome: z.enum(["succeeded", "failed", "interrupted"]).nullable(),
+  observedAt: z.number().finite().nullable(),
+})
+export const CurrentActivityOutput = z.strictObject({
+  activities: z.array(CurrentTaskActivity).max(40),
+})
+export type CurrentActivityInput = z.input<typeof CurrentActivityInput>
+export type CurrentActivityOutput = z.infer<typeof CurrentActivityOutput>
+export type CurrentTaskActivity = z.infer<typeof CurrentTaskActivity>
 export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
@@ -84,6 +118,8 @@ export const GetOutput = z.discriminatedUnion("status", [
     advice: TaskAdviceSnapshot.nullable().default(null),
     reference: TaskReferenceSchema,
     disposition: TaskDispositionRecord.optional(),
+    /** Raw node lifecycle, if planned, distinct from plan-level blocked presentation. */
+    recordedState: TaskState.nullable().optional(),
     execution: Execution.optional(),
     attempts: z.array(TaskAttempt).optional(),
     activity: z.array(TaskActivity).optional(),
@@ -114,6 +150,7 @@ export const Tasks = Rpc.define({
   methods: {
     query: { input: QueryInput, output: QueryOutput },
     get: { input: GetInput, output: GetOutput },
+    currentActivity: { input: CurrentActivityInput, output: CurrentActivityOutput },
     start: { input: StartInput, output: StartOutput },
   },
   events: { changed: { schema: Changed } },

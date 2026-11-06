@@ -8,21 +8,21 @@ export function ExecutionPlanGroupView(props: {
   stateFilter: TaskStateFilter
   children: JSX.Element
 }) {
-  const open = () => props.stateFilter === "open"
+  const nonterminal = () => ["open", "queued", "running", "blocked"].includes(props.stateFilter)
   return (
     <section
       class="lazers-tasks-plan"
       aria-label={
-        open()
-          ? `${props.group.title}, ${props.group.activeCount} active of ${props.group.totalCount} tasks`
+        nonterminal()
+          ? `${props.group.title}, ${props.group.nonterminalCount} nonterminal of ${props.group.totalCount} tasks in this plan`
           : props.group.title
       }
     >
       <div class="lazers-tasks-plan-heading">
         <span>{props.group.title}</span>
-        <Show when={open()}>
+        <Show when={nonterminal()}>
           <span>
-            {props.group.activeCount}/{props.group.totalCount}
+            {props.group.nonterminalCount}/{props.group.totalCount} nonterminal
           </span>
         </Show>
       </div>

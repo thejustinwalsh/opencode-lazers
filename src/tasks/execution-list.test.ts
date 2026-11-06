@@ -128,7 +128,7 @@ test("chains keep admitted ordinals without implying parallel work and preserve 
   })
   expect(paged.plans[0]?.rows.map((row) => row.taskID)).toEqual([c])
   expect(paged.plans[0]?.rows[0]?.prerequisites).toEqual([b])
-  expect(paged.plans[0]).toMatchObject({ activeCount: 2, totalCount: 3 })
+  expect(paged.plans[0]).toMatchObject({ nonterminalCount: 2, totalCount: 3 })
 })
 
 test("a diamond is one real expandable fork and its shared join stays on the root lane", () => {
@@ -382,7 +382,7 @@ test("selecting an already visible planless task emits its canonical row once", 
   expect(result.unplanned[0]?.contextOnly).toBe(false)
 })
 
-test("grouped and context-only rows preserve the effective plan-blocked state", () => {
+test("grouped and context-only rows preserve recorded lifecycle beside plan holds", () => {
   const [root, left, right, join] = [id(1), id(2), id(3), id(4)]
   const observed = topology(
     [root, left, right, join].map((taskID, ordinal) => ({ taskID, ordinal })),
@@ -397,19 +397,40 @@ test("grouped and context-only rows preserve the effective plan-blocked state", 
   observed.plans[0]!.reason = "Plan awaits human evidence"
   const tasks = summaries([left])
   tasks[0]!.status = "blocked"
+  tasks[0]!.recordedState = "ready"
   tasks[0]!.reason = "Plan awaits human evidence"
   const result = buildExecutionList({ topology: observed, tasks })
   const contextualRoot = result.plans[0]?.rows[0]
   expect(contextualRoot).toMatchObject({
     taskID: root,
     contextOnly: true,
-    status: "blocked",
+    status: "ready",
     reason: "Plan awaits human evidence",
+    waiting: true,
+    holdReason: "Plan awaits human evidence",
   })
   expect(contextualRoot?.fork?.branches[0]?.rows[0]).toMatchObject({
     taskID: left,
     contextOnly: false,
-    status: "blocked",
+    status: "ready",
     reason: "Plan awaits human evidence",
+    waiting: true,
+    holdReason: "Plan awaits human evidence",
   })
+})
+
+test("rows keep raw recorded node state when an older summary contains effective held status", () => {
+  const taskID = id(1)
+  const observed = topology([{ taskID, ordinal: 0 }], [])
+  observed.plans[0]!.state = "blocked"
+  const task = summaries([taskID])[0]!
+  task.status = "blocked"
+  expect(buildExecutionList({ topology: observed, tasks: [task] }).plans[0]?.rows[0]).toMatchObject(
+    {
+      status: "ready",
+      waiting: true,
+    },
+  )
+  task.recordedState = "ready"
+  expect(buildExecutionList({ tasks: [task] }).unplanned[0]).toMatchObject({ status: "ready" })
 })

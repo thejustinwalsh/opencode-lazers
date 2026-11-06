@@ -4,21 +4,238 @@ import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import { Tool } from "@opencode/schema/tool"
 import { z } from "zod"
-import type { TaskReads } from "./read.ts"
-import { Tasks } from "./contract.ts"
+import { resolve, isAbsolute } from "node:path"
+import type { CurrentActivityTarget, TaskReads } from "./read.ts"
+import { CurrentActivityInput, CurrentActivityOutput, Tasks } from "./contract.ts"
+import type { CurrentTaskActivity } from "./contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
+import type { HostSession } from "../runner/host.ts"
 import { databaseChanges } from "../database-events.ts"
 import { TaskAdviceInput, recordTaskAdvice } from "./advice.ts"
 
+function nonnegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function matchesCurrentWorker(
+  worker: HostSession | null,
+  target: CurrentActivityTarget,
+  projectID: string,
+): worker is HostSession {
+  return Boolean(
+    worker &&
+    target.authorized &&
+    target.attempt &&
+    worker.id === target.attempt.sessionID &&
+    worker.projectID === projectID &&
+    !worker.archived &&
+    worker.agent === "lazers-implementor" &&
+    worker.metadata?.lazersAttemptID === target.attempt.id &&
+    isAbsolute(worker.directory) &&
+    isAbsolute(target.attempt.workspace) &&
+    resolve(worker.directory) === resolve(target.attempt.workspace) &&
+    typeof worker.busy === "boolean" &&
+    worker.observationUnstable !== true,
+  )
+}
+
+function sameWorkerObservation(left: HostSession, right: HostSession): boolean {
+  return (
+    left.id === right.id &&
+    left.projectID === right.projectID &&
+    left.directory === right.directory &&
+    left.agent === right.agent &&
+    left.archived === right.archived &&
+    left.metadata?.lazersAttemptID === right.metadata?.lazersAttemptID &&
+    left.busy === right.busy &&
+    left.pendingInput === right.pendingInput &&
+    left.pendingPermissions === right.pendingPermissions &&
+    left.pendingForms === right.pendingForms &&
+    left.outcome === right.outcome &&
+    left.observationUnstable === right.observationUnstable
+  )
+}
+
 export function registerTaskReads(
-  ctx: Pick<Plugin.Context, "rpc" | "permission"> & Partial<Pick<Plugin.Context, "tool">>,
+  ctx: Pick<Plugin.Context, "rpc" | "permission"> &
+    Partial<Pick<Plugin.Context, "tool" | "session">>,
   reads: TaskReads,
   runtime: TaskRuntime,
 ) {
   return Effect.gen(function* () {
     const rpc = yield* ctx.rpc.register(Tasks, {
-      query: (input) => Effect.sync(() => reads.query(input)),
+      query: (input) =>
+        Effect.sync(() => {
+          const page = reads.query(input)
+          return {
+            ...page,
+            tasks: page.tasks.map((task) => {
+              if (task.recordedState !== undefined) return task
+              const recordedState = reads.recordedStateForTask(task.taskID)
+              return recordedState ? { ...task, recordedState } : task
+            }),
+          }
+        }),
       get: (input) => Effect.sync(() => reads.get(input)),
+      currentActivity: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = CurrentActivityInput.parse(input)
+            const sessionService = ctx.session
+            if (!sessionService) throw new Error("Current task activity is unavailable")
+            const readScope = async (authorize: boolean) => {
+              let actor
+              try {
+                actor = await Effect.runPromise(
+                  sessionService
+                    .get({ sessionID: Session.ID.make(request.sessionID) })
+                    .pipe(
+                      Effect.catch((error) =>
+                        typeof error === "object" &&
+                        error !== null &&
+                        "_tag" in error &&
+                        error._tag === "SessionNotFoundError"
+                          ? Effect.succeed(null)
+                          : Effect.fail(error),
+                      ),
+                    ),
+                )
+              } catch {
+                throw new Error("Task activity scope is unavailable")
+              }
+              if (
+                !actor ||
+                actor.id !== request.sessionID ||
+                actor.projectID !== runtime.projectID ||
+                actor.time.archived !== undefined ||
+                !actor.agent
+              )
+                throw new Error("Task activity scope is unavailable")
+              if (authorize)
+                await Effect.runPromise(
+                  ctx.permission.assert({
+                    sessionID: Session.ID.make(actor.id),
+                    agent: Agent.ID.make(actor.agent),
+                    action: "read",
+                    resources: [reads.repository.projectDirectory],
+                  }),
+                )
+              return actor
+            }
+
+            signal.throwIfAborted()
+            const initialScope = await readScope(true)
+            signal.throwIfAborted()
+            const sessionScope = request.scope === "session" ? request.sessionID : undefined
+            const before = reads.currentActivityTargets(request.taskIDs, sessionScope)
+            const initial = await Promise.all(
+              before.map(async (target): Promise<CurrentTaskActivity> => {
+                const unknown = (
+                  reason: "no-current-attempt" | "unavailable",
+                  current = target,
+                ): CurrentTaskActivity => ({
+                  taskID: target.taskID,
+                  ...(current.authorized && current.attempt
+                    ? { workerSessionID: current.attempt.sessionID }
+                    : {}),
+                  attemptID: current.authorized ? (current.attempt?.id ?? null) : null,
+                  foreground: "unknown",
+                  unknownReason: reason,
+                  recordedState: current.authorized ? current.recordedState : null,
+                  waiting: current.authorized && current.waiting,
+                  holdReason: current.authorized ? current.holdReason : null,
+                  pendingInput: null,
+                  pendingPermissions: null,
+                  pendingForms: null,
+                  outcome: null,
+                  observedAt: null,
+                })
+                if (!target.authorized) return unknown("unavailable")
+                if (!target.attempt) return unknown("no-current-attempt")
+                signal.throwIfAborted()
+                let worker: HostSession | null
+                try {
+                  worker = await runtime.host.session(target.attempt.sessionID, { messages: false })
+                } catch {
+                  if (signal.aborted) signal.throwIfAborted()
+                  return unknown("unavailable")
+                }
+                signal.throwIfAborted()
+                if (!matchesCurrentWorker(worker, target, runtime.projectID))
+                  return unknown("unavailable")
+                let confirmation: HostSession | null
+                try {
+                  confirmation = await runtime.host.session(target.attempt.sessionID, {
+                    messages: false,
+                  })
+                } catch {
+                  if (signal.aborted) signal.throwIfAborted()
+                  return unknown("unavailable")
+                }
+                signal.throwIfAborted()
+                if (
+                  !matchesCurrentWorker(confirmation, target, runtime.projectID) ||
+                  !sameWorkerObservation(worker, confirmation)
+                )
+                  return unknown("unavailable")
+                return {
+                  taskID: target.taskID,
+                  workerSessionID: target.attempt.sessionID,
+                  attemptID: target.attempt.id,
+                  foreground: worker.busy ? "active" : "inactive",
+                  unknownReason: null,
+                  recordedState: target.recordedState,
+                  waiting: target.waiting,
+                  holdReason: target.holdReason,
+                  pendingInput:
+                    typeof worker.pendingInput === "boolean" ? worker.pendingInput : null,
+                  pendingPermissions: nonnegativeInteger(worker.pendingPermissions),
+                  pendingForms: nonnegativeInteger(worker.pendingForms),
+                  outcome: worker.outcome ?? null,
+                  observedAt: Date.now(),
+                }
+              }),
+            )
+            signal.throwIfAborted()
+            const after = reads.currentActivityTargets(request.taskIDs, sessionScope)
+            const currentScope = await readScope(false)
+            signal.throwIfAborted()
+            const scopeChanged =
+              currentScope.id !== initialScope.id ||
+              currentScope.projectID !== initialScope.projectID ||
+              currentScope.agent !== initialScope.agent ||
+              currentScope.time.archived !== initialScope.time.archived
+            const currentByID = new Map(after.map((target) => [target.taskID, target]))
+            const activities = initial.map((activity, index) => {
+              const original = before[index]!
+              const current = currentByID.get(activity.taskID)
+              if (
+                scopeChanged ||
+                !current ||
+                JSON.stringify(original) !== JSON.stringify(current)
+              ) {
+                const latest = current ?? original
+                return {
+                  taskID: activity.taskID,
+                  attemptID: latest.authorized ? (latest.attempt?.id ?? null) : null,
+                  foreground: "unknown" as const,
+                  unknownReason: "unavailable" as const,
+                  recordedState: latest.authorized ? latest.recordedState : null,
+                  waiting: latest.authorized && latest.waiting,
+                  holdReason: latest.authorized ? latest.holdReason : null,
+                  pendingInput: null,
+                  pendingPermissions: null,
+                  pendingForms: null,
+                  outcome: null,
+                  observedAt: null,
+                }
+              }
+              return activity
+            })
+            return CurrentActivityOutput.parse({ activities })
+          },
+          catch: () => new Error("Current task activity is unavailable"),
+        }).pipe(Effect.orDie),
       start: (input) =>
         Effect.tryPromise({
           try: async () => {
