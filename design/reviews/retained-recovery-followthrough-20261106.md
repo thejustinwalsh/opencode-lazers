@@ -3,6 +3,31 @@
 Observed 2026-11-06. This supplements the earlier handoff; it does not establish
 completion of the roadmap or of the live walkthroughs.
 
+## Latest qualification checkpoint
+
+Root tree ata413b678 includes4ff1775,60d2578 and Root f6afba2. The latter fixes
+an additional real-state defect: running/null-artifact candidates could accept
+the task node but leave the original attempt active, causing immediate re-hold
+on reconciliation. Only still-running/verifying attempts now become qualified;
+historical failed attempts remain failed. The new case preserves the same
+worker/prompt count and old unknown background while successors complete.
+
+Combined backend suite:571tests/7564assertions pass,174.51s, with default per-test
+allowance30s under the observed host load. After the60d test-only merge, the
+registered retained suite17tests/204assertions and quality pass. An isolated
+adoption phase case also passes20assertions. Earlier timed-out suites remain
+failed runs; actual registered production156 qualification is still pending.
+
+The original138 attempt failed its declared check; a later native attempt
+091ee91c delivered60d's registered-control regression and is verifying. Both
+histories/source remain. LZ-128 is superseded/cancelled without its impossible
+human gate.2082900 is preserved but unapproved; linked LZ-159 is actively
+correcting reviewer findings (hidden detach failures and cross-provider
+cancellation/lost-reply coverage). The tree still contains old8f GPU staging
+and the intentional red reload reproduction. Do not activate it wholesale.
+See the separate [renderer/event report](renderer-event-amplification-20261106.md)
+for measured amplification, staged publisher repair and operational recovery.
+
 ## Changes and verification
 
 - Advice findings and implementation text have no character ceiling. Current

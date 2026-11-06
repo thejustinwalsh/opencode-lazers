@@ -6,27 +6,51 @@ an observation-based improvement plan. The scope is not limited to Models/Tasks.
 
 ## Latest follow-through (2026-11-06)
 
-Read `design/reviews/retained-recovery-followthrough-20261106.md` before relying
-on the older active-state snapshot below. Canonical source remains unchanged;
-new documentation is at4a92aaa. Root isolated tree
-`/private/tmp/lz-native-log-contract-review` is at521a02c, including an intentionally
-FAILING normal-plugin-reload regression. Do not merge/activate that tree as ready.
+Read `design/reviews/retained-recovery-followthrough-20261106.md` and
+`design/reviews/renderer-event-amplification-20261106.md` first. Canonical source is
+still57288dc; newer main commits are documentation. No source activation occurred.
 
-Same LZ-138 Luna Max worker is active on advice15: retained-target acceptance must
-not wait for queued successors. Baseline required suite559tests/7446assertions
-passes; the dependency correction and actual retained156 walkthrough are unproven.
-Same LZ-128 Luna Max worker is also active, correcting a NEW blocking finding:
-normal supported plugin reload replaces main provider, while8f14285 rejects that
-changed epoch despite proven old renderer disposal. Original same-provider-only
-specification excludes this recovery; Architect must reconcile real tasking and
-acceptance, not override it with advice or grant an impossible live gate. Root's
-26-line failing reproduction521a02c was delivered for reuse. Six flags/Never stay.
-No canonical activation while implementors run. Preserve original work/history.
+Root isolated tree `/private/tmp/lz-native-log-contract-review` is ata413b678.
+It contains reviewed/staged backend work, but ALSO old8f14285 GPU source and an
+intentionally red normal-reload regression. Do not activate the whole tree yet.
+Key staged commits:08166cf native replay, b01121b native catalog access,
+4cd8527 retained setup uncertainty,4ff1775 independent retained task acceptance,
+60d2578 registered control fixture,20d9736 one shared Tasks revision publisher,
+f6afba2 qualification of still-active retained attempts; failed history stays failed.
 
-Advice text cap is already removed; current4tests/59assertions pass. Native review
-usage currently lacks LAZERS progress capture/attribution; Architect is reconciling
-that existing measurement requirement without delaying157/158. Full roadmap goal
-stays active: Models, Tasks/Trajectory, Radar and the remaining recovery/release work.
+Root reproduced real156's running/null-artifact idle hold.4ff alone accepted the
+node but left its attempt running, causing re-hold after reconcile. f6 fixes only
+running/verifying attempt rows. Tests prove private qualification→native reconcile→
+ordered successors with one original prompt and unknown background preserved.
+571tests/7564assertions pass in the combined backend suite (`--timeout30000`,
+174.51s) before60d's test-only merge; merged retained suite17tests/204assertions
+and quality pass afterward. Actual native retained156 qualification is unproven.
+
+138 now has a NEW attempt091ee91c-c6e3-43d3-b7f9-858028336150, worker
+ses_9e11e5a8fae643a79c50b2346bfb48a9, artifact60d2578, last verifying/model inactive.
+Original87c14979/worker28780d1d remains failed with4ff and retained history. Owner
+last ses_e937c3ce298747bc8898cda4c2c56b06. Revalidate rather than copying versions.
+
+Old128 contract is superseded/cancelled natively, not fulfilled.2082900 source is
+preserved, NOT approved or merged into Root tree: peer review found hidden detach
+failures and missing cross-provider cancellation/lost-reply coverage. Linked159
+b3781cfa-4c99-4274-ae58-f762cf7aa301, planb171f745-0676-48e5-b517-cb5a8aad56d6
+is running under Main Architect. Attempt18d49ee3-493f-4df1-a920-1b997d8adc53,
+worker ses_f1562a517796402694b1fc3a7c26d148 (OpenAI Luna Max) is ACTIVE on correction.
+Preserve its work; coordinate quiet activation. No old impossible live gate grant.
+
+Root captured renderer~587%CPU and14identical Tasks events per version. Publisher
+repair20d passes9tests/67assertions; native post-activation counts/CPU are pending.
+Native CmdR recovered the renderer to0.6%CPU with backend PID71027 unchanged.
+All six inference flags stayed on, Never unchanged; chat/speech readiness recovered.
+That is operational recovery, not proof of source fixes or159. Raw CPU trace/sample
+remain private under/tmp. Root sent source fix/test/profile facts through Desktop.
+
+Main Architect last ses_e568438ebffeaoFbF9nBb942XM, Sol High. Continue full roadmap:
+Models157/158, Tasks148/149/Trajectory, Radar, recovery/verification/release.
+149 advice3 includes observed pending-refresh Worker Unknown flicker. Managed
+research/review overhead is still unallocated; existing measurement planning owns
+that gap. Advice length cap is already removed. No arbitrary model budgets.
 
 ## Operating decisions
 
