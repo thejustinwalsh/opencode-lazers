@@ -9326,6 +9326,10 @@ export class TaskRuntime {
         return undefined
 
       let expectedPlanVersion = initial.planVersion
+      // A still-active attempt must stop normal worker finalization; historical failures stay failed.
+      db.query(
+        "UPDATE runner_attempts SET state='accepted',artifact=? WHERE id=? AND state IN ('running','verifying')",
+      ).run(initial.artifact, initial.attemptID)
       if (currentNode.state !== "accepted") {
         db.query(
           "UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=? AND state=?",

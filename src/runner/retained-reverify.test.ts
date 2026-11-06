@@ -516,6 +516,76 @@ function writeInjectedPrivatePackage(candidateWorkspace: string): void {
   )
 }
 
+test("unrecorded running candidate qualifies under an idle hold and continues through reconciliation", async () => {
+  const f = fixture({ successorCount: 2, requestTick: async () => {} })
+  const observe = f.host.session
+  f.host.session = async (id) => {
+    const worker = await observe(id)
+    if (worker && f.created[0] === id && worker.turn?.state === "completed")
+      worker.background = {
+        state: "unknown",
+        source: "experimental.idle",
+        reason: "Native execution success did not match the current experimental.idle execution",
+      }
+    return worker
+  }
+  await f.runtime.command(
+    { requestID: "run-held-native-candidate", planID: f.planID, expectedVersion: 1, action: "run" },
+    "owner",
+  )
+  for (let i = 0; i < 5; i++) await f.runtime.tick()
+  const attempt = f.store.attempts(f.planID)[0]!
+  expect(attempt.state).toBe("running")
+  expect(attempt.artifact).toBeNull()
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  const artifact = git(attempt.workspace, ["rev-parse", "HEAD"])
+  const requested = (await f.runtime.command(
+    {
+      requestID: "qualify-unrecorded-running-candidate",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "verify-retained",
+      projectID: "project",
+      planRevision: 1,
+      taskID: f.task.id,
+      taskRevision: 1,
+      attemptID: attempt.id,
+      artifact,
+      reason: "Qualify actual committed work despite missing old idle lineage",
+    },
+    "owner",
+  )) as { operationID: string }
+  for (let i = 0; i < 5 && f.store.nodes(f.planID)[0]?.state !== "accepted"; i++)
+    await f.runtime.tick()
+  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+  expect(f.prompts.filter((p) => p.sessionID === attempt.session_id)).toHaveLength(1)
+  const qualifiedAttempt = f.store.attempts(f.planID)[0]!
+  expect(qualifiedAttempt.id).toBe(attempt.id)
+  expect(qualifiedAttempt.state).toBe("accepted")
+  expect(qualifiedAttempt.artifact).toBe(artifact)
+  // Non-failure holds remain an explicit Architect decision, not an implicit bypass.
+  await f.runtime.command(
+    {
+      requestID: "reconcile-qualified-held-plan",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "reconcile",
+    },
+    "owner",
+  )
+  for (let i = 0; i < 20 && f.store.nodes(f.planID).some((node) => node.state !== "accepted"); i++)
+    await f.runtime.tick()
+  expect(f.store.nodes(f.planID).map((node) => node.state)).toEqual([
+    "accepted",
+    "accepted",
+    "accepted",
+  ])
+  expect(f.prompts.filter((p) => p.sessionID === attempt.session_id)).toHaveLength(1)
+  const worker = await f.host.session(attempt.session_id)
+  expect(worker?.background?.state).toBe("unknown")
+  expect(requested.operationID).toBeString()
+}, 30_000)
+
 test(
   "owner verifies an exact failed-attempt candidate with zero replacement prompts",
   async () => {
