@@ -16,6 +16,11 @@ import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { registerModelsServer } from "./server.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
+import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
+import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint-pricing.ts"
+import { ModelDecisionInspectOutputSchema } from "./decision-contract.ts"
+import { modelConfigurationID } from "./model-identity.ts"
+import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 type ModelRPC = {
@@ -284,6 +289,278 @@ function writeCapturedModelEvidence(path: string) {
     store.saveSnapshot({ ...catalog, projectDirectory, generation: 5 })
   } finally {
     store.close()
+  }
+}
+
+function writeMarketIdentityEvidence(
+  path: string,
+  projectDirectory: string,
+  options: { duplicateLuna?: boolean; includeKimi?: boolean } = {},
+) {
+  const directNative = ModelEvidenceSnapshotSchema.parse(captured.native.snapshot)
+  const directCatalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
+  const goNative = ModelEvidenceSnapshotSchema.parse(capturedGo.native.snapshot)
+  const goCatalog = ModelEvidenceSnapshotSchema.parse(capturedGo.openrouter.snapshot)
+  if (
+    directNative.source !== "native-catalog" ||
+    directCatalog.source !== "openrouter-models" ||
+    goNative.source !== "native-catalog" ||
+    goCatalog.source !== "openrouter-models"
+  )
+    throw new Error("Captured market identity sources have unexpected types")
+
+  const nativeRecords = [
+    ...directNative.records.filter(
+      (record) => record.providerID === "openai" && record.id === "gpt-6-luna",
+    ),
+    ...goNative.records.filter(
+      (record) =>
+        record.providerID === "opencode-go" &&
+        ["kimi-k3.1-pro", "qwen3.8-flash"].includes(record.id),
+    ),
+  ]
+  const catalogRecords = [
+    ...directCatalog.records.filter((record) => record.id === "openai/gpt-6-luna"),
+    ...goCatalog.records.filter(
+      (record) =>
+        (options.includeKimi !== false && record.id === "moonshotai/kimi-k3.1-pro") ||
+        record.id === "qwen/qwen3.8-flash",
+    ),
+  ]
+  if (options.duplicateLuna)
+    catalogRecords.push(catalogRecords.find((record) => record.id === "openai/gpt-6-luna")!)
+
+  const store = new ModelEvidenceStore(path, projectDirectory)
+  try {
+    const generations = store.beginRefresh()
+    const nativeSnapshot = ModelEvidenceSnapshotSchema.parse({
+      ...directNative,
+      snapshotID: crypto.randomUUID(),
+      projectDirectory,
+      generation: generations["native-catalog"],
+      retrievedAt: new Date(Date.now() + generations["native-catalog"]).toISOString(),
+      records: nativeRecords,
+    })
+    const catalogSnapshot = ModelEvidenceSnapshotSchema.parse({
+      ...directCatalog,
+      snapshotID: crypto.randomUUID(),
+      projectDirectory,
+      generation: generations["openrouter-models"],
+      retrievedAt: new Date(Date.now() + generations["openrouter-models"]).toISOString(),
+      records: catalogRecords,
+    })
+    store.saveSnapshot(nativeSnapshot)
+    store.saveSnapshot(catalogSnapshot)
+  } finally {
+    store.close()
+  }
+}
+
+function writeMarketEndpointEvidence(
+  path: string,
+  projectDirectory: string,
+  products: Array<{
+    productID: EndpointPricingProductID
+    providerName: string
+    tag: string
+    pricing: EndpointPricingRecord["pricing"]
+  }>,
+) {
+  const store = new ModelEvidenceStore(path, projectDirectory)
+  try {
+    const generations = store.beginEndpointPricingRefresh()
+    for (const item of products) {
+      const source = ENDPOINT_PRICING_PRODUCTS.find(
+        (candidate) => candidate.productID === item.productID,
+      )!
+      const record = EndpointPricingRecordSchema.parse({
+        productID: item.productID,
+        name: `${item.providerName} market endpoint`,
+        providerName: item.providerName,
+        tag: item.tag,
+        serviceTier: null,
+        pricing: item.pricing,
+        cacheWriteDocumentation: null,
+      })
+      store.saveEndpointPricingSnapshot({
+        snapshotID: crypto.randomUUID(),
+        projectDirectory,
+        productID: item.productID,
+        generation: generations[item.productID],
+        retrievedAt: new Date(Date.now() + generations[item.productID]).toISOString(),
+        sourceURL: source.sourceURL,
+        httpStatus: 200,
+        records: [record],
+      })
+    }
+    return { store, generations }
+  } catch (error) {
+    store.close()
+    throw error
+  }
+}
+
+function rewriteAttemptForMarket(
+  path: string,
+  projectID: string,
+  attemptID: string,
+  route: { providerID: string; modelID: string; variant: string | null },
+  inputTokens: readonly number[],
+) {
+  const db = new Database(path, { strict: true })
+  try {
+    const rows = db
+      .query<{ seq: number; kind: string; payload: string }, [string]>(
+        "SELECT seq,kind,payload FROM runner_progress WHERE attempt_id=? ORDER BY seq",
+      )
+      .all(attemptID)
+    let stepIndex = 0
+    for (const row of rows) {
+      const payload = JSON.parse(row.payload) as Record<string, unknown>
+      payload.route = route
+      payload.routeEvidence = { status: "observed", route }
+      const input =
+        row.kind === "usage-snapshot"
+          ? inputTokens.reduce((sum, value) => sum + value, 0)
+          : (inputTokens[Math.min(stepIndex, inputTokens.length - 1)] ?? 0)
+      payload.usage = {
+        input,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      }
+      db.query("UPDATE runner_progress SET payload=?,message_id=? WHERE seq=?").run(
+        JSON.stringify(payload),
+        `rpc-market-call-${row.seq}`,
+        row.seq,
+      )
+      if (row.kind === "step") stepIndex++
+    }
+    const owner = db
+      .query<
+        { task_id: string; plan_id: string; session_id: string; project_directory: string },
+        [string]
+      >(
+        `SELECT a.task_id,a.plan_id,a.session_id,p.project_directory
+         FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE a.id=?`,
+      )
+      .get(attemptID)
+    if (!owner) throw new Error("Fixture attempt is unavailable")
+    const insertFact = (
+      kind: "step" | "usage-snapshot",
+      payload: Record<string, unknown>,
+      suffix: string,
+    ) => {
+      db.query(
+        `INSERT INTO runner_progress
+         (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,
+          source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        owner.project_directory,
+        projectID,
+        owner.plan_id,
+        owner.task_id,
+        attemptID,
+        owner.session_id,
+        4_000,
+        4_011,
+        "runtime",
+        JSON.stringify(["runtime"]),
+        kind,
+        JSON.stringify([]),
+        null,
+        kind === "step" ? `rpc-market-${suffix}-${attemptID}` : null,
+        `rpc-market-${suffix}-${attemptID}`,
+        JSON.stringify(payload),
+      )
+    }
+    if (!rows.some((row) => row.kind === "usage-snapshot") && inputTokens.length) {
+      insertFact(
+        "usage-snapshot",
+        {
+          additive: false,
+          measurementBasis: "cumulative-session-snapshot",
+          usage: {
+            input: inputTokens.reduce((sum, value) => sum + value, 0),
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+        },
+        "usage",
+      )
+    }
+    if (!rows.some((row) => row.kind === "step"))
+      insertFact("step", { routeEvidence: { status: "observed", route }, route }, "route")
+  } finally {
+    db.close()
+  }
+}
+
+function saveLunaEndpointSnapshot(
+  store: ModelEvidenceStore,
+  projectDirectory: string,
+  generation: number,
+  rates: { prompt: string; overridePrompt: string } = {
+    prompt: "0.0000001",
+    overridePrompt: "0.0000002",
+  },
+) {
+  const productID = "openai/gpt-6-luna" as const
+  const product = ENDPOINT_PRICING_PRODUCTS.find((item) => item.productID === productID)!
+  const record = EndpointPricingRecordSchema.parse({
+    productID,
+    name: "OpenAI GPT-6 Luna",
+    providerName: "OpenAI",
+    tag: "openai",
+    serviceTier: null,
+    pricing: {
+      unit: "USD per token",
+      prompt: rates.prompt,
+      completion: "0.0000005",
+      inputCacheRead: "0.00000001",
+      inputCacheWrite: "0.000000125",
+      overrides: [
+        {
+          minPromptTokens: 272_000,
+          prompt: rates.overridePrompt,
+          completion: "0.00000075",
+          inputCacheRead: "0.00000002",
+          inputCacheWrite: "0.00000025",
+        },
+      ],
+    },
+    cacheWriteDocumentation: null,
+  })
+  store.saveEndpointPricingSnapshot({
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    productID,
+    generation,
+    retrievedAt: new Date(Date.now() + generation).toISOString(),
+    sourceURL: product.sourceURL,
+    httpStatus: 200,
+    records: [record],
+  })
+}
+
+function writeLunaEndpointSnapshot(
+  path: string,
+  projectDirectory: string,
+  rates?: { prompt: string; overridePrompt: string },
+) {
+  const store = new ModelEvidenceStore(path, projectDirectory)
+  try {
+    const productID = "openai/gpt-6-luna" as const
+    const generation = store.beginEndpointPricingRefresh()[productID]
+    saveLunaEndpointSnapshot(store, projectDirectory, generation, rates)
+    return { store, generation, productID }
+  } catch (error) {
+    store.close()
+    throw error
   }
 }
 
@@ -1619,6 +1896,27 @@ test("Models group RPC cancellation after source reads cannot publish a successf
 
 test("ModelsDecision registers and serves coherent production overview, rows, configurations and inspect", async () => {
   const fixture = makeLedgerFixture()
+  const marketRoute = {
+    providerID: "openai",
+    modelID: "gpt-6-luna",
+    variant: "max",
+  }
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.failed.id,
+    marketRoute,
+    [100],
+  )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    marketRoute,
+    [20, 30],
+  )
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
+  const endpointEvidence = writeLunaEndpointSnapshot(fixture.path, fixture.projectDirectory)
   const sourceWriter = new Database(fixture.path, { strict: true })
   sourceWriter
     .query("UPDATE runner_progress SET message_id='decision-server-' || seq WHERE kind='step'")
@@ -1643,7 +1941,14 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
 
     const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
       context: { snapshotID: string }
-      rows: Array<{ configuration: { configurationID: string } }>
+      rows: Array<{
+        configuration: {
+          configurationID: string
+          route: { providerID: string; modelID: string; variant: string | null }
+        }
+        efficiency: unknown
+        nativeReportedCost: unknown
+      }>
       totalCount: number
     }
     const configurations = (await Effect.runPromise(
@@ -1658,17 +1963,83 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
     expect(rows.totalCount).toBe(overview.configurationCount)
     expect(configurations.totalCount).toBe(overview.configurationCount)
     expect(rows.rows.length).toBeGreaterThan(0)
+    const marketRow = rows.rows.find(
+      (row) =>
+        row.configuration.route.providerID === marketRoute.providerID &&
+        row.configuration.route.modelID === marketRoute.modelID &&
+        row.configuration.route.variant === marketRoute.variant,
+    )
+    expect(marketRow).toBeDefined()
+    expect(marketRow?.efficiency).toBeDefined()
+    expect(marketRow?.nativeReportedCost).toBeDefined()
 
     const inspection = await Effect.runPromise(
       harness.methods().inspect({
         ...input,
         snapshotID: overview.context.snapshotID,
-        configurationID: rows.rows[0]!.configuration.configurationID,
-        selectedTaskID: null,
+        configurationID: marketRow!.configuration.configurationID,
+        selectedTaskID: fixture.tasks.retry!.id,
         contributorLimit: 100,
       }),
     )
-    expect(inspection).toMatchObject({ status: "found" })
+    const parsedInspection = ModelDecisionInspectOutputSchema.parse(inspection)
+    expect(parsedInspection).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        schemaVersion: 1,
+        scope: "known-retained-token-usage-only",
+        route: marketRoute,
+        identity: {
+          status: "exact",
+          productID: "openai/gpt-6-luna",
+          basis: "provider-owner-qualification",
+          rules: [{ id: "provider-owner-qualified-local-id-v1" }],
+        },
+        status: "range",
+        scenarios: [
+          {
+            id: "luna-openai-standard",
+            status: "range",
+            freshness: "current",
+            tierAttribution: {
+              status: "unresolved",
+              basis: "aggregate-tier-envelope",
+              promptThresholds: [272_000],
+            },
+            provenance: {
+              source: "openrouter-endpoints",
+              productID: "openai/gpt-6-luna",
+              snapshotGeneration: endpointEvidence.generation,
+              providerName: "OpenAI",
+              tag: "openai",
+              serviceTier: null,
+            },
+            coverage: {
+              scope: "known-route-matched-retained-usage",
+              wholeTaskBound: false,
+              categories: { uncachedInput: { tokens: 150, status: "observed" } },
+              retries: {
+                status: "complete",
+                attemptCount: 2,
+                failedAttemptCount: 1,
+                retryAttemptCount: 1,
+              },
+              route: { matchedRouteSessionCount: 2, includedSessionCount: 2 },
+            },
+          },
+        ],
+      },
+    })
+    if (parsedInspection.status === "found") {
+      expect(parsedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+        0.000015,
+        12,
+      )
+      expect(parsedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+        0.00003,
+        12,
+      )
+    }
     expect(harness.permissionCalls).toHaveLength(4)
     expect(harness.permissionCalls).toEqual(
       expect.arrayContaining([
@@ -1679,6 +2050,530 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
       ]),
     )
   } finally {
+    endpointEvidence.store.close()
+    fixture.close()
+  }
+})
+
+test("registered inspector maps exact configured Go routes to independently sourced market scenarios", async () => {
+  const fixture = makeLedgerFixture()
+  const kimiRoute = {
+    providerID: "opencode-go",
+    modelID: "kimi-k3.1-pro",
+    variant: "high",
+  }
+  const qwenRoute = {
+    providerID: "opencode-go",
+    modelID: "qwen3.8-flash",
+    variant: "medium",
+  }
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.failed.id,
+    kimiRoute,
+    [10],
+  )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    kimiRoute,
+    [20],
+  )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.adoption.id,
+    qwenRoute,
+    [20],
+  )
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
+  const endpointEvidence = writeMarketEndpointEvidence(fixture.path, fixture.projectDirectory, [
+    {
+      productID: "moonshotai/kimi-k3.1-pro",
+      providerName: "Moonshot AI",
+      tag: "moonshotai/mxfp4",
+      pricing: {
+        unit: "USD per token",
+        prompt: "0.000002",
+        completion: "0.00001",
+        inputCacheRead: "0.0000002",
+      },
+    },
+    {
+      productID: "qwen/qwen3.8-flash",
+      providerName: "Alibaba",
+      tag: "alibaba",
+      pricing: {
+        unit: "USD per token",
+        prompt: "0.00000015",
+        completion: "0.00000047",
+        inputCacheRead: "0.000000016",
+        inputCacheWrite: "0.0000002",
+      },
+    },
+  ])
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository)
+  repository.close()
+  const input = {
+    sessionID: "ses-native",
+    scope: { projectDirectory: fixture.projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+
+  try {
+    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string }
+    }
+    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
+      rows: Array<{ configuration: { configurationID: string; route: typeof kimiRoute } }>
+    }
+    const cases = [
+      {
+        route: kimiRoute,
+        productID: "moonshotai/kimi-k3.1-pro",
+        scenarioID: "kimi-moonshot-mxfp4",
+        selectedTaskID: fixture.tasks.retry!.id,
+        value: 0.00006,
+      },
+      {
+        route: qwenRoute,
+        productID: "qwen/qwen3.8-flash",
+        scenarioID: "qwen-alibaba",
+        selectedTaskID: fixture.tasks.adoption!.id,
+        value: 0.000003,
+      },
+    ] as const
+    for (const item of cases) {
+      const configurationID = `configuration:${modelConfigurationID(
+        item.route.providerID,
+        item.route.modelID,
+        item.route.variant,
+      )}`
+      expect(rows.rows.some((row) => row.configuration.configurationID === configurationID)).toBe(
+        true,
+      )
+      const inspection = ModelDecisionInspectOutputSchema.parse(
+        await Effect.runPromise(
+          harness.methods().inspect({
+            ...input,
+            snapshotID: overview.context.snapshotID,
+            configurationID,
+            selectedTaskID: item.selectedTaskID,
+            contributorLimit: 100,
+          }),
+        ),
+      )
+      expect(inspection).toMatchObject({
+        status: "found",
+        knownUsageMarket: {
+          route: item.route,
+          identity: {
+            status: "exact",
+            productID: item.productID,
+            basis: "verified-source-backed-route-alias",
+            evidence: {
+              catalog: [expect.objectContaining({ recordID: item.productID })],
+            },
+          },
+          status: "exact",
+          scenarios: [
+            {
+              id: item.scenarioID,
+              status: "exact",
+              provenance: {
+                source: "openrouter-endpoints",
+                productID: item.productID,
+                snapshotGeneration: endpointEvidence.generations[item.productID],
+              },
+            },
+          ],
+        },
+      })
+      if (inspection.status === "found")
+        expect(inspection.knownUsageMarket?.scenarios[0]?.valueUSD).toBeCloseTo(item.value, 12)
+    }
+  } finally {
+    endpointEvidence.store.close()
+    fixture.close()
+  }
+})
+
+test("registered inspector leaves unsupported, ambiguous, and absent mappings unknown despite endpoint rates", async () => {
+  const fixture = makeLedgerFixture()
+  const ambiguousRoute = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const absentRoute = { providerID: "opencode-go", modelID: "kimi-k3.1-pro", variant: "high" }
+  const unsupportedRoute = { providerID: "opencode-go", modelID: "unlisted-model", variant: "max" }
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.failed.id,
+    ambiguousRoute,
+    [10],
+  )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    absentRoute,
+    [20],
+  )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.adoption.id,
+    unsupportedRoute,
+    [30],
+  )
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory, {
+    duplicateLuna: true,
+    includeKimi: false,
+  })
+  const endpointEvidence = writeMarketEndpointEvidence(fixture.path, fixture.projectDirectory, [
+    {
+      productID: "openai/gpt-6-luna",
+      providerName: "OpenAI",
+      tag: "openai",
+      pricing: {
+        unit: "USD per token",
+        prompt: "0.0000001",
+        completion: "0.0000005",
+        inputCacheRead: "0.00000001",
+        inputCacheWrite: "0.000000125",
+      },
+    },
+    {
+      productID: "moonshotai/kimi-k3.1-pro",
+      providerName: "Moonshot AI",
+      tag: "moonshotai/mxfp4",
+      pricing: { unit: "USD per token", prompt: "0.000002", completion: "0.00001" },
+    },
+  ])
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository)
+  repository.close()
+  const input = {
+    sessionID: "ses-native",
+    scope: { projectDirectory: fixture.projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+
+  try {
+    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string }
+    }
+    const cases = [
+      {
+        route: ambiguousRoute,
+        selectedTaskID: fixture.tasks.retry!.id,
+        identityStatus: "ambiguous",
+      },
+      {
+        route: absentRoute,
+        selectedTaskID: fixture.tasks.retry!.id,
+        identityStatus: "supported-but-absent",
+      },
+      {
+        route: unsupportedRoute,
+        selectedTaskID: fixture.tasks.adoption!.id,
+        identityStatus: "unsupported",
+      },
+    ] as const
+    for (const item of cases) {
+      const configurationID = `configuration:${modelConfigurationID(
+        item.route.providerID,
+        item.route.modelID,
+        item.route.variant,
+      )}`
+      const inspection = ModelDecisionInspectOutputSchema.parse(
+        await Effect.runPromise(
+          harness.methods().inspect({
+            ...input,
+            snapshotID: overview.context.snapshotID,
+            configurationID,
+            selectedTaskID: item.selectedTaskID,
+            contributorLimit: 100,
+          }),
+        ),
+      )
+      expect(inspection).toMatchObject({
+        status: "found",
+        knownUsageMarket: {
+          route: item.route,
+          status: "not-applicable",
+          identity: { status: item.identityStatus },
+          scenarios: [],
+        },
+      })
+    }
+    expect(endpointEvidence.generations["openai/gpt-6-luna"]).toBeGreaterThan(0)
+    expect(endpointEvidence.generations["moonshotai/kimi-k3.1-pro"]).toBeGreaterThan(0)
+  } finally {
+    endpointEvidence.store.close()
+    fixture.close()
+  }
+})
+
+test("registered inspector pins scenario pages across retained writes and reprices only market evidence", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
+  rewriteAttemptForMarket(fixture.path, fixture.projectID, fixture.attempts.failed.id, route, [100])
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    route,
+    [20, 30],
+  )
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
+  const endpointEvidence = writeLunaEndpointSnapshot(fixture.path, fixture.projectDirectory)
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository)
+  repository.close()
+  const input = {
+    sessionID: "ses-native",
+    scope: { projectDirectory: fixture.projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+  const configurationID = `configuration:${modelConfigurationID(
+    route.providerID,
+    route.modelID,
+    route.variant,
+  )}`
+  const inspect = async (snapshotID: string, contributorCursor?: string) =>
+    ModelDecisionInspectOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().inspect({
+          ...input,
+          snapshotID,
+          configurationID,
+          selectedTaskID: fixture.tasks.retry!.id,
+          contributorLimit: 1,
+          ...(contributorCursor ? { contributorCursor } : {}),
+        }),
+      ),
+    )
+
+  try {
+    const firstOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string }
+    }
+    const firstRows = (await Effect.runPromise(
+      harness.methods().rows({ ...input, limit: 100 }),
+    )) as {
+      rows: Array<{
+        configuration: { configurationID: string }
+        efficiency: unknown
+        nativeReportedCost: unknown
+      }>
+    }
+    const firstRow = firstRows.rows.find(
+      (candidate) => candidate.configuration.configurationID === configurationID,
+    )
+    expect(firstRow).toBeDefined()
+    const firstInspection = await inspect(firstOverview.context.snapshotID)
+    expect(firstInspection.status).toBe("found")
+    if (firstInspection.status !== "found") return
+    const firstScenario = firstInspection.knownUsageMarket?.scenarios[0]
+    expect(firstScenario).toMatchObject({
+      status: "range",
+      freshness: "current",
+      provenance: { snapshotGeneration: 1, currentGeneration: 1 },
+      coverage: {
+        categories: { uncachedInput: { tokens: 150, status: "observed" } },
+        retries: { status: "complete", attemptCount: 2 },
+      },
+    })
+    expect(firstScenario?.rangeUSD?.minimum).toBeCloseTo(0.000015, 12)
+    expect(firstScenario?.rangeUSD?.maximum).toBeCloseTo(0.00003, 12)
+    const contributorCursor = firstInspection.contributorPage.nextCursor
+    expect(contributorCursor).not.toBeNull()
+
+    const staleGeneration =
+      endpointEvidence.store.beginEndpointPricingRefresh()[endpointEvidence.productID]
+    rewriteAttemptForMarket(
+      fixture.path,
+      fixture.projectID,
+      fixture.attempts.accepted.id,
+      route,
+      [40, 60],
+    )
+    const pinnedPage = await inspect(firstOverview.context.snapshotID, contributorCursor!)
+    expect(pinnedPage).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        scenarios: [
+          {
+            freshness: "current",
+            provenance: { snapshotGeneration: 1, currentGeneration: 1 },
+            coverage: { categories: { uncachedInput: { tokens: 150 } } },
+          },
+        ],
+      },
+    })
+
+    const staleOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string }
+    }
+    const staleRows = (await Effect.runPromise(
+      harness.methods().rows({ ...input, limit: 100 }),
+    )) as typeof firstRows
+    const staleRow = staleRows.rows.find(
+      (candidate) => candidate.configuration.configurationID === configurationID,
+    )
+    expect(staleRow).toBeDefined()
+    const staleInspection = await inspect(staleOverview.context.snapshotID)
+    expect(staleInspection).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        status: "range",
+        scenarios: [
+          {
+            status: "range",
+            freshness: "stale",
+            provenance: {
+              snapshotGeneration: staleGeneration - 1,
+              currentGeneration: staleGeneration,
+              refreshState: "refreshing",
+            },
+            coverage: {
+              categories: { uncachedInput: { tokens: 200, status: "observed" } },
+            },
+          },
+        ],
+      },
+    })
+    if (staleInspection.status !== "found") return
+    expect(staleInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+      0.00002,
+      12,
+    )
+    expect(staleInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+      0.00004,
+      12,
+    )
+
+    saveLunaEndpointSnapshot(endpointEvidence.store, fixture.projectDirectory, staleGeneration, {
+      prompt: "0.0000002",
+      overridePrompt: "0.0000004",
+    })
+    const refreshedOverview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string }
+    }
+    const refreshedRows = (await Effect.runPromise(
+      harness.methods().rows({ ...input, limit: 100 }),
+    )) as typeof firstRows
+    const refreshedRow = refreshedRows.rows.find(
+      (candidate) => candidate.configuration.configurationID === configurationID,
+    )
+    expect(refreshedRow).toBeDefined()
+    const refreshedInspection = await inspect(refreshedOverview.context.snapshotID)
+    expect(refreshedInspection).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        scenarios: [
+          {
+            status: "range",
+            freshness: "current",
+            provenance: {
+              snapshotGeneration: staleGeneration,
+              currentGeneration: staleGeneration,
+            },
+            coverage: { categories: { uncachedInput: { tokens: 200 } } },
+          },
+        ],
+      },
+    })
+    if (refreshedInspection.status === "found") {
+      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+        0.00004,
+        12,
+      )
+      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+        0.00008,
+        12,
+      )
+    }
+    expect(refreshedRow?.efficiency).toEqual(staleRow?.efficiency)
+    expect(refreshedRow?.nativeReportedCost).toEqual(staleRow?.nativeReportedCost)
+    expect(firstRow?.efficiency).not.toEqual(staleRow?.efficiency)
+  } finally {
+    endpointEvidence.store.close()
+    fixture.close()
+  }
+})
+
+test("registered inspector reports missing retained endpoint evidence without fabricating a value", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
+  rewriteAttemptForMarket(fixture.path, fixture.projectID, fixture.attempts.failed.id, route, [100])
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    route,
+    [20, 30],
+  )
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository)
+  repository.close()
+  try {
+    const input = {
+      sessionID: "ses-native",
+      scope: { projectDirectory: fixture.projectDirectory },
+      filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+    }
+    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string }
+    }
+    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
+      rows: Array<{ configuration: { configurationID: string } }>
+    }
+    const configurationID = `configuration:${modelConfigurationID(
+      route.providerID,
+      route.modelID,
+      route.variant,
+    )}`
+    const inspection = ModelDecisionInspectOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().inspect({
+          ...input,
+          snapshotID: overview.context.snapshotID,
+          configurationID,
+          selectedTaskID: fixture.tasks.retry!.id,
+          contributorLimit: 100,
+        }),
+      ),
+    )
+    expect(rows.rows.some((row) => row.configuration.configurationID === configurationID)).toBe(
+      true,
+    )
+    expect(inspection).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        status: "unavailable",
+        scenarios: [
+          {
+            status: "unavailable",
+            freshness: "unavailable",
+            valueUSD: null,
+            rangeUSD: null,
+            provenance: {
+              source: "openrouter-endpoints",
+              refreshState: "never",
+              snapshotID: null,
+            },
+            coverage: { wholeTaskBound: false },
+          },
+        ],
+      },
+    })
+    expect(tableExists(fixture.path, "model_endpoint_pricing_refreshes")).toBe(true)
+    expect(tableExists(fixture.path, "model_endpoint_pricing_snapshots")).toBe(true)
+  } finally {
     fixture.close()
   }
 })
@@ -1688,7 +2583,14 @@ test("ModelsDecision foreign scope, denial and pre-abort do not read price sourc
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
   let denied = false
-  const harness = await register(repository, { denied: () => denied })
+  let evidenceReads = 0
+  const harness = await register(repository, {
+    denied: () => denied,
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      evidenceReads++
+      return new ModelEvidenceReadStore(databasePath, directory)
+    },
+  })
   repository.close()
   const input = {
     sessionID: "ses-native",
@@ -1705,12 +2607,14 @@ test("ModelsDecision foreign scope, denial and pre-abort do not read price sourc
       ),
     ).rejects.toThrow()
     expect(harness.permissionCalls).toHaveLength(0)
+    expect(evidenceReads).toBe(0)
 
     denied = true
     await expect(Effect.runPromise(harness.methods().overview(input))).rejects.toThrow(
       "native permission denied",
     )
     expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(evidenceReads).toBe(0)
     expect(harness.storageCalls.get).toBe(0)
 
     denied = false
@@ -1720,6 +2624,51 @@ test("ModelsDecision foreign scope, denial and pre-abort do not read price sourc
       Effect.runPromise(harness.methods().overview(input), { signal: controller.signal }),
     ).rejects.toThrow()
     expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
+    expect(evidenceReads).toBe(0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("cancelled ModelsDecision price/evidence read closes its source store and cannot publish", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const controller = new AbortController()
+  let evidenceOpens = 0
+  let evidenceCloses = 0
+  const harness = await register(repository, {
+    evidenceReadStoreFactory: (databasePath, directory) => {
+      evidenceOpens++
+      const reader = new ModelEvidenceReadStore(databasePath, directory)
+      return {
+        projectDirectory: directory,
+        readComparisonSources(selection) {
+          const sources = reader.readComparisonSources(selection)
+          controller.abort()
+          return sources
+        },
+        close() {
+          evidenceCloses++
+          reader.close()
+        },
+      }
+    },
+  })
+  repository.close()
+  try {
+    const exit = await Effect.runPromiseExit(
+      harness.methods().overview({
+        sessionID: "ses-native",
+        scope: { projectDirectory },
+        filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+      }),
+      { signal: controller.signal },
+    )
+    expect(exit._tag).toBe("Failure")
+    expect(evidenceOpens).toBe(1)
+    expect(evidenceCloses).toBe(1)
+    expect(harness.permissionCalls).toHaveLength(1)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -14,9 +14,14 @@ import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import type { CurrentPriceIndex } from "./valuation-schema.ts"
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
+import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
+import type { EndpointPricingProductID } from "./endpoint-pricing.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { projectTaskValuation } from "./valuation.ts"
+import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import capturedCatalogs from "../../test/models-current-price-index/fixtures/captured-catalogs.json" with { type: "json" }
+import capturedIdentity from "../../test/models-identity/fixtures/captured-20261103.json" with { type: "json" }
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 
 const completeUsage = (input: number) => ({
@@ -269,6 +274,93 @@ function saveCapturedOpenRouterSnapshot(
   })
   if (snapshot.source !== "openrouter-models") throw new Error("Expected OpenRouter snapshot")
   store.saveSnapshot(snapshot)
+}
+
+function saveLunaEndpointSnapshot(
+  store: ModelEvidenceStore,
+  projectDirectory: string,
+  promptRate: string,
+  overridePromptRate: string,
+) {
+  const productID: EndpointPricingProductID = "openai/gpt-6-luna"
+  const generation = store.beginEndpointPricingRefresh()[productID]
+  const product = ENDPOINT_PRICING_PRODUCTS.find((item) => item.productID === productID)!
+  const record = EndpointPricingRecordSchema.parse({
+    productID,
+    name: "OpenAI GPT-6 Luna",
+    providerName: "OpenAI",
+    tag: "openai",
+    serviceTier: null,
+    pricing: {
+      unit: "USD per token",
+      prompt: promptRate,
+      completion: "0.0000005",
+      inputCacheRead: "0.00000001",
+      inputCacheWrite: "0.000000125",
+      overrides: [
+        {
+          minPromptTokens: 272_000,
+          prompt: overridePromptRate,
+          completion: "0.00000075",
+          inputCacheRead: "0.00000002",
+          inputCacheWrite: "0.00000025",
+        },
+      ],
+    },
+    cacheWriteDocumentation: null,
+  })
+  store.saveEndpointPricingSnapshot({
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    productID,
+    generation,
+    retrievedAt: new Date(Date.now() + generation).toISOString(),
+    sourceURL: product.sourceURL,
+    httpStatus: 200,
+    records: [record],
+  })
+  return generation
+}
+
+function saveIdentityCatalogSnapshots(store: ModelEvidenceStore, projectDirectory: string) {
+  const native = ModelEvidenceSnapshotSchema.parse(capturedIdentity.native.snapshot)
+  const catalog = ModelEvidenceSnapshotSchema.parse(capturedIdentity.openrouter.snapshot)
+  if (native.source !== "native-catalog" || catalog.source !== "openrouter-models")
+    throw new Error("Expected captured native and OpenRouter identity sources")
+  const generations = store.beginRefresh()
+  store.saveSnapshot({
+    ...native,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: generations["native-catalog"],
+    retrievedAt: new Date(Date.now() + generations["native-catalog"]).toISOString(),
+  })
+  store.saveSnapshot({
+    ...catalog,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: generations["openrouter-models"],
+    retrievedAt: new Date(Date.now() + generations["openrouter-models"]).toISOString(),
+  })
+}
+
+function readIdentitySources(
+  path: string,
+  projectDirectory: string,
+): {
+  identityCatalogSource: ModelEvidenceComparisonSourceRead | undefined
+  identityNativeSource: ModelEvidenceComparisonSourceRead | undefined
+} {
+  const store = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    const sources = store.readComparisonSources()
+    return {
+      identityCatalogSource: sources.find((source) => source.source === "openrouter-models"),
+      identityNativeSource: sources.find((source) => source.source === "native-catalog"),
+    }
+  } finally {
+    store.close()
+  }
 }
 
 function makePriceIndex(
@@ -1189,6 +1281,176 @@ test("an ordered-source quote refresh reprices market efficiency without changin
   } finally {
     reader.close()
     sourceStore.close()
+    fixture.close()
+  }
+})
+
+test("endpoint scenarios reuse one coherent capture, pin pages, and reprice without changing v2 valuation", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  rewriteAttemptFacts(fixture.path, fixture.projectID, fixture.attempts.failed.id, route)
+  rewriteAttemptUsage(fixture.path, fixture.attempts.failed.id, 100, 1, 2)
+  rewriteAttemptFacts(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    route,
+    [20, 30],
+  )
+
+  const endpointStore = new ModelEvidenceStore(fixture.path, fixture.projectDirectory)
+  saveIdentityCatalogSnapshots(endpointStore, fixture.projectDirectory)
+  saveLunaEndpointSnapshot(endpointStore, fixture.projectDirectory, "0.0000001", "0.0000002")
+  let captures = 0
+  const reader = createModelDecisionReader({
+    projectDirectory: fixture.projectDirectory,
+    openLedger() {
+      const ledger = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+      return {
+        decisionRevision: () => ledger.decisionRevision(),
+        readDecision(signal) {
+          captures++
+          return ledger.readDecision(signal)
+        },
+        close: () => ledger.close(),
+      }
+    },
+    async readPriceState(routes, signal) {
+      signal?.throwIfAborted()
+      return {
+        settings: priceSettings(),
+        index: makePriceIndex(routes),
+        endpointPricing: readEndpointPricingEvidence(
+          fixture.path,
+          fixture.projectDirectory,
+          signal,
+        ),
+        ...readIdentitySources(fixture.path, fixture.projectDirectory),
+        freshness: "current",
+      }
+    },
+  })
+  try {
+    const input = inputFor(fixture.projectDirectory)
+    const firstOverview = await reader.overview(input)
+    const routeConfigurationID = `configuration:${modelConfigurationID(
+      route.providerID,
+      route.modelID,
+      route.variant,
+    )}`
+    const firstInspection = await reader.inspect({
+      ...input,
+      snapshotID: firstOverview.context.snapshotID,
+      configurationID: routeConfigurationID,
+      selectedTaskID: fixture.tasks.retry!.id,
+      contributorLimit: 1,
+    })
+    expect(firstInspection.status).toBe("found")
+    if (firstInspection.status !== "found") return
+    const firstRow = (await reader.rows({ ...input, limit: 100 })).rows.find(
+      (row) => row.configuration.configurationID === routeConfigurationID,
+    )
+    assert.ok(firstRow)
+    const firstMarket = firstInspection.knownUsageMarket
+    expect(firstMarket).toMatchObject({
+      schemaVersion: 1,
+      status: "range",
+      scenarios: [
+        {
+          status: "range",
+          freshness: "current",
+          tierAttribution: { status: "unresolved", basis: "aggregate-tier-envelope" },
+          coverage: {
+            scope: "known-route-matched-retained-usage",
+            wholeTaskBound: false,
+            categories: { uncachedInput: { tokens: 150, status: "observed" } },
+            retries: { status: "complete", failedAttemptCount: 1 },
+          },
+        },
+      ],
+    })
+    expect(firstMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(0.00001575, 12)
+    expect(firstMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(0.00003125, 12)
+    expect(firstInspection.contributorPage.nextCursor).not.toBeNull()
+    expect(firstMarket?.scenarios[0]?.provenance.snapshotGeneration).toBe(1)
+    expect(firstRow.efficiency.tokensPerAcceptedTask).toBe(153)
+    expect(captures).toBe(1)
+
+    saveLunaEndpointSnapshot(endpointStore, fixture.projectDirectory, "0.0000002", "0.0000004")
+    const pinnedInspection = await reader.inspect({
+      ...input,
+      snapshotID: firstOverview.context.snapshotID,
+      configurationID: routeConfigurationID,
+      selectedTaskID: fixture.tasks.retry!.id,
+      contributorLimit: 1,
+      contributorCursor: firstInspection.contributorPage.nextCursor!,
+    })
+    expect(pinnedInspection).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        scenarios: [
+          {
+            provenance: { snapshotGeneration: 1 },
+          },
+        ],
+      },
+    })
+    if (pinnedInspection.status === "found") {
+      expect(pinnedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+        0.00001575,
+        12,
+      )
+      expect(pinnedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+        0.00003125,
+        12,
+      )
+    }
+    expect(captures).toBe(1)
+
+    const refreshedOverview = await reader.overview(input)
+    const refreshedInspection = await reader.inspect({
+      ...input,
+      snapshotID: refreshedOverview.context.snapshotID,
+      configurationID: routeConfigurationID,
+      selectedTaskID: fixture.tasks.retry!.id,
+      contributorLimit: 1,
+    })
+    const refreshedRow = (await reader.rows({ ...input, limit: 100 })).rows.find(
+      (row) => row.configuration.configurationID === routeConfigurationID,
+    )
+    assert.ok(refreshedRow)
+    expect(refreshedInspection).toMatchObject({
+      status: "found",
+      knownUsageMarket: {
+        scenarios: [
+          {
+            provenance: { snapshotGeneration: 2 },
+          },
+        ],
+      },
+    })
+    if (refreshedInspection.status === "found") {
+      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
+        0.00003075,
+        12,
+      )
+      expect(refreshedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
+        0.00006125,
+        12,
+      )
+    }
+    expect(refreshedRow.efficiency).toEqual(firstRow.efficiency)
+    expect(refreshedRow.nativeReportedCost).toEqual(firstRow.nativeReportedCost)
+    expect(refreshedInspection.status).toBe("found")
+    if (refreshedInspection.status !== "found") return
+    expect(refreshedInspection.estimate).toEqual(firstInspection.estimate)
+    expect(refreshedInspection.contributorPage.contributors).toEqual(
+      firstInspection.contributorPage.contributors,
+    )
+    expect(captures).toBe(2)
+  } finally {
+    reader.close()
+    endpointStore.close()
     fixture.close()
   }
 })

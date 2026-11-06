@@ -3,6 +3,7 @@ import { z } from "zod"
 import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { TaskReferenceSchema } from "../task.ts"
 import { ModelPriceSourcePolicySchema, ModelPriceSourceSchema } from "./price-source-settings.ts"
+import { KnownUsageMarketSchema } from "./market-range.ts"
 
 /** Versioned, producer-owned read contract for the Models decision view. */
 export const MODELS_DECISION_RPC_ID = "lazers.models.decision.v2"
@@ -594,6 +595,8 @@ export const ModelDecisionInspectOutputSchema = z
       selectedTaskID: z.uuid().nullable(),
       estimate: ModelDecisionEstimateSchema,
       contributorPage: ModelDecisionContributorPageSchema,
+      /** Optional additive v1 known-usage endpoint-scenario surface; v2 values stay unchanged. */
+      knownUsageMarket: KnownUsageMarketSchema.optional(),
     }),
     z.strictObject({
       status: z.literal("not-found"),
