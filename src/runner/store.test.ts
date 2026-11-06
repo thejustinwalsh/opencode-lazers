@@ -342,6 +342,32 @@ test("owner-transfer evidence is exact, plan-scoped and time-bounded", () => {
   expect(f.store.hasPlanOwnerTransfer(plan.planID, successor, predecessor, 0)).toBe(false)
 })
 
+test("owner-transfer evidence follows an ordered same-plan continuation and reassignment path", () => {
+  const f = fixture("ordered-plan-owner-transfer-evidence")
+  const plan = f.store.submit(f.input, "owner")
+  const originalOwner = "original-owner"
+  const renewedOwner = "renewed-owner"
+  const successor = "current-owner"
+
+  // A later edge cannot prove a path before its predecessor has transferred.
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
+    from: renewedOwner,
+    to: successor,
+  })
+  f.store.record(plan.planID, null, "OWNER_CONTINUED", {
+    from: originalOwner,
+    to: renewedOwner,
+  })
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, originalOwner, successor, 0)).toBe(false)
+
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
+    from: renewedOwner,
+    to: successor,
+  })
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, originalOwner, successor, 0)).toBe(true)
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, successor, originalOwner, 0)).toBe(false)
+})
+
 function seedSourceJournal(
   store: RunnerStore,
   planID: string,

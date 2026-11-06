@@ -559,6 +559,76 @@ test.each(["reassignment", "renewal"] as const)(
   },
 )
 
+test("retained repair follows multiple continuations before reassignment without reparenting the worker", async () => {
+  const f = fixture()
+  await accept(f)
+  const prior = f.store.attempts(f.planID)[0]!
+  const worker = f.sessions.get(prior.session_id)!
+  const originalParent = worker.parentID
+  let ownerID = "owner"
+
+  for (const nextOwnerID of ["renewed-owner-1", "renewed-owner-2", "renewed-owner-3"]) {
+    f.sessions.set(nextOwnerID, {
+      ...structuredClone(f.sessions.get(ownerID)!),
+      id: nextOwnerID,
+    })
+    expect(f.store.updatePlanOwner(f.planID, ownerID, nextOwnerID)).toBe(true)
+    ownerID = nextOwnerID
+  }
+
+  const currentOwner = { ...structuredClone(f.sessions.get(ownerID)!), id: "current-owner" }
+  f.sessions.set(currentOwner.id, currentOwner)
+  await f.runtime.command(
+    {
+      requestID: "reassign-after-retained-repair-renewals",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "reassign",
+      targetSessionID: currentOwner.id,
+      reason: "Reassign retained repair authority after successive supported continuations.",
+    },
+    ownerID,
+  )
+
+  expect(f.store.plan(f.planID)?.owner).toBe(currentOwner.id)
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(worker.parentID).toBe(originalParent)
+  expect(originalParent).toBe("owner")
+
+  const command = retainedRepairCommand(f)
+  const requested = await f.runtime.command(command, currentOwner.id)
+  expect(requested).toMatchObject({
+    status: "retained-repair-requested",
+    taskID: prior.task_id,
+    attemptID: prior.id,
+    artifact: prior.artifact,
+  })
+  expect(await f.runtime.command(command, currentOwner.id)).toEqual(requested)
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: prior.id,
+    session_id: prior.session_id,
+    state: "preparing",
+  })
+  expect(worker.parentID).toBe(originalParent)
+  expect(f.created).toHaveLength(1)
+
+  await f.runtime.tick()
+  expect(f.prompts).toHaveLength(2)
+  expect(f.prompts[1]?.sessionID).toBe(prior.session_id)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("accepted")
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: prior.id,
+    session_id: prior.session_id,
+    state: "accepted",
+  })
+  expect(worker.parentID).toBe(originalParent)
+  expect(f.prompts).toHaveLength(2)
+})
+
 test("A to B to A owner reassignment fences the deferred retained-repair prompt", async () => {
   const f = fixture()
   await accept(f)

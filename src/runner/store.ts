@@ -3080,34 +3080,33 @@ export class RunnerStore {
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
   }
-  /** Confirms a same-plan owner transfer after the retained attempt began. */
+  /** Confirms an ordered plan-level owner-transfer path after the retained attempt began. */
   hasPlanOwnerTransfer(planID: string, previousOwner: string, currentOwner: string, after: number) {
     if (!this.plan(planID)) throw new Error("Plan not found")
     if (!previousOwner || !currentOwner || previousOwner === currentOwner) return false
-    return this.atomic((db) =>
-      db
-        .query<{ event: string; payload: string }, [string, number]>(
-          `SELECT event,payload FROM runner_transitions
+    return this.atomic(
+      (db) =>
+        db
+          .query<{ payload: string }, [string, number]>(
+            `SELECT payload FROM runner_transitions
            WHERE plan_id=? AND task_id IS NULL AND created_at>=?
              AND event IN ('OWNER_REASSIGNED','OWNER_CONTINUED')
            ORDER BY id`,
-        )
-        .all(planID, after)
-        .some((transition) => {
-          try {
-            const payload = JSON.parse(transition.payload) as {
-              from?: unknown
-              to?: unknown
+          )
+          .all(planID, after)
+          .reduce((owner, transition) => {
+            try {
+              const payload = JSON.parse(transition.payload) as {
+                from?: unknown
+                to?: unknown
+              }
+              return payload.from === owner && typeof payload.to === "string" && payload.to
+                ? payload.to
+                : owner
+            } catch {
+              return owner
             }
-            return (
-              (transition.event === "OWNER_REASSIGNED" || transition.event === "OWNER_CONTINUED") &&
-              payload.from === previousOwner &&
-              payload.to === currentOwner
-            )
-          } catch {
-            return false
-          }
-        }),
+          }, previousOwner) === currentOwner,
     )
   }
   /** High-water mark for plan-level owner/cancellation changes, excluding task activity. */

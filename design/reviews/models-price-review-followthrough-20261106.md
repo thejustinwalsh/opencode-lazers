@@ -59,7 +59,7 @@ pricing fixes and current main as source candidate `d301bc83`:
 
 - Formatting, lint, typecheck (386 files), diff check, and GUI build passed.
 - `bun test src/models test/models-decision src/trajectory/accounting.test.ts
-  test/models-panel test/models-chart test/observation-panels/root.test.ts`:
+test/models-panel test/models-chart test/observation-panels/root.test.ts`:
   220 passed, 3,296 assertions, 13.59 seconds.
 - Log: `/private/tmp/lz-models-full-combined-verification.log`.
 
