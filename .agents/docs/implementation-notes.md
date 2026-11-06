@@ -3,6 +3,15 @@
 Attach only relevant lessons to a task. These are reusable code findings, not a
 mandatory task checklist. New lessons should come from observed work.
 
+## Execution identity and market pricing
+
+The execution provider and pricing source are separate. Resolve the native
+model's market product through the evidence-backed rules in
+`src/models/model-identity.ts`; preserve its execution provider, model and effort.
+Label endpoint assumptions separately. Cover the product entry point with
+relevant configured routes, including subscription routes; fixtures using only
+the pricing provider do not exercise that boundary.
+
 ## Worker tools and trajectory time
 
 Expose worker-facing tools to Code Mode (`codemode: true`). Registering progress

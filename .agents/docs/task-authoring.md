@@ -78,15 +78,15 @@ behavior and unsupported or repeated obligations. It preserves necessary
 requirements while removing needless instructions; it is not implementation
 approval.
 
-Use an explicit user-selected native implementor route through plan `workerModel`
-with the exact `providerID`, model `id`, and optional native `variant`/effort.
-Otherwise omit it and inherit the native implementor configuration. LAZERS passes
-an explicit route to the native session API unchanged; the host either creates
-that route or returns its error. Live catalog prices, variants, and capability
-metadata inform advice but do not gate or rewrite a selection. Missing prices
-remain unknown. Each plan node may independently name at most one
-model-independent persona (`ui`, `systems`, or `small-refactoring`); do not map
-personas to models. Plans without a route or persona retain their behavior.
+Assign each new task one model-independent persona (`ui`, `systems`, or
+`small-refactoring`). Runtime resolves its current task, project or shared model
+mapping at dispatch, then falls back to the native implementor configuration.
+An explicit user-selected plan `workerModel` overrides that mapping with the exact
+`providerID`, model `id`, and optional native `variant`/effort. Running attempts
+retain their recorded route. LAZERS forwards selections unchanged; the native
+host decides availability. Catalog information informs advice without gating or
+rewriting a selection. Missing prices remain unknown. Legacy plans without a
+persona retain their behavior.
 
 Grade real work by acceptance correctness, regressions, scope, maintainability
 and necessary rework. Retain visible trajectories and failed attempts. Compare

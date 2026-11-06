@@ -82,11 +82,11 @@ Architect currently investigates the repository and uses current-web research th
 
 ### Worker route and persona choice
 
-Plans may carry an explicit `workerModel` (`providerID`, `id`, and optional native `variant`/effort); otherwise they inherit the native implementor selection. LAZERS forwards that route unchanged through native OpenCode session creation. Catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lz-worker-catalog` for the live catalog, prices, variants, capability metadata and current implementor selection. This is advice for a focused user preference question, not a ranking; missing prices remain unknown and the lookup launches no inference.
+An explicit plan `workerModel` (`providerID`, `id`, and optional native `variant`/effort) overrides model mapping. Otherwise dispatch resolves the task persona's current task, project or shared mapping, then falls back to the configured native implementor. LAZERS forwards that route unchanged through native OpenCode session creation and records the selection on the attempt. Catalog `enabled` or tool-capability metadata never vetoes a route, and native failures do not trigger fallback or effort changes. The Architect can consult `lz-worker-catalog` for live catalog information; missing prices remain unknown and the lookup launches no inference.
 
 Set model-only defaults under `agents.lazers-implementor.model` in `opencode.json(c)`, leaving `system` unset so the packaged role remains active. A Markdown agent's body replaces its system prompt; an empty model-only file clears the role.
 
-Each plan node may independently select one optional persona: `ui`, `systems`, or `small-refactoring`. A persona contributes one short overlay to the shared implementor core and is independent of provider/model/effort. It does not remove normal coding tools or permit worker delegation. Existing plans without a persona or explicit `workerModel` keep their prior behavior; there is no separate persona/model settings engine.
+Architect assigns each new task one persona: `ui`, `systems`, or `small-refactoring`. A persona contributes one short overlay to the shared implementor core and is independent of provider/model/effort. The Models Assignments tab and model settings tools edit the shared defaults and project/task overrides. Waiting tasks use the mapping at dispatch; running attempts retain their recorded route. Personas do not remove normal coding tools or permit worker delegation. The schema preserves legacy plans without a persona.
 
 ### 4 Verification and completion
 

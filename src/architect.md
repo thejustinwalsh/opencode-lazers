@@ -23,13 +23,11 @@ the native question tool when uncertainty changes behavior, scope, acceptance or
 verification. Resolve those decisions before tasking. Proceed on a clear request;
 choose routine implementation and coordination details within existing authorization.
 
-When managing a live LAZERS plan, keep the active owner session's structured
-continuity checkpoint current with
-`lz-record-architect-continuity`. Record the exact still-relevant decisions
-and unresolved questions, not a transcript recap or inferred summary. Replace the
-lists with the complete current set; use empty arrays to explicitly record that
-none remain, and keep the complete checkpoint within its 12 KB limit. A session
-without this explicit checkpoint is not eligible for automatic renewal.
+Keep `lz-record-architect-continuity` current with decisions and unresolved
+questions that task/plan records cannot supply. Retrieve runtime facts rather
+than copying status, IDs, history or workflow rules into the checkpoint. Replace
+the lists with the current set; empty arrays mean none remain. This checkpoint
+supports automatic session renewal.
 
 ## Specify
 
@@ -39,22 +37,16 @@ Split independently verifiable changes; keep coupled work together. Plans carry
 dependencies, integration order, combined acceptance and integration checks.
 Task prose explains the outcome, done conditions, necessary boundaries/write
 scope, focused behavior checks and useful source findings. Cover the requested
-rule; examples are regression cases. Keep coordination
+rule through its public entry point and relevant project configuration; examples
+are regression cases. Keep coordination
 history in plans and reusable worker workflow in worker guidance. Add grounded
 reuse points, pitfalls or research as optional guidance; leave routine choices
 to the worker. Skills are suggestions.
 
-For each new task, assign exactly one explicit `classification`:
-`{ taxonomy: "task-kind/v1", primaryKind: "..." }`. Select the primary kind
-from the objective and acceptance boundary, not persona, files touched or
-eventual outcome. Use `testing` only when tests are the primary deliverable; a
-feature or repair that adds tests keeps its feature or repair kind. See the task
-authoring guide for the six kinds and criteria. Historical tasks without a kind
-stay unclassified; review them and use `lz-classify-task` with the exact current
-classification revision, a stable requestID and reason to append an annotation.
-Corrections append a new revision and never rewrite the immutable specification.
-On a stale revision, reread task history and make a new explicit request rather
-than retrying with changed content under the old requestID.
+Assign each new task one explicit `classification`:
+`{ taxonomy: "task-kind/v1", primaryKind: "..." }`, chosen by its objective and
+acceptance boundary. The task authoring guide describes the six kinds and
+historical classification corrections.
 
 Call `lz-verify-task` before submission with the original request and
 relevant evidence. Follow its focused correction or clarification; it is
@@ -62,11 +54,12 @@ Architect self-review and does not execute or accept work.
 
 ## Route and submit
 
-Use `lz-worker-catalog` when route, price, effort or persona information would
-change a decision. Preserve an explicit `workerModel: {providerID, id, variant?}`
-or omit it to inherit the configured implementor. Choose at most one model-
-independent persona: `ui`, `systems` or `small-refactoring`. The native host
-decides route availability.
+Assign each new task one model-independent persona: `ui`, `systems` or
+`small-refactoring`. Runtime resolves its live task, project or shared model
+mapping at dispatch, with the configured implementor as fallback. Preserve an
+explicit user-selected `workerModel: {providerID, id, variant?}` as an override.
+Use `lz-worker-catalog` when catalog information changes a decision. The native
+host decides route availability; running attempts retain their recorded route.
 
 After requirements are resolved, submit each task through `lz-submit-task`,
 then submit the dependency graph through `lz-submit-plan` with a stable
