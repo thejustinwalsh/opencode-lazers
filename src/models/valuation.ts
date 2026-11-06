@@ -5,6 +5,7 @@ import {
 } from "../trajectory/accounting.ts"
 import { CurrentPriceIndexSchema, TaskValuationSchema } from "./valuation-schema.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
+import type { CurrentPriceApplicability } from "./current-price-index.ts"
 
 type Decimal = { coefficient: bigint; scale: number }
 type ProgressFact = {
@@ -994,6 +995,32 @@ export type ProjectTaskValuationInput = {
   progressTruncated: boolean
   truncatedContextSessionIDs: readonly string[]
   currentIndex: CurrentPriceIndex
+}
+
+export type ProjectTaskValuationRequest = Omit<ProjectTaskValuationInput, "currentIndex">
+
+/** Build price selectors from the same deduplicated usage and exact route allocation as valuation. */
+export function taskValuationApplicabilities(
+  input: ProjectTaskValuationRequest,
+): CurrentPriceApplicability[] {
+  const effort = projectTaskEffortBasis(input)
+  const usage = projectUsage(effort)
+  return usage.sessions.flatMap((session) => {
+    const attempts = input.attempts.filter((attempt) => attempt.sessionID === session.sessionID)
+    const allocation = sessionRouteAllocation(session.sessionID, attempts, input.progressFacts)
+    if (allocation.status !== "single-observed-route" || !allocation.identity) return []
+    return [
+      {
+        route: allocation.identity,
+        usage: Object.fromEntries(
+          USAGE_CATEGORIES.map((category) => {
+            const measure = session.categories[category]
+            return [category, { value: measure.value, status: measure.status }]
+          }),
+        ) as NonNullable<CurrentPriceApplicability["usage"]>,
+      },
+    ]
+  })
 }
 
 /** Revalue one deduplicated effort projection from explicitly supplied current product/price pins. */

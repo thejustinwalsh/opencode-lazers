@@ -466,6 +466,27 @@ export class TrajectoryPanelState {
       if (!captured || this.data.taskID !== taskID) return
       const report: TrajectoryReport = {
         ...statusReport,
+        effort: {
+          ...statusReport.effort,
+          ...(captured.effort.marketEquivalentCost
+            ? {
+                marketEquivalentCost: captured.effort.marketEquivalentCost,
+                recordedCost: {
+                  ...statusReport.effort.recordedCost,
+                  apiEquivalentTotalUsd: captured.effort.recordedCost.apiEquivalentTotalUsd,
+                  ...(captured.effort.recordedCost.apiEquivalentSubtotalUsd === undefined
+                    ? {}
+                    : {
+                        apiEquivalentSubtotalUsd:
+                          captured.effort.recordedCost.apiEquivalentSubtotalUsd,
+                      }),
+                  ...(captured.effort.recordedCost.apiEquivalentStatus === undefined
+                    ? {}
+                    : { apiEquivalentStatus: captured.effort.recordedCost.apiEquivalentStatus }),
+                },
+              }
+            : {}),
+        },
         coverage: {
           ...statusReport.coverage,
           ...captured.coverage,

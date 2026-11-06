@@ -8,6 +8,7 @@ import { inspectTrajectory } from "./read.ts"
 import { privacyStats, safeError } from "./privacy.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
+import type { TaskValuationProvider } from "../models/task-valuation.ts"
 
 type ToolContext = Pick<Plugin.Context, "permission" | "tool">
 
@@ -16,6 +17,7 @@ export function registerTrajectoryTools(
   store: RunnerStore,
   host: TrajectoryHost,
   projectID: string,
+  taskValuationProvider?: TaskValuationProvider,
 ) {
   const path = store.repository.path
   const projectDirectory = store.repository.projectDirectory
@@ -43,7 +45,7 @@ export function registerTrajectoryTools(
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () => {
+                try: async (signal) => {
                   const parsed = InspectTrajectoryInput.parse(input)
                   const connection = openReadOnlyTrajectoryStore(path, projectDirectory)
                   try {
@@ -53,6 +55,7 @@ export function registerTrajectoryTools(
                       projectID,
                       parsed,
                       cursorSecret,
+                      { taskValuationProvider, signal },
                     )
                     return { content: JSON.stringify(report), output: report }
                   } finally {

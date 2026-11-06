@@ -981,6 +981,28 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 }
                 const partial = () => usage().total === null
                 const apiCost = () => currentReport().effort.recordedCost.apiEquivalentTotalUsd
+                const marketCost = () => currentReport().effort.marketEquivalentCost
+                const marketStatus = () => marketCost()?.status ?? "unknown"
+                const formatMarketUSD = (value: number) =>
+                  `$${new Intl.NumberFormat("en-US", {
+                    maximumSignificantDigits: 6,
+                    useGrouping: false,
+                  }).format(value)}`
+                const displayedMarketCost = () => {
+                  const value = apiCost()
+                  if (value !== null) return formatMarketUSD(value)
+                  const subtotal = marketCost()?.subtotalUSD ?? null
+                  return subtotal === null ? "—" : `${formatMarketUSD(subtotal)} subtotal`
+                }
+                const priceSourceSummary = () => {
+                  const index = marketCost()?.currentIndex
+                  if (!index) return "Price source unavailable"
+                  const sources = index.sources.map(
+                    (source) =>
+                      `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation}`,
+                  )
+                  return `${sources.join("; ") || "No selected cached price source"} · ${index.freshness} freshness`
+                }
                 const categories = [
                   ["Uncached input", "uncachedInput"],
                   ["Cache read", "cacheRead"],
@@ -1014,11 +1036,65 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       </For>
                       <div
                         class="lazers-trajectory-cost"
-                        title="API-equivalent cost is unknown without complete pricing provenance."
+                        title="Market-equivalent worker usage is not actual provider charges or full task cost."
                       >
-                        <span>API equivalent</span>
-                        <span>{apiCost() === null ? "—" : `$${apiCost()!.toFixed(4)}`}</span>
+                        <span>API equivalent · {marketStatus()}</span>
+                        <span>{displayedMarketCost()}</span>
                       </div>
+                      <Show when={marketCost()}>
+                        <div class="lazers-trajectory-coverage">
+                          <span>{priceSourceSummary()}</span>
+                        </div>
+                        <details class="lazers-trajectory-payload lazers-trajectory-valuation">
+                          <summary>Pricing coverage and provenance</summary>
+                          <p>{marketCost()!.meaning}</p>
+                          <Show when={marketCost()!.currentIndex}>
+                            {(index) => (
+                              <div class="lazers-trajectory-coverage">
+                                <div>Models index {index().indexID}</div>
+                                <div>Read {new Date(index().retrievedAt).toLocaleString()}</div>
+                                <For each={index().sources}>
+                                  {(source) => (
+                                    <div>
+                                      {source.source} · snapshot {source.snapshotID} · generation{" "}
+                                      {source.generation} · {source.priceBasis} · {source.rateUnit}
+                                      {source.asOf ? ` · as of ${source.asOf}` : ""}
+                                    </div>
+                                  )}
+                                </For>
+                              </div>
+                            )}
+                          </Show>
+                          <div class="lazers-trajectory-coverage">
+                            {marketCost()!.coverage.pricedSessions} /{" "}
+                            {marketCost()!.coverage.totalUniqueSessions} sessions fully priced ·{" "}
+                            {marketCost()!.coverage.partialSessions} partial ·{" "}
+                            {marketCost()!.coverage.unpricedSessionIDs.length} unpriced
+                          </div>
+                          <For each={marketCost()!.sessions}>
+                            {(session) => (
+                              <div class="lazers-trajectory-coverage">
+                                <span>
+                                  Session {session.sessionID} · {session.status} · route{" "}
+                                  {session.routeAllocation.status} · price {session.pinStatus}
+                                </span>
+                                <span>
+                                  <For each={Object.entries(session.categories)}>
+                                    {([name, category]) => (
+                                      <span>
+                                        {name}: {category.status}
+                                        {category.valueUSD === null
+                                          ? ""
+                                          : ` · ${formatMarketUSD(category.valueUSD)}`}{" "}
+                                      </span>
+                                    )}
+                                  </For>
+                                </span>
+                              </div>
+                            )}
+                          </For>
+                        </details>
+                      </Show>
                       <div class="lazers-trajectory-coverage">
                         <span>
                           {usage().knownSessions} / {usage().totalSessions} unique sessions ·{" "}

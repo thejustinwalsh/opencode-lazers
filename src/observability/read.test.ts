@@ -15,6 +15,7 @@ import { validProposal } from "../../test/proposal.ts"
 import type { TrajectoryHost, TrajectorySession } from "../trajectory/native.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
 import { ObservationSyncState } from "./state.ts"
+import { unavailableTaskValuation } from "../models/task-valuation.ts"
 
 function metadataOnlyHost(fixture: ReturnType<typeof makeFixture>): TrajectoryHost {
   return {
@@ -206,7 +207,18 @@ test("trajectory projection preserves unique-session effort and refuses out-of-s
   const fixture = makeFixture()
   try {
     const secret = new Uint8Array(32).fill(8)
-    const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
+    let valuationReads = 0
+    const reads = new ObservationReads(
+      fixture.store,
+      fixture.host,
+      "project",
+      secret,
+      undefined,
+      async (input) => {
+        valuationReads += 1
+        return unavailableTaskValuation(input)
+      },
+    )
     const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
     tracker.initialize()
     const result = await reads.trajectory(
@@ -237,6 +249,7 @@ test("trajectory projection preserves unique-session effort and refuses out-of-s
     expect(report.effort.tokenUsage.total?.uncachedInput).toBe(30)
     expect(report.effort.tokenUsage.unknownAttempts).toEqual([])
     expect(report.effort.recordedCost.apiEquivalentTotalUsd).toBeNull()
+    expect(valuationReads).toBe(1)
     expect(report.attempts).toHaveLength(2)
     expect(report.attempts.every((attempt) => attempt.intervals.attempt.endedAt === null)).toBe(
       true,
@@ -263,6 +276,7 @@ test("trajectory projection preserves unique-session effort and refuses out-of-s
         tracker,
       ),
     ).rejects.toThrow("No observation in this scope")
+    expect(valuationReads).toBe(1)
   } finally {
     fixture.close()
   }

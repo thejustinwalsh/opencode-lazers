@@ -172,7 +172,7 @@ export function registerObservability(
         }).pipe(Effect.orDie),
       trajectory: (input) =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             await authorize(
               ctx,
               input.scope,
@@ -180,13 +180,14 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               "lz-inspect-trajectory",
             )
-            return reads.trajectory(input, tracker)
+            signal.throwIfAborted()
+            return reads.trajectory(input, tracker, signal)
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
       trajectoryHistory: (input, context) =>
         Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             await authorize(
               ctx,
               input.scope,
@@ -194,7 +195,8 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               "lz-inspect-trajectory",
             )
-            return reads.trajectoryHistory(input, tracker)
+            signal.throwIfAborted()
+            return reads.trajectoryHistory(input, tracker, signal)
           },
           catch: (error) => error,
         }).pipe(

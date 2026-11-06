@@ -30,6 +30,8 @@ import { readModelComparison } from "./comparison-read.ts"
 import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
+import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
+import type { TaskValuationProvider } from "./task-valuation.ts"
 import { createModelDecisionReader } from "./decision-read.ts"
 import {
   ModelsDecision,
@@ -165,6 +167,55 @@ function nativeCatalogAccess(
   return matchingOutcome ? "configured" : "unknown"
 }
 
+/** Read-only Models-owned task valuation provider using the same configured cached price path. */
+export function createModelsTaskValuationProvider(
+  ctx: ModelsContext,
+  repository: TaskRepository,
+  evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
+    new ModelEvidenceReadStore(databasePath, directory),
+): TaskValuationProvider {
+  const projectDirectory = repository.projectDirectory
+  const priceSourceSettings = new ModelPriceSourceSettingsStore(
+    {
+      get: (key, signal) =>
+        Effect.runPromise(ctx.storage.get(key), signal ? { signal } : undefined),
+      set: (key, value, signal) =>
+        Effect.runPromise(ctx.storage.set(key, value), signal ? { signal } : undefined),
+    },
+    projectDirectory,
+  )
+  const readPriceIndex = createTaskValuationReader(async (routes, signal) => {
+    signal.throwIfAborted()
+    const [policy, openrouter] = await Promise.all([
+      priceSourceSettings.read(signal),
+      configuredAccess(ctx, "openrouter", signal),
+    ])
+    signal.throwIfAborted()
+    const store = evidenceReadStoreFactory(repository.path, projectDirectory)
+    try {
+      signal.throwIfAborted()
+      const sources = store.readComparisonSources()
+      signal.throwIfAborted()
+      const opencode = nativeCatalogAccess(
+        sources.find((source) => source.source === "native-catalog"),
+      )
+      const settings = ModelPriceSourceSettingsSchema.parse({
+        policy,
+        access: { openrouter, opencode },
+      })
+      const index = buildCurrentPriceIndex({
+        sourceStore: { readComparisonSources: () => sources },
+        priceSources: settings,
+        observedRoutes: routes,
+      })
+      return { index, freshness: currentPriceIndexFreshness(index, sources) }
+    } finally {
+      store.close()
+    }
+  })
+  return readPriceIndex
+}
+
 /** Desktop RPC and Code Mode tools share the same project-scoped SQLite mappings. */
 export function registerModelsServer(
   ctx: ModelsContext,
@@ -246,27 +297,12 @@ export function registerModelsServer(
             priceSources: settings,
             observedRoutes: routes,
           })
-          const stale = index.pins.some((pin) => {
-            const source = sources.find(
-              (candidate) => candidate.snapshot?.snapshotID === pin.provenance.snapshotID,
-            )
-            return Boolean(
-              source?.refresh &&
-              (source.refresh.state === "failed" ||
-                source.refresh.state === "cancelled" ||
-                source.refresh.state === "refreshing"),
-            )
-          })
           return {
             settings,
             opencode,
             index,
             sources,
-            freshness: index.pins.length
-              ? stale
-                ? ("stale" as const)
-                : ("current" as const)
-              : ("unknown" as const),
+            freshness: currentPriceIndexFreshness(index, sources),
           }
         })
         const endpointPricing = readEndpointPricingEvidence(path, projectDirectory, signal)
