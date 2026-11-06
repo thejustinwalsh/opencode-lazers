@@ -432,9 +432,11 @@ async function installCandidateDependencies(input: {
   environment: Record<string, string>
   signal: AbortSignal
 }): Promise<void> {
+  const bun = Bun.which("bun", { PATH: input.environment.PATH })
+  if (!bun) throw new Error("Candidate dependency setup requires Bun on the verification PATH")
   return runRetainedSetupProcess({
     command: [
-      process.execPath,
+      bun,
       "install",
       "--frozen-lockfile",
       "--ignore-scripts",

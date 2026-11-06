@@ -170,7 +170,7 @@ function commitFixture(root: string): string {
   return git(root, ["rev-parse", "HEAD"])
 }
 
-test.each(["empty", "native", "shared", "external-child"] as const)(
+test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
   "an authored Bun test isolates the %s dependency setup",
   async (dependencySetup) => {
     const root = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-repo-"))
@@ -266,7 +266,19 @@ test.each(["empty", "native", "shared", "external-child"] as const)(
       )
       return
     }
-    const context = await createRetainedCheckContext(contextInput)
+    let context: Awaited<ReturnType<typeof createRetainedCheckContext>>
+    if (dependencySetup === "compiled") {
+      const creator = join(state, "compiled-creator.ts")
+      const executable = join(state, "compiled-creator")
+      writeFileSync(
+        creator,
+        `import { createRetainedCheckContext } from ${JSON.stringify(new URL("./isolation.ts", import.meta.url).pathname)}; console.log(JSON.stringify(await createRetainedCheckContext(JSON.parse(process.argv.at(-1)!))))`,
+      )
+      execFileSync(process.execPath, ["build", "--compile", creator, "--outfile", executable])
+      context = JSON.parse(
+        execFileSync(executable, [JSON.stringify(contextInput)], { encoding: "utf8" }),
+      )
+    } else context = await createRetainedCheckContext(contextInput)
     if (nativeDirectory) {
       const adopted = statSync(join(context.directory, "dependencies"))
       expect([adopted.dev, adopted.ino]).toEqual([nativeDirectory.dev, nativeDirectory.ino])
