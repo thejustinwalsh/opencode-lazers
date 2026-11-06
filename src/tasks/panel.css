@@ -163,12 +163,23 @@
   font-size: 0.74em;
   line-height: 1.35;
 }
-.lazers-tasks-row-hold {
-  min-width: 0;
+.lazers-tasks-row-lifecycle {
+  color: var(--text-weak);
+  text-transform: capitalize;
+}
+.lazers-tasks-row-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-base);
+  text-transform: capitalize;
+}
+.lazers-tasks-row-waiting {
   color: var(--icon-warning-base);
-  font-size: 0.76em;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+.lazers-tasks-row-attention {
+  color: var(--text-weak);
 }
 .lazers-tasks-foreground {
   display: inline-flex;
@@ -281,9 +292,9 @@
 }
 .lazers-tasks-state[data-state="running"],
 .lazers-tasks-state[data-state="verifying"] {
-  border-color: var(--icon-success-base);
-  border-top-color: transparent;
-  animation: lazers-task-spin 1s linear infinite;
+  border-color: var(--text-weak);
+  border-top-color: var(--text-weak);
+  animation: none;
 }
 .lazers-tasks-state[data-waiting="true"] {
   border-color: var(--icon-warning-base);
@@ -337,11 +348,6 @@
   content: "−";
   font-size: 11px;
   line-height: 1;
-}
-@keyframes lazers-task-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 .lazers-tasks button:focus-visible,
 .lazers-tasks summary:focus-visible,
@@ -410,6 +416,10 @@
   color: var(--text-weak);
   font-size: 0.86em;
   line-height: 1.4;
+}
+.lazers-tasks-worker {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .lazers-tasks-start {
   min-height: 26px;
