@@ -15,11 +15,16 @@ export function retainedVerificationProbeBasis(
   const workspace = phase === "task" ? operation.taskWorkspace : operation.combinedWorkspace
   if (!workspace) throw new Error(`Retained ${phase} candidate checkout has not been reserved`)
   const artifact = phase === "task" ? operation.artifact : operation.combinedArtifact
+  if (!artifact) throw new Error(`Retained ${phase} candidate is not available yet`)
+  const inputFingerprint =
+    phase === "task"
+      ? operation.inputFingerprint
+      : (operation.combinedInputFingerprint ?? operation.inputFingerprint)
   return {
     candidate: { revision: artifact, workspace },
     inputs: {
       recordID: `retained-verification:${operation.id}:inputs`,
-      revision: operation.inputFingerprint,
+      revision: inputFingerprint,
     },
     environment: {
       recordID: `retained-verification:${operation.id}:environment`,

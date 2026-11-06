@@ -46,6 +46,9 @@ function fixture(
     humanTaskEvidence?: boolean
     retainedDependencyInstaller?: RetainedDependencyInstaller
     requestTick?: () => Promise<void>
+    successorCount?: number
+    failRetainedCheck?: boolean
+    combinedHumanEvidence?: boolean
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-reverify-project-"))
@@ -96,10 +99,11 @@ function fixture(
   writeFileSync(
     join(root, "src", "runner", "retained-check.test.ts"),
     `import { Database } from "bun:sqlite"\n` +
-      `import { appendFileSync, mkdirSync } from "node:fs"\n` +
+      `import { appendFileSync, existsSync, mkdirSync } from "node:fs"\n` +
       `import { dirname, join } from "node:path"\n` +
       `import { expect, test } from "bun:test"\n` +
       `test("authored project check writes only to the isolated profile and database", () => {\n` +
+      `  if (existsSync(join(import.meta.dir, "FAIL_RETAINED_CHECK"))) throw new Error("fixture retained check failure")\n` +
       `  if (!process.env.LAZERS_VERIFICATION_SQLITE) throw new Error("No private verification database")\n` +
       `  const sentinel = join(process.env.HOME!, "profile", "sentinel")\n` +
       `  mkdirSync(dirname(sentinel), { recursive: true })\n` +
@@ -115,6 +119,8 @@ function fixture(
       `  expect(checkID).toMatch(/^isolated-(?:task|combined)-check$/)\n` +
       `})\n`,
   )
+  if (options.failRetainedCheck)
+    writeFileSync(join(root, "src", "runner", "FAIL_RETAINED_CHECK"), "fail\n")
   writeFileSync(
     join(root, "src", "models", "retained-delayed-check.test.ts"),
     `import { appendFileSync, mkdirSync } from "node:fs"\n` +
@@ -174,6 +180,39 @@ function fixture(
     },
     proposal,
   })
+  const tasks = [task]
+  for (let index = 0; index < (options.successorCount ?? 0); index++) {
+    const checkID = `successor-${index + 1}-check`
+    const successorProposal = validProposal()
+    successorProposal.objective = `Complete retained-verification successor ${index + 1}`
+    successorProposal.writeScope = [`result-${index + 2}.txt`]
+    successorProposal.verification = [{ id: checkID, command: "true", timeoutMs: 10_000 }]
+    successorProposal.acceptance = [
+      {
+        id: `successor-${index + 1}-candidate`,
+        assertion: `Successor ${index + 1} passes its authored task check`,
+        evidence: [{ kind: "verification", verificationID: checkID }],
+      },
+    ]
+    successorProposal.limits.maxRepairAttempts = 0
+    tasks.push(
+      repository.insert({
+        schemaVersion: 1,
+        id: crypto.randomUUID(),
+        revision: 1,
+        status: "submitted",
+        createdAt: new Date().toISOString(),
+        provenance: {
+          projectID: "project",
+          projectDirectory: root,
+          workspaceDirectory: root,
+          sessionID: "owner",
+          startingRevision: { kind: "git", commit: base },
+        },
+        proposal: successorProposal,
+      }),
+    )
+  }
   const plan = store.submit(
     {
       requestID: "retained-reverify-plan",
@@ -181,9 +220,12 @@ function fixture(
       workspaceMode: "isolated",
       baseCommit: base,
       workerModel: model,
-      nodes: [{ taskID: task.id, revision: 1 }],
-      dependencies: [],
-      integrationOrder: [task.id],
+      nodes: tasks.map((candidate) => ({ taskID: candidate.id, revision: 1 })),
+      dependencies: tasks.slice(1).map((successor, index) => ({
+        prerequisite: tasks[index]!.id,
+        successor: successor.id,
+      })),
+      integrationOrder: tasks.map((candidate) => candidate.id),
       verification: [
         {
           id: "isolated-combined-check",
@@ -197,7 +239,12 @@ function fixture(
         {
           id: "combined-candidate",
           assertion: "The combined candidate passed its exact private-resource check",
-          evidence: [{ kind: "verification", verificationID: "isolated-combined-check" }],
+          evidence: [
+            { kind: "verification", verificationID: "isolated-combined-check" },
+            ...(options.combinedHumanEvidence
+              ? [{ kind: "human" as const, decision: "Architect observes the combined candidate" }]
+              : []),
+          ],
         },
       ],
     },
@@ -298,8 +345,19 @@ function fixture(
       prompts.push({ sessionID: input.sessionID, id: input.id })
       const worker = sessions.get(input.sessionID)
       if (!worker) throw new Error("The original worker is missing")
-      writeFileSync(join(input.directory, "result.txt"), "retained candidate\n")
-      git(input.directory, ["add", "result.txt"])
+      const attemptID = worker.metadata?.lazersAttemptID
+      const taskIndex = store
+        .attempts(plan.planID)
+        .find((attempt) => attempt.id === attemptID)?.task_id
+      const resultFile =
+        tasks.findIndex((candidate) => candidate.id === taskIndex) <= 0
+          ? "result.txt"
+          : `result-${tasks.findIndex((candidate) => candidate.id === taskIndex) + 1}.txt`
+      writeFileSync(
+        join(input.directory, resultFile),
+        `retained candidate ${taskIndex ?? "unknown"}\n`,
+      )
+      git(input.directory, ["add", resultFile])
       git(input.directory, ["commit", "-m", "retained candidate"])
       worker.messages.push({ id: input.id, text: input.text })
       worker.busy = false
@@ -336,6 +394,7 @@ function fixture(
     state,
     oldHome,
     task,
+    tasks,
     planID: plan.planID,
     store,
     runtime,
@@ -408,153 +467,441 @@ function writeInjectedPrivatePackage(candidateWorkspace: string): void {
   )
 }
 
-test("owner verifies an exact failed-attempt candidate with zero replacement prompts", async () => {
-  const f = await failedFixture()
-  const planBefore = f.plan
-  const attemptBefore = f.attempt
-  expect(planBefore.state).toBe("blocked")
-  expect(attemptBefore.state).toBe("failed")
-  expect(attemptBefore.artifact).toMatch(/^[a-f0-9]{40}$/)
-  const exactArtifact = attemptBefore.artifact
-  if (!exactArtifact) throw new Error("Failed attempt did not retain its committed candidate")
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
-  const sessionBefore = structuredClone(f.sessions.get(attemptBefore.session_id))
-  const promptCount = f.prompts.length
-  const sessionCount = f.created.length
-  const worktreeCount = f.worktreeCreations.length
-  const oldEffectPayload = JSON.stringify({ uncertain: true, originalAttemptOnly: true })
-  f.store.atomic((db) =>
-    db
-      .query(
-        `INSERT INTO runner_effects(id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
+test(
+  "owner verifies an exact failed-attempt candidate with zero replacement prompts",
+  async () => {
+    const f = await failedFixture()
+    const planBefore = f.plan
+    const attemptBefore = f.attempt
+    expect(planBefore.state).toBe("blocked")
+    expect(attemptBefore.state).toBe("failed")
+    expect(attemptBefore.artifact).toMatch(/^[a-f0-9]{40}$/)
+    const exactArtifact = attemptBefore.artifact
+    if (!exactArtifact) throw new Error("Failed attempt did not retain its committed candidate")
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    const sessionBefore = structuredClone(f.sessions.get(attemptBefore.session_id))
+    const promptCount = f.prompts.length
+    const sessionCount = f.created.length
+    const worktreeCount = f.worktreeCreations.length
+    const oldEffectPayload = JSON.stringify({ uncertain: true, originalAttemptOnly: true })
+    f.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO runner_effects(id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
        VALUES('retained-old-uncertain-effect',?,?,?,?,?,?,NULL,0)`,
-      )
-      .run(
-        f.planID,
-        f.task.id,
-        attemptBefore.id,
-        "old-resource-effect",
-        "uncertain",
-        oldEffectPayload,
+        )
+        .run(
+          f.planID,
+          f.task.id,
+          attemptBefore.id,
+          "old-resource-effect",
+          "uncertain",
+          oldEffectPayload,
+        ),
+    )
+    const oldEffectBefore = f.store
+      .effects(f.planID)
+      .find((effect) => effect.id === "retained-old-uncertain-effect")
+    const oldProfileBefore = readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")
+
+    const verifyCommand = {
+      requestID: "verify-retained-candidate",
+      planID: f.planID,
+      expectedVersion: planBefore.version,
+      action: "verify-retained" as const,
+      projectID: "project",
+      planRevision: planBefore.revision,
+      taskID: f.task.id,
+      taskRevision: f.task.revision,
+      attemptID: attemptBefore.id,
+      artifact: exactArtifact,
+      reason: "Verify the exact committed implementation without replaying its worker turn",
+    }
+    const result = (await f.runtime.command(verifyCommand, "owner")) as {
+      operationID: string
+      generation: number
+      status: string
+    }
+
+    expect(result.status).toBe("retained-verification-requested")
+    expect(result.generation).toBe(1)
+    expect(await f.runtime.command(verifyCommand, "owner")).toEqual(result)
+    expect(f.worktreeCreations).toHaveLength(worktreeCount + 2)
+    const operation = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(result.operationID),
+    )
+    expect(operation).toBeDefined()
+    const retained = JSON.parse(operation!.payload) as {
+      state: string
+      cleanupState: string
+      artifact: string
+      combinedArtifact: string
+      taskWorkspace: string | null
+      combinedWorkspace: string | null
+    }
+    expect(retained.state).toBe("accepted")
+    expect(retained.cleanupState).toBe("complete")
+    expect(retained.artifact).toBe(exactArtifact)
+    expect(f.store.plan(f.planID)?.state).toBe("accepted")
+    expect(f.store.nodes(f.planID)[0]?.artifact).toBe(exactArtifact)
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.planID)[0]).toMatchObject({
+      id: attemptBefore.id,
+      state: "failed",
+      session_id: attemptBefore.session_id,
+      message_id: attemptBefore.message_id,
+      artifact: exactArtifact,
+      token_count: attemptBefore.token_count,
+      tool_count: attemptBefore.tool_count,
+      cost: attemptBefore.cost,
+    })
+    expect(f.prompts).toHaveLength(promptCount)
+    expect(f.created).toHaveLength(sessionCount)
+    expect(f.sessions.get(attemptBefore.session_id)).toEqual(sessionBefore)
+    expect(
+      f.store.effects(f.planID).find((effect) => effect.id === "retained-old-uncertain-effect"),
+    ).toEqual(oldEffectBefore)
+    expect(oldEffectBefore).toMatchObject({ state: "uncertain", payload: oldEffectPayload })
+    expect(readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")).toBe(oldProfileBefore)
+    expect(retained.combinedArtifact).toMatch(/^[a-f0-9]{40}$/)
+    expect(retained.taskWorkspace).not.toBeNull()
+    expect(retained.combinedWorkspace).not.toBeNull()
+    expect(existsSync(retained.taskWorkspace!)).toBe(false)
+    expect(existsSync(retained.combinedWorkspace!)).toBe(false)
+    const checks = f.store.atomic((db) =>
+      db
+        .query<
+          {
+            phase: string
+            check_id: string
+            state: string
+            receipt: string | null
+            cleanup_state: string
+          },
+          [string]
+        >(
+          "SELECT phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase",
+        )
+        .all(result.operationID),
+    )
+    expect(checks).toHaveLength(2)
+    expect(
+      checks.every((check) => check.state === "completed" && check.cleanup_state === "complete"),
+    ).toBe(true)
+    for (const check of checks) {
+      const receipt = JSON.parse(check.receipt!) as {
+        exitCode: number
+        cwd: string
+        isolation: {
+          operationID: string
+          generation: number
+          phase: string
+          resources: Array<{ name: string; realPath: string; device: number; inode: number }>
+          sqlitePath: string
+        }
+      }
+      expect(receipt.exitCode).toBe(0)
+      expect(receipt.cwd).not.toBe(attemptBefore.workspace)
+      expect(receipt.isolation.operationID).toBe(result.operationID)
+      expect(receipt.isolation.generation).toBe(1)
+      expect(receipt.isolation.phase).toBe(check.phase)
+      expect(receipt.isolation.resources.length).toBe(9)
+      expect(
+        new Set(
+          receipt.isolation.resources.map((resource) => `${resource.device}:${resource.inode}`),
+        ).size,
+      ).toBe(9)
+      expect(receipt.isolation.sqlitePath).toContain("retained-verification-resources")
+    }
+  },
+  { timeout: 30_000 },
+)
+
+test(
+  "retained task evidence releases a successor chain and defers combined checks across reopen",
+  async () => {
+    const f = await failedFixture({
+      successorCount: 2,
+      humanTaskEvidence: true,
+      combinedHumanEvidence: true,
+      requestTick: async () => {},
+    })
+    const originalAttempt = f.attempt
+    const originalSession = structuredClone(f.sessions.get(originalAttempt.session_id))
+    const originalPromptCount = f.prompts.filter(
+      (prompt) => prompt.sessionID === originalAttempt.session_id,
+    ).length
+    const request = retainedVerifyCommand(f, "verify-retained-chain-with-human-evidence")
+    const requested = (await f.runtime.command(request, "owner")) as {
+      operationID: string
+      generation: number
+      status: string
+    }
+    expect(requested.status).toBe("retained-verification-requested")
+    await f.runtime.tick()
+
+    const initialOperation = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(requested.operationID),
+    )!
+    expect(JSON.parse(initialOperation.payload)).toMatchObject({
+      state: "waiting-human",
+      combinedArtifact: null,
+      combinedWorkspace: null,
+    })
+    expect(f.store.nodes(f.planID).map((node) => node.state)).toEqual([
+      "failed",
+      "queued",
+      "queued",
+    ])
+    expect(
+      f.store.attempts(f.planID).filter((attempt) => attempt.task_id === f.task.id),
+    ).toHaveLength(1)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=? AND phase='combined'",
+            )
+            .get(requested.operationID)!.count,
       ),
-  )
-  const oldEffectBefore = f.store
-    .effects(f.planID)
-    .find((effect) => effect.id === "retained-old-uncertain-effect")
-  const oldProfileBefore = readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")
+    ).toBe(0)
+    const taskChecksBeforeReplay = f.store.atomic((db) =>
+      db
+        .query<{ receipt: string | null; state: string }, [string]>(
+          "SELECT receipt,state FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+        )
+        .get(requested.operationID),
+    )!
+    const worktreesBeforeReplay = f.worktreeCreations.length
+    expect(await f.runtime.command(request, "owner")).toEqual(requested)
+    expect(f.worktreeCreations).toHaveLength(worktreesBeforeReplay)
+    expect(
+      f.store.atomic((db) =>
+        db
+          .query<{ receipt: string | null; state: string }, [string]>(
+            "SELECT receipt,state FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+          )
+          .get(requested.operationID),
+      ),
+    ).toEqual(taskChecksBeforeReplay)
+    expect(
+      f.prompts.filter((prompt) => prompt.sessionID === originalAttempt.session_id),
+    ).toHaveLength(originalPromptCount)
+    expect(f.sessions.get(originalAttempt.session_id)).toEqual(originalSession)
 
-  const verifyCommand = {
-    requestID: "verify-retained-candidate",
-    planID: f.planID,
-    expectedVersion: planBefore.version,
-    action: "verify-retained" as const,
-    projectID: "project",
-    planRevision: planBefore.revision,
-    taskID: f.task.id,
-    taskRevision: f.task.revision,
-    attemptID: attemptBefore.id,
-    artifact: exactArtifact,
-    reason: "Verify the exact committed implementation without replaying its worker turn",
-  }
-  const result = (await f.runtime.command(verifyCommand, "owner")) as {
-    operationID: string
-    generation: number
-    status: string
-  }
+    await f.runtime.stop()
+    f.store.atomic((db) =>
+      db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
+    )
+    f.store.repository.close()
+    const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+    const reopenedStore = new RunnerStore(reopenedRepository)
+    const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project")
+    cleanups.push(() => {
+      void reopenedRuntime.stop()
+      reopenedRepository.close()
+    })
+    await reopenedRuntime.tick()
+    expect(
+      reopenedStore.atomic((db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_retained_verifications WHERE id=?",
+          )
+          .get(requested.operationID),
+      ),
+    ).toMatchObject({ payload: expect.stringContaining('"state":"waiting-human"') })
+    expect(
+      reopenedStore.atomic((db) =>
+        db
+          .query<{ receipt: string | null; state: string }, [string]>(
+            "SELECT receipt,state FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+          )
+          .get(requested.operationID),
+      ),
+    ).toEqual(taskChecksBeforeReplay)
+    expect(
+      f.prompts.filter((prompt) => prompt.sessionID === originalAttempt.session_id),
+    ).toHaveLength(originalPromptCount)
+    expect(reopenedStore.nodes(f.planID).map((node) => node.state)).toEqual([
+      "failed",
+      "queued",
+      "queued",
+    ])
 
-  expect(result.status).toBe("retained-verification-requested")
-  expect(result.generation).toBe(1)
-  expect(await f.runtime.command(verifyCommand, "owner")).toEqual(result)
-  expect(f.worktreeCreations).toHaveLength(worktreeCount + 2)
+    await reopenedRuntime.command(
+      {
+        requestID: "provide-retained-chain-human-evidence",
+        planID: f.planID,
+        expectedVersion: reopenedStore.plan(f.planID)!.version,
+        action: "human-evidence",
+        taskID: f.task.id,
+        assertionID: "task-candidate",
+        artifact: f.artifact,
+        retainedVerificationID: requested.operationID,
+        reason: "The Architect observed the retained first-task candidate",
+      },
+      "owner",
+    )
+    expect(reopenedStore.nodes(f.planID)[0]?.state).toBe("accepted")
+    expect(reopenedStore.nodes(f.planID)[2]?.state).toBe("queued")
+    expect(reopenedStore.plan(f.planID)?.state).toBe("running")
+    expect(
+      reopenedStore.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=? AND phase='combined'",
+            )
+            .get(requested.operationID)!.count,
+      ),
+    ).toBe(0)
+
+    for (
+      let i = 0;
+      i < 40 &&
+      reopenedStore.plan(f.planID)?.state !== "accepted" &&
+      reopenedStore
+        .atomic((db) =>
+          db
+            .query<{ payload: string }, [string]>(
+              "SELECT payload FROM runner_retained_verifications WHERE id=?",
+            )
+            .get(requested.operationID),
+        )
+        ?.payload.includes('"state":"waiting-human-combined"') !== true;
+      i++
+    )
+      await reopenedRuntime.tick()
+    expect(reopenedStore.nodes(f.planID).map((node) => node.state)).toEqual([
+      "accepted",
+      "accepted",
+      "accepted",
+    ])
+    const waitingCombinedEvidence = JSON.parse(
+      reopenedStore.atomic((db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_retained_verifications WHERE id=?",
+          )
+          .get(requested.operationID),
+      )!.payload,
+    ) as { state: string; combinedArtifact: string | null }
+    expect(waitingCombinedEvidence.state).toBe("waiting-human-combined")
+    expect(typeof waitingCombinedEvidence.combinedArtifact).toBe("string")
+    expect(waitingCombinedEvidence.combinedArtifact).toMatch(/^[a-f0-9]{40}$/)
+    const combinedOperation = RetainedVerificationSchema.parse(waitingCombinedEvidence)
+    const combinedInputFingerprint = combinedOperation.combinedInputFingerprint
+    if (typeof combinedInputFingerprint !== "string")
+      throw new Error("Deferred combined evidence has no phase-specific input fingerprint")
+    expect(combinedInputFingerprint).not.toBe(combinedOperation.inputFingerprint)
+    expect(retainedVerificationProbeBasis(combinedOperation, "combined").inputs.revision).toBe(
+      combinedInputFingerprint,
+    )
+    expect(reopenedStore.plan(f.planID)?.state).toBe("running")
+    expect(
+      reopenedStore.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=? AND phase='combined' AND state='completed'",
+            )
+            .get(requested.operationID)!.count,
+      ),
+    ).toBe(1)
+    await reopenedRuntime.command(
+      {
+        requestID: "provide-retained-chain-combined-human-evidence",
+        planID: f.planID,
+        expectedVersion: reopenedStore.plan(f.planID)!.version,
+        action: "human-evidence",
+        assertionID: "combined-candidate",
+        artifact: waitingCombinedEvidence.combinedArtifact!,
+        retainedVerificationID: requested.operationID,
+        reason: "The Architect observed the complete combined candidate",
+      },
+      "owner",
+    )
+    expect(reopenedStore.plan(f.planID)?.state).toBe("accepted")
+    expect(
+      reopenedStore.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=? AND phase='combined' AND state='completed'",
+            )
+            .get(requested.operationID)!.count,
+      ),
+    ).toBe(1)
+    expect(
+      reopenedStore.attempts(f.planID).filter((attempt) => attempt.task_id === f.task.id),
+    ).toHaveLength(1)
+    expect(
+      reopenedStore.attempts(f.planID).find((attempt) => attempt.id === originalAttempt.id),
+    ).toMatchObject({
+      state: "failed",
+      session_id: originalAttempt.session_id,
+      message_id: originalAttempt.message_id,
+      artifact: f.artifact,
+      token_count: originalAttempt.token_count,
+      tool_count: originalAttempt.tool_count,
+    })
+    expect(
+      f.prompts.filter((prompt) => prompt.sessionID === originalAttempt.session_id),
+    ).toHaveLength(originalPromptCount)
+  },
+  { timeout: 30_000 },
+)
+
+test("failed retained task evidence never accepts the target or releases dependents", async () => {
+  const f = await failedFixture({ successorCount: 1, failRetainedCheck: true })
+  const originalPromptCount = f.prompts.length
+  const result = (await f.runtime.command(
+    retainedVerifyCommand(f, "verify-retained-failing-task-evidence"),
+    "owner",
+  )) as { operationID: string }
   const operation = f.store.atomic((db) =>
     db
       .query<{ payload: string }, [string]>(
         "SELECT payload FROM runner_retained_verifications WHERE id=?",
       )
       .get(result.operationID),
-  )
-  expect(operation).toBeDefined()
-  const retained = JSON.parse(operation!.payload) as {
-    state: string
-    cleanupState: string
-    artifact: string
-    combinedArtifact: string
-    taskWorkspace: string | null
-    combinedWorkspace: string | null
-  }
-  expect(retained.state).toBe("accepted")
-  expect(retained.cleanupState).toBe("complete")
-  expect(retained.artifact).toBe(exactArtifact)
-  expect(f.store.plan(f.planID)?.state).toBe("accepted")
-  expect(f.store.nodes(f.planID)[0]?.artifact).toBe(exactArtifact)
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
-  expect(f.store.attempts(f.planID)[0]).toMatchObject({
-    id: attemptBefore.id,
-    state: "failed",
-    session_id: attemptBefore.session_id,
-    message_id: attemptBefore.message_id,
-    artifact: exactArtifact,
-    token_count: attemptBefore.token_count,
-    tool_count: attemptBefore.tool_count,
-    cost: attemptBefore.cost,
-  })
-  expect(f.prompts).toHaveLength(promptCount)
-  expect(f.created).toHaveLength(sessionCount)
-  expect(f.sessions.get(attemptBefore.session_id)).toEqual(sessionBefore)
+  )!
+  expect(JSON.parse(operation.payload)).toMatchObject({ state: "held" })
   expect(
-    f.store.effects(f.planID).find((effect) => effect.id === "retained-old-uncertain-effect"),
-  ).toEqual(oldEffectBefore)
-  expect(oldEffectBefore).toMatchObject({ state: "uncertain", payload: oldEffectPayload })
-  expect(readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")).toBe(oldProfileBefore)
-  expect(retained.combinedArtifact).toMatch(/^[a-f0-9]{40}$/)
-  expect(retained.taskWorkspace).not.toBeNull()
-  expect(retained.combinedWorkspace).not.toBeNull()
-  expect(existsSync(retained.taskWorkspace!)).toBe(false)
-  expect(existsSync(retained.combinedWorkspace!)).toBe(false)
-  const checks = f.store.atomic((db) =>
-    db
-      .query<
-        {
-          phase: string
-          check_id: string
-          state: string
-          receipt: string | null
-          cleanup_state: string
-        },
-        [string]
-      >(
-        "SELECT phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase",
-      )
-      .all(result.operationID),
-  )
-  expect(checks).toHaveLength(2)
+    f.store.atomic((db) =>
+      db
+        .query<{ exit_code: number; state: string }, [string]>(
+          "SELECT json_extract(receipt,'$.exitCode') AS exit_code,state FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+        )
+        .get(result.operationID),
+    ),
+  ).toMatchObject({ exit_code: expect.any(Number), state: "completed" })
   expect(
-    checks.every((check) => check.state === "completed" && check.cleanup_state === "complete"),
-  ).toBe(true)
-  for (const check of checks) {
-    const receipt = JSON.parse(check.receipt!) as {
-      exitCode: number
-      cwd: string
-      isolation: {
-        operationID: string
-        generation: number
-        phase: string
-        resources: Array<{ name: string; realPath: string; device: number; inode: number }>
-        sqlitePath: string
-      }
-    }
-    expect(receipt.exitCode).toBe(0)
-    expect(receipt.cwd).not.toBe(attemptBefore.workspace)
-    expect(receipt.isolation.operationID).toBe(result.operationID)
-    expect(receipt.isolation.generation).toBe(1)
-    expect(receipt.isolation.phase).toBe(check.phase)
-    expect(receipt.isolation.resources.length).toBe(9)
-    expect(
-      new Set(receipt.isolation.resources.map((resource) => `${resource.device}:${resource.inode}`))
-        .size,
-    ).toBe(9)
-    expect(receipt.isolation.sqlitePath).toContain("retained-verification-resources")
-  }
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ exit_code: number }, [string]>(
+            "SELECT json_extract(receipt,'$.exitCode') AS exit_code FROM runner_retained_verification_checks WHERE operation_id=? AND phase='task'",
+          )
+          .get(result.operationID)!.exit_code,
+    ),
+  ).not.toBe(0)
+  expect(f.store.nodes(f.planID).map((node) => node.state)).toEqual(["failed", "queued"])
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.prompts).toHaveLength(originalPromptCount)
+  expect(
+    f.store.attempts(f.planID).filter((attempt) => attempt.task_id === f.task.id),
+  ).toHaveLength(1)
 })
 
 test("stale, wrong-candidate, wrong-attempt and foreign-owner requests launch no checks", async () => {
@@ -774,137 +1121,144 @@ test("a current task probe definition cannot be bypassed by task-check receipts"
   expect(f.store.attempts(f.planID)).toHaveLength(1)
 })
 
-test("a retained probe is generation-bound, owner-recorded, resource-isolated, and gates acceptance", async () => {
-  const f = await failedFixture()
-  const probes = new ProbeRepository(f.store.repository)
-  const definitionResult = probes.define(
-    {
-      requestID: "required-retained-probe-definition-pass",
-      target: { kind: "task", taskID: f.task.id },
-      scenarios: [
-        {
-          id: "retained-live-behavior-pass",
-          summary: "Exercise the exact retained candidate",
-          acceptanceIDs: ["task-candidate"],
-          procedure: { recordID: "runbook:retained-probe-pass", revision: "1" },
-        },
-      ],
-      notApplicable: [],
-    },
-    { sessionID: "owner", agent: "architect" },
-  )
-  if (definitionResult.status === "conflict")
-    throw new Error("Probe definition unexpectedly conflicted")
-  const requested = (await f.runtime.command(
-    {
-      requestID: "verify-retained-with-live-probe",
-      planID: f.planID,
-      expectedVersion: f.plan.version,
-      action: "verify-retained",
-      projectID: "project",
-      planRevision: f.plan.revision,
-      taskID: f.task.id,
-      taskRevision: f.task.revision,
+test(
+  "a retained probe is generation-bound, owner-recorded, resource-isolated, and gates acceptance",
+  async () => {
+    const f = await failedFixture()
+    const probes = new ProbeRepository(f.store.repository)
+    const definitionResult = probes.define(
+      {
+        requestID: "required-retained-probe-definition-pass",
+        target: { kind: "task", taskID: f.task.id },
+        scenarios: [
+          {
+            id: "retained-live-behavior-pass",
+            summary: "Exercise the exact retained candidate",
+            acceptanceIDs: ["task-candidate"],
+            procedure: { recordID: "runbook:retained-probe-pass", revision: "1" },
+          },
+        ],
+        notApplicable: [],
+      },
+      { sessionID: "owner", agent: "architect" },
+    )
+    if (definitionResult.status === "conflict")
+      throw new Error("Probe definition unexpectedly conflicted")
+    const requested = (await f.runtime.command(
+      {
+        requestID: "verify-retained-with-live-probe",
+        planID: f.planID,
+        expectedVersion: f.plan.version,
+        action: "verify-retained",
+        projectID: "project",
+        planRevision: f.plan.revision,
+        taskID: f.task.id,
+        taskRevision: f.task.revision,
+        attemptID: f.attempt.id,
+        artifact: f.artifact,
+        reason: "Run ordinary isolated checks and preserve the required live behavior probe",
+      },
+      "owner",
+    )) as { operationID: string }
+    const operationRow = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(requested.operationID),
+    )!
+    const operation = RetainedVerificationSchema.parse(JSON.parse(operationRow.payload))
+    const basis = retainedVerificationProbeBasis(operation, "task")
+    const probeInput = {
+      requestID: "retained-live-probe-run",
+      definitionID: definitionResult.definition.definitionID,
+      definitionRevision: definitionResult.definition.revision,
+      scenarioID: "retained-live-behavior-pass",
       attemptID: f.attempt.id,
-      artifact: f.artifact,
-      reason: "Run ordinary isolated checks and preserve the required live behavior probe",
-    },
-    "owner",
-  )) as { operationID: string }
-  const operationRow = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(requested.operationID),
-  )!
-  const operation = RetainedVerificationSchema.parse(JSON.parse(operationRow.payload))
-  const basis = retainedVerificationProbeBasis(operation, "task")
-  const probeInput = {
-    requestID: "retained-live-probe-run",
-    definitionID: definitionResult.definition.definitionID,
-    definitionRevision: definitionResult.definition.revision,
-    scenarioID: "retained-live-behavior-pass",
-    attemptID: f.attempt.id,
-    ...basis,
-    capabilities: ["isolated-filesystem-fixture"],
-    setupReferences: ["runbook:retained-probe-pass#setup"],
-    fixtureReferences: ["owned-resource:retained-probe-fixture"],
-    actions: [
-      {
-        kind: "navigate" as const,
-        summary: "Exercise the retained candidate in its owned context",
-      },
-    ],
-    observations: [
-      { source: "tool-observation" as const, fact: "The exact retained behavior was observed" },
-    ],
-    evidenceReferences: [{ kind: "interaction" as const, reference: "trace:retained-probe-pass" }],
-    timing: { startedAt: 100, finishedAt: null, elapsedMs: null },
-    usage: { tokens: 0, toolCalls: 1, costUsd: null },
-    cleanupState: "pending" as const,
-  }
-  const architect = { sessionID: "owner", agent: "architect" }
-  expect(() =>
-    probes.startRun(
-      {
-        ...probeInput,
-        requestID: "stale-retained-live-probe",
-        inputs: { ...basis.inputs, revision: "stale" },
-      },
-      architect,
-    ),
-  ).toThrow("candidate, inputs or environment are stale")
-  expect(() =>
-    probes.startRun(
-      { ...probeInput, requestID: "foreign-retained-live-probe" },
-      { sessionID: "foreign", agent: "architect" },
-    ),
-  ).toThrow("current Architect owner")
-  expect(probes.runsForAttempt(f.attempt.id)).toHaveLength(0)
-  const started = probes.startRun(probeInput, architect)
-  if (started.status === "conflict") throw new Error(started.message)
-  expect(started.run).toMatchObject({
-    sessionID: f.attempt.session_id,
-    producer: architect,
-  })
-
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "lazers-retained-live-probe-resource-"))
-  cleanups.push(() => rmSync(fixtureRoot, { recursive: true, force: true }))
-  const lifecycle = filesystemProbeLifecycle(
-    new ResourceRepository(f.store.repository),
-    probes,
-    fixtureRoot,
-  )
-  const executed = await lifecycle.withOwnedResources(
-    {
-      runID: started.run.runID,
-      actor: architect,
-      resources: [
+      ...basis,
+      capabilities: ["isolated-filesystem-fixture"],
+      setupReferences: ["runbook:retained-probe-pass#setup"],
+      fixtureReferences: ["owned-resource:retained-probe-fixture"],
+      actions: [
         {
-          requestID: "retained-probe-fixture-resource",
-          generation: 1,
-          name: "behavior-fixture",
-          contents: "candidate-owned fixture",
+          kind: "navigate" as const,
+          summary: "Exercise the retained candidate in its owned context",
         },
       ],
-    },
-    (fixtures) => {
-      expect(existsSync(fixtures[0]!.path)).toBe(true)
-      return { verdict: "passed", value: "behavior observed" }
-    },
-  )
-  expect(executed.run).toMatchObject({
-    lifecycle: "completed",
-    verdict: "passed",
-    cleanupState: "complete",
-  })
-  for (let i = 0; i < 4 && f.store.plan(f.planID)?.state !== "accepted"; i++) await f.runtime.tick()
-  expect(f.store.plan(f.planID)?.state).toBe("accepted")
-  expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-  expect(f.store.attempts(f.planID)).toHaveLength(1)
-  expect(f.prompts).toHaveLength(1)
-})
+      observations: [
+        { source: "tool-observation" as const, fact: "The exact retained behavior was observed" },
+      ],
+      evidenceReferences: [
+        { kind: "interaction" as const, reference: "trace:retained-probe-pass" },
+      ],
+      timing: { startedAt: 100, finishedAt: null, elapsedMs: null },
+      usage: { tokens: 0, toolCalls: 1, costUsd: null },
+      cleanupState: "pending" as const,
+    }
+    const architect = { sessionID: "owner", agent: "architect" }
+    expect(() =>
+      probes.startRun(
+        {
+          ...probeInput,
+          requestID: "stale-retained-live-probe",
+          inputs: { ...basis.inputs, revision: "stale" },
+        },
+        architect,
+      ),
+    ).toThrow("candidate, inputs or environment are stale")
+    expect(() =>
+      probes.startRun(
+        { ...probeInput, requestID: "foreign-retained-live-probe" },
+        { sessionID: "foreign", agent: "architect" },
+      ),
+    ).toThrow("current Architect owner")
+    expect(probes.runsForAttempt(f.attempt.id)).toHaveLength(0)
+    const started = probes.startRun(probeInput, architect)
+    if (started.status === "conflict") throw new Error(started.message)
+    expect(started.run).toMatchObject({
+      sessionID: f.attempt.session_id,
+      producer: architect,
+    })
+
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "lazers-retained-live-probe-resource-"))
+    cleanups.push(() => rmSync(fixtureRoot, { recursive: true, force: true }))
+    const lifecycle = filesystemProbeLifecycle(
+      new ResourceRepository(f.store.repository),
+      probes,
+      fixtureRoot,
+    )
+    const executed = await lifecycle.withOwnedResources(
+      {
+        runID: started.run.runID,
+        actor: architect,
+        resources: [
+          {
+            requestID: "retained-probe-fixture-resource",
+            generation: 1,
+            name: "behavior-fixture",
+            contents: "candidate-owned fixture",
+          },
+        ],
+      },
+      (fixtures) => {
+        expect(existsSync(fixtures[0]!.path)).toBe(true)
+        return { verdict: "passed", value: "behavior observed" }
+      },
+    )
+    expect(executed.run).toMatchObject({
+      lifecycle: "completed",
+      verdict: "passed",
+      cleanupState: "complete",
+    })
+    for (let i = 0; i < 4 && f.store.plan(f.planID)?.state !== "accepted"; i++)
+      await f.runtime.tick()
+    expect(f.store.plan(f.planID)?.state).toBe("accepted")
+    expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    expect(f.prompts).toHaveLength(1)
+  },
+  { timeout: 30_000 },
+)
 
 test("owner reassignment and a newer generation reject late probe and human evidence", async () => {
   const f = await failedFixture({ humanTaskEvidence: true })
@@ -1387,9 +1741,19 @@ test("cancellation observes a real installer process group before removing parti
     "owner",
   )
   await setupStarted.promise
-  for (let i = 0; i < 500 && !existsSync(descendantPIDPath); i++) await Bun.sleep(10)
+  let runningDescendantPID = 0
+  for (let i = 0; i < 500 && runningDescendantPID === 0; i++) {
+    if (existsSync(descendantPIDPath)) {
+      const value = readFileSync(descendantPIDPath, "utf8")
+      if (/^\d+$/.test(value)) {
+        const parsed = Number(value)
+        if (Number.isSafeInteger(parsed) && parsed > 0) runningDescendantPID = parsed
+      }
+    }
+    if (runningDescendantPID === 0) await Bun.sleep(10)
+  }
   expect(existsSync(descendantPIDPath)).toBe(true)
-  const runningDescendantPID = Number(readFileSync(descendantPIDPath, "utf8"))
+  expect(runningDescendantPID).toBeGreaterThan(0)
   expect(processIsAlive(runningDescendantPID)).toBe(true)
   const operation = f.store.atomic((db) =>
     db

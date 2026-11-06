@@ -9,6 +9,7 @@ export const RetainedVerificationState = z.enum([
   "combined-checks",
   "waiting-human",
   "waiting-human-combined",
+  "task-accepted",
   "accepted",
   "failed",
   "held",
@@ -37,7 +38,11 @@ export const RetainedVerificationSchema = z.strictObject({
   originalMessageID: z.string().min(1).max(200),
   originalWorkspace: z.string().min(1).max(1_024),
   artifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
-  combinedArtifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+  combinedArtifact: z
+    .string()
+    .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+    .nullable(),
+  combinedInputFingerprint: z.string().min(1).nullable().optional(),
   taskWorkspace: z.string().min(1).max(1_024).nullable(),
   taskWorkspaceState: z.enum(["reserved", "owned", "uncertain", "removed"]).nullable(),
   combinedWorkspace: z.string().min(1).max(1_024).nullable(),

@@ -759,22 +759,53 @@ export class TaskRuntime {
         `Retained candidate contains out-of-scope changes: ${violations.slice(0, 20).join(", ")}`,
       )
 
+    const nodes = this.store.nodes(plan.id)
     const branches = input.integrationOrder.map((taskID) => {
       if (taskID === task.id) return command.artifact!
-      const other = this.store.nodes(plan.id).find((item) => item.task_id === taskID)
-      if (!other?.artifact || !["accepted", "incorporated"].includes(other.state))
-        throw new Error(
-          "Combined retained verification requires every other task's accepted artifact",
-        )
-      return other.artifact
+      const other = nodes.find((item) => item.task_id === taskID)
+      return other?.artifact && ["accepted", "incorporated"].includes(other.state)
+        ? other.artifact
+        : null
     })
-    const combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+    let combinedArtifact: string | null = null
+    if (branches.every((branch): branch is string => branch !== null)) {
+      try {
+        combinedArtifact = combineArtifacts(this.directory, input.baseCommit, branches)
+      } catch {
+        // Task acceptance is independent; the ordinary plan-ready integration
+        // path will report a combined artifact conflict after this task passes.
+      }
+    }
     const generation = this.store.atomic((db) => {
       ensureRetainedVerificationTables(db)
       return latestRetainedVerificationGeneration(db, this.directory, plan.id, task.id) + 1
     })
     const environmentIdentity = retainedVerificationEnvironmentIdentity()
     const id = crypto.randomUUID()
+    const inputFingerprint = fingerprint({
+      projectID: this.projectID,
+      projectDirectory: this.directory,
+      planID: plan.id,
+      planRevision: plan.revision,
+      planVersion: plan.version,
+      planBody: plan.body,
+      owner: caller,
+      ownerEpoch: this.store.planControlEpoch(plan.id),
+      taskID: task.id,
+      taskRevision: task.revision,
+      taskProposal: task.proposal,
+      attemptID: attempt.id,
+      originalSessionID: attempt.session_id,
+      originalMessageID: attempt.message_id,
+      originalWorkspace,
+      candidate: command.artifact,
+      combinedArtifact,
+      effectiveWriteScope: this.store.effectiveWriteScope(task.id),
+      verification: { task: task.proposal.verification, combined: input.verification },
+      acceptance: { task: task.proposal.acceptance, combined: input.acceptance },
+      environmentIdentity,
+      reason: command.reason,
+    })
     const seed = {
       schemaVersion: 1 as const,
       id,
@@ -794,34 +825,14 @@ export class TaskRuntime {
       originalWorkspace: originalWorkspace,
       artifact: command.artifact,
       combinedArtifact,
+      combinedInputFingerprint: combinedArtifact ? inputFingerprint : null,
       taskWorkspace: this.retainedVerificationWorkspacePath(id, "task"),
       taskWorkspaceState: null,
-      combinedWorkspace: this.retainedVerificationWorkspacePath(id, "combined"),
+      combinedWorkspace: combinedArtifact
+        ? this.retainedVerificationWorkspacePath(id, "combined")
+        : null,
       combinedWorkspaceState: null,
-      inputFingerprint: fingerprint({
-        projectID: this.projectID,
-        projectDirectory: this.directory,
-        planID: plan.id,
-        planRevision: plan.revision,
-        planVersion: plan.version,
-        planBody: plan.body,
-        owner: caller,
-        ownerEpoch: this.store.planControlEpoch(plan.id),
-        taskID: task.id,
-        taskRevision: task.revision,
-        taskProposal: task.proposal,
-        attemptID: attempt.id,
-        originalSessionID: attempt.session_id,
-        originalMessageID: attempt.message_id,
-        originalWorkspace,
-        candidate: command.artifact,
-        combinedArtifact,
-        effectiveWriteScope: this.store.effectiveWriteScope(task.id),
-        verification: { task: task.proposal.verification, combined: input.verification },
-        acceptance: { task: task.proposal.acceptance, combined: input.acceptance },
-        environmentIdentity,
-        reason: command.reason,
-      }),
+      inputFingerprint,
       environmentIdentity,
       reason: command.reason,
       state: "pending" as const,
@@ -2915,7 +2926,9 @@ export class TaskRuntime {
           retainedVerification: { operationID: operation.id, generation: operation.generation },
           probeBasis: {
             task: retainedVerificationProbeBasis(operation, "task"),
-            combined: retainedVerificationProbeBasis(operation, "combined"),
+            ...(operation.combinedArtifact
+              ? { combined: retainedVerificationProbeBasis(operation, "combined") }
+              : {}),
           },
           version: plan.version,
         }
@@ -2936,6 +2949,7 @@ export class TaskRuntime {
             "combined-checks",
             "waiting-human",
             "waiting-human-combined",
+            "task-accepted",
             "held",
           ].includes(operation.state)
         )
@@ -3167,6 +3181,7 @@ export class TaskRuntime {
           const artifact = taskEvidence ? operation.artifact : operation.combinedArtifact
           const assertion = assertions.find((item) => item.id === command.assertionID)
           if (
+            !artifact ||
             command.artifact !== artifact ||
             !assertion?.evidence.some((item) => item.kind === "human")
           )
@@ -5826,7 +5841,14 @@ export class TaskRuntime {
         const retained = this.store.atomic((db) =>
           retainedVerificationsForPlan(db, this.directory, plan.id),
         )
-        if (retained.some((operation) => operation.state !== "cancelled")) continue
+        if (
+          retained.some(
+            (operation) =>
+              !["cancelled", "task-accepted"].includes(operation.state) &&
+              !this.retainedTaskCandidateAccepted(operation),
+          )
+        )
+          continue
         await this.step(plan, fence)
         if (heartbeatFailed) throw heartbeatError
       }
@@ -7681,6 +7703,7 @@ export class TaskRuntime {
           "combined-checks",
           "waiting-human",
           "waiting-human-combined",
+          "task-accepted",
         ].includes(current.state)
       )
         return false
@@ -7690,12 +7713,17 @@ export class TaskRuntime {
         .attempts(current.planID)
         .filter((attempt) => attempt.task_id === current.taskID)
         .at(-1)
+      const combinedPhase =
+        current.state === "combined-checks" || current.state === "waiting-human-combined"
+      const deferredTaskPhase = current.state === "task-accepted"
       return Boolean(
         plan &&
-        ["blocked", "accepted", "cleanup-blocked"].includes(plan.state) &&
+        (["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
+          ((combinedPhase || deferredTaskPhase) && plan.state === "running") ||
+          (deferredTaskPhase && plan.state === "blocked")) &&
         plan.owner === current.owner &&
         plan.revision === current.planRevision &&
-        plan.version === current.planVersion &&
+        (deferredTaskPhase || plan.version === current.planVersion) &&
         this.store.planControlEpoch(plan.id) === current.ownerEpoch &&
         task &&
         task.revision === current.taskRevision &&
@@ -7712,6 +7740,35 @@ export class TaskRuntime {
 
   private retainedVerificationEnvironmentIdentityCurrent(operation: RetainedVerification): boolean {
     return operation.environmentIdentity === retainedVerificationEnvironmentIdentity()
+  }
+
+  private retainedTaskCandidateAccepted(operation: RetainedVerification): boolean {
+    const accepted = this.store.latestTransition<{
+      operationID?: string
+      generation?: number
+      artifact?: string
+    }>(operation.planID, operation.taskID, "RETAINED_TASK_CANDIDATE_ACCEPTED")
+    return Boolean(
+      accepted?.operationID === operation.id &&
+      accepted.generation === operation.generation &&
+      accepted.artifact === operation.artifact,
+    )
+  }
+
+  private retainedCombinedGatePending(operation: RetainedVerification): boolean {
+    return Boolean(
+      ["task-accepted", "combined-checks", "waiting-human-combined"].includes(operation.state) ||
+      (operation.state === "held" && this.retainedTaskCandidateAccepted(operation)),
+    )
+  }
+
+  private retainedVerificationInputFingerprint(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+  ): string {
+    return phase === "task"
+      ? operation.inputFingerprint
+      : (operation.combinedInputFingerprint ?? operation.inputFingerprint)
   }
 
   private retainedWorkspaceUnchanged(
@@ -7873,6 +7930,7 @@ export class TaskRuntime {
           "combined-checks",
           "waiting-human",
           "waiting-human-combined",
+          "task-accepted",
         ].includes(current.state)
       )
         return
@@ -8195,7 +8253,7 @@ export class TaskRuntime {
           ? fingerprint({
               operationID: initial.id,
               generation: initial.generation,
-              operationInputFingerprint: initial.inputFingerprint,
+              operationInputFingerprint: this.retainedVerificationInputFingerprint(initial, phase),
               phase,
               check,
               workspace,
@@ -8543,7 +8601,7 @@ export class TaskRuntime {
       const inputFingerprint = fingerprint({
         operationID: initial.id,
         generation: initial.generation,
-        operationInputFingerprint: initial.inputFingerprint,
+        operationInputFingerprint: this.retainedVerificationInputFingerprint(initial, phase),
         phase,
         check,
         workspace,
@@ -8994,7 +9052,7 @@ export class TaskRuntime {
     const probeRuns = probeDefinition ? probes.runsForAttempt(operation.attemptID) : []
     const currentInputs = {
       recordID: `retained-verification:${operation.id}:inputs`,
-      revision: operation.inputFingerprint,
+      revision: this.retainedVerificationInputFingerprint(operation, phase),
     }
     const currentEnvironment = {
       recordID: `retained-verification:${operation.id}:environment`,
@@ -9216,6 +9274,186 @@ export class TaskRuntime {
     return true
   }
 
+  private async acceptRetainedTaskCandidate(
+    initial: RetainedVerification,
+    workspace: string,
+    receipts: CheckReceipt[],
+    fence: number,
+  ): Promise<RetainedVerification | undefined> {
+    if (!this.retainedWorkspaceUnchanged(workspace, initial.artifact)) {
+      await this.holdRetainedVerification(
+        initial,
+        "Retained task candidate changed after its task checks",
+        fence,
+      )
+      return undefined
+    }
+
+    const plan = this.store.plan(initial.planID)
+    const input = plan ? PlanInput.parse(JSON.parse(plan.body)) : undefined
+    const nodes = this.store.nodes(initial.planID)
+    const node = nodes.find((candidate) => candidate.task_id === initial.taskID)
+    const attempt = this.store
+      .attempts(initial.planID)
+      .filter((candidate) => candidate.task_id === initial.taskID)
+      .at(-1)
+    const targetFailureOwnsBlock = Boolean(
+      plan?.state === "blocked" &&
+      node?.state === "failed" &&
+      attempt?.state === "failed" &&
+      plan.reason !== null &&
+      (plan.reason === node.reason ||
+        plan.reason === `Task ${node.task_id}: ${node.reason ?? node.state}`),
+    )
+    const otherNodesReady = Boolean(
+      input?.integrationOrder.every((taskID) => {
+        if (taskID === initial.taskID) return true
+        const other = nodes.find((candidate) => candidate.task_id === taskID)
+        return Boolean(other?.artifact && ["accepted", "incorporated"].includes(other.state))
+      }),
+    )
+    const canContinueCombined = Boolean(
+      initial.combinedArtifact &&
+      otherNodesReady &&
+      (plan?.state === "accepted" || plan?.state === "cleanup-blocked" || targetFailureOwnsBlock),
+    )
+    return this.store.fenced(this.owner, fence, (db) => {
+      const current = retainedVerification(db, initial.id)
+      const currentPlan = this.store.plan(initial.planID)
+      const currentTask = this.store.repository.get(initial.taskID)
+      const latestAttempt = this.store
+        .attempts(initial.planID)
+        .filter((candidate) => candidate.task_id === initial.taskID)
+        .at(-1)
+      const currentNode = this.store
+        .nodes(initial.planID)
+        .find((candidate) => candidate.task_id === initial.taskID)
+      if (
+        !current ||
+        current.generation !== initial.generation ||
+        !["task-checks", "waiting-human"].includes(current.state) ||
+        !currentPlan ||
+        currentPlan.version !== initial.planVersion ||
+        currentPlan.revision !== initial.planRevision ||
+        currentPlan.owner !== initial.owner ||
+        this.store.planControlEpoch(currentPlan.id) !== initial.ownerEpoch ||
+        !["blocked", "accepted", "cleanup-blocked"].includes(currentPlan.state) ||
+        !currentTask ||
+        currentTask.revision !== initial.taskRevision ||
+        latestAttempt?.id !== initial.attemptID ||
+        latestAttempt.session_id !== initial.originalSessionID ||
+        latestAttempt.message_id !== initial.originalMessageID ||
+        realpathSync(latestAttempt.workspace) !== initial.originalWorkspace ||
+        !currentNode ||
+        !["accepted", "blocked", "failed", "verifying", "running", "ready"].includes(
+          currentNode.state,
+        ) ||
+        (currentNode.artifact !== null && currentNode.artifact !== initial.artifact)
+      )
+        return undefined
+
+      let expectedPlanVersion = initial.planVersion
+      if (currentNode.state !== "accepted") {
+        db.query(
+          "UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=? AND state=?",
+        ).run(initial.artifact, initial.planID, initial.taskID, currentNode.state)
+        this.store.move(initial.planID, initial.taskID, "RETAINED_ACCEPT")
+        expectedPlanVersion += 1
+      }
+
+      let resumedForDependencies = false
+      if (
+        currentPlan.state === "blocked" &&
+        currentNode.state === "failed" &&
+        latestAttempt.state === "failed" &&
+        currentPlan.reason !== null &&
+        (currentPlan.reason === currentNode.reason ||
+          currentPlan.reason ===
+            `Task ${currentNode.task_id}: ${currentNode.reason ?? currentNode.state}`)
+      ) {
+        const resumed = db
+          .query(
+            `UPDATE runner_plans SET state='running',reason=NULL,version=version+1
+             WHERE id=? AND state='blocked' AND reason=? AND version=?`,
+          )
+          .run(initial.planID, currentPlan.reason, expectedPlanVersion).changes
+        if (resumed !== 1) throw new Error("Plan changed before retained task dependency release")
+        expectedPlanVersion += 1
+        resumedForDependencies = true
+      }
+
+      const allNodesReady = this.store
+        .nodes(initial.planID)
+        .every((candidate) =>
+          input!.integrationOrder.includes(candidate.task_id)
+            ? candidate.task_id === initial.taskID ||
+              (Boolean(candidate.artifact) &&
+                ["accepted", "incorporated"].includes(candidate.state))
+            : false,
+        )
+      const runCombined = Boolean(
+        canContinueCombined &&
+        current.combinedArtifact &&
+        allNodesReady &&
+        ["running", "accepted", "cleanup-blocked"].includes(this.store.plan(initial.planID)!.state),
+      )
+      const updated: RetainedVerification = {
+        ...current,
+        state: runCombined ? "combined-checks" : "task-accepted",
+        holdReason: null,
+        ...(runCombined
+          ? {
+              planVersion: expectedPlanVersion,
+              combinedWorkspace:
+                current.combinedWorkspace ??
+                this.retainedVerificationWorkspacePath(current.id, "combined"),
+            }
+          : {}),
+        updatedAt: this.now(),
+      }
+      saveRetainedVerification(db, updated)
+      this.store.record(initial.planID, initial.taskID, "RETAINED_TASK_CANDIDATE_ACCEPTED", {
+        operationID: initial.id,
+        generation: initial.generation,
+        taskRevision: initial.taskRevision,
+        attemptID: initial.attemptID,
+        artifact: initial.artifact,
+        taskChecks: receipts,
+        combinedVerification: runCombined ? "ready" : "deferred-until-plan-readiness",
+        resumedForDependencies,
+        cleanupState: updated.cleanupState,
+        originalAttemptPreserved: true,
+        originalSessionMessageRouteUsagePreserved: true,
+        oldExecutionAndResourceHoldsPreserved: true,
+      })
+      if (resumedForDependencies)
+        this.store.record(initial.planID, null, "RETAINED_TASK_RELEASED_DEPENDENCIES", {
+          operationID: initial.id,
+          generation: initial.generation,
+          taskID: initial.taskID,
+          artifact: initial.artifact,
+          reason: "The exact retained task failure was resolved by ordinary task evidence",
+          normalDependencyAndReservationGatesPreserved: true,
+        })
+      this.outcome(
+        initial.planID,
+        {
+          status: "task-accepted",
+          taskID: initial.taskID,
+          attemptID: initial.attemptID,
+          artifact: initial.artifact,
+          retainedVerificationID: initial.id,
+          generation: initial.generation,
+          evidence: receipts.map((receipt) => receipt.id),
+          cleanupState: updated.cleanupState,
+          resumedForDependencies,
+        },
+        true,
+      )
+      return updated
+    })
+  }
+
   private async advanceRetainedVerification(initial: RetainedVerification, fence: number) {
     let operation = this.store.atomic((db) => retainedVerification(db, initial.id))
     if (
@@ -9229,14 +9467,20 @@ export class TaskRuntime {
     let owner: HostSession | null | undefined
     try {
       owner = await this.host.session(operation.owner)
+      const combinedPhase =
+        operation.state === "combined-checks" || operation.state === "waiting-human-combined"
+      const deferredTaskPhase = operation.state === "task-accepted"
       if (
         !this.validArchitect(owner) ||
         owner.id !== plan.owner ||
         operation.owner !== plan.owner ||
         operation.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
         operation.planRevision !== plan.revision ||
-        operation.planVersion !== plan.version ||
-        !["blocked", "accepted", "cleanup-blocked"].includes(plan.state)
+        (!deferredTaskPhase && operation.planVersion !== plan.version) ||
+        !(
+          ["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
+          ((combinedPhase || deferredTaskPhase) && plan.state === "running")
+        )
       )
         throw new Error("Retained verification owner, plan version or execution authority changed")
       if (!this.retainedVerificationLive(operation.id, operation.generation))
@@ -9255,7 +9499,14 @@ export class TaskRuntime {
       )
       return
     }
-    const checks = [...task.proposal.verification, ...input.verification]
+    const checks =
+      operation.state === "pending" ||
+      operation.state === "task-checks" ||
+      operation.state === "waiting-human"
+        ? task.proposal.verification
+        : operation.state === "combined-checks" || operation.state === "waiting-human-combined"
+          ? input.verification
+          : []
     if (operation.state === "pending" || operation.state === "task-checks") {
       for (const check of task.proposal.verification)
         if (
@@ -9352,14 +9603,14 @@ export class TaskRuntime {
         )
         return
       }
-      const updated = await this.setRetainedVerificationState(
+      const accepted = await this.acceptRetainedTaskCandidate(
         operation,
-        "combined-checks",
-        null,
+        workspace,
+        taskReceipts,
         fence,
       )
-      if (!updated) return
-      operation = updated
+      if (!accepted || accepted.state === "task-accepted") return
+      operation = accepted
     }
     if (operation.state === "waiting-human") {
       const taskWorkspace = this.retainedVerificationIsolatedWorkspace(operation, "task")
@@ -9378,14 +9629,14 @@ export class TaskRuntime {
         taskReceipts,
       )
       if (missing.length) return
-      const updated = await this.setRetainedVerificationState(
+      const accepted = await this.acceptRetainedTaskCandidate(
         operation,
-        "combined-checks",
-        null,
+        taskWorkspace,
+        taskReceipts,
         fence,
       )
-      if (!updated) return
-      operation = updated
+      if (!accepted || accepted.state === "task-accepted") return
+      operation = accepted
     }
     if (operation.state === "waiting-human-combined") {
       const updated = await this.setRetainedVerificationState(
@@ -9397,23 +9648,151 @@ export class TaskRuntime {
       if (!updated) return
       operation = updated
     }
+    if (operation.state === "task-accepted") {
+      const deferredOperation = operation
+      if (plan.state !== "running") return
+      const nodes = this.store.nodes(deferredOperation.planID)
+      const byTask = new Map(nodes.map((node) => [node.task_id, node]))
+      const allNodesReady = input.integrationOrder.every((taskID) => {
+        const node = byTask.get(taskID)
+        return Boolean(
+          node?.artifact &&
+          ["accepted", "incorporated"].includes(node.state) &&
+          (taskID !== deferredOperation.taskID || node.artifact === deferredOperation.artifact),
+        )
+      })
+      if (!allNodesReady) return
+      let combinedArtifact: string
+      try {
+        combinedArtifact = combineArtifacts(
+          this.directory,
+          input.baseCommit,
+          input.integrationOrder.map((taskID) => byTask.get(taskID)!.artifact!),
+        )
+      } catch (error) {
+        await this.holdRetainedVerification(
+          deferredOperation,
+          `Combined artifact conflict: ${errorText(error)}`,
+          fence,
+        )
+        return
+      }
+      const acceptedArtifacts = input.integrationOrder.map((taskID) => ({
+        taskID,
+        artifact: byTask.get(taskID)!.artifact!,
+      }))
+      const combinedInputFingerprint = fingerprint({
+        operationInputFingerprint: deferredOperation.inputFingerprint,
+        planID: plan.id,
+        planRevision: plan.revision,
+        planVersion: plan.version,
+        planBody: plan.body,
+        taskID: deferredOperation.taskID,
+        taskArtifact: deferredOperation.artifact,
+        acceptedArtifacts,
+        combinedArtifact,
+        verification: input.verification,
+        acceptance: input.acceptance,
+        environmentIdentity: deferredOperation.environmentIdentity,
+      })
+      const promoted = this.store.fenced(this.owner, fence, (db) => {
+        const current = retainedVerification(db, deferredOperation.id)
+        const currentPlan = this.store.plan(deferredOperation.planID)
+        const currentNodes = this.store.nodes(deferredOperation.planID)
+        const currentByTask = new Map(currentNodes.map((node) => [node.task_id, node]))
+        if (
+          !current ||
+          current.generation !== deferredOperation.generation ||
+          current.state !== "task-accepted" ||
+          !currentPlan ||
+          currentPlan.state !== "running" ||
+          currentPlan.version !== plan.version ||
+          currentPlan.revision !== deferredOperation.planRevision ||
+          currentPlan.owner !== deferredOperation.owner ||
+          this.store.planControlEpoch(currentPlan.id) !== deferredOperation.ownerEpoch ||
+          !input.integrationOrder.every((taskID) => {
+            const before = byTask.get(taskID)
+            const after = currentByTask.get(taskID)
+            return Boolean(
+              before?.artifact &&
+              after?.artifact === before.artifact &&
+              ["accepted", "incorporated"].includes(before.state) &&
+              ["accepted", "incorporated"].includes(after.state),
+            )
+          }) ||
+          currentByTask.get(deferredOperation.taskID)?.artifact !== deferredOperation.artifact
+        )
+          return undefined
+        const updated: RetainedVerification = {
+          ...current,
+          state: "combined-checks",
+          planVersion: currentPlan.version,
+          combinedArtifact,
+          combinedInputFingerprint,
+          combinedWorkspace:
+            current.combinedWorkspace ??
+            this.retainedVerificationWorkspacePath(current.id, "combined"),
+          holdReason: null,
+          updatedAt: this.now(),
+        }
+        saveRetainedVerification(db, updated)
+        this.store.record(
+          deferredOperation.planID,
+          deferredOperation.taskID,
+          "RETAINED_TASK_PLAN_READY_FOR_COMBINED_VERIFICATION",
+          {
+            operationID: deferredOperation.id,
+            generation: deferredOperation.generation,
+            artifact: deferredOperation.artifact,
+            combinedArtifact,
+            acceptedArtifacts,
+            planVersion: currentPlan.version,
+          },
+        )
+        return updated
+      })
+      if (!promoted) return
+      operation = promoted
+      const unsafeCombined = input.verification
+        .map((check) => this.retainedCheckResourceProblem(check))
+        .find(Boolean)
+      if (unsafeCombined) {
+        await this.holdRetainedVerification(operation, unsafeCombined, fence)
+        return
+      }
+    }
     if (operation.state !== "combined-checks") return
+    const combinedArtifact = operation.combinedArtifact
+    if (!combinedArtifact) {
+      await this.holdRetainedVerification(
+        operation,
+        "Combined retained verification has no ready plan artifact",
+        fence,
+      )
+      return
+    }
     const combinedWorkspace = await this.ensureRetainedVerificationWorkspace(
       operation,
       "combined",
-      operation.combinedArtifact,
+      combinedArtifact,
       fence,
     )
     if (!combinedWorkspace) return
     const refreshed = this.store.atomic((db) => retainedVerification(db, initial.id))
-    if (!refreshed || refreshed.generation !== initial.generation) return
+    if (
+      !refreshed ||
+      refreshed.generation !== initial.generation ||
+      refreshed.state !== "combined-checks" ||
+      refreshed.combinedArtifact !== combinedArtifact
+    )
+      return
     operation = refreshed
     const combinedReceipts = await this.runRetainedVerificationChecks(
       operation,
       "combined",
       input.verification,
       combinedWorkspace,
-      operation.combinedArtifact,
+      combinedArtifact,
       fence,
     )
     if (!combinedReceipts || !this.retainedVerificationLive(operation.id, operation.generation))
@@ -9423,7 +9802,7 @@ export class TaskRuntime {
         receipt.exitCode !== 0 ||
         receipt.timedOut ||
         !receipt.unchanged ||
-        receipt.inputIdentity !== operation.combinedArtifact,
+        receipt.inputIdentity !== combinedArtifact,
     )
     if (failed) {
       await this.holdRetainedVerification(
@@ -9438,7 +9817,7 @@ export class TaskRuntime {
       "combined",
       input.acceptance,
       combinedWorkspace,
-      operation.combinedArtifact,
+      combinedArtifact,
       combinedReceipts,
     )
     if (missing.length) {
@@ -9454,7 +9833,7 @@ export class TaskRuntime {
       return
     }
     if (
-      !this.retainedWorkspaceUnchanged(combinedWorkspace, operation.combinedArtifact) ||
+      !this.retainedWorkspaceUnchanged(combinedWorkspace, combinedArtifact) ||
       !this.retainedWorkspaceUnchanged(
         this.retainedVerificationIsolatedWorkspace(operation, "task")!,
         operation.artifact,
@@ -9552,7 +9931,7 @@ export class TaskRuntime {
         .query(
           "UPDATE runner_plans SET state='accepted',artifact=?,version=version+1 WHERE id=? AND version=?",
         )
-        .run(operation.combinedArtifact, operation.planID, expectedPlanVersion)
+        .run(combinedArtifact, operation.planID, expectedPlanVersion)
       if (planAcceptance.changes !== 1)
         throw new Error("Plan changed before retained candidate acceptance")
       this.store.record(operation.planID, operation.taskID, "RETAINED_CANDIDATE_ACCEPTED", {
@@ -9561,7 +9940,7 @@ export class TaskRuntime {
         taskRevision: operation.taskRevision,
         attemptID: operation.attemptID,
         artifact: operation.artifact,
-        combinedArtifact: operation.combinedArtifact,
+        combinedArtifact,
         taskChecks: taskReceiptsForAcceptance,
         combinedChecks: combinedReceipts,
         originalAttemptStatePreserved: true,
@@ -9570,7 +9949,7 @@ export class TaskRuntime {
         resourceHoldsPreserved: true,
       })
       this.store.record(operation.planID, null, "PLAN_ACCEPTED", {
-        artifact: operation.combinedArtifact,
+        artifact: combinedArtifact,
         taskArtifact: operation.artifact,
         retainedVerificationID: operation.id,
         generation: operation.generation,
@@ -9581,7 +9960,7 @@ export class TaskRuntime {
         operation.planID,
         {
           status: "accepted",
-          artifact: operation.combinedArtifact,
+          artifact: combinedArtifact,
           taskID: operation.taskID,
           taskArtifact: operation.artifact,
           attemptID: operation.attemptID,
@@ -10342,6 +10721,14 @@ export class TaskRuntime {
   }
   private async finish(plan: PlanRow, fence: number) {
     if (this.store.plan(plan.id)?.state !== "running") return
+    if (
+      this.store.atomic((db) =>
+        retainedVerificationsForPlan(db, this.directory, plan.id).some((operation) =>
+          this.retainedCombinedGatePending(operation),
+        ),
+      )
+    )
+      return
     const verificationPlanVersion = this.store.plan(plan.id)!.version
     const sourceGeneration = this.retainedRepairGeneration(plan.id)
     const input = PlanInput.parse(JSON.parse(plan.body))

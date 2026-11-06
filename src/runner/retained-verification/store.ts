@@ -104,6 +104,7 @@ const liveStates = [
   "combined-checks",
   "waiting-human",
   "waiting-human-combined",
+  "task-accepted",
   "held",
 ] as const
 
