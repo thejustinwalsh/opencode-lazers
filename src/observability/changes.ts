@@ -13,6 +13,43 @@ export type SourceStamp = {
 
 type JsonObject = Record<string, unknown>
 
+type AssociationRead = {
+  revision: number
+  repositoryVersion: number
+  sessions: readonly string[]
+}
+const associationReadsKey = Symbol.for("opencode-lazers.observation-association-reads.v1")
+const associationHost = globalThis as typeof globalThis & {
+  [associationReadsKey]?: Map<string, AssociationRead>
+}
+const associationReads: Map<string, AssociationRead> = (associationHost[associationReadsKey] ??=
+  new Map<string, AssociationRead>())
+
+/** Loaded locations share a notification stack; every reader still checks its durable revision. */
+function readAssociatedSessions(
+  db: Database,
+  projectDirectory: string,
+  repositoryVersion: number,
+  revision: number,
+) {
+  const key = JSON.stringify([db.filename, projectDirectory])
+  let entry = associationReads.get(key)
+  if (entry?.revision !== revision || entry.repositoryVersion !== repositoryVersion) {
+    entry = {
+      revision,
+      repositoryVersion,
+      sessions: [...associatedSessionIDs(db, projectDirectory)],
+    }
+    associationReads.set(key, entry)
+    const captured = entry
+    // Drop the shared view when this notification stack yields.
+    queueMicrotask(() => {
+      if (associationReads.get(key) === captured) associationReads.delete(key)
+    })
+  }
+  return new Set(entry.sessions)
+}
+
 function object(value: unknown): JsonObject | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
@@ -40,7 +77,7 @@ export function sourceStampFromDatabase(
   return {
     repositoryVersion,
     sourceFingerprint: createHmac("sha256", secret).update(String(revision)).digest("hex"),
-    sessionIDs: associatedSessionIDs(db, projectDirectory),
+    sessionIDs: readAssociatedSessions(db, projectDirectory, repositoryVersion, revision),
   }
 }
 

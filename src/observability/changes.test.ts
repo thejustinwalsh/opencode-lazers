@@ -1,7 +1,58 @@
 import { expect, test } from "bun:test"
-import { ObservationChangeTracker } from "./changes.ts"
+import { ObservationChangeTracker, sourceStampFromDatabase } from "./changes.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
+
+test("loaded observers share membership reads only within the same durable revision and synchronous batch", async () => {
+  const f = makeFixture()
+  try {
+    const copy = await import(
+      new URL(`./changes.ts?copy=${crypto.randomUUID()}`, import.meta.url).href
+    )
+    let membershipReads = 0
+    const secret = new Uint8Array(32).fill(3)
+    const otherSecret = new Uint8Array(32).fill(4)
+    const read = (key = secret, directory = f.directory) =>
+      f.store.atomic((db) => {
+        const observed = new Proxy(db, {
+          get(target, property) {
+            if (property === "query")
+              return (sql: string) => {
+                if (sql.includes("$.provenance.sessionID")) membershipReads++
+                return target.query(sql)
+              }
+            return Reflect.get(target, property, target)
+          },
+        })
+        return sourceStampFromDatabase(observed, directory, key)
+      })
+    const initial = read()
+    expect(membershipReads).toBe(1)
+    for (let index = 0; index < 14; index++) expect(read().sessionIDs).toEqual(initial.sessionIDs)
+    f.store.atomic((db) => {
+      expect(copy.sourceStampFromDatabase(db, f.directory, secret).sessionIDs).toEqual(
+        initial.sessionIDs,
+      )
+    })
+    expect(membershipReads).toBe(1)
+    const distinctSecret = read(otherSecret)
+    expect(distinctSecret.sourceFingerprint).not.toBe(initial.sourceFingerprint)
+    initial.sessionIDs.clear()
+    expect(read().sessionIDs.size).toBeGreaterThan(0)
+    f.store.atomic((db) =>
+      db.query("UPDATE runner_plans SET owner=? WHERE id=?").run("ses-new-owner", f.receipt.planID),
+    )
+    expect(read().sessionIDs.has("ses-new-owner")).toBe(true)
+    expect(membershipReads).toBe(2)
+    expect(read(secret, "/unrelated-project").sessionIDs.size).toBe(0)
+    expect(membershipReads).toBe(3)
+    await Promise.resolve()
+    expect(read().sessionIDs.has("ses-new-owner")).toBe(true)
+    expect(membershipReads).toBe(4)
+  } finally {
+    f.close()
+  }
+})
 
 test("filtered native sequences deduplicate without inventing gaps; disconnect requires resnapshot", () => {
   const fixture = makeFixture()
