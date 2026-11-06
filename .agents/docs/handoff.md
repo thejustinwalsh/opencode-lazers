@@ -113,7 +113,9 @@ tagged correction to the original147 worker, now inactive/succeeded at
 `ebdf41a044f761b78308f70eefedf24f2f113fc3`. Root source-reviewed the correction
 in native `/private/tmp/lz147-compact-review`, combined with keyed fix/current main.
 69 tests passed;6 menu tests passed after generating their required Radar build
-artifact. Mounted UI/keyed tests, fmt/lint/types/build passed. Keep the clean
+artifact. Root then fixed that unrelated test prerequisite in review commit
+`3e09c37`: real GUI/Vite compiler, configFile:false; all6 tests passed with the
+artifact temporarily absent, plus lint/types. Include this test fix at integration. Mounted UI/keyed tests, fmt/lint/types/build passed. Keep the clean
 review tree for next combined integration; no canonical activation yet. Compact title-first rows; full hold reasons in
 selected inspector; preserve truthful foreground states and149 scope. Root owns
 keyed.ts separately. Use screenshots, not mockup-to-components.
@@ -143,6 +145,16 @@ See `design/reviews/lz138-candidate-dependencies-review-20261106.md`.
 Review tests14/156assertions plus quality/build passed; no durable native receipts
 proved. Do not integrate d378 as full candidate-dependency support.
 Do not accept based only on the binder or fixture tests.
+
+## Models UI source review
+
+152 initial committed candidate `26a0d882488e2615703e8b83bb58bd79733eea85`
+passes worker184tests/2794assertions and quality/build, but Root rejected default
+presentation: many caveat/metadata paragraphs above collapsed evidence contradict
+the approved compact mockup. Root sent concrete feedback through Architect; the
+same152 worker resumed. Keep summary price/endpoint/essential uncertainty visible,
+detailed tier/retry/cache/source information under collapsed Evidence & assumptions.
+No data-policy expansion. Wait for corrected source before visual acceptance.
 
 ## Newly observed pricing connection gap
 
