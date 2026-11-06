@@ -4,6 +4,8 @@ import type {
   ModelLeaseIdentity,
   ModelLeaseRetirement,
 } from "./ipc.ts"
+import { ModelLeaseGrantSchema, ModelLeaseRetirementSchema } from "./ipc.ts"
+import { Schema } from "effect"
 
 type ReleaseRequest = {
   lease: ModelLeaseIdentity
@@ -12,8 +14,9 @@ type ReleaseRequest = {
 }
 
 type RegisteredGeneration = { generationID: string; generationSequence: number }
-type LeaseOwner = { window: number; lease: ModelLeaseIdentity }
+type LeaseOwner = { window: number; lease: ModelLeaseGrant }
 type AcquireOperation = {
+  operationID: string
   window: number
   fingerprint: string
   generationID: string
@@ -23,6 +26,7 @@ type AcquireOperation = {
   grant?: ModelLeaseGrant
 }
 type RetirementOperation = {
+  retirementID: string
   window: number
   fingerprint: string
   pending?: Promise<ModelLeaseRetirement>
@@ -30,6 +34,46 @@ type RetirementOperation = {
 }
 
 const MAX_REMEMBERED_OPERATIONS = 64
+
+const leaseID = Schema.String.check(Schema.isBetweenLength(1, 100))
+const leaseSequence = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+)
+const leaseWindow = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1))
+const PersistedAcquire = Schema.Struct({
+  operationID: leaseID,
+  window: leaseWindow,
+  fingerprint: Schema.String,
+  generationID: leaseID,
+  generationSequence: leaseSequence,
+  providerEpoch: leaseID,
+  grant: Schema.optionalKey(ModelLeaseGrantSchema),
+})
+const PersistedRetirement = Schema.Struct({
+  retirementID: leaseID,
+  window: leaseWindow,
+  fingerprint: Schema.String,
+  result: Schema.optionalKey(ModelLeaseRetirementSchema),
+})
+
+export const ModelLeasePersistenceSchema = Schema.Struct({
+  schemaVersion: Schema.Literals([1]),
+  providerEpoch: leaseID,
+  state: Schema.Literals(["idle", "active", "retired", "unproven"]),
+  windowID: Schema.optionalKey(leaseWindow),
+  lease: Schema.optionalKey(ModelLeaseGrantSchema),
+  acquisitions: Schema.Array(PersistedAcquire).check(
+    Schema.isBetweenLength(0, MAX_REMEMBERED_OPERATIONS),
+  ),
+  retirements: Schema.Array(PersistedRetirement).check(
+    Schema.isBetweenLength(0, MAX_REMEMBERED_OPERATIONS),
+  ),
+})
+export type ModelLeasePersistence = typeof ModelLeasePersistenceSchema.Type
+
+type InheritedOwner = { window: number; grant: ModelLeaseGrant }
+type ProviderOwnershipState = "idle" | "retired" | "unproven"
 
 const sameLease = (left: ModelLeaseIdentity, right: ModelLeaseIdentity) =>
   left.owner === right.owner &&
@@ -52,20 +96,131 @@ const remember = <T>(map: Map<string, T>, key: string, value: T) => {
 export class ModelLease {
   readonly providerEpoch = crypto.randomUUID()
   private owner: LeaseOwner | undefined
+  private inherited: InheritedOwner | undefined
+  private blocked = false
   private retiring: Promise<unknown> | undefined
   private clearing = false
+  private sealed = false
   private readonly generations = new Map<number, RegisteredGeneration>()
   private readonly legacySequences = new Map<number, number>()
   private readonly acquisitions = new Map<string, AcquireOperation>()
   private readonly retirements = new Map<string, RetirementOperation>()
+  readonly previousProviderEpoch?: string
+  readonly previousProviderState?: ProviderOwnershipState
 
-  constructor(private readonly drain: () => Promise<void>) {}
+  constructor(
+    private readonly drain: () => Promise<void>,
+    previous?: ModelLeasePersistence | null,
+    private readonly persistState?: (state: ModelLeasePersistence) => void,
+  ) {
+    this.previousProviderEpoch = previous?.providerEpoch
+    if (!previous) return
+
+    const hasOwnerIdentity = previous.windowID !== undefined && previous.lease !== undefined
+    const validRetired = previous.state === "retired" && hasOwnerIdentity
+    const validIdle =
+      previous.state === "idle" && previous.windowID === undefined && previous.lease === undefined
+    const ownershipUnknown =
+      previous.state === "active" ||
+      previous.state === "unproven" ||
+      (previous.state === "retired" && !validRetired) ||
+      (previous.state === "idle" && !validIdle)
+    this.previousProviderState = ownershipUnknown ? "unproven" : previous.state
+    if (validRetired) this.inherited = { window: previous.windowID!, grant: previous.lease! }
+    else if (ownershipUnknown) {
+      this.blocked = true
+      if (previous.windowID !== undefined && previous.lease)
+        this.inherited = { window: previous.windowID, grant: previous.lease }
+    }
+
+    for (const operation of previous.acquisitions ?? []) {
+      this.acquisitions.set(operation.operationID, {
+        operationID: operation.operationID,
+        window: operation.window,
+        fingerprint: operation.fingerprint,
+        generationID: operation.generationID,
+        generationSequence: operation.generationSequence,
+        providerEpoch: operation.providerEpoch,
+        ...(operation.grant ? { grant: operation.grant } : {}),
+      })
+    }
+    for (const operation of previous.retirements ?? []) {
+      this.retirements.set(operation.retirementID, {
+        retirementID: operation.retirementID,
+        window: operation.window,
+        fingerprint: operation.fingerprint,
+        ...(operation.result ? { result: operation.result } : {}),
+      })
+    }
+  }
+
+  persist() {
+    this.persistState?.(this.snapshot())
+  }
+
+  private snapshot(): ModelLeasePersistence {
+    const retained = this.owner
+      ? { windowID: this.owner.window, lease: this.owner.lease }
+      : this.inherited
+        ? { windowID: this.inherited.window, lease: this.inherited.grant }
+        : undefined
+    return {
+      schemaVersion: 1,
+      providerEpoch: this.providerEpoch,
+      state:
+        this.blocked || this.clearing
+          ? "unproven"
+          : this.owner
+            ? "active"
+            : this.inherited
+              ? "retired"
+              : "idle",
+      ...(retained ?? {}),
+      acquisitions: Array.from(this.acquisitions.values(), (operation) => ({
+        operationID: operation.operationID,
+        window: operation.window,
+        fingerprint: operation.fingerprint,
+        generationID: operation.generationID,
+        generationSequence: operation.generationSequence,
+        providerEpoch: operation.providerEpoch,
+        ...(operation.grant ? { grant: operation.grant } : {}),
+      })),
+      retirements: Array.from(this.retirements.values(), (operation) => ({
+        retirementID: operation.retirementID,
+        window: operation.window,
+        fingerprint: operation.fingerprint,
+        ...(operation.result ? { result: operation.result } : {}),
+      })),
+    }
+  }
 
   occupied() {
-    return Boolean(this.owner || this.retiring || this.clearing)
+    return Boolean(this.owner || this.inherited || this.blocked || this.retiring || this.clearing)
+  }
+
+  seal() {
+    this.sealed = true
+  }
+
+  providerStopped() {
+    if (this.retiring || this.clearing)
+      throw new Error("Model ownership did not settle before provider cleanup")
+    this.sealed = true
+    if (this.owner) {
+      this.inherited = { window: this.owner.window, grant: this.owner.lease }
+      this.owner = undefined
+    }
+    this.persist()
+  }
+
+  providerStopFailed() {
+    this.sealed = true
+    this.blocked = true
+    this.persist()
   }
 
   registerGeneration(window: number, generationID: string, generationSequence: number) {
+    if (this.sealed) throw new Error("The main-process provider is shutting down")
     if (!Number.isSafeInteger(generationSequence) || generationSequence < 1)
       throw new Error("Invalid renderer generation")
     const current = this.generations.get(window)
@@ -82,6 +237,7 @@ export class ModelLease {
   acquire(window: number): string
   acquire(window: number, request: ModelLeaseAcquire): Promise<ModelLeaseGrant>
   acquire(window: number, request?: ModelLeaseAcquire): string | Promise<ModelLeaseGrant> {
+    if (this.sealed) throw new Error("The main-process provider is shutting down")
     // Kept for the older direct unit fixtures; the registered IPC surface always supplies identity.
     if (!request) {
       if (this.occupied()) throw new Error("The model cache is owned or being cleaned up")
@@ -97,6 +253,16 @@ export class ModelLease {
         providerEpoch: this.providerEpoch,
       }
       this.owner = { window, lease: identity }
+      remember(this.acquisitions, identity.operationID, {
+        operationID: identity.operationID,
+        window,
+        fingerprint: "legacy",
+        generationID,
+        generationSequence,
+        providerEpoch: identity.providerEpoch,
+        grant: identity,
+      })
+      this.persist()
       return identity.owner
     }
     if (request.providerEpoch !== this.providerEpoch)
@@ -121,7 +287,8 @@ export class ModelLease {
 
     if (!request.predecessor) {
       if (this.retiring) throw new Error("The model cache is being cleaned up")
-      if (this.owner) throw new Error("The model cache is owned or being cleaned up")
+      if (this.owner || this.inherited || this.blocked)
+        throw new Error("The model cache is owned or being cleaned up")
       const identity = {
         owner: crypto.randomUUID(),
         generationID: request.generationID,
@@ -131,6 +298,7 @@ export class ModelLease {
       }
       const grant: ModelLeaseGrant = identity
       remember(this.acquisitions, request.operationID, {
+        operationID: request.operationID,
         window,
         fingerprint,
         generationID: request.generationID,
@@ -138,18 +306,27 @@ export class ModelLease {
         providerEpoch: request.providerEpoch,
         grant,
       })
-      this.owner = { window, lease: identity }
+      this.owner = { window, lease: grant }
+      this.persist()
       return Promise.resolve(grant)
     }
 
     const predecessor = request.predecessor
-    if (predecessor.providerEpoch !== this.providerEpoch)
-      throw new Error("The predecessor belongs to a different main-process provider")
     if (!predecessor.rendererDisposalID || !predecessor.retirementID)
       throw new Error("Renderer disposal is not proven")
     if (this.retiring) throw new Error("The model cache is being cleaned up")
-    if (!this.owner || this.owner.window !== window || !sameLease(this.owner.lease, predecessor))
-      throw new Error("The predecessor no longer owns the model cache")
+    const fromCurrentProvider = predecessor.providerEpoch === this.providerEpoch
+    const inherited = this.inherited
+    if (fromCurrentProvider) {
+      if (!this.owner || this.owner.window !== window || !sameLease(this.owner.lease, predecessor))
+        throw new Error("The predecessor no longer owns the model cache")
+    } else {
+      if (this.previousProviderState !== "retired" || !inherited)
+        throw new Error("The predecessor belongs to a different main-process provider")
+      if (inherited.window !== window || !sameLease(inherited.grant, predecessor))
+        throw new Error("The predecessor belongs to an unproven main-process provider")
+    }
+    if (this.blocked) throw new Error("Previous provider ownership remains unproven")
 
     const retirementFingerprint = JSON.stringify({
       window,
@@ -170,6 +347,7 @@ export class ModelLease {
       throw new Error("Retirement identity does not match its original operation")
 
     const operation: AcquireOperation = {
+      operationID: request.operationID,
       window,
       fingerprint,
       generationID: request.generationID,
@@ -177,6 +355,7 @@ export class ModelLease {
       providerEpoch: request.providerEpoch,
     }
     const retirement: RetirementOperation = {
+      retirementID: predecessor.retirementID,
       window,
       fingerprint: retirementFingerprint,
     }
@@ -184,10 +363,13 @@ export class ModelLease {
       .then(() => this.drain())
       .then(() => {
         this.assertCurrentGeneration(window, request.generationID, request.generationSequence)
+        const currentOwner = fromCurrentProvider ? this.owner : this.inherited
+        const currentLease = this.owner?.lease ?? this.inherited?.grant
         if (
-          !this.owner ||
-          this.owner.window !== window ||
-          !sameLease(this.owner.lease, predecessor)
+          !currentOwner ||
+          currentOwner.window !== window ||
+          !currentLease ||
+          !sameLease(currentLease, predecessor)
         )
           throw new Error("The predecessor changed during renderer retirement")
         const retired: ModelLeaseRetirement = {
@@ -208,8 +390,10 @@ export class ModelLease {
           retired,
         }
         this.owner = { window, lease: grant }
+        this.inherited = undefined
         operation.grant = grant
         retirement.result = retired
+        this.persist()
         return grant
       })
       .finally(() => {
@@ -229,15 +413,26 @@ export class ModelLease {
     identity: { generationID: string; operationID: string; providerEpoch: string },
   ) {
     const operation = this.acquisitions.get(identity.operationID)
+    if (operation) {
+      if (
+        operation.window !== window ||
+        operation.generationID !== identity.generationID ||
+        operation.providerEpoch !== identity.providerEpoch
+      )
+        return undefined
+      if (operation.pending) return operation.pending
+      return operation.grant
+    }
+    const inherited = this.inherited
     if (
-      !operation ||
-      operation.window !== window ||
-      operation.generationID !== identity.generationID ||
-      operation.providerEpoch !== identity.providerEpoch
+      inherited &&
+      inherited.window === window &&
+      inherited.grant.generationID === identity.generationID &&
+      inherited.grant.operationID === identity.operationID &&
+      inherited.grant.providerEpoch === identity.providerEpoch
     )
-      return undefined
-    if (operation.pending) return operation.pending
-    return operation.grant
+      return inherited.grant
+    return undefined
   }
 
   assert(window: number, lease: ModelLeaseIdentity | string) {
@@ -245,13 +440,14 @@ export class ModelLease {
       typeof lease === "string"
         ? this.owner?.lease.owner === lease
         : this.owner && sameLease(this.owner.lease, lease)
-    if (this.retiring || this.owner?.window !== window || !matches)
+    if (this.sealed || this.blocked || this.retiring || this.owner?.window !== window || !matches)
       throw new Error("This window does not own the WebGPU model")
   }
 
   release(window: number, request: ReleaseRequest): Promise<ModelLeaseRetirement>
   release(window: number, owner: string): Promise<void>
   release(window: number, request: ReleaseRequest | string): Promise<ModelLeaseRetirement | void> {
+    if (this.sealed) throw new Error("The main-process provider is shutting down")
     if (typeof request === "string") {
       const current = this.owner
       if (!current || current.window !== window || current.lease.owner !== request)
@@ -290,7 +486,7 @@ export class ModelLease {
       throw new Error("This window does not own the WebGPU model")
     this.assertCurrentGeneration(window, lease.generationID, lease.generationSequence)
 
-    const operation: RetirementOperation = { window, fingerprint }
+    const operation: RetirementOperation = { retirementID, window, fingerprint }
     const pending = Promise.resolve()
       .then(() => this.drain())
       .then(() => {
@@ -308,6 +504,7 @@ export class ModelLease {
         }
         this.owner = undefined
         operation.result = result
+        this.persist()
         return result
       })
       .finally(() => {
@@ -348,6 +545,7 @@ export class ModelLease {
   }
 
   lost(window: number) {
+    if (this.sealed) return Promise.resolve()
     const observed = this.owner
     if (!observed || observed.window !== window) return Promise.resolve()
     return (this.retiring?.catch(() => {}) ?? Promise.resolve()).then(() => {
@@ -370,6 +568,7 @@ export class ModelLease {
     generationID: string,
     generationSequence: number,
   ) {
+    if (this.sealed) throw new Error("The main-process provider is shutting down")
     const current = this.generations.get(window)
     if (
       !current ||
@@ -380,12 +579,15 @@ export class ModelLease {
   }
 
   async clear(run: () => Promise<void>) {
+    if (this.sealed) throw new Error("The main-process provider is shutting down")
     if (this.occupied()) throw new Error("Unload the model before removing cached files")
     this.clearing = true
     try {
+      this.persist()
       await run()
     } finally {
       this.clearing = false
+      this.persist()
     }
   }
 }

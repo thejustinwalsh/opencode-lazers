@@ -76,11 +76,14 @@ type MainHost = {
   invocations: Array<{ method: string; window: number; input: unknown }>
   logs: Array<{ level: string; message: string; data?: Record<string, unknown> }>
   memory: Map<string, object>
+  persistent: Map<string, unknown>
   gate?: ResponseGate
   cleanup: Array<() => void>
   stop?: () => void | Promise<void>
   foreignSequence: number
   workerOwner?: string
+  workerAttachCalls: number
+  workerDetachCalls: number
   window: FakeBrowserWindow
   otherWindow: FakeBrowserWindow
 }
@@ -107,7 +110,7 @@ class FakeBrowserWindow extends EventEmitter {
   }
 }
 
-const makeMain = (): MainHost => {
+const makeMain = (persistent = new Map<string, unknown>()): MainHost => {
   const window = new FakeBrowserWindow(17, 4217)
   const otherWindow = new FakeBrowserWindow(18, 4218)
   const cleanup: Array<() => void> = []
@@ -118,6 +121,24 @@ const makeMain = (): MainHost => {
   let implementation: Record<string, MainHandler> = {}
   const ctx = {
     options: { dataDirectory: join(tmpdir(), `lazers-main-lease-${crypto.randomUUID()}`) },
+    storage: {
+      store: (key: string, options: { initial: unknown }) => {
+        if (!persistent.has(key)) persistent.set(key, options.initial)
+        return {
+          get value() {
+            return persistent.get(key)
+          },
+          ready: () => true,
+          set: (value: unknown) => persistent.set(key, value),
+          update: (mutate: (draft: unknown) => void) => {
+            const draft = structuredClone(persistent.get(key))
+            mutate(draft)
+            persistent.set(key, draft)
+          },
+        }
+      },
+      remove: (key: string) => persistent.delete(key),
+    },
     signal: new AbortController().signal,
     log: {
       write: (level: string, message: string, data?: Record<string, unknown>) =>
@@ -146,11 +167,14 @@ const makeMain = (): MainHost => {
     invocations,
     logs,
     memory: new Map(),
+    persistent,
     foreignSequence: 0,
     cleanup,
     stop: typeof stop === "function" ? stop : undefined,
     window,
     otherWindow,
+    workerAttachCalls: 0,
+    workerDetachCalls: 0,
   }
 }
 
@@ -253,11 +277,13 @@ const makeRuntime = (host: MainHost) => {
   const files = filesFor(host, 17, controller.signal)
   const worker = {
     attach: async ({ owner }: { owner: string }) => {
+      host.workerAttachCalls++
       if (host.workerOwner && host.workerOwner !== owner)
         throw new Error("Another renderer owns inference")
       host.workerOwner = owner
     },
     detach: async ({ owner }: { owner: string }) => {
+      host.workerDetachCalls++
       if (host.workerOwner !== owner) throw new Error("Renderer ownership was lost")
       host.workerOwner = undefined
     },
@@ -331,7 +357,12 @@ const memoryFor = (host: MainHost) =>
         generationSequence: number
         state: string
         disposalID?: string
-        acquire?: { operationID: string; predecessor?: { retirementID: string } }
+        acquire?: {
+          generationID: string
+          providerEpoch: string
+          operationID: string
+          predecessor?: { retirementID: string }
+        }
         grant?: ModelLeaseGrant
         retiredBy?: ModelLeaseRetirement
         releaseAck?: ModelLeaseRetirement
@@ -383,6 +414,16 @@ const cleanupHost = async (host: MainHost) => {
 }
 
 try {
+  assert.throws(
+    () =>
+      makeMain(
+        new Map([
+          ["webgpu-model-lease", { schemaVersion: 1, providerEpoch: "unknown", state: "idle" }],
+        ]),
+      ),
+    "invalid persisted ownership cannot silently reset to a free lease",
+  )
+
   // A blocked renderer disposal keeps the exact predecessor occupied until its proof is recorded.
   {
     const host = makeMain()
@@ -631,6 +672,124 @@ try {
     }
   }
 
+  // A cancelled acquire reply remains recoverable when the full main provider is replaced.
+  {
+    const original = makeMain()
+    let replacement: MainHost | undefined
+    try {
+      const acquireReply = setGate(original, "acquire", () => true)
+      const a = makeRuntime(original)
+      await acquireReply.reached
+      const aEntry = entryFor(original, 1)
+      const oldAcquire = aEntry.acquire!
+      const oldEpoch = oldAcquire.providerEpoch
+      assert.equal((await a.files.status({ signal: a.controller.signal })).occupied, true)
+      assert.equal(allocations, 0, "the cancelled acquisition never allocated a model")
+
+      a.controller.abort()
+      await a.runtime.dispose()
+      assert.equal(aEntry.state, "disposed")
+      assert.equal(allocations, 0)
+      assert.equal(original.workerAttachCalls, 0, "the cancelled grant never attached the broker")
+      assert.equal(original.workerDetachCalls, 0, "aborted renderer context skips worker IPC")
+      assert.equal(callCount(original, "release", 17), 0, "aborted context skips lease IPC")
+      await cleanupHost(original)
+      const inheritedOwner = (
+        original.persistent.get("webgpu-model-lease") as { lease?: ModelLeaseGrant }
+      ).lease?.owner
+      assert.ok(inheritedOwner)
+
+      replacement = makeMain(original.persistent)
+      replacement.memory = original.memory
+      const b = makeRuntime(replacement)
+      const newIdentity = await b.files.identity()
+      assert.notEqual(newIdentity.providerEpoch, oldEpoch)
+      await until(() => b.runtime.state() === "ready", "cross-provider acquire reconciliation")
+      const reconciliation = replacement.invocations.find(
+        (call) => call.method === "reconcileAcquire" && call.window === 17,
+      )
+      assert.deepEqual(reconciliation?.input, {
+        generationID: oldAcquire.generationID,
+        operationID: oldAcquire.operationID,
+        providerEpoch: oldAcquire.providerEpoch,
+      })
+      const bEntry = entryFor(replacement, 2)
+      assert.equal(bEntry.grant?.owner, inheritedOwner)
+      assert.equal(bEntry.grant?.retired?.generationID, aEntry.generationID)
+      assert.equal(bEntry.grant?.retired?.operationID, oldAcquire.operationID)
+      assert.equal(callCount(replacement, "acquire", 17), 1)
+      assert.equal(allocations, 1)
+      assert.equal(maximumAllocations, 1)
+
+      acquireReply.release()
+      assert.equal((await b.files.status({ signal: b.controller.signal })).occupied, true)
+      await assertOtherWindowBlocked(
+        replacement,
+        newIdentity.providerEpoch,
+        "cross-provider-acquire",
+      )
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (replacement) await cleanupHost(replacement)
+      await cleanupHost(original)
+    }
+  }
+
+  // A lost retirement reply remains exact across provider replacement and cannot free its successor.
+  {
+    const original = makeMain()
+    let replacement: MainHost | undefined
+    try {
+      const a = makeRuntime(original)
+      await until(() => a.runtime.state() === "ready", "cross-provider retirement original model")
+      const disposalCount = successfulDisposals
+      const retirementReply = setGate(original, "release", () => true)
+      const unloading = a.runtime.unload()
+      await retirementReply.reached
+      assert.equal(allocations, 0, "renderer model disposed before the lost retirement response")
+      assert.equal(successfulDisposals, disposalCount + 1)
+      const releaseInput = original.invocations.findLast(
+        (call) => call.method === "release" && call.window === 17,
+      )?.input
+      assert.ok(releaseInput)
+
+      a.controller.abort()
+      await Promise.all([unloading, a.runtime.dispose()])
+      const aEntry = entryFor(original, 1)
+      assert.equal(aEntry.releaseAck, undefined, "aborted renderer did not accept the held reply")
+      assert.equal(aEntry.state, "disposed")
+      await cleanupHost(original)
+
+      replacement = makeMain(original.persistent)
+      replacement.memory = original.memory
+      const b = makeRuntime(replacement)
+      await until(() => b.runtime.state() === "ready", "cross-provider retirement reconciliation")
+      const reconciliation = replacement.invocations.find(
+        (call) => call.method === "reconcileRelease" && call.window === 17,
+      )
+      assert.deepEqual(reconciliation?.input, releaseInput)
+      assert.equal(callCount(replacement, "reconcileRelease", 17), 1)
+      assert.equal(entryFor(replacement, 2).grant?.retired, undefined)
+      assert.equal(allocations, 1)
+      assert.equal(maximumAllocations, 1)
+
+      retirementReply.release()
+      assert.equal((await b.files.status({ signal: b.controller.signal })).occupied, true)
+      assert.equal(allocations, 1, "the late old-provider acknowledgement cannot free B")
+      await assertOtherWindowBlocked(
+        replacement,
+        (await b.files.identity({ signal: b.controller.signal })).providerEpoch,
+        "cross-provider-retirement",
+      )
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (replacement) await cleanupHost(replacement)
+      await cleanupHost(original)
+    }
+  }
+
   // Installed-plugin reload replaces main but retains the window's plugin memory.
   {
     const original = makeMain()
@@ -639,12 +798,20 @@ try {
       const a = makeRuntime(original)
       await until(() => a.runtime.state() === "ready", "normal reload original model")
       const oldEpoch = (await a.files.identity()).providerEpoch
+      const oldWorkerOwner = original.workerOwner
+      const disposalCount = successfulDisposals
       a.controller.abort()
       await a.runtime.dispose()
       assert.equal(allocations, 0, "the original renderer positively disposed its model")
+      assert.equal(successfulDisposals, disposalCount + 1)
+      assert.equal(original.workerDetachCalls, 0, "aborted renderer context skips worker IPC")
+      assert.equal(callCount(original, "release", 17), 0, "aborted context skips lease IPC")
       await cleanupHost(original)
+      const inheritedOwner = (
+        original.persistent.get("webgpu-model-lease") as { lease?: ModelLeaseGrant }
+      ).lease?.owner
 
-      replacement = makeMain()
+      replacement = makeMain(original.persistent)
       replacement.memory = original.memory
       // GUI/main reload leaves the server-side inference broker running.
       replacement.workerOwner = original.workerOwner
@@ -652,10 +819,76 @@ try {
       assert.notEqual((await b.files.identity()).providerEpoch, oldEpoch)
       await until(() => b.runtime.state() === "ready", "normal reload replacement model")
       assert.equal(allocations, 1)
+      assert.equal(replacement.workerOwner, oldWorkerOwner)
+      assert.equal(entryFor(replacement, 2).grant?.owner, inheritedOwner)
+      assert.equal(
+        entryFor(replacement, 2).grant?.retired?.generationID,
+        entryFor(replacement, 1).generationID,
+      )
       b.controller.abort()
       await b.runtime.dispose()
     } finally {
       if (replacement) await cleanupHost(replacement)
+    }
+  }
+
+  // Main cleanup can finish first; the replacement must wait for the renderer's disposal proof.
+  {
+    const original = makeMain()
+    let replacement: MainHost | undefined
+    try {
+      const a = makeRuntime(original)
+      await until(() => a.runtime.state() === "ready", "main-first reload original model")
+      const oldEpoch = (await a.files.identity()).providerEpoch
+      const oldWorkerOwner = original.workerOwner
+      const disposalCount = successfulDisposals
+      const disposal = holdNextDisposal()
+      a.controller.abort()
+      const cleanupA = a.runtime.dispose()
+      await disposal.started
+      assert.equal(allocations, 1, "the renderer model remains allocated while disposal is pending")
+      assert.equal(original.workerDetachCalls, 0, "aborted renderer context skips worker IPC")
+      assert.equal(callCount(original, "release", 17), 0, "aborted context skips lease IPC")
+
+      for (const fn of original.cleanup.reverse()) fn()
+      original.cleanup.length = 0
+      await original.stop?.()
+      original.stop = undefined
+
+      replacement = makeMain(original.persistent)
+      replacement.memory = original.memory
+      replacement.workerOwner = original.workerOwner
+      const b = makeRuntime(replacement)
+      const newIdentity = await b.files.identity()
+      assert.notEqual(newIdentity.providerEpoch, oldEpoch)
+      await until(
+        () => callCount(replacement!, "registerGeneration", 17) === 1,
+        "main-first replacement registration",
+      )
+      await Bun.sleep(60)
+      assert.equal(
+        callCount(replacement, "acquire", 17),
+        0,
+        "the new provider cannot acquire before old renderer disposal is proven",
+      )
+      assert.equal(allocations, 1)
+      await assertOtherWindowBlocked(replacement, newIdentity.providerEpoch, "main-first-pending")
+
+      disposal.release()
+      await cleanupA
+      assert.equal(allocations, 0, "the old renderer disposal is positively observed")
+      assert.equal(successfulDisposals, disposalCount + 1)
+      await until(() => b.runtime.state() === "ready", "main-first replacement handoff")
+      const current = entryFor(replacement, 2)
+      assert.equal(current.grant?.owner, oldWorkerOwner)
+      assert.equal(current.grant?.retired?.generationID, entryFor(replacement, 1).generationID)
+      assert.equal(allocations, 1)
+      await assertOtherWindowBlocked(replacement, newIdentity.providerEpoch, "main-first-after")
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (replacement) await cleanupHost(replacement)
+      await cleanupHost(original)
     }
   }
 

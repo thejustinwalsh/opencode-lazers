@@ -37,6 +37,8 @@ import type {
 
 type ModelKind = "chat" | "decision"
 
+class WorkerDetachError extends Error {}
+
 type HandoffGeneration = {
   generationID: string
   generationSequence: number
@@ -108,6 +110,7 @@ export function createInferenceRuntime(
     now?: () => number
     wallNow?: () => number
     schedule?: (callback: () => void, delayMs: number) => () => void
+    serviceTimeoutMs?: number
   } = {},
 ) {
   const files = ctx.main(ModelFiles)
@@ -208,6 +211,7 @@ export function createInferenceRuntime(
     | { id: string; feature: LocalFeature; controller: AbortController; done: Promise<void> }
     | undefined
   let polling = false
+  let attachPending = false
   let disposed = false
   let unloading: Promise<void> | undefined
   let switching = false
@@ -220,7 +224,8 @@ export function createInferenceRuntime(
   let recoveryRetry: { kind: ModelKind; at: number } | undefined
   let nextLoadAttempt = 0
   let loadFailures = 0
-  const serviceSignal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
+  const serviceSignal = () =>
+    AbortSignal.any([ctx.signal, AbortSignal.timeout(timing.serviceTimeoutMs ?? 5_000)])
   const rpc = () => ctx.client.rpc(LocalInference)
   const worker = () => ctx.client.rpc(RendererInference)
   const ready = () => {
@@ -452,20 +457,40 @@ export function createInferenceRuntime(
     const provider = await files.identity({ signal })
     if (handoff.windowID !== undefined && handoff.windowID !== provider.windowID)
       throw new Error("The renderer window changed; previous ownership remains unproven")
-    if (handoff.providerEpoch && handoff.providerEpoch !== provider.providerEpoch)
-      throw new Error("The main-process provider changed; previous ownership remains unproven")
-    if (!handoff.providerEpoch || handoff.windowID === undefined)
+    const previous = ancestors()
+    const providerChanged = Boolean(
+      handoff.providerEpoch && handoff.providerEpoch !== provider.providerEpoch,
+    )
+    if (providerChanged) {
+      if (
+        provider.previousProviderEpoch !== handoff.providerEpoch ||
+        !provider.previousProviderState ||
+        provider.previousProviderState === "unproven"
+      )
+        throw new Error("The main-process provider changed without exact retirement evidence")
+    } else if (
+      (!handoff.providerEpoch || handoff.windowID === undefined) &&
+      previous.some((entry) => entry.grant || entry.acquire || entry.release)
+    ) {
+      throw new Error("Previous main-process ownership identity is missing")
+    }
+    await files.registerGeneration({ generationID, generationSequence }, { signal })
+    await waitForRendererDisposal(previous, signal)
+    await reconcileAncestors(previous, signal)
+    const predecessor = currentPredecessor(previous)
+    if (providerChanged) {
+      if (provider.previousProviderState === "retired" && !predecessor)
+        throw new Error("The replacement provider retains an unidentified predecessor")
+      if (provider.previousProviderState === "idle" && predecessor)
+        throw new Error("The replacement provider does not acknowledge previous ownership")
+    }
+    if (!handoff.providerEpoch || providerChanged || handoff.windowID === undefined)
       setHandoff((draft) => {
         draft.providerEpoch = provider.providerEpoch
         draft.windowID = provider.windowID
       })
-    await files.registerGeneration({ generationID, generationSequence }, { signal })
-    const previous = ancestors()
-    await waitForRendererDisposal(previous, signal)
-    await reconcileAncestors(previous, signal)
     let request = generation().releaseAck ? undefined : generation().acquire
     if (!request) {
-      const predecessor = currentPredecessor(previous)
       if (predecessor) {
         const predecessorEntry = previous.find(
           (entry) => entry.generationID === predecessor.generationID,
@@ -473,8 +498,7 @@ export function createInferenceRuntime(
         if (
           !predecessorEntry ||
           predecessorEntry.state !== "disposed" ||
-          !predecessorEntry.disposalID ||
-          predecessor.providerEpoch !== provider.providerEpoch
+          !predecessorEntry.disposalID
         )
           throw new Error("Previous renderer disposal or provider ownership is unconfirmed")
         request = {
@@ -559,6 +583,27 @@ export function createInferenceRuntime(
     if (owner && JSON.stringify(leaseIdentity(owner)) === JSON.stringify(request.lease))
       owner = undefined
     return ack
+  }
+
+  const detachWorker = async (lease: ModelLeaseGrant, error?: unknown) => {
+    if (supportsLeaseHandoff && ctx.signal.aborted) return false
+    try {
+      await worker().detach(
+        {
+          owner: lease.owner,
+          ...(error === undefined ? {} : { error: errorDetail(error) }),
+        },
+        { signal: serviceSignal() },
+      )
+      attachPending = false
+      return true
+    } catch (cause) {
+      if (supportsLeaseHandoff && ctx.signal.aborted) return false
+      attachPending = true
+      throw new WorkerDetachError(
+        `Local inference worker detach failed; cache ownership is retained: ${errorDetail(cause)}`,
+      )
+    }
   }
 
   const cancelLease = () => {
@@ -933,10 +978,8 @@ export function createInferenceRuntime(
         setTarget(undefined)
         const lease = owner
         if (lease && (!ctx.signal.aborted || !supportsLeaseHandoff)) {
-          await worker()
-            .detach({ owner: lease.owner }, { signal: serviceSignal() })
-            .catch(() => {})
-          await retireLease(lease, crypto.randomUUID(), serviceSignal())
+          if (await detachWorker(lease))
+            await retireLease(lease, crypto.randomUUID(), serviceSignal())
         }
         setGPU("")
         ready()
@@ -969,7 +1012,9 @@ export function createInferenceRuntime(
       try {
         if (!navigator.gpu) throw new Error("WebGPU is unavailable in this Desktop renderer")
         const lease = await acquireLease(signal)
+        attachPending = true
         await worker().attach({ owner: lease.owner }, { signal })
+        attachPending = false
         if (needsChat(features()))
           cacheOperations.push(
             retryLoad(
@@ -1027,17 +1072,14 @@ export function createInferenceRuntime(
         }
         if (owner && (!ctx.signal.aborted || !supportsLeaseHandoff)) {
           const lease = owner
-          await worker()
-            .detach(
-              { owner: lease.owner, error: String(error).slice(0, 2_000) },
-              { signal: serviceSignal() },
-            )
-            .catch(() => {})
           try {
-            await retireLease(lease, crypto.randomUUID(), serviceSignal())
+            if (await detachWorker(lease, error))
+              await retireLease(lease, crypto.randomUUID(), serviceSignal())
           } catch (cleanup) {
-            autoload = false
-            fail(`Cache ownership cleanup failed: ${String(cleanup)}`)
+            if (!(cleanup instanceof WorkerDetachError)) autoload = false
+            fail(
+              `Model load failed: ${errorDetail(error)}. Cleanup failed: ${errorDetail(cleanup)}`,
+            )
             return
           }
         }
@@ -1066,7 +1108,7 @@ export function createInferenceRuntime(
         ready()
         return
       }
-      if (autoload && !owner && !initializing) {
+      if (autoload && (!owner || attachPending) && !initializing) {
         void load()
         return
       }

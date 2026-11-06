@@ -55,10 +55,12 @@ const LeaseRetirement = Schema.Struct({
   providerEpoch: leaseID,
   rendererDisposalID: leaseID,
 })
+export const ModelLeaseRetirementSchema = LeaseRetirement
 const LeaseGrant = Schema.Struct({
   ...LeaseIdentity.fields,
   retired: Schema.optionalKey(LeaseRetirement),
 })
+export const ModelLeaseGrantSchema = LeaseGrant
 const LeaseAcquire = Schema.Struct({
   generationID: leaseID,
   generationSequence: leaseSequence,
@@ -70,6 +72,12 @@ const LeaseRelease = Schema.Struct({
   lease: LeaseIdentity,
   retirementID: leaseID,
   rendererDisposalID: leaseID,
+})
+const ProviderIdentity = Schema.Struct({
+  providerEpoch: leaseID,
+  windowID: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  previousProviderEpoch: Schema.optionalKey(leaseID),
+  previousProviderState: Schema.optionalKey(Schema.Literals(["idle", "retired", "unproven"])),
 })
 export type ModelLeaseIdentity = typeof LeaseIdentity.Type
 export type ModelLeaseGrant = typeof LeaseGrant.Type
@@ -233,10 +241,7 @@ export const ModelFiles = Ipc.define({
   id: "lazers.webgpu-files",
   methods: {
     identity: {
-      output: Schema.Struct({
-        providerEpoch: leaseID,
-        windowID: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
-      }),
+      output: ProviderIdentity,
     },
     registerGeneration: {
       input: Schema.Struct({ generationID: leaseID, generationSequence: leaseSequence }),
