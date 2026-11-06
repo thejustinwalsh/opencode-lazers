@@ -1,6 +1,6 @@
 import { createComponent, createSignal } from "solid-js"
 import { render } from "solid-js/web"
-import { Panel } from "@opencode/plugin/gui"
+import { LinkHandler, Panel } from "@opencode/plugin/gui"
 import type { Panel as PanelContribution } from "@opencode/plugin/gui"
 import {
   PanelContext,
@@ -14,6 +14,7 @@ export {
   registryTokens,
   setupGui,
 } from "../../models-panel/fixtures/dom-host.ts"
+export { LinkHandler }
 
 export function taskPanelRegistration(registrations: Array<{ token: unknown; value: unknown }>) {
   return registrations.find(

@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite"
+import { execFileSync } from "node:child_process"
+import { existsSync, realpathSync } from "node:fs"
+import { relative, resolve, sep } from "node:path"
 import { canonical, fingerprint } from "../../identity.ts"
 import type { TaskRepository } from "../../storage.ts"
 import { PlanInput } from "../../runner/schema.ts"
+import { RetainedVerificationSchema } from "../../runner/retained-verification/schema.ts"
+import type { RetainedVerification } from "../../runner/retained-verification/schema.ts"
+import { retainedVerificationProbeBasis } from "../../runner/retained-verification/probe.ts"
 import {
   ProbeActorSchema,
   ProbeDefinitionInputSchema,
@@ -10,9 +16,12 @@ import {
   ProbeRunSchema,
   ProbeRunStartInputSchema,
   ProbeRunUpdateInputSchema,
+  ProbeTargetSchema,
 } from "./schema.ts"
 import type {
   ProbeActor,
+  ProbeBasis,
+  ProbeCandidate,
   ProbeDefinition,
   ProbeDefinitionInput,
   ProbeRun,
@@ -111,6 +120,16 @@ function decodeRun(payload: string): ProbeRun {
 
 function same(left: unknown, right: unknown): boolean {
   return canonical(left) === canonical(right)
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  const first = resolve(left)
+  const second = resolve(right)
+  const contains = (parent: string, child: string) => {
+    const rel = relative(parent, child)
+    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith(sep))
+  }
+  return contains(first, second) || contains(second, first)
 }
 
 function assertArchitect(actor: ProbeActor): void {
@@ -278,6 +297,20 @@ export class ProbeRepository {
     })
   }
 
+  /** Read the current project-owned definition for an exact task or plan target. */
+  definitionForTarget(targetInput: unknown): ProbeDefinition | undefined {
+    const target = ProbeTargetSchema.parse(targetInput)
+    return this.repository.atomic((db) => {
+      ensureTables(db)
+      const head = db
+        .query<{ definition_id: string; revision: number }, [string, string]>(
+          "SELECT definition_id,revision FROM probe_definition_heads WHERE project_directory=? AND target_key=?",
+        )
+        .get(this.repository.projectDirectory, targetKey(target))
+      return head ? this.definitionIn(db, head.definition_id, head.revision) : undefined
+    })
+  }
+
   startRun(input: unknown, actorInput: unknown): ProbeRunWrite {
     const parsed = ProbeRunStartInputSchema.parse(input)
     const actor = ProbeActorSchema.parse(actorInput)
@@ -319,10 +352,26 @@ export class ProbeRepository {
         throw new Error("Run references no required scenario; not-applicable policy is not a run")
 
       const attempt = this.attemptIn(db, parsed.attemptID)
-      this.assertActorOwnsAttempt(actor, attempt)
       if (definition.target.kind === "task" && definition.target.taskID !== attempt.task_id)
         throw new Error("Probe task does not match the original attempt")
-      if (definition.target.kind === "task" && parsed.candidate.workspace !== attempt.workspace)
+      const retainedOperation = this.retainedOperationForBasis(
+        db,
+        definition.target,
+        attempt,
+        parsed,
+      )
+      if (retainedOperation) {
+        this.assertRetainedProbeBinding(db, retainedOperation, definition.target, parsed, attempt)
+        if (actor.sessionID !== retainedOperation.owner || actor.agent !== "architect")
+          throw new Error("Retained probes must be recorded by the current Architect owner")
+      } else {
+        this.assertActorOwnsAttempt(actor, attempt)
+      }
+      if (
+        !retainedOperation &&
+        definition.target.kind === "task" &&
+        parsed.candidate.workspace !== attempt.workspace
+      )
         throw new Error("Task probe candidate workspace must match the original attempt")
       if (
         definition.target.kind === "combined-candidate" &&
@@ -424,7 +473,7 @@ export class ProbeRepository {
       const current = decodeRun(row.payload)
       this.assertRunOwner(actor, current)
       const attempt = this.attemptIn(db, current.attemptID)
-      this.assertActorOwnsAttempt(actor, attempt)
+      this.assertRunActorIn(db, current, actor, attempt)
       if (
         attempt.task_id !== current.taskID ||
         attempt.plan_id !== current.planID ||
@@ -538,6 +587,16 @@ export class ProbeRepository {
         if (!scenario || !same(scenario.procedure, current.procedure))
           reasons.push("procedure-definition-changed")
       }
+      if (run.inputs.recordID.startsWith("retained-verification:")) {
+        try {
+          const attempt = this.attemptIn(db, run.attemptID)
+          const operation = this.retainedOperationForBasis(db, run.target, attempt, run)
+          if (!operation) reasons.push("retained-verification-changed")
+          else this.assertRetainedProbeBinding(db, operation, run.target, run, attempt)
+        } catch {
+          reasons.push("retained-verification-changed")
+        }
+      }
       try {
         const acceptance = this.acceptanceForTarget(db, run.target)
         if (!latest || latest.acceptanceBasis.revision !== acceptance.revision)
@@ -558,6 +617,208 @@ export class ProbeRepository {
         cleanupState: run.cleanupState,
       }
     })
+  }
+
+  private retainedOperationIn(db: Database, operationID: string): RetainedVerification | undefined {
+    const row = db
+      .query<{ payload: string }, [string, string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE project_directory=? AND id=?",
+      )
+      .get(this.repository.projectDirectory, operationID)
+    return row ? RetainedVerificationSchema.parse(JSON.parse(row.payload)) : undefined
+  }
+
+  private retainedOperationForBasis(
+    db: Database,
+    target: ProbeTarget,
+    attempt: AttemptIdentity,
+    input: { inputs: ProbeBasis },
+  ): RetainedVerification | undefined {
+    const marker = input.inputs.recordID
+    if (!marker.startsWith("retained-verification:")) return undefined
+    const match = /^retained-verification:([0-9a-f-]{36}):inputs$/.exec(marker)
+    if (!match) throw new Error("Malformed retained verification probe basis")
+    const operation = this.retainedOperationIn(db, match[1]!)
+    if (!operation) throw new Error("Retained verification operation is unavailable")
+    if (
+      operation.attemptID !== attempt.id ||
+      operation.taskID !== attempt.task_id ||
+      operation.planID !== attempt.plan_id
+    )
+      throw new Error("Retained verification operation does not own this original attempt")
+    if (
+      target.kind === "task"
+        ? target.taskID !== operation.taskID
+        : target.planID !== operation.planID
+    )
+      throw new Error("Retained verification target does not match its operation")
+    return operation
+  }
+
+  private assertRunActorIn(
+    db: Database,
+    run: ProbeRun,
+    actor: ProbeActor,
+    attempt: AttemptIdentity,
+  ): void {
+    if (
+      run.taskID !== attempt.task_id ||
+      run.planID !== attempt.plan_id ||
+      run.attemptID !== attempt.id ||
+      run.sessionID !== attempt.session_id
+    )
+      throw new Error("Probe run no longer matches its original attempt")
+    const operation = this.retainedOperationForBasis(db, run.target, attempt, run)
+    if (!operation) {
+      this.assertActorOwnsAttempt(actor, attempt)
+      return
+    }
+    this.assertRetainedProbeBinding(db, operation, run.target, run, attempt)
+    if (actor.sessionID !== operation.owner || actor.agent !== "architect")
+      throw new Error("Retained probe updates must come from the current Architect owner")
+  }
+
+  /** Resource lifecycle shares probe authorization rather than trusting caller-supplied ownership. */
+  assertResourceActor(runID: string, actorInput: unknown): ProbeRun {
+    const actor = ProbeActorSchema.parse(actorInput)
+    return this.repository.atomic((db) => {
+      ensureTables(db)
+      const row = db
+        .query<{ payload: string }, [string, string]>(
+          "SELECT payload FROM probe_runs WHERE project_directory=? AND run_id=?",
+        )
+        .get(this.repository.projectDirectory, runID)
+      if (!row) throw new Error("Probe run not found in this project")
+      const run = decodeRun(row.payload)
+      const attempt = this.attemptIn(db, run.attemptID)
+      this.assertRunOwner(actor, run)
+      this.assertRunActorIn(db, run, actor, attempt)
+      if (
+        attempt.task_id !== run.taskID ||
+        attempt.plan_id !== run.planID ||
+        attempt.session_id !== run.sessionID
+      )
+        throw new Error("Probe run no longer matches its original attempt")
+      return run
+    })
+  }
+
+  private assertRetainedProbeBinding(
+    db: Database,
+    operation: RetainedVerification,
+    target: ProbeTarget,
+    input: { candidate: ProbeCandidate; inputs: ProbeBasis; environment: ProbeBasis },
+    attempt: AttemptIdentity,
+  ): void {
+    const phase = target.kind === "task" ? "task" : "combined"
+    const workspace = phase === "task" ? operation.taskWorkspace : operation.combinedWorkspace
+    const workspaceState =
+      phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState
+    const activeStates = [
+      "pending",
+      "task-checks",
+      "combined-checks",
+      "waiting-human",
+      "waiting-human-combined",
+    ]
+    if (
+      input.inputs.recordID !== `retained-verification:${operation.id}:inputs` ||
+      !activeStates.includes(operation.state) ||
+      workspaceState !== "owned" ||
+      !workspace ||
+      operation.projectDirectory !== this.repository.projectDirectory ||
+      operation.taskID !== attempt.task_id ||
+      operation.planID !== attempt.plan_id ||
+      operation.attemptID !== attempt.id ||
+      operation.originalSessionID !== attempt.session_id ||
+      (target.kind === "task" && target.taskID !== operation.taskID) ||
+      (target.kind === "combined-candidate" && target.planID !== operation.planID)
+    )
+      throw new Error("Retained probe is not bound to the current owned verification generation")
+    const basis = retainedVerificationProbeBasis(operation, phase)
+    if (
+      !same(input.candidate, basis.candidate) ||
+      !same(input.inputs, basis.inputs) ||
+      !same(input.environment, basis.environment)
+    )
+      throw new Error("Retained probe candidate, inputs or environment are stale")
+    const plan = db
+      .query<
+        { owner: string; revision: number; version: number; state: string; body: string },
+        [string, string]
+      >(
+        "SELECT owner,revision,version,state,body FROM runner_plans WHERE id=? AND project_directory=?",
+      )
+      .get(operation.planID, this.repository.projectDirectory)
+    const controlEpoch = db
+      .query<{ epoch: number }, [string]>(
+        `SELECT COALESCE(MAX(id),0) AS epoch FROM runner_transitions
+         WHERE plan_id=? AND task_id IS NULL AND event IN (
+           'OWNER_REASSIGNED','OWNER_CONTINUED','OWNER_CONTINUATION_ROLLED_BACK','CANCEL_REQUESTED'
+         )`,
+      )
+      .get(operation.planID)!.epoch
+    const latestAttempt = db
+      .query<{ id: string }, [string, string]>(
+        "SELECT id FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
+      )
+      .get(operation.planID, operation.taskID)
+    const task = this.repository.get(operation.taskID)
+    if (
+      !plan ||
+      plan.owner !== operation.owner ||
+      plan.version !== operation.planVersion ||
+      plan.revision !== operation.planRevision ||
+      !["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
+      controlEpoch !== operation.ownerEpoch ||
+      !task ||
+      task.revision !== operation.taskRevision ||
+      task.provenance.projectDirectory !== operation.projectDirectory ||
+      latestAttempt?.id !== operation.attemptID
+    )
+      throw new Error("Retained probe owner, plan, task or latest attempt changed")
+    const planInput = PlanInput.parse(JSON.parse(plan.body))
+    if (
+      planInput.nodes.find((node) => node.taskID === operation.taskID)?.revision !==
+      operation.taskRevision
+    )
+      throw new Error("Retained probe task revision changed in the current plan")
+    const latestGeneration = db
+      .query<{ generation: number | null }, [string, string, string]>(
+        "SELECT MAX(generation) AS generation FROM runner_retained_verifications WHERE project_directory=? AND plan_id=? AND task_id=?",
+      )
+      .get(operation.projectDirectory, operation.planID, operation.taskID)?.generation
+    if (latestGeneration !== operation.generation)
+      throw new Error("Retained verification generation is no longer current")
+    const canonicalCandidate = realpathSync(workspace)
+    const canonicalOriginal = realpathSync(attempt.workspace)
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: canonicalCandidate,
+      encoding: "utf8",
+    }).trim()
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: canonicalCandidate,
+      encoding: "utf8",
+    }).trim()
+    const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: canonicalCandidate,
+      encoding: "utf8",
+    })
+    const conflicts = execFileSync("git", ["ls-files", "-u", "-z"], {
+      cwd: canonicalCandidate,
+      encoding: "utf8",
+    })
+    if (
+      !existsSync(canonicalCandidate) ||
+      canonicalCandidate !== workspace ||
+      canonicalCandidate === canonicalOriginal ||
+      pathsOverlap(canonicalCandidate, canonicalOriginal) ||
+      top !== canonicalCandidate ||
+      head !== basis.candidate.revision ||
+      status ||
+      conflicts
+    )
+      throw new Error("Retained probe checkout is not the exact distinct clean candidate")
   }
 
   private validateCoverage(input: ProbeDefinitionInput, acceptanceIDs: string[]): void {

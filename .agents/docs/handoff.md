@@ -1,174 +1,198 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T05:27:15.449713+00:00. Goal remains active: drive OpenCode Desktop until the full
-active roadmap is implemented, verified, integrated and cleaned, then present
-an observation-based improvement plan. The scope is not limited to Models/Tasks.
+Updated 2026-11-06T12:35:22.405854+00:00. Canonical source now62b0170.
+Goal remains active: drive OpenCode Desktop until the full roadmap is implemented,
+verified, integrated and cleaned, then propose observation-based improvements.
+Runtime/API readback is authoritative. This replaces contradictory historical
+status sections; archive: handoff-before-20261106-native-activation.md.
 
-## Operating decisions
+## Working rules
 
-- Model prompts through Desktop CUA; read-only SDK/SQLite inspection is allowed.
-  No production SQL writes or CLI model sessions.
-- Architect: OpenAI gpt-6.1-sol/high. Implementors and research: OpenAI
-  gpt-6-luna/max. Reuse native Tera High for screenshots; no mockup-to-components.
-- Root reviews/integrates and fixes blockers. Runtime owns task state/dispatch,
-  attempts and cleanup. Use native worktree APIs. Preserve active workers.
-- Evidence is tests and observed behavior, not file hashes. Keep schemas,
-  lz-verify-task self-review and advisory System One. No arbitrary model budgets.
-- Keep all six inference flags enabled and unload Never. Do not disable GPU/models.
-- Current priority: Models, Tasks/Trajectory, Radar; retained recovery can proceed
-  independently. Radar monitors actual agents/models/tools/files/messages/health.
-- One reusable plugin; native SDK/adapters, no custom daemons. Portless before
-  listening project servers. Native one-shot tests and supported app lifecycle
-  follow their documented flows.
+- Model prompts through Desktop CUA; read-only SDK/SQLite diagnostics allowed.
+  No production SQL mutations. Root reviews/integrates and fixes actual blockers.
+- Architect OpenAI gpt-6.1-sol/high; implementors/research OpenAI gpt-6-luna/max.
+  Existing native Tera High reviews screenshots. No mockup-to-components skill.
+- Preserve original worker/attempt/history/useful work; native runtime owns dispatch,
+  task state and cleanup. Use OpenCode worktree APIs, not custom worktree commands.
+- Evidence is tests and actual product probes, never source hashing. Keep schema
+  checks, lz-verify-task Architect self-review and advisory System One. No budgets.
+- All six inference flags ON; unload Never. Do not disable inference to pass tests.
+- Avoid source/build activation during actual implementation. Coordinate a natural
+  quiet boundary. Never stop healthy workers merely to manufacture one.
+- Read README and opencode-api.md before integration changes. Load Portless skill
+  before listening project servers; third-party Desktop follows native lifecycle.
+- Priority Models → Tasks/Trajectory → Radar; preserve the full remaining roadmap.
+  Tasks are small coherent increments, not epics. Architect decomposes and schedules.
 
-## Landed and activated
+## Integrated and observed
 
-Canonical code is at4319bde2a0594ca81ac5dd49c9e0ec3417e617cf; later commits are
-retained documentation/evidence. It includes147 compact rows (ebdf41a),153 large
-history reads (c8530aa),152 scenario UI + compact evidence (26a0d88/59cf8f8),
-Root keyed-row crash fix7f5133b and clean-checkout menu-test fix3e09c37.
+Canonical7e80cac preserves native2610e9f (retained verification) and3ea8b5d
+(GPU normal reload) ancestry, plus catalog accessb01121b, native replay08166cf,
+and shared Tasks publisher20d9736. Combined reviewed tree was a9235c8 at
+/private/tmp/lz-native-log-contract-review. Clean backend-only review tree
+/private/tmp/lz-backend-release-review was129c750. Root removed both finished review trees through native worktree.remove(force:false);
+physical absence confirmed. Backend review commit retained by branch
+feat/backend-release-review-record; integrated full candidate is in main ancestry.
+Active worker worktrees remain untouched.
 
-Independent combined verification:1364tests/15208assertions/154files,250.53s;
-fmt/lint/types/diff and GUI build/bundle evaluation pass. Logs:
-`evidence/dogfood-20261106/models-tasks-batch-tests.log` and corresponding build log.
-GUI rebuilt on canonical source. Actual native RPC and UI reads confirm activation;
-no service restart was needed. Service last observed PID71027; revalidate.
+All native sessions were confirmed inactive before activation. Root quit/reopened
+Desktop; service PID71027 survived. Canonical GUI build/bundle evaluation passed.
+Then normal Extensions → Plugins → Reload and settings local inference returned
+“local GPU ready.”,19input/4outputtokens. Flags ON/Never unchanged. This proves
+normal reload/output, not every cross-window/cancellation/lost-response race.
 
-LZ-153 plan a27556ef-015b-4084-bc5a-ed12dea9329e is INTEGRATED v12 atc8530aa.
-Task5d4548ce-e5c0-4f7a-b3d1-3614e973e3f5; original worker
-ses_bb1ddbbe1ca84e498de9597792c602f6. Native cleanup removed its tree; physical
-absence confirmed. Root observed actual project capture over16315facts/155tasks,
-coherent authenticated overview/rows/configurations, connected Refresh and a fresh
-close/reopen from the extra-panel list. Three rows/scenarios render, with no old
-15000-fact failure. Evidence & assumptions starts collapsed and expands/collapses
-with real rates, categories, retries and scoped caching provenance.
+Postactivation3sec sample:21Tasks events/21versions, one each instead of14copies.
+Renderer78667 measured2.0%CPU, service71027 15.5%. Observability still520events/3sec;
+not all performance issues resolved. See renderer-event-amplification-20261106.md
+under design/reviews. Historical587%renderer recovered after window reload; do not
+claim that recovery alone proves a code fix.
 
-Native context evidence and screenshots:
-`evidence/dogfood-20261106/models-native-activated-contexts.json`,
-`models-live-activated.png`, `tasks-compact-live-activated.png`.
-Reader capture took5.3s; responsiveness remains a follow-up concern, not a reason
-to restore arbitrary data ceilings. See models-history-read-review-20261106.md.
+Exact retained required command passed562tests/7497assertions/30files in155.78s,
+without timeout override; boundary116/855 and WebGPU22/122 passed. Quality/build
+pass. Logs under /private/tmp/lz-clean-backend-* and lz-final-backend-gpu-*.
+Real native retained qualification remains unproven; tests do not substitute.
 
-Root review tree /private/tmp/lz147-compact-review was natively removed after
-landing; physical absence confirmed. Do not reuse it. Its metadata JSON in/tmp is
-historical. Other Root review/adoption/performance trees were removed earlier.
+147 UI corrections are integrated (e05e82c,14e8928,50cc2f2 ancestry). Native failed
+lifecycle renders Failed; objective/Done when precede collapsed diagnostics;
+links158→157→156 work. Latest accepted product work retains cleanup-blocked status:
+cleanup uncertainty does not revoke product acceptance.153 is integrated/cleaned;
+large Models history reads work. No real Models comparison graph accepted yet.
 
-## Active native coordination
+## Current native work
 
-Main Architect: ses_e568438ebffeaoFbF9nBb942XM (Sol High).
-Use current runtime versions/records rather than copying stale versions into calls.
+Main Architect ses_e568438ebffeaoFbF9nBb942XM is active on the full roadmap.
+Root resumed through Desktop after activation. Latest actual blocker:
+registered verify-retained on156 refused “A conflicting active implementation
+attempt prevents retained verification”; no operation/check/acceptance was created.
+Historical122 attempt38df5475-caa8-4469-8c68-1b330f981c80 overlaps Models source but
+has sealed source quarantine. Runtime guard scans raw attempt states; existing
+sourceReservationExcluded has a narrow isolation-aware exclusion. Investigate and
+reuse existing policy; do not clear historical state or invent idle success.
 
-147: task c1e32cb7-6c7b-427c-927c-97f8332a8165; plan
-b4736219-82ba-44f2-b319-f26a5095d0a2; attempt
-3b4bad86-2aad-44d2-a17a-fb98707dcd6e; SAME original worker
-ses_f4eb00b5f274438a8aba61a09782395f is ACTIVE on a genuine inspector correction.
-Tera found diagnostics before objective/Done when. Put identity/status, objective
-and visible Done when first; full hold/lifecycle/raw-worker detail is progressive.
-Keep truthful activity/unknowns and filters. Repeated plan headers/density belongs
-to existing149; do not duplicate that grouping work. Original native idle mismatch
-history remains; do not manufacture proof. Old compact source is already landed.
+Luna e522 confirmed the admission defect. SAME138 worker delivered00c20ad;
+worker suites561/7486 passed, native registered checks finished, then Root merged
+atd998ea6. Canonical retained21/254 and quality passed. No extra worker turn.
+Real156 generation1 f0a3a894 was ADMITTED, but HELD before checks because native
+worktree startup had already populated node_modules. Pinned native worktree.create
+awaits project.commands.start; the original empty-directory assumption was wrong.
+Root owns this isolation repair lane; do not duplicate native implementors.
 
-138: task0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4; plan
-e48290a6-a871-42a2-94f1-c88f700c0d11; attempt
-87c14979-917d-4495-9fa6-90bb3aaeff17; SAME worker
-ses_28780d1d92544da880d3db3496c8a29d is ACTIVE on async setup/partial-resource repair.
-It checkpointed fee2a89 after fixing candidate-lock dependency support;549 task
-suite tests and isolated candidate quality/build passed. Old d378 review rejected
-root lock equality/cloned root installation; fee2 addresses that issue.
-Root then found synchronous120s execFileSync installation on service thread and
-possible unregistered partial resources after setup failure. Advice8 records the
-findings. Worker ended before Root activation, then Architect resumed it for a
-genuine async native/existing-executor setup and owned failure/cancellation
-reconciliation. No new worker/daemon. Source still unapproved; independent review,
-integration and actual native retained-verification walkthrough remain required.
-Reuse Luna reviewer ses_e522ffd49ffeenRSBj8xvTAxMB after the corrected commit.
+Roote36a42c adopts only a physically private native dependency directory into the
+operation's resource root, preserves unsafe-link rejection and ordinary installer/
+cleanup, and passed30/355 plus real native-created LAZERS checkout buncheck/cleanup.
+Root review tree was removed with nativeforce:false, physical absence confirmed.
+Gen1 was cancelled through native control; old history/resources preserved.
 
-Progress note checkpoint initially failed1200-character validation, then succeeded
-when shortened. Retain this actual cap/retry finding for follow-up; do not confuse
-it with removed320-character advice cap (b0548ba, regression4tests/59assertions).
+Real156 generation2 41d43759 then reached installer but HELD: server process.execPath
+is compiled opencode-cli, not Bun. Root reproduced this with an ACTUAL compiled
+executable fixture.63d5001 resolves standalone Bun from verificationPATH;62b0170
+keeps the fixture's own native-startup cache private. Final31coupledtests/
+375assertions17.48s +quality pass. Initial sandboxed suite30pass/1fail was the new
+fixture writing global Bun cache; corrected and rerun, not a production lock error.
+Source fixes are active. Root directed Main to cancel only heldgen2 then request
+justifiedgen3 on SAME ff55/b011, zero implementation/modelturns. Gen3 34d2518c is TASK-ACCEPTED on originalff55/b011, with one original prompt.
+Model/quality checks exit0, check resource cleanup complete. Main recorded source
+landing and reconciled; ModelsplanRUNNINGv13,157dispatched. Operation-level old
+worktree cleanup remains independent/pending. Actual report:
+design/reviews/retained156-native-observation-20261106.json. Do not replay proof. See native-worktree-dependencies
+review and /private/tmp/lz-compiled-host-coupled-tests-final.log.
 
-## Models pricing and visual acceptance
+Original129 repair hit parentID===currentOwner despite valid ownership transfer.
+Root corrected research scope: supported reassignment as well as renewal must work;
+immutable native launch parent is not current plan authority. Preserve exact
+worker/attempt/project/route/input/current-owner epoch bindings; do not invent a
+predecessor-archival/ancestry ceremony that invalidates the58approved transfers.
+Main is planning a proportional correction in existing57 or linked remaining work.
 
-151/152 plan9f7c80ad-a799-443e-8a40-f294e15f9d50 remains blocked on
-connected-live-pricing-review:human.151 task77155457-70ca-424b-b5cf-0598244fe738
-sourcebff6013 is landed.152 task34de5cf6-afdd-41c0-82f5-6ea8356fba2e,
-attempt6c5b0677-3a6e-4956-ad23-cb8e3f54f70c, worker
-ses_06ae893559b2433d88f788baaf2e966c is inactive/succeeded at59cf8f8;
-its genuine correction was natively reconciled and task accepted. Source landed.
+Root used native Help→ExportLogs; current main extract is
+/private/tmp/lz-native-export-current-main.log. Actual provider/generation1→2,
+handoff retirement and successor-ready/probe records correlate to the witnessed
+reload. See design/reviews/native-plugin-reload-observation-20261106.md. e502 independently accepted the bounded native gate via correlated source-gated
+successor readiness and probe.159 plan is INTEGRATEDv14 at3ea8b5d; native worktree
+removal completed and physical absence verified. No claim covers every race or
+physical GPU EP (trace observedEP is unknown). Reuse research sessions; do not duplicate.
 
-Current actual UI: all3 canonical rows show Unknown cost and no graph points.
-Kimi endpoint scenario shows a scoped known-usage amount. These are different
-valuations. Native context says OpenRouter configured, no applicable cached quote,
-price index unavailable/pins empty. Do not speculate or invent plot data.
-Existing native Luna researcher ses_e5337592effeefMspoKIlcYx4F is ACTIVE diagnosing
-actual retained sources/valuation. Main will task the smallest grounded correction.
+138 task0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4;
+plane48290a6-a871-42a2-94f1-c88f700c0d11. Latest attempt091ee91c-c6e3-43d3-b7f9-858028336150,
+worker ses_9e11e5a8fae643a79c50b2346bfb48a9 delivered00c20ad, model inactive.
+Original87c14979 remains failed, preserved. Current owner ses_5c1563b654ed441990b217eb2006ef2f (lastplanv78, native human gate);
+revalidate current owner/version before controls. f6/2610 fixed accepted node leaving
+running attempt; only running/verifying rows advance, historical failed stays failed.
 
-Tera High ses_e52a5ae04ffeObat8Bt6imz4ci completed actual screenshot review:
-Tasks visual acceptance open; Models unavailable-state layout acceptable, full
-comparison unaccepted. Report design/reviews/activated-panels-review-20261106.md.
-Models scenario-card dominance and full wide/interaction/chart evidence remain
-open. Avoid another cosmetic pass until actual price diagnosis resolves the gap.
-Approved references: design/task-panel/tasks-focus-v2.png and
-design/models-panel/models-approved.png. Use actual screenshots and Tera.
+159 taskb3781cfa-4c99-4274-ae58-f762cf7aa301;
+planb171f745-0676-48e5-b517-cb5a8aad56d6, worker ses_f1562a517796402694b1fc3a7c26d148
+inactive/succeeded3ea8b5d; plan integratedv14 and worker worktree removed.
+128 is superseded/cancelled, not fulfilled. Old impossible same-provider gate is
+not granted. Peer retracted broker-idle fixture false positive; no extra proof turn.
 
-155: taskc23ffca3-fe8d-4102-afe6-3ee6ebf12f0c; plan
-b2d491ae-b125-485e-8637-796ae194447e; DRAFT Systems/LunaMax, after151/152 and153
-plans. Reuse102 valuation to connect trajectory tool/panel current market values,
-with partial/unknown coverage, retries and cached-source provenance. No subscription
-charges/new price arithmetic.153 prerequisite is now integrated;151/152 is not.
+## Models and subsequent work
 
-154: task19d5deff-69e2-4780-be58-83594a4d1969; plan
-c8fdd538-c1eb-4ca5-8414-e74f0f1aabbf; draft Systems/LunaMax, after Models and
-Tasks148/149 plan7d463854-6ef1-4206-beb8-5a9b8d4e6692. Normal same-worker native
-steering/control should automatically associate input through verification; existing
-136 aliases external tagged messages but does not send them. Communication itself
-does not require zero background/empty controls; preserve current facts and later
-verify actual completed work. No extra admission fences or invented stopgaps.
+Plan eade12ae-74f3-48af-874b-f5950f4a41c3:156→157→158, priority100.
+156 taskefd19c25-909e-4b06-aa4b-b6411785b4f7, original attempt
+ff55fda4-7c0d-4a43-b295-cdc29deefd1d, worker ses_507e57d6901a4928bfddd1e46d8f846b,
+b01121b now accepted on the original attempt after actualgen3 qualification.
+Main source-recorded and reconciled existingplan.157 is now ACCEPTED at
+f8c5e2eb69427e5e6653a7d26c152e362297c4f1, original attempt
+3bc67a5f-2354-467d-ab99-e401dd940e8d/workerb11, clean; reported194Models tests and
+quality/build pass. Native Luna reviewer ses_e522ffd49ffeenRSBj8xvTAxMB is actively
+reviewing immutablef8 arithmetic/coverage/snapshot pinning. Reuse its review.
+Root has inspected portions, not completed whole-source signoff. f8 is NOT yet
+merged on canonical main; do not activate while158 is active.
+158 is RUNNING on attempt14be7721-297d-4a70-bbdc-8652c807f943, worker
+ses_af5f7ceb2def456db6c25a8c09096a30 (OpenAI gpt-6-luna/max), based on accepted
+producer. It passed through a transient permission/reconciliation hold without
+restart; current planRUNNINGv19. Native UI goal is approved chart/rows/inspector;
+review narrow+wide screenshots with Tera High before visual acceptance.
+Root opened Tasks→157→Trajectory→Open worker in Desktop and saw actual source
+reads/patches. /private/tmp/lz157-native-worker-running.png is a native capture.
+157 task74f716cd-cf3e-436e-b112-57de5403b20c adds cohort/reference estimates.
+158 task64ed8c82-7bdd-4b2b-bbaa-c612464c5671 adds approved chart/rows/inspector.
+Approved references design/models-panel/models-approved.png and
+design/task-panel/tasks-focus-v2.png. Actual missing rates/tier uncertainty remain
+honest; current-market reference estimates may be labelled partial/ranges.
+Prices use live configured OpenRouter/native catalog, not subscription charges.
+Shared/project persona mapping resolves at dispatch; retain actual historical route.
 
-## Full backlog and limits
+Tasks148/149 plan7d463854-6ef1-4206-beb8-5a9b8d4e6692 follows prerequisites.
+149 advice3 includes refresh clearing prior activity into Unknown: preserve exact
+scoped stale observation during refresh, never invent current activity.
+131 timestamps overlap138;139 historical trajectories,155 market valuation,
+154 same-worker steering remain.151/152 connected-live-pricing gate is unresolved;
+actual Refresh “decision reads disagree” is not proof of working price presentation.
 
-Keep88 transient observation holds→148 eligibility/order→149 compact task grouping,
-139 historical trajectories,131 observed timestamps,128/110 GPU leases/recovery,
-Radar33/34 and129 source correction, audio, model metrics/projections/persona
-selection, packaging/install/upgrade/cross-machine work. Preserve proactive worker
-recovery, structured handoffs and live product verification contracts, including
-two actual implementer correction/reprobe walkthroughs. They are not proven by
-unit tests or delivered notifications. Use README contracts, design briefs and
-roadmap-execution.md; historical handoffs are context, not current instructions.
+## New live observations
 
-Completed-plan audit retained39integrated plans/47tasks/123passing task-check
-receipts and matching human records for6required tasks. It proves records and
-ancestry, not every current feature. Full mission/release completion is unproven.
-Active-performance sample found service~100%CPU during parallel work, renderer
-~20–27%, GPU process~13–18%; not an idle/battery qualification. No repeat2000% spike
-in those samples. Source profile is unsymbolicated; no speculative attribution.
-See design/reviews/active-dogfood-performance-20261106.md and retained native sample.
+After159's successful bounded plugin reload, local runtime later showed
+“Previous renderer ownership is unknown”. Root used supported CmdR (window only),
+verified service71027 and live157worker continued, flags6ON/Never unchanged;
+recovery FAILED with “A stale renderer generation cannot claim the model cache”.
+Do not claim local inference currently healthy. Latest native Help→ExportLogs
+current-main extraction: /private/tmp/lz-post-recovery-main.log. Source leads:
+ModelLease.lost handles onlycurrentowner, notinheritedowner, and retains generation
+map; fresh page-local sequence can conflict with surviving main. Root asked Main
+to reuse existing110/recovery or linked small defect, preserving159's bounded pass.
+Do not weaken unknown-owner guards or activate source under active implementation.
+Current briefCPU sample: service9.9%,renderer10.5%,GPUprocess33%; not idle proof.
+Tasks still1event/version; observability322events/3sec remains separate129 work.
 
-## Latest follow-through
+Current138owner5c had paged70historical journal pages for another plan and ended
+without action. Root opened exactID via Search; it is a native read-only child
+Architect UI with no composer, titled from old persona-dispatch task. Root sent
+Main a concrete request to natively assign138currentreview with actualgen3proof,
+including Root's e36/63 fixes in reviewed integration. Do not claim00calone contains
+those host fixes. ParentID is launchhistory; no manual data/identity edits.
+Existing renewal work should provide a concrete admitted-plan/event wake and a
+clearly named human-accessible coordinator. Main staged164 (138-linked operation inspection) and165 (window recovery), behind
+Models priority; no source activation while158 active. Operator finding: full inspect currently lacks retained-op
+summaries/checks and forces source/DB investigation. Keep Models first.
 
-147 inspector candidate14e8928 is committed. Root found its Waiting on references
-were hidden inside Activity and holds, contrary to the user request. Main resumed
-the original3b4bad86 worker for a narrow visible-links regression/fix. Preserve the
-objective-first hierarchy. A separate failed147attempt59b56192-a6e3-4419-b802-df2ee7ed2e53
-retains50cc2f2dcb4b9a83389f6bead072dbfafe80cf3f (child of14e): terminal lifecycle /
-Completed tasks must not be Waiting because a plan has a hold. Main has native
-Luna reviewer ses_e50a3b4ccffesHNeu80o108Z04 reviewing that fixed source. Root must
-combine both useful changes in the next integration; do not delete failed work or
-assume original3b is the latest runtime attempt. Native records are authoritative.
+## Full scope still open
 
-Pricing researcher completed the actual diagnosis: exact identity matches exist.
-Kimi/Qwen whole-model OpenRouter quotes lack a cache-write rate despite positive
-observed writes. Luna's two published prompt tiers have no captured selector.
-Current exact unknowns are therefore expected under old contracts; they do not
-complete the requested estimation UI. Root asked Architect to deliver clearly
-labelled current-market reference estimates/ranges and partial coverage, preserving
-exact accounting and genuine missing rates. In a native interview Root chose actual
-observed cohorts first, including failed/retry effort per accepted task, labelled
-for differing task mixes; no invented shared-workload frontier. Main is planning
-that missing feature without interrupting138/147.
-
-Root also asked Main to verify source semantics against pinned API/source:
-OpenCode fallback means accessible published native model/catalog market data,
-not subscription/session charges or requiring an unrelated execution-provider
-login. Explicit source settings and true missing data remain. Research before
-carrying the old connection gate into the new estimation path.
+Keep roadmap/design contracts for proactive recovery, structured reviewed handoffs,
+live verification (two real implementer correction/reprobe walkthroughs), scheduler
+renewal, task ordering/grouping, live Radar agents/models/tools/files/flow/health,
+audio, model metrics and persona selection, packaging/install/upgrade/cross-machine.
+Research/review/integration usage overhead is still unallocated;0subscriptioncharge
+is not market cost. Full release completion is unproven. See roadmap-execution.md,
+retained-recovery-followthrough-20261106.md and design/roadmap.md for linked work.
+Advice320-character cap is removed (b0548ba); latest retest4pass/59assertions.

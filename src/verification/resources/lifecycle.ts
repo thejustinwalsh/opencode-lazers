@@ -300,9 +300,8 @@ export class OwnedProbeLifecycle {
   }
 
   private ownedRun(runID: string, actor: ProbeActor): ProbeRun {
-    const run = this.probes.run(runID)
-    if (!run) throw new Error("Probe run not found in this project")
-    if (run.sessionID !== actor.sessionID || canonical(run.producer) !== canonical(actor))
+    const run = this.probes.assertResourceActor(runID, actor)
+    if (canonical(run.producer) !== canonical(actor))
       throw new Error("Owned resources require the original V2 probe producer")
     return run
   }

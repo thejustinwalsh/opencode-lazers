@@ -114,7 +114,11 @@ export function terminalWorkerContinuationProblem(
     return "A conflicting active worker or plan effect prevents continuation"
 
   const nativeOutcome = worker?.outcome
+  // Verification can hold after the model turn ended normally. Its correction
+  // uses fresh native ownership/activity facts, not a running-turn stop record.
+  const verifying = node.state === "verifying" && attempt.state === "verifying"
   const validState =
+    (verifying && ["succeeded", "interrupted", "failed"].includes(nativeOutcome ?? "")) ||
     ((nativeOutcome === "interrupted" || nativeOutcome === "succeeded") &&
       node.state === "running" &&
       attempt.state === "running") ||
@@ -123,22 +127,23 @@ export function terminalWorkerContinuationProblem(
         (node.state === "failed" && attempt.state === "failed")))
   if (
     !validState ||
-    !planHoldObservation ||
-    planHoldObservation.kind !== "terminal-worker-observation" ||
-    planHoldObservation.attemptID !== attempt.id ||
-    planHoldObservation.sessionID !== attempt.session_id ||
-    planHoldObservation.workspace !== attempt.workspace ||
-    planHoldObservation.outcome !== nativeOutcome ||
-    planHoldObservation.busy !== false ||
-    planHoldObservation.pendingInput !== false ||
-    planHoldObservation.pendingPermissions !== 0 ||
-    planHoldObservation.pendingForms !== 0 ||
-    planHoldObservation.observationUnstable !== false ||
-    !stopObservation ||
-    stopObservation.attemptID !== attempt.id ||
-    stopObservation.sessionID !== attempt.session_id ||
-    stopObservation.workspace !== attempt.workspace ||
-    stopObservation.outcome !== nativeOutcome
+    (!verifying &&
+      (!planHoldObservation ||
+        planHoldObservation.kind !== "terminal-worker-observation" ||
+        planHoldObservation.attemptID !== attempt.id ||
+        planHoldObservation.sessionID !== attempt.session_id ||
+        planHoldObservation.workspace !== attempt.workspace ||
+        planHoldObservation.outcome !== nativeOutcome ||
+        planHoldObservation.busy !== false ||
+        planHoldObservation.pendingInput !== false ||
+        planHoldObservation.pendingPermissions !== 0 ||
+        planHoldObservation.pendingForms !== 0 ||
+        planHoldObservation.observationUnstable !== false ||
+        !stopObservation ||
+        stopObservation.attemptID !== attempt.id ||
+        stopObservation.sessionID !== attempt.session_id ||
+        stopObservation.workspace !== attempt.workspace ||
+        stopObservation.outcome !== nativeOutcome))
   )
     return "Plan is not held for this attempt's matching terminal worker observation"
 
@@ -177,9 +182,10 @@ export function terminalWorkerContinuationProblem(
   )
     return "Terminal worker outcome does not match the current assigned input lineage"
   if (
-    stopObservation.inputID !== worker.turn.inputID ||
-    planHoldObservation.inputID !== worker.turn.inputID ||
-    planHoldObservation.turnState !== worker.turn.state
+    !verifying &&
+    (stopObservation!.inputID !== worker.turn.inputID ||
+      planHoldObservation!.inputID !== worker.turn.inputID ||
+      planHoldObservation!.turnState !== worker.turn.state)
   )
     return "Terminal worker hold does not match the current assigned input lineage"
 
@@ -193,7 +199,7 @@ export function terminalWorkerContinuationProblem(
     )
       return "Native idle background observation does not match the current worker input lineage"
   }
-  const heldBackground = planHoldObservation.background
+  const heldBackground = verifying ? undefined : planHoldObservation!.background
   if (
     heldBackground?.state === "observed" &&
     heldBackground.count > 0 &&

@@ -28,8 +28,64 @@ import type { Features, LocalFeature } from "./features.ts"
 
 import type { InferenceTraceEvent, InferenceTraceMark, TraceStage } from "./inference-trace.ts"
 import { RuntimeTrace } from "./runtime-trace.ts"
+import type {
+  ModelLeaseAcquire,
+  ModelLeaseGrant,
+  ModelLeaseIdentity,
+  ModelLeaseRetirement,
+} from "./ipc.ts"
 
 type ModelKind = "chat" | "decision"
+
+class WorkerDetachError extends Error {}
+
+type HandoffGeneration = {
+  generationID: string
+  generationSequence: number
+  previous?: string
+  state: "active" | "disposing" | "disposed" | "failed"
+  disposalID?: string
+  acquire?: ModelLeaseAcquire
+  grant?: ModelLeaseGrant
+  retiredBy?: ModelLeaseRetirement
+  release?: {
+    lease: ModelLeaseIdentity
+    retirementID: string
+    rendererDisposalID: string
+  }
+  releaseAck?: ModelLeaseRetirement
+}
+
+type HandoffMemory = {
+  sequence: number
+  current?: string
+  providerEpoch?: string
+  windowID?: number
+  generations: Record<string, HandoffGeneration>
+}
+
+const leaseIdentity = (grant: ModelLeaseGrant): ModelLeaseIdentity => ({
+  owner: grant.owner,
+  generationID: grant.generationID,
+  generationSequence: grant.generationSequence,
+  operationID: grant.operationID,
+  providerEpoch: grant.providerEpoch,
+})
+
+const matchesRetirement = (
+  ack: ModelLeaseRetirement | undefined,
+  windowID: number,
+  lease: ModelLeaseIdentity,
+  retirementID: string,
+  rendererDisposalID: string,
+) =>
+  ack?.windowID === windowID &&
+  ack?.retirementID === retirementID &&
+  ack.generationID === lease.generationID &&
+  ack.generationSequence === lease.generationSequence &&
+  ack.operationID === lease.operationID &&
+  ack.providerEpoch === lease.providerEpoch &&
+  ack.rendererDisposalID === rendererDisposalID
 
 // Native RPC failures are structured values, not necessarily Error instances.
 const errorDetail = (error: unknown): string => {
@@ -54,9 +110,13 @@ export function createInferenceRuntime(
     now?: () => number
     wallNow?: () => number
     schedule?: (callback: () => void, delayMs: number) => () => void
+    serviceTimeoutMs?: number
   } = {},
 ) {
   const files = ctx.main(ModelFiles)
+  const supportsLeaseHandoff =
+    typeof (files as unknown as { identity?: unknown }).identity === "function" &&
+    typeof (files as unknown as { registerGeneration?: unknown }).registerGeneration === "function"
   let traceWrites = Promise.resolve()
   const writeTrace = (event: InferenceTraceEvent) => {
     traceWrites = traceWrites
@@ -89,18 +149,69 @@ export function createInferenceRuntime(
   const [phase, setPhase] = createSignal("unloaded")
   const [resident, setResident] = createSignal<ModelKind | undefined>()
   const [target, setTarget] = createSignal<ModelKind | undefined>()
+  const fallbackHandoff: HandoffMemory = { sequence: 0, generations: {} }
+  let handoff: HandoffMemory
+  let setHandoff: (update: (draft: HandoffMemory) => void) => void
+  const storage = (ctx as unknown as { storage?: typeof ctx.storage }).storage
+  if (typeof storage?.memory === "function") {
+    ;[handoff, setHandoff] = storage.memory<HandoffMemory>("webgpu-model-lease", {
+      initial: fallbackHandoff,
+    })
+  } else {
+    handoff = fallbackHandoff
+    setHandoff = (update) => update(fallbackHandoff)
+  }
+  if (!Number.isSafeInteger(handoff.sequence) || handoff.sequence >= Number.MAX_SAFE_INTEGER)
+    throw new Error("Renderer generation sequence is exhausted")
+  const generationID = crypto.randomUUID()
+  const generationSequence = handoff.sequence + 1
+  let previousGenerationID = handoff.current
+  const prunedGenerations: string[] = []
+  while (previousGenerationID) {
+    const previous = handoff.generations[previousGenerationID]
+    if (
+      !previous ||
+      previous.state !== "disposed" ||
+      previous.grant ||
+      previous.acquire ||
+      previous.release
+    )
+      break
+    prunedGenerations.push(previousGenerationID)
+    previousGenerationID = previous.previous
+  }
+  if (Object.keys(handoff.generations).length - prunedGenerations.length >= 64)
+    throw new Error("Renderer ownership history is full; previous ownership remains occupied")
+  setHandoff((draft) => {
+    for (const id of prunedGenerations) delete draft.generations[id]
+    draft.sequence = generationSequence
+    draft.current = generationID
+    draft.generations[generationID] = {
+      generationID,
+      generationSequence,
+      ...(previousGenerationID ? { previous: previousGenerationID } : {}),
+      state: "active",
+    }
+  })
+  const generation = () => handoff.generations[generationID]!
+  const updateGeneration = (id: string, update: (entry: HandoffGeneration) => void) =>
+    setHandoff((draft) => {
+      const entry = draft.generations[id]
+      if (entry) update(entry)
+    })
   const models = new ExclusiveModels<{
     chat: { engine: Lfm3OmniForConditionalGeneration; dispose(): Promise<void> }
     decision: { engine: DecisionRuntime; dispose(): Promise<void> }
   }>()
   const transcripts = new Map<string, (text: string) => void>()
-  let owner: string | undefined
+  let owner: ModelLeaseGrant | undefined
   let initializing: Promise<void> | undefined
   let loadController: AbortController | undefined
   let active:
     | { id: string; feature: LocalFeature; controller: AbortController; done: Promise<void> }
     | undefined
   let polling = false
+  let attachPending = false
   let disposed = false
   let unloading: Promise<void> | undefined
   let switching = false
@@ -113,7 +224,8 @@ export function createInferenceRuntime(
   let recoveryRetry: { kind: ModelKind; at: number } | undefined
   let nextLoadAttempt = 0
   let loadFailures = 0
-  const serviceSignal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
+  const serviceSignal = () =>
+    AbortSignal.any([ctx.signal, AbortSignal.timeout(timing.serviceTimeoutMs ?? 5_000)])
   const rpc = () => ctx.client.rpc(LocalInference)
   const worker = () => ctx.client.rpc(RendererInference)
   const ready = () => {
@@ -152,6 +264,360 @@ export function createInferenceRuntime(
     setDetail(errorDetail(error))
   }
 
+  const ancestors = () => {
+    const result: HandoffGeneration[] = []
+    const seen = new Set<string>()
+    let id = previousGenerationID
+    while (id) {
+      if (seen.has(id)) throw new Error("Renderer ownership history is invalid")
+      seen.add(id)
+      const entry = handoff.generations[id]
+      if (!entry) throw new Error("Previous renderer ownership is unknown")
+      result.push(entry)
+      id = entry.previous
+    }
+    return result.reverse()
+  }
+
+  const pauseForHandoff = (signal: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason)
+        return
+      }
+      const abort = () => {
+        clearTimeout(timer)
+        reject(signal.reason)
+      }
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", abort)
+        resolve()
+      }, 20)
+      signal.addEventListener("abort", abort, { once: true })
+    })
+
+  const waitForRendererDisposal = async (previous: HandoffGeneration[], signal: AbortSignal) => {
+    const deadline = Date.now() + 120_000
+    while (true) {
+      signal.throwIfAborted()
+      const failedGeneration = previous.find((entry) => entry.state === "failed")
+      if (failedGeneration)
+        throw new Error(`Renderer ${failedGeneration.generationSequence} disposal is unconfirmed`)
+      if (previous.every((entry) => entry.state === "disposed" && entry.disposalID)) return
+      if (Date.now() >= deadline)
+        throw new Error(
+          "Previous renderer disposal is still unconfirmed; cache ownership is retained",
+        )
+      await pauseForHandoff(signal)
+    }
+  }
+
+  const checkGrant = (grant: ModelLeaseGrant, request: ModelLeaseAcquire) => {
+    if (
+      grant.generationID !== request.generationID ||
+      grant.generationSequence !== request.generationSequence ||
+      grant.operationID !== request.operationID ||
+      grant.providerEpoch !== request.providerEpoch
+    )
+      throw new Error("Main-process acquisition acknowledgement did not match its request")
+    if (request.predecessor) {
+      if (
+        grant.owner !== request.predecessor.owner ||
+        !matchesRetirement(
+          grant.retired,
+          handoff.windowID!,
+          request.predecessor,
+          request.predecessor.retirementID,
+          request.predecessor.rendererDisposalID,
+        )
+      )
+        throw new Error("Main-process retirement acknowledgement did not match its predecessor")
+    } else if (grant.retired) throw new Error("Unexpected predecessor retirement acknowledgement")
+  }
+
+  const storeGrant = (entryID: string, grant: ModelLeaseGrant, request: ModelLeaseAcquire) => {
+    checkGrant(grant, request)
+    if (request.predecessor) {
+      const predecessor = handoff.generations[request.predecessor.generationID]
+      if (!predecessor) throw new Error("Retired renderer identity is unknown")
+      updateGeneration(predecessor.generationID, (entry) => {
+        entry.retiredBy = grant.retired
+      })
+    }
+    updateGeneration(entryID, (entry) => {
+      entry.grant = grant
+    })
+    if (entryID === generationID)
+      setHandoff((draft) => {
+        if (draft.current !== generationID) return
+        const current = draft.generations[generationID]
+        if (!current) return
+        const predecessorID = request.predecessor?.generationID
+        current.previous = predecessorID
+        for (const id of Object.keys(draft.generations))
+          if (id !== generationID && id !== predecessorID) delete draft.generations[id]
+        if (predecessorID) {
+          const predecessor = draft.generations[predecessorID]
+          if (predecessor) {
+            delete predecessor.previous
+            delete predecessor.acquire
+            delete predecessor.grant
+            delete predecessor.release
+            delete predecessor.releaseAck
+          }
+        }
+      })
+  }
+
+  const reconcileAncestors = async (previous: HandoffGeneration[], signal: AbortSignal) => {
+    for (const entry of previous) {
+      if (entry.state === "failed")
+        throw new Error(`Renderer ${entry.generationSequence} disposal is unconfirmed`)
+      if (entry.acquire && !entry.grant) {
+        try {
+          const reconciled = await files.reconcileAcquire(
+            {
+              generationID: entry.acquire.generationID,
+              operationID: entry.acquire.operationID,
+              providerEpoch: entry.acquire.providerEpoch,
+            },
+            { signal },
+          )
+          if (reconciled.lease) storeGrant(entry.generationID, reconciled.lease, entry.acquire)
+        } catch (error) {
+          if (signal.aborted) throw error
+          // Unknown or failed acquisition is not ownership evidence. A fresh exact handoff will
+          // either find its predecessor or fail closed while the main process remains occupied.
+        }
+      }
+      if (entry.release && !entry.releaseAck) {
+        try {
+          const reconciled = await files.reconcileRelease(entry.release, { signal })
+          const ack = reconciled.retirement
+          if (
+            ack &&
+            matchesRetirement(
+              ack,
+              handoff.windowID!,
+              entry.release.lease,
+              entry.release.retirementID,
+              entry.release.rendererDisposalID,
+            )
+          )
+            updateGeneration(entry.generationID, (current) => {
+              current.releaseAck = ack
+              current.retiredBy = ack
+            })
+        } catch (error) {
+          if (signal.aborted) throw error
+          // An unacknowledged release is not proof of a free cache; hand off its exact lease instead.
+        }
+      }
+    }
+  }
+
+  const currentPredecessor = (previous: HandoffGeneration[]) => {
+    let current: ModelLeaseGrant | undefined
+    for (const entry of previous) {
+      if (entry.grant) current = entry.grant
+      const retired = entry.retiredBy ?? entry.releaseAck
+      if (
+        current &&
+        retired &&
+        matchesRetirement(
+          retired,
+          handoff.windowID!,
+          leaseIdentity(current),
+          retired.retirementID,
+          retired.rendererDisposalID,
+        )
+      )
+        current = undefined
+    }
+    return current
+  }
+
+  const acquireLease = async (signal: AbortSignal) => {
+    if (owner) return owner
+    if (!supportsLeaseHandoff) {
+      const acquire = (
+        files as unknown as { acquire: (options: { signal: AbortSignal }) => Promise<string> }
+      ).acquire
+      const token = await acquire({ signal })
+      signal.throwIfAborted()
+      owner = {
+        owner: token,
+        generationID,
+        generationSequence,
+        operationID: `legacy-${generationID}`,
+        providerEpoch: "legacy",
+      }
+      return owner
+    }
+    const provider = await files.identity({ signal })
+    if (handoff.windowID !== undefined && handoff.windowID !== provider.windowID)
+      throw new Error("The renderer window changed; previous ownership remains unproven")
+    const previous = ancestors()
+    const providerChanged = Boolean(
+      handoff.providerEpoch && handoff.providerEpoch !== provider.providerEpoch,
+    )
+    if (providerChanged) {
+      if (
+        provider.previousProviderEpoch !== handoff.providerEpoch ||
+        !provider.previousProviderState ||
+        provider.previousProviderState === "unproven"
+      )
+        throw new Error("The main-process provider changed without exact retirement evidence")
+    } else if (
+      (!handoff.providerEpoch || handoff.windowID === undefined) &&
+      previous.some((entry) => entry.grant || entry.acquire || entry.release)
+    ) {
+      throw new Error("Previous main-process ownership identity is missing")
+    }
+    await files.registerGeneration({ generationID, generationSequence }, { signal })
+    await waitForRendererDisposal(previous, signal)
+    await reconcileAncestors(previous, signal)
+    const predecessor = currentPredecessor(previous)
+    if (providerChanged) {
+      if (provider.previousProviderState === "retired" && !predecessor)
+        throw new Error("The replacement provider retains an unidentified predecessor")
+      if (provider.previousProviderState === "idle" && predecessor)
+        throw new Error("The replacement provider does not acknowledge previous ownership")
+    }
+    if (!handoff.providerEpoch || providerChanged || handoff.windowID === undefined)
+      setHandoff((draft) => {
+        draft.providerEpoch = provider.providerEpoch
+        draft.windowID = provider.windowID
+      })
+    let request = generation().releaseAck ? undefined : generation().acquire
+    if (!request) {
+      if (predecessor) {
+        const predecessorEntry = previous.find(
+          (entry) => entry.generationID === predecessor.generationID,
+        )
+        if (
+          !predecessorEntry ||
+          predecessorEntry.state !== "disposed" ||
+          !predecessorEntry.disposalID
+        )
+          throw new Error("Previous renderer disposal or provider ownership is unconfirmed")
+        request = {
+          generationID,
+          generationSequence,
+          operationID: crypto.randomUUID(),
+          providerEpoch: provider.providerEpoch,
+          predecessor: {
+            ...leaseIdentity(predecessor),
+            retirementID: crypto.randomUUID(),
+            rendererDisposalID: predecessorEntry.disposalID,
+          },
+        }
+      } else {
+        request = {
+          generationID,
+          generationSequence,
+          operationID: crypto.randomUUID(),
+          providerEpoch: provider.providerEpoch,
+        }
+      }
+      updateGeneration(generationID, (entry) => {
+        entry.acquire = request
+        delete entry.grant
+        delete entry.retiredBy
+        delete entry.release
+        delete entry.releaseAck
+      })
+    }
+    if (request.providerEpoch !== provider.providerEpoch)
+      throw new Error("The main-process provider changed during renderer handoff")
+    const grant = await files.acquire(request, { signal })
+    signal.throwIfAborted()
+    storeGrant(generationID, grant, request)
+    owner = grant
+    return grant
+  }
+
+  const retireLease = async (
+    grant: ModelLeaseGrant,
+    rendererDisposalID: string,
+    signal: AbortSignal,
+  ) => {
+    if (!supportsLeaseHandoff) {
+      const release = (
+        files as unknown as {
+          release: (input: { owner: string }, options: { signal: AbortSignal }) => Promise<void>
+        }
+      ).release
+      await release({ owner: grant.owner }, { signal })
+      if (owner === grant) owner = undefined
+      return
+    }
+    let request = generation().release
+    if (!request) {
+      request = {
+        lease: leaseIdentity(grant),
+        retirementID: crypto.randomUUID(),
+        rendererDisposalID,
+      }
+      updateGeneration(generationID, (entry) => {
+        entry.release = request
+      })
+    }
+    if (JSON.stringify(request.lease) !== JSON.stringify(leaseIdentity(grant)))
+      throw new Error("Renderer retirement identity changed during cleanup")
+    const ack = await files.release(request, { signal })
+    if (
+      !matchesRetirement(
+        ack,
+        handoff.windowID!,
+        request.lease,
+        request.retirementID,
+        request.rendererDisposalID,
+      )
+    )
+      throw new Error("Main-process cleanup acknowledgement did not match its request")
+    updateGeneration(generationID, (entry) => {
+      entry.releaseAck = ack
+      entry.retiredBy = ack
+    })
+    if (owner && JSON.stringify(leaseIdentity(owner)) === JSON.stringify(request.lease))
+      owner = undefined
+    return ack
+  }
+
+  const detachWorker = async (lease: ModelLeaseGrant, error?: unknown) => {
+    if (supportsLeaseHandoff && ctx.signal.aborted) return false
+    try {
+      await worker().detach(
+        {
+          owner: lease.owner,
+          ...(error === undefined ? {} : { error: errorDetail(error) }),
+        },
+        { signal: serviceSignal() },
+      )
+      attachPending = false
+      return true
+    } catch (cause) {
+      if (supportsLeaseHandoff && ctx.signal.aborted) return false
+      attachPending = true
+      throw new WorkerDetachError(
+        `Local inference worker detach failed; cache ownership is retained: ${errorDetail(cause)}`,
+      )
+    }
+  }
+
+  const cancelLease = () => {
+    if (!owner) return
+    const cancel = supportsLeaseHandoff
+      ? files.cancel(leaseIdentity(owner))
+      : (
+          files as unknown as {
+            cancel(input: { owner: string }): Promise<void>
+          }
+        ).cancel({ owner: owner.owner })
+    void cancel.catch(() => {})
+  }
+
   const ensureModel = async (kind: ModelKind, signal: AbortSignal) => {
     const requestedSignal = signal
     signal = AbortSignal.any([signal, AbortSignal.timeout(120_000)])
@@ -166,12 +632,12 @@ export function createInferenceRuntime(
       return
     }
     setTarget(kind)
-    if (!owner) {
+    const lease = owner
+    if (!lease) {
       const error = new Error("Local model cache ownership was lost")
       fail(error)
       throw error
     }
-    const token = owner
     switching = true
     setState("loading")
     setPhase("loading")
@@ -179,8 +645,17 @@ export function createInferenceRuntime(
     setDetail(`Loading ${kind === "chat" ? "chat and speech" : "d1 decision"} model from cache`)
     try {
       if (!usesGPU(features())) throw Error("Local inference is turned off")
-      if (kind === "chat") await files.ensure({ owner: token }, { signal })
-      else await files.decisionEnsure({ owner: token }, { signal })
+      if (supportsLeaseHandoff) {
+        if (kind === "chat") await files.ensure(leaseIdentity(lease), { signal })
+        else await files.decisionEnsure(leaseIdentity(lease), { signal })
+      } else {
+        const legacy = files as unknown as {
+          ensure(input: { owner: string }, options: { signal: AbortSignal }): Promise<void>
+          decisionEnsure(input: { owner: string }, options: { signal: AbortSignal }): Promise<void>
+        }
+        if (kind === "chat") await legacy.ensure({ owner: lease.owner }, { signal })
+        else await legacy.decisionEnsure({ owner: lease.owner }, { signal })
+      }
       if (models.current() && (models.current() !== kind || models.isTainted())) {
         await models.release()
         setResident(models.current())
@@ -202,9 +677,24 @@ export function createInferenceRuntime(
                     cache: false,
                     prefixSnapshotStore: null,
                     signal,
-                    fetch: cachedModelFetch((id, offset, length, readSignal) =>
-                      files.read({ owner: token, id, offset, length }, { signal: readSignal }),
-                    ),
+                    fetch: cachedModelFetch((id, offset, length, readSignal) => {
+                      if (!supportsLeaseHandoff)
+                        return (
+                          files as unknown as {
+                            read(
+                              input: { owner: string; id: string; offset: number; length: number },
+                              options: { signal: AbortSignal },
+                            ): Promise<string>
+                          }
+                        ).read(
+                          { owner: lease.owner, id, offset, length },
+                          { signal: readSignal ?? signal },
+                        )
+                      return files.read(
+                        { ...leaseIdentity(lease), id, offset, length },
+                        { signal: readSignal },
+                      )
+                    }),
                     onProgress: (progress) =>
                       setDetail(
                         `${progress.message ?? "Loading chat model"}${progress.fraction === undefined ? "" : ` · ${Math.floor(progress.fraction * 100)}%`}`,
@@ -238,8 +728,21 @@ export function createInferenceRuntime(
             retryLoad(
               async () => {
                 const engine = await loadDecisionRuntime(
-                  (id, offset, length) =>
-                    files.decisionRead({ owner: token, id, offset, length }, { signal }),
+                  (id, offset, length) => {
+                    if (!supportsLeaseHandoff)
+                      return (
+                        files as unknown as {
+                          decisionRead(
+                            input: { owner: string; id: string; offset: number; length: number },
+                            options: { signal: AbortSignal },
+                          ): Promise<string>
+                        }
+                      ).decisionRead({ owner: lease.owner, id, offset, length }, { signal })
+                    return files.decisionRead(
+                      { ...leaseIdentity(lease), id, offset, length },
+                      { signal },
+                    )
+                  },
                   signal,
                   setDetail,
                   () => {
@@ -473,13 +976,10 @@ export function createInferenceRuntime(
         await models.release()
         setResident(models.current())
         setTarget(undefined)
-        const token = owner
-        if (token) {
-          await worker()
-            .detach({ owner: token }, { signal: serviceSignal() })
-            .catch(() => {})
-          await files.release({ owner: token })
-          owner = undefined
+        const lease = owner
+        if (lease && (!ctx.signal.aborted || !supportsLeaseHandoff)) {
+          if (await detachWorker(lease))
+            await retireLease(lease, crypto.randomUUID(), serviceSignal())
         }
         setGPU("")
         ready()
@@ -511,18 +1011,45 @@ export function createInferenceRuntime(
     initializing = (async () => {
       try {
         if (!navigator.gpu) throw new Error("WebGPU is unavailable in this Desktop renderer")
-        if (!owner) {
-          owner = await files.acquire({ signal })
-          await worker().attach({ owner }, { signal })
-        }
-        const token = owner
+        const lease = await acquireLease(signal)
+        attachPending = true
+        await worker().attach({ owner: lease.owner }, { signal })
+        attachPending = false
         if (needsChat(features()))
           cacheOperations.push(
-            retryLoad(() => files.ensure({ owner: token }, { signal }), signal, setDetail),
+            retryLoad(
+              () =>
+                supportsLeaseHandoff
+                  ? files.ensure(leaseIdentity(lease), { signal })
+                  : (
+                      files as unknown as {
+                        ensure(
+                          input: { owner: string },
+                          options: { signal: AbortSignal },
+                        ): Promise<void>
+                      }
+                    ).ensure({ owner: lease.owner }, { signal }),
+              signal,
+              setDetail,
+            ),
           )
         if (featureEnabled(features(), "decisions"))
           cacheOperations.push(
-            retryLoad(() => files.decisionEnsure({ owner: token }, { signal }), signal, setDetail),
+            retryLoad(
+              () =>
+                supportsLeaseHandoff
+                  ? files.decisionEnsure(leaseIdentity(lease), { signal })
+                  : (
+                      files as unknown as {
+                        decisionEnsure(
+                          input: { owner: string },
+                          options: { signal: AbortSignal },
+                        ): Promise<void>
+                      }
+                    ).decisionEnsure({ owner: lease.owner }, { signal }),
+              signal,
+              setDetail,
+            ),
           )
         await Promise.all(cacheOperations)
         await ensureModel(needsChat(features()) ? "chat" : "decision", signal)
@@ -543,20 +1070,16 @@ export function createInferenceRuntime(
           fail(`Model cleanup failed; GPU ownership retained: ${String(cleanup)}`)
           return
         }
-        if (owner) {
-          const token = owner
-          await worker()
-            .detach(
-              { owner: token, error: String(error).slice(0, 2_000) },
-              { signal: serviceSignal() },
-            )
-            .catch(() => {})
+        if (owner && (!ctx.signal.aborted || !supportsLeaseHandoff)) {
+          const lease = owner
           try {
-            await files.release({ owner: token })
-            owner = undefined
+            if (await detachWorker(lease, error))
+              await retireLease(lease, crypto.randomUUID(), serviceSignal())
           } catch (cleanup) {
-            autoload = false
-            fail(`Cache ownership cleanup failed: ${String(cleanup)}`)
+            if (!(cleanup instanceof WorkerDetachError)) autoload = false
+            fail(
+              `Model load failed: ${errorDetail(error)}. Cleanup failed: ${errorDetail(cleanup)}`,
+            )
             return
           }
         }
@@ -585,14 +1108,15 @@ export function createInferenceRuntime(
         ready()
         return
       }
-      if (autoload && !owner && !initializing) {
+      if (autoload && (!owner || attachPending) && !initializing) {
         void load()
         return
       }
       if (owner && !polling) {
         polling = true
         try {
-          const token = owner
+          const lease = owner
+          const token = lease.owner
           const response = await worker().poll(
             { owner: token, available: !active && !initializing && !switching && !recovery },
             { signal: serviceSignal() },
@@ -710,7 +1234,22 @@ export function createInferenceRuntime(
     if (disposal) return disposal
     disposed = true
     stopTimer()
-    disposal = unload()
+    updateGeneration(generationID, (entry) => {
+      entry.state = "disposing"
+    })
+    disposal = unload().then(() => {
+      if (models.current() === undefined && !models.isTainted()) {
+        updateGeneration(generationID, (entry) => {
+          entry.state = "disposed"
+          entry.disposalID = crypto.randomUUID()
+        })
+      } else {
+        updateGeneration(generationID, (entry) => {
+          entry.state = "failed"
+          delete entry.disposalID
+        })
+      }
+    })
     return disposal
   }
   ctx.signal.addEventListener(
@@ -746,7 +1285,7 @@ export function createInferenceRuntime(
       autoload = false
       loadController?.abort(new Error("Local inference turned off"))
       recoveryController?.abort(new Error("Local inference turned off"))
-      if (owner) void files.cancel({ owner }).catch(() => {})
+      cancelLease()
       void unload()
     } else if (!wasEnabled) {
       autoload = true
@@ -776,7 +1315,7 @@ export function createInferenceRuntime(
       loadController?.abort(new Error("Model loading cancelled"))
       recoveryController?.abort(new Error("GPU recovery cancelled"))
       active?.controller.abort(new Error("Local inference cancelled"))
-      if (owner) void files.cancel({ owner }).catch(() => {})
+      cancelLease()
     },
     simulateDeviceLoss: () => models.get("decision")?.engine.loseDevice(),
     generate: (prompt: string, signal?: AbortSignal) =>

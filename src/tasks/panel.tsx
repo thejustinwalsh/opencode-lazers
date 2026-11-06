@@ -81,6 +81,14 @@ function distinctReasons(reasons: readonly (string | null | undefined)[]) {
   return [...new Set(reasons.filter((reason): reason is string => Boolean(reason?.trim())))]
 }
 
+const terminalLifecycleStates = new Set([
+  "accepted",
+  "incorporated",
+  "failed",
+  "exhausted",
+  "cancelled",
+])
+
 function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskTrajectoryOpener }) {
   const ctx = props.ctx
   const Ui = ctx.ui
@@ -411,8 +419,9 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       selectedDetail()?.recordedState ?? node?.state ?? execution?.state ?? selectedTask()?.status
     )
   }
-  const selectedHoldReasons = () => {
-    const activity = selectedActivity()
+  const selectedIsWaiting = () => {
+    const recordedState = selectedRecordedState()
+    if (recordedState && terminalLifecycleStates.has(recordedState)) return false
     const taskID = visible()?.selectedID
     const execution = selectedExecution()
     const plan = visible()?.topology?.plans.find((item) => item.id === execution?.planID)
@@ -425,8 +434,15 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       plan?.state !== "cancelled" &&
       (node.state === "blocked" || (plan?.state === "blocked" && !terminal)),
     )
-    const waiting = activity?.waiting || topologyWaiting || execution?.state === "blocked"
-    return waiting
+    return Boolean(selectedActivity()?.waiting || topologyWaiting || execution?.state === "blocked")
+  }
+  const selectedHoldReasons = () => {
+    const activity = selectedActivity()
+    const taskID = visible()?.selectedID
+    const execution = selectedExecution()
+    const plan = visible()?.topology?.plans.find((item) => item.id === execution?.planID)
+    const node = plan?.nodes.find((item) => item.taskID === taskID)
+    return selectedIsWaiting()
       ? distinctReasons([
           activity?.waiting ? activity.holdReason : null,
           node?.reason,
@@ -435,6 +451,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
         ])
       : []
   }
+  const selectedInspectorStatus = () =>
+    selectedIsWaiting() ? "Waiting" : (selectedRecordedState() ?? "Unknown")
   const selectedRelations = () => {
     const taskID = visible()?.selectedID
     const waitingOn = selectedExecution()?.waitingOn ?? []
@@ -481,6 +499,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     const value = visible()
     if (!value?.selectedID || value.detail?.status !== "found") return
     const relationIDs = new Set([
+      ...selectedRelations().waitingOn,
       ...selectedRelations().prerequisites,
       ...selectedRelations().successors,
     ])
@@ -1041,10 +1060,10 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 <span
                   class="lazers-tasks-inspector-state"
                   data-state={selectedRecordedState()}
-                  data-waiting={selectedHoldReasons().length > 0}
-                  aria-label={`Recorded ${selectedRecordedState()}${selectedActivity()?.foreground ? `; observed foreground activity ${selectedActivity()!.foreground}` : ""}${selectedHoldReasons().length ? `; waiting: ${selectedHoldReasons().join("; ")}` : ""}`}
+                  data-waiting={selectedIsWaiting()}
+                  aria-label={`${selectedInspectorStatus()}${selectedRecordedState() ? `; recorded lifecycle ${selectedRecordedState()}` : ""}`}
                 >
-                  {selectedRecordedState()}
+                  {selectedInspectorStatus()}
                 </span>
                 <Show when={canStart(selectedExecution()?.state ?? task().status)}>
                   <Ui.Button
@@ -1078,82 +1097,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   Copy task link
                 </Ui.Button>
               </div>
-              <Show when={copyStatus()}>
-                <p class="lazers-tasks-reason" role="status">
-                  {copyStatus()}
-                </p>
-              </Show>
-              <For each={selectedHoldReasons()}>
-                {(reason) => (
-                  <p class="lazers-tasks-reason" role="status">
-                    Waiting: {reason}
-                  </p>
-                )}
-              </For>
-              <Show
-                when={
-                  ["running", "verifying"].includes(selectedRecordedState() ?? "") ||
-                  selectedActivity()?.foreground === "active" ||
-                  selectedActivity()?.waiting
-                }
-              >
-                <div
-                  class="lazers-tasks-current-activity"
-                  aria-label="Recorded lifecycle and observed foreground activity"
-                >
-                  <span>Recorded {selectedRecordedState()}</span>
-                  <span class="lazers-tasks-foreground">
-                    <span
-                      class="lazers-tasks-activity-indicator"
-                      data-state={selectedActivity()?.foreground ?? "unknown"}
-                      aria-hidden="true"
-                    />
-                    Worker {selectedActivity()?.foreground ?? "unknown"}
-                  </span>
-                  <Show when={selectedActivity()?.unknownReason}>
-                    {(reason) => (
-                      <span>
-                        Observation{" "}
-                        {reason() === "no-current-attempt"
-                          ? "has no current attempt"
-                          : "unavailable"}
-                      </span>
-                    )}
-                  </Show>
-                  <Show when={selectedActivity()?.workerSessionID}>
-                    {(workerSessionID) => (
-                      <span
-                        class="lazers-tasks-worker"
-                        aria-label={`Latest worker session ${workerSessionID()}`}
-                      >
-                        Latest worker{" "}
-                        <code style={{ "font-family": ctx.appearance.font("mono") }}>
-                          {workerSessionID()}
-                        </code>
-                      </span>
-                    )}
-                  </Show>
-                  <Show when={selectedActivity()?.outcome}>
-                    {(outcome) => <span>Worker outcome {outcome()}</span>}
-                  </Show>
-                  <Show when={selectedActivity()?.waiting}>
-                    <span class="lazers-tasks-waiting">Waiting</span>
-                  </Show>
-                  <Show when={selectedActivity()?.pendingInput}>
-                    <span>Input pending</span>
-                  </Show>
-                  <Show
-                    when={
-                      (selectedActivity()?.pendingPermissions ?? 0) > 0 ||
-                      (selectedActivity()?.pendingForms ?? 0) > 0
-                    }
-                  >
-                    <span>Approval pending</span>
-                  </Show>
-                </div>
-              </Show>
+              <div class="lazers-tasks-objective">
+                <Ui.Markdown text={task().proposal.objective} />
+              </div>
               <Show when={selectedRelations().waitingOn.length}>
-                <div class="lazers-tasks-dependencies">
+                <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
                   <span>Waiting on </span>
                   <For each={selectedRelations().waitingOn}>
                     {(taskID, index) => (
@@ -1165,40 +1113,6 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   </For>
                 </div>
               </Show>
-              <Show when={selectedRelations().prerequisites.length}>
-                <div class="lazers-tasks-dependencies">
-                  <span>Prerequisites </span>
-                  <For each={selectedRelations().prerequisites}>
-                    {(taskID, index) => (
-                      <>
-                        {index() ? ", " : ""}
-                        {renderRelation(taskID)}
-                      </>
-                    )}
-                  </For>
-                </div>
-              </Show>
-              <Show when={selectedRelations().successors.length}>
-                <div class="lazers-tasks-dependencies">
-                  <span>Blocks </span>
-                  <For each={selectedRelations().successors}>
-                    {(taskID, index) => (
-                      <>
-                        {index() ? ", " : ""}
-                        {renderRelation(taskID)}
-                      </>
-                    )}
-                  </For>
-                </div>
-              </Show>
-              <Show when={startFeedback().error}>
-                <p class="lazers-tasks-error" role="alert">
-                  {startFeedback().error}
-                </p>
-              </Show>
-              <div class="lazers-tasks-objective">
-                <Ui.Markdown text={task().proposal.objective} />
-              </div>
               <h4>Done when</h4>
               <ul class="lazers-tasks-assertions">
                 <For each={task().proposal.acceptance}>
@@ -1209,6 +1123,118 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   )}
                 </For>
               </ul>
+              <Show when={copyStatus()}>
+                <p class="lazers-tasks-reason" role="status">
+                  {copyStatus()}
+                </p>
+              </Show>
+              <Show when={startFeedback().error}>
+                <p class="lazers-tasks-error" role="alert">
+                  {startFeedback().error}
+                </p>
+              </Show>
+              <details class="lazers-tasks-section lazers-tasks-activity-details">
+                <summary>
+                  <Ui.Icon name="chevron-right" size="small" />
+                  Activity and holds
+                </summary>
+                <For each={selectedHoldReasons()}>
+                  {(reason) => (
+                    <p class="lazers-tasks-reason" role="status">
+                      Waiting: {reason}
+                    </p>
+                  )}
+                </For>
+                <Show
+                  when={
+                    ["running", "verifying"].includes(selectedRecordedState() ?? "") ||
+                    selectedIsWaiting() ||
+                    selectedActivity()?.foreground === "active" ||
+                    selectedActivity()?.waiting
+                  }
+                >
+                  <div
+                    class="lazers-tasks-current-activity"
+                    aria-label="Recorded lifecycle and observed foreground activity"
+                  >
+                    <span>Recorded {selectedRecordedState()}</span>
+                    <span class="lazers-tasks-foreground">
+                      <span
+                        class="lazers-tasks-activity-indicator"
+                        data-state={selectedActivity()?.foreground ?? "unknown"}
+                        aria-hidden="true"
+                      />
+                      Worker {selectedActivity()?.foreground ?? "unknown"}
+                    </span>
+                    <Show when={selectedActivity()?.unknownReason}>
+                      {(reason) => (
+                        <span>
+                          Observation{" "}
+                          {reason() === "no-current-attempt"
+                            ? "has no current attempt"
+                            : "unavailable"}
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={selectedActivity()?.workerSessionID}>
+                      {(workerSessionID) => (
+                        <span
+                          class="lazers-tasks-worker"
+                          aria-label={`Latest worker session ${workerSessionID()}`}
+                        >
+                          Latest worker{" "}
+                          <code style={{ "font-family": ctx.appearance.font("mono") }}>
+                            {workerSessionID()}
+                          </code>
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={selectedActivity()?.outcome}>
+                      {(outcome) => <span>Worker outcome {outcome()}</span>}
+                    </Show>
+                    <Show when={selectedActivity()?.waiting}>
+                      <span class="lazers-tasks-waiting">Waiting</span>
+                    </Show>
+                    <Show when={selectedActivity()?.pendingInput}>
+                      <span>Input pending</span>
+                    </Show>
+                    <Show
+                      when={
+                        (selectedActivity()?.pendingPermissions ?? 0) > 0 ||
+                        (selectedActivity()?.pendingForms ?? 0) > 0
+                      }
+                    >
+                      <span>Approval pending</span>
+                    </Show>
+                  </div>
+                </Show>
+                <Show when={selectedRelations().prerequisites.length}>
+                  <div class="lazers-tasks-dependencies">
+                    <span>Prerequisites </span>
+                    <For each={selectedRelations().prerequisites}>
+                      {(taskID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderRelation(taskID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <Show when={selectedRelations().successors.length}>
+                  <div class="lazers-tasks-dependencies">
+                    <span>Blocks </span>
+                    <For each={selectedRelations().successors}>
+                      {(taskID, index) => (
+                        <>
+                          {index() ? ", " : ""}
+                          {renderRelation(taskID)}
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </details>
               <details class="lazers-tasks-section">
                 <summary>
                   <Ui.Icon name="chevron-right" size="small" />
@@ -1240,11 +1266,16 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 <dl>
                   <dt>Task ID</dt>
                   <dd style={{ "font-family": ctx.appearance.font("mono") }}>{task().id}</dd>
-                  <dt>Status</dt>
+                  <dt>Lifecycle</dt>
                   <dd>
-                    {selectedExecution()?.state ?? task().status} · specification revision{" "}
-                    {task().revision}
-                    <Show when={selectedExecution()?.reason}>{(reason) => <p>{reason()}</p>}</Show>
+                    Recorded lifecycle {selectedRecordedState() ?? task().status} · specification
+                    revision {task().revision}
+                    <Show when={selectedExecution()?.state !== selectedRecordedState()}>
+                      <p>Plan status {selectedExecution()?.state}</p>
+                    </Show>
+                    <Show when={selectedExecution()?.reason}>
+                      {(reason) => <p>Plan reason: {reason()}</p>}
+                    </Show>
                   </dd>
                   <dt>Session association</dt>
                   <dd>

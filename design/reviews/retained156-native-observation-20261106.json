@@ -1,0 +1,57 @@
+{
+  "observedAt": 1793968522401,
+  "operation": {
+    "id": "34d2518c-4a7a-41ad-bb69-59943b6fd87d",
+    "generation": 3,
+    "state": "task-accepted",
+    "createdAt": 1793965598931,
+    "updatedAt": 1793965637665,
+    "cleanupState": "pending",
+    "artifact": "b01121b2645ae5e7b9104556e635e89517059693",
+    "originalWorkspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/ff55fda4-7c0d-4a43-b295-cdc29deefd1d",
+    "taskWorkspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/retained-34d2518c-4a7a-41ad-bb69-59943b6fd87d-task"
+  },
+  "checks": [
+    {
+      "check_id": "models",
+      "state": "completed",
+      "cleanup_state": "complete",
+      "command": "bun test src/models",
+      "artifact": "b01121b2645ae5e7b9104556e635e89517059693",
+      "startedAt": 1793965604040,
+      "endedAt": 1793965614922,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 10882,
+      "passingTests": 176
+    },
+    {
+      "check_id": "quality",
+      "state": "completed",
+      "cleanup_state": "complete",
+      "command": "bun fmt --check && bun lint && bun check && git diff --check && bun run build:gui",
+      "artifact": "b01121b2645ae5e7b9104556e635e89517059693",
+      "startedAt": 1793965626257,
+      "endedAt": 1793965630535,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 4278,
+      "passingTests": null
+    }
+  ],
+  "originalAttempt": {
+    "id": "ff55fda4-7c0d-4a43-b295-cdc29deefd1d",
+    "session_id": "ses_507e57d6901a4928bfddd1e46d8f846b",
+    "message_id": "msg_92de4b0ffc97449ebb860f7dc951b66a",
+    "state": "accepted",
+    "artifact": "b01121b2645ae5e7b9104556e635e89517059693",
+    "started_at": 1793945363595
+  },
+  "originalPromptEffects": 1,
+  "resourceStates": [
+    {
+      "state": "removed",
+      "count": 24
+    }
+  ]
+}

@@ -3,30 +3,30 @@
 LAZERS builds itself through OpenCode Desktop. The goal is accepted software
 changes with clear intent, efficient execution and little manual intervention.
 
-## Current delivery front — 2026-11-05
+## Current delivery front — 2026-11-06
 
-This table supplements the increment definitions below; it is not acceptance or
-permission to bypass runtime admission. Native state, source landing, live proof
-and resource cleanup remain distinct. Preserve original task/attempt identities.
+Native runtime state is authoritative. Source landing, task acceptance, plan
+acceptance, live observation and cleanup are separate facts. Current work is
+Models → Tasks/Trajectory → Radar, with genuinely independent work in parallel.
 
-| Lane                              | Delivered / current work                                                                                                           | Remaining boundary                                                                                                                                                                    |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Performance                       | Astra’s measured repairs are integrated; reuse them.                                                                               | LZ135 native performance/idle gate remains open; no total CPU or battery success claim.                                                                                               |
-| Tasks                             | State filters and completed-history access work. Tasks A/B remain drafts.                                                          | Runtime-owned ordering/eligibility, Now/Attention/Next, correct selected-task navigation and error states.                                                                            |
-| Radar                             | Original LZ129 source is accepted but unmerged.                                                                                    | Fix its three reviewed defects, then safe file/edit observation and the compact live agent monitor; real narrow/wide/Tera review.                                                     |
-| Trajectory                        | LZ130 check-duration UI is observed. LZ131 endpoints are queued.                                                                   | A separate scoped-read repair must fix single-task reads failing above 10,000 project transitions; preserve unknown historical ends.                                                  |
-| Models                            | Attribution/current-market foundations are merged;126→122 is the existing producer lane.                                           | Decision RPC is unavailable. Deliver the approved Pareto UI, real cohorts/estimates, editable assignments and persona-to-dispatch resolution; keep LZ108 native/Tera acceptance open. |
-| Retained recovery                 | LZ99 quarantine is sealed; old unknown execution/resources and work remain retained. LZ118 is running on Luna Max at priority2160. | LZ57 is blocked with cancelled LZ58. Linked LZ138 covers the changed isolated-verification scope and waits for LZ57 source integration.                                               |
-| Architect continuity              | LZ132/137 advice and LZ133 corrected journal are fully qualified, integrated and cleaned up.                                       | LZ134 notification coalescing and parentless renewal remain queued; actual reservations govern dispatch.                                                                              |
-| Native reliability                | LZ127 source is landed; real-host log retention cannot supply historical idle recovery.                                            | Retain117/128 qualification and110 enabled-inference limits. Source/tests alone do not close live gates.                                                                              |
-| Recovery / verification / release | Reuse the delivered foundations and original qualification chain.                                                                  | Finish R2–R6, H3–H5, V3–V6/N1, real same-worker correction/reprobe and usable one-package release/install/upgrade verification.                                                       |
+| Lane                              | Delivered / current work                                                                                                                                                    | Remaining boundary                                                                                                                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Models                            | LZ-153 history-read repair is integrated and observed over 16,315 facts/155 tasks. Decision RPC and saved assignments are accessible. LZ-151/152 scenario source is landed. | LZ-156 native catalog access is reviewed/staged; recover its retained attempt. LZ-157/158 deliver actual cohort/reference estimates, coherent Refresh and the approved comparison UI. Connected acceptance remains open. |
+| Tasks                             | LZ-147 inspector correction is landed; objective/Done when and actual dependency navigation are observed. Its task is accepted.                                             | LZ-147 old worktree cleanup is held separately. LZ-148/149 own runtime ordering/eligibility and compact grouping; do not duplicate them.                                                                                 |
+| Trajectory                        | Existing duration UI and recorded history remain useful.                                                                                                                    | Unix endpoints, current-market valuation and live/history interaction observations remain part of the existing work; use LZ-155 for the valuation continuation.                                                          |
+| Retained recovery                 | LZ-138 is active on the original Luna Max worker. Fresh private verification preserves original attempt/model/usage and unknown original resources.                         | Fix target acceptance incorrectly waiting for queued successors, then observe actual retained LZ-156 qualification and subsequent ordinary dispatch. No proof-only implementation rerun.                                 |
+| Native reliability                | LZ-128 returned8f14285; task accepted, independent lease/runtime checks pass.                                                                                               | Its plan waits for actual same-provider GUI-replacement/inference observation. Staged source/build is not that observation. Retain earlier117/110 observation gaps.                                                      |
+| Architect continuity              | LZ-132/137 advice and LZ-133 journal are qualified/integrated. Advice text has no character ceiling.                                                                        | Preserve runtime ownership, meaningful notifications and existing continuation work; old-session recovery must not require Root SQL repair.                                                                              |
+| Performance                       | Reuse integrated Astra repairs and prior measured observations.                                                                                                             | LZ-135 performance/idle observation remains open; no overall battery or CPU success claim.                                                                                                                               |
+| Radar                             | Reuse accepted producers and the approved agent-monitor direction.                                                                                                          | Finish reviewed live-data defects and the compact agent monitor with actual tools/files/messages/health, narrow/wide interaction and Tera review. Architecture maps stay diagnostic.                                     |
+| Recovery / verification / release | Reuse delivered foundations and the original qualification chain.                                                                                                           | Finish R2–R6, H3–H5, V3–V6/N1, actual same-worker correction/reprobe and usable one-package release/install/upgrade verification.                                                                                        |
 
-Observed LZ133 production paging returned 4,657 unique records across94 registered
-pages; a separate production-reader probe survived scanner movement. Current
-Trajectory failure is reproduced at14,104 project transitions. See the
-[LZ133 qualification review](reviews/task133-cursor-correction-review-20261105.md),
-[task-scoped read failure](reviews/tasks-trajectory-native-read-failure-20261105.md)
-and [Models visual/producer review](reviews/models-live-visual-review-20261105.md).
+Current observations, commits, test boundaries and active worker identities are in
+[retained recovery follow-through](reviews/retained-recovery-followthrough-20261106.md)
+and the [handoff](../.agents/docs/handoff.md). Root's isolated staged tree is
+`/private/tmp/lz-native-log-contract-review`; activation waits for a real quiet
+worker boundary. Keep all six inference flags enabled and idle unload Never.
+
 Historical Astra/Root global holds are obsolete. Preserve native permissions,
 actual resource isolation, current owners and truthful acceptance boundaries.
 
@@ -73,55 +73,29 @@ local inference stays enabled. Current findings are in the delivery audit.
 
 ### Proportional performance continuation
 
-[Astra's measured repair](reviews/astra-performance-repair-20261104.md) is the
-baseline, not unfinished work to reassign: identical98-row outbox results with
-actual query median390.34→4.74ms, live attribution2853→37outbox samples, and final
-warm same-PID service CPU17.61% versus46.36%. Radar read and event-directory
-semantics also landed. Temporary JSC profiler API/helper/tests were removed; keep
-raw captures private under `/private/tmp`. All six inference flags and Never unload
-remain unchanged. These are bounded observed windows, not battery-life estimates.
+Reuse [Astra's measured repair](reviews/astra-performance-repair-20261104.md):
+identical98-row outbox results with actual query median390.34→4.74ms, live
+attribution2853→37outbox samples and warm same-PID service CPU17.61% versus46.36%.
+These bounded windows do not establish battery-life or whole-product performance.
+All six inference flags and Never unload remain unchanged.
 
-Keep the next work within existing Tasks/Radar/runtime and recovery/verification
-lanes rather than opening a parallel performance program:
+Continue performance work inside the existing runtime and Radar lanes. Reconcile
+LZ-129's retained producer work and reviewed defects before adding another producer.
+Use small live summaries/deltas; fetch selected history separately. Measure actual
+source work, native calls, response bytes and elapsed time, rather than adding a
+row cap or hiding unknown coverage.
 
-1. Execute the unfulfilled **LZ129** bounded-live producer boundary, then the held
-   consumer. Avoid repeated full-history/lifecycle reconstruction and megabyte live
-   payloads; preserve separately fetched selected history, privacy and unknown
-   coverage. Source-work/native-call/response-byte bounds are part of delivery,
-   not just a faster final query or row cap. Reuse landed filters and query repairs.
-2. **Astra owns the residual performance repair:** Root resumed the original agent
-   for a native isolated tree, profiling and repair of measured prerequisite Git
-   and repeated native-session/attempt reads. Reserve those seams; do not dispatch
-   the earlier Tasks A performance/refactoring proposal or duplicate its work.
-   Tasks A will consume Astra's reviewed authoritative proof/fact interfaces after
-   handoff. Research below is input, not another implementation assignment. Savings
-   on valid proof are not established by sampled stacks. Any optimization must
-   preserve dispatch **and finalization** proof behavior.
-   No queued task is not sufficient reason to skip prerequisite proof: it also gates
-   combined verification/finalization. Reuse across observations requires a justified
-   freshness/invalidation boundary, not a timer or presumed idle state.
-3. Require semantic and work-count regressions covering changed prerequisite
-   artifact/acceptance/branch ancestry, cleanup-in-progress integration, stale or
-   cancelled proof, session/attempt changes, reopen and concurrent transitions.
-   Missing/unavailable evidence remains blocked or unknown, never a cached pass.
-   Reserve measured before/after native same-scope/same-PID checks only at a
-   coordinated boundary; record workload and actual elapsed/calls/bytes, not an
-   invented CPU target or another permanent diagnostic endpoint.
+Astra's residual-performance findings are review input, not an assertion that an
+Astra agent is still running or that an old reservation is current. Use runtime
+ownership and reservations to assign the remaining increments. Do not duplicate
+Tasks ordering/eligibility work or build a second scheduling oracle in the UI.
 
-Residual runtime work remains Astra-owned under actual reservations. It must not
-displace Root's first-install/control qualification, weaken lifecycle/cleanup checks,
-or become a duplicate Tasks A optimization. LZ129 and LZ132 retain unfinished dirty work after the actual OpenAI quota stop;
-neither is accepted. Root owns coordinated activation and native qualification,
-then hands orchestration back on the authorized route. Original identities and the
-roadmap stay intact; a provider failure does not imply completed implementation.
-
-Before original LZ57 dispatch, re-audit its amended outcomes against the installed
-adopt-descendant/source-repair flows and qualified bootstrap. Reuse delivered behavior
-instead of implementing it again. Original LZ57/58's zero-attempt plan is reversibly
-cancelled as a scheduling hold, not fulfilled or discarded; use supported native
-requeue/reconciliation for justified remaining work after that audit. LZ58's genuinely
-independent verification contexts/receipts remain required separately. Preserve all
-old effects/resources and the LZ88 integration edge; no manual TaskDB edits.
+Optimize repeated prerequisite and session/attempt reads where measurement shows
+cost. Preserve correct dispatch, verification and finalization under changes,
+cancellation and reopen. Qualify changes at a coordinated native boundary with a
+comparable workload; temporary diagnostic captures need not become product APIs.
+Root owns coordinated activation. Provider interruption, source landing and old
+status prose do not establish acceptance or justify discarding retained work.
 
 ### Proactive worker recovery
 
