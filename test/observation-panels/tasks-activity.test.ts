@@ -116,6 +116,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const attemptIDs = Object.fromEntries(
       Object.entries(ids).map(([key]) => [key, crypto.randomUUID()]),
     ) as Record<keyof typeof ids, string>
+    const workerSessionIDs = Object.fromEntries(
+      Object.keys(ids).map((key) => [key, `ses-worker-${key}`]),
+    ) as Record<keyof typeof ids, string>
     const taskNames: Record<keyof typeof ids, string> = {
       held: "Inactive worker under a reconciliation hold",
       active: "Active worker under a reconciliation hold",
@@ -242,6 +245,8 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     }
     const planID = "77777777-7777-4777-8777-777777777777"
     const completedPlanID = "88888888-8888-4888-8888-888888888888"
+    const activityHoldReason =
+      "Worker-level hold: waiting for a reviewer to reconcile the external result before this task may continue.\nAdditional hold: retain the audit trail and confirm the exact input provenance before resuming."
     const node = (taskID: string, ordinal: number) => ({
       taskID,
       revision: 1,
@@ -321,12 +326,13 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
           taskID === ids.held ? "inactive" : taskID === ids.active ? "active" : "unknown"
         return {
           taskID,
+          workerSessionID: workerSessionIDs[key],
           attemptID: attemptIDs[key],
           foreground,
           unknownReason: foreground === "unknown" ? "unavailable" : null,
           recordedState: states[taskID],
           waiting: taskID !== ids.completed,
-          holdReason: taskID === ids.completed ? null : "Reconciliation hold: awaiting review",
+          holdReason: taskID === ids.completed ? null : activityHoldReason,
           pendingInput: taskID === ids.active,
           pendingPermissions: taskID === ids.active ? 1 : 0,
           pendingForms: 0,
@@ -475,26 +481,44 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const row = (taskID: string) =>
       container.querySelector<HTMLButtonElement>(`[data-task-id="${taskID}"]`)
     await until(() =>
-      Boolean(row(ids.held)?.getAttribute("aria-label")?.includes("foreground inactive")),
+      Boolean(
+        row(ids.held)
+          ?.getAttribute("aria-label")
+          ?.includes("observed foreground activity inactive"),
+      ),
     )
     const heldRow = row(ids.held)!
     const activeRow = row(ids.active)!
     const unknownRow = row(ids.unknown)!
-    expect(heldRow.getAttribute("aria-label")).toContain("recorded running")
-    expect(heldRow.getAttribute("aria-label")).toContain("foreground inactive")
+    expect(heldRow.getAttribute("aria-label")).toContain("recorded lifecycle running")
+    expect(heldRow.getAttribute("aria-label")).toContain("observed foreground activity inactive")
+    expect(heldRow.getAttribute("aria-label")).toContain("latest worker session ses-worker-held")
     expect(heldRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
+    expect(heldRow.getAttribute("aria-label")).toContain("Additional hold: retain the audit trail")
     expect(heldRow.querySelector(".lazers-tasks-state")?.getAttribute("data-waiting")).toBe("true")
-    expect(heldRow.textContent).toContain("Foreground inactive")
+    expect(
+      heldRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
+    ).toBe("inactive")
+    expect(heldRow.textContent).toContain("Worker inactive")
     expect(heldRow.textContent).toContain("Waiting")
+    expect(heldRow.textContent).not.toContain("Additional hold: retain the audit trail")
     expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
       "Worker outcome succeeded",
     )
-    expect(activeRow.getAttribute("aria-label")).toContain("foreground active")
+    expect(activeRow.getAttribute("aria-label")).toContain("observed foreground activity active")
     expect(activeRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
+    expect(
+      activeRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
+    ).toBe("active")
     expect(activeRow.textContent).toContain("Input pending")
     expect(activeRow.textContent).toContain("Approval pending")
-    expect(unknownRow.getAttribute("aria-label")).toContain("foreground unknown")
+    expect(unknownRow.getAttribute("aria-label")).toContain("observed foreground activity unknown")
     expect(unknownRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
+    expect(unknownRow.getAttribute("aria-label")).toContain("activity observation unavailable")
+    expect(unknownRow.textContent).toContain("Worker unknown")
+    expect(
+      unknownRow.querySelector(".lazers-tasks-activity-indicator")?.getAttribute("data-state"),
+    ).toBe("unknown")
     expect(container.querySelector(".lazers-tasks-plan-heading")?.textContent).toContain(
       "nonterminal",
     )
@@ -515,8 +539,26 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       () =>
         container
           .querySelector(".lazers-tasks-current-activity")
-          ?.textContent?.includes("Foreground active") ?? false,
+          ?.textContent?.includes("Worker active") ?? false,
     )
+    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
+      "ses-worker-active",
+    )
+    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
+      "Latest worker",
+    )
+    expect(container.querySelector(".lazers-tasks-detail")?.textContent).toContain(
+      "Additional hold: retain the audit trail",
+    )
+    expect(
+      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
+    ).toContain("Recorded running; observed foreground activity active")
+    expect(
+      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
+    ).toContain("waiting: Worker-level hold:")
+    expect(
+      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
+    ).toContain("Reconciliation hold: awaiting review")
     const openTrajectory = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.getAttribute("aria-label")?.startsWith("Open trajectory for"),
     )!
@@ -527,6 +569,26 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         projectDirectory
       ]?.selectedTaskID,
     ).toBe(ids.active)
+
+    const list = container.querySelector<HTMLDivElement>(".lazers-tasks-list")!
+    const detailPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
+    list.scrollTop = 37
+    list.dispatchEvent(new dom.window.Event("scroll") as unknown as Event)
+    detailPane.scrollTop = 23
+    detailPane.dispatchEvent(new dom.window.Event("scroll") as unknown as Event)
+    const readsBeforeRefresh = queryCalls.length
+    snapshot++
+    eventSubscriber?.({
+      type: "rpc.lazers.tasks.changed",
+      data: { projectDirectory, version: snapshot },
+    })
+    await until(
+      () =>
+        queryCalls.length > readsBeforeRefresh &&
+        row(ids.active)?.getAttribute("aria-pressed") === "true",
+    )
+    expect(list.scrollTop).toBe(37)
+    expect(detailPane.scrollTop).toBe(23)
 
     const chooseFilter = async (label: string) => {
       const trigger = [
@@ -563,7 +625,9 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
 
     await chooseFilter("Running")
     await until(() => queryCalls.at(-1)?.state === "running" && Boolean(row(ids.held)))
-    expect(row(ids.held)?.getAttribute("aria-label")).toContain("foreground inactive")
+    expect(row(ids.held)?.getAttribute("aria-label")).toContain(
+      "observed foreground activity inactive",
+    )
     await chooseFilter("Blocked / waiting")
     await until(() => queryCalls.at(-1)?.state === "blocked" && Boolean(row(ids.active)))
     expect(container.textContent).toContain("Node or plan holds may overlap Queued or Running")
@@ -571,7 +635,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
 
     await chooseFilter("Completed")
     await until(() => queryCalls.at(-1)?.state === "completed" && Boolean(row(ids.completed)))
-    expect(row(ids.completed)?.getAttribute("aria-label")).toContain("recorded accepted")
+    expect(row(ids.completed)?.getAttribute("aria-label")).toContain("recorded lifecycle accepted")
     expect(row(ids.completed)?.getAttribute("aria-label")).not.toContain("waiting")
     expect(
       queryCalls.some((call) => call.state === "queued" && call.cursor === "queued-page-three"),

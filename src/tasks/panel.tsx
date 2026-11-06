@@ -77,6 +77,10 @@ export type TaskTrajectoryOpener = (
   target: TaskTrajectoryRequest,
 ) => void
 
+function distinctReasons(reasons: readonly (string | null | undefined)[]) {
+  return [...new Set(reasons.filter((reason): reason is string => Boolean(reason?.trim())))]
+}
+
 function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskTrajectoryOpener }) {
   const ctx = props.ctx
   const Ui = ctx.ui
@@ -407,20 +411,29 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
       selectedDetail()?.recordedState ?? node?.state ?? execution?.state ?? selectedTask()?.status
     )
   }
-  const selectedHoldReason = () => {
+  const selectedHoldReasons = () => {
     const activity = selectedActivity()
-    if (activity?.waiting) return activity.holdReason
     const taskID = visible()?.selectedID
-    const plan = visible()?.topology?.plans.find((item) => item.id === selectedExecution()?.planID)
+    const execution = selectedExecution()
+    const plan = visible()?.topology?.plans.find((item) => item.id === execution?.planID)
     const node = plan?.nodes.find((item) => item.taskID === taskID)
-    if (!node) return selectedExecution()?.state === "blocked" ? selectedExecution()?.reason : null
-    if (plan?.state === "cancelled") return null
     const terminal = ["accepted", "incorporated", "failed", "exhausted", "cancelled"].includes(
-      node.state,
+      node?.state ?? "",
     )
-    return node.state === "blocked" || (plan?.state === "blocked" && !terminal)
-      ? (node.reason ?? plan?.reason ?? selectedExecution()?.reason ?? null)
-      : null
+    const topologyWaiting = Boolean(
+      node &&
+      plan?.state !== "cancelled" &&
+      (node.state === "blocked" || (plan?.state === "blocked" && !terminal)),
+    )
+    const waiting = activity?.waiting || topologyWaiting || execution?.state === "blocked"
+    return waiting
+      ? distinctReasons([
+          activity?.waiting ? activity.holdReason : null,
+          node?.reason,
+          plan?.reason,
+          execution?.reason,
+        ])
+      : []
   }
   const selectedRelations = () => {
     const taskID = visible()?.selectedID
@@ -508,7 +521,11 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     const expanded = () => Boolean(group && taskRow().fork && forkExpanded(group(), taskRow()))
     const currentActivity = () => visible()?.currentActivity[taskRow().taskID]
     const waiting = () => taskRow().waiting || currentActivity()?.waiting === true
-    const holdReason = () => taskRow().holdReason ?? currentActivity()?.holdReason
+    const holdReasons = () =>
+      distinctReasons([
+        taskRow().waiting ? taskRow().holdReason : null,
+        currentActivity()?.waiting ? currentActivity()?.holdReason : null,
+      ])
     const showCurrent = () =>
       ["running", "verifying"].includes(taskRow().status) ||
       waiting() ||
@@ -521,6 +538,29 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
           ? ["Approval pending"]
           : []),
       ].join(" · ")
+    }
+    const accessibleDescription = () => {
+      const activity = currentActivity()
+      const reasons = holdReasons()
+      return [
+        taskTitle(taskRow().title),
+        `recorded lifecycle ${taskRow().status}`,
+        ...(showCurrent()
+          ? [
+              `observed foreground activity ${activity?.foreground ?? "unknown"}`,
+              ...(activity?.workerSessionID
+                ? [`latest worker session ${activity.workerSessionID}`]
+                : []),
+              ...(activity?.unknownReason
+                ? [`activity observation ${activity.unknownReason}`]
+                : []),
+              ...(activity?.outcome ? [`worker outcome ${activity.outcome}`] : []),
+            ]
+          : []),
+        ...(waiting() ? [`waiting${reasons.length ? `: ${reasons.join("; ")}` : ""}`] : []),
+        ...(pendingLabel() ? [pendingLabel()] : []),
+        ...(taskRow().contextOnly ? ["context"] : []),
+      ].join(", ")
     }
     const relationshipCount = () =>
       new Set([...taskRow().prerequisites, ...taskRow().successors]).size
@@ -549,7 +589,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
             class="lazers-tasks-row"
             data-task-id={taskRow().taskID}
             aria-pressed={taskRow().taskID === visible()?.selectedID}
-            aria-label={`${taskTitle(taskRow().title)}, recorded ${taskRow().status}${showCurrent() ? `, foreground ${currentActivity()?.foreground ?? "unknown"}` : ""}${waiting() ? `, waiting${holdReason() ? `: ${holdReason()}` : ""}` : ""}${pendingLabel() ? `, ${pendingLabel()}` : ""}${taskRow().contextOnly ? ", context" : ""}`}
+            aria-label={accessibleDescription()}
             tabIndex={rowTabIndex(taskRow().taskID)}
             onKeyDown={rowKey}
             onClick={() => selectTask(taskRow().taskID)}
@@ -564,23 +604,22 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               <span class="lazers-tasks-row-title">{taskTitle(taskRow().title)}</span>
               <Show when={showCurrent()}>
                 <span class="lazers-tasks-row-meta">
-                  <span>Recorded {taskRow().status}</span>
-                  <span class="lazers-tasks-foreground">
+                  <span class="lazers-tasks-row-lifecycle">{taskRow().status}</span>
+                  <span class="lazers-tasks-row-activity">
                     <span
                       class="lazers-tasks-activity-indicator"
                       data-state={currentActivity()?.foreground ?? "unknown"}
                       aria-hidden="true"
                     />
-                    Foreground {currentActivity()?.foreground ?? "unknown"}
+                    Worker {currentActivity()?.foreground ?? "unknown"}
                   </span>
                   <Show when={waiting()}>
-                    <span class="lazers-tasks-waiting">Waiting</span>
+                    <span class="lazers-tasks-row-waiting">Waiting</span>
                   </Show>
-                  <Show when={pendingLabel()}>{(label) => <span>{label()}</span>}</Show>
+                  <Show when={pendingLabel()}>
+                    {(label) => <span class="lazers-tasks-row-attention">{label()}</span>}
+                  </Show>
                 </span>
-                <Show when={waiting() && holdReason()}>
-                  {(reason) => <span class="lazers-tasks-row-hold">{reason()}</span>}
-                </Show>
               </Show>
             </span>
             <Show when={relationshipCount() > 0}>
@@ -1002,8 +1041,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 <span
                   class="lazers-tasks-inspector-state"
                   data-state={selectedRecordedState()}
-                  data-waiting={Boolean(selectedHoldReason())}
-                  aria-label={`Recorded ${selectedRecordedState()}${selectedActivity()?.foreground ? `; foreground ${selectedActivity()!.foreground}` : ""}${selectedHoldReason() ? `; waiting: ${selectedHoldReason()}` : ""}`}
+                  data-waiting={selectedHoldReasons().length > 0}
+                  aria-label={`Recorded ${selectedRecordedState()}${selectedActivity()?.foreground ? `; observed foreground activity ${selectedActivity()!.foreground}` : ""}${selectedHoldReasons().length ? `; waiting: ${selectedHoldReasons().join("; ")}` : ""}`}
                 >
                   {selectedRecordedState()}
                 </span>
@@ -1044,13 +1083,13 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                   {copyStatus()}
                 </p>
               </Show>
-              <Show when={selectedHoldReason()}>
+              <For each={selectedHoldReasons()}>
                 {(reason) => (
                   <p class="lazers-tasks-reason" role="status">
-                    Waiting: {reason()}
+                    Waiting: {reason}
                   </p>
                 )}
-              </Show>
+              </For>
               <Show
                 when={
                   ["running", "verifying"].includes(selectedRecordedState() ?? "") ||
@@ -1069,8 +1108,31 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                       data-state={selectedActivity()?.foreground ?? "unknown"}
                       aria-hidden="true"
                     />
-                    Foreground {selectedActivity()?.foreground ?? "unknown"}
+                    Worker {selectedActivity()?.foreground ?? "unknown"}
                   </span>
+                  <Show when={selectedActivity()?.unknownReason}>
+                    {(reason) => (
+                      <span>
+                        Observation{" "}
+                        {reason() === "no-current-attempt"
+                          ? "has no current attempt"
+                          : "unavailable"}
+                      </span>
+                    )}
+                  </Show>
+                  <Show when={selectedActivity()?.workerSessionID}>
+                    {(workerSessionID) => (
+                      <span
+                        class="lazers-tasks-worker"
+                        aria-label={`Latest worker session ${workerSessionID()}`}
+                      >
+                        Latest worker{" "}
+                        <code style={{ "font-family": ctx.appearance.font("mono") }}>
+                          {workerSessionID()}
+                        </code>
+                      </span>
+                    )}
+                  </Show>
                   <Show when={selectedActivity()?.outcome}>
                     {(outcome) => <span>Worker outcome {outcome()}</span>}
                   </Show>
