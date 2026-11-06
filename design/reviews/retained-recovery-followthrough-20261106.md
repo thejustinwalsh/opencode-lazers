@@ -26,6 +26,9 @@ completion of the roadmap or of the live walkthroughs.
   replacement generations and window isolation. Root independently reran 11
   lease/main/runtime/decision tests, 57 assertions. Combined review-tree formatter,
   linter and typechecker pass. Inference preferences were not changed.
+  Native Luna reviewer `ses_e502151b3ffeBPGscw9thFkXM4` subsequently found no
+  blocking source defect and independently passed18tests/95assertions plus quality
+  checks on that commit. Its verdict explicitly leaves native handoff unqualified.
 
 ## Blocking finding and actual action
 
@@ -58,6 +61,25 @@ before claiming the LZ-128 live gate. No switches or inference preferences chang
 [Pinned native handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/app/src/runtime/plugin/extension-plugins.tsx#L135-L139).
 The combined staged GUI build completed and its bundle evaluated without a renderer
 process global. This is build evidence, not live inference evidence.
+
+## Observed effort and overhead coverage
+
+LZ-128's native busy/idle endpoints are1793948364178 and1793951814096:
+57.50 minutes elapsed, including implementation/reasoning/tools/checks, not a
+measure of active model computation. Durable cumulative usage at1793951813900
+records input384025, output40690, reasoning110220, cacheRead19675136 and
+cacheWrite0. Reported subscription cost0 is not current market value. The token
+categories are recorded separately; reasoning must not be blindly added to an
+output count that may already include it.
+
+The separate reviewer `ses_e502151b3ffeBPGscw9thFkXM4` has no `runner_progress`
+rows in the current project database. `src/models/valuation.ts` explicitly leaves
+Architect/review/integration overhead unallocated. These observations do not prove
+that the native host lacks usage data; they show missing LAZERS capture/attribution.
+Root queued this finding through Desktop for Architect to reconcile with existing
+recovery/measurement work, without expanding or delaying LZ-157/158. Relevant
+managed-session hooks, task/plan attribution and indexed market valuation are
+needed before claiming full-task cost. No manual token self-report or spend gate.
 
 ## Still unproven
 
