@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert"
-import { createRoot, createSignal, onCleanup } from "solid-js"
+import { createComputed, createRoot, createSignal, onCleanup } from "solid-js"
 import { mapByKey } from "../../../src/tasks/keyed.ts"
 
 type Row = { taskID: string; title: string; status: string }
@@ -24,6 +24,7 @@ createRoot((dispose) => {
         (row) => row.taskID,
         (row) => {
           mounts++
+          createComputed(() => assert.equal(typeof row().status, "string"))
           onCleanup(() => removals++)
           return { row, target: {} }
         },

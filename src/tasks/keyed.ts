@@ -10,7 +10,16 @@ export function mapByKey<T, U>(
   const values = createMemo(() => new Map(each().map((item) => [by(item), item])))
   return mapArray(
     () => [...values().keys()],
-    (key) => render(() => values().get(key)!),
+    (key) => {
+      let current: T = values().get(key)!
+      return render(() => {
+        // Consumers may update before mapArray disposes a removed key's owner.
+        // Keep its last value valid through that final reactive update.
+        const next = values().get(key)
+        if (next !== undefined) current = next
+        return current
+      })
+    },
   )
 }
 
