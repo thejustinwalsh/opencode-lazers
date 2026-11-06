@@ -92,6 +92,7 @@ import {
 import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
 import {
   activeRetainedVerifications,
+  activateRetainedVerificationResources,
   beginRetainedVerificationCheck,
   completeRetainedVerificationCheck,
   createRetainedVerification,
@@ -108,6 +109,7 @@ import {
   setRetainedVerificationCheckCleanup,
   setRetainedVerificationWorkspace,
   settleRetainedVerificationResources,
+  updateRetainedVerificationResourceIdentity,
 } from "./retained-verification/store.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
 import {
@@ -116,8 +118,14 @@ import {
   observeRetainedCheckIsolationWitness,
   removeRetainedCheckContext,
   removeRetainedCheckContextFromWitness,
+  removeRetainedCheckSetupResources,
   retainedCheckIsolationWitness,
   retainedVerificationEnvironmentIdentity,
+} from "./retained-verification/isolation.ts"
+import type {
+  RetainedCheckSetupLink,
+  RetainedCheckSetupResource,
+  RetainedDependencyInstaller,
 } from "./retained-verification/isolation.ts"
 import { ProbeRepository } from "../verification/probe/store.ts"
 import { ResourceRepository } from "../verification/resources/store.ts"
@@ -178,6 +186,7 @@ export type TaskRuntimeOptions = {
   now?: () => number
   architectPromptHook?: boolean
   requestTick?: () => Promise<void>
+  retainedDependencyInstaller?: RetainedDependencyInstaller
 }
 
 type AdoptionSeed = {
@@ -267,6 +276,7 @@ export class TaskRuntime {
   private readonly architectIdleWindowMs: number
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
+  private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly modelMappingResolver: ModelMappingResolver
   constructor(
     readonly store: RunnerStore,
@@ -280,6 +290,7 @@ export class TaskRuntime {
     this.architectIdleWindowMs = architectIdleWindowMs(options.architectIdleWindowMs)
     this.architectPromptHook = options.architectPromptHook ?? false
     this.requestTick = options.requestTick ?? (() => this.tick())
+    this.retainedDependencyInstaller = options.retainedDependencyInstaller
     this.modelMappingResolver = new ModelMappingResolver(new ModelMappingStore(store.repository))
   }
   get directory() {
@@ -8302,14 +8313,17 @@ export class TaskRuntime {
         }
         return active.map((row) => row.canonical_path)
       })
-      let context: ReturnType<typeof createRetainedCheckContext>
+      const controller = new AbortController()
+      this.retainedVerificationAborts.set(initial.id, controller)
+      const rootDirectory = join(this.dataDirectory, "retained-verification-resources")
+      let setupResource: RetainedCheckSetupResource | undefined
+      let setupDependencyLink: RetainedCheckSetupLink | undefined
+      let setupTemporaryDirectoryLink: RetainedCheckSetupLink | undefined
+      let context: Awaited<ReturnType<typeof createRetainedCheckContext>>
       try {
-        mkdirSync(join(this.dataDirectory, "retained-verification-resources"), {
-          recursive: true,
-          mode: 0o700,
-        })
-        context = createRetainedCheckContext({
-          rootDirectory: join(this.dataDirectory, "retained-verification-resources"),
+        mkdirSync(rootDirectory, { recursive: true, mode: 0o700 })
+        context = await createRetainedCheckContext({
+          rootDirectory,
           operationID: initial.id,
           generation: initial.generation,
           phase,
@@ -8321,21 +8335,105 @@ export class TaskRuntime {
           candidateArtifact: artifact,
           priorResourcePaths: prior,
           procedurePlan: procedure.plan,
+          signal: controller.signal,
+          dependencyInstaller: this.retainedDependencyInstaller,
+          onSetupPathReserved: (path) => {
+            setupResource = { path, realPath: path, device: -1, inode: -1 }
+            this.store.atomic((db) =>
+              registerRetainedVerificationResources(db, this.directory, {
+                operationID: initial.id,
+                generation: initial.generation,
+                phase,
+                checkID: check.id,
+                resources: [{ name: "setup-root", realPath: path, device: -1, inode: -1 }],
+                state: "creating",
+                now: this.now(),
+              }),
+            )
+          },
+          onSetupPathCreated: (resource) => {
+            setupResource = resource
+            const updated = this.store.atomic((db) =>
+              updateRetainedVerificationResourceIdentity(db, {
+                operationID: initial.id,
+                phase,
+                checkID: check.id,
+                resourceName: "setup-root",
+                realPath: resource.realPath,
+                device: resource.device,
+                inode: resource.inode,
+                now: this.now(),
+              }),
+            )
+            if (!updated)
+              throw new Error("Retained verification setup-root ownership reservation changed")
+          },
+          onResourcesCreated: (resources) =>
+            this.store.atomic((db) =>
+              registerRetainedVerificationResources(db, this.directory, {
+                operationID: initial.id,
+                generation: initial.generation,
+                phase,
+                checkID: check.id,
+                resources,
+                state: "creating",
+                now: this.now(),
+              }),
+            ),
+          onDependencyLink: (link) => {
+            setupDependencyLink = link
+          },
+          onTemporaryDirectoryLink: (link) => {
+            setupTemporaryDirectoryLink = link
+            this.store.atomic((db) =>
+              registerRetainedVerificationResources(db, this.directory, {
+                operationID: initial.id,
+                generation: initial.generation,
+                phase,
+                checkID: check.id,
+                resources: [
+                  {
+                    name: "tmp-alias",
+                    realPath: link.path,
+                    device: link.device,
+                    inode: link.inode,
+                  },
+                ],
+                state: "creating",
+                now: this.now(),
+              }),
+            )
+          },
         })
         if (!observeRetainedCheckContext(context))
           throw new Error("Fresh verification resources do not have a readable ownership witness")
         this.store.atomic((db) =>
-          registerRetainedVerificationResources(db, this.directory, {
-            operationID: initial.id,
-            generation: initial.generation,
-            phase,
-            checkID: check.id,
-            resources: context.resources,
-            now: this.now(),
-          }),
+          activateRetainedVerificationResources(db, initial.id, phase, check.id, this.now()),
         )
       } catch (error) {
-        await this.holdRetainedVerification(initial, errorText(error), fence)
+        const cleaned = this.cleanupRetainedCheckSetup(
+          initial,
+          phase,
+          check.id,
+          rootDirectory,
+          workspace,
+          setupResource,
+          setupDependencyLink,
+          setupTemporaryDirectoryLink,
+        )
+        this.retainedVerificationAborts.delete(initial.id)
+        if (
+          controller.signal.aborted ||
+          !this.retainedVerificationLive(initial.id, initial.generation)
+        )
+          return undefined
+        await this.holdRetainedVerification(
+          initial,
+          cleaned
+            ? errorText(error)
+            : `${errorText(error)}; partial setup cleanup could not be proven and remains uncertain`,
+          fence,
+        )
         return undefined
       }
       const receiptPath = join(
@@ -8397,6 +8495,7 @@ export class TaskRuntime {
             ),
           )
         }
+        this.retainedVerificationAborts.delete(initial.id)
         await this.holdRetainedVerification(initial, errorText(error), fence)
         return undefined
       }
@@ -8409,10 +8508,9 @@ export class TaskRuntime {
           retainedCheckIsolationWitness(context),
           fence,
         )
+        this.retainedVerificationAborts.delete(initial.id)
         return undefined
       }
-      const controller = new AbortController()
-      this.retainedVerificationAborts.set(initial.id, controller)
       try {
         const receipt = await runCheck(workspace, artifact, check, receiptPath, {
           environment: context.environment,
@@ -8604,6 +8702,74 @@ export class TaskRuntime {
         },
       )
       void fence
+    }
+  }
+
+  private cleanupRetainedCheckSetup(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+    checkID: string,
+    rootDirectory: string,
+    candidateWorkspace: string,
+    resource: RetainedCheckSetupResource | undefined,
+    dependencyLink: RetainedCheckSetupLink | undefined,
+    temporaryDirectoryLink: RetainedCheckSetupLink | undefined,
+  ): boolean {
+    if (!resource) return true
+    try {
+      removeRetainedCheckSetupResources({
+        rootDirectory,
+        resource,
+        candidateWorkspace,
+        ...(dependencyLink ? { dependencyLink } : {}),
+        ...(temporaryDirectoryLink ? { temporaryDirectoryLink } : {}),
+      })
+      this.store.atomic((db) =>
+        settleRetainedVerificationResources(
+          db,
+          operation.id,
+          phase,
+          checkID,
+          "removed",
+          this.now(),
+        ),
+      )
+      this.store.record(operation.planID, operation.taskID, "RETAINED_VERIFICATION_SETUP_CLEANED", {
+        operationID: operation.id,
+        generation: operation.generation,
+        phase,
+        checkID,
+        contextPath: resource.path,
+        cleanupState: "complete",
+      })
+      return true
+    } catch (error) {
+      this.store.atomic((db) =>
+        settleRetainedVerificationResources(
+          db,
+          operation.id,
+          phase,
+          checkID,
+          "uncertain",
+          this.now(),
+        ),
+      )
+      this.store.record(
+        operation.planID,
+        operation.taskID,
+        "RETAINED_VERIFICATION_SETUP_CLEANUP_FAILED",
+        {
+          operationID: operation.id,
+          generation: operation.generation,
+          phase,
+          checkID,
+          contextPath: resource.path,
+          reason: errorText(error),
+          cleanupState: "failed",
+          forcedDeletion: false,
+        },
+      )
+      return false
     }
   }
 

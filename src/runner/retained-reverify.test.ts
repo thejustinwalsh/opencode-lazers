@@ -1,5 +1,13 @@
 import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
@@ -13,6 +21,7 @@ import { ResourceRepository } from "../verification/resources/store.ts"
 import { filesystemProbeLifecycle } from "../verification/resources/lifecycle.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
 import { RetainedVerificationSchema } from "./retained-verification/schema.ts"
+import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -22,8 +31,10 @@ afterEach(() => {
 function fixture(
   options: {
     taskCheckCommand?: string
+    combinedCheckCommand?: string
     failRetainedCleanup?: boolean
     humanTaskEvidence?: boolean
+    retainedDependencyInstaller?: RetainedDependencyInstaller
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-reverify-project-"))
@@ -45,6 +56,17 @@ function fixture(
     join(root, "package.json"),
     '{"name":"retained-reverify-fixture","version":"1.0.0"}\n',
   )
+  if (options.retainedDependencyInstaller) {
+    const manifest = {
+      name: "retained-reverify-fixture",
+      version: "1.0.0",
+      dependencies: { "retained-fixture-dependency": "file:vendor/fixture-dependency.tgz" },
+    }
+    mkdirSync(join(root, "vendor"), { recursive: true })
+    writeFileSync(join(root, "vendor", "fixture-dependency.tgz"), "injected installer fixture\n")
+    writeFileSync(join(root, "package.json"), `${JSON.stringify(manifest)}\n`)
+    writeFileSync(join(root, "bun.lock"), '{"lockfileVersion":1,"workspaces":{}}\n')
+  }
   mkdirSync(join(root, "node_modules"))
   for (const directory of [
     "src/runner",
@@ -95,7 +117,7 @@ function fixture(
       `  await Bun.sleep(10_000)\n` +
       `}, { timeout: 20_000 })\n`,
   )
-  git(root, ["add", ".gitignore", "package.json", "seed.txt", "src", "test"])
+  git(root, ["add", "-A"])
   git(root, ["commit", "-m", "baseline"])
   const base = git(root, ["rev-parse", "HEAD"])
   const repository = new TaskRepository(join(state, "tasks.sqlite"), root)
@@ -155,6 +177,7 @@ function fixture(
         {
           id: "isolated-combined-check",
           command:
+            options.combinedCheckCommand ??
             "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
           timeoutMs: 10_000,
         },
@@ -283,7 +306,9 @@ function fixture(
     notify: async () => {},
     interrupt: async () => {},
   }
-  const runtime = new TaskRuntime(store, host, "project")
+  const runtime = new TaskRuntime(store, host, "project", undefined, {
+    retainedDependencyInstaller: options.retainedDependencyInstaller,
+  })
   cleanups.push(() => {
     void runtime.stop()
     repository.close()
@@ -321,6 +346,41 @@ async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   const attempt = f.store.attempts(f.planID).at(-1)!
   if (!attempt.artifact) throw new Error("Fixture attempt did not retain an artifact")
   return { ...f, plan, attempt, artifact: attempt.artifact }
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+function retainedVerifyCommand(f: Awaited<ReturnType<typeof failedFixture>>, requestID: string) {
+  const plan = f.store.plan(f.planID)!
+  return {
+    requestID,
+    planID: f.planID,
+    expectedVersion: plan.version,
+    action: "verify-retained" as const,
+    projectID: "project",
+    planRevision: plan.revision,
+    taskID: f.task.id,
+    taskRevision: f.task.revision,
+    attemptID: f.attempt.id,
+    artifact: f.artifact,
+    reason: "Verify the exact retained candidate without replaying its worker turn",
+  }
+}
+
+function writeInjectedPrivatePackage(candidateWorkspace: string): void {
+  const dependencyRoot = realpathSync(join(candidateWorkspace, "node_modules"))
+  const packageDirectory = join(dependencyRoot, "retained-fixture-dependency")
+  mkdirSync(packageDirectory, { recursive: true })
+  writeFileSync(
+    join(packageDirectory, "package.json"),
+    '{"name":"retained-fixture-dependency","version":"1.0.0"}\n',
+  )
 }
 
 test("owner verifies an exact failed-attempt candidate with zero replacement prompts", async () => {
@@ -1178,4 +1238,243 @@ test("cancellation and database reopen cannot accept a late retained-check resul
   expect(delayed.prompts).toHaveLength(1)
   await reopenedRuntime.stop()
   reopenedRepository.close()
+})
+
+test("a slow candidate dependency setup leaves unrelated plan RPCs responsive", async () => {
+  const setupStarted = deferred()
+  const releaseSetup = deferred()
+  let installCalls = 0
+  let released = false
+  const installer: RetainedDependencyInstaller = async ({ candidateWorkspace, signal }) => {
+    installCalls++
+    if (installCalls === 1) {
+      setupStarted.resolve()
+      await releaseSetup.promise
+    }
+    if (signal.aborted) throw new Error("fixture setup cancelled")
+    writeInjectedPrivatePackage(candidateWorkspace)
+  }
+  const f = await failedFixture({
+    taskCheckCommand: "bun test src/runner/retained-check.test.ts",
+    combinedCheckCommand: "bun test src/runner/retained-check.test.ts",
+    retainedDependencyInstaller: installer,
+  })
+  const verification = f.runtime.command(
+    retainedVerifyCommand(f, "verify-retained-during-slow-setup"),
+    "owner",
+  )
+  try {
+    await setupStarted.promise
+    const audit = f.runtime.command(
+      {
+        requestID: "audit-during-slow-retained-install",
+        planID: f.planID,
+        expectedVersion: f.store.plan(f.planID)!.version,
+        action: "audit",
+      },
+      "owner",
+    )
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let responsive: boolean
+    try {
+      responsive = await Promise.race([
+        audit.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 2_000)
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    expect(responsive).toBe(true)
+    expect(released).toBe(false)
+    released = true
+    releaseSetup.resolve()
+    const result = (await verification) as { operationID: string }
+    expect(installCalls).toBe(2)
+    const operation = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE id=?",
+        )
+        .get(result.operationID),
+    )!
+    expect(JSON.parse(operation.payload)).toMatchObject({ state: "accepted" })
+  } finally {
+    releaseSetup.resolve()
+    await verification.catch(() => undefined)
+  }
+})
+
+test("cancellation aborts dependency setup and removes its durably reserved partial context", async () => {
+  const setupStarted = deferred()
+  const installer: RetainedDependencyInstaller = ({ signal }) =>
+    new Promise<void>((_resolve, reject) => {
+      const cancelled = () => reject(new Error("Candidate dependency setup was cancelled"))
+      signal.addEventListener("abort", cancelled, { once: true })
+      setupStarted.resolve()
+      if (signal.aborted) cancelled()
+    })
+  const f = await failedFixture({
+    taskCheckCommand: "bun test src/runner/retained-check.test.ts",
+    combinedCheckCommand: "bun test src/runner/retained-check.test.ts",
+    retainedDependencyInstaller: installer,
+  })
+  const verification = f.runtime.command(
+    retainedVerifyCommand(f, "verify-retained-cancel-during-setup"),
+    "owner",
+  )
+  await setupStarted.promise
+  const operation = f.store.atomic((db) =>
+    db
+      .query<{ id: string; payload: string }, []>(
+        "SELECT id,payload FROM runner_retained_verifications LIMIT 1",
+      )
+      .get(),
+  )!
+  const setupRows = f.store.atomic((db) =>
+    db
+      .query<
+        {
+          resource_name: string
+          canonical_path: string
+          state: string
+          device: number
+          inode: number
+        },
+        [string]
+      >(
+        "SELECT resource_name,canonical_path,state,device,inode FROM runner_retained_verification_resources WHERE operation_id=?",
+      )
+      .all(operation.id),
+  )
+  expect(setupRows.some((row) => row.resource_name === "setup-root")).toBe(true)
+  expect(setupRows.length).toBeGreaterThan(1)
+  expect(setupRows.every((row) => row.state === "creating")).toBe(true)
+  const setupRoot = setupRows.find((row) => row.resource_name === "setup-root")!
+  const candidateWorkspace = (JSON.parse(operation.payload) as { taskWorkspace: string })
+    .taskWorkspace
+
+  await f.runtime.command(
+    {
+      requestID: "cancel-retained-dependency-setup",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "cancel-retained-verification",
+      retainedVerificationID: operation.id,
+      reason: "Cancel the isolated dependency setup before any check launches",
+    },
+    "owner",
+  )
+  await verification
+
+  const cancelled = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(operation.id),
+  )!
+  expect(JSON.parse(cancelled.payload)).toMatchObject({ state: "cancelled" })
+  expect(existsSync(setupRoot.canonical_path)).toBe(false)
+  expect(existsSync(join(candidateWorkspace, "node_modules"))).toBe(false)
+  expect(
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=?",
+          )
+          .get(operation.id)!.count,
+    ),
+  ).toBe(0)
+  expect(
+    f.store.atomic((db) =>
+      db
+        .query<{ state: string }, [string]>(
+          "SELECT state FROM runner_retained_verification_resources WHERE operation_id=?",
+        )
+        .all(operation.id)
+        .every((row) => row.state === "removed"),
+    ),
+  ).toBe(true)
+})
+
+test("an injected dependency setup failure cleans registered partial resources before holding", async () => {
+  const setupStarted = deferred()
+  const releaseFailure = deferred()
+  const installer: RetainedDependencyInstaller = async () => {
+    setupStarted.resolve()
+    await releaseFailure.promise
+    throw new Error("injected dependency setup failure")
+  }
+  const f = await failedFixture({
+    taskCheckCommand: "bun test src/runner/retained-check.test.ts",
+    combinedCheckCommand: "bun test src/runner/retained-check.test.ts",
+    retainedDependencyInstaller: installer,
+  })
+  const verification = f.runtime.command(
+    retainedVerifyCommand(f, "verify-retained-injected-setup-failure"),
+    "owner",
+  )
+  await setupStarted.promise
+  const operation = f.store.atomic((db) =>
+    db
+      .query<{ id: string; payload: string }, []>(
+        "SELECT id,payload FROM runner_retained_verifications LIMIT 1",
+      )
+      .get(),
+  )!
+  const setupRows = f.store.atomic((db) =>
+    db
+      .query<{ resource_name: string; canonical_path: string; state: string }, [string]>(
+        "SELECT resource_name,canonical_path,state FROM runner_retained_verification_resources WHERE operation_id=?",
+      )
+      .all(operation.id),
+  )
+  expect(
+    setupRows.some((row) => row.resource_name === "setup-root" && row.state === "creating"),
+  ).toBe(true)
+  expect(
+    setupRows.some((row) => row.resource_name === "dependencies" && row.state === "creating"),
+  ).toBe(true)
+  const setupRoot = setupRows.find((row) => row.resource_name === "setup-root")!
+  const candidateWorkspace = (JSON.parse(operation.payload) as { taskWorkspace: string })
+    .taskWorkspace
+  releaseFailure.resolve()
+  await verification
+
+  const held = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(operation.id),
+  )!
+  expect(JSON.parse(held.payload)).toMatchObject({
+    state: "held",
+    holdReason: expect.stringContaining("injected dependency setup failure"),
+  })
+  expect(existsSync(setupRoot.canonical_path)).toBe(false)
+  expect(existsSync(join(candidateWorkspace, "node_modules"))).toBe(false)
+  expect(
+    f.store.atomic((db) =>
+      db
+        .query<{ state: string }, [string]>(
+          "SELECT state FROM runner_retained_verification_resources WHERE operation_id=?",
+        )
+        .all(operation.id)
+        .every((row) => row.state === "removed"),
+    ),
+  ).toBe(true)
+  expect(
+    f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=?",
+          )
+          .get(operation.id)!.count,
+    ),
+  ).toBe(0)
 })

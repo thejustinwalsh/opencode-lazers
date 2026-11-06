@@ -346,6 +346,7 @@ export function registerRetainedVerificationResources(
     phase: "task" | "combined"
     checkID: string
     resources: Array<{ name: string; realPath: string; device: number; inode: number }>
+    state?: "creating" | "active"
     now: number
   },
 ): void {
@@ -365,7 +366,10 @@ export function registerRetainedVerificationResources(
         (other.canonical_path === resource.realPath ||
           resource.realPath.startsWith(`${other.canonical_path}/`) ||
           other.canonical_path.startsWith(`${resource.realPath}/`) ||
-          (other.device === resource.device && other.inode === resource.inode)),
+          (other.device >= 0 &&
+            resource.device >= 0 &&
+            other.device === resource.device &&
+            other.inode === resource.inode)),
     )
     if (overlap)
       throw new Error(`Verification resource ${resource.name} has an active or unknown writer`)
@@ -374,7 +378,7 @@ export function registerRetainedVerificationResources(
     db.query(
       `INSERT INTO runner_retained_verification_resources
        (project_directory,operation_id,generation,phase,check_id,resource_name,canonical_path,device,inode,state,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,'active',?,?)`,
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       projectDirectory,
       input.operationID,
@@ -385,9 +389,58 @@ export function registerRetainedVerificationResources(
       resource.realPath,
       resource.device,
       resource.inode,
+      input.state ?? "active",
       input.now,
       input.now,
     )
+}
+
+export function updateRetainedVerificationResourceIdentity(
+  db: Database,
+  input: {
+    operationID: string
+    phase: "task" | "combined"
+    checkID: string
+    resourceName: string
+    realPath: string
+    device: number
+    inode: number
+    now: number
+  },
+): boolean {
+  ensureRetainedVerificationTables(db)
+  const changed = db
+    .query(
+      `UPDATE runner_retained_verification_resources
+       SET device=?,inode=?,updated_at=?
+       WHERE operation_id=? AND phase=? AND check_id=? AND resource_name=?
+         AND canonical_path=? AND state='creating'`,
+    )
+    .run(
+      input.device,
+      input.inode,
+      input.now,
+      input.operationID,
+      input.phase,
+      input.checkID,
+      input.resourceName,
+      input.realPath,
+    ).changes
+  return changed === 1
+}
+
+export function activateRetainedVerificationResources(
+  db: Database,
+  operationID: string,
+  phase: "task" | "combined",
+  checkID: string,
+  now: number,
+): void {
+  ensureRetainedVerificationTables(db)
+  db.query(
+    `UPDATE runner_retained_verification_resources SET state='active',updated_at=?
+     WHERE operation_id=? AND phase=? AND check_id=? AND state='creating'`,
+  ).run(now, operationID, phase, checkID)
 }
 
 export function settleRetainedVerificationResources(

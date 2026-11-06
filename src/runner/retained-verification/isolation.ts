@@ -49,6 +49,26 @@ export type RetainedCheckContext = {
   environment: Record<string, string>
 }
 
+export type RetainedCheckSetupResource = {
+  path: string
+  realPath: string
+  device: number
+  inode: number
+}
+
+export type RetainedCheckSetupLink = {
+  path: string
+  target: string
+  device: number
+  inode: number
+}
+
+export type RetainedDependencyInstaller = (input: {
+  candidateWorkspace: string
+  environment: Record<string, string>
+  signal: AbortSignal
+}) => Promise<void>
+
 type OwnerMarker = {
   schemaVersion: 1
   operationID: string
@@ -297,26 +317,63 @@ function assertCandidateDependencySetup(
   }
 }
 
-function installCandidateDependencies(
-  candidateWorkspace: string,
-  environment: Record<string, string>,
-) {
-  try {
-    execFileSync(
+async function installCandidateDependencies(input: {
+  candidateWorkspace: string
+  environment: Record<string, string>
+  signal: AbortSignal
+}): Promise<void> {
+  if (input.signal.aborted) throw new Error("Candidate dependency setup was cancelled")
+  const child = Bun.spawn(
+    [
       process.execPath,
-      ["install", "--frozen-lockfile", "--ignore-scripts", "--no-save", "--no-progress"],
-      {
-        cwd: candidateWorkspace,
-        env: environment,
-        timeout: 120_000,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    )
-  } catch {
+      "install",
+      "--frozen-lockfile",
+      "--ignore-scripts",
+      "--no-save",
+      "--no-progress",
+    ],
+    {
+      cwd: input.candidateWorkspace,
+      env: input.environment,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    },
+  )
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  let abortListener: (() => void) | undefined
+  const outcome = await Promise.race([
+    child.exited.then((code) => ({ kind: "exit" as const, code })),
+    new Promise<{ kind: "cancelled" | "timeout" }>((resolve) => {
+      if (input.signal.aborted) {
+        resolve({ kind: "cancelled" })
+        return
+      }
+      abortListener = () => resolve({ kind: "cancelled" })
+      input.signal.addEventListener("abort", abortListener, { once: true })
+      timeout = setTimeout(() => resolve({ kind: "timeout" }), 120_000)
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout)
+    if (abortListener) input.signal.removeEventListener("abort", abortListener)
+  })
+  if (outcome.kind !== "exit") {
+    child.kill("SIGTERM")
+    const exited = await Promise.race([
+      child.exited.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+    ])
+    if (!exited) {
+      child.kill("SIGKILL")
+      await child.exited
+    }
+    if (outcome.kind === "cancelled") throw new Error("Candidate dependency setup was cancelled")
+    throw new Error("Candidate dependency setup exceeded 120 seconds")
+  }
+  if (outcome.code !== 0)
     throw new Error(
       "Candidate dependency environment cannot be isolated: Bun could not install the committed candidate lockfile",
     )
-  }
 }
 
 function candidateDependencyEnvironmentIdentity(
@@ -384,6 +441,7 @@ function temporaryDirectoryAlias(input: {
   phase: "task" | "combined"
   checkID: string
   target: string
+  blockedPaths: string[]
 }): RetainedProcedureBinding["temporaryDirectoryLink"] {
   if (process.platform === "win32") return null
   const aliasRoot = "/tmp"
@@ -397,6 +455,10 @@ function temporaryDirectoryAlias(input: {
   const nameLength = targetLength - aliasRoot.length - 1
   if (nameLength < prefix.length || nameLength > 255 || !existsSync(aliasRoot)) return null
   const path = join(aliasRoot, prefix + "x".repeat(nameLength - prefix.length))
+  if (
+    input.blockedPaths.some((blocked) => pathContains(path, blocked) || pathContains(blocked, path))
+  )
+    return null
   try {
     lstatSync(path)
     throw new Error("Temporary resource alias path is already occupied; ownership is uncertain")
@@ -419,7 +481,7 @@ function temporaryDirectoryAlias(input: {
 }
 
 /** Allocate only runtime-owned, operation-specific writable check resources. */
-export function createRetainedCheckContext(input: {
+export async function createRetainedCheckContext(input: {
   rootDirectory: string
   operationID: string
   generation: number
@@ -432,7 +494,19 @@ export function createRetainedCheckContext(input: {
   candidateArtifact: string
   priorResourcePaths: string[]
   procedurePlan: RetainedProcedurePlan
-}): RetainedCheckContext {
+  signal?: AbortSignal
+  dependencyInstaller?: RetainedDependencyInstaller
+  onSetupPathReserved?: (path: string) => void
+  onSetupPathCreated?: (resource: RetainedCheckSetupResource) => void
+  onResourcesCreated?: (resources: RetainedCheckContext["resources"]) => void
+  onDependencyLink?: (link: RetainedCheckSetupLink) => void
+  onTemporaryDirectoryLink?: (link: RetainedCheckSetupLink) => void
+}): Promise<RetainedCheckContext> {
+  const signal = input.signal ?? new AbortController().signal
+  const assertNotCancelled = () => {
+    if (signal.aborted) throw new Error("Candidate dependency setup was cancelled")
+  }
+  assertNotCancelled()
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(input.checkID))
     throw new Error("Verification check ID is not a safe resource identity")
   const root = realpathSync(input.rootDirectory)
@@ -456,18 +530,30 @@ export function createRetainedCheckContext(input: {
   const candidateManifest = candidatePackageManifest(candidateWorkspace)
   if (candidateManifest)
     assertCandidateDependencySetup(candidateWorkspace, input.candidateArtifact, candidateManifest)
+  const candidateDependencies = join(candidateWorkspace, "node_modules")
+  if (lstatIfPresent(candidateDependencies))
+    throw new Error("Candidate checkout already contains an unowned node_modules resource")
   const directory = join(
     root,
-    `retained-${input.operationID}-${input.generation}`,
-    input.phase,
-    input.checkID,
+    `retained-${input.operationID}-${input.generation}-${input.phase}-${input.checkID}`,
   )
-  if (existsSync(directory))
+  if (lstatIfPresent(directory))
     throw new Error("Retained verification resources already exist; ownership is uncertain")
-  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  input.onSetupPathReserved?.(directory)
+  mkdirSync(directory, { mode: 0o700 })
+  const directoryInfo = lstatSync(directory)
+  if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory())
+    throw new Error("Verification resource root is not a real owned directory")
+  input.onSetupPathCreated?.({
+    path: directory,
+    realPath: directory,
+    device: directoryInfo.dev,
+    inode: directoryInfo.ino,
+  })
   const canonicalDirectory = realpathSync(directory)
   if (canonicalDirectory !== directory || !pathContains(root, canonicalDirectory))
     throw new Error("Verification resources escaped the runtime-owned resource root")
+  assertNotCancelled()
 
   const resources: RetainedCheckContext["resources"] = []
   for (const name of resourceNames) {
@@ -479,26 +565,25 @@ export function createRetainedCheckContext(input: {
       throw new Error(`Verification resource ${name} is not a canonical owned directory`)
     resources.push({ name, path, realPath, device: info.dev, inode: info.ino })
   }
+  input.onResourcesCreated?.(resources)
+  assertNotCancelled()
 
-  const candidateDependencies = join(candidateWorkspace, "node_modules")
   let dependencyLink: RetainedCheckContext["dependencyLink"] = null
   if (candidateManifest) {
-    if (
-      existsSync(candidateDependencies) ||
-      (() => {
-        try {
-          lstatSync(candidateDependencies)
-          return true
-        } catch {
-          return false
-        }
-      })()
-    )
-      throw new Error("Candidate checkout already contains an unowned node_modules resource")
     const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
     const link = relative(candidateWorkspace, dependencyResource.realPath)
     symlinkSync(link, candidateDependencies, "dir")
-    if (realpathSync(candidateDependencies) !== dependencyResource.realPath)
+    const info = lstatSync(candidateDependencies)
+    input.onDependencyLink?.({
+      path: candidateDependencies,
+      target: dependencyResource.realPath,
+      device: info.dev,
+      inode: info.ino,
+    })
+    if (
+      !info.isSymbolicLink() ||
+      realpathSync(candidateDependencies) !== dependencyResource.realPath
+    )
       throw new Error("Candidate dependency link does not resolve to its owned resource")
     dependencyLink = { path: candidateDependencies, target: dependencyResource.realPath }
   }
@@ -531,13 +616,6 @@ export function createRetainedCheckContext(input: {
       throw new Error(`Verification resource ${resource.name} overlaps another mutable resource`)
   }
   const temporaryDirectoryResource = resources.find((resource) => resource.name === "tmp")!
-  const temporaryDirectoryLink = temporaryDirectoryAlias({
-    operationID: input.operationID,
-    generation: input.generation,
-    phase: input.phase,
-    checkID: input.checkID,
-    target: temporaryDirectoryResource.realPath,
-  })
   const byName = Object.fromEntries(resources.map((resource) => [resource.name, resource.realPath]))
   const npmCache = join(byName.cache!, "npm")
   mkdirSync(npmCache, { mode: 0o700 })
@@ -546,9 +624,9 @@ export function createRetainedCheckContext(input: {
   const environment: Record<string, string> = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: byName.home!,
-    TMPDIR: temporaryDirectoryLink?.path ?? byName.tmp!,
-    TMP: temporaryDirectoryLink?.path ?? byName.tmp!,
-    TEMP: temporaryDirectoryLink?.path ?? byName.tmp!,
+    TMPDIR: byName.tmp!,
+    TMP: byName.tmp!,
+    TEMP: byName.tmp!,
     XDG_CONFIG_HOME: byName.config!,
     XDG_DATA_HOME: byName.data!,
     XDG_CACHE_HOME: byName.cache!,
@@ -573,7 +651,12 @@ export function createRetainedCheckContext(input: {
     GIT_TERMINAL_PROMPT: "0",
   }
   if (candidateManifest && candidateDependencySpecs(candidateManifest).length > 0)
-    installCandidateDependencies(candidateWorkspace, environment)
+    await (input.dependencyInstaller ?? installCandidateDependencies)({
+      candidateWorkspace,
+      environment,
+      signal,
+    })
+  assertNotCancelled()
   const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
   if (candidateManifest) {
     const resolverRoot = join(dependencyResource.realPath, "node_modules")
@@ -589,6 +672,22 @@ export function createRetainedCheckContext(input: {
     candidateManifest,
     candidateWorkspace,
   )
+  const temporaryDirectoryLink = temporaryDirectoryAlias({
+    operationID: input.operationID,
+    generation: input.generation,
+    phase: input.phase,
+    checkID: input.checkID,
+    target: temporaryDirectoryResource.realPath,
+    blockedPaths: external,
+  })
+  if (temporaryDirectoryLink) {
+    const temporaryLinkIdentity: RetainedCheckSetupLink = temporaryDirectoryLink
+    input.onTemporaryDirectoryLink?.(temporaryLinkIdentity)
+    environment.TMPDIR = temporaryDirectoryLink.path
+    environment.TMP = temporaryDirectoryLink.path
+    environment.TEMP = temporaryDirectoryLink.path
+  }
+  assertNotCancelled()
 
   const identity = fingerprint({
     schemaVersion: 1,
@@ -865,6 +964,65 @@ export function retainedCheckIsolationWitness(context: RetainedCheckContext) {
     })),
     sqlitePath: context.environment.LAZERS_VERIFICATION_SQLITE,
   }
+}
+
+/** Remove a setup that failed before a complete context witness was returned. */
+export function removeRetainedCheckSetupResources(input: {
+  rootDirectory: string
+  resource: RetainedCheckSetupResource
+  candidateWorkspace: string
+  dependencyLink?: RetainedCheckSetupLink
+  temporaryDirectoryLink?: RetainedCheckSetupLink
+}): void {
+  const root = realpathSync(input.rootDirectory)
+  const setupPath = input.resource.path
+  const setupRelativePath = relative(root, setupPath)
+  if (
+    !setupRelativePath ||
+    setupRelativePath === "." ||
+    setupRelativePath === ".." ||
+    setupRelativePath.startsWith(`..${sep}`) ||
+    setupRelativePath.includes(sep) ||
+    input.resource.realPath !== setupPath
+  )
+    throw new Error("Verification setup ownership path is not a direct child of its private root")
+
+  if (
+    (input.dependencyLink &&
+      (input.dependencyLink.path !== join(realpathSync(input.candidateWorkspace), "node_modules") ||
+        input.dependencyLink.target !== join(setupPath, "dependencies"))) ||
+    (input.temporaryDirectoryLink && input.temporaryDirectoryLink.target !== join(setupPath, "tmp"))
+  )
+    throw new Error("Verification setup link binding changed; preserve the partial context")
+
+  const removeOwnedLink = (link: RetainedCheckSetupLink) => {
+    if (!pathContains(setupPath, link.target))
+      throw new Error("Verification setup link points outside its owned partial context")
+    const info = lstatIfPresent(link.path)
+    if (!info) return
+    if (!info.isSymbolicLink() || info.dev !== link.device || info.ino !== link.inode)
+      throw new Error("Verification setup link ownership changed; preserve the resource")
+    unlinkSync(link.path)
+  }
+
+  if (input.dependencyLink) removeOwnedLink(input.dependencyLink)
+  if (input.temporaryDirectoryLink) removeOwnedLink(input.temporaryDirectoryLink)
+
+  const info = lstatIfPresent(setupPath)
+  if (!info) return
+  if (
+    input.resource.device < 0 ||
+    input.resource.inode < 0 ||
+    info.isSymbolicLink() ||
+    !info.isDirectory() ||
+    info.dev !== input.resource.device ||
+    info.ino !== input.resource.inode ||
+    realpathSync(setupPath) !== setupPath
+  )
+    throw new Error("Verification setup directory ownership changed; preserve the resource")
+  rmSync(setupPath, { recursive: true, force: false })
+  if (lstatIfPresent(setupPath))
+    throw new Error("Verification setup directory remains after cleanup")
 }
 
 /** Non-forced, ownership-checked teardown. Unknown entries are never followed. */

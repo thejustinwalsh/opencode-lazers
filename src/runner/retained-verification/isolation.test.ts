@@ -205,7 +205,7 @@ test("an authored Bun test runs in an isolated checkout with private dependencie
   } as const
   const procedure = retainedProcedurePlan(check.command)
   if (procedure.status !== "supported") throw new Error(procedure.reason)
-  const context = createRetainedCheckContext({
+  const context = await createRetainedCheckContext({
     rootDirectory: state,
     operationID: crypto.randomUUID(),
     generation: 1,
@@ -372,7 +372,7 @@ test("another project executes a new scoped target against its committed depende
   expect(procedure.plan.targets).toEqual(["packages/widget/test"])
   expect(git(root, ["rev-parse", "HEAD"])).toBe(baseline)
 
-  const context = createRetainedCheckContext({
+  const context = await createRetainedCheckContext({
     rootDirectory: state,
     operationID: crypto.randomUUID(),
     generation: 1,
@@ -466,7 +466,7 @@ test("another project executes a new scoped target against its committed depende
   expect(existsSync(join(context.candidateWorkspace, "node_modules"))).toBe(false)
 })
 
-test("an unavailable candidate-committed dependency source blocks before resources or checks", () => {
+test("an unavailable candidate-committed dependency source blocks before resources or checks", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-missing-dependency-source-"))
   const state = mkdtempSync(join(tmpdir(), "lazers-retained-missing-dependency-state-"))
   const candidate = join(state, "candidate")
@@ -492,7 +492,7 @@ test("an unavailable candidate-committed dependency source blocks before resourc
   if (procedure.status !== "supported") throw new Error(procedure.reason)
   const operationID = crypto.randomUUID()
 
-  expect(() =>
+  await expect(
     createRetainedCheckContext({
       rootDirectory: state,
       operationID,
@@ -507,7 +507,7 @@ test("an unavailable candidate-committed dependency source blocks before resourc
       priorResourcePaths: [],
       procedurePlan: procedure.plan,
     }),
-  ).toThrow(
+  ).rejects.toThrow(
     "Candidate dependency environment cannot be isolated: fixture-peer file source is unavailable",
   )
   expect(existsSync(join(state, `retained-${operationID}-1`))).toBe(false)
@@ -548,7 +548,7 @@ test("candidate-declared build scripts execute with private build outputs and mu
   const unownedScript = retainedProcedurePlan("bun run not-declared")
   if (unownedScript.status !== "supported") throw new Error(unownedScript.reason)
   const rejectedOperation = crypto.randomUUID()
-  expect(() =>
+  await expect(
     createRetainedCheckContext({
       rootDirectory: state,
       operationID: rejectedOperation,
@@ -563,9 +563,9 @@ test("candidate-declared build scripts execute with private build outputs and mu
       priorResourcePaths: [oldProfile],
       procedurePlan: unownedScript.plan,
     }),
-  ).toThrow("Candidate package.json does not declare project procedure script not-declared")
+  ).rejects.toThrow("Candidate package.json does not declare project procedure script not-declared")
   expect(existsSync(join(state, `retained-${rejectedOperation}-1`))).toBe(false)
-  const context = createRetainedCheckContext({
+  const context = await createRetainedCheckContext({
     rootDirectory: state,
     operationID: crypto.randomUUID(),
     generation: 1,
@@ -644,7 +644,7 @@ test("candidate-declared build scripts execute with private build outputs and mu
   expect(existsSync(join(candidate, "node_modules"))).toBe(false)
 })
 
-test("a verification resource aliasing a retained workspace is rejected", () => {
+test("a verification resource aliasing a retained workspace is rejected", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-alias-"))
   const repo = join(root, "repo")
   const candidate = join(root, "candidate")
@@ -662,7 +662,7 @@ test("a verification resource aliasing a retained workspace is rejected", () => 
     "bun fmt --check && bun lint && bun check && git diff --check",
   )
   if (procedure.status !== "supported") throw new Error(procedure.reason)
-  expect(() =>
+  await expect(
     createRetainedCheckContext({
       rootDirectory: candidate,
       operationID: crypto.randomUUID(),
@@ -677,7 +677,7 @@ test("a verification resource aliasing a retained workspace is rejected", () => 
       priorResourcePaths: [],
       procedurePlan: procedure.plan,
     }),
-  ).toThrow("Verification resource home aliases a retained or shared resource")
+  ).rejects.toThrow("Verification resource home aliases a retained or shared resource")
   expect(git(repo, ["rev-parse", "HEAD"])).toBe(artifact)
 })
 
