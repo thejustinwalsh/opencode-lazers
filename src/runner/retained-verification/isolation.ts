@@ -69,6 +69,13 @@ export type RetainedDependencyInstaller = (input: {
   signal: AbortSignal
 }) => Promise<void>
 
+export class RetainedSetupProcessTreeUncertainError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "RetainedSetupProcessTreeUncertainError"
+  }
+}
+
 type OwnerMarker = {
   schemaVersion: 1
   operationID: string
@@ -317,29 +324,79 @@ function assertCandidateDependencySetup(
   }
 }
 
-async function installCandidateDependencies(input: {
+function processGroupExists(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error) {
+      if (error.code === "ESRCH") return false
+      if (error.code === "EPERM") return true
+    }
+    throw error
+  }
+}
+
+function signalProcessGroup(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(-pid, signal)
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH")
+      return
+    throw error
+  }
+}
+
+async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (processGroupExists(pid)) {
+    if (Date.now() >= deadline) return false
+    await Bun.sleep(20)
+  }
+  return true
+}
+
+async function terminateAndObserveProcessGroup(child: ReturnType<typeof Bun.spawn>): Promise<void> {
+  try {
+    signalProcessGroup(child.pid, "SIGTERM")
+    if (!(await waitForProcessGroupExit(child.pid, 1_000))) {
+      signalProcessGroup(child.pid, "SIGKILL")
+      if (!(await waitForProcessGroupExit(child.pid, 5_000)))
+        throw new RetainedSetupProcessTreeUncertainError(
+          "Could not confirm that the candidate dependency installer process tree stopped; preserve its partial resources",
+        )
+    }
+    await child.exited
+  } catch (error) {
+    if (error instanceof RetainedSetupProcessTreeUncertainError) throw error
+    throw new RetainedSetupProcessTreeUncertainError(
+      `Could not terminate and observe the candidate dependency installer process tree: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+/** Run an installer command in an owned process group and observe all group members before returning. */
+export async function runRetainedSetupProcess(input: {
+  command: string[]
   candidateWorkspace: string
   environment: Record<string, string>
   signal: AbortSignal
+  timeoutMs: number
+  failedMessage: string
 }): Promise<void> {
   if (input.signal.aborted) throw new Error("Candidate dependency setup was cancelled")
-  const child = Bun.spawn(
-    [
-      process.execPath,
-      "install",
-      "--frozen-lockfile",
-      "--ignore-scripts",
-      "--no-save",
-      "--no-progress",
-    ],
-    {
-      cwd: input.candidateWorkspace,
-      env: input.environment,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    },
-  )
+  if (process.platform === "win32")
+    throw new Error(
+      "Candidate dependency setup cannot prove installer process-tree cleanup on this platform",
+    )
+  const child = Bun.spawn(input.command, {
+    cwd: input.candidateWorkspace,
+    env: input.environment,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    detached: true,
+  })
   let timeout: ReturnType<typeof setTimeout> | undefined
   let abortListener: (() => void) | undefined
   const outcome = await Promise.race([
@@ -351,29 +408,45 @@ async function installCandidateDependencies(input: {
       }
       abortListener = () => resolve({ kind: "cancelled" })
       input.signal.addEventListener("abort", abortListener, { once: true })
-      timeout = setTimeout(() => resolve({ kind: "timeout" }), 120_000)
+      timeout = setTimeout(() => resolve({ kind: "timeout" }), input.timeoutMs)
     }),
   ]).finally(() => {
     if (timeout) clearTimeout(timeout)
     if (abortListener) input.signal.removeEventListener("abort", abortListener)
   })
   if (outcome.kind !== "exit") {
-    child.kill("SIGTERM")
-    const exited = await Promise.race([
-      child.exited.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
-    ])
-    if (!exited) {
-      child.kill("SIGKILL")
-      await child.exited
-    }
+    await terminateAndObserveProcessGroup(child)
     if (outcome.kind === "cancelled") throw new Error("Candidate dependency setup was cancelled")
-    throw new Error("Candidate dependency setup exceeded 120 seconds")
+    throw new Error(`Candidate dependency setup exceeded ${input.timeoutMs} milliseconds`)
   }
-  if (outcome.code !== 0)
-    throw new Error(
+  if (!(await waitForProcessGroupExit(child.pid, 100))) {
+    await terminateAndObserveProcessGroup(child)
+    throw new Error("Candidate dependency installer exited while descendants were still running")
+  }
+  if (outcome.code !== 0) throw new Error(input.failedMessage)
+}
+
+async function installCandidateDependencies(input: {
+  candidateWorkspace: string
+  environment: Record<string, string>
+  signal: AbortSignal
+}): Promise<void> {
+  return runRetainedSetupProcess({
+    command: [
+      process.execPath,
+      "install",
+      "--frozen-lockfile",
+      "--ignore-scripts",
+      "--no-save",
+      "--no-progress",
+    ],
+    candidateWorkspace: input.candidateWorkspace,
+    environment: input.environment,
+    signal: input.signal,
+    timeoutMs: 120_000,
+    failedMessage:
       "Candidate dependency environment cannot be isolated: Bun could not install the committed candidate lockfile",
-    )
+  })
 }
 
 function candidateDependencyEnvironmentIdentity(
@@ -435,14 +508,12 @@ function candidateDependencyEnvironmentIdentity(
   return fingerprint({ schemaVersion: 1, root, installed, sourceFiles })
 }
 
-function temporaryDirectoryAlias(input: {
+function temporaryDirectoryAliasPath(input: {
   operationID: string
   generation: number
   phase: "task" | "combined"
   checkID: string
-  target: string
-  blockedPaths: string[]
-}): RetainedProcedureBinding["temporaryDirectoryLink"] {
+}): string | null {
   if (process.platform === "win32") return null
   const aliasRoot = "/tmp"
   const targetLength = tmpdir().length
@@ -454,7 +525,29 @@ function temporaryDirectoryAlias(input: {
   }).slice(0, 32)}`
   const nameLength = targetLength - aliasRoot.length - 1
   if (nameLength < prefix.length || nameLength > 255 || !existsSync(aliasRoot)) return null
-  const path = join(aliasRoot, prefix + "x".repeat(nameLength - prefix.length))
+  return join(aliasRoot, prefix + "x".repeat(nameLength - prefix.length))
+}
+
+export function retainedTemporaryDirectoryAliasPath(input: {
+  operationID: string
+  generation: number
+  phase: "task" | "combined"
+  checkID: string
+}): string | null {
+  return temporaryDirectoryAliasPath(input)
+}
+
+function temporaryDirectoryAlias(input: {
+  operationID: string
+  generation: number
+  phase: "task" | "combined"
+  checkID: string
+  target: string
+  blockedPaths: string[]
+  onReserved?: (link: RetainedCheckSetupLink) => void
+}): RetainedProcedureBinding["temporaryDirectoryLink"] {
+  const path = temporaryDirectoryAliasPath(input)
+  if (!path) return null
   if (
     input.blockedPaths.some((blocked) => pathContains(path, blocked) || pathContains(blocked, path))
   )
@@ -471,6 +564,7 @@ function temporaryDirectoryAlias(input: {
     ))
       throw error
   }
+  input.onReserved?.({ path, target: input.target, device: -1, inode: -1 })
   symlinkSync(input.target, path, "dir")
   const info = lstatSync(path)
   if (!info.isSymbolicLink() || realpathSync(path) !== input.target) {
@@ -499,7 +593,9 @@ export async function createRetainedCheckContext(input: {
   onSetupPathReserved?: (path: string) => void
   onSetupPathCreated?: (resource: RetainedCheckSetupResource) => void
   onResourcesCreated?: (resources: RetainedCheckContext["resources"]) => void
+  onDependencyLinkReserved?: (link: RetainedCheckSetupLink) => void
   onDependencyLink?: (link: RetainedCheckSetupLink) => void
+  onTemporaryDirectoryLinkReserved?: (link: RetainedCheckSetupLink) => void
   onTemporaryDirectoryLink?: (link: RetainedCheckSetupLink) => void
 }): Promise<RetainedCheckContext> {
   const signal = input.signal ?? new AbortController().signal
@@ -572,19 +668,29 @@ export async function createRetainedCheckContext(input: {
   if (candidateManifest) {
     const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
     const link = relative(candidateWorkspace, dependencyResource.realPath)
+    if (lstatIfPresent(candidateDependencies))
+      throw new Error("Candidate checkout dependency link path is already occupied")
+    const reservedLink: RetainedCheckSetupLink = {
+      path: candidateDependencies,
+      target: dependencyResource.realPath,
+      device: -1,
+      inode: -1,
+    }
+    input.onDependencyLinkReserved?.(reservedLink)
     symlinkSync(link, candidateDependencies, "dir")
     const info = lstatSync(candidateDependencies)
-    input.onDependencyLink?.({
+    const createdLink: RetainedCheckSetupLink = {
       path: candidateDependencies,
       target: dependencyResource.realPath,
       device: info.dev,
       inode: info.ino,
-    })
+    }
     if (
       !info.isSymbolicLink() ||
       realpathSync(candidateDependencies) !== dependencyResource.realPath
     )
       throw new Error("Candidate dependency link does not resolve to its owned resource")
+    input.onDependencyLink?.(createdLink)
     dependencyLink = { path: candidateDependencies, target: dependencyResource.realPath }
   }
 
@@ -679,6 +785,7 @@ export async function createRetainedCheckContext(input: {
     checkID: input.checkID,
     target: temporaryDirectoryResource.realPath,
     blockedPaths: external,
+    onReserved: input.onTemporaryDirectoryLinkReserved,
   })
   if (temporaryDirectoryLink) {
     const temporaryLinkIdentity: RetainedCheckSetupLink = temporaryDirectoryLink
@@ -1002,9 +1109,18 @@ export function removeRetainedCheckSetupResources(input: {
     if (!info) return
     if (!info.isSymbolicLink() || info.dev !== link.device || info.ino !== link.inode)
       throw new Error("Verification setup link ownership changed; preserve the resource")
+    if (realpathSync(link.path) !== link.target)
+      throw new Error("Verification setup link target changed; preserve the resource")
     unlinkSync(link.path)
   }
 
+  if (
+    !input.dependencyLink &&
+    lstatIfPresent(join(realpathSync(input.candidateWorkspace), "node_modules"))
+  )
+    throw new Error(
+      "Verification dependency link has no persisted ownership witness; preserve the resource",
+    )
   if (input.dependencyLink) removeOwnedLink(input.dependencyLink)
   if (input.temporaryDirectoryLink) removeOwnedLink(input.temporaryDirectoryLink)
 

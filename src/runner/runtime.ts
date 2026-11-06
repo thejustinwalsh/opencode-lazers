@@ -120,6 +120,8 @@ import {
   removeRetainedCheckContextFromWitness,
   removeRetainedCheckSetupResources,
   retainedCheckIsolationWitness,
+  retainedTemporaryDirectoryAliasPath,
+  RetainedSetupProcessTreeUncertainError,
   retainedVerificationEnvironmentIdentity,
 } from "./retained-verification/isolation.ts"
 import type {
@@ -179,6 +181,15 @@ function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
 }
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message || String(error) : String(error)
+function pathEntryExists(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return false
+    throw error
+  }
+}
 export const DEFAULT_ARCHITECT_IDLE_WINDOW_MS = 30 * 60 * 1000
 
 export type TaskRuntimeOptions = {
@@ -8283,6 +8294,11 @@ export class TaskRuntime {
         return undefined
       }
 
+      if (
+        await this.reconcileInterruptedRetainedCheckSetup(initial, phase, check, workspace, fence)
+      )
+        return undefined
+
       const unsafe = this.retainedCheckResourceProblem(check)
       if (unsafe) {
         await this.holdRetainedVerification(initial, unsafe, fence)
@@ -8380,10 +8396,40 @@ export class TaskRuntime {
                 now: this.now(),
               }),
             ),
+          onDependencyLinkReserved: (link) => {
+            setupDependencyLink = link
+            this.store.atomic((db) =>
+              registerRetainedVerificationResources(db, this.directory, {
+                operationID: initial.id,
+                generation: initial.generation,
+                phase,
+                checkID: check.id,
+                resources: [
+                  { name: "dependency-link", realPath: link.path, device: -1, inode: -1 },
+                ],
+                state: "creating",
+                now: this.now(),
+              }),
+            )
+          },
           onDependencyLink: (link) => {
             setupDependencyLink = link
+            const updated = this.store.atomic((db) =>
+              updateRetainedVerificationResourceIdentity(db, {
+                operationID: initial.id,
+                phase,
+                checkID: check.id,
+                resourceName: "dependency-link",
+                realPath: link.path,
+                device: link.device,
+                inode: link.inode,
+                now: this.now(),
+              }),
+            )
+            if (!updated)
+              throw new Error("Retained verification dependency-link ownership reservation changed")
           },
-          onTemporaryDirectoryLink: (link) => {
+          onTemporaryDirectoryLinkReserved: (link) => {
             setupTemporaryDirectoryLink = link
             this.store.atomic((db) =>
               registerRetainedVerificationResources(db, this.directory, {
@@ -8395,14 +8441,31 @@ export class TaskRuntime {
                   {
                     name: "tmp-alias",
                     realPath: link.path,
-                    device: link.device,
-                    inode: link.inode,
+                    device: -1,
+                    inode: -1,
                   },
                 ],
                 state: "creating",
                 now: this.now(),
               }),
             )
+          },
+          onTemporaryDirectoryLink: (link) => {
+            setupTemporaryDirectoryLink = link
+            const updated = this.store.atomic((db) =>
+              updateRetainedVerificationResourceIdentity(db, {
+                operationID: initial.id,
+                phase,
+                checkID: check.id,
+                resourceName: "tmp-alias",
+                realPath: link.path,
+                device: link.device,
+                inode: link.inode,
+                now: this.now(),
+              }),
+            )
+            if (!updated)
+              throw new Error("Retained verification temporary-link ownership reservation changed")
           },
         })
         if (!observeRetainedCheckContext(context))
@@ -8411,16 +8474,19 @@ export class TaskRuntime {
           activateRetainedVerificationResources(db, initial.id, phase, check.id, this.now()),
         )
       } catch (error) {
-        const cleaned = this.cleanupRetainedCheckSetup(
-          initial,
-          phase,
-          check.id,
-          rootDirectory,
-          workspace,
-          setupResource,
-          setupDependencyLink,
-          setupTemporaryDirectoryLink,
-        )
+        const cleaned =
+          error instanceof RetainedSetupProcessTreeUncertainError
+            ? this.markRetainedCheckSetupUncertain(initial, phase, check.id, errorText(error))
+            : this.cleanupRetainedCheckSetup(
+                initial,
+                phase,
+                check.id,
+                rootDirectory,
+                workspace,
+                setupResource,
+                setupDependencyLink,
+                setupTemporaryDirectoryLink,
+              )
         this.retainedVerificationAborts.delete(initial.id)
         if (
           controller.signal.aborted ||
@@ -8705,6 +8771,39 @@ export class TaskRuntime {
     }
   }
 
+  private markRetainedCheckSetupUncertain(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+    checkID: string,
+    reason: string,
+  ): false {
+    this.store.atomic((db) =>
+      settleRetainedVerificationResources(
+        db,
+        operation.id,
+        phase,
+        checkID,
+        "uncertain",
+        this.now(),
+      ),
+    )
+    this.store.record(
+      operation.planID,
+      operation.taskID,
+      "RETAINED_VERIFICATION_SETUP_CLEANUP_FAILED",
+      {
+        operationID: operation.id,
+        generation: operation.generation,
+        phase,
+        checkID,
+        reason,
+        cleanupState: "failed",
+        forcedDeletion: false,
+      },
+    )
+    return false
+  }
+
   private cleanupRetainedCheckSetup(
     operation: RetainedVerification,
     phase: "task" | "combined",
@@ -8715,8 +8814,80 @@ export class TaskRuntime {
     dependencyLink: RetainedCheckSetupLink | undefined,
     temporaryDirectoryLink: RetainedCheckSetupLink | undefined,
   ): boolean {
-    if (!resource) return true
     try {
+      const persisted = this.store.atomic((db) =>
+        db
+          .query<
+            {
+              resource_name: string
+              canonical_path: string
+              device: number
+              inode: number
+              state: string
+            },
+            [string, string, string]
+          >(
+            `SELECT resource_name,canonical_path,device,inode,state
+             FROM runner_retained_verification_resources
+             WHERE operation_id=? AND phase=? AND check_id=? ORDER BY resource_name`,
+          )
+          .all(operation.id, phase, checkID),
+      )
+      const expectedSetupPath = join(
+        realpathSync(rootDirectory),
+        `retained-${operation.id}-${operation.generation}-${phase}-${checkID}`,
+      )
+      const root = persisted.find((item) => item.resource_name === "setup-root")
+      resource ??= root
+        ? {
+            path: root.canonical_path,
+            realPath: root.canonical_path,
+            device: root.device,
+            inode: root.inode,
+          }
+        : undefined
+      if (!resource) {
+        if (persisted.length || pathEntryExists(expectedSetupPath))
+          throw new Error("Partial verification setup has no durable setup-root ownership witness")
+        return true
+      }
+      if (resource.path !== expectedSetupPath)
+        throw new Error("Verification setup path does not match its reserved operation identity")
+      const persistedDependencyLink = persisted.find(
+        (item) => item.resource_name === "dependency-link",
+      )
+      dependencyLink ??= persistedDependencyLink
+        ? {
+            path: persistedDependencyLink.canonical_path,
+            target: join(resource.path, "dependencies"),
+            device: persistedDependencyLink.device,
+            inode: persistedDependencyLink.inode,
+          }
+        : undefined
+      const persistedTemporaryLink = persisted.find((item) => item.resource_name === "tmp-alias")
+      temporaryDirectoryLink ??= persistedTemporaryLink
+        ? {
+            path: persistedTemporaryLink.canonical_path,
+            target: join(resource.path, "tmp"),
+            device: persistedTemporaryLink.device,
+            inode: persistedTemporaryLink.inode,
+          }
+        : undefined
+      if (!temporaryDirectoryLink) {
+        const aliasPath = retainedTemporaryDirectoryAliasPath({
+          operationID: operation.id,
+          generation: operation.generation,
+          phase,
+          checkID,
+        })
+        if (aliasPath && pathEntryExists(aliasPath))
+          temporaryDirectoryLink = {
+            path: aliasPath,
+            target: join(resource.path, "tmp"),
+            device: -1,
+            inode: -1,
+          }
+      }
       removeRetainedCheckSetupResources({
         rootDirectory,
         resource,
@@ -8763,7 +8934,7 @@ export class TaskRuntime {
           generation: operation.generation,
           phase,
           checkID,
-          contextPath: resource.path,
+          contextPath: resource?.path ?? null,
           reason: errorText(error),
           cleanupState: "failed",
           forcedDeletion: false,
@@ -8976,6 +9147,82 @@ export class TaskRuntime {
     }
   }
 
+  private async reconcileInterruptedRetainedCheckSetup(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+    check: TaskProposal["verification"][number],
+    candidateWorkspace: string,
+    fence: number,
+  ): Promise<boolean> {
+    const existingCheck = this.store.atomic((db) =>
+      retainedVerificationChecks(db, operation.id, phase).some((item) => item.checkID === check.id),
+    )
+    if (existingCheck) return false
+    const resources = this.store.atomic((db) =>
+      db
+        .query<
+          {
+            resource_name: string
+            canonical_path: string
+            device: number
+            inode: number
+            state: string
+          },
+          [string, string, string]
+        >(
+          `SELECT resource_name,canonical_path,device,inode,state
+           FROM runner_retained_verification_resources
+           WHERE operation_id=? AND phase=? AND check_id=? ORDER BY resource_name`,
+        )
+        .all(operation.id, phase, check.id),
+    )
+    if (!resources.length) return false
+    const setupRoot = resources.find((item) => item.resource_name === "setup-root")
+    const rootDirectory = join(this.dataDirectory, "retained-verification-resources")
+    const root = setupRoot
+      ? {
+          path: setupRoot.canonical_path,
+          realPath: setupRoot.canonical_path,
+          device: setupRoot.device,
+          inode: setupRoot.inode,
+        }
+      : undefined
+    const dependency = resources.find((item) => item.resource_name === "dependency-link")
+    const temporary = resources.find((item) => item.resource_name === "tmp-alias")
+    const cleaned = this.cleanupRetainedCheckSetup(
+      operation,
+      phase,
+      check.id,
+      rootDirectory,
+      candidateWorkspace,
+      root,
+      dependency && root
+        ? {
+            path: dependency.canonical_path,
+            target: join(root.path, "dependencies"),
+            device: dependency.device,
+            inode: dependency.inode,
+          }
+        : undefined,
+      temporary && root
+        ? {
+            path: temporary.canonical_path,
+            target: join(root.path, "tmp"),
+            device: temporary.device,
+            inode: temporary.inode,
+          }
+        : undefined,
+    )
+    await this.holdRetainedVerification(
+      operation,
+      cleaned
+        ? `Interrupted retained verification setup ${phase}:${check.id} was reconciled; start a new verification generation rather than replaying this setup`
+        : `Interrupted retained verification setup ${phase}:${check.id} could not be safely cleaned and remains uncertain`,
+      fence,
+    )
+    return true
+  }
+
   private async advanceRetainedVerification(initial: RetainedVerification, fence: number) {
     let operation = this.store.atomic((db) => retainedVerification(db, initial.id))
     if (
@@ -9016,6 +9263,31 @@ export class TaskRuntime {
       return
     }
     const checks = [...task.proposal.verification, ...input.verification]
+    if (operation.state === "pending" || operation.state === "task-checks") {
+      for (const check of task.proposal.verification)
+        if (
+          await this.reconcileInterruptedRetainedCheckSetup(
+            operation,
+            "task",
+            check,
+            operation.taskWorkspace ?? "",
+            fence,
+          )
+        )
+          return
+    }
+    if (operation.state === "combined-checks")
+      for (const check of input.verification)
+        if (
+          await this.reconcileInterruptedRetainedCheckSetup(
+            operation,
+            "combined",
+            check,
+            operation.combinedWorkspace ?? "",
+            fence,
+          )
+        )
+          return
     const unsafe = checks.map((check) => this.retainedCheckResourceProblem(check)).find(Boolean)
     if (unsafe) {
       await this.holdRetainedVerification(operation, unsafe, fence)
