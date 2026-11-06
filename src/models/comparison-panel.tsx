@@ -4,6 +4,7 @@ import { Schema } from "effect"
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
+import type { KnownUsageMarketScenario } from "./market-range.ts"
 import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import type { ModelMappingTargetInput } from "./mapping-schema.ts"
 import { ModelsDecision } from "./decision-contract.ts"
@@ -194,6 +195,280 @@ function formatMoney(value: number | null) {
         currency: "USD",
         maximumFractionDigits: 6,
       }).format(value)
+}
+
+const knownUsageCurrency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumSignificantDigits: 12,
+})
+
+function formatKnownUsageMoney(value: number | null) {
+  return value === null ? "Unavailable" : knownUsageCurrency.format(value)
+}
+
+function countLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`
+}
+
+function formatKnownUsageRange(
+  range: { minimum: number; maximum: number } | null,
+  alwaysShowEndpoints = false,
+) {
+  if (!range) return "Unavailable"
+  const minimum = formatKnownUsageMoney(range.minimum)
+  if (!alwaysShowEndpoints && range.minimum === range.maximum) return minimum
+  return `${minimum}–${formatKnownUsageMoney(range.maximum)}`
+}
+
+function knownUsageValueLabel(scenario: KnownUsageMarketScenario) {
+  switch (scenario.status) {
+    case "exact":
+      return scenario.valueUSD === null
+        ? "Unavailable · no scenario amount was supplied"
+        : `${scenario.tierAttribution.status === "resolved-per-call" ? "Known-tier scenario amount" : "Scenario amount"} · ${formatKnownUsageMoney(scenario.valueUSD)}`
+    case "range":
+      return scenario.rangeUSD === null
+        ? "Unavailable · no scenario range was supplied"
+        : `Conditional endpoint tier range · ${formatKnownUsageRange(scenario.rangeUSD, true)}`
+    case "partial":
+      return scenario.knownSubtotalUSD === null
+        ? "Unavailable from partial evidence · no complete value, range or known subtotal; not a zero price"
+        : `Known subtotal only · ${formatKnownUsageRange(scenario.knownSubtotalUSD)}`
+    case "unavailable":
+      return "Unavailable from retained evidence · not a zero price"
+  }
+}
+
+function knownUsageTierDescription(scenario: KnownUsageMarketScenario) {
+  const tier = scenario.tierAttribution
+  const selected = tier.selectedTierIDs.length ? tier.selectedTierIDs.join(", ") : "none resolved"
+  switch (tier.status) {
+    case "not-required":
+      return `Tier attribution not required for the single published rate scenario · rate tier ${selected}.`
+    case "resolved-per-call":
+      return `Prompt tiers resolved per call · ${countLabel(tier.callCount, "measured call")} · selected tiers ${selected}.`
+    case "unresolved":
+      return `Prompt tier unresolved · available tiers ${selected}. Any range is conditional for known retained usage only, not a complete-task or whole-history bound.`
+    case "unsupported":
+      return `Endpoint tier selector unsupported by retained usage evidence · no unsupported tier is inferred.`
+  }
+}
+
+function knownUsageRetryDescription(scenario: KnownUsageMarketScenario) {
+  const retries = scenario.coverage.retries
+  const description =
+    `Retry coverage ${retries.status} · ${countLabel(retries.attemptCount, "attempt")} · ` +
+    `${countLabel(retries.failedAttemptCount, "failed attempt")} · ` +
+    `${countLabel(retries.retryAttemptCount, "retry", "retries")} · ` +
+    `${countLabel(retries.attemptsWithCompleteUsage, "attempt with complete measured usage")}.`
+  return retries.status === "complete"
+    ? `${description} Coverage is complete only for retained matching usage, not a complete-task bound.`
+    : `${description} Incomplete retry history is conditional and cannot bound the complete task or whole history.`
+}
+
+function knownUsageCacheWriteDescription(scenario: KnownUsageMarketScenario) {
+  const evidence = scenario.cacheWriteEvidence
+  switch (evidence.basis) {
+    case "scoped-documentation":
+      return `Cache-write pricing uses scoped documentation${evidence.policyID ? ` · ${evidence.policyID}` : ""}; any documented zero applies only to this scenario.`
+    case "endpoint-rate":
+      return "Cache-write pricing uses the published rate for this exact endpoint scenario only; it does not establish general cache-write capability or availability."
+    case "zero-usage-rate-not-required":
+      return "No cache-write rate was needed for the measured zero usage; zero observed writes do not mean cache writes are free."
+    case "missing":
+      return "Cache-write pricing evidence is missing; no zero rate or free usage is assumed."
+  }
+}
+
+function knownUsageCategoryRows(scenario: KnownUsageMarketScenario) {
+  return [
+    ["Uncached input", scenario.coverage.categories.uncachedInput],
+    ["Output", scenario.coverage.categories.output],
+    ["Reasoning", scenario.coverage.categories.reasoning],
+    ["Cache read", scenario.coverage.categories.cacheRead],
+    ["Cache write", scenario.coverage.categories.cacheWrite],
+  ] as const
+}
+
+/** Keep endpoint-scenario values visually and semantically separate from empirical estimates. */
+export function KnownUsageMarketScenarioCard(props: { scenario: KnownUsageMarketScenario }) {
+  const scenario = () => props.scenario
+  const valueLabel = () => knownUsageValueLabel(scenario())
+  const provenance = () => scenario().provenance
+  const freshness = () =>
+    scenario().freshness === "current"
+      ? "Current"
+      : scenario().freshness === "stale"
+        ? "Stale"
+        : "Unavailable"
+  const routeCoverage = () => scenario().coverage.route
+  const retries = () => scenario().coverage.retries
+
+  return (
+    <section
+      class="lazers-models-market-scenario"
+      data-status={scenario().status}
+      aria-label="Current-market equivalent of known retained usage"
+    >
+      <h3>Current-market equivalent of known retained usage</h3>
+      <p class="lazers-models-market-value">
+        <strong>{valueLabel()}</strong>
+        <span>{scenario().label}</span>
+      </p>
+      <p class="lazers-models-market-caveat">
+        Endpoint scenario for known, non-shared retained usage with an exact observed route only ·
+        not a complete-task or whole-history bound, actual charges, or an empirical predictive
+        interval.
+      </p>
+      <p class="lazers-models-market-meta">
+        Endpoint · provider {provenance().providerName ?? "not specified"} · tag{" "}
+        {provenance().tag ?? "not specified"} · service tier{" "}
+        {provenance().serviceTier ?? "not specified by endpoint"} · freshness {freshness()} ·
+        retrieved {formatDate(provenance().retrievedAt)}
+      </p>
+      <p class="lazers-models-market-meta">{knownUsageTierDescription(scenario())}</p>
+      <p class="lazers-models-market-meta">
+        Measured usage · {routeCoverage().includedSessionCount.toLocaleString()} of{" "}
+        {routeCoverage().relatedSessionCount.toLocaleString()} related sessions included · exact
+        route matched in {routeCoverage().matchedRouteSessionCount.toLocaleString()} · whole-task
+        bound: no.
+      </p>
+      <p class="lazers-models-market-meta">{knownUsageRetryDescription(scenario())}</p>
+      <p class="lazers-models-market-meta">{knownUsageCacheWriteDescription(scenario())}</p>
+      <Show when={scenario().reason}>
+        {(reason) => <p class="lazers-models-market-caveat">{reason()}</p>}
+      </Show>
+      <details class="lazers-models-market-details">
+        <summary>Measured categories, endpoint rates and source evidence</summary>
+        <div class="lazers-models-market-evidence">
+          <dl class="lazers-models-evidence-summary">
+            <dt>Pricing source</dt>
+            <dd>
+              OpenRouter endpoint pricing · {provenance().productID} · refresh{" "}
+              {provenance().refreshState} · snapshot generation{" "}
+              {provenance().snapshotGeneration?.toLocaleString() ?? "unavailable"}
+              {provenance().currentGeneration === null
+                ? ""
+                : ` / ${provenance().currentGeneration?.toLocaleString()}`}
+            </dd>
+            <dt>Endpoint source</dt>
+            <dd>
+              <a href={provenance().sourceURL} target="_blank" rel="noreferrer">
+                {provenance().sourceURL}
+              </a>
+            </dd>
+            <dt>Source record</dt>
+            <dd>
+              Snapshot {provenance().snapshotID ?? "unavailable"} · record index{" "}
+              {provenance().recordIndex?.toLocaleString() ?? "unavailable"}
+            </dd>
+            <dt>Cache-write evidence</dt>
+            <dd>
+              {scenario().cacheWriteEvidence.basis} · policy{" "}
+              {scenario().cacheWriteEvidence.policyID ?? "unavailable"} · source{" "}
+              {scenario().cacheWriteEvidence.sourceURL ??
+                (scenario().cacheWriteEvidence.basis === "endpoint-rate"
+                  ? provenance().sourceURL
+                  : "unavailable")}{" "}
+              · retrieved {formatDate(scenario().cacheWriteEvidence.retrievedAt)}
+            </dd>
+            <dt>Tier thresholds</dt>
+            <dd>
+              {scenario().tierAttribution.promptThresholds.length
+                ? `${scenario()
+                    .tierAttribution.promptThresholds.map((threshold) => threshold.toLocaleString())
+                    .join(", ")} prompt tokens`
+                : "Not reported"}
+              {scenario().tierAttribution.thresholdSemantics
+                ? ` · ${scenario().tierAttribution.thresholdSemantics}`
+                : ""}
+            </dd>
+            <dt>Missing endpoint rates</dt>
+            <dd>
+              {scenario().missingRates.length
+                ? scenario().missingRates.join(", ")
+                : "None reported"}
+            </dd>
+          </dl>
+          <div class="lazers-models-market-coverage">
+            <h4>Measured token categories</h4>
+            <For each={knownUsageCategoryRows(scenario())}>
+              {([label, category]) => (
+                <p>
+                  <strong>{label}</strong> ·{" "}
+                  {category.tokens === null
+                    ? "tokens unavailable"
+                    : countLabel(category.tokens, "token")}{" "}
+                  · {statusText(category.status)}
+                </p>
+              )}
+            </For>
+            <p>
+              Route sessions · {routeCoverage().matchedRouteSessionCount} exact matched ·{" "}
+              {routeCoverage().includedSessionCount} included ·{" "}
+              {routeCoverage().otherRouteSessionCount} other-route ·{" "}
+              {routeCoverage().mixedRouteSessionCount} mixed-route ·{" "}
+              {routeCoverage().unknownRouteSessionCount} unknown-route ·{" "}
+              {routeCoverage().sharedSessionCount} shared excluded.
+            </p>
+            <p>
+              Attempts · {countLabel(retries().attemptCount, "total attempt")} ·{" "}
+              {countLabel(retries().failedAttemptCount, "failed attempt")} ·{" "}
+              {countLabel(retries().retryAttemptCount, "retry", "retries")} ·{" "}
+              {countLabel(retries().attemptsWithCompleteUsage, "attempt with complete usage")} ·{" "}
+              {countLabel(
+                retries().failedAttemptsWithCompleteUsage,
+                "failed attempt with complete usage",
+              )}{" "}
+              ·{" "}
+              {countLabel(
+                retries().retryAttemptsWithCompleteUsage,
+                "retry with complete usage",
+                "retries with complete usage",
+              )}
+              .
+            </p>
+          </div>
+          <div class="lazers-models-market-rates">
+            <h4>Published rates · USD per token</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Tier</th>
+                  <th scope="col">Prompt</th>
+                  <th scope="col">Completion</th>
+                  <th scope="col">Cache read</th>
+                  <th scope="col">Cache write</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={scenario().rateSets}>
+                  {(rate) => (
+                    <tr>
+                      <th scope="row">
+                        {rate.tierID}
+                        {rate.minPromptTokens === null
+                          ? ""
+                          : ` · >${rate.minPromptTokens.toLocaleString()} prompt tokens`}
+                      </th>
+                      <td>{rate.prompt ?? "Unavailable"}</td>
+                      <td>{rate.completion ?? "Unavailable"}</td>
+                      <td>{rate.cacheRead ?? "Unavailable"}</td>
+                      <td>{rate.cacheWrite ?? "Unavailable"}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+            <Show when={!scenario().rateSets.length}>
+              <p>No compatible endpoint rate sets are available; unavailable is not zero.</p>
+            </Show>
+          </div>
+        </div>
+      </details>
+    </section>
+  )
 }
 
 function estimateLabel(
@@ -1866,6 +2141,9 @@ function ModelPanel(
                           </strong>
                           <span>{estimateValuesLabel(inspection().estimate)}</span>
                         </p>
+                        <Show when={inspection().knownUsageMarket?.scenarios[0]}>
+                          {(scenario) => <KnownUsageMarketScenarioCard scenario={scenario()} />}
+                        </Show>
                         <details
                           class="lazers-models-evidence-details"
                           open={decisionEvidenceOpen()}
