@@ -47,9 +47,36 @@ No provider substitution, replacement worker, or worktree reset was used.
 A failing LZ-158 panel test exposed global chart labels changing when another
 row page loaded. Root reported the source finding through Desktop; Architect
 authorized the same worker to add producer-owned chart labels and token
-coordinates. That correction is still in progress and is not covered by the
-backend results above.
+coordinates. Runtime transition `SCOPE_AMENDED` version 25 at Unix milliseconds
+1793976008645 durably added the five contract/producer/test paths, preserving
+the immutable task specification and original attempt. Explicit null coordinates
+remain unknown; paging and inspection cannot override global chart metadata.
+
+LZ-158 delivered clean `03331c85`. Its runtime panel check passed in 9,264 ms
+and quality check in 3,915 ms. Architect woke and requested independent review
+without a new driver prompt. Root combined this delivery with the reviewed
+pricing fixes and current main as source candidate `d301bc83`:
+
+- Formatting, lint, typecheck (386 files), diff check, and GUI build passed.
+- `bun test src/models test/models-decision src/trajectory/accounting.test.ts
+  test/models-panel test/models-chart test/observation-panels/root.test.ts`:
+  220 passed, 3,296 assertions, 13.59 seconds.
+- Log: `/private/tmp/lz-models-full-combined-verification.log`.
+
+The actual Desktop trajectory reports one original Luna Max attempt, 331 tool
+calls, 829,789 uncached input tokens, 42,702,208 cache-read tokens, 63,314 output
+tokens and 109,745 reasoning tokens. These are the displayed categories, not
+an asserted non-overlapping billable-token total. The panel check ends 152:05
+after attempt start; that elapsed interval includes interruption and is not
+active coding time. Attempt end is not inferred. API-equivalent cost remains
+unavailable in that view. Root corrections and reviewer/driver overhead are
+additional work, not included in those worker-only figures.
+
+The delivered task is visible in Desktop through Tasks → All → search LZ-158 →
+Open trajectory. Both models/quality check receipts appear twice in the timeline;
+the duplicate-projection finding is retained for existing trajectory follow-up.
 
 This record does not establish connected price-data correctness, narrow/wide
 visual fidelity, assignment behavior, final combined integration, or cleanup.
 Those remain pending actual Desktop observation and Tera High visual review.
+Independent review of the delivered UI/interface changes is also pending.
