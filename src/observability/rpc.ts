@@ -1,5 +1,4 @@
 import type { Plugin } from "@opencode/plugin/effect"
-import { randomUUID } from "node:crypto"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { Effect, Stream } from "effect"
@@ -95,7 +94,6 @@ export function registerObservability(
 ) {
   return Effect.gen(function* () {
     const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
-    let streamEpoch = randomUUID()
     const rpc = yield* ctx.rpc.register(Observability, {
       snapshot: (input) =>
         Effect.tryPromise({
@@ -169,7 +167,7 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               "read",
             )
-            return reads.liveRadar(input, tracker, signal, streamEpoch)
+            return reads.liveRadar(input, tracker, signal, tracker.streamEpoch)
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
@@ -285,6 +283,7 @@ export function registerObservability(
       Effect.sync(() => {
         disposed = true
         if (retry) clearTimeout(retry)
+        tracker.close()
       }),
     )
 
@@ -317,11 +316,9 @@ export function registerObservability(
         Effect.match({
           onFailure: () => {
             tracker.streamGap()
-            streamEpoch = randomUUID()
           },
           onSuccess: () => {
             tracker.streamGap()
-            streamEpoch = randomUUID()
           },
         }),
         Effect.andThen(Effect.sleep(1_000)),

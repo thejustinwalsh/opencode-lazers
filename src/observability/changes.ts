@@ -1,4 +1,5 @@
-import { createHmac } from "node:crypto"
+import { createHash, createHmac, randomUUID } from "node:crypto"
+import { realpathSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
@@ -13,10 +14,40 @@ export type SourceStamp = {
 
 type JsonObject = Record<string, unknown>
 
-function object(value: unknown): JsonObject | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : null
+type AssociationRead = {
+  revision: number
+  repositoryVersion: number
+  sessions: readonly string[]
+}
+const associationReadsKey = Symbol.for("opencode-lazers.observation-association-reads.v1")
+const associationHost = globalThis as typeof globalThis & {
+  [associationReadsKey]?: Map<string, AssociationRead>
+}
+const associationReads: Map<string, AssociationRead> = (associationHost[associationReadsKey] ??=
+  new Map<string, AssociationRead>())
+
+/** Loaded locations share membership reads only for the same durable revision and sync batch. */
+function readAssociatedSessions(
+  db: Database,
+  projectDirectory: string,
+  repositoryVersion: number,
+  revision: number,
+) {
+  const key = JSON.stringify([db.filename, projectDirectory])
+  let entry = associationReads.get(key)
+  if (entry?.revision !== revision || entry.repositoryVersion !== repositoryVersion) {
+    entry = {
+      revision,
+      repositoryVersion,
+      sessions: [...associatedSessionIDs(db, projectDirectory)],
+    }
+    associationReads.set(key, entry)
+    const captured = entry
+    queueMicrotask(() => {
+      if (associationReads.get(key) === captured) associationReads.delete(key)
+    })
+  }
+  return new Set(entry.sessions)
 }
 
 /** A keyed source fingerprint detects runner/check/tool changes not reflected in the task watermark. */
@@ -40,7 +71,7 @@ export function sourceStampFromDatabase(
   return {
     repositoryVersion,
     sourceFingerprint: createHmac("sha256", secret).update(String(revision)).digest("hex"),
-    sessionIDs: associatedSessionIDs(db, projectDirectory),
+    sessionIDs: readAssociatedSessions(db, projectDirectory, repositoryVersion, revision),
   }
 }
 
@@ -57,46 +88,265 @@ export function readSourceStamp(
   }
 }
 
+type NativeFact = {
+  sessionID: string
+  eventID: string | null
+  aggregateID: string | null
+  durableSequence: number | null
+}
+
+type TrackerState = {
+  projectID: string
+  sequence: number
+  sourceRevision: number
+  nativeRevision: number
+  repositoryVersion: number
+  sourceFingerprint: string
+  sessionIDs: Set<string>
+  seenEvents: Set<string>
+  durableSequences: Map<string, number>
+  eventStreamConnected: boolean
+  gapActive: boolean
+  streamEpoch: string
+  members: Set<ObservationChangeTracker>
+  publishers: Map<ObservationChangeTracker, (change: ObservationChange) => void>
+  pendingNative: NativeFact[]
+  pendingNativeKeys: Set<string>
+  pendingOverflow: boolean
+  registryKey?: string
+}
+
+const MAX_TRACKED_EVENTS = 4096
+const projectStatesKey = Symbol.for("opencode-lazers.observation-project-states.v1")
+const projectStatesHost = globalThis as typeof globalThis & {
+  [projectStatesKey]?: Map<string, TrackerState>
+}
+const projectStates: Map<string, TrackerState> = (projectStatesHost[projectStatesKey] ??= new Map<
+  string,
+  TrackerState
+>())
+
+function newState(projectID: string): TrackerState {
+  return {
+    projectID,
+    sequence: 0,
+    sourceRevision: 0,
+    nativeRevision: 0,
+    repositoryVersion: 0,
+    sourceFingerprint: "",
+    sessionIDs: new Set(),
+    seenEvents: new Set(),
+    durableSequences: new Map(),
+    eventStreamConnected: false,
+    gapActive: false,
+    streamEpoch: randomUUID(),
+    members: new Set(),
+    publishers: new Map(),
+    pendingNative: [],
+    pendingNativeKeys: new Set(),
+    pendingOverflow: false,
+  }
+}
+
+function rememberBounded<T>(set: Set<T>, value: T) {
+  set.add(value)
+  if (set.size > MAX_TRACKED_EVENTS) set.delete(set.values().next().value!)
+}
+
+function nativeFact(event: unknown): NativeFact | null {
+  const info = object(event)
+  const data = object(info?.data)
+  const sessionID = typeof data?.sessionID === "string" ? data.sessionID : null
+  if (!sessionID || sessionID.length > 200) return null
+  const durable = object(info?.durable)
+  const aggregateID =
+    typeof durable?.aggregateID === "string" && durable.aggregateID.length <= 200
+      ? durable.aggregateID
+      : null
+  return {
+    sessionID,
+    eventID: typeof info?.id === "string" && info.id.length <= 200 ? info.id : null,
+    aggregateID,
+    durableSequence:
+      typeof durable?.seq === "number" && Number.isSafeInteger(durable.seq) ? durable.seq : null,
+  }
+}
+
+function pendingKey(fact: NativeFact) {
+  if (fact.eventID) return `id:${fact.eventID}`
+  if (fact.aggregateID && fact.durableSequence !== null)
+    return `seq:${fact.aggregateID}:${fact.durableSequence}`
+  return null
+}
+
+function pendingScopeSelection(state: TrackerState) {
+  for (const member of state.members) if (member.hasPendingScopeSelection()) return true
+  return false
+}
+
+function hasScopedInterest(state: TrackerState, sessionID: string) {
+  for (const member of state.members) if (member.hasScopedSession(sessionID)) return true
+  return false
+}
+
+function hasInterest(state: TrackerState, sessionID: string) {
+  return state.sessionIDs.has(sessionID) || hasScopedInterest(state, sessionID)
+}
+
+function emit(state: TrackerState, cause: ObservationChange["cause"], resnapshotRequired: boolean) {
+  state.sequence++
+  const change: ObservationChange = {
+    projectID: state.projectID,
+    sequence: state.sequence,
+    repositoryVersion: state.repositoryVersion,
+    sourceRevision: state.sourceRevision,
+    nativeRevision: state.nativeRevision,
+    cause,
+    resnapshotRequired,
+  }
+  state.publishers.values().next().value?.(change)
+}
+
+function applyNative(state: TrackerState, fact: NativeFact) {
+  if (fact.eventID && state.seenEvents.has(fact.eventID)) return
+  if (fact.eventID) rememberBounded(state.seenEvents, fact.eventID)
+  if (fact.aggregateID && fact.durableSequence !== null) {
+    const previous = state.durableSequences.get(fact.aggregateID)
+    if (previous !== undefined && fact.durableSequence <= previous) return
+    state.durableSequences.delete(fact.aggregateID)
+    state.durableSequences.set(fact.aggregateID, fact.durableSequence)
+    if (state.durableSequences.size > MAX_TRACKED_EVENTS)
+      state.durableSequences.delete(state.durableSequences.keys().next().value!)
+  }
+
+  state.nativeRevision++
+  state.eventStreamConnected = true
+  state.gapActive = false
+  if (fact.eventID)
+    for (const member of state.members)
+      if (state.sessionIDs.has(fact.sessionID) || member.hasScopedSession(fact.sessionID))
+        member.recordLiveEvent(fact.eventID, fact.sessionID)
+  emit(state, "native", false)
+}
+
+function streamGap(state: TrackerState) {
+  if (state.gapActive) return
+  state.nativeRevision++
+  state.eventStreamConnected = false
+  state.gapActive = true
+  state.streamEpoch = randomUUID()
+  state.pendingNative = []
+  state.pendingNativeKeys.clear()
+  state.pendingOverflow = false
+  state.durableSequences.clear()
+  for (const member of state.members) member.clearLiveEvents()
+  emit(state, "gap", true)
+}
+
+function bufferNative(state: TrackerState, fact: NativeFact) {
+  const key = pendingKey(fact)
+  if (key && state.pendingNativeKeys.has(key)) return
+  if (state.pendingNative.length >= MAX_TRACKED_EVENTS) {
+    state.pendingOverflow = true
+    return
+  }
+  if (key) state.pendingNativeKeys.add(key)
+  state.pendingNative.push(fact)
+}
+
+function drainPending(state: TrackerState) {
+  const pending = state.pendingNative
+  state.pendingNative = []
+  state.pendingNativeKeys.clear()
+  for (const fact of pending) {
+    if (fact.eventID && state.seenEvents.has(fact.eventID)) continue
+    if (hasInterest(state, fact.sessionID)) applyNative(state, fact)
+    else if (pendingScopeSelection(state)) bufferNative(state, fact)
+    else if (fact.eventID) rememberBounded(state.seenEvents, fact.eventID)
+  }
+  if (!pendingScopeSelection(state) && state.pendingOverflow) streamGap(state)
+}
+
+/** One project/source sequence with private session interests and event cursors per reader. */
 export class ObservationChangeTracker {
-  sequence = 0
-  sourceRevision = 0
-  nativeRevision = 0
-  private repositoryVersion = 0
-  private sourceFingerprint = ""
-  private sessionIDs = new Set<string>()
+  private state: TrackerState
   private scopedSessionIDs = new Set<string>()
-  private readonly seenEvents = new Set<string>()
-  private readonly durableSequences = new Map<string, number>()
   private readonly liveEventIDs = new Map<string, string>()
-  private eventStreamConnected = false
-  private publish?: (change: ObservationChange) => void
+  private scopeSelectionReads = 0
 
   constructor(
     readonly repository: TaskRepository,
     private readonly secret: Uint8Array,
     private readonly projectID: string,
-  ) {}
+  ) {
+    this.state = newState(projectID)
+    this.state.members.add(this)
+  }
+
+  get sequence() {
+    return this.state.sequence
+  }
+
+  get sourceRevision() {
+    return this.state.sourceRevision
+  }
+
+  get nativeRevision() {
+    return this.state.nativeRevision
+  }
+
+  get streamEpoch() {
+    return this.state.streamEpoch
+  }
 
   initialize(publish?: (change: ObservationChange) => void) {
-    this.publish = publish
+    if (publish) {
+      const key = JSON.stringify([
+        realpathSync(this.repository.path),
+        this.repository.projectDirectory,
+        this.projectID,
+        createHash("sha256").update(this.secret).digest("hex"),
+      ])
+      this.state.members.delete(this)
+      const existing = projectStates.get(key)
+      if (existing) this.state = existing
+      else {
+        this.state = newState(this.projectID)
+        this.state.registryKey = key
+        projectStates.set(key, this.state)
+        try {
+          this.initializeState()
+        } catch (error) {
+          projectStates.delete(key)
+          throw error
+        }
+      }
+      this.state.members.add(this)
+      this.state.publishers.set(this, publish)
+      return
+    }
+    this.initializeState()
+  }
+
+  private initializeState() {
     const stamp = readSourceStamp(
       this.repository.path,
       this.repository.projectDirectory,
       this.secret,
     )
-    this.repositoryVersion = stamp.repositoryVersion
-    this.sourceFingerprint = stamp.sourceFingerprint
-    this.sessionIDs = stamp.sessionIDs
+    this.state.repositoryVersion = stamp.repositoryVersion
+    this.state.sourceFingerprint = stamp.sourceFingerprint
+    this.state.sessionIDs = stamp.sessionIDs
   }
 
   boundary(stamp: SourceStamp, transitionSequence: number) {
     this.observeStamp(stamp)
     return {
       repositoryVersion: stamp.repositoryVersion,
-      sourceRevision: this.sourceRevision,
+      sourceRevision: this.state.sourceRevision,
       sourceFingerprint: stamp.sourceFingerprint,
-      nativeRevision: this.nativeRevision,
-      eventSequence: this.sequence,
+      nativeRevision: this.state.nativeRevision,
+      eventSequence: this.state.sequence,
       transitionSequence,
     }
   }
@@ -109,9 +359,29 @@ export class ObservationChangeTracker {
 
   trackScopedSessions(sessionIDs: Iterable<string>) {
     this.scopedSessionIDs = new Set([...sessionIDs].slice(0, 500))
+    drainPending(this.state)
   }
 
-  /** Return only events observed since the last radar projection; history never pulses. */
+  beginScopeSelection() {
+    this.scopeSelectionReads++
+    let finished = false
+    return () => {
+      if (finished) return
+      finished = true
+      this.scopeSelectionReads--
+      drainPending(this.state)
+    }
+  }
+
+  hasPendingScopeSelection() {
+    return this.scopeSelectionReads > 0
+  }
+
+  hasScopedSession(sessionID: string) {
+    return this.scopedSessionIDs.has(sessionID)
+  }
+
+  /** Return only events observed since the last projection; each reader owns its queue. */
   peekLiveEvents(sessionIDs: ReadonlySet<string>) {
     return new Set(
       [...this.liveEventIDs].flatMap(([eventID, sessionID]) =>
@@ -120,7 +390,7 @@ export class ObservationChangeTracker {
     )
   }
 
-  /** Return only events observed since the last radar projection; history never pulses. */
+  /** Return only events observed since the last projection; each reader owns its queue. */
   takeLiveEvents(sessionIDs: ReadonlySet<string>) {
     const output = new Set<string>()
     for (const [eventID, sessionID] of this.liveEventIDs) {
@@ -131,80 +401,78 @@ export class ObservationChangeTracker {
     return output
   }
 
+  recordLiveEvent(eventID: string, sessionID: string) {
+    this.liveEventIDs.delete(eventID)
+    this.liveEventIDs.set(eventID, sessionID)
+    if (this.liveEventIDs.size > MAX_TRACKED_EVENTS)
+      this.liveEventIDs.delete(this.liveEventIDs.keys().next().value!)
+  }
+
+  clearLiveEvents() {
+    this.liveEventIDs.clear()
+  }
+
   observeStamp(stamp: SourceStamp) {
     const changed =
-      this.repositoryVersion !== stamp.repositoryVersion ||
-      this.sourceFingerprint !== stamp.sourceFingerprint
-    this.repositoryVersion = stamp.repositoryVersion
-    this.sourceFingerprint = stamp.sourceFingerprint
-    this.sessionIDs = stamp.sessionIDs
+      this.state.repositoryVersion !== stamp.repositoryVersion ||
+      this.state.sourceFingerprint !== stamp.sourceFingerprint
+    this.state.repositoryVersion = stamp.repositoryVersion
+    this.state.sourceFingerprint = stamp.sourceFingerprint
+    this.state.sessionIDs = stamp.sessionIDs
+    drainPending(this.state)
     if (changed) {
-      this.sourceRevision++
-      this.emit("runner", false)
+      this.state.sourceRevision++
+      emit(this.state, "runner", false)
     }
   }
 
   native(event: unknown) {
-    const data = object(object(event)?.data)
-    const sessionID = typeof data?.sessionID === "string" ? data.sessionID : null
-    if (!sessionID) return
-    if (!this.sessionIDs.has(sessionID) && !this.scopedSessionIDs.has(sessionID)) {
+    const fact = nativeFact(event)
+    if (!fact) return
+    if (fact.eventID && this.state.seenEvents.has(fact.eventID)) return
+    if (!hasInterest(this.state, fact.sessionID)) {
+      if (pendingScopeSelection(this.state)) {
+        bufferNative(this.state, fact)
+        return
+      }
       this.refreshSource()
-      if (!this.sessionIDs.has(sessionID) && !this.scopedSessionIDs.has(sessionID)) return
+      if (!hasInterest(this.state, fact.sessionID)) {
+        if (fact.eventID) rememberBounded(this.state.seenEvents, fact.eventID)
+        return
+      }
     }
-
-    const info = object(event)
-    const id = typeof info?.id === "string" ? info.id : null
-    if (id && this.seenEvents.has(id)) return
-    if (id) {
-      this.seenEvents.add(id)
-      if (this.seenEvents.size > 4096)
-        this.seenEvents.delete(this.seenEvents.values().next().value!)
-    }
-
-    const durable = object(info?.durable)
-    const aggregateID = typeof durable?.aggregateID === "string" ? durable.aggregateID : null
-    const sequence = typeof durable?.seq === "number" ? durable.seq : null
-    if (aggregateID && sequence !== null && Number.isInteger(sequence)) {
-      const previous = this.durableSequences.get(aggregateID)
-      if (previous !== undefined && sequence <= previous) return
-      // The native subscription filters event types. Missing sequence numbers
-      // may belong to omitted events, not transport loss. Disconnects and the
-      // projection's own contiguous event sequence provide real gap signals.
-      this.durableSequences.set(aggregateID, sequence)
-    }
-    this.nativeRevision++
-    this.eventStreamConnected = true
-    if (id) {
-      this.liveEventIDs.set(id, sessionID)
-      if (this.liveEventIDs.size > 4096)
-        this.liveEventIDs.delete(this.liveEventIDs.keys().next().value!)
-    }
-    this.emit("native", false)
+    applyNative(this.state, fact)
   }
 
   streamGap() {
-    this.nativeRevision++
-    this.eventStreamConnected = false
-    this.liveEventIDs.clear()
-    this.durableSequences.clear()
-    this.emit("gap", true)
+    streamGap(this.state)
   }
 
   get hasConnectedEventStream() {
-    return this.eventStreamConnected
+    return this.state.eventStreamConnected
   }
 
-  private emit(cause: ObservationChange["cause"], resnapshotRequired: boolean) {
-    this.sequence++
-    this.publish?.({
-      projectID: this.projectID,
-      sequence: this.sequence,
-      repositoryVersion: this.repositoryVersion,
-      sourceRevision: this.sourceRevision,
-      nativeRevision: this.nativeRevision,
-      cause,
-      resnapshotRequired,
-    })
+  close() {
+    const state = this.state
+    const wasPublisher = state.publishers.keys().next().value === this
+    state.publishers.delete(this)
+    state.members.delete(this)
+    this.scopeSelectionReads = 0
+    this.scopedSessionIDs.clear()
+    this.liveEventIDs.clear()
+    if (!state.members.size) {
+      if (state.registryKey) projectStates.delete(state.registryKey)
+      state.pendingNative = []
+      state.pendingNativeKeys.clear()
+      return
+    }
+    if (wasPublisher && state.publishers.size) streamGap(state)
+    drainPending(state)
   }
+}
+
+function object(value: unknown): JsonObject | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as JsonObject)
+    : null
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { ObservationScope } from "../observability/contract.ts"
+import type { ObservationScope, SnapshotResponse } from "../observability/contract.ts"
 import { makeFixture } from "../../test/trajectory/fixture.ts"
 import { ObservationChangeTracker } from "../observability/changes.ts"
 import { ObservationSyncState } from "../observability/state.ts"
@@ -52,6 +52,7 @@ test("RPC adapter sends the explicit scope, directory, and abort signal", async 
       }),
       "/workspace/project",
       () => true,
+      "project",
     )
 
     expect(await transport.snapshot(scope, controller.signal)).toBe(snapshot)
@@ -76,7 +77,7 @@ test("RPC adapter sends the explicit scope, directory, and abort signal", async 
   }
 })
 
-test("other worktree counters cannot trigger Radar gaps or suppress this location", async () => {
+test("canonical project changes cross location boundaries but foreign projects stay excluded", async () => {
   const sync = new ObservationSyncState()
   const generation = sync.connect("project", { kind: "project", sessionID: "ses-owner" })
   const change = (sequence: number) => ({
@@ -99,18 +100,19 @@ test("other worktree counters cannot trigger Radar gaps or suppress this locatio
       events: {
         subscribe: async function* () {
           yield { location: { directory: "/workspace/project" }, data: change(1) }
-          yield { location: { directory: "/workspace/worker" }, data: change(100) }
-          yield { data: change(200) }
+          yield { location: { directory: "/workspace/worker" }, data: change(2) }
+          yield { data: change(3) }
           yield {
             location: { directory: "/workspace/project" },
             data: { ...change(900), projectID: "other" },
           }
-          yield { location: { directory: "/workspace/project" }, data: change(2) }
+          yield { location: { directory: "/workspace/project" }, data: change(4) }
         },
       },
     }),
     "/workspace/project",
     () => true,
+    "project",
   )
   const sequences: number[] = []
   const contiguous: boolean[] = []
@@ -118,7 +120,47 @@ test("other worktree counters cannot trigger Radar gaps or suppress this locatio
     sequences.push(event.sequence)
     contiguous.push(sync.acceptChange(generation, "project", event))
   }
-  expect(sequences).toEqual([1, 900, 2])
-  expect(contiguous).toEqual([false, false, true])
-  expect(sync.eventSequence).toBe(2)
+  expect(sequences).toEqual([1, 2, 3, 4])
+  expect(contiguous).toEqual([false, true, true, true])
+  expect(sync.eventSequence).toBe(4)
+})
+
+test("the first cross-location event waits for the scoped read identity", async () => {
+  const controller = new AbortController()
+  const scope: ObservationScope = { kind: "project", sessionID: "ses-owner" }
+  const change = (projectID: string, sequence: number) => ({
+    projectID,
+    sequence,
+    repositoryVersion: 0,
+    sourceRevision: 0,
+    nativeRevision: sequence,
+    cause: "native" as const,
+    resnapshotRequired: false,
+  })
+  const snapshot = { projectID: "project" } as SnapshotResponse
+  const transport = createRadarTransport(
+    () => ({
+      snapshot: async () => snapshot,
+      radar: async () => {
+        throw new Error("not requested")
+      },
+      events: {
+        subscribe: async function* () {
+          yield { location: { directory: "/workspace/other" }, data: change("other", 1) }
+          yield { location: { directory: "/workspace/worker" }, data: change("project", 1) }
+        },
+      },
+    }),
+    "/workspace/project",
+    () => true,
+  )
+  const changes = transport.changes(controller.signal)[Symbol.asyncIterator]()
+  const first = changes.next()
+  await Bun.sleep(5)
+  await transport.snapshot(scope, controller.signal)
+  await expect(first).resolves.toMatchObject({
+    done: false,
+    value: { projectID: "project", sequence: 1 },
+  })
+  controller.abort()
 })

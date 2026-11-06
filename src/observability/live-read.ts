@@ -28,7 +28,14 @@ type SessionCandidate = { id: string; directory: string | null; native?: RadarNa
 const TRUNCATION_SUFFIX = "…[truncated]"
 
 function contractText(value: string, stats: ReturnType<typeof privacyStats>, maximum: number) {
-  return safeText(value, stats, Math.max(0, maximum - TRUNCATION_SUFFIX.length))
+  const sanitized = safeText(value, stats, Number.MAX_SAFE_INTEGER)
+  if (sanitized.length <= maximum) return sanitized
+  stats.truncated++
+  const bodyLength = Math.max(0, maximum - TRUNCATION_SUFFIX.length)
+  let body = sanitized.slice(0, bodyLength)
+  const last = body.charCodeAt(body.length - 1)
+  if (last >= 0xd800 && last <= 0xdbff) body = body.slice(0, -1)
+  return `${body}${TRUNCATION_SUFFIX}`
 }
 
 function jsonBytesAtMost(value: unknown, maximum: number): { bytes: number; overflow: boolean } {
@@ -301,8 +308,10 @@ function latestNativeObservation(observations: JsonObject[]) {
 }
 
 function routeFromObservation(observation: JsonObject, stats: ReturnType<typeof privacyStats>) {
-  const evidence = object(observation.routeEvidence)
-  if (evidence) return evidence.status === "observed" ? safeRoute(evidence.route, stats) : null
+  if (Object.hasOwn(observation, "routeEvidence")) {
+    const evidence = object(observation.routeEvidence)
+    return evidence?.status === "observed" ? safeRoute(evidence.route, stats) : null
+  }
   return safeRoute(observation.route, stats)
 }
 
@@ -613,6 +622,20 @@ export class LiveRadarReader {
   }
 
   async radar(
+    input: LiveRadarRequestInput,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    streamEpoch: string,
+  ): Promise<LiveRadarResponse> {
+    const finishScopeSelection = tracker.beginScopeSelection()
+    try {
+      return await this.readRadar(input, tracker, signal, streamEpoch)
+    } finally {
+      finishScopeSelection()
+    }
+  }
+
+  private async readRadar(
     input: LiveRadarRequestInput,
     tracker: ObservationChangeTracker,
     signal: AbortSignal,

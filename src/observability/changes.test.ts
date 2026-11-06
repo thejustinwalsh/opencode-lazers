@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "./changes.ts"
+import type { ObservationChange } from "./contract.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 
@@ -48,6 +49,77 @@ test("filtered native sequences deduplicate without inventing gaps; disconnect r
       nativeRevision: 4,
     })
   } finally {
+    fixture.close()
+  }
+})
+
+test("loaded project registrations publish canonically while reader event queues stay independent", async () => {
+  const fixture = makeFixture()
+  const trackers: InstanceType<typeof ObservationChangeTracker>[] = []
+  const deliveries: ObservationChange[][] = []
+  try {
+    const copies = await Promise.all(
+      Array.from(
+        { length: 13 },
+        (_, index) =>
+          import(
+            new URL(`./changes.ts?location=${index}-${crypto.randomUUID()}`, import.meta.url).href
+          ),
+      ),
+    )
+    const constructors = [
+      ObservationChangeTracker,
+      ...copies.map((copy) => copy.ObservationChangeTracker),
+    ]
+    for (let index = 0; index < constructors.length; index++) {
+      const Tracker = constructors[index]!
+      const tracker = new Tracker(fixture.repository, new Uint8Array(32).fill(61), "project")
+      trackers.push(tracker)
+      deliveries.push([])
+      tracker.initialize((change: ObservationChange) => deliveries[index]!.push(change))
+    }
+    trackers[1]!.trackScopedSessions(["ses-unmanaged-selected"])
+
+    const selectedEvent = {
+      id: "event-unmanaged-selected",
+      type: "session.tool.progress",
+      durable: { aggregateID: "ses-unmanaged-selected", seq: 7 },
+      data: { sessionID: "ses-unmanaged-selected" },
+    }
+    for (const tracker of trackers) tracker.native(selectedEvent)
+
+    expect(deliveries.flat()).toMatchObject([{ sequence: 1, cause: "native" }])
+    expect(trackers[0]!.peekLiveEvents(new Set(["ses-unmanaged-selected"]))).toEqual(new Set())
+    expect(trackers[1]!.peekLiveEvents(new Set(["ses-unmanaged-selected"]))).toEqual(
+      new Set(["event-unmanaged-selected"]),
+    )
+    trackers[0]!.takeLiveEvents(new Set(["ses-unmanaged-selected"]))
+    expect(trackers[1]!.takeLiveEvents(new Set(["ses-unmanaged-selected"]))).toEqual(
+      new Set(["event-unmanaged-selected"]),
+    )
+
+    const distinctObservation = {
+      id: "event-managed-same-sequence",
+      type: "session.tool.success",
+      durable: { aggregateID: "ses-failed", seq: 7 },
+      data: { sessionID: "ses-failed" },
+    }
+    for (const tracker of trackers) tracker.native(distinctObservation)
+    expect(deliveries.flat()).toMatchObject([
+      { sequence: 1, cause: "native" },
+      { sequence: 2, cause: "native" },
+    ])
+    expect(deliveries.flat()).toHaveLength(2)
+
+    trackers[0]!.close()
+    expect(deliveries[1]).toMatchObject([{ sequence: 3, cause: "gap", resnapshotRequired: true }])
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID),
+    )
+    trackers[1]!.refreshSource()
+    expect(deliveries[1]!.at(-1)).toMatchObject({ sequence: 4, cause: "runner" })
+  } finally {
+    for (const tracker of trackers) tracker.close()
     fixture.close()
   }
 })

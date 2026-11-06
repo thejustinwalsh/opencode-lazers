@@ -321,6 +321,21 @@ function assignmentFromRow(row: AssignmentRow): LiveAttemptAssignment {
   }
 }
 
+/** The denormalized project key and partial index keep historical attempts out of the live scan. */
+export function activeAssignmentsQuery(sessionScoped: boolean) {
+  return `SELECT a.session_id,a.plan_id,a.task_id,a.id AS attempt_id,a.state,a.started_at,
+                 CASE WHEN ${boundedBytePrefix("a.policy", POLICY_BYTES)}<=? THEN a.policy END AS policy,
+                 ${boundedBytePrefix("a.policy", POLICY_BYTES)} AS policy_bytes,
+                 ${boundedBytePrefix("a.policy", POLICY_BYTES)}>? AS policy_omitted,
+                 CASE WHEN ${boundedBytePrefix("a.workspace", 4096)}<=? THEN a.workspace END AS workspace,
+                 ${boundedBytePrefix("a.workspace", 4096)}>? AS workspace_omitted
+            FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE a.project_directory=? AND p.project_directory=?
+             AND a.state IN ('preparing','running','verifying')
+             ${sessionScoped ? "AND a.session_id=?" : ""}
+           ORDER BY a.started_at DESC,a.id DESC LIMIT ?`
+}
+
 function progressRowQuery(db: Database, metrics: LiveStoreMetrics, args: (string | number)[]) {
   countQuery(metrics)
   const rows = progressQuery(db).all(...args)
@@ -432,23 +447,13 @@ export class LiveReadStore {
         signal.throwIfAborted()
         countQuery(metrics)
         const activeAssignments = db
-          .query<AssignmentRow, (string | number)[]>(
-            `SELECT a.session_id,a.plan_id,a.task_id,a.id AS attempt_id,a.state,a.started_at,
-                    CASE WHEN ${boundedBytePrefix("a.policy", POLICY_BYTES)}<=? THEN a.policy END AS policy,
-                    ${boundedBytePrefix("a.policy", POLICY_BYTES)} AS policy_bytes,
-                    ${boundedBytePrefix("a.policy", POLICY_BYTES)}>? AS policy_omitted,
-                    CASE WHEN ${boundedBytePrefix("a.workspace", 4096)}<=? THEN a.workspace END AS workspace,
-                    ${boundedBytePrefix("a.workspace", 4096)}>? AS workspace_omitted
-               FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
-              WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')
-                ${sessionID === null ? "" : "AND a.session_id=?"}
-              ORDER BY a.started_at DESC,a.id DESC LIMIT ?`,
-          )
+          .query<AssignmentRow, (string | number)[]>(activeAssignmentsQuery(sessionID !== null))
           .all(
             POLICY_BYTES,
             POLICY_BYTES,
             4096,
             4096,
+            this.projectDirectory,
             this.projectDirectory,
             ...(sessionID === null ? [] : [sessionID]),
             LIVE_LIMITS.sessions + 1,

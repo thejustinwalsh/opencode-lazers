@@ -161,6 +161,92 @@ test.each([false, true])(
   },
 )
 
+test("registered locations share one project publisher and fail over on unload", async () => {
+  const fixture = makeFixture()
+  const reads = new ObservationReads(
+    fixture.store,
+    { session: async (id) => fixture.host.session(id) },
+    "project",
+    new Uint8Array(32).fill(91),
+  )
+  const registrationReady = [Promise.withResolvers<void>(), Promise.withResolvers<void>()]
+  const deliveries: Array<Array<{ cause: string; sequence: number }>> = [[], []]
+  let registrationIndex = 0
+  const ctx = {
+    rpc: {
+      register: () => {
+        const index = registrationIndex++
+        registrationReady[index]!.resolve()
+        return Effect.succeed({
+          dispose: Effect.void,
+          events: {
+            emit: (_name: string, change: { cause: string; sequence: number }) =>
+              Effect.sync(() => deliveries[index]!.push(change)),
+          },
+        })
+      },
+    },
+    session: {
+      get: ({ sessionID }: { sessionID: string }) =>
+        Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "architect",
+          time: { archived: undefined },
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    event: { subscribe: () => Stream.never },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  const launch = () =>
+    Effect.runFork(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerObservability(ctx, reads, "project")
+          yield* Effect.never
+        }),
+      ),
+    )
+  const waitFor = async (predicate: () => boolean) => {
+    for (let index = 0; index < 400 && !predicate(); index++) await Bun.sleep(5)
+    expect(predicate()).toBe(true)
+  }
+
+  const first = launch()
+  await registrationReady[0]!.promise
+  const second = launch()
+  await registrationReady[1]!.promise
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID),
+    )
+    await waitFor(() => deliveries.flat().length >= 1)
+    expect(
+      deliveries.map((items) => items.map(({ cause, sequence }) => ({ cause, sequence }))),
+    ).toEqual([[{ cause: "runner", sequence: 1 }], []])
+
+    await Effect.runPromise(Fiber.interrupt(first))
+    await waitFor(() => deliveries[1]!.some((change) => change.cause === "gap"))
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID),
+    )
+    await waitFor(() => deliveries[1]!.some((change) => change.cause === "runner"))
+    expect(
+      deliveries.map((items) => items.map(({ cause, sequence }) => ({ cause, sequence }))),
+    ).toEqual([
+      [{ cause: "runner", sequence: 1 }],
+      [
+        { cause: "gap", sequence: 2 },
+        { cause: "runner", sequence: 3 },
+      ],
+    ])
+  } finally {
+    await Effect.runPromise(Fiber.interrupt(first))
+    await Effect.runPromise(Fiber.interrupt(second))
+    fixture.close()
+  }
+})
+
 test("history cache hits remain permission-first and continuation data stays scoped", async () => {
   const fixture = makeFixture()
   const secret = new Uint8Array(32).fill(2)
@@ -829,6 +915,19 @@ test("registered live RPCs keep current reads bounded and page selected progress
               route: { ...observedRoute, identity: null },
             },
           },
+          {
+            source: "native-event",
+            eventID: "evt-concurrent-c",
+            eventType: "session.step.started",
+            at: 20_120,
+            status: "started",
+            messageID: "msg-concurrent-c",
+            route: observedRoute,
+            routeEvidence: {
+              status: "observed",
+              route: { ...observedRoute, identity: { ...observedRoute, modelID: "conflict" } },
+            },
+          },
         ],
       },
     })
@@ -851,6 +950,9 @@ test("registered live RPCs keep current reads bounded and page selected progress
     expect(
       conflictingRoutes.flow.find((edge) => edge.messageID === "msg-concurrent-b"),
     ).toMatchObject({ to: null, routeID: null, sourceEventID: "evt-concurrent-b" })
+    expect(
+      conflictingRoutes.flow.find((edge) => edge.messageID === "msg-concurrent-c"),
+    ).toMatchObject({ to: null, routeID: null, sourceEventID: "evt-concurrent-c" })
 
     for (const length of [239, 240, 241])
       insertLiveProgress(fixture, {
@@ -868,6 +970,21 @@ test("registered live RPCs keep current reads bounded and page selected progress
           error: { type: "ToolError", message: "e".repeat(length) },
         },
       })
+    insertLiveProgress(fixture, {
+      kind: "tool",
+      callID: "call-cap-astral",
+      messageID: "msg-live",
+      at: 22_500,
+      dedupeKey: "cap-tool-astral",
+      payload: {
+        tool: "Bash",
+        status: "succeeded",
+        callID: "call-cap-astral",
+        execution: { status: "executed" },
+        content: "😀".repeat(121),
+        error: { type: "ToolError", message: "😀".repeat(121) },
+      },
+    })
     for (const length of [599, 600, 601])
       insertLiveProgress(fixture, {
         kind: "tool",
@@ -884,14 +1001,44 @@ test("registered live RPCs keep current reads bounded and page selected progress
           error: { type: "ToolError", message: "j".repeat(length) },
         },
       })
+    insertLiveProgress(fixture, {
+      kind: "tool",
+      callID: "call-history-cap-astral",
+      messageID: "msg-live",
+      at: 23_800,
+      dedupeKey: "history-cap-tool-astral",
+      payload: {
+        tool: "Bash",
+        status: "succeeded",
+        callID: "call-history-cap-astral",
+        execution: { status: "executed" },
+        content: "😀".repeat(301),
+        error: { type: "ToolError", message: "😀".repeat(301) },
+      },
+    })
     const cappedFields = LiveRadarOutput.parse(
       await Effect.runPromise(handlers!.liveRadar({ scope, includeUnmanagedSessions: true })),
     )
     for (const length of [239, 240, 241]) {
       const call = cappedFields.calls.find((item) => item.callID === `call-cap-${length}`)!
-      expect(call.result!.length).toBeLessThanOrEqual(240)
-      expect(call.error!.length).toBeLessThanOrEqual(240)
+      const expectedLength = Math.min(length, 240)
+      expect(call.result).toHaveLength(expectedLength)
+      expect(call.error).toHaveLength(expectedLength)
+      if (length > 240) {
+        expect(call.result).toEndWith("…[truncated]")
+        expect(call.error).toEndWith("…[truncated]")
+      } else {
+        expect(call.result).toBe("r".repeat(length))
+        expect(call.error).toBe("e".repeat(length))
+      }
     }
+    const astralCall = cappedFields.calls.find((item) => item.callID === "call-cap-astral")!
+    expect(astralCall.result).toHaveLength(240)
+    expect(astralCall.error).toHaveLength(240)
+    expect(astralCall.result).toEndWith("…[truncated]")
+    expect(astralCall.error).toEndWith("…[truncated]")
+    expect(astralCall.result!.slice(0, -"…[truncated]".length)).not.toMatch(/[\uD800-\uDBFF]$/)
+    expect(astralCall.error!.slice(0, -"…[truncated]".length)).not.toMatch(/[\uD800-\uDBFF]$/)
 
     fixture.store.atomic((db) => {
       const insert = db.query(
@@ -1105,9 +1252,22 @@ test("registered live RPCs keep current reads bounded and page selected progress
       const item = allHistoryItems.find(
         (history) => history.callID === `call-history-cap-${length}`,
       )!
-      expect(item.result!.length).toBeLessThanOrEqual(600)
-      expect(item.error!.length).toBeLessThanOrEqual(600)
+      expect(item.result).toHaveLength(Math.min(length, 600))
+      expect(item.error).toHaveLength(Math.min(length, 600))
+      if (length > 600) {
+        expect(item.result).toEndWith("…[truncated]")
+        expect(item.error).toEndWith("…[truncated]")
+      }
     }
+    const historyAstral = allHistoryItems.find(
+      (history) => history.callID === "call-history-cap-astral",
+    )!
+    expect(historyAstral.result).toHaveLength(600)
+    expect(historyAstral.error).toHaveLength(600)
+    expect(historyAstral.result).toEndWith("…[truncated]")
+    expect(historyAstral.error).toEndWith("…[truncated]")
+    expect(historyAstral.result!.slice(0, -"…[truncated]".length)).not.toMatch(/[\uD800-\uDBFF]$/)
+    expect(historyAstral.error!.slice(0, -"…[truncated]".length)).not.toMatch(/[\uD800-\uDBFF]$/)
     await expect(
       Effect.runPromise(
         handlers!.liveHistory(
@@ -1235,6 +1395,161 @@ test("registered live RPCs keep current reads bounded and page selected progress
       "ses-retained-32",
     ])
   } finally {
+    fixture.close()
+  }
+})
+
+test("first inventory preserves selected unmanaged events and retrieves managed sessions beyond its cap", async () => {
+  const fixture = makeFixture()
+  const secret = new Uint8Array(32).fill(73)
+  const managedNative = radarNativeSession("ses-failed", "project", null, fixture.directory)
+  const selectedUnmanaged = {
+    ...radarNativeSession("ses-selected-unmanaged", "project", null, fixture.directory),
+    directory: `/private/${"d".repeat(5_000)}`,
+    agent: "a".repeat(250),
+    model: { providerID: "p".repeat(210), id: "m".repeat(310), variant: null },
+  }
+  const inventory = [
+    selectedUnmanaged,
+    ...Array.from({ length: 256 }, (_, index) =>
+      radarNativeSession(`ses-unmanaged-${index}`, "project", null, fixture.directory),
+    ),
+    managedNative,
+  ]
+  const inventoryStarted = Promise.withResolvers<void>()
+  const delayedInventory = Promise.withResolvers<{
+    sessions: RadarNativeSession[]
+    truncated: boolean
+  }>()
+  const firstSubscription = Promise.withResolvers<void>()
+  const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
+  const published: Array<{ cause: string; sequence: number }> = []
+  const selectedMetadataBytes = new TextEncoder().encode(
+    JSON.stringify({
+      id: selectedUnmanaged.id,
+      projectID: selectedUnmanaged.projectID,
+      parentID: selectedUnmanaged.parentID,
+      directory: selectedUnmanaged.directory,
+      agent: selectedUnmanaged.agent,
+      model: selectedUnmanaged.model,
+      archived: selectedUnmanaged.archived,
+      busy: selectedUnmanaged.busy,
+      createdAt: selectedUnmanaged.createdAt,
+      updatedAt: selectedUnmanaged.updatedAt,
+    }),
+  ).byteLength
+  let inventoryReads = 0
+  let managedReads = 0
+  let handlers: LiveHandlers | undefined
+  const nativeHost: RadarSessionHost = {
+    get: async (sessionID) => {
+      if (sessionID === "ses-failed") {
+        managedReads++
+        return managedNative
+      }
+      return null
+    },
+    project: async () => {
+      inventoryReads++
+      if (inventoryReads === 1) {
+        inventoryStarted.resolve()
+        return delayedInventory.promise
+      }
+      return { sessions: inventory, truncated: true }
+    },
+    descendants: async () => ({ sessions: [], truncated: false }),
+  }
+  const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, nativeHost)
+  fixture.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+  )
+  const ctx = {
+    rpc: {
+      register: (_definition: unknown, methods: LiveHandlers) => {
+        handlers = methods
+        return Effect.succeed({
+          dispose: Effect.void,
+          events: {
+            emit: (_name: string, change: { cause: string; sequence: number }) =>
+              Effect.sync(() => published.push(change)),
+          },
+        })
+      },
+    },
+    session: {
+      get: ({ sessionID }: { sessionID: string }) =>
+        Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "architect",
+          time: { archived: undefined },
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    event: {
+      subscribe: () => {
+        firstSubscription.resolve()
+        return Stream.fromQueue(eventQueue)
+      },
+    },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  const service = Effect.runFork(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerObservability(ctx, reads, "project")
+        yield* Effect.never
+      }),
+    ),
+  )
+
+  try {
+    await firstSubscription.promise
+    const scope = { kind: "project" as const, sessionID: "ses-owner" }
+    const firstRead = Effect.runPromise(
+      handlers!.liveRadar({ scope, includeUnmanagedSessions: true }),
+    )
+    await inventoryStarted.promise
+    await Effect.runPromise(
+      Queue.offer(eventQueue, {
+        id: "evt-selected-unmanaged-first-read",
+        type: "session.tool.progress",
+        durable: { aggregateID: "ses-selected-unmanaged", seq: 1 },
+        data: { sessionID: "ses-selected-unmanaged" },
+      }),
+    )
+    await Bun.sleep(20)
+    expect(published).toEqual([])
+    delayedInventory.resolve({ sessions: inventory, truncated: true })
+    await expect(firstRead).rejects.toThrow("changed during the live read")
+    await Effect.runPromise(
+      Effect.promise(async () => {
+        for (let index = 0; index < 400 && !published.length; index++) await Bun.sleep(5)
+      }),
+    )
+    expect(published).toMatchObject([{ cause: "native", sequence: 1 }])
+
+    const response = LiveRadarOutput.parse(
+      await Effect.runPromise(handlers!.liveRadar({ scope, includeUnmanagedSessions: true })),
+    )
+    expect(response.coverage.inventoryTruncated).toBe(true)
+    expect(response.coverage.nativeSessionReads).toBe(1)
+    expect(managedReads).toBe(2)
+    expect(response.sessions.some((session) => session.sessionID === "ses-failed")).toBe(true)
+    const unmanaged = response.sessions.find(
+      (session) => session.sessionID === "ses-selected-unmanaged",
+    )!
+    expect(unmanaged).toMatchObject({
+      classification: "unmanaged",
+      agent: null,
+      routeCoverage: { selected: "unavailable" },
+    })
+    expect(response.coverage.nativeMetadataBoundary).toBe("raw-selected-fields-after-adapter")
+    expect(response.coverage.nativeMetadataBytesInspected).toBeGreaterThan(selectedMetadataBytes)
+    expect(response.coverage.nativeMetadataBytesInspected).toBeLessThanOrEqual(
+      response.limits.nativeMetadataBytes,
+    )
+  } finally {
+    await Effect.runPromise(Fiber.interrupt(service))
     fixture.close()
   }
 })
