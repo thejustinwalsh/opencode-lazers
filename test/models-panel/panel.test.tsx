@@ -12,14 +12,10 @@ const vite = await createServer({
   appType: "custom",
 })
 afterAll(() => vite.close())
-const {
-  ModelCandidateRow,
-  HistoricalChartPlaceholder,
-  RoutingNotActiveNotice,
-  KnownUsageMarketScenarioCard,
-} = (await vite.ssrLoadModule(
-  "/src/models/comparison-panel.tsx",
-)) as typeof import("../../src/models/comparison-panel.tsx")
+const { ModelCandidateRow, HistoricalChartPlaceholder, KnownUsageMarketScenarioCard } =
+  (await vite.ssrLoadModule(
+    "/src/models/comparison-panel.tsx",
+  )) as typeof import("../../src/models/comparison-panel.tsx")
 
 const candidate = {
   candidateID: "openai|gpt-6|high",
@@ -169,17 +165,12 @@ test("candidate row bounds a missing-name ID visually and exposes its full exact
   expect(html).toContain(`title="new-provider / ${modelID}"`)
 })
 
-test("unavailable chart and read-only assignments never fabricate values or imply active routing", () => {
+test("unavailable chart never fabricates zero or illustrative comparison values", () => {
   const chart = renderToString(() => createComponent(HistoricalChartPlaceholder, {}))
   expect(chart).toContain("Unknown prices and zero-accepted configurations stay unplotted")
   expect(chart).toContain('role="status"')
   expect(chart).not.toContain("<svg")
   expect(chart).not.toContain("illustrative")
-
-  const assignments = renderToString(() => createComponent(RoutingNotActiveNotice, {}))
-  expect(assignments).toContain("Routing is not active")
-  expect(assignments).toContain("do not change worker dispatch")
-  expect(assignments).not.toContain("<button")
 })
 
 const observed = (

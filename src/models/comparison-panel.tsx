@@ -15,6 +15,8 @@ import type {
   ModelDecisionTaskKind,
 } from "./decision-contract.ts"
 import { ComparisonChart, comparisonChartHasPlottablePoints } from "./comparison-chart.tsx"
+import type { ComparisonChartReference } from "./comparison-chart.tsx"
+import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
@@ -193,8 +195,66 @@ function formatMoney(value: number | null) {
     : new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: "USD",
-        maximumFractionDigits: 6,
+        maximumSignificantDigits: 12,
       }).format(value)
+}
+
+function moneyRangeLabel(range: { minimum: number; maximum: number }) {
+  return range.minimum === range.maximum
+    ? formatMoney(range.minimum)
+    : `${formatMoney(range.minimum)}–${formatMoney(range.maximum)}`
+}
+
+function referenceCostLabel(estimate: ModelDecisionReferenceEstimate) {
+  switch (estimate.status) {
+    case "exact":
+      return `OpenRouter scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
+    case "conditional":
+      return `OpenRouter conditional range · ${estimate.rangeUSDPerAcceptedTask ? moneyRangeLabel(estimate.rangeUSDPerAcceptedTask) : "Unavailable"} / accepted task`
+    case "partial":
+      if (estimate.knownSubtotalUSDPerAcceptedTask !== null)
+        return `OpenRouter priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
+      if (estimate.knownSubtotalRangeUSDPerAcceptedTask)
+        return `OpenRouter priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
+      return "OpenRouter partial pricing · subtotal unavailable; total unknown"
+    case "zero-accepted":
+      return "No accepted tasks · no reference per-task amount"
+    case "unavailable":
+      return "OpenRouter reference unavailable"
+  }
+}
+
+function referenceSourceSummary(estimate: ModelDecisionReferenceEstimate) {
+  const provenance = estimate.provenance
+  const source =
+    provenance.source === "openrouter-models"
+      ? "OpenRouter published model catalog"
+      : "OpenRouter source unavailable"
+  const retrieved = provenance.retrievedAt
+    ? `retrieved ${formatDate(provenance.retrievedAt)}`
+    : "retrieval time unavailable"
+  return `${source} · ${provenance.freshness} · ${retrieved} · denominator ${formatNumber(estimate.acceptedTaskCount)} accepted tasks. Actual route-specific task mix; not a common workload or universal ranking.`
+}
+
+function referenceRowBasis(estimate: ModelDecisionReferenceEstimate) {
+  const source =
+    estimate.provenance.source === "openrouter-models"
+      ? "OpenRouter catalog"
+      : "OpenRouter source unavailable"
+  return `${source} · ${estimate.provenance.freshness} · ${formatNumber(estimate.acceptedTaskCount)} accepted · actual task mix (not common workload)`
+}
+
+const referenceUsageCategories = [
+  ["uncachedInput", "Uncached input"],
+  ["output", "Output"],
+  ["reasoning", "Reasoning"],
+  ["cacheRead", "Cache read"],
+  ["cacheWrite", "Cache write"],
+] as const
+
+function referenceCategoryStatus(estimate: ModelDecisionReferenceEstimate, category: string) {
+  const usage = estimate.coverage.categories[category as keyof typeof estimate.coverage.categories]
+  return `${usage.tokens === null ? "tokens unknown" : `${formatNumber(usage.tokens)} tokens`} · ${usage.status} usage · ${usage.rateCoverage} rate coverage`
 }
 
 const knownUsageCurrency = new Intl.NumberFormat("en-US", {
@@ -675,14 +735,6 @@ export function HistoricalChartPlaceholder() {
   )
 }
 
-export function RoutingNotActiveNotice() {
-  return (
-    <p class="lazers-models-routing-notice" role="note">
-      Routing is not active. Saved assignments do not change worker dispatch.
-    </p>
-  )
-}
-
 function sourceRefreshLabel(data: ModelComparisonPanelData) {
   if (data.sourceRefresh === "refreshing") return "Refreshing external and native sources…"
   if (data.sourceRefresh === "failed") return "Source refresh failed; cached evidence is retained."
@@ -869,24 +921,26 @@ function ModelPanel(
             { sessionID: value.session, scope: { projectDirectory: value.project }, filters },
             { ...location, signal },
           ),
-        decisionRows: (filters, cursor, signal) =>
+        decisionRows: (filters, cursor, snapshotID, signal) =>
           decisions.rows(
             {
               sessionID: value.session,
               scope: { projectDirectory: value.project },
               filters,
               limit: 50,
+              snapshotID,
               ...(cursor ? { cursor } : {}),
             },
             { ...location, signal },
           ),
-        decisionConfigurations: (filters, cursor, signal) =>
+        decisionConfigurations: (filters, cursor, snapshotID, signal) =>
           decisions.configurations(
             {
               sessionID: value.session,
               scope: { projectDirectory: value.project },
               filters,
               limit: 50,
+              snapshotID,
               ...(cursor ? { cursor } : {}),
             },
             { ...location, signal },
@@ -971,6 +1025,8 @@ function ModelPanel(
     if (row.efficiency.currentMarketUSDPerAcceptedTask === null) return "Unknown"
     return formatMoney(row.efficiency.currentMarketUSDPerAcceptedTask)
   }
+  const referenceCostForRow = (row: ModelDecisionRow) =>
+    row.referenceEstimate ? referenceCostLabel(row.referenceEstimate) : undefined
   const selectedTask = () => visible()?.task
   const selectedDecisionConfiguration = () => {
     const current = visible()
@@ -984,6 +1040,26 @@ function ModelPanel(
         (row) => row.configuration.configurationID === current.selectedConfigurationID,
       )?.configuration
     )
+  }
+  const decisionChartReferences = (): ComparisonChartReference[] => {
+    const overview = visible()?.decisionOverview
+    if (!overview) return []
+    const points = new Map(
+      overview.graph.points.map((point) => [point.configurationID, point] as const),
+    )
+    return (overview.graph.referenceEstimates ?? []).map((item) => {
+      const point = points.get(item.configurationID)
+      return {
+        configurationID: item.configurationID,
+        estimate: item.estimate,
+        // An explicit null is authoritative: never replace unknown global data
+        // with a number or label discovered on a loaded page or inspection.
+        tokensPerAcceptedTask: Object.hasOwn(item, "tokensPerAcceptedTask")
+          ? (item.tokensPerAcceptedTask ?? null)
+          : (point?.tokensPerAcceptedTask ?? null),
+        label: item.label ?? point?.label ?? item.configurationID,
+      }
+    })
   }
   const availableConfigurations = (): ModelDecisionConfiguration[] => {
     const current = visible()
@@ -1783,7 +1859,6 @@ function ModelPanel(
               id="lazers-models-assignments-panel"
               aria-labelledby="lazers-models-assignments-tab"
             >
-              <RoutingNotActiveNotice />
               <Show when={visible()?.settingsLoading}>
                 <p class="lazers-models-note">
                   <Ui.Loader size="small" /> Loading saved assignments…
@@ -1898,10 +1973,15 @@ function ModelPanel(
               <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
                 <div class="lazers-models-section-heading">
                   <h3 id="lazers-models-chart-title">
-                    {visible()?.decisionOverview &&
-                    !comparisonChartHasPlottablePoints(visible()!.decisionOverview!.graph.points)
-                      ? "No plottable comparison points"
-                      : "Historical task outcomes"}
+                    {(() => {
+                      const points = visible()?.decisionOverview?.graph.points ?? []
+                      const references = decisionChartReferences()
+                      if (comparisonChartHasPlottablePoints(points))
+                        return "Historical task outcomes"
+                      if (comparisonChartHasPlottablePoints([], references))
+                        return "OpenRouter reference estimates · actual task mix"
+                      return "No plottable comparison points"
+                    })()}
                   </h3>
                   <span
                     class="lazers-models-decision-status"
@@ -1933,19 +2013,15 @@ function ModelPanel(
                   }
                 >
                   {(overview) => (
-                    <Show
-                      when={comparisonChartHasPlottablePoints(overview().graph.points)}
-                      fallback={<HistoricalChartPlaceholder />}
-                    >
-                      <ComparisonChart
-                        points={overview().graph.points}
-                        frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
-                        selectedConfigurationID={visible()?.selectedConfigurationID}
-                        onSelect={(configurationID) => state.selectConfiguration(configurationID)}
-                        appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-                        monoFontFamily={ctx.appearance.font("mono")}
-                      />
-                    </Show>
+                    <ComparisonChart
+                      points={overview().graph.points}
+                      references={decisionChartReferences()}
+                      frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
+                      selectedConfigurationID={visible()?.selectedConfigurationID}
+                      onSelect={(configurationID) => state.selectConfiguration(configurationID)}
+                      appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
+                      monoFontFamily={ctx.appearance.font("mono")}
+                    />
                   )}
                 </Show>
               </section>
@@ -1969,13 +2045,13 @@ function ModelPanel(
                 >
                   <table
                     class="lazers-models-decision-rows"
-                    aria-label="Canonical model comparison"
+                    aria-label="Model cost per accepted task by exact route"
                   >
                     <thead>
                       <tr>
                         <th scope="col">Model</th>
                         <th scope="col">Accepted</th>
-                        <th scope="col">Cost / task</th>
+                        <th scope="col">Cost / accepted task</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2013,7 +2089,7 @@ function ModelPanel(
                                     visible()?.selectedConfigurationID
                                   }
                                   title={routeLabel(configuration().route)}
-                                  aria-label={`Inspect ${decisionModelFullName(configuration())}; exact route ${routeLabel(configuration().route)}; ${acceptedTaskValue(row())} accepted tasks; ${currentCostPerAcceptedTask(row())} current market cost per accepted task`}
+                                  aria-label={`Inspect ${decisionModelFullName(configuration())}; exact route ${routeLabel(configuration().route)}; ${acceptedTaskValue(row())} accepted tasks; ${currentCostPerAcceptedTask(row())} canonical current market cost per accepted task${referenceCostForRow(row()) ? `; ${referenceCostForRow(row())}` : ""}`}
                                   onClick={() =>
                                     state.selectConfiguration(configuration().configurationID)
                                   }
@@ -2023,10 +2099,27 @@ function ModelPanel(
                               </th>
                               <td>{acceptedTaskValue(row())}</td>
                               <td
-                                title="Current market valuation per accepted task."
+                                title="Canonical current-market valuation and the separate OpenRouter reference per accepted task."
                                 data-status={row().efficiency.status}
                               >
-                                {currentCostPerAcceptedTask(row())}
+                                <span class="lazers-models-canonical-cost">
+                                  Market · {currentCostPerAcceptedTask(row())}
+                                </span>
+                                <Show when={row().referenceEstimate}>
+                                  {(estimate) => (
+                                    <span class="lazers-models-reference-cost-group">
+                                      <span
+                                        class="lazers-models-reference-cost"
+                                        data-reference-status={estimate().status}
+                                      >
+                                        {referenceCostLabel(estimate())}
+                                      </span>
+                                      <span class="lazers-models-reference-meta">
+                                        {referenceRowBasis(estimate())}
+                                      </span>
+                                    </span>
+                                  )}
+                                </Show>
                               </td>
                             </tr>
                           )
@@ -2192,6 +2285,101 @@ function ModelPanel(
                           </strong>
                           <span>{estimateValuesLabel(inspection().estimate)}</span>
                         </p>
+                        <Show when={inspection().referenceEstimate}>
+                          {(reference) => (
+                            <section
+                              class="lazers-models-reference-estimate"
+                              aria-label="OpenRouter actual-cohort reference estimate"
+                            >
+                              <p class="lazers-models-estimate" role="status">
+                                <strong>{referenceCostLabel(reference())}</strong>
+                                <span>
+                                  Canonical current-market cost ·{" "}
+                                  {inspection().efficiency.currentMarketUSDPerAcceptedTask === null
+                                    ? "Unknown"
+                                    : formatMoney(
+                                        inspection().efficiency.currentMarketUSDPerAcceptedTask,
+                                      )}
+                                  {" · "}
+                                  {referenceSourceSummary(reference())}
+                                </span>
+                              </p>
+                              <details class="lazers-models-reference-details">
+                                <summary>OpenRouter reference coverage and source</summary>
+                                <div class="lazers-models-reference-content">
+                                  <p>
+                                    This reference uses observed attributed usage and published
+                                    OpenRouter rates. Failed and retry effort is included as
+                                    producer-reported; it is divided by accepted logical tasks.
+                                    Actual task mix can differ by configuration; this is not a
+                                    common workload or universal ranking.
+                                  </p>
+                                  <p>
+                                    Identity · {reference().identityStatus} · source availability ·{" "}
+                                    {reference().provenance.availability} · access ·{" "}
+                                    {reference().provenance.access} · freshness ·{" "}
+                                    {reference().provenance.freshness}
+                                  </p>
+                                  <p>
+                                    Source snapshot ·{" "}
+                                    {reference().provenance.snapshotID ?? "unavailable"} ·
+                                    generation ·{" "}
+                                    {reference().provenance.generation ?? "unavailable"} · record ·{" "}
+                                    {reference().provenance.recordID ?? "unavailable"}
+                                    {reference().provenance.recordIndex === null
+                                      ? ""
+                                      : ` · index ${Number(reference().provenance.recordIndex) + 1}`}
+                                    {reference().provenance.retrievedAt
+                                      ? ` · retrieved ${formatDate(reference().provenance.retrievedAt)}`
+                                      : " · retrieval date unavailable"}
+                                  </p>
+                                  <Show when={reference().provenance.sourceURL}>
+                                    {(sourceURL) => (
+                                      <p>
+                                        <a href={sourceURL()} target="_blank" rel="noreferrer">
+                                          OpenRouter published source
+                                        </a>
+                                      </p>
+                                    )}
+                                  </Show>
+                                  <h3>Usage categories and rate coverage</h3>
+                                  <ul>
+                                    <For each={referenceUsageCategories}>
+                                      {([category, label]) => (
+                                        <li>
+                                          {label} · {referenceCategoryStatus(reference(), category)}
+                                        </li>
+                                      )}
+                                    </For>
+                                  </ul>
+                                  <p>
+                                    Failed/retry coverage · {reference().coverage.retries.status} ·{" "}
+                                    {reference().coverage.retries.attemptCount} attempts ·{" "}
+                                    {reference().coverage.retries.failedAttemptCount} failed ·{" "}
+                                    {reference().coverage.retries.retryAttemptCount} retries ·{" "}
+                                    {reference().coverage.retries.attemptsWithCompleteUsage} with
+                                    complete usage
+                                  </p>
+                                  <p>
+                                    Attribution · {reference().coverage.attribution.status} ·{" "}
+                                    {reference().coverage.attribution.matchedRouteSessionCount}{" "}
+                                    matched route /{" "}
+                                    {reference().coverage.attribution.relatedSessionCount} related
+                                    sessions ·{" "}
+                                    {reference().coverage.attribution.unknownRouteTaskCount} tasks
+                                    with unknown route ·{" "}
+                                    {reference().coverage.attribution.sharedSessionCount} shared ·{" "}
+                                    {reference().coverage.attribution.unattributedSessionCount}{" "}
+                                    unattributed
+                                  </p>
+                                  <Show when={reference().reasons.length > 0}>
+                                    <p>Reference notes · {reference().reasons.join(", ")}</p>
+                                  </Show>
+                                </div>
+                              </details>
+                            </section>
+                          )}
+                        </Show>
                         <Show when={inspection().knownUsageMarket?.scenarios[0]}>
                           {(scenario) => <KnownUsageMarketScenarioCard scenario={scenario()} />}
                         </Show>

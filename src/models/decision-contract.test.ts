@@ -34,6 +34,75 @@ import {
   ModelsDecision,
 } from "./decision-contract.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
+import { ModelDecisionReferenceEstimateSchema } from "./reference-estimate.ts"
+
+function unavailableReferenceEstimate() {
+  const category = {
+    tokens: null,
+    status: "unavailable" as const,
+    rateCoverage: "unknown" as const,
+  }
+  return ModelDecisionReferenceEstimateSchema.parse({
+    status: "unavailable",
+    basis: "openrouter-published-model-reference-cost-per-accepted-task",
+    route: { providerID: "openai", modelID: "gpt-6", variant: "high" },
+    acceptedTaskCount: 1,
+    numeratorUSD: null,
+    numeratorRangeUSD: null,
+    valueUSDPerAcceptedTask: null,
+    rangeUSDPerAcceptedTask: null,
+    knownSubtotalUSD: null,
+    knownSubtotalRangeUSD: null,
+    knownSubtotalUSDPerAcceptedTask: null,
+    knownSubtotalRangeUSDPerAcceptedTask: null,
+    identityStatus: "source-unavailable",
+    provenance: {
+      source: null,
+      policyRevision: 0,
+      availability: "unavailable",
+      access: "unknown",
+      snapshotID: null,
+      generation: null,
+      retrievedAt: null,
+      sourceURL: null,
+      recordID: null,
+      recordIndex: null,
+      freshness: "unavailable",
+    },
+    coverage: {
+      categories: {
+        uncachedInput: category,
+        output: category,
+        reasoning: category,
+        cacheRead: category,
+        cacheWrite: category,
+      },
+      retries: {
+        status: "unknown",
+        attemptCount: 0,
+        failedAttemptCount: 0,
+        retryAttemptCount: 0,
+        attemptsWithCompleteUsage: 0,
+        failedAttemptsWithCompleteUsage: 0,
+        retryAttemptsWithCompleteUsage: 0,
+      },
+      attribution: {
+        status: "partial",
+        relatedTaskCount: 0,
+        unknownRouteTaskCount: 0,
+        relatedSessionCount: 0,
+        matchedRouteSessionCount: 0,
+        includedSessionCount: 0,
+        otherRouteSessionCount: 0,
+        mixedRouteSessionCount: 0,
+        unknownRouteSessionCount: 0,
+        sharedSessionCount: 0,
+        unattributedSessionCount: 0,
+      },
+    },
+    reasons: ["catalog-unavailable"],
+  })
+}
 
 test("versioned reads share producer context while the global graph stays independent of row pages", () => {
   const overview = ModelDecisionOverviewOutputSchema.parse(decisionOverview())
@@ -92,6 +161,49 @@ test("versioned reads share producer context while the global graph stays indepe
   expect(inspect.contributorPage.contributors[0]?.membership).toBeUndefined()
   expect(inspect.estimate.confidenceInterval).toBeNull()
   expect(inspect.referenceEstimate).toBeUndefined()
+})
+
+test("global reference chart labels and actual effort coordinates are backward-compatible optional fields", () => {
+  const legacy = ModelDecisionOverviewOutputSchema.parse(decisionOverview())
+  expect(legacy.graph.referenceEstimates).toBeUndefined()
+
+  const estimate = unavailableReferenceEstimate()
+  const enriched = ModelDecisionOverviewOutputSchema.parse({
+    ...decisionOverview(),
+    graph: {
+      ...decisionOverview().graph,
+      referenceEstimates: [
+        {
+          configurationID: CONFIG_ONE,
+          label: "Producer-owned route label",
+          tokensPerAcceptedTask: 12_345.5,
+          estimate,
+        },
+        { configurationID: CONFIG_SINGLE, estimate },
+        {
+          configurationID: CONFIG_ZERO,
+          label: "Producer-owned unknown coordinate",
+          tokensPerAcceptedTask: null,
+          estimate,
+        },
+      ],
+    },
+  })
+  expect(enriched.graph.referenceEstimates).toEqual([
+    {
+      configurationID: CONFIG_ONE,
+      label: "Producer-owned route label",
+      tokensPerAcceptedTask: 12_345.5,
+      estimate,
+    },
+    { configurationID: CONFIG_SINGLE, estimate },
+    {
+      configurationID: CONFIG_ZERO,
+      label: "Producer-owned unknown coordinate",
+      tokensPerAcceptedTask: null,
+      estimate,
+    },
+  ])
 })
 
 test("first-page snapshot pins are additive to legacy v2 inputs and registered RPC schemas", () => {

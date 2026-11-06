@@ -2330,6 +2330,8 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
     expect(marketRow.configuration.referenceEstimate).toEqual(marketEstimate)
     expect(globalReferenceEstimates).toContainEqual({
       configurationID: marketRow.configuration.configurationID,
+      label: marketRow.configuration.label,
+      tokensPerAcceptedTask: marketRow.efficiency.tokensPerAcceptedTask,
       estimate: marketEstimate,
     })
     expect(
@@ -2520,6 +2522,15 @@ test("registered first-page snapshot pins keep rows, configurations, and referen
     expect(pinnedInspection.status).toBe("found")
     if (pinnedInspection.status === "found")
       expect(pinnedInspection.referenceEstimate).toEqual(estimateA)
+
+    const pinnedGlobalEstimate = overviewA.graph.referenceEstimates?.find(
+      (item) => item.configurationID === configurationID,
+    )
+    expect(pinnedGlobalEstimate).toMatchObject({
+      label: expect.any(String),
+      tokensPerAcceptedTask: expect.any(Number),
+      estimate: estimateA,
+    })
 
     const refreshedRows = ModelDecisionRowsOutputSchema.parse(
       await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 })),

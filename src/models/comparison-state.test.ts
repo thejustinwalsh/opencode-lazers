@@ -511,13 +511,145 @@ test("decision controller rejects mismatched snapshot, scope, and filters withou
     )
     try {
       await until(() => state.data.decisionStatus === "error" && !state.data.decisionRowsLoading)
-      expect(state.data.decisionError).toContain("disagree on project, filters, or snapshot")
+      expect(state.data.decisionError).toContain(
+        mismatch === "snapshot"
+          ? "disagree on project, filters, or snapshot"
+          : "disagree on project or filters",
+      )
       expect(state.data.decisionOverview).toBeUndefined()
       expect(state.data.decisionRows).toEqual([])
       expect(state.data.decisionConfigurations).toEqual([])
     } finally {
       state.close()
     }
+  }
+})
+
+test("decision capture refreshes sources first, pins both first pages, and retries an expired or same-scope race once", async () => {
+  const filters = decisionRead.filters
+  for (const firstAttempt of ["expired", "same-scope-race"] as const) {
+    const first = coherentDecisionPage("/repo", filters, `snapshot:${firstAttempt}:first`)
+    const second = coherentDecisionPage("/repo", filters, `snapshot:${firstAttempt}:second`)
+    const pendingSourceRefresh = deferred<ModelEvidenceOutput>()
+    const events: string[] = []
+    const rowPins: string[] = []
+    const configurationPins: string[] = []
+    let overviewReads = 0
+    const publishedSnapshots: string[] = []
+    const state = new ModelComparisonPanelState((data) => {
+      if (data.decisionContext && data.decisionRows.length)
+        publishedSnapshots.push(data.decisionContext.snapshotID)
+    })
+    state.connect(
+      `decision-pinned-${firstAttempt}`,
+      "project-a",
+      "/repo",
+      transport({
+        queryTasks: async () => tasks([]),
+        refreshSources: async () => {
+          events.push("sources")
+          return pendingSourceRefresh.promise
+        },
+        decisionOverview: async () => {
+          events.push("overview")
+          return overviewReads++ === 0 ? first.overview : second.overview
+        },
+        decisionRows: async (_filters, _cursor, snapshotID) => {
+          rowPins.push(snapshotID)
+          events.push(`rows:${snapshotID}`)
+          if (snapshotID === first.overview.context.snapshotID) {
+            if (firstAttempt === "expired")
+              throw new Error("Model decision snapshot is unavailable or expired")
+            return {
+              ...first.rows,
+              context: { ...first.rows.context, snapshotID: "snapshot:race:advanced" },
+            }
+          }
+          return second.rows
+        },
+        decisionConfigurations: async (_filters, _cursor, snapshotID) => {
+          configurationPins.push(snapshotID)
+          events.push(`configurations:${snapshotID}`)
+          return snapshotID === first.overview.context.snapshotID
+            ? first.configurations
+            : second.configurations
+        },
+      }),
+      { selectedTaskID: null, selectedCandidateID: null },
+      filters,
+    )
+    try {
+      await until(() => events.includes("sources"))
+      expect(events).toEqual(["sources"])
+      expect(overviewReads).toBe(0)
+      pendingSourceRefresh.resolve(evidence())
+      await until(
+        () =>
+          state.data.decisionStatus === "ready" &&
+          state.data.decisionContext?.snapshotID === second.overview.context.snapshotID,
+      )
+      expect(overviewReads).toBe(2)
+      expect(rowPins).toEqual([
+        first.overview.context.snapshotID,
+        second.overview.context.snapshotID,
+      ])
+      expect(configurationPins).toEqual([
+        first.overview.context.snapshotID,
+        second.overview.context.snapshotID,
+      ])
+      expect(publishedSnapshots).toEqual([second.overview.context.snapshotID])
+      expect(state.data.decisionRows).toEqual(second.rows.rows)
+      expect(state.data.decisionConfigurations).toEqual(second.configurations.configurations)
+      expect(events.indexOf("sources")).toBeLessThan(events.indexOf("overview"))
+    } finally {
+      state.close()
+    }
+  }
+})
+
+test("repeated expired pinned reads preserve the last complete decision tuple as stale", async () => {
+  const filters = decisionRead.filters
+  const retained = coherentDecisionPage("/repo", filters, "snapshot:retained")
+  let overviewReads = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "decision-pinned-expiry",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async () => {
+        overviewReads++
+        return overviewReads === 1
+          ? retained.overview
+          : coherentDecisionPage("/repo", filters, `snapshot:expired:${overviewReads}`).overview
+      },
+      decisionRows: async (_filters, _cursor, snapshotID) => {
+        if (snapshotID === retained.overview.context.snapshotID) return retained.rows
+        throw new Error("Model decision snapshot is unavailable or expired")
+      },
+      decisionConfigurations: async (_filters, _cursor, snapshotID) => {
+        if (snapshotID === retained.overview.context.snapshotID) return retained.configurations
+        throw new Error("Model decision snapshot is unavailable or expired")
+      },
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => state.data.decisionStatus === "ready")
+    const retainedOverview = state.data.decisionOverview
+    const retainedRows = state.data.decisionRows
+    const retainedConfigurations = state.data.decisionConfigurations
+    await state.refreshDecisionSnapshot()
+    expect(state.data.decisionStatus).toBe("stale")
+    expect(state.data.decisionError).toContain("unavailable or expired")
+    expect(state.data.decisionOverview).toBe(retainedOverview)
+    expect(state.data.decisionRows).toBe(retainedRows)
+    expect(state.data.decisionConfigurations).toBe(retainedConfigurations)
+    expect(overviewReads).toBe(3)
+  } finally {
+    state.close()
   }
 })
 

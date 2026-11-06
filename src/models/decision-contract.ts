@@ -468,6 +468,10 @@ export const ModelDecisionGraphSchema = z.strictObject({
     .array(
       z.strictObject({
         configurationID: OpaqueID,
+        /** Stable producer-owned display label, independent of loaded row pages. */
+        label: z.string().min(1).max(512).optional(),
+        /** Actual cohort effort coordinate; null means the producer has no numeric basis. */
+        tokensPerAcceptedTask: Nonnegative.nullable().optional(),
         estimate: ModelDecisionReferenceEstimateSchema,
       }),
     )
