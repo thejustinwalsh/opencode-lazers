@@ -64,11 +64,37 @@ active status confirmed. Task instructions, cached index/outline and progress
 calls actually succeeded; worker is reading relevant panel/tests. LZ-169
 3b5ed421-d8b4-42bb-b238-7ea15c70286e follows168 sequentially for chart names,
 tooltips and legend; shared panel/CSS scopes justify serial execution.
-Main's continuation msg_1b19eda2b001WZ1Sr1r4kENWWw asks it to continue the existing
-prioritized roadmap through compatible independent lanes while UI runs, without
-historical review loops or source activation under healthy workers. Verify its
-actual subsequent decisions; do not claim a second implementation worker yet.
-Do not use the older original Tera review to restore the removed side table.
+Main consumed the roadmap continuation and dispatched two further original
+queued lanes, all on OpenAI gpt-6-luna/max in distinct native worktrees:
+
+- LZ-155 taskc23ffca3-fe8d-4102-afe6-3ee6ebf12f0c, plan
+  b2d491ae-b125-485e-8637-796ae194447e, attempt
+  3cac0215-de89-4d5f-9b05-694ec6a3c822, worker
+  ses_2221f33835cd4e04b453227d8a176103, started1793981780184. Main removed
+  only its obsolete Models VISUAL prerequisite after verifying integrated source
+  prerequisites; priority80 below Models100. Native transient permission cleared
+  and same attempt reconciled. Actual source edits underway.
+- LZ-163 task83098b94-d420-4759-bbf8-25e22cb08468, plan
+  61e9cffc-7883-43d9-81e0-803e0fd591b1, attempt
+  0eeb5b3b-d65e-4bf2-b305-0549d3f6ad40, worker
+  ses_f1a9e1c74a874f4180d48c479737410a, started1793982358363. Priority90;
+  normal reservation released by real138TASKacceptance, no quarantine substitute.
+  131 priority70 preserves original130history and serializes actual overlapping
+  runtime/trajectory scopes. 148/149 still have genuine queued prerequisites.
+  Root read-only exact scope comparison identified138 as the remaining unsealed
+  runtime conflict; helper /private/tmp/lz-read-current-scope-blockers.ts. Root
+  queued this current fact through Desktop without interrupting workers. Main used
+  supported reassign→ordinary task human-evidence→reconcile→task integrated for138.
+  No SQL mutation, new proof worker or canonical source activation.
+  LZ-168 actual typecheck now passes386files after initial4nullable-access errors;
+  rendered tests, delivery and live visual acceptance remain pending. First native
+  progress/index/instruction calls succeeded; edits remain in owned worker scope.
+  Root clicked Tasks→168→Open trajectory: matched original worker/LunaMax,54calls,
+  recorded11:06:08reservation start, connected updates; task activity became active
+  on current read. Current trajectory still exposes technical timing/cost prose;
+  155/131 and later consumer review remain. Capture:
+  /private/tmp/lz-active168-trajectory-20261106.png.
+  Do not use the older original Tera review to restore the removed side table.
 
 Main Architect: ses_e568438ebffeaoFbF9nBb942XM, Sol High.
 Current visual reviewer: ses_e52a5ae04ffeObat8Bt6imz4ci, general agent,
@@ -178,10 +204,12 @@ See retained156-native-observation-20261106.json and native-worktree-dependencie
 review. Tests and real checks are evidence, not hashes.
 
 138 task0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4, plan
-e48290a6-a871-42a2-94f1-c88f700c0d11 stillBLOCKEDv78 on native-no-proof-turn human
-gate. Current owner5c1563b654ed441990b217eb2006ef2f paged historical notices rather
-than current review. Its parented Architect UI is read-only. Main must deliver a
-concrete native assignment using actual gen3proof; no manual SQL or history wipe.
+e48290a6-a871-42a2-94f1-c88f700c0d11 nowowned by Main after supported reassignment. Original091ee91c/00c TASK is
+ACTUALLY accepted and task source integration recorded through native commands,
+using real156gen3proof and explicit installed Root e36/63host-fix binding. This
+released163's reservation. Plan remains blocked on combined129repair/check/review
+acceptance; do not claim the whole plan complete or clean old resources. Main
+explicitly preserved that combined gate. No task/proof/history replacement.
 
 163 ownership/continuation correction must support authorized reassignment AND
 renewal: native launch parent is history, not current plan authority. Preserve
