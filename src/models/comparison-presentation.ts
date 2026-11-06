@@ -3,6 +3,8 @@ import type {
   ModelComparisonCandidateSchema,
   ModelComparisonSourceSchema,
 } from "./comparison-schema.ts"
+import type { ModelDecisionEstimate } from "./decision-contract.ts"
+import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 
 const NullableNumber = z.number().finite().nullable()
 const Route = z
@@ -170,6 +172,115 @@ export const TaskEffortBasisSchema = z
 export type TaskEffortBasis = z.infer<typeof TaskEffortBasisSchema>
 export type ModelCandidate = typeof ModelComparisonCandidateSchema._output
 export type ModelSource = typeof ModelComparisonSourceSchema._output
+
+export type CurrentMarketEstimateSummary = {
+  amount: string
+  context: string
+  title: string
+}
+
+const compactMarketCurrency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumSignificantDigits: 1,
+  maximumSignificantDigits: 3,
+})
+const scientificMarketCurrency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "scientific",
+  maximumSignificantDigits: 3,
+})
+
+function marketAmount(value: number) {
+  return value !== 0 && (Math.abs(value) < 0.000001 || Math.abs(value) >= 1_000_000_000_000)
+    ? scientificMarketCurrency.format(value).replace("E", "e")
+    : compactMarketCurrency.format(value)
+}
+
+function marketRange(range: { minimum: number; maximum: number }) {
+  return range.minimum === range.maximum
+    ? marketAmount(range.minimum)
+    : `${marketAmount(range.minimum)}–${marketAmount(range.maximum)}`
+}
+
+function marketFreshness(value: "current" | "stale" | "unknown" | "unavailable") {
+  return value === "current" ? "current" : value === "stale" ? "stale" : "freshness unknown"
+}
+
+function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
+  const freshness = marketFreshness(estimate.provenance.freshness)
+  const retrievedAt = estimate.provenance.retrievedAt
+    ? ` · retrieved ${estimate.provenance.retrievedAt}`
+    : " · retrieval date unavailable"
+
+  if (estimate.acceptedTaskCount < 1) return undefined
+
+  if (estimate.status === "exact" && estimate.valueUSDPerAcceptedTask !== null) {
+    return {
+      amount: `≈${marketAmount(estimate.valueUSDPerAcceptedTask)} / accepted task`,
+      context: `OpenRouter · ${freshness}`,
+      title: `OpenRouter scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · ${freshness}${retrievedAt}`,
+    }
+  }
+  if (estimate.status === "conditional" && estimate.rangeUSDPerAcceptedTask !== null) {
+    return {
+      amount: `≈${marketRange(estimate.rangeUSDPerAcceptedTask)} / accepted task`,
+      context: `OpenRouter conditional range · ${freshness}`,
+      title: `OpenRouter conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · ${freshness}${retrievedAt}`,
+    }
+  }
+  if (estimate.status !== "partial") return undefined
+
+  if (estimate.knownSubtotalUSDPerAcceptedTask !== null) {
+    return {
+      amount: `≈${marketAmount(estimate.knownSubtotalUSDPerAcceptedTask)} priced subtotal / accepted task`,
+      context: `OpenRouter · remainder unknown · ${freshness}`,
+      title: `OpenRouter known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · remainder unknown · ${freshness}${retrievedAt}`,
+    }
+  }
+  if (estimate.knownSubtotalRangeUSDPerAcceptedTask !== null) {
+    return {
+      amount: `≈${marketRange(estimate.knownSubtotalRangeUSDPerAcceptedTask)} priced subtotal / accepted task`,
+      context: `OpenRouter · remainder unknown · ${freshness}`,
+      title: `OpenRouter known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · remainder unknown · ${freshness}${retrievedAt}`,
+    }
+  }
+  return undefined
+}
+
+/** Prefer the producer's configured market valuation, then its OpenRouter reference. */
+export function currentMarketEstimateSummary(input: {
+  estimate: ModelDecisionEstimate
+  referenceEstimate?: ModelDecisionReferenceEstimate
+  acceptedTaskCount: number
+  priceSource: "openrouter" | "opencode" | "mixed" | "unavailable"
+  priceFreshness: "current" | "stale" | "unavailable"
+}): CurrentMarketEstimateSummary | undefined {
+  if (input.acceptedTaskCount < 1) return undefined
+
+  const currentMarket = input.estimate.range.currentMarketUSD
+  if (currentMarket) {
+    const freshness = marketFreshness(input.priceFreshness)
+    const source =
+      input.priceSource === "openrouter"
+        ? "OpenRouter"
+        : input.priceSource === "opencode"
+          ? "OpenCode"
+          : input.priceSource === "mixed"
+            ? "Configured price sources"
+            : "Price source unknown"
+    const partial = input.estimate.status === "partial"
+    const amount = marketRange(currentMarket)
+    return {
+      amount: `≈${amount} / accepted task`,
+      context: `${source}${partial ? " · partial observed cohort" : ""} · ${freshness}`,
+      title: `Producer current-market estimate · exact USD per accepted task ${String(currentMarket.minimum)}–${String(currentMarket.maximum)} · ${input.estimate.observationCount} observation(s) · ${source} · ${freshness}`,
+    }
+  }
+
+  return input.referenceEstimate ? referenceMarketSummary(input.referenceEstimate) : undefined
+}
 
 /** Read only the versioned categorized projection; legacy scalar attempt tokens are not a fallback. */
 export function readTaskEffortBasis(report: unknown): TaskEffortBasis | undefined {
