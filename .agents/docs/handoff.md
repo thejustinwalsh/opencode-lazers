@@ -5,6 +5,42 @@ Goal remains active: drive OpenCode Desktop until the full roadmap is implemente
 verified, integrated and cleaned, then propose observation-based improvements.
 Runtime/API readback is authoritative. Revalidate live handles before acting.
 
+## Latest checkpoint — 2026-11-06 afternoon
+
+LZ-168 original worker delivered clean commit8dad5df after18panel tests,
+655registered-panel assertions, GUI build/lint/typecheck and changed-file formatting.
+Global formatting failed only untouched baseline handoff.md and
+models-price-review-followthrough-20261106.md. Runtime nevertheless created
+repair attemptfb309498-2cb0-4594-a3f1-c4211c3a5608, worker
+ses_8fb7834c899145518ac38b7082c98743, OpenAI Luna/max. Preserve both histories;
+Main received native Desktop notice to allow mechanical autoformat. Root review
+found visible summary copy still says partial observed cohort/priced subtotal/
+remainder unknown in comparison-presentation.ts233–277; Main received correction
+msg_1b1d7237700193YeDSZ3DaxFxb. No new Models source loaded in Desktop yet.
+
+LZ-163 original formatting failure generated repair130e1ffc-8528-4da7-a376-bdd8f7da9b44,
+worker ses_8dfa9dfc893241088c64ea1cdb51f0a8. It actually read the multi-transfer
+review and added ordered-chain regressions. Focused5tests/58assertions pass;
+full runner/store/native/retained suite377tests/5656assertions passes with
+--max-concurrency=1 (145.41s); initial parallel invocation had5second timeouts
+under load. Formatting816files, lint396, typecheck386 and diff check pass.
+Native scope amendment allowed only mechanical report formatting. Canonical
+report formatting fix a1346f7 predates this checkpoint, not worker baselines.
+LZ-155 still active; read/tools23tests pass; panel-state28pass/1fail being repaired.
+
+Desktop twice displayed native unresponsive alert. Export saved
+/Users/tjw/Downloads/opencode-debug-20261106T165751.zip. Three-second samples:
+/private/tmp/lz-freeze-20261106T1657-renderer.sample.txt and matching service sample.
+Renderer all238main-thread samples busy unsymbolized V8; no JS cause established.
+Native Relaunch preserved service71027 and the same native worker sessions.
+No source activation or inference setting change. LFM3 remains Error.
+
+User explicitly requested adversarial Sol6.1High architecture review: root child
+sol_adversarial_architecture_review is auditing all systems, durable Markdown
+rankings and standalone ELK C4 HTML under design/reviews. No production mutation.
+After review Root must deliver full report through Desktop to native Architect to
+specify coherent P0/P1 tasks, preserving current roadmap/workers.
+
 ## Working rules
 
 - Model prompts through Desktop CUA. Read-only SDK/SQLite diagnostics are allowed;
