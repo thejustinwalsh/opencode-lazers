@@ -480,6 +480,18 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     mounted = host.mountTaskPanel(panel!, context, session, container)
     const row = (taskID: string) =>
       container.querySelector<HTMLButtonElement>(`[data-task-id="${taskID}"]`)
+    const activityDetails = () =>
+      container.querySelector<HTMLDetailsElement>(".lazers-tasks-activity-details")!
+    const toggleActivityDetailsFromKeyboard = (key: "Enter" | " ") => {
+      const summary = activityDetails().querySelector("summary")!
+      summary.focus()
+      expect(summary.ownerDocument.activeElement).toBe(summary)
+      summary.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", { key, bubbles: true }) as unknown as Event,
+      )
+      // Happy DOM does not synthesize the browser's native summary keyboard click.
+      summary.click()
+    }
     await until(() =>
       Boolean(
         row(ids.held)
@@ -487,6 +499,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
           ?.includes("observed foreground activity inactive"),
       ),
     )
+    await until(() => Boolean(activityDetails()))
     const heldRow = row(ids.held)!
     const activeRow = row(ids.active)!
     const unknownRow = row(ids.unknown)!
@@ -522,9 +535,26 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(container.querySelector(".lazers-tasks-plan-heading")?.textContent).toContain(
       "nonterminal",
     )
-    expect(container.querySelector(".lazers-tasks-inspector-state")?.textContent).toContain(
-      "running",
+    expect(container.querySelector(".lazers-tasks-inspector-state")?.textContent).toBe("Waiting")
+    const inspectorPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
+    const inspectorText = inspectorPane.textContent ?? ""
+    expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Done when"))
+    expect(inspectorText.indexOf("Done when")).toBeLessThan(
+      inspectorText.indexOf("Activity and holds"),
     )
+    expect(activityDetails().open).toBe(false)
+
+    toggleActivityDetailsFromKeyboard("Enter")
+    await until(() => activityDetails().open)
+    let diagnosticText = activityDetails().textContent ?? ""
+    expect(diagnosticText).toContain("Recorded running")
+    expect(diagnosticText).toContain("Worker inactive")
+    expect(diagnosticText).toContain("ses-worker-held")
+    expect(diagnosticText).toContain("Worker outcome succeeded")
+    expect(diagnosticText).toContain("Reconciliation hold: awaiting review")
+    expect(diagnosticText).toContain("Additional hold: retain the audit trail")
+    toggleActivityDetailsFromKeyboard("Enter")
+    await until(() => !activityDetails().open)
 
     heldRow.focus()
     heldRow.dispatchEvent(
@@ -547,18 +577,21 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
       "Latest worker",
     )
-    expect(container.querySelector(".lazers-tasks-detail")?.textContent).toContain(
-      "Additional hold: retain the audit trail",
-    )
+    expect(activityDetails().open).toBe(false)
     expect(
       container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
-    ).toContain("Recorded running; observed foreground activity active")
-    expect(
-      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
-    ).toContain("waiting: Worker-level hold:")
-    expect(
-      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
-    ).toContain("Reconciliation hold: awaiting review")
+    ).toContain("Waiting; recorded lifecycle running")
+    toggleActivityDetailsFromKeyboard(" ")
+    await until(() => activityDetails().open)
+    diagnosticText = activityDetails().textContent ?? ""
+    expect(diagnosticText).toContain("Recorded running")
+    expect(diagnosticText).toContain("Worker active")
+    expect(diagnosticText).toContain("ses-worker-active")
+    expect(diagnosticText).toContain("Input pending")
+    expect(diagnosticText).toContain("Approval pending")
+    expect(diagnosticText).toContain("Additional hold: retain the audit trail")
+    toggleActivityDetailsFromKeyboard(" ")
+    await until(() => !activityDetails().open)
     const openTrajectory = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.getAttribute("aria-label")?.startsWith("Open trajectory for"),
     )!
@@ -569,6 +602,26 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         projectDirectory
       ]?.selectedTaskID,
     ).toBe(ids.active)
+
+    activeRow.focus()
+    activeRow.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+      }) as unknown as Event,
+    )
+    await until(() => unknownRow.getAttribute("aria-pressed") === "true")
+    expect(activityDetails().open).toBe(false)
+    toggleActivityDetailsFromKeyboard("Enter")
+    await until(() => activityDetails().open)
+    diagnosticText = activityDetails().textContent ?? ""
+    expect(diagnosticText).toContain("Recorded running")
+    expect(diagnosticText).toContain("Worker unknown")
+    expect(diagnosticText).toContain("Observation unavailable")
+    expect(diagnosticText).toContain("ses-worker-unknown")
+    expect(diagnosticText).toContain("Additional hold: retain the audit trail")
+    toggleActivityDetailsFromKeyboard("Enter")
+    await until(() => !activityDetails().open)
 
     const list = container.querySelector<HTMLDivElement>(".lazers-tasks-list")!
     const detailPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
@@ -585,7 +638,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(
       () =>
         queryCalls.length > readsBeforeRefresh &&
-        row(ids.active)?.getAttribute("aria-pressed") === "true",
+        row(ids.unknown)?.getAttribute("aria-pressed") === "true",
     )
     expect(list.scrollTop).toBe(37)
     expect(detailPane.scrollTop).toBe(23)
