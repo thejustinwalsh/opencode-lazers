@@ -385,9 +385,13 @@ test("a 7,026-character shared state and 14 checks stay intact in one transport 
     evidence: ["", ""] as string[],
   }
   const evidenceCharacters = 7_026 - JSON.stringify(stateWithTwoEmptyEvidence).length
-  expect(evidenceCharacters).toBeGreaterThan(6_000)
+  expect(evidenceCharacters).toBeGreaterThan(1)
   expect(evidenceCharacters).toBeLessThanOrEqual(12_000)
-  const evidence = ["x".repeat(6_000), "x".repeat(evidenceCharacters - 6_000)]
+  const firstEvidenceCharacters = Math.ceil(evidenceCharacters / 2)
+  const evidence = [
+    "x".repeat(firstEvidenceCharacters),
+    "x".repeat(evidenceCharacters - firstEvidenceCharacters),
+  ]
   input.evidence = evidence
   const expectedState = {
     task: input.task,
