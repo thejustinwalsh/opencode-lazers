@@ -278,7 +278,7 @@ test("selected current-market summary rounds producer scalars and preserves tiny
     priceSource: "openrouter",
     priceFreshness: "stale",
   })
-  expect(staleProducer?.amount).toBe("≈$4e-8–$1.2e-7 / accepted task")
+  expect(staleProducer?.amount).toBe("≈$4e-8–$1.2e-7 priced portion / accepted task")
   expect(staleProducer?.context).toBe("OpenRouter · range · stale")
   expect(staleProducer?.title).toContain("exact USD per accepted task 4e-8–1.2e-7")
   expect(staleProducer?.title).toContain("partial observed cohort")

@@ -277,7 +277,7 @@ export function currentMarketEstimateSummary(input: {
     const missing =
       input.estimate.status === "partial" ? ` · missing ${input.estimate.missing.join(", ")}` : ""
     return {
-      amount: `≈${amount} / accepted task`,
+      amount: `≈${amount}${partial ? " priced portion" : ""} / accepted task`,
       context: `${source}${isRange ? " · range" : ""} · ${freshness}`,
       title: `Producer current-market estimate · exact USD per accepted task ${String(currentMarket.minimum)}${isRange ? `–${String(currentMarket.maximum)}` : ""} · ${input.estimate.observationCount} observation(s) · denominator ${input.acceptedTaskCount} accepted task${input.acceptedTaskCount === 1 ? "" : "s"} · ${source} · ${freshness}${partial ? " · partial observed cohort" : ""}${missing}`,
     }
