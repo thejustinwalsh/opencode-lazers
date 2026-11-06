@@ -49,3 +49,24 @@ correction by the same worker. This candidate is not activated.
 Still required: corrected source and review, final combined checks, coordinated
 activation, and the actual registered zero-implementation-turn retained-candidate
 walkthrough. Worker reports and passing fixtures do not establish those outcomes.
+
+## Supported continuation blocker
+
+Root separately landed `1cec835`: existing review-input reconciliation accepts
+matching verifying assignments, and existing resume can return a stopped verifying
+attempt to the same worker. Native ownership/input/route, pending activity,
+unresolved effects and reservations remain checked. The task state machine records
+the transition; original attempts, receipts and usage are retained. Checks:
+59 affected runtime tests/1,041 assertions, 29 continuation/state-machine tests,
+typecheck, lint, formatting and diff check. Registered native qualification is
+pending; a passing fixture is not that qualification.
+
+The LZ-138 owning Architect was waiting on a source-journal question, despite being
+reported active. Root answered it in Desktop with the exact current plan identity.
+Main's single routed control request can now proceed; no ownership transfer or new
+implementation session was used to work around the question.
+
+Both Root review worktrees were removed through native `force:false` cleanup after
+preserving source and observations. Their physical absence was confirmed. Original
+worker worktrees remain intact. Retained test logs are under
+`.agents/docs/evidence/dogfood-20261106/retained-current-*.log`.

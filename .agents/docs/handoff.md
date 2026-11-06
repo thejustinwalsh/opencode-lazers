@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T05:27:15.449713+00:00. Goal remains active: drive OpenCode Desktop until the full
+Updated 2026-11-06T06:26:49.099116+00:00. Goal remains active: drive OpenCode Desktop until the full
 active roadmap is implemented, verified, integrated and cleaned, then present
 an observation-based improvement plan. The scope is not limited to Models/Tasks.
 
@@ -23,8 +23,8 @@ an observation-based improvement plan. The scope is not limited to Models/Tasks.
 
 ## Landed and activated
 
-Canonical code is at4319bde2a0594ca81ac5dd49c9e0ec3417e617cf; later commits are
-retained documentation/evidence. It includes147 compact rows (ebdf41a),153 large
+Canonical code is at57288dc8946df0ec28ea208e253e4e45029623fb. The earlier
+1364-test batch below qualified4319bde, not every later change. It includes147 compact rows (ebdf41a),153 large
 history reads (c8530aa),152 scenario UI + compact evidence (26a0d88/59cf8f8),
 Root keyed-row crash fix7f5133b and clean-checkout menu-test fix3e09c37.
 
@@ -172,3 +172,50 @@ OpenCode fallback means accessible published native model/catalog market data,
 not subscription/session charges or requiring an unrelated execution-provider
 login. Explicit source settings and true missing data remain. Research before
 carrying the old connection gate into the new estimation path.
+
+## Current continuation (supersedes earlier active-state notes)
+
+LZ-147 correction is source-landed and GUI-activated. Main57288dc preserves original
+e05e82c ancestry, including14e8928 inspector hierarchy and50cc2f2 lifecycle fixes.
+Current-main affected checks:70tests/773assertions, formatting/lint/types/diff and
+GUI bundle pass. Actual Desktop shows failed147 as Failed; objective/Done when
+precede collapsed Activity and holds. Root followed visible dependency links
+158→157→156, with156 observed Active. Screenshots and logs are in evidence/
+dogfood-20261106/tasks-final-*. Native task attempt59b is FAILED on inherited
+formatting in its old checkout; Main is to adopt the reviewed main descendant
+with fresh checks, not send another formatting turn. Tera review of the new
+captures was requested through Main using existing reviewer e52a.149 grouping
+remains separate. Do not call147 fully accepted/cleaned yet.
+
+Root landed1cec835: existing review-input reconciliation and same-worker resume
+now support stopped VERIFYING attempts.59affected runtime tests/1041assertions,
+29guard/machine tests (plus machine table check) and quality pass. It preserves
+identity/history, blocks active/pending/uncertain work and does not require a
+running-turn hold record for a verification hold. Actual registered control
+qualification remains pending. The owning138 Architect is now
+ses_fbdd7a13bb12499cb2c70cebb1a2b833; Root found it waiting on a source-journal
+question, answered that question through Desktop with exact138plan identity,
+and it is processing again. Main e568 routed one control request to that owner;
+do not duplicate wakeups or assume active means free of pending questions.
+
+LZ-138 worker a869fce is NOT READY: Luna e522 found actual child-process-tree
+termination and crash/reopen partial-resource recovery gaps. Advice12 records
+both; same worker awaits supported continuation for the real correction. Root's
+current-main candidate7b6abc5 was never activated. Focused33tests and quality/build
+pass, but broader600-test runs were not clean (default596pass/4timeouts;
+30s-default rerun599pass/one explicit10s timeout). All original4timeout cases
+passed separately. Preserve failures; rerun affected checks after source repair.
+Report: design/reviews/retained-async-integration-review-20261106.md.
+Both Root /private/tmp review worktrees were removed natively force:false and
+physical absence confirmed. Original implementation worktrees remain intact.
+
+Architect specified and ran plan eade12ae-74f3-48af-874b-f5950f4a41c3, priority100,
+after integrated153, with156→157→158 dependency/integration order. LZ-156
+(efd19c25-909e-4b06-aa4b-b6411785b4f7) fixes native catalog-price eligibility;
+worker ses_507e57d6901a4928bfddd1e46d8f846b on OpenAI Luna Max, attempt
+ff55fda4-7c0d-4a43-b295-cdc29deefd1d, observed live active.
+LZ-157 (74f716cd-cf3e-436e-b112-57de5403b20c) adds actual-cohort reference estimates;
+158 (64ed8c82-7bdd-4b2b-bbaa-c612464c5671) adds row/inspector/chart consumption.
+They retain exact valuation, partial coverage and tier uncertainty; no fabricated
+frontier. Advisory hardening advanced with recorded OrtRun/fiber interruption
+concerns after its bounded rounds; no inference settings were changed.

@@ -1,0 +1,813 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+src/runner/scheduler-coordinator.test.ts:
+(pass) 54 location registrations share one project reconciliation and one timer [1.97ms]
+(pass) independent projects keep requested intervals on the same timer [0.22ms]
+(pass) slow reconciliation never overlaps, coalesces requests, and does not block other projects [0.20ms]
+(pass) retiring the elected participant waits for its drain before transferring ownership [0.11ms]
+(pass) a replacement registration during final disposal cannot start an overlapping drain [0.07ms]
+(pass) an error or failing error reporter does not strand subsequent reconciliation [0.12ms]
+(pass) requests use the earliest deadline; disposal cancels pending requested work [0.06ms]
+(pass) a shorter participant interval advances the deadline without a duplicate startup sweep [0.19ms]
+(pass) initial deadlines support periodic jobs without an immediate startup invocation [0.10ms]
+(pass) explicit start requests join one elected drain and wait for work after an in-flight read [0.27ms]
+(pass) explicit reconciliation errors reach their caller and do not poison the next request [0.12ms]
+(pass) disposal rejects queued explicit requests instead of leaving their callers waiting [0.08ms]
+(pass) disposing a follower rejects captured Start waits without resuming its closed store [0.14ms]
+(pass) invalid intervals and deadlines cannot create an unbounded timer loop [0.07ms]
+(pass) independently loaded module copies share the process coordinator [0.43ms]
+(pass) canonical project keys coalesce path aliases while keeping databases and projects distinct [0.65ms]
+
+src/runner/inspection.test.ts:
+(pass) compact inspection keeps scheduling signal without serializing logs [33.72ms]
+(pass) selected full detail does not run the project audit; explicit project inspection retains it [16.32ms]
+(pass) journal is an explicitly selected bounded view and leaves compact/full inputs compatible [1.74ms]
+
+src/runner/store.test.ts:
+(pass) legacy Architect renewal rows migrate to store an explicit continuity snapshot [12.03ms]
+(pass) startup settlement receipt appends evidence without replacing the original operation failure [0.07ms]
+(pass) legacy adoption evidence remains auditable but cannot satisfy phase-bound evidence [13.45ms]
+(pass) legacy Architect input rows survive migration into the durable source journal [11.82ms]
+(pass) retained repair generations remain task-bound and the latest plan operation is observable [13.84ms]
+(pass) plan control epochs change on owner/cancellation controls but ignore task activity [14.05ms]
+(pass) source-notice pointer readers materialize only current owners or exact replacement IDs [59.30ms]
+(pass) Architect source journal pages traverse large retained sources and invalidate foreign or stale cursors [93.83ms]
+(pass) 804-input/3839-result and doubled journals keep handoff and current pointer bytes compact [215.19ms]
+(pass) an in-progress source-notice reconciliation claim survives store reopen without replacing receipts [23.93ms]
+(pass) journal revision triggers are replaced on a second connection without resetting counters [17.60ms]
+(pass) active project reservations preserve priority and attempt order and refresh across transitions and reopen [20.61ms]
+(pass) delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown [14.23ms]
+(pass) delivery ranks numeric versions once while preserving latest terminal ties, active recovery and project order [15.62ms]
+(pass) legacy delivered outbox schema migrates across an actual close and reopen with unknown consumption [28.71ms]
+(pass) legacy continuation session uniqueness migrates so one renewal can own multiple plans [14.11ms]
+(pass) authored plan titles survive persistence, reopen, and idempotent replay unchanged [19.13ms]
+(pass) new and legacy untitled plan bodies remain title-absent across reopen and replay [17.45ms]
+
+src/runner/retained-reverify.test.ts:
+(pass) owner verifies an exact failed-attempt candidate with zero replacement prompts [1124.51ms]
+(pass) stale, wrong-candidate, wrong-attempt and foreign-owner requests launch no checks [273.14ms]
+(pass) unisolatable required shared services block before checkout or check receipt [388.75ms]
+(pass) an opaque called script is held before candidate checkout or receipt creation [337.71ms]
+(pass) a current task probe definition cannot be bypassed by task-check receipts [543.20ms]
+(pass) a retained probe is generation-bound, owner-recorded, resource-isolated, and gates acceptance [1104.70ms]
+(pass) owner reassignment and a newer generation reject late probe and human evidence [772.83ms]
+(pass) failed retained-checkout cleanup does not revoke a product pass [776.28ms]
+(pass) cancellation and database reopen cannot accept a late retained-check result [523.26ms]
+(pass) a slow candidate dependency setup leaves unrelated plan RPCs responsive [1104.80ms]
+(pass) cancellation aborts dependency setup and removes its durably reserved partial context [420.29ms]
+(pass) an injected dependency setup failure cleans registered partial resources before holding [427.42ms]
+
+src/runner/native.test.ts:
+(pass) native adapter exposes inbox and paginated history reconciliation without claiming a sealed cutover [0.12ms]
+(pass) native worktrees use the host lifecycle with the admitted ref and returned directory [1.25ms]
+(pass) native worktree creation preserves typed terminal failure and uses canonical project source [0.97ms]
+(pass) native adapter leaves defects, interruption, lost responses and lookalikes uncertain [0.43ms]
+(pass) native adapter recognizes tagged failures from an independent temporary schema module [5.85ms]
+(pass) child prompt uses native move and verifies location before any model work [0.29ms]
+(pass) retained repair uses public foreground wait and refuses to move a worker [0.10ms]
+(pass) scope instructions use native durable keyed entries with lost-reply recovery and no model work [0.25ms]
+(pass) scope instruction ownership rejects foreign, moved, replaced and archived targets before native mutation [0.22ms]
+(pass) scope instructions require matching readback rather than trusting a successful native reply [0.09ms]
+(pass) worker guidance teaches focused LAZERS discovery and optional progressive skill use [0.01ms]
+(pass) optional skills are not resolved, and only the legacy LAZERS entry is removed before prompting [0.20ms]
+(pass) a host that fails to move the child cannot receive its work prompt [0.17ms]
+(pass) native worker selection survives role registration and reaches native creation unchanged [1.68ms]
+(pass) native selected source-message reads are authenticated, bounded and privacy-filtered [1.33ms]
+(pass) native host reads a non-following session log on its validated client and invalidates failures [19.98ms]
+(pass) actionable notifications use the authenticated native client with durable ownership [0.18ms]
+(pass) native cancellation rechecks exact ownership and preserves user, worker, and foreign inputs [0.30ms]
+(pass) native inbox refuses a discovered service owned by another process [0.07ms]
+(pass) native cache retirement ignores retained history but refuses active or unknown execution [0.88ms]
+(pass) native inbox does not start or substitute an unavailable service [0.05ms]
+(pass) native archive uses the public client route and requires archived-state readback [0.21ms]
+(pass) native Architect input reconciliation follows public message pagination and keeps original IDs [1.20ms]
+(pass) native Architect history projects mutable assistant/tool status without private payloads [0.14ms]
+(pass) native session heartbeat reads metadata without context and opts into messages explicitly [1.26ms]
+(pass) compacted worker turns retain the actual latest input without replaying history [0.48ms]
+(pass) compacted worker with no response remains pending and no durable input stays unknown [0.16ms]
+(pass) foreground inventory overrides idle-looking timestamps and cached discovery is reused [0.10ms]
+(pass) orphaned busy timestamps and unfinished latest assistant override historical success [0.11ms]
+(pass) pending worker input and location-scoped approvals prevent terminal projection [0.12ms]
+(pass) active/detail-read changes remain explicitly unstable and fail closed [0.11ms]
+(pass) cached native transport invalidates on process replacement and rediscovers current host [0.14ms]
+(pass) discovery, authentication, inventory, PID, and version failures remain explicit [0.17ms]
+(pass) native adapter fails closed when durable idle persistence is unavailable [0.15ms]
+(pass) native session absence accepts the pinned core and protocol tags only for the requested ID [16.77ms]
+(pass) only confirmed native absence permits a same-session missing inbox [13.89ms]
+(pass) fresh native reads confirm the separate pinned idle terminal marker after reopening context twice [15.98ms]
+(pass) compacted native idle confirmation uses retained input without accepting stale markers [110.31ms]
+(pass) compacted completed review keeps its exact retained input binding [16.47ms]
+(pass) fresh revalidation requires the latest same-input execution's own idle certificate [30.98ms]
+(pass) missing, failed, stale-input, and wrong-identity terminal facts block zero-background proof [14.46ms]
+(pass) wrong-location and unavailable location shell reads block and persisted positive background survives reopen [17.14ms]
+
+src/runner/schema.test.ts:
+(pass) PlanInput accepts and preserves an optional authored title verbatim [1.15ms]
+(pass) PlanInput keeps the title absent for untitled and legacy plan bodies [0.10ms]
+(pass) startup settlement command requires exact task, attempt and decision [0.35ms]
+(pass) Architect continuity preserves exact authored decisions and bounds the handoff [0.49ms]
+(pass) CommandInput scopes exact review-input aliases to owner reconciliation [0.24ms]
+(pass) source notice reconciliation requires its exact source and excludes other reconciliation inputs [0.08ms]
+(pass) selected source-message inspection is bounded, unique and strict [0.10ms]
+(pass) retained repair commands bind the exact task attempt artifact and concrete defect [0.08ms]
+(pass) retained verification requests bind current revisions and cancellation names its operation [0.20ms]
+
+src/runner/native-input.test.ts:
+(pass) pinned native continuation notes preserve the logical input in visible context [0.17ms]
+(pass) instruction context does not replace user input or genuine synthetic steering [0.07ms]
+(pass) unknown and malformed synthetic metadata remains input regardless of its prose [0.08ms]
+(pass) completed compaction recovers retained input when only instruction context is visible [0.10ms]
+(pass) retained input skips all native instruction pages and falls back to the assigned user [0.12ms]
+(pass) retained provider continuation notes do not replace the original assigned input [0.07ms]
+(pass) retained steering uses its own host-order cursor after instruction context is skipped [0.13ms]
+(pass) synthetic-only histories retain steering but never instruction-only context [0.09ms]
+(pass) non-advancing instruction history fails rather than looping or inventing input [0.05ms]
+
+src/runner/cleanup-convergence.test.ts:
+(pass) fresh durable native idle revalidation removes a clean merged owned worktree without replay [245.00ms]
+
+src/runner/catalog.test.ts:
+(pass) worker route advice reads live native choices without gating catalog metadata [0.44ms]
+
+src/runner/artifacts.test.ts:
+(pass) verification identity records stable runtime metadata without hashing unrelated credentials [0.20ms]
+(pass) identical check modules retain the same environment identity across reload [2.60ms]
+(pass) commit ancestry distinguishes non-ancestor evidence from unavailable Git state [135.41ms]
+(pass) artifact evidence accepts regular files and non-empty workspace-contained directories [3.27ms]
+(pass) artifact evidence never uses paths outside the workspace or follows symlinks [5.47ms]
+(pass) worker commits are retained and their committed changes remain subject to scope checks [287.89ms]
+(pass) isolated rebases exclude reviewed main changes while retaining worker scope checks [470.84ms]
+(pass) divergent isolated repairs compare against the safe merge of admitted and incorporated work [445.81ms]
+(pass) edits to reviewed paths and unauthorized files remain violations in every Git state [1409.79ms]
+(pass) reviewed content copied without shared ancestry is not exempted [295.24ms]
+(pass) conflicting virtual baselines fail before staging even when the worker resolved its merge [321.80ms]
+(pass) ambiguous reviewed ancestry fails closed before staging [343.38ms]
+
+src/runner/native-registry.test.ts:
+(pass) durable native idle evidence survives separate pinned local-loader generations [42.68ms]
+
+src/runner/startup-recovery.test.ts:
+(pass) an absent startup reservation can recover beside a guarded retained worktree [179.74ms]
+(pass) recovery-only unavailable-session telemetry survives settlement and reopen, then permits explicit resume and safe cleanup [308.42ms]
+(pass) recovery-only GAP telemetry cannot authorize a changed recovered workspace without a prompt [178.59ms]
+(pass) meaningful execution facts still refuse startup settlement [81.08ms]
+(pass) an independent conflicting reservation still refuses startup settlement [84.51ms]
+(pass) typed native failure settles only after fresh absence and resumes the same reservation after reopen [144.09ms]
+(pass) legacy error-only receipts settle generically from current runtime identity and resume after reopen [164.19ms]
+(pass) the exact historical 139/141 receipt shapes are classified without an identity allowlist [0.25ms]
+(pass) legacy dependent worktree compatibility binds the attempt base, not the plan anchor [291.59ms]
+(pass) unknown, timed-out and ENOSPC failures cannot be settled as terminal absence [351.60ms]
+(pass) each conclusively failed linked recovery can be settled before another explicit resume [241.97ms]
+(pass) a new owner may settle historical linked failure and explicitly continue under fresh authority [198.87ms]
+(pass) a late recovery callback after reassignment cannot commit old readiness or admit a worker [157.82ms]
+(pass) worker admission waits for an untouched reserved base after native creation [175.32ms]
+(pass) partial resources, native/Git collisions, inventory failures and reserved sessions refuse settlement [623.25ms]
+(pass) an ownership change during asynchronous absence observation wins over settlement [91.76ms]
+(pass) reassignment during absence observation removes authority from the old owner [101.88ms]
+(pass) an uncertain linked recovery operation stays unresolved and is never replayed [121.69ms]
+(pass) a late recovery completion after cancellation cannot admit the reserved worker [134.53ms]
+
+src/runner/prerequisite-proof.test.ts:
+(pass) valid integration retains every Git check for dispatch and selected-baseline proof [1.24ms]
+(pass) all durable evidence is validated before starting any Git process [0.44ms]
+(pass) changed evidence and ancestry are rechecked on every decision without a cached pass [0.16ms]
+
+src/runner/adopted-descendant.test.ts:
+(pass) failed/READY task adopts only after fresh checks and new task/combined human evidence, including receipt recovery [2450.91ms]
+(pass) accepted task with blocked combined check adopts a descendant without rewriting acceptance or landing receipts [1387.23ms]
+(pass) adoption scope uses the latest reviewed integration baseline, not intervening accepted work [1801.02ms]
+(pass) adoption verifies reviewed main with independent work without widening worker scope [2754.10ms]
+(pass) adoption still rejects out-of-scope changes in the original worker artifact [430.97ms]
+(pass) revoking a mistaken supplemental scope restores adoption without changing the task or history [419.23ms]
+(pass) supplemental scope cannot be revoked during a writer or an active adoption [407.35ms]
+(pass) identical task and combined assertion/artifact evidence remains phase- and task-bound [5963.93ms]
+(pass) restart recovers task and combined check receipt cuts without replaying checks [3034.28ms]
+(pass) only active worker reservations with conflicting write scopes block adoption [819.00ms]
+(pass) irrelevant environment churn is ignored while check inputs and operation evidence stay isolated [1586.87ms]
+(pass) changed verification command input invalidates completed adoption receipts [1077.56ms]
+(pass) owner-session loss after verification holds instead of publishing acceptance [903.60ms]
+(pass) candidate index changes during combined verification invalidate publication [932.97ms]
+(pass) dirty candidates, wrong bindings, foreign owners, and worker controls fail closed [469.53ms]
+(pass) active adoption scopes are reserved transactionally across plans [509.02ms]
+(pass) a worker activated after the final idle observation still fences adoption publication [1495.34ms]
+(pass) cancellation during a fresh check fences late acceptance and preserves adoption worktrees [606.92ms]
+(pass) cancellation during combined checks prevents late plan acceptance and cleanup [931.00ms]
+(pass) timed-out adoption checks hold without repair, new worker turns, or acceptance [1629.29ms]
+(pass) cancel during worker observation does not create a candidate worktree or publish acceptance [560.68ms]
+(pass) mutating adoption checks hold without repair or publication [682.80ms]
+
+src/runner/native-idle.test.ts:
+(pass) zero background is unknown until exact terminal success and a newer execution invalidates it [16.26ms]
+(pass) positive native background survives store reopen even when external shell inventory may be empty [15.89ms]
+(pass) late idle callbacks are revision-fenced and corrupt persisted evidence fails closed [13.71ms]
+(pass) confirmed zero-background identity survives SQLite reopen in a separate Bun process [79.41ms]
+(pass) same-attempt input reassignment invalidates old zero, accepts a fresh turn, and fences old callbacks [15.68ms]
+(pass) a duplicate start cannot carry execution lineage across assigned-input changes [14.66ms]
+(pass) fresh idle hook after delivered input can replace an invalidated report in the same execution [13.22ms]
+(pass) an invalidly ordered input event destroys execution lineage instead of reviving stale reports [13.71ms]
+(pass) benign stale-event diagnostics do not strand pending success but newer activity still rejects [14.65ms]
+
+src/runner/source-quarantine.test.ts:
+(pass) missing reserved workspaces remain distinct from existing retained worktrees [0.61ms]
+(pass) existing symlink ancestors preserve identity for absent children [0.76ms]
+(pass) unresolvable symlinks and filesystem errors remain conservative [0.32ms]
+
+src/runner/machine.test.ts:
+(pass) initial task snapshot is queued and versioned [0.08ms]
+(pass) task transition table persists each next state with the machine version [1.20ms]
+(pass) terminal and unknown events reject without changing the state [0.26ms]
+
+src/runner/roles.test.ts:
+(pass) worker personas retain read-only catalog access but cannot delegate [1.24ms]
+
+src/runner/interrupted-continuation.test.ts:
+(pass) unknown background remains explicit while the exact interrupted assignment may continue [0.28ms]
+(pass) a completed model turn can continue unfinished work without establishing task completion [0.04ms]
+(pass) a genuinely failed native outcome with its completed assigned turn stays failed and may continue [0.02ms]
+(pass) rejects another caller [0.02ms]
+(pass) rejects an archived owner
+(pass) rejects a foreign owner
+(pass) rejects a stale attempt
+(pass) rejects a wrong attempt ID
+(pass) rejects an unrelated hold
+(pass) rejects an unresolved effect [0.12ms]
+(pass) rejects a conflicting reservation [0.07ms]
+(pass) rejects a foreign worker [0.02ms]
+(pass) rejects an archived worker
+(pass) rejects a wrong worker attempt [0.07ms]
+(pass) rejects a wrong worker route [0.15ms]
+(pass) rejects a different interrupted input [0.05ms]
+(pass) rejects a failed outcome without its current-input stop record [0.02ms]
+(pass) rejects a failed outcome with an earlier failure input [0.05ms]
+(pass) rejects a completed turn without a failed native outcome [0.04ms]
+(pass) rejects a busy worker [0.03ms]
+(pass) rejects pending input [0.02ms]
+(pass) rejects an approval [0.01ms]
+(pass) rejects an unstable observation [0.01ms]
+(pass) rejects known background work [0.03ms]
+(pass) rejects a mismatched known-idle report [0.02ms]
+
+src/runner/tools.test.ts:
+(pass) authorized callers read native catalog advice; only orchestration requires Architect [3.15ms]
+(pass) journal inspection is permission-gated before bounded store reads [1.51ms]
+(pass) registered journal traversal survives unrelated worker progress in the same project [21.75ms]
+
+src/runner/source-fence-rpc.test.ts:
+(pass) the exact native location reports its installed guard only for its live hook scope [24.64ms]
+(pass) a replacement cannot fall back to old or known unguarded generation registrations [14.81ms]
+(pass) full plugin early setup failure invalidates a borrowed predecessor before worker registration [45.94ms]
+
+src/runner/runtime.test.ts:
+(pass) source quarantine uses native clear controls and assignment-bound worker archival with lost-reply readback [180.78ms]
+(pass) native retained worker archival rejects foreign or changed bindings, active work and unavailable observations [1385.96ms]
+(pass) native location activation restores pending and sealed quarantine after registry loss and database reopen [588.62ms]
+(pass) failed or mismatched native activation retains sealed resources and recovers only a current exact guard [212.99ms]
+(pass) source quarantine seals only a stopped guarded native writer and permits independent code without accepting old work [605.59ms]
+(pass) source quarantine isolates a completed foreground worker with unknown background without accepting it [324.15ms]
+(pass) tagged review source quarantine survives reopen and native archive without accepting unknown background [184.07ms]
+(pass) source review admission rejects input changed during worktrees without mutation [207.39ms]
+(pass) source review admission rejects tag changed during worktrees without mutation [252.61ms]
+(pass) source review admission rejects route changed during worktrees without mutation [171.73ms]
+(pass) source review admission rejects owner changed during worktrees without mutation [167.64ms]
+(pass) source review admission rejects input changed during guard without mutation [167.38ms]
+(pass) source review admission rejects tag changed during guard without mutation [181.62ms]
+(pass) source review admission rejects route changed during guard without mutation [171.53ms]
+(pass) source review admission rejects owner changed during guard without mutation [165.49ms]
+(pass) malformed sealed review pin cannot exclude source even with its installed guard [172.94ms]
+(pass) sealed review guard recovery permits a later handoff before-restore without replaying archive [196.48ms]
+(pass) sealed review guard recovery permits a later handoff during-restore without replaying archive [189.64ms]
+(pass) healthy sealed review guard permits a later handoff without rescanning review messages [185.88ms]
+(pass) concurrent explicit pending supersessions use the plan version once [198.75ms]
+(pass) a later explicit quarantine cannot retarget an already sealed review pin [190.82ms]
+(pass) fresh owner command explicitly supersedes a pending review pin; old replay cannot retarget it [181.98ms]
+(pass) legacy source quarantine migration preserves its original-input binding [175.43ms]
+(pass) tagged review source quarantine rejects metadata before mutation [166.49ms]
+(pass) tagged review source quarantine rejects task before mutation [160.71ms]
+(pass) tagged review source quarantine rejects attempt before mutation [164.92ms]
+(pass) tagged review source quarantine rejects duplicate before mutation [158.83ms]
+(pass) tagged review source quarantine rejects current before mutation [168.79ms]
+(pass) tagged review source quarantine rejects failed before mutation [166.77ms]
+(pass) tagged review source quarantine rejects route before mutation [157.39ms]
+(pass) tagged review source quarantine rejects non-synthetic before mutation [157.89ms]
+(pass) tagged review source quarantine rejects absent before mutation [158.37ms]
+(pass) tagged review source quarantine rejects pending before mutation [163.69ms]
+(pass) tagged review source quarantine rejects permission before mutation [175.54ms]
+(pass) tagged review source quarantine rejects form before mutation [172.17ms]
+(pass) tagged review source quarantine rejects unstable before mutation [179.47ms]
+(pass) tagged review source quarantine rejects effort before mutation [182.32ms]
+(pass) tagged review archive fences a changed input before-update [183.93ms]
+(pass) tagged review archive fences a changed tag before-update [189.87ms]
+(pass) tagged review archive fences a changed route before-update [194.84ms]
+(pass) tagged review archive fences a changed foreground before-update [185.42ms]
+(pass) tagged review archive fences a changed input after-update [191.27ms]
+(pass) tagged review archive fences a changed tag after-update [191.67ms]
+(pass) tagged review archive fences a changed route after-update [202.85ms]
+(pass) tagged review archive fences a changed foreground after-update [226.75ms]
+(pass) native running-source archive fences a newer input before-update [174.97ms]
+(pass) native running-source archive fences a newer input after-update [222.25ms]
+(pass) running source quarantine rejects pending foreground without mutation [254.80ms]
+(pass) running source quarantine rejects different-input foreground without mutation [145.81ms]
+(pass) running source quarantine rejects failed foreground without mutation [162.13ms]
+(pass) running source quarantine rejects busy foreground without mutation [152.45ms]
+(pass) running source quarantine rejects missing-turn foreground without mutation [192.75ms]
+(pass) source quarantine preserves shared and physical-checkout exclusion at both admission gates [912.39ms]
+(pass) source quarantine recovers lost archive replies after reopen without inventing old receipts or replaying archive [212.58ms]
+(pass) source quarantine rejects missing enforcement, active writers, stale versions and foreign owners before mutation [186.04ms]
+(pass) source quarantine fences reassignment during archive and accepts a fresh authorized continuation [201.68ms]
+(pass) source quarantine recovery does not inspect or mutate another project sharing its database [179.81ms]
+(pass) active scope amendments durably update the same worker after it fetched old instructions and survive reopen [347.12ms]
+(pass) failed and lost scope-update replies recover keyed delivery without workers, repairs or wait churn [232.11ms]
+(pass) cancellation suppresses a pending scope instruction rather than waking a stopped worker [116.43ms]
+(pass) task integration records a reviewed landing without finalizing the plan or disturbing active dependencies [407.56ms]
+(pass) scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it [437.49ms]
+(pass) scope amendments preserve the specification and recover dependency edits in the same attempt [395.00ms]
+(pass) scope amendment rejects active overlap and reserves amended scope before later dispatch [376.79ms]
+(pass) scope amendment requires this plan's unfinished task and explicit additive authorization [89.22ms]
+(pass) shared scheduler routes manual Start through its elected runtime instead of a second lease owner [181.80ms]
+(pass) scheduler retries after a failed lease claim instead of remaining permanently running [73.38ms]
+(pass) a disposed follower Start cannot read or reopen its store after the elected drain finishes [135.39ms]
+(pass) inspector Start admits one real runtime plan and returns record-backed task state [275.37ms]
+(pass) Start recovers a lost native continuation-create response after restart [267.70ms]
+(pass) run authorizes and validates the original command before creating a continuation [132.49ms]
+(pass) continued run retains original caller/version replay identity across concurrent calls and restart [76.21ms]
+(pass) Start admits an existing queued plan, keeps its selected worker route and respects dependencies [145.46ms]
+(pass) continued run recovers a crash before its receipt without changing caller identity [85.22ms]
+(pass) a concurrent reassignment cannot be overwritten by continuation completion [74.97ms]
+(pass) Start cannot adopt a stale continuation after an explicit owner round trip [148.48ms]
+(pass) a lost continuation-create response is reconciled by stable native session ID [310.02ms]
+(pass) a missing task owner gets a same-project continuation without foreign parent context [284.64ms]
+(pass) Start admits the configured route independently of the Architect model [194.20ms]
+(pass) manual Start supports legacy unclassified tasks without inventing persona provenance [91.63ms]
+(pass) Go and configured routes reach native execution unchanged alongside independent personas [774.99ms]
+(pass) Start of explicitly persona-bearing plans honors mappings for every persona [1238.87ms]
+(pass) an intentional plan route wins mappings and fallback while native fallback keeps honest provenance [288.21ms]
+(pass) a route removed after admission blocks dispatch before creating a worker [79.41ms]
+(pass) a reopened retry preserves the earlier route decision and uses the current mapping variant [240.58ms]
+(pass) resuming a mapped attempt preserves its native route after the mapping changes [149.61ms]
+(pass) a native route failure stays visible and is never retried with a substitute [89.44ms]
+(pass) Start rejects stale, foreign and ended work without changing runtime state [70.35ms]
+(pass) an admitted source backlog shares only same-pass no-op target observations [86.98ms]
+(pass) admitted outcome rechecks durable owner after native observation awaits [204.11ms]
+(pass) host-admitted current outcomes follow an archived owner unless transcript consumption is proved [412.57ms]
+(pass) an uncertain current outcome follows an adopted owner across reopen without losing admission evidence [223.36ms]
+(pass) real Git worktrees execute a dependency graph, verify combined content and retain origin [806.07ms]
+(pass) independent isolated Git branches overlap and combined verification includes every artifact [1073.92ms]
+(pass) dependencies wait for accepted inputs and wildcard ancestor scopes serialize [3521.76ms]
+killed 1 dangling process
+(fail) independent plans overlap while a second reconciler cannot duplicate dispatch [5131.80ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+69 |     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+70 |     this.connection = this.open()
+71 |   }
+72 | 
+73 |   private open(): Database {
+74 |     const db = new Database(this.path, { create: true, strict: true })
+                    ^
+SQLiteError: unable to open database file
+      errno: 14,
+ byteOffset: -1,
+       code: "SQLITE_CANTOPEN"
+
+      at new Database (bun:sqlite:268:28)
+      at open (/private/tmp/lz138-current-review/src/storage.ts:74:16)
+      at db (/private/tmp/lz138-current-review/src/storage.ts:61:50)
+      at resolveTaskID (/private/tmp/lz138-current-review/src/storage.ts:384:12)
+      at get (/private/tmp/lz138-current-review/src/storage.ts:505:25)
+      at failAttempt (/private/tmp/lz138-current-review/src/runner/runtime.ts:10082:40)
+      at verify (/private/tmp/lz138-current-review/src/runner/runtime.ts:7454:12)
+      at advanceAttempt (/private/tmp/lz138-current-review/src/runner/runtime.ts:7398:16)
+      at async step (/private/tmp/lz138-current-review/src/runner/runtime.ts:5885:21)
+      at async tick (/private/tmp/lz138-current-review/src/runner/runtime.ts:5813:20)
+      at async drive (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:511:49)
+      at async <anonymous> (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:4016:11)
+-------------------------------
+
+(pass) single-task acceptance coalesces its task handoff while another plan worker stays active [2847.57ms]
+(pass) a late older retry cannot replace a newer queued plan outcome [2082.40ms]
+(pass) an actionable partial-task outcome wakes review while its sibling worker remains active [1794.38ms]
+(pass) a newer partial result carries all prior reviewable artifacts while a third worker remains active [1836.69ms]
+(pass) legacy partial notices for distinct tasks cannot silently replace one another [486.38ms]
+(pass) failed cancellation keeps the newer outcome pending and retries after the queue race clears [2236.78ms]
+(pass) an unavailable native inbox cannot be reported as successful supersession [870.19ms]
+(pass) a cancellation that races with transcript consumption is recorded as consumed, not suppressed [805.85ms]
+(pass) a successful native cancel response is rechecked before recording supersession [909.60ms]
+(pass) completed shared plan verifies its exact artifact without touching an advanced shared checkout [554.25ms]
+(pass) shared resume waits for another plan's worker and cancellation retains final usage [876.61ms]
+(pass) reconciliation retains legacy advanced-checkout receipts and verifies the exact artifact afresh [758.22ms]
+(pass) explicit reconcile retries conclusive combined checks after environment repair without erasing evidence [487.56ms]
+(pass) uncertain prompt cannot prevent cancellation of an admitted sibling [219.63ms]
+(pass) two conflicting shared resumes use current prompt identities and cannot deadlock [1008.17ms]
+(pass) combined worktree completion cannot overwrite a concurrent cancellation [764.24ms]
+(pass) one failed branch blocks combined acceptance without losing sibling verification or usage [626.84ms]
+(pass) conflicting accepted branches hold integration and preserve both real Git artifacts [1400.96ms]
+killed 1 dangling process
+(fail) lost worktree creation response resumes its own blocked startup after reconciliation [5049.27ms]
+  ^ this test timed out after 5000ms.
+(pass) a different block reason keeps a reconciled worktree startup blocked [1004.64ms]
+(pass) cancelling overlapping workers waits for every native session and preserves usage [1193.15ms]
+
+# Unhandled error between tests
+-------------------------------
+27 |     timeout: 30000,
+28 |     maxBuffer: 8 * 1024 * 1024,
+29 |     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...environment },
+30 |   })
+31 |   if (result.status !== 0)
+32 |     throw new Error(
+                   ^
+error: git rev-parse failed: unknown
+      at git (/private/tmp/lz138-current-review/src/runner/artifacts.ts:32:15)
+      at fixture (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:90:16)
+      at <anonymous> (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:4832:15)
+-------------------------------
+
+(pass) reviewed combined merge removes only owned Git worktrees and preserves foreign work [4720.86ms]
+(pass) repairing one parallel branch retains its failed check and usage while its sibling is accepted [2607.66ms]
+(pass) missing and permission-denied skill suggestions never block admission or dispatch [1742.12ms]
+(pass) repair handoffs do not copy legacy skill bodies into a new attempt [288.75ms]
+(pass) verification failure and scope violations cannot unblock a successor [1137.53ms]
+(pass) an unchanged evidence wait keeps its version and notification stable until evidence arrives [1046.38ms]
+(pass) a resumed worker verifies its new commit without reusing older receipts or spending a repair [1007.20ms]
+(pass) plan evidence binds to the accepted combination and remains separate from task evidence [737.01ms]
+(pass) lost host response reconciles a real accepted prompt without creating another worker [129.16ms]
+(pass) lost prompt response after a committed worker turn reconciles through verification [1339.64ms]
+(pass) leases fence stale owners; expiration does not replay an uncertain effect [83.13ms]
+(pass) schema rejects cycles, foreign dependency IDs and duplicate nodes before persistence [77.48ms]
+(pass) historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage [970.96ms]
+(pass) runtime retains the actual directory returned by the host worktree strategy [878.58ms]
+(pass) an explicitly cancelled worker can continue through its owner without replacing its worktree [190.19ms]
+killed 1 dangling process
+(fail) a cancelled afterPlans child resumes its retained committed attempt [5120.32ms]
+  ^ this test timed out after 5000ms.
+
+# Unhandled error between tests
+-------------------------------
+69 |     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+70 |     this.connection = this.open()
+71 |   }
+72 | 
+73 |   private open(): Database {
+74 |     const db = new Database(this.path, { create: true, strict: true })
+                    ^
+SQLiteError: unable to open database file
+      errno: 14,
+ byteOffset: -1,
+       code: "SQLITE_CANTOPEN"
+
+      at new Database (bun:sqlite:268:28)
+      at open (/private/tmp/lz138-current-review/src/storage.ts:74:16)
+      at db (/private/tmp/lz138-current-review/src/storage.ts:61:50)
+      at atomic (/private/tmp/lz138-current-review/src/storage.ts:248:12)
+      at step (/private/tmp/lz138-current-review/src/runner/runtime.ts:5920:25)
+      at async tick (/private/tmp/lz138-current-review/src/runner/runtime.ts:5813:20)
+      at async <anonymous> (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:5567:19)
+-------------------------------
+
+killed 1 dangling process
+(fail) retry requeues a cancelled unstarted successor in the admitted graph and waits for dependencies and scope [5151.42ms]
+  ^ this test timed out after 5000ms.
+(pass) requeued unstarted work can be cancelled again before normal dispatch [648.51ms]
+(pass) unstarted retry selects an explicit newer baseline without replacing tasks or attempts [1361.47ms]
+(pass) unstarted baseline selection rejects missing, unrelated and unlanded commits atomically [1797.66ms]
+(pass) unstarted baseline selection cannot rewrite a plan with a prior worker [639.18ms]
+(pass) unstarted recovery rejects unauthorized, stale, missing, archived and foreign owners without writes [1675.72ms]
+(pass) unstarted recovery rechecks the plan version after owner lookup races with reassignment [442.52ms]
+(pass) unstarted recovery rejects invalid node/plan states and unreconciled effects [522.15ms]
+
+# Unhandled error between tests
+-------------------------------
+69 |     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+70 |     this.connection = this.open()
+71 |   }
+72 | 
+73 |   private open(): Database {
+74 |     const db = new Database(this.path, { create: true, strict: true })
+                    ^
+SQLiteError: unable to open database file
+      errno: 14,
+ byteOffset: -1,
+       code: "SQLITE_CANTOPEN"
+
+      at new Database (bun:sqlite:268:28)
+      at open (/private/tmp/lz138-current-review/src/storage.ts:74:16)
+      at db (/private/tmp/lz138-current-review/src/storage.ts:61:50)
+      at atomic (/private/tmp/lz138-current-review/src/storage.ts:248:12)
+      at hold (/private/tmp/lz138-current-review/src/runner/runtime.ts:5362:16)
+      at finish (/private/tmp/lz138-current-review/src/runner/runtime.ts:10140:12)
+      at step (/private/tmp/lz138-current-review/src/runner/runtime.ts:6012:18)
+      at async tick (/private/tmp/lz138-current-review/src/runner/runtime.ts:5813:20)
+      at async drive (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:511:49)
+      at async <anonymous> (/private/tmp/lz138-current-review/src/runner/runtime.test.ts:5745:9)
+-------------------------------
+
+(pass) serial shared children commit in the current checkout without creating worktrees [449.68ms]
+(pass) explicit retry starts a fresh native child and retains the old attempt and usage [158.62ms]
+(pass) a shared node's first attempt starts at reviewed HEAD, not an older accepted predecessor [487.56ms]
+(pass) an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes [634.20ms]
+(pass) retry without a newly selected baseline continues from the failed artifact and retains history [647.98ms]
+(pass) native cleanup follows verified integration, preserves dirty work, and retries explicitly [761.53ms]
+(pass) cleanup retries require detailed worker inactivity and never rerun product checks [901.41ms]
+(pass) explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance [440.20ms]
+(pass) cleanup preserves clean worktrees with commits outside the reviewed integration [741.64ms]
+(pass) cleanup preserves a dirty owned worktree even after its accepted commit was merged [662.68ms]
+(pass) priority orders conflicting plans without rejecting their overlapping scopes [116.28ms]
+(pass) afterPlans dispatches from combined integration while prerequisite cleanup is still pending [2033.46ms]
+(pass) afterPlans rejects a legacy cleanup snapshot after durable prerequisite cancellation [429.85ms]
+(pass) afterPlans cleanup cannot publish over cancellation or reuse the historical integration proof [412.47ms]
+(pass) afterPlans invalidation during child worktree creation keeps the owned workspace and suppresses prompt admission [592.50ms]
+(pass) cancelling a child during session creation prevents prompt intent and preserves owned resources [592.62ms]
+(pass) afterPlans invalidation during retained preparation reconciliation blocks the later prompt [694.18ms]
+(pass) afterPlans dispatches after genuine combined-check recovery while preserving failed receipts [1111.82ms]
+(pass) afterPlans rejects task-only, missing, malformed, mismatched and foreign integration evidence [1982.88ms]
+(pass) afterPlans requires both the integrated artifact and its recorded integration head in selected HEAD [1003.06ms]
+(pass) every afterPlans prerequisite needs genuine fresh acceptance and integration after cancellation [1455.92ms]
+(pass) valid afterPlans integration does not bypass shared-checkout admission [450.04ms]
+(pass) cross-plan dependencies wait for integration and dispatch from the integrated source [1184.89ms]
+(pass) schedule updates are versioned, retry-safe and reject dependency cycles or foreign plans [77.41ms]
+(pass) runtime shutdown joins an in-flight native operation before storage may close [108.23ms]
+(pass) heartbeat avoids context and rechecks a stopped worker after detailed accounting [292.80ms]
+(pass) cancellation wins over a stale interrupted detailed worker observation [115.03ms]
+(pass) cancellation wins over a stale succeeded detailed worker observation [112.34ms]
+(pass) cancellation wins over a stale missing detailed worker observation [114.06ms]
+(pass) terminal verification waits for active foreground, exact input completion, and background settlement [351.68ms]
+(pass) background hold avoids repeated context for failed while preserving interruption evidence [111.42ms]
+(pass) background hold avoids repeated context for interrupted while preserving interruption evidence [116.03ms]
+(pass) worker-location permissions and forms block terminal work and surface actionable diagnostics [367.82ms]
+(pass) a durably admitted same-attempt handoff reminder can finish with fresh matching evidence [346.58ms]
+(pass) owner reconciliation binds an observed review input without replacing the assignment [325.26ms]
+(pass) review input identity accepts unrelated additive native message metadata [114.79ms]
+(pass) an admitted review-input alias survives later OWNER_CONTINUED with the original worker assignment [292.12ms]
+(pass) an admitted review-input alias survives later OWNER_REASSIGNED with the original worker assignment [290.85ms]
+(pass) review reconciliation rejects wrong task metadata without recording an alias [115.24ms]
+(pass) review reconciliation rejects wrong attempt metadata without recording an alias [112.70ms]
+(pass) review reconciliation rejects missing review metadata without recording an alias [115.79ms]
+(pass) review reconciliation rejects absent native message without recording an alias [113.84ms]
+(pass) review reconciliation rejects unrelated latest input without recording an alias [114.28ms]
+(pass) review reconciliation rejects wrong session without recording an alias [111.21ms]
+(pass) review reconciliation rejects wrong project without recording an alias [111.75ms]
+(pass) review reconciliation rejects wrong workspace without recording an alias [114.76ms]
+(pass) review reconciliation rejects wrong attempt session metadata without recording an alias [112.68ms]
+(pass) review reconciliation rejects wrong model route without recording an alias [119.96ms]
+(pass) review reconciliation rejects stale idle assignment without recording an alias [128.18ms]
+(pass) review reconciliation rejects unknown background without recording an alias [123.41ms]
+(pass) review reconciliation rejects nonzero background without recording an alias [128.95ms]
+(pass) review reconciliation rejects negative execution start sequence without recording an alias [127.22ms]
+(pass) review reconciliation rejects negative idle event sequence without recording an alias [128.91ms]
+(pass) review reconciliation rejects negative terminal sequence without recording an alias [129.41ms]
+(pass) review reconciliation rejects active foreground without recording an alias [125.60ms]
+(pass) review reconciliation rejects pending native input without recording an alias [123.89ms]
+(pass) review reconciliation rejects pending turn without recording an alias [117.39ms]
+(pass) review reconciliation rejects pending approval without recording an alias [113.82ms]
+(pass) review reconciliation rejects pending form without recording an alias [112.99ms]
+(pass) review reconciliation rejects unstable observation without recording an alias [118.16ms]
+(pass) review reconciliation rejects wrong-owner command identity [112.00ms]
+(pass) review reconciliation rejects stale-version command identity [129.12ms]
+(pass) review reconciliation rejects wrong-task command identity [111.46ms]
+(pass) review reconciliation rejects wrong-attempt command identity [112.40ms]
+(pass) review reconciliation does not record lineage while an effect is intended [114.19ms]
+(pass) review reconciliation does not record lineage while an effect is uncertain [112.38ms]
+(pass) cancellation and assignment changes during review observation fence stale aliases [223.94ms]
+(pass) a concurrent new-input during deferred owner observation rejects review reconciliation [113.47ms]
+(pass) a concurrent new-execution during deferred owner observation rejects review reconciliation [115.94ms]
+(pass) an admitted review alias does not match a later unrelated native current input [117.66ms]
+(pass) a changed current attempt during native review observation rejects the stale alias [119.73ms]
+(pass) a persisted foreign projectID review alias cannot verify the original attempt [132.46ms]
+(pass) a persisted foreign taskID review alias cannot verify the original attempt [133.43ms]
+(pass) a persisted foreign attemptID review alias cannot verify the original attempt [138.21ms]
+(pass) a persisted foreign sessionID review alias cannot verify the original attempt [129.32ms]
+(pass) a persisted foreign assignedMessageID review alias cannot verify the original attempt [129.74ms]
+(pass) reminder completion rejects unconfirmed lineage [129.47ms]
+(pass) reminder completion rejects foreign lineage [119.33ms]
+(pass) reminder completion rejects stale-assignment lineage [118.62ms]
+(pass) reminder completion rejects pre-reminder-report lineage [116.16ms]
+(pass) terminal verification rejects a fresh idle report from a different native input [113.20ms]
+(pass) a deferred blocked tick cannot undo resume or a later cancellation (cancel=%s) [255.51ms]
+(pass) a deferred blocked tick cannot undo resume or a later cancellation (cancel=%s) [253.04ms]
+(pass) native heartbeat failures retain structured holds without repeatedly reading context [140.54ms]
+(pass) owner can resume completed but unaccepted work for a correction while background stays unknown [154.93ms]
+(pass) an explicit resume continues one process-replaced interrupted attempt without inventing idle proof [415.72ms]
+(pass) manual continuation accepts a real failed outcome only for its completed current assigned input [127.34ms]
+(pass) a failed fresh continuation input is processed despite the unchanged prior unknown background [128.50ms]
+(pass) a current-input permission hold is not suppressed by the unchanged prior unknown background [138.22ms]
+(pass) a current-input form hold is not suppressed by the unchanged prior unknown background [140.89ms]
+(pass) terminal failed worker with a genuine current-input idle report can resume from failed state [132.07ms]
+(pass) native continuation rejects a failed turn for a foreign input [129.53ms]
+(pass) native continuation rejects a failed turn with no native input ID [128.21ms]
+(pass) failed-worker continuation rejects a active native observation [125.70ms]
+(pass) failed-worker continuation rejects a pending-input native observation [127.79ms]
+(pass) failed-worker continuation rejects a pending-approval native observation [118.38ms]
+(pass) failed-worker continuation rejects a unstable native observation [120.21ms]
+(pass) failed-worker continuation rejects a known-background native observation [139.69ms]
+(pass) a completed turn for another input cannot authorize terminal continuation [113.09ms]
+(pass) interrupted continuation rejects wrong-attempt [122.93ms]
+(pass) interrupted continuation rejects foreign-worker [117.58ms]
+(pass) interrupted continuation rejects archived-worker [111.44ms]
+(pass) interrupted continuation rejects route-mismatch [115.02ms]
+(pass) interrupted continuation rejects active-worker [113.85ms]
+(pass) interrupted continuation rejects pending-input [108.84ms]
+(pass) interrupted continuation rejects pending-approval [109.58ms]
+(pass) interrupted continuation rejects unstable-observation [108.89ms]
+(pass) interrupted continuation rejects input-lineage [107.34ms]
+(pass) interrupted continuation rejects known-background [113.58ms]
+(pass) interrupted continuation rejects unrelated-hold [116.99ms]
+(pass) interrupted continuation rejects uncertain-effect [107.16ms]
+(pass) cancellation or reassignment during interrupted-worker observation wins (cancel) [115.56ms]
+(pass) cancellation or reassignment during interrupted-worker observation wins (reassign) [119.11ms]
+(pass) ambiguous interrupted continuation delivery stays uncertain after runtime reopen [136.85ms]
+(pass) explicit cancellation after process replacement resumes the same dirty attempt exactly once [379.11ms]
+(pass) cancellation does not settle when foreground activity reappears during its detail read [130.32ms]
+(pass) normal source scans do not materialize historical notice payloads across a large multi-owner backlog [193.02ms]
+(pass) legacy reconciliation resolves exact replacement IDs without loading its large historical payload backlog [174.50ms]
+(pass) explicit reconciliation cancels disjoint equal-revision notices only after pointer coverage [132.46ms]
+(pass) foreign and ambiguously absent legacy notices remain visible and are never cancelled [126.13ms]
+(pass) source-notice cancellation API unavailability is recoverable without altering legacy receipts [123.94ms]
+(pass) source-notice reconciliation processes only a bounded batch and resumes remaining legacy notices [136.31ms]
+(pass) reconciliation keeps separate current-owner pointers and receipts for multiple retained sources [138.64ms]
+(pass) lost native cancellation response remains unknown and never becomes a false cancellation claim [122.73ms]
+(pass) ownership changes during native observation defer cancellation and establish a pointer for the new owner [118.11ms]
+(pass) source-notice cancellation racing with consumption records consumption, not cancellation [126.54ms]
+(pass) the registered scheduler reuses recent/busy Architects and renews at the default threshold [122.13ms]
+(pass) idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed [462.68ms]
+(pass) renewal requires an explicit checkpoint and retains queued native inputs by ID [240.01ms]
+(pass) one successor receives every live plan owned by the same Architect [212.12ms]
+(pass) input during a deferred native create prevents transfer and predecessor archival [141.44ms]
+(pass) a continuity edit during successor creation blocks stale ownership transfer [129.47ms]
+(pass) native queued synthetic input is retained and referenced across creation, transfer, and archive [414.37ms]
+(pass) late input on an archived predecessor is reconciled to the current owner without waking or replay [126.41ms]
+(pass) predecessor reconciliation persists native message pagination across scheduler ticks [124.24ms]
+(pass) selected source-message retrieval is current-owner authorized and journal-ID bounded [128.12ms]
+(pass) large predecessor histories coalesce to a compact progressive source-change pointer [126.59ms]
+(pass) a previously seen pending input that disappears without history stays unknown, never cancelled or replayed [124.22ms]
+(pass) generated renewal notifications are authenticated and do not form A-to-B-to-C input loops [120.35ms]
+(pass) a retired Architect predecessor cannot reclaim a transferred plan through reassign [124.76ms]
+(pass) input racing native archival remains on the retained source and is referenced to the new owner [125.83ms]
+(pass) input on the reserved successor is preserved there without reversing predecessor transfer [118.44ms]
+(pass) an outcome admitted during archival is blocked then retargeted to the renewed owner [121.93ms]
+(pass) unavailable renewal successor fails before history sweeps and retries with fresh complete proofs [117.18ms]
+(pass) native archive failure remains visible and retries without restoring predecessor authority [123.04ms]
+(pass) a reopened scheduler recovers a durable transfer before archival without changing workers [133.74ms]
+(pass) a reopened two-scheduler runtime archives only after durable transfer and reconciles queued input [147.17ms]
+(pass) cancellation interrupts workers while a transferred renewal still has failed archival recovery [140.81ms]
+(pass) a continuity checkpoint cannot outlive a later observed user input [134.62ms]
+(pass) renewal finishes all preparation pages before transferring a checkpoint [130.94ms]
+(pass) late and mutable assistant tool results are signalled through the progressive source journal [139.41ms]
+(pass) concurrent plan admission joins the fixed successor and survives two-scheduler reopen [155.26ms]
+(pass) shared-database renewal recovery is invisible to a different canonical project [150.97ms]
+(pass) terminal continuation preserves the retained assignment against workspace changes [135.68ms]
+(pass) terminal continuation preserves the retained assignment against baseline changes [122.38ms]
+(pass) terminal continuation retains a redundant workspace selection (shared=%s) [119.50ms]
+(pass) terminal continuation retains a redundant workspace selection (shared=%s) [134.80ms]
+
+src/runner/retained-repair.test.ts:
+(pass) explicit retained repair preserves accepted history and usage and re-verifies equal-hash task and combined artifacts [565.86ms]
+(pass) A to B to A owner reassignment fences the deferred retained-repair prompt [415.84ms]
+(pass) repeated artifact hashes require current-generation human evidence after repair [1632.74ms]
+(pass) a later retry cannot reuse human acceptance evidence superseded by retained repair [1901.87ms]
+(pass) stale caller/version, wrong artifact and dirty workspace reject without lifecycle changes [1112.01ms]
+(pass) wrong artifacts and changed routes reject without lifecycle changes [1107.18ms]
+(pass) foreground/input controls and uncertain effects reject without lifecycle changes [1938.68ms]
+(pass) native ownership and input races reject without reopening or prompting [422.68ms]
+(pass) source-landed artifacts and tasks with dispatched transitive dependents cannot reopen [787.67ms]
+(pass) dispatched cross-plan dependents and effective scope reservations reject unchanged [694.13ms]
+(pass) a failed retained repair holds the same attempt for decision without automatic replacement [583.36ms]
+(pass) an ambiguous retained prompt is never automatically replayed [467.35ms]
+
+src/runner/artifact-evidence.test.ts:
+(pass) directory artifact evidence accepts only with matching checks and human evidence [795.50ms]
+(pass) empty or missing directories and failed checks still prevent acceptance [2173.53ms]
+
+src/runner/failed-resume.test.ts:
+(pass) explicit resume continues a stopped failed attempt with its history and receipt intact [404.25ms]
+(pass) failed-attempt resume preserves authorization, owner, and uncertain-effect guards [202.62ms]
+(pass) RETRY after failure still starts a distinct retained attempt [245.94ms]
+
+src/runner/outcome.test.ts:
+(pass) notifications carry a concise action and identity, not full check logs [0.16ms]
+
+src/trajectory/store.test.ts:
+(pass) trajectory store opens the project database read-only and rejects SQL mutations [15.09ms]
+
+src/trajectory/read.test.ts:
+(pass) full capture preserves every paged event and live status reads metadata only [31.15ms]
+(pass) trajectory specifications preserve legacy policy references and omit absent ones [28.03ms]
+(pass) trajectory presents commentary separately from automatic worker facts without granting authority [16.80ms]
+(pass) native-context timing keeps unknown endpoints null instead of using parent creation time [14.65ms]
+(pass) read-only trajectory access tolerates a pre-recorded_at progress table without migration [17.95ms]
+(pass) task reports include unsuccessful and accepted attempts, usage categories, checks and unknown cost [14.34ms]
+(pass) versioned task effort accounting survives task, attempt, paged, and read-only reopened reads [18.48ms]
+(pass) trajectory route accounting compares identical 121-character plan, policy, session, and step IDs losslessly [15.85ms]
+(pass) trajectory route accounting distinguishes 121-character IDs with the same retained prefix [15.21ms]
+(pass) trajectory accounting keeps long native context identities exact and marks truncated progress identities unavailable [14.95ms]
+(pass) unavailable-route cursors remain stable across trajectory reads [218.56ms]
+(pass) bounded pages preserve exact event order and reject stale or foreign continuations [28.09ms]
+(pass) visible export redacts nested credentials before truncation and fails closed on private parts [15.60ms]
+(pass) native tool arguments, JSON results and errors omit nested private state [15.01ms]
+(pass) tool multipart JSON and nesting-limit strings omit private reasoning while retaining safe siblings [14.71ms]
+(pass) attempt lookup rejects foreign IDs and session identity mismatches without exporting data [12.67ms]
+(pass) continuation cursors are bound to the project-owned source snapshot [27.28ms]
+(pass) native session errors are redacted before appearing in the report [14.49ms]
+(pass) trajectory reads leave seeded task, attempt, progress, effect, transition, audit rows and watermark unchanged [15.44ms]
+
+src/trajectory/native.test.ts:
+(pass) native adapter reads only the owned session context and projects public times/usage [2.19ms]
+(pass) native adapter refuses a foreign project before reading its transcript [0.15ms]
+(pass) lightweight native status reads current session facts without loading context [0.12ms]
+(pass) lightweight status rejects a foreign session before returning live metadata [0.05ms]
+(pass) native context access failures remain explicit and redact credentials [0.13ms]
+
+src/trajectory/history.test.ts:
+(pass) history cache pages an immutable sanitized capture in exact order [0.43ms]
+(pass) history cursors reject tampering and every foreign identity dimension [0.16ms]
+(pass) expired and evicted history cursors require explicit recapture [0.14ms]
+(pass) history cache rejects duplicate or oversized projections rather than serving partial pages [0.04ms]
+
+src/trajectory/privacy.test.ts:
+(pass) visible text redacts OpenCode credentials including embedded quoted JSON [0.07ms]
+(pass) structured projection omits tagged private content and unsupported values safely [0.86ms]
+(pass) structured JSON strings at the nesting limit fail closed without hiding safe siblings [0.07ms]
+(pass) text bounds count Unicode code points after redaction [0.05ms]
+
+src/trajectory/accounting.test.ts:
+(pass) shared-session steps compare only with their exact retained attempt owner [0.29ms]
+(pass) shared-session context and current selection remain visible without invented historical attempt ownership [0.08ms]
+(pass) deduplicates session references and never fills a current cumulative snapshot from older or additive observations [0.13ms]
+(pass) selects the latest retained cumulative snapshot deterministically without category gap filling [0.10ms]
+(pass) retained additive steps are a source-stamped subtotal, deduplicated by step and isolated from legacy scalars [0.25ms]
+(pass) keeps frozen assignment separate from mixed observed routes and exposes unavailable coverage honestly [0.16ms]
+(pass) route accounting compares exact identities behind bounded displays and leaves lost identities unavailable [0.17ms]
+(pass) unavailable route ordering follows source occurrences, not lossy displays or allocation order [0.15ms]
+(pass) ID-less unavailable routes retain distinct fact and observation-slot occurrences [0.21ms]
+
+src/trajectory/live.test.ts:
+(pass) live delivery retains unchanged events and updates the same ID across lost responses [0.14ms]
+(pass) foreign, expired, evicted and process-lost baselines reset with the current full data [0.05ms]
+(pass) a projection larger than the delivery cache is returned in full without truncation [0.02ms]
+
+src/runner/retained-verification/isolation.test.ts:
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+Saved lockfile
+(pass) an authored Bun test runs in an isolated checkout with private dependencies, SQLite and profile [497.02ms]
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+Saved lockfile
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+Saved lockfile
+(pass) another project executes a new scoped target against its committed dependency manifest [632.78ms]
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+Saved lockfile
+(pass) an unavailable candidate-committed dependency source blocks before resources or checks [214.19ms]
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+Saved lockfile
+(pass) candidate-declared build scripts execute with private build outputs and mutable resources [462.33ms]
+Resolving dependencies
+Resolved, downloaded and extracted [2]
+Saved lockfile
+(pass) a verification resource aliasing a retained workspace is rejected [194.49ms]
+(pass) project procedure bindings cover authored and newly scoped Bun targets [0.30ms]
+
+src/verification/resources/store.test.ts:
+(pass) resource registrations are durable, idempotent, generation-bound, and project-exclusive [28.06ms]
+(pass) registration failure rolls back the whole batch before a caller can create fixtures [19.95ms]
+
+src/verification/resources/lifecycle.test.ts:
+(pass) committed registration precedes fixture creation; exact replay is inert and changed content conflicts [20.27ms]
+(pass) success, product failure, setup failure and cancellation all attempt owned teardown [42.02ms]
+(pass) failed cleanup is durable and retry does not replay the callback or change a passed verdict [18.52ms]
+(pass) reopened cleanup with a different filesystem root stays uncertain until the original root returns [24.96ms]
+(pass) reopen reconciles before-create and after-create-before-receipt cuts without duplicate creation [31.57ms]
+(pass) a concurrent replay cannot duplicate probe behavior or clean up another active invocation [17.61ms]
+(pass) reopen after delete-before-receipt accepts only authoritative absence and preserves pass [21.46ms]
+(pass) unknown observations stay claimed and foreign fixture content is never removed [27.22ms]
+(pass) shared and independent coordinators fail closed across canonical root aliases [47.62ms]
+(pass) unsafe fixture paths and failed registration prevent filesystem creation [14.94ms]
+
+src/verification/probe/store.test.ts:
+(pass) definitions cover every declared assertion and preserve authenticated Architect policy revisions [9.06ms]
+(pass) task and combined-candidate definitions reject foreign task and plan ownership [19.59ms]
+(pass) behavior satisfaction is independent of cleanup while failed and unfinished probes remain unsatisfied [18.71ms]
+(pass) SQLite reopen preserves independent, actor-bound probe receipts and cleanup remains separate from pass [63.31ms]
+(pass) run lifecycle, verdict, cleanup failures and transactional rollback remain distinct [27.31ms]
+(pass) durable record revisions invalidate only mismatched receipts without deleting them [14.67ms]
+
+4 tests failed:
+(fail) independent plans overlap while a second reconciler cannot duplicate dispatch [5131.80ms]
+  ^ this test timed out after 5000ms.
+(fail) lost worktree creation response resumes its own blocked startup after reconciliation [5049.27ms]
+  ^ this test timed out after 5000ms.
+(fail) a cancelled afterPlans child resumes its retained committed attempt [5120.32ms]
+  ^ this test timed out after 5000ms.
+(fail) retry requeues a cancelled unstarted successor in the admitted graph and waits for dependencies and scope [5151.42ms]
+  ^ this test timed out after 5000ms.
+
+ 596 pass
+ 4 fail
+ 4 errors
+ 7647 expect() calls
+Ran 600 tests across 37 files. [198.78s]
