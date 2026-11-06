@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T04:08:00Z. The goal remains active: drive OpenCode Desktop until the
+Updated 2026-11-06T04:40:00Z. The goal remains active: drive OpenCode Desktop until the
 active roadmap is implemented, verified, integrated and cleaned; then present
 an observation-based improvement plan. Preserve the full backlog.
 
@@ -54,7 +54,14 @@ GUI bundle. Reactive identity + mounted panel tests passed; broader Tasks suite
 34 tests / 152 assertions passed, with lint/types/build. Native Tasks selection,
 Start153 and Queued→Running filtering survived without blanking.
 See `design/reviews/tasks-keyed-row-crash-20261106.md`.
-No further Root activation planned while the current workers run.
+Review batch HEAD `231805d29313ced9b3e73607a78cdacadb302d2d` in
+`/private/tmp/lz147-compact-review` contains147compact,3e09menu test fix,
+153c8530aa and15259cf8f8. Full independent regression1364tests/15208assertions
+passed (250.53s); fmt/lint/types/diff and combined GUI build pass. Logs in
+`evidence/dogfood-20261106/models-tasks-batch-{tests,build}.log`.
+147/152/153 workers are inactive/succeeded.138dependency correction remains
+active, now running its declared suite after focused15tests/169assertions pass.
+Use a completed-worker activation boundary; do not interrupt138's current execution.
 
 LZ-151: task `77155457-70ca-424b-b5cf-0598244fe738`, plan
 `9f7c80ad-a799-443e-8a40-f294e15f9d50`, attempt
@@ -75,6 +82,11 @@ Current edits are comparison-panel.tsx/css; review on completion.
 
 LZ-153: `5d4548ce-e5c0-4f7a-b3d1-3614e973e3f5`, plan
 `a27556ef-015b-4084-bc5a-ed12dea9329e`, running / priority100 / Systems / LunaMax.
+Worker now inactive/succeeded and clean at `c8530aa0612403e4eb7de9d136183b55660a7b22`.
+Root merged it into `/private/tmp/lz147-compact-review`; independent Models183tests/
+2152assertions passed there. Actual read-only project capture succeeded over16315
+facts/155tasks,5.3s. Native full producer/UI still unqualified. See
+`design/reviews/models-history-read-review-20261106.md`.
 Root clicked Start in Desktop; native attempt
 `4e7fb2d5-e54f-4f9c-a153-58a38aa87dc2`, worker
 `ses_bb1ddbbe1ca84e498de9597792c602f6`, separate native tree.
@@ -109,8 +121,14 @@ Native Tera High reviewer `ses_e52a5ae04ffeObat8Bt6imz4ci` compared
 `design/task-panel/tasks-focus-v2.png` with
 `.agents/docs/evidence/dogfood-20261106/147-running-desktop.png`.
 Tera completed review; visual acceptance remains open. Architect sent a genuine
-tagged correction to the original147 worker, now actively editing panel.tsx/css
-and the mounted activity test. Compact title-first rows; full hold reasons in
+tagged correction to the original147 worker, now inactive/succeeded at
+`ebdf41a044f761b78308f70eefedf24f2f113fc3`. Root source-reviewed the correction
+in native `/private/tmp/lz147-compact-review`, combined with keyed fix/current main.
+69 tests passed;6 menu tests passed after generating their required Radar build
+artifact. Root then fixed that unrelated test prerequisite in review commit
+`3e09c37`: real GUI/Vite compiler, configFile:false; all6 tests passed with the
+artifact temporarily absent, plus lint/types. Include this test fix at integration. Mounted UI/keyed tests, fmt/lint/types/build passed. Keep the clean
+review tree for next combined integration; no canonical activation yet. Compact title-first rows; full hold reasons in
 selected inspector; preserve truthful foreground states and149 scope. Root owns
 keyed.ts separately. Use screenshots, not mockup-to-components.
 
@@ -134,11 +152,31 @@ Full independent review, integration and native retained-task walkthrough are
 still required. Luna reviewer `ses_e522ffd49ffeenRSBj8xvTAxMB` completed: NOT READY.
 Candidate dependency lockfiles still must equal root installed state; fixture only
 adds already-installed package without lockfile. Root confirmed isolation.ts228-255
-and sent the concrete defect to Architect for genuine same-worker138 correction.
+and sent the defect to Architect; original138 worker is active on the genuine correction.
 See `design/reviews/lz138-candidate-dependencies-review-20261106.md`.
 Review tests14/156assertions plus quality/build passed; no durable native receipts
 proved. Do not integrate d378 as full candidate-dependency support.
 Do not accept based only on the binder or fixture tests.
+
+## Models UI source review
+
+152 initial committed candidate `26a0d882488e2615703e8b83bb58bd79733eea85`
+passes worker184tests/2794assertions and quality/build, but Root rejected default
+presentation: many caveat/metadata paragraphs above collapsed evidence contradict
+the approved compact mockup. Architect steered the same152worker, now inactive/succeeded and clean at
+`59cf8f8d23c027c0cb0b8c4e7fe8a72bfafee43c`. Worker184tests/2816assertions and
+quality/build pass. Root source review passes and merged it into review batch;
+Main natively reconciled its genuine correction and reports accepted152. Keep summary price/endpoint/essential uncertainty visible,
+detailed tier/retry/cache/source information under collapsed Evidence & assumptions.
+No data-policy expansion. Wait for corrected source before visual acceptance.
+
+## Trajectory pricing follow-up
+
+Architect submitted LZ-155 task `c23ffca3-fe8d-4102-afe6-3ee6ebf12f0c`, plan
+`b2d491ae-b125-485e-8637-796ae194447e`: draft, Systems/LunaMax, after Models151/152
+plan and153plan. It connects existing102 valuation to authorized trajectory tool/
+panel consumers, preserving partial/unknown usage and current cached source provenance.
+No new price arithmetic or subscription charges. It has not run.
 
 ## Newly observed pricing connection gap
 

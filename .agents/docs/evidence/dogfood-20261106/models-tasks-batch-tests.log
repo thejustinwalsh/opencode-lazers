@@ -1,0 +1,1733 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+src/task-correction.test.ts:
+(pass) task corrections require an explicit project-local original or explicit separation [8.23ms]
+
+src/architect.test.ts:
+(pass) the packaged definition registers a missing primary agent and isolates transform replays [2.73ms]
+
+src/database-events.test.ts:
+(pass) native database notifications share a feed and reach independent service connections [162.51ms]
+(pass) independently loaded modules reuse the same process feed [0.36ms]
+
+src/submission.test.ts:
+(pass) lost receipts and reordered nested objects replay the unchanged original after reopening [18.44ms]
+(pass) changed values and array order conflict; distinct exact keys and canonical repositories are independent [16.20ms]
+(pass) invalid keys/proposals and provenance failures never reserve a key [8.01ms]
+(pass) fresh requests require an explicit kind while exact unclassified historical replay stays unchanged [8.78ms]
+(pass) a failed association write rolls back task, key and change stream; retry succeeds [8.27ms]
+(pass) fresh native-tool processes recover a lost receipt across session/worktree/HEAD changes [416.93ms]
+(pass) independent native-tool connections racing the same content commit one task and association [317.87ms]
+(pass) independent native-tool connections racing changed content produce one winner and one conflict [367.99ms]
+(pass) concurrent distinct submissions allocate unique project-local references [541.98ms]
+(pass) concurrent stale classification corrections serialize to one commit and one conflict [199.09ms]
+(pass) independent processes replay durable project-local correction receipts without rewriting provenance [659.21ms]
+(pass) independent processes serialize opposing links and atomically prevent a cross-task cycle [157.57ms]
+(pass) genuine v1 data migrates transactionally and mappings survive repeated reopening [11.08ms]
+(pass) migration failure preserves v1 metadata/body and can be retried without partial DDL [7.72ms]
+
+src/task.test.ts:
+(pass) submission keys are required transport identity, bounded and never normalized [1.27ms]
+(pass) task proposals > accepts a scoped task and emits strict JSON Schema from Zod [0.14ms]
+(pass) task proposals > round-trips one explicit versioned primary task kind and rejects ambiguous taxonomy [0.20ms]
+(pass) task proposals > preserves a workspace-relative directory artifact reference verbatim [0.19ms]
+(pass) task proposals > rejects drafts, unknown fields, empty intent, and missing evidence [1.53ms]
+(pass) task proposals > rejects scope paths that escape or ambiguously redefine the repository boundary [0.47ms]
+(pass) task proposals > exported path pattern works without Unicode regex flags used outside JSON Schema [0.27ms]
+(pass) task proposals > rejects duplicate identifiers and missing verification references [0.15ms]
+(pass) task proposals > accepts tasks without guessed budgets and validates legacy limits when supplied [0.23ms]
+(pass) submitted envelopes distinguish unborn provenance from a missing revision [0.18ms]
+(pass) legacy task bodies remain readable without creating a default classification [0.05ms]
+
+src/storage.test.ts:
+(pass) a validated submission survives closing and reopening SQLite with runtime provenance [7.57ms]
+(pass) invalid submissions return field guidance, save nothing, and do not collect provenance [6.19ms]
+(pass) worktrees sharing canonical project identity see tasks; other projects cannot retrieve them [6.09ms]
+(pass) a newer database version fails without resetting migration metadata [2.33ms]
+(pass) SQLite itself enforces key uniqueness and task association referential integrity [5.97ms]
+(pass) task dispositions are project-local, durable, idempotent, and hide retired records by default [8.26ms]
+(pass) classification annotations use exact CAS replay and preserve every immutable or execution record [17.56ms]
+(pass) correction audit persists with CAS replay and leaves physical accepted history untouched [24.52ms]
+(pass) correction endpoints reject self, missing, and foreign tasks; request replay is nonduplicating [8.57ms]
+(pass) repository pages filter execution state before counting while legacy history includes all states [17.00ms]
+(pass) a disposition cannot hide active execution or claim failed work was fulfilled [9.47ms]
+(pass) storage path honors an explicit directory and rejects a relative override [0.07ms]
+(pass) Git provenance distinguishes unborn HEAD, committed HEAD, and an inaccessible repository [77.63ms]
+
+src/tools.test.ts:
+(pass) pinned Code Mode resultValue prefers defined output and joins text only as fallback [0.12ms]
+(pass) registered tools submit, retrieve, and list the same durable task [37.50ms]
+(pass) native task submission round-trips all task-kind/v1 values through effective reads [109.91ms]
+(pass) Architect classification tool appends, exactly replays, and returns conflict on changed content [33.30ms]
+(pass) Architect correction controls record, replay, revise, retract, and inspect explicit membership [50.77ms]
+(pass) a replayed submission receipt reports current queued state without claiming execution [35.27ms]
+(pass) Architect can durably retire a legacy task and replay the same disposition [33.72ms]
+(pass) task disposition is Architect-only even when native permission allows the tool [6.69ms]
+(pass) non-Architect correction and classification denials precede parsing and database access [6.27ms]
+(pass) permission denial prevents task writes [8.35ms]
+(pass) retained tool callbacks survive disposal of the registration connection [43.53ms]
+(pass) tool execution returns validation guidance without persisting an invalid task [6.63ms]
+(pass) task reads expose structured Code Mode outputs and require their own permissions [32.99ms]
+(pass) registered Code Mode implementor fetch yields readable instructions before typed data [29.07ms]
+(pass) readable task fetch handles missing and unavailable revisions [31.74ms]
+(pass) native schema/runtime require keys, validate before database access, and leave rejected keys reusable [27.02ms]
+(pass) permission denial precedes every lookup/write for first, replay, conflict and read invocations [42.22ms]
+(pass) native retries and conflicts skip inaccessible Git; canonical project scope crosses worktrees but not repositories [61.71ms]
+
+test/maintenance-preflight.test.ts:
+(pass) the production evaluator preserves exact handoff bindings and never authorizes recovery [3.51ms]
+(pass) production effect and environment identities are preserved and foreign bindings fail closed [1.20ms]
+(pass) the evaluator is deterministic and calls only injected read-only evidence readers [0.82ms]
+(pass) dirty, wrong, changed, unmerged and snapshot-mismatched candidates fail closed [0.45ms]
+(pass) manifest-free and legacy-manifest inspections reach candidate and receipt evaluation [0.39ms]
+(pass) candidate Git observations bracket successful and throwing receipt reads [0.19ms]
+(pass) unavailable readers and stale or contradictory durable snapshots have stable blockers [0.94ms]
+(pass) new, missing, malformed and mismatched receipts never repair an uncertain effect [0.44ms]
+(pass) latest-attempt/effect and effect payload bindings are exact [0.55ms]
+(pass) snapshot age alone is not treated as freshness evidence [0.07ms]
+(pass) PID reuse, start-time mismatch, live identity and absence all leave containment unproven [0.77ms]
+(pass) spawned offline CLI accepts production bindings and leaves candidate and receipts unchanged [265.47ms]
+
+src/tasks/corrections.test.ts:
+(pass) effective roots follow explicit chains and branches across reassignment and retraction [14.72ms]
+(pass) a pinned read-only SQLite snapshot hides concurrent correction writes until the next read [8.06ms]
+(pass) legacy missing correction tables are unreviewed, distinct from explicit independence, and read-only [2.69ms]
+(pass) an explicit independence review has durable history distinct from unreviewed membership [10.38ms]
+(pass) correction reads isolate project scope and do not infer generic supplementary relations [23.48ms]
+
+src/tasks/read.test.ts:
+(pass) older records, literal filters, sessions and keyset snapshots stay bounded and isolated [69.86ms]
+(pass) read observers cannot invalidate a committed receipt and a fresh process preserves the watermark [71.08ms]
+(pass) unplanned detail is encodable by the native JSON RPC boundary [14.85ms]
+(pass) task advice is explicit without legacy attachments and shared by planned and unplanned reads [20.39ms]
+(pass) get, query, history and exact classification revisions agree and mutations stale cursors [17.02ms]
+(pass) retired tasks disappear from open queries but direct detail preserves disposition [13.90ms]
+(pass) open, failed and cancelled filters separate effective plan and node states [32.57ms]
+(pass) queued, running and blocked filters use recorded node and plan states across pages [25.29ms]
+(pass) current activity candidates are limited to requested, authorized latest attempt rows [17.02ms]
+
+src/tasks/panel-state.test.ts:
+(pass) state preferences remain independent while old history preferences retain their meaning [0.05ms]
+(pass) healthy connected Tasks does not repeat list and inspector reads without changes [5152.64ms]
+(pass) native activity events refresh only matching tasks and coalesce repeated notifications [136.27ms]
+(pass) native reconnect refreshes current activity once on the connected stream [7.83ms]
+(pass) disposed task connections ignore late native activity notifications [86.67ms]
+(pass) late current-activity responses cannot cross a changed Tasks scope [57.54ms]
+(pass) native reconnect catches missed state even when repository version did not advance [3.81ms]
+(pass) failed reads retry without events and stop retrying after recovery [4255.43ms]
+(pass) closing a failed view cancels its recovery reads [1102.29ms]
+(pass) old session/project/server/filter responses and old detail selections cannot replace the current view [5.19ms]
+(pass) duplicate Start clicks share a request, while reconnect retries through the new transport [1.22ms]
+(pass) invalidations during snapshot acquisition are caught up, foreign and duplicate events are ignored [7.66ms]
+(pass) a change already covered by the in-flight snapshot does not repeat the read [4.32ms]
+(pass) read failures retain stale scoped data and recovery preserves the selected task [1.86ms]
+(pass) topology is published only when it shares the task-page repository boundary [3.31ms]
+(pass) linked dependency details use the transport's same-scope authorization path [1.87ms]
+(pass) late optional topology cannot publish old tasks into a newly connected scope [5.53ms]
+(pass) restored inspectors load while topology is pending or the list fails [4.03ms]
+(pass) optional topology errors show only a readable public message: {"type":"rpc.internal","message":"RPC call failed"} [1.85ms]
+(pass) optional topology errors show only a readable public message: {"arbitrary":"private details"} [1.37ms]
+(pass) optional topology errors show only a readable public message: {} [1.24ms]
+
+src/tasks/events.test.ts:
+(pass) native connection announcements resnapshot; only valid scoped task changes pass [1.10ms]
+(pass) aborted native subscriptions cannot invalidate a closed task view [0.08ms]
+
+src/tasks/panel-view.test.ts:
+(pass) late Start failures/completions cannot affect another task or scope [0.13ms]
+(pass) scroll restoration waits for detail content independently of the list [0.11ms]
+(pass) default scroll restoration respects the browser scheduler receiver [0.80ms]
+(pass) planned queued work exposes Start, but ended or held work does not [0.05ms]
+
+src/tasks/execution-list.test.ts:
+(pass) chains keep admitted ordinals without implying parallel work and preserve off-page prerequisites [1.06ms]
+(pass) a diamond is one real expandable fork and its shared join stays on the root lane [0.49ms]
+(pass) disjoint forks remain separate and an overlapping cross-edge is never forced into a tree [0.21ms]
+(pass) real b50-shaped branches fold while external speech remains a join dependency [0.15ms]
+(pass) extra edges into branch heads and interiors and nonlinear branches remain flat [0.28ms]
+(pass) an external join prerequisite stays on the root lane with both branches folded [0.12ms]
+(pass) planless and unavailable topology remain honest ungrouped task rows [0.10ms]
+(pass) selecting an already visible planless task emits its canonical row once [0.04ms]
+(pass) grouped and context-only rows preserve recorded lifecycle beside plan holds [0.08ms]
+(pass) rows keep raw recorded node state when an older summary contains effective held status [0.04ms]
+
+src/tasks/rpc.test.ts:
+(pass) RPC invalidations catch independent connections and retry transient read and delivery failures [3330.93ms]
+(pass) Tasks RPC restores persisted references on association-aware query summaries [19.73ms]
+(pass) current-activity RPC observes only authorized latest metadata and rejects changed attempts [18.86ms]
+(pass) native advice attachment is Architect-only, replay-safe, and returned through task reads [28.67ms]
+(pass) Start RPC checks actor ownership and native permission before entering runtime [17.62ms]
+
+src/tasks/instructions.test.ts:
+(pass) task instructions preserve goal, acceptance, boundaries, guidance, verification, and sources [0.39ms]
+(pass) task instructions retain readable missing-task and unavailable-revision outcomes [0.03ms]
+(pass) task instructions render only concise effective advice with its provenance and inert references [0.33ms]
+
+src/tasks/classification.test.ts:
+(pass) legacy annotation, embedded baseline and corrections have independent contiguous revisions [10.27ms]
+(pass) read-only classification reads tolerate a missing annotation table without migration or file creation [2.44ms]
+
+src/tasks/panel-layout.test.ts:
+(pass) split geometry subtracts the live wrapped header and separator [0.07ms]
+(pass) multiple pointer moves and short panes stay within the usable split range [0.03ms]
+
+src/tasks/advice.test.ts:
+(pass) advice persists append-only with exact replay, correction, conflicts, provenance, and reopen [15.87ms]
+(pass) foreign-project reads and writes do not expose or create attachment receipts [8.23ms]
+(pass) corrections continue past the bounded read projection without dropping history or changing task bytes [17.70ms]
+(pass) concurrent writers serialize expected-revision compare-and-append [95.74ms]
+
+src/context/index.test.ts:
+(pass) index refresh supports native process worker observers [524.84ms]
+(pass) explicit refresh uses pinned Repomix and preserves ignore, secret, permission, and symlink protections [676.71ms]
+(pass) read selections and service reopen reuse one snapshot without collection, processing, or cache writes [343.75ms]
+(pass) readers and later permission revocations are checked against cached files on every read [380.35ms]
+(pass) focused reads authorize only distinct path/search matches in snapshot order [1380.31ms]
+(pass) focused result totals and truncation use authorized matches before response limits [1046.76ms]
+(pass) failed refresh leaves the published snapshot intact; refresh updates changed, added, deleted, and ignored files atomically [1065.98ms]
+(pass) queries during a refresh see the prior complete snapshot until atomic publication [1555.26ms]
+(pass) cross-process publication and eviction cannot remove bytes selected by an in-flight reader [812.70ms]
+(pass) refresh requires Architect authority and foreign workspaces do not inherit another index [360.51ms]
+(pass) focused multi-file reads return complete source beyond the former response cap [366.02ms]
+(pass) manifest and evidence retain their source-count response bounds [969.38ms]
+(pass) worker packets use the reusable snapshot, cited ranges, and bounded source deferral [645.22ms]
+
+src/context/tools.test.ts:
+(pass) read tools report an absent index without building, and an explicit Architect refresh publishes it [348.18ms]
+(pass) native permission and Architect role both gate refresh; reads remain available to permitted implementors [340.90ms]
+(pass) native permission denial prevents Architect refresh from creating a snapshot [24.32ms]
+(pass) cancelling an index tool interrupts its native permission wait and stops the scan [401.30ms]
+
+src/progress/reconstruction.test.ts:
+(pass) 54 registrations across pinned loader generations share one 97-session baseline [39.80ms]
+(pass) diagnostics are lookup-only for absent and initialized project coordinators [15.99ms]
+(pass) retired native reads remain visible until settlement without reclaiming queue ownership [21.00ms]
+(pass) canonical aliases share ownership while different database and project keys isolate [15.08ms]
+(pass) suspended changes coalesce, assignment changes are polled, and stale reads refetch [37.79ms]
+(pass) all-participant disposal preserves unfinished recovery without replaying completed sessions [20.49ms]
+(pass) unavailable reconstruction remains queued and retries until it recovers [1016.79ms]
+(pass) terminal historical context is fairly rechecked without a native event [27.18ms]
+(pass) mixed-case terminal sessions advance fairly across complete refresh cycles [27.07ms]
+
+src/progress/native.test.ts:
+(pass) a replacement idle hook retains truthful completion with a connected peer [41.34ms]
+(pass) a replacement idle hook retains truthful completion with a retired peer [30.57ms]
+(pass) a replacement idle hook retains truthful completion with a disconnected peer [1041.21ms]
+(pass) a replacement idle hook retains truthful completion with a retired-after-idle peer [29.70ms]
+(pass) registered report tool, hook, native events, and recovery share one recorder [46.15ms]
+(pass) reconstruction diagnostics count actual native read outcomes without exposing error details [23.50ms]
+(pass) native permission denial and forged or foreign reports perform no writes [16.89ms]
+(pass) idle handoff reminder is concise, persisted, and sent at most once per attempt [25.88ms]
+(pass) genuine zero-background hook and exact success survive listener disposal and SQLite reopen [33.79ms]
+(pass) fresh same-execution idle hook restores convergence after queued and synthetic input [35.95ms]
+(pass) a same-input newer execution and delayed older success cannot resurrect zero background [41.28ms]
+(pass) a received live duplicate start establishes owning-listener lineage and survives reopen [39.36ms]
+(pass) independent listeners and disposal preserve only confirmed durable idle evidence [35.75ms]
+(pass) same-process listener replacement cannot invent current execution lineage for msg_initial [33.96ms]
+(pass) same-process listener replacement cannot invent current execution lineage for msg_resumed [31.93ms]
+(pass) a replacement listener uses a complete native log only for its genuine idle hook [33.88ms]
+(pass) native log lineage preserves a positive background idle observation [30.98ms]
+(pass) replacement idle replay rejects unavailable log evidence [24.08ms]
+(pass) replacement idle replay rejects missing sync marker log evidence [24.91ms]
+(pass) replacement idle replay rejects empty history with a nonempty sync watermark log evidence [21.88ms]
+(pass) replacement idle replay rejects gapped log evidence [28.59ms]
+(pass) replacement idle replay rejects terminal after the latest start log evidence [35.54ms]
+(pass) replacement idle replay rejects unpersisted newer start log evidence [29.96ms]
+(pass) a changed input while log replay is pending cannot confirm its old start [30.77ms]
+(pass) a changed execution while log replay is pending cannot confirm its old start [40.13ms]
+(pass) a replacement stream gap before its first event invalidates inherited execution identity [1047.01ms]
+(pass) failed durable event observation prevents late idle input from confirming an old start [23.99ms]
+(pass) failed newer start persistence cannot confirm an earlier zero report with later success [26.31ms]
+(pass) a stale second-listener start cannot confirm an older zero after a failed newer start [27.18ms]
+(pass) stream-loss-read recovers from an unknown lineage barrier only at a finite live-start boundary [1046.62ms]
+(pass) stream-loss-first-reconnect-read-fails recovers from an unknown lineage barrier only at a finite live-start boundary [2054.61ms]
+(pass) unsequenced-event-reconnect recovers from an unknown lineage barrier only at a finite live-start boundary [1066.64ms]
+(pass) unsequenced-event-continuing recovers from an unknown lineage barrier only at a finite live-start boundary [51.58ms]
+(pass) a delayed old idle callback cannot overwrite a newer confirmed same-session report [58.07ms]
+(pass) queued older session.shell.started cannot regress the latest durable idle report [58.04ms]
+(pass) queued older session.execution.started cannot regress the latest durable idle report [39.16ms]
+(pass) queued older session.inbox.enqueued cannot regress the latest durable idle report [39.20ms]
+(pass) queued older session.execution.failed cannot regress the latest durable idle report [43.84ms]
+(pass) idle producer failures retain safe diagnostics and never become terminal evidence [38.15ms]
+(pass) registered idle and success retain compacted input identity and reject a changed retained input [94.86ms]
+(pass) registered native idle order preserves matching success and ignores delayed older terminal events [72.28ms]
+(pass) early assistant commentary followed by tools is not a final handoff [27.57ms]
+(pass) final handoff after later tools suppresses reminder; non-final tool commentary does not [26.26ms]
+(pass) same-execution reentrant idle cannot recursively admit more than one synthetic reminder [30.34ms]
+(pass) concurrent idle hooks claim and admit only one bounded reminder [25.70ms]
+(pass) unknown synthetic admission is reconciled by exact stable native identity without resend [25.98ms]
+(pass) confirmed rejection can retry once with the same native ID; then it is bounded [32.10ms]
+(pass) reminder completion stays bound to its claimed attempt, session and message across cancellation races [17.75ms]
+(pass) project recovery is coalesced while native hooks remain per location [83.14ms]
+(pass) unavailable or mismatched historical get reads keep a safe gap and eventually recover [1023.75ms]
+(pass) unavailable or mismatched historical context reads keep a safe gap and eventually recover [1029.40ms]
+(pass) unavailable or mismatched historical identity reads keep a safe gap and eventually recover [1019.41ms]
+(pass) replacement recovery takes ownership during a suspended get read and fences its late continuation [101.91ms]
+(pass) replacement recovery takes ownership during a suspended context read and fences its late continuation [98.61ms]
+
+src/progress/integration-review.test.ts:
+(pass) structured context, reasoning and full inputs are omitted at durable write and legacy read [17.09ms]
+(pass) older recovery cannot overwrite a newer cumulative payload while provenance merges [19.06ms]
+(pass) native terminal and retained marker coalesce; session outcome snapshots are explicitly non-additive [20.03ms]
+
+src/progress/recorder.test.ts:
+(pass) hook, native tool events, and retained recovery coalesce into one durable identity [21.70ms]
+(pass) two database connections allocate unique ordered sequences and reports resolve identity [22.51ms]
+(pass) step costs are additive per step while cumulative session snapshots stay separate [16.97ms]
+(pass) runtime checks and artifacts are durable facts but never acceptance authority [14.76ms]
+(pass) failed tools, failed steps, retries, shell results and interrupted turns recover without final prose [20.70ms]
+(pass) native timing endpoints converge across hook, live, and retained recovery replay [48.87ms]
+(pass) retained unavailable routes are canonical on first write and idempotent through replay and reopen [35.92ms]
+(pass) retained terminal execution wins over stale snapshots in every replay order [40.07ms]
+(pass) equally authoritative retained execution conflicts survive permutations and reopen [30.49ms]
+(pass) recorded-at migration preserves legacy progress identity and leaves legacy time unknown [23.06ms]
+(pass) startup reconciliation resolves a claimed reminder by exact synthetic identity or keeps admission unknown [16.78ms]
+(pass) native synthetic admission event completes only its owned reminder claim [15.92ms]
+(pass) unchanged recovery performs no SQLite write while fresh and changed facts remain durable across connections [20.99ms]
+(pass) warm unchanged recovery skips per-message fact append and merge attempts across history sizes [49.69ms]
+(pass) bounded recovery memo preserves warm reuse across 122 terminal sessions and unrelated activity [124.42ms]
+(pass) recovery fingerprint distinguishes an absent property from an own undefined route [18.07ms]
+(pass) fresh native UTC and zoned timestamps reuse recovery by their recorded epoch millis [27.25ms]
+(pass) unsafe timestamp lookalikes, getters, and cycles never warm recovery fingerprints [17.04ms]
+(pass) DateTime values in non-timestamp payloads do not normalize away meaningful route changes [16.13ms]
+(pass) retained recovery reprojects after same- and other-connection native updates [20.49ms]
+
+src/recovery/journal.test.ts:
+(pass) captured page advances its exact prefix after later appends (limit 1) [18.29ms]
+(pass) captured page advances its exact prefix after later appends (limit 10) [14.81ms]
+(pass) an empty captured page cannot consume facts appended before advancement [14.82ms]
+(pass) journal captures inserts and in-place modifications, ignores replay, and survives reopen [21.50ms]
+(pass) pre-journal rows are represented by an explicit starting boundary, not fabricated history [18.90ms]
+(pass) late project initialization retains facts captured by another project's triggers [26.38ms]
+(pass) a native terminal failure modifies the recorder's existing call without changing its identity [18.93ms]
+(pass) source writes and journal facts roll back together; caller result and cursor share a transaction [27.35ms]
+(pass) bounded pages measure observed journal reads and unchanged polls do not reread history [18.62ms]
+(pass) project isolation and stale cursor checks cannot skip journal facts [19.75ms]
+(pass) advance rejects forged IDs, substituted facts, and invalid boundaries atomically [20.77ms]
+
+src/recovery/producer.test.ts:
+(pass) ordinary RunnerStore initialization captures real recorder inserts and coalesced failures [19.55ms]
+(pass) identical recorder replay is inert and real inserts or coalesced updates roll back atomically [18.23ms]
+(pass) captured producer prefix survives independent initialization and reopen [30.95ms]
+
+src/runner/scheduler-coordinator.test.ts:
+(pass) 54 location registrations share one project reconciliation and one timer [0.89ms]
+(pass) independent projects keep requested intervals on the same timer [0.17ms]
+(pass) slow reconciliation never overlaps, coalesces requests, and does not block other projects [0.37ms]
+(pass) retiring the elected participant waits for its drain before transferring ownership [0.13ms]
+(pass) a replacement registration during final disposal cannot start an overlapping drain [0.08ms]
+(pass) an error or failing error reporter does not strand subsequent reconciliation [0.12ms]
+(pass) requests use the earliest deadline; disposal cancels pending requested work [0.07ms]
+(pass) a shorter participant interval advances the deadline without a duplicate startup sweep [0.06ms]
+(pass) initial deadlines support periodic jobs without an immediate startup invocation [0.04ms]
+(pass) explicit start requests join one elected drain and wait for work after an in-flight read [0.14ms]
+(pass) explicit reconciliation errors reach their caller and do not poison the next request [0.07ms]
+(pass) disposal rejects queued explicit requests instead of leaving their callers waiting [0.05ms]
+(pass) disposing a follower rejects captured Start waits without resuming its closed store [0.10ms]
+(pass) invalid intervals and deadlines cannot create an unbounded timer loop [0.06ms]
+(pass) independently loaded module copies share the process coordinator [0.10ms]
+(pass) canonical project keys coalesce path aliases while keeping databases and projects distinct [0.59ms]
+
+src/runner/inspection.test.ts:
+(pass) compact inspection keeps scheduling signal without serializing logs [21.84ms]
+(pass) selected full detail does not run the project audit; explicit project inspection retains it [17.26ms]
+(pass) journal is an explicitly selected bounded view and leaves compact/full inputs compatible [1.47ms]
+
+src/runner/store.test.ts:
+(pass) legacy Architect renewal rows migrate to store an explicit continuity snapshot [13.85ms]
+(pass) startup settlement receipt appends evidence without replacing the original operation failure [0.14ms]
+(pass) legacy adoption evidence remains auditable but cannot satisfy phase-bound evidence [14.25ms]
+(pass) legacy Architect input rows survive migration into the durable source journal [14.71ms]
+(pass) retained repair generations remain task-bound and the latest plan operation is observable [15.14ms]
+(pass) plan control epochs change on owner/cancellation controls but ignore task activity [16.96ms]
+(pass) source-notice pointer readers materialize only current owners or exact replacement IDs [68.23ms]
+(pass) Architect source journal pages traverse large retained sources and invalidate foreign or stale cursors [107.86ms]
+(pass) 804-input/3839-result and doubled journals keep handoff and current pointer bytes compact [239.83ms]
+(pass) an in-progress source-notice reconciliation claim survives store reopen without replacing receipts [27.97ms]
+(pass) journal revision triggers are replaced on a second connection without resetting counters [18.71ms]
+(pass) active project reservations preserve priority and attempt order and refresh across transitions and reopen [24.97ms]
+(pass) delivery excludes terminal historical unknown rows but retains admitted recovery and the latest unknown [17.38ms]
+(pass) delivery ranks numeric versions once while preserving latest terminal ties, active recovery and project order [17.83ms]
+(pass) legacy delivered outbox schema migrates across an actual close and reopen with unknown consumption [40.51ms]
+(pass) legacy continuation session uniqueness migrates so one renewal can own multiple plans [17.68ms]
+(pass) authored plan titles survive persistence, reopen, and idempotent replay unchanged [19.79ms]
+(pass) new and legacy untitled plan bodies remain title-absent across reopen and replay [19.94ms]
+
+src/runner/native.test.ts:
+(pass) native adapter exposes inbox and paginated history reconciliation without claiming a sealed cutover [0.04ms]
+(pass) native worktrees use the host lifecycle with the admitted ref and returned directory [0.38ms]
+(pass) native worktree creation preserves typed terminal failure and uses canonical project source [0.79ms]
+(pass) native adapter leaves defects, interruption, lost responses and lookalikes uncertain [0.44ms]
+(pass) native adapter recognizes tagged failures from an independent temporary schema module [8.45ms]
+(pass) child prompt uses native move and verifies location before any model work [0.29ms]
+(pass) retained repair uses public foreground wait and refuses to move a worker [0.10ms]
+(pass) scope instructions use native durable keyed entries with lost-reply recovery and no model work [0.27ms]
+(pass) scope instruction ownership rejects foreign, moved, replaced and archived targets before native mutation [0.16ms]
+(pass) scope instructions require matching readback rather than trusting a successful native reply [0.07ms]
+(pass) worker guidance teaches focused LAZERS discovery and optional progressive skill use [0.02ms]
+(pass) optional skills are not resolved, and only the legacy LAZERS entry is removed before prompting [0.12ms]
+(pass) a host that fails to move the child cannot receive its work prompt [0.07ms]
+(pass) native worker selection survives role registration and reaches native creation unchanged [0.69ms]
+(pass) native selected source-message reads are authenticated, bounded and privacy-filtered [0.98ms]
+(pass) native host reads a non-following session log on its validated client and invalidates failures [17.27ms]
+(pass) actionable notifications use the authenticated native client with durable ownership [0.23ms]
+(pass) native cancellation rechecks exact ownership and preserves user, worker, and foreign inputs [0.33ms]
+(pass) native inbox refuses a discovered service owned by another process [0.06ms]
+(pass) native cache retirement ignores retained history but refuses active or unknown execution [0.92ms]
+(pass) native inbox does not start or substitute an unavailable service [0.05ms]
+(pass) native archive uses the public client route and requires archived-state readback [0.20ms]
+(pass) native Architect input reconciliation follows public message pagination and keeps original IDs [0.32ms]
+(pass) native Architect history projects mutable assistant/tool status without private payloads [0.09ms]
+(pass) native session heartbeat reads metadata without context and opts into messages explicitly [0.39ms]
+(pass) compacted worker turns retain the actual latest input without replaying history [0.42ms]
+(pass) compacted worker with no response remains pending and no durable input stays unknown [0.14ms]
+(pass) foreground inventory overrides idle-looking timestamps and cached discovery is reused [0.09ms]
+(pass) orphaned busy timestamps and unfinished latest assistant override historical success [0.12ms]
+(pass) pending worker input and location-scoped approvals prevent terminal projection [0.12ms]
+(pass) active/detail-read changes remain explicitly unstable and fail closed [0.07ms]
+(pass) cached native transport invalidates on process replacement and rediscovers current host [0.11ms]
+(pass) discovery, authentication, inventory, PID, and version failures remain explicit [0.15ms]
+(pass) native adapter fails closed when durable idle persistence is unavailable [0.08ms]
+(pass) native session absence accepts the pinned core and protocol tags only for the requested ID [19.71ms]
+(pass) only confirmed native absence permits a same-session missing inbox [21.36ms]
+(pass) fresh native reads confirm the separate pinned idle terminal marker after reopening context twice [17.75ms]
+(pass) compacted native idle confirmation uses retained input without accepting stale markers [156.97ms]
+(pass) compacted completed review keeps its exact retained input binding [17.60ms]
+(pass) fresh revalidation requires the latest same-input execution's own idle certificate [35.85ms]
+(pass) missing, failed, stale-input, and wrong-identity terminal facts block zero-background proof [20.65ms]
+(pass) wrong-location and unavailable location shell reads block and persisted positive background survives reopen [18.69ms]
+
+src/runner/schema.test.ts:
+(pass) PlanInput accepts and preserves an optional authored title verbatim [0.27ms]
+(pass) PlanInput keeps the title absent for untitled and legacy plan bodies [0.06ms]
+(pass) startup settlement command requires exact task, attempt and decision [1.24ms]
+(pass) Architect continuity preserves exact authored decisions and bounds the handoff [1.23ms]
+(pass) CommandInput scopes exact review-input aliases to owner reconciliation [0.17ms]
+(pass) source notice reconciliation requires its exact source and excludes other reconciliation inputs [0.06ms]
+(pass) selected source-message inspection is bounded, unique and strict [0.17ms]
+(pass) retained repair commands bind the exact task attempt artifact and concrete defect [0.07ms]
+
+src/runner/native-input.test.ts:
+(pass) pinned native continuation notes preserve the logical input in visible context [0.30ms]
+(pass) instruction context does not replace user input or genuine synthetic steering [0.09ms]
+(pass) unknown and malformed synthetic metadata remains input regardless of its prose [0.10ms]
+(pass) completed compaction recovers retained input when only instruction context is visible [0.07ms]
+(pass) retained input skips all native instruction pages and falls back to the assigned user [0.12ms]
+(pass) retained provider continuation notes do not replace the original assigned input [0.05ms]
+(pass) retained steering uses its own host-order cursor after instruction context is skipped [0.15ms]
+(pass) synthetic-only histories retain steering but never instruction-only context [0.07ms]
+(pass) non-advancing instruction history fails rather than looping or inventing input [0.05ms]
+
+src/runner/cleanup-convergence.test.ts:
+(pass) fresh durable native idle revalidation removes a clean merged owned worktree without replay [293.47ms]
+
+src/runner/catalog.test.ts:
+(pass) worker route advice reads live native choices without gating catalog metadata [0.52ms]
+
+src/runner/artifacts.test.ts:
+(pass) verification identity records stable runtime metadata without hashing unrelated credentials [0.13ms]
+(pass) identical check modules retain the same environment identity across reload [3.40ms]
+(pass) commit ancestry distinguishes non-ancestor evidence from unavailable Git state [136.28ms]
+(pass) artifact evidence accepts regular files and non-empty workspace-contained directories [2.35ms]
+(pass) artifact evidence never uses paths outside the workspace or follows symlinks [8.75ms]
+(pass) worker commits are retained and their committed changes remain subject to scope checks [283.63ms]
+(pass) isolated rebases exclude reviewed main changes while retaining worker scope checks [425.35ms]
+(pass) divergent isolated repairs compare against the safe merge of admitted and incorporated work [491.46ms]
+(pass) edits to reviewed paths and unauthorized files remain violations in every Git state [1580.38ms]
+(pass) reviewed content copied without shared ancestry is not exempted [329.43ms]
+(pass) conflicting virtual baselines fail before staging even when the worker resolved its merge [363.14ms]
+(pass) ambiguous reviewed ancestry fails closed before staging [365.59ms]
+
+src/runner/native-registry.test.ts:
+(pass) durable native idle evidence survives separate pinned local-loader generations [47.20ms]
+
+src/runner/startup-recovery.test.ts:
+(pass) an absent startup reservation can recover beside a guarded retained worktree [194.69ms]
+(pass) recovery-only unavailable-session telemetry survives settlement and reopen, then permits explicit resume and safe cleanup [326.20ms]
+(pass) recovery-only GAP telemetry cannot authorize a changed recovered workspace without a prompt [181.68ms]
+(pass) meaningful execution facts still refuse startup settlement [76.76ms]
+(pass) an independent conflicting reservation still refuses startup settlement [78.36ms]
+(pass) typed native failure settles only after fresh absence and resumes the same reservation after reopen [149.71ms]
+(pass) legacy error-only receipts settle generically from current runtime identity and resume after reopen [176.59ms]
+(pass) the exact historical 139/141 receipt shapes are classified without an identity allowlist [0.23ms]
+(pass) legacy dependent worktree compatibility binds the attempt base, not the plan anchor [270.98ms]
+(pass) unknown, timed-out and ENOSPC failures cannot be settled as terminal absence [336.13ms]
+(pass) each conclusively failed linked recovery can be settled before another explicit resume [218.27ms]
+(pass) a new owner may settle historical linked failure and explicitly continue under fresh authority [202.64ms]
+(pass) a late recovery callback after reassignment cannot commit old readiness or admit a worker [159.38ms]
+(pass) worker admission waits for an untouched reserved base after native creation [176.98ms]
+(pass) partial resources, native/Git collisions, inventory failures and reserved sessions refuse settlement [698.31ms]
+(pass) an ownership change during asynchronous absence observation wins over settlement [102.22ms]
+(pass) reassignment during absence observation removes authority from the old owner [92.26ms]
+(pass) an uncertain linked recovery operation stays unresolved and is never replayed [122.29ms]
+(pass) a late recovery completion after cancellation cannot admit the reserved worker [152.78ms]
+
+src/runner/prerequisite-proof.test.ts:
+(pass) valid integration retains every Git check for dispatch and selected-baseline proof [0.34ms]
+(pass) all durable evidence is validated before starting any Git process [0.23ms]
+(pass) changed evidence and ancestry are rechecked on every decision without a cached pass [0.11ms]
+
+src/runner/adopted-descendant.test.ts:
+(pass) failed/READY task adopts only after fresh checks and new task/combined human evidence, including receipt recovery [2550.77ms]
+(pass) accepted task with blocked combined check adopts a descendant without rewriting acceptance or landing receipts [1792.68ms]
+(pass) adoption scope uses the latest reviewed integration baseline, not intervening accepted work [1630.82ms]
+(pass) adoption verifies reviewed main with independent work without widening worker scope [2721.60ms]
+(pass) adoption still rejects out-of-scope changes in the original worker artifact [523.28ms]
+(pass) revoking a mistaken supplemental scope restores adoption without changing the task or history [444.73ms]
+(pass) supplemental scope cannot be revoked during a writer or an active adoption [426.71ms]
+(pass) identical task and combined assertion/artifact evidence remains phase- and task-bound [6600.38ms]
+(pass) restart recovers task and combined check receipt cuts without replaying checks [3183.41ms]
+(pass) only active worker reservations with conflicting write scopes block adoption [788.21ms]
+(pass) irrelevant environment churn is ignored while check inputs and operation evidence stay isolated [1655.27ms]
+(pass) changed verification command input invalidates completed adoption receipts [1183.46ms]
+(pass) owner-session loss after verification holds instead of publishing acceptance [897.44ms]
+(pass) candidate index changes during combined verification invalidate publication [878.01ms]
+(pass) dirty candidates, wrong bindings, foreign owners, and worker controls fail closed [557.79ms]
+(pass) active adoption scopes are reserved transactionally across plans [544.48ms]
+(pass) a worker activated after the final idle observation still fences adoption publication [1562.87ms]
+(pass) cancellation during a fresh check fences late acceptance and preserves adoption worktrees [652.21ms]
+(pass) cancellation during combined checks prevents late plan acceptance and cleanup [948.17ms]
+(pass) timed-out adoption checks hold without repair, new worker turns, or acceptance [1773.41ms]
+(pass) cancel during worker observation does not create a candidate worktree or publish acceptance [547.72ms]
+(pass) mutating adoption checks hold without repair or publication [589.68ms]
+
+src/runner/native-idle.test.ts:
+(pass) zero background is unknown until exact terminal success and a newer execution invalidates it [15.15ms]
+(pass) positive native background survives store reopen even when external shell inventory may be empty [15.32ms]
+(pass) late idle callbacks are revision-fenced and corrupt persisted evidence fails closed [13.55ms]
+(pass) confirmed zero-background identity survives SQLite reopen in a separate Bun process [78.72ms]
+(pass) same-attempt input reassignment invalidates old zero, accepts a fresh turn, and fences old callbacks [16.84ms]
+(pass) a duplicate start cannot carry execution lineage across assigned-input changes [15.00ms]
+(pass) fresh idle hook after delivered input can replace an invalidated report in the same execution [14.80ms]
+(pass) an invalidly ordered input event destroys execution lineage instead of reviving stale reports [13.50ms]
+(pass) benign stale-event diagnostics do not strand pending success but newer activity still rejects [13.93ms]
+
+src/runner/source-quarantine.test.ts:
+(pass) missing reserved workspaces remain distinct from existing retained worktrees [0.42ms]
+(pass) existing symlink ancestors preserve identity for absent children [0.40ms]
+(pass) unresolvable symlinks and filesystem errors remain conservative [0.26ms]
+
+src/runner/machine.test.ts:
+(pass) initial task snapshot is queued and versioned [0.13ms]
+(pass) task transition table persists each next state with the machine version [0.81ms]
+(pass) terminal and unknown events reject without changing the state [0.14ms]
+
+src/runner/roles.test.ts:
+(pass) worker personas retain read-only catalog access but cannot delegate [1.14ms]
+
+src/runner/interrupted-continuation.test.ts:
+(pass) unknown background remains explicit while the exact interrupted assignment may continue [0.21ms]
+(pass) a completed model turn can continue unfinished work without establishing task completion [0.04ms]
+(pass) a genuinely failed native outcome with its completed assigned turn stays failed and may continue [0.02ms]
+(pass) rejects another caller [0.01ms]
+(pass) rejects an archived owner
+(pass) rejects a foreign owner
+(pass) rejects a stale attempt
+(pass) rejects a wrong attempt ID
+(pass) rejects an unrelated hold
+(pass) rejects an unresolved effect
+(pass) rejects a conflicting reservation
+(pass) rejects a foreign worker
+(pass) rejects an archived worker
+(pass) rejects a wrong worker attempt
+(pass) rejects a wrong worker route [0.01ms]
+(pass) rejects a different interrupted input
+(pass) rejects a failed outcome without its current-input stop record
+(pass) rejects a failed outcome with an earlier failure input [0.01ms]
+(pass) rejects a completed turn without a failed native outcome
+(pass) rejects a busy worker
+(pass) rejects pending input
+(pass) rejects an approval
+(pass) rejects an unstable observation
+(pass) rejects known background work [0.01ms]
+(pass) rejects a mismatched known-idle report [0.01ms]
+
+src/runner/tools.test.ts:
+(pass) authorized callers read native catalog advice; only orchestration requires Architect [2.58ms]
+(pass) journal inspection is permission-gated before bounded store reads [1.39ms]
+(pass) registered journal traversal survives unrelated worker progress in the same project [19.63ms]
+
+src/runner/source-fence-rpc.test.ts:
+(pass) the exact native location reports its installed guard only for its live hook scope [18.31ms]
+(pass) a replacement cannot fall back to old or known unguarded generation registrations [13.44ms]
+(pass) full plugin early setup failure invalidates a borrowed predecessor before worker registration [44.05ms]
+
+src/runner/runtime.test.ts:
+(pass) source quarantine uses native clear controls and assignment-bound worker archival with lost-reply readback [185.07ms]
+(pass) native retained worker archival rejects foreign or changed bindings, active work and unavailable observations [1667.05ms]
+(pass) native location activation restores pending and sealed quarantine after registry loss and database reopen [551.24ms]
+(pass) failed or mismatched native activation retains sealed resources and recovers only a current exact guard [178.01ms]
+(pass) source quarantine seals only a stopped guarded native writer and permits independent code without accepting old work [284.78ms]
+(pass) source quarantine isolates a completed foreground worker with unknown background without accepting it [269.03ms]
+(pass) tagged review source quarantine survives reopen and native archive without accepting unknown background [171.25ms]
+(pass) source review admission rejects input changed during worktrees without mutation [162.12ms]
+(pass) source review admission rejects tag changed during worktrees without mutation [164.49ms]
+(pass) source review admission rejects route changed during worktrees without mutation [186.10ms]
+(pass) source review admission rejects owner changed during worktrees without mutation [288.88ms]
+(pass) source review admission rejects input changed during guard without mutation [243.54ms]
+(pass) source review admission rejects tag changed during guard without mutation [226.82ms]
+(pass) source review admission rejects route changed during guard without mutation [216.52ms]
+(pass) source review admission rejects owner changed during guard without mutation [228.95ms]
+(pass) malformed sealed review pin cannot exclude source even with its installed guard [215.10ms]
+(pass) sealed review guard recovery permits a later handoff before-restore without replaying archive [196.54ms]
+(pass) sealed review guard recovery permits a later handoff during-restore without replaying archive [191.36ms]
+(pass) healthy sealed review guard permits a later handoff without rescanning review messages [205.36ms]
+(pass) concurrent explicit pending supersessions use the plan version once [186.67ms]
+(pass) a later explicit quarantine cannot retarget an already sealed review pin [184.67ms]
+(pass) fresh owner command explicitly supersedes a pending review pin; old replay cannot retarget it [170.10ms]
+(pass) legacy source quarantine migration preserves its original-input binding [170.58ms]
+(pass) tagged review source quarantine rejects metadata before mutation [155.16ms]
+(pass) tagged review source quarantine rejects task before mutation [167.67ms]
+(pass) tagged review source quarantine rejects attempt before mutation [181.09ms]
+(pass) tagged review source quarantine rejects duplicate before mutation [171.53ms]
+(pass) tagged review source quarantine rejects current before mutation [162.59ms]
+(pass) tagged review source quarantine rejects failed before mutation [162.94ms]
+(pass) tagged review source quarantine rejects route before mutation [161.22ms]
+(pass) tagged review source quarantine rejects non-synthetic before mutation [161.16ms]
+(pass) tagged review source quarantine rejects absent before mutation [197.54ms]
+(pass) tagged review source quarantine rejects pending before mutation [193.80ms]
+(pass) tagged review source quarantine rejects permission before mutation [370.97ms]
+(pass) tagged review source quarantine rejects form before mutation [187.80ms]
+(pass) tagged review source quarantine rejects unstable before mutation [190.34ms]
+(pass) tagged review source quarantine rejects effort before mutation [178.97ms]
+(pass) tagged review archive fences a changed input before-update [208.03ms]
+(pass) tagged review archive fences a changed tag before-update [199.07ms]
+(pass) tagged review archive fences a changed route before-update [206.48ms]
+(pass) tagged review archive fences a changed foreground before-update [203.64ms]
+(pass) tagged review archive fences a changed input after-update [217.79ms]
+(pass) tagged review archive fences a changed tag after-update [205.49ms]
+(pass) tagged review archive fences a changed route after-update [377.25ms]
+(pass) tagged review archive fences a changed foreground after-update [496.57ms]
+(pass) native running-source archive fences a newer input before-update [142.22ms]
+(pass) native running-source archive fences a newer input after-update [126.00ms]
+(pass) running source quarantine rejects pending foreground without mutation [121.73ms]
+(pass) running source quarantine rejects different-input foreground without mutation [118.66ms]
+(pass) running source quarantine rejects failed foreground without mutation [113.40ms]
+(pass) running source quarantine rejects busy foreground without mutation [114.96ms]
+(pass) running source quarantine rejects missing-turn foreground without mutation [132.06ms]
+(pass) source quarantine preserves shared and physical-checkout exclusion at both admission gates [829.29ms]
+(pass) source quarantine recovers lost archive replies after reopen without inventing old receipts or replaying archive [196.60ms]
+(pass) source quarantine rejects missing enforcement, active writers, stale versions and foreign owners before mutation [206.36ms]
+(pass) source quarantine fences reassignment during archive and accepts a fresh authorized continuation [212.92ms]
+(pass) source quarantine recovery does not inspect or mutate another project sharing its database [206.31ms]
+(pass) active scope amendments durably update the same worker after it fetched old instructions and survive reopen [327.97ms]
+(pass) failed and lost scope-update replies recover keyed delivery without workers, repairs or wait churn [240.86ms]
+(pass) cancellation suppresses a pending scope instruction rather than waking a stopped worker [111.31ms]
+(pass) task integration records a reviewed landing without finalizing the plan or disturbing active dependencies [363.68ms]
+(pass) scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it [383.16ms]
+(pass) scope amendments preserve the specification and recover dependency edits in the same attempt [312.36ms]
+(pass) scope amendment rejects active overlap and reserves amended scope before later dispatch [267.12ms]
+(pass) scope amendment requires this plan's unfinished task and explicit additive authorization [75.22ms]
+(pass) shared scheduler routes manual Start through its elected runtime instead of a second lease owner [154.92ms]
+(pass) scheduler retries after a failed lease claim instead of remaining permanently running [89.97ms]
+(pass) a disposed follower Start cannot read or reopen its store after the elected drain finishes [173.94ms]
+(pass) inspector Start admits one real runtime plan and returns record-backed task state [352.87ms]
+(pass) Start recovers a lost native continuation-create response after restart [313.82ms]
+(pass) run authorizes and validates the original command before creating a continuation [154.07ms]
+(pass) continued run retains original caller/version replay identity across concurrent calls and restart [100.09ms]
+(pass) Start admits an existing queued plan, keeps its selected worker route and respects dependencies [154.88ms]
+(pass) continued run recovers a crash before its receipt without changing caller identity [92.97ms]
+(pass) a concurrent reassignment cannot be overwritten by continuation completion [85.02ms]
+(pass) Start cannot adopt a stale continuation after an explicit owner round trip [145.89ms]
+(pass) a lost continuation-create response is reconciled by stable native session ID [280.86ms]
+(pass) a missing task owner gets a same-project continuation without foreign parent context [284.77ms]
+(pass) Start admits the configured route independently of the Architect model [212.69ms]
+(pass) manual Start supports legacy unclassified tasks without inventing persona provenance [91.93ms]
+(pass) Go and configured routes reach native execution unchanged alongside independent personas [798.89ms]
+(pass) Start of explicitly persona-bearing plans honors mappings for every persona [1504.56ms]
+(pass) an intentional plan route wins mappings and fallback while native fallback keeps honest provenance [306.37ms]
+(pass) a route removed after admission blocks dispatch before creating a worker [88.52ms]
+(pass) a reopened retry preserves the earlier route decision and uses the current mapping variant [252.45ms]
+(pass) resuming a mapped attempt preserves its native route after the mapping changes [171.95ms]
+(pass) a native route failure stays visible and is never retried with a substitute [89.39ms]
+(pass) Start rejects stale, foreign and ended work without changing runtime state [72.77ms]
+(pass) an admitted source backlog shares only same-pass no-op target observations [90.09ms]
+(pass) admitted outcome rechecks durable owner after native observation awaits [226.69ms]
+(pass) host-admitted current outcomes follow an archived owner unless transcript consumption is proved [432.00ms]
+(pass) an uncertain current outcome follows an adopted owner across reopen without losing admission evidence [219.70ms]
+(pass) real Git worktrees execute a dependency graph, verify combined content and retain origin [542.60ms]
+(pass) independent isolated Git branches overlap and combined verification includes every artifact [679.38ms]
+(pass) dependencies wait for accepted inputs and wildcard ancestor scopes serialize [1145.46ms]
+(pass) independent plans overlap while a second reconciler cannot duplicate dispatch [796.35ms]
+(pass) single-task acceptance coalesces its task handoff while another plan worker stays active [584.35ms]
+(pass) a late older retry cannot replace a newer queued plan outcome [350.90ms]
+(pass) an actionable partial-task outcome wakes review while its sibling worker remains active [364.67ms]
+(pass) a newer partial result carries all prior reviewable artifacts while a third worker remains active [551.09ms]
+(pass) legacy partial notices for distinct tasks cannot silently replace one another [80.84ms]
+(pass) failed cancellation keeps the newer outcome pending and retries after the queue race clears [608.01ms]
+(pass) an unavailable native inbox cannot be reported as successful supersession [512.40ms]
+(pass) a cancellation that races with transcript consumption is recorded as consumed, not suppressed [486.01ms]
+(pass) a successful native cancel response is rechecked before recording supersession [498.31ms]
+(pass) completed shared plan verifies its exact artifact without touching an advanced shared checkout [368.56ms]
+(pass) shared resume waits for another plan's worker and cancellation retains final usage [614.68ms]
+(pass) reconciliation retains legacy advanced-checkout receipts and verifies the exact artifact afresh [378.02ms]
+(pass) explicit reconcile retries conclusive combined checks after environment repair without erasing evidence [441.06ms]
+(pass) uncertain prompt cannot prevent cancellation of an admitted sibling [175.78ms]
+(pass) two conflicting shared resumes use current prompt identities and cannot deadlock [538.03ms]
+(pass) combined worktree completion cannot overwrite a concurrent cancellation [482.45ms]
+(pass) one failed branch blocks combined acceptance without losing sibling verification or usage [383.91ms]
+(pass) conflicting accepted branches hold integration and preserve both real Git artifacts [546.35ms]
+(pass) lost worktree creation response resumes its own blocked startup after reconciliation [1295.46ms]
+(pass) a different block reason keeps a reconciled worktree startup blocked [129.33ms]
+(pass) cancelling overlapping workers waits for every native session and preserves usage [187.94ms]
+(pass) reviewed combined merge removes only owned Git worktrees and preserves foreign work [906.69ms]
+(pass) repairing one parallel branch retains its failed check and usage while its sibling is accepted [681.12ms]
+(pass) missing and permission-denied skill suggestions never block admission or dispatch [1884.60ms]
+(pass) repair handoffs do not copy legacy skill bodies into a new attempt [368.54ms]
+(pass) verification failure and scope violations cannot unblock a successor [1148.83ms]
+(pass) an unchanged evidence wait keeps its version and notification stable until evidence arrives [970.13ms]
+(pass) a resumed worker verifies its new commit without reusing older receipts or spending a repair [1013.74ms]
+(pass) plan evidence binds to the accepted combination and remains separate from task evidence [802.20ms]
+(pass) lost host response reconciles a real accepted prompt without creating another worker [127.73ms]
+(pass) lost prompt response after a committed worker turn reconciles through verification [1250.13ms]
+(pass) leases fence stale owners; expiration does not replay an uncertain effect [66.67ms]
+(pass) schema rejects cycles, foreign dependency IDs and duplicate nodes before persistence [67.75ms]
+(pass) historical guessed token caps do not stop useful work and stopped attempts resume without resetting usage [511.25ms]
+(pass) runtime retains the actual directory returned by the host worktree strategy [594.77ms]
+(pass) an explicitly cancelled worker can continue through its owner without replacing its worktree [146.89ms]
+(pass) a cancelled afterPlans child resumes its retained committed attempt [1923.64ms]
+(pass) retry requeues a cancelled unstarted successor in the admitted graph and waits for dependencies and scope [967.51ms]
+(pass) requeued unstarted work can be cancelled again before normal dispatch [87.50ms]
+(pass) unstarted retry selects an explicit newer baseline without replacing tasks or attempts [211.24ms]
+(pass) unstarted baseline selection rejects missing, unrelated and unlanded commits atomically [167.33ms]
+(pass) unstarted baseline selection cannot rewrite a plan with a prior worker [133.11ms]
+(pass) unstarted recovery rejects unauthorized, stale, missing, archived and foreign owners without writes [459.37ms]
+(pass) unstarted recovery rechecks the plan version after owner lookup races with reassignment [95.97ms]
+(pass) unstarted recovery rejects invalid node/plan states and unreconciled effects [234.01ms]
+(pass) serial shared children commit in the current checkout without creating worktrees [446.64ms]
+(pass) explicit retry starts a fresh native child and retains the old attempt and usage [211.59ms]
+(pass) a shared node's first attempt starts at reviewed HEAD, not an older accepted predecessor [629.49ms]
+(pass) an explicit corrected shared baseline wins across reopen and excludes reviewed scope changes [859.66ms]
+(pass) retry without a newly selected baseline continues from the failed artifact and retains history [698.40ms]
+(pass) native cleanup follows verified integration, preserves dirty work, and retries explicitly [845.51ms]
+(pass) cleanup retries require detailed worker inactivity and never rerun product checks [1164.48ms]
+(pass) explicit Luna Max worker selection preserves the stronger Architect model and reaches acceptance [630.72ms]
+(pass) cleanup preserves clean worktrees with commits outside the reviewed integration [1132.37ms]
+(pass) cleanup preserves a dirty owned worktree even after its accepted commit was merged [840.85ms]
+(pass) priority orders conflicting plans without rejecting their overlapping scopes [177.97ms]
+(pass) afterPlans dispatches from combined integration while prerequisite cleanup is still pending [2023.34ms]
+(pass) afterPlans rejects a legacy cleanup snapshot after durable prerequisite cancellation [425.02ms]
+(pass) afterPlans cleanup cannot publish over cancellation or reuse the historical integration proof [423.73ms]
+(pass) afterPlans invalidation during child worktree creation keeps the owned workspace and suppresses prompt admission [606.91ms]
+(pass) cancelling a child during session creation prevents prompt intent and preserves owned resources [590.23ms]
+(pass) afterPlans invalidation during retained preparation reconciliation blocks the later prompt [729.86ms]
+(pass) afterPlans dispatches after genuine combined-check recovery while preserving failed receipts [1124.47ms]
+(pass) afterPlans rejects task-only, missing, malformed, mismatched and foreign integration evidence [2376.86ms]
+(pass) afterPlans requires both the integrated artifact and its recorded integration head in selected HEAD [998.58ms]
+(pass) every afterPlans prerequisite needs genuine fresh acceptance and integration after cancellation [1671.48ms]
+(pass) valid afterPlans integration does not bypass shared-checkout admission [399.84ms]
+(pass) cross-plan dependencies wait for integration and dispatch from the integrated source [1402.77ms]
+(pass) schedule updates are versioned, retry-safe and reject dependency cycles or foreign plans [88.52ms]
+(pass) runtime shutdown joins an in-flight native operation before storage may close [130.23ms]
+(pass) heartbeat avoids context and rechecks a stopped worker after detailed accounting [346.86ms]
+(pass) cancellation wins over a stale interrupted detailed worker observation [146.19ms]
+(pass) cancellation wins over a stale succeeded detailed worker observation [170.64ms]
+(pass) cancellation wins over a stale missing detailed worker observation [130.76ms]
+(pass) terminal verification waits for active foreground, exact input completion, and background settlement [366.42ms]
+(pass) background hold avoids repeated context for failed while preserving interruption evidence [115.20ms]
+(pass) background hold avoids repeated context for interrupted while preserving interruption evidence [113.61ms]
+(pass) worker-location permissions and forms block terminal work and surface actionable diagnostics [301.36ms]
+(pass) a durably admitted same-attempt handoff reminder can finish with fresh matching evidence [327.50ms]
+(pass) owner reconciliation binds an observed review input without replacing the assignment [337.52ms]
+(pass) review input identity accepts unrelated additive native message metadata [120.90ms]
+(pass) an admitted review-input alias survives later OWNER_CONTINUED with the original worker assignment [320.60ms]
+(pass) an admitted review-input alias survives later OWNER_REASSIGNED with the original worker assignment [334.18ms]
+(pass) review reconciliation rejects wrong task metadata without recording an alias [136.42ms]
+(pass) review reconciliation rejects wrong attempt metadata without recording an alias [138.46ms]
+(pass) review reconciliation rejects missing review metadata without recording an alias [127.80ms]
+(pass) review reconciliation rejects absent native message without recording an alias [136.04ms]
+(pass) review reconciliation rejects unrelated latest input without recording an alias [124.75ms]
+(pass) review reconciliation rejects wrong session without recording an alias [130.03ms]
+(pass) review reconciliation rejects wrong project without recording an alias [131.83ms]
+(pass) review reconciliation rejects wrong workspace without recording an alias [127.42ms]
+(pass) review reconciliation rejects wrong attempt session metadata without recording an alias [131.19ms]
+(pass) review reconciliation rejects wrong model route without recording an alias [121.44ms]
+(pass) review reconciliation rejects stale idle assignment without recording an alias [114.73ms]
+(pass) review reconciliation rejects unknown background without recording an alias [118.62ms]
+(pass) review reconciliation rejects nonzero background without recording an alias [114.15ms]
+(pass) review reconciliation rejects negative execution start sequence without recording an alias [113.08ms]
+(pass) review reconciliation rejects negative idle event sequence without recording an alias [110.21ms]
+(pass) review reconciliation rejects negative terminal sequence without recording an alias [111.04ms]
+(pass) review reconciliation rejects active foreground without recording an alias [109.81ms]
+(pass) review reconciliation rejects pending native input without recording an alias [111.24ms]
+(pass) review reconciliation rejects pending turn without recording an alias [110.95ms]
+(pass) review reconciliation rejects pending approval without recording an alias [109.90ms]
+(pass) review reconciliation rejects pending form without recording an alias [111.32ms]
+(pass) review reconciliation rejects unstable observation without recording an alias [115.76ms]
+(pass) review reconciliation rejects wrong-owner command identity [129.34ms]
+(pass) review reconciliation rejects stale-version command identity [118.06ms]
+(pass) review reconciliation rejects wrong-task command identity [130.25ms]
+(pass) review reconciliation rejects wrong-attempt command identity [122.13ms]
+(pass) review reconciliation does not record lineage while an effect is intended [134.38ms]
+(pass) review reconciliation does not record lineage while an effect is uncertain [130.96ms]
+(pass) cancellation and assignment changes during review observation fence stale aliases [273.66ms]
+(pass) a concurrent new-input during deferred owner observation rejects review reconciliation [136.46ms]
+(pass) a concurrent new-execution during deferred owner observation rejects review reconciliation [231.91ms]
+(pass) an admitted review alias does not match a later unrelated native current input [126.87ms]
+(pass) a changed current attempt during native review observation rejects the stale alias [129.06ms]
+(pass) a persisted foreign projectID review alias cannot verify the original attempt [194.97ms]
+(pass) a persisted foreign taskID review alias cannot verify the original attempt [157.65ms]
+(pass) a persisted foreign attemptID review alias cannot verify the original attempt [138.58ms]
+(pass) a persisted foreign sessionID review alias cannot verify the original attempt [132.15ms]
+(pass) a persisted foreign assignedMessageID review alias cannot verify the original attempt [136.40ms]
+(pass) reminder completion rejects unconfirmed lineage [134.76ms]
+(pass) reminder completion rejects foreign lineage [130.86ms]
+(pass) reminder completion rejects stale-assignment lineage [129.81ms]
+(pass) reminder completion rejects pre-reminder-report lineage [133.64ms]
+(pass) terminal verification rejects a fresh idle report from a different native input [203.40ms]
+(pass) a deferred blocked tick cannot undo resume or a later cancellation (cancel=%s) [501.14ms]
+(pass) a deferred blocked tick cannot undo resume or a later cancellation (cancel=%s) [282.95ms]
+(pass) native heartbeat failures retain structured holds without repeatedly reading context [146.31ms]
+(pass) owner can resume completed but unaccepted work for a correction while background stays unknown [132.34ms]
+(pass) an explicit resume continues one process-replaced interrupted attempt without inventing idle proof [348.93ms]
+(pass) manual continuation accepts a real failed outcome only for its completed current assigned input [133.81ms]
+(pass) a failed fresh continuation input is processed despite the unchanged prior unknown background [141.52ms]
+(pass) a current-input permission hold is not suppressed by the unchanged prior unknown background [130.32ms]
+(pass) a current-input form hold is not suppressed by the unchanged prior unknown background [139.42ms]
+(pass) terminal failed worker with a genuine current-input idle report can resume from failed state [120.82ms]
+(pass) native continuation rejects a failed turn for a foreign input [122.13ms]
+(pass) native continuation rejects a failed turn with no native input ID [122.94ms]
+(pass) failed-worker continuation rejects a active native observation [124.62ms]
+(pass) failed-worker continuation rejects a pending-input native observation [116.09ms]
+(pass) failed-worker continuation rejects a pending-approval native observation [119.92ms]
+(pass) failed-worker continuation rejects a unstable native observation [130.07ms]
+(pass) failed-worker continuation rejects a known-background native observation [134.31ms]
+(pass) a completed turn for another input cannot authorize terminal continuation [138.33ms]
+(pass) interrupted continuation rejects wrong-attempt [131.60ms]
+(pass) interrupted continuation rejects foreign-worker [135.04ms]
+(pass) interrupted continuation rejects archived-worker [131.17ms]
+(pass) interrupted continuation rejects route-mismatch [135.92ms]
+(pass) interrupted continuation rejects active-worker [131.27ms]
+(pass) interrupted continuation rejects pending-input [154.77ms]
+(pass) interrupted continuation rejects pending-approval [133.72ms]
+(pass) interrupted continuation rejects unstable-observation [128.11ms]
+(pass) interrupted continuation rejects input-lineage [119.93ms]
+(pass) interrupted continuation rejects known-background [117.81ms]
+(pass) interrupted continuation rejects unrelated-hold [111.28ms]
+(pass) interrupted continuation rejects uncertain-effect [120.72ms]
+(pass) cancellation or reassignment during interrupted-worker observation wins (cancel) [123.33ms]
+(pass) cancellation or reassignment during interrupted-worker observation wins (reassign) [123.74ms]
+(pass) ambiguous interrupted continuation delivery stays uncertain after runtime reopen [134.73ms]
+(pass) explicit cancellation after process replacement resumes the same dirty attempt exactly once [342.77ms]
+(pass) cancellation does not settle when foreground activity reappears during its detail read [123.37ms]
+(pass) normal source scans do not materialize historical notice payloads across a large multi-owner backlog [192.10ms]
+(pass) legacy reconciliation resolves exact replacement IDs without loading its large historical payload backlog [167.50ms]
+(pass) explicit reconciliation cancels disjoint equal-revision notices only after pointer coverage [130.86ms]
+(pass) foreign and ambiguously absent legacy notices remain visible and are never cancelled [128.79ms]
+(pass) source-notice cancellation API unavailability is recoverable without altering legacy receipts [148.16ms]
+(pass) source-notice reconciliation processes only a bounded batch and resumes remaining legacy notices [166.33ms]
+(pass) reconciliation keeps separate current-owner pointers and receipts for multiple retained sources [181.47ms]
+(pass) lost native cancellation response remains unknown and never becomes a false cancellation claim [242.59ms]
+(pass) ownership changes during native observation defer cancellation and establish a pointer for the new owner [164.39ms]
+(pass) source-notice cancellation racing with consumption records consumption, not cancellation [151.73ms]
+(pass) the registered scheduler reuses recent/busy Architects and renews at the default threshold [161.66ms]
+(pass) idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed [554.55ms]
+(pass) renewal requires an explicit checkpoint and retains queued native inputs by ID [276.74ms]
+(pass) one successor receives every live plan owned by the same Architect [193.91ms]
+(pass) input during a deferred native create prevents transfer and predecessor archival [142.36ms]
+(pass) a continuity edit during successor creation blocks stale ownership transfer [142.30ms]
+(pass) native queued synthetic input is retained and referenced across creation, transfer, and archive [378.46ms]
+(pass) late input on an archived predecessor is reconciled to the current owner without waking or replay [124.00ms]
+(pass) predecessor reconciliation persists native message pagination across scheduler ticks [119.83ms]
+(pass) selected source-message retrieval is current-owner authorized and journal-ID bounded [123.86ms]
+(pass) large predecessor histories coalesce to a compact progressive source-change pointer [125.95ms]
+(pass) a previously seen pending input that disappears without history stays unknown, never cancelled or replayed [119.98ms]
+(pass) generated renewal notifications are authenticated and do not form A-to-B-to-C input loops [116.90ms]
+(pass) a retired Architect predecessor cannot reclaim a transferred plan through reassign [117.95ms]
+(pass) input racing native archival remains on the retained source and is referenced to the new owner [120.88ms]
+(pass) input on the reserved successor is preserved there without reversing predecessor transfer [136.74ms]
+(pass) an outcome admitted during archival is blocked then retargeted to the renewed owner [141.65ms]
+(pass) unavailable renewal successor fails before history sweeps and retries with fresh complete proofs [135.43ms]
+(pass) native archive failure remains visible and retries without restoring predecessor authority [132.61ms]
+(pass) a reopened scheduler recovers a durable transfer before archival without changing workers [132.45ms]
+(pass) a reopened two-scheduler runtime archives only after durable transfer and reconciles queued input [142.83ms]
+(pass) cancellation interrupts workers while a transferred renewal still has failed archival recovery [139.16ms]
+(pass) a continuity checkpoint cannot outlive a later observed user input [152.51ms]
+(pass) renewal finishes all preparation pages before transferring a checkpoint [137.66ms]
+(pass) late and mutable assistant tool results are signalled through the progressive source journal [149.81ms]
+(pass) concurrent plan admission joins the fixed successor and survives two-scheduler reopen [161.36ms]
+(pass) shared-database renewal recovery is invisible to a different canonical project [154.46ms]
+(pass) terminal continuation preserves the retained assignment against workspace changes [125.94ms]
+(pass) terminal continuation preserves the retained assignment against baseline changes [114.11ms]
+(pass) terminal continuation retains a redundant workspace selection (shared=%s) [114.58ms]
+(pass) terminal continuation retains a redundant workspace selection (shared=%s) [133.10ms]
+
+src/runner/retained-repair.test.ts:
+(pass) explicit retained repair preserves accepted history and usage and re-verifies equal-hash task and combined artifacts [568.09ms]
+(pass) A to B to A owner reassignment fences the deferred retained-repair prompt [439.20ms]
+(pass) repeated artifact hashes require current-generation human evidence after repair [1152.48ms]
+(pass) a later retry cannot reuse human acceptance evidence superseded by retained repair [2053.39ms]
+(pass) stale caller/version, wrong artifact and dirty workspace reject without lifecycle changes [1128.24ms]
+(pass) wrong artifacts and changed routes reject without lifecycle changes [1280.89ms]
+(pass) foreground/input controls and uncertain effects reject without lifecycle changes [1921.68ms]
+(pass) native ownership and input races reject without reopening or prompting [399.20ms]
+(pass) source-landed artifacts and tasks with dispatched transitive dependents cannot reopen [889.83ms]
+(pass) dispatched cross-plan dependents and effective scope reservations reject unchanged [821.56ms]
+(pass) a failed retained repair holds the same attempt for decision without automatic replacement [735.82ms]
+(pass) an ambiguous retained prompt is never automatically replayed [556.29ms]
+
+src/runner/artifact-evidence.test.ts:
+(pass) directory artifact evidence accepts only with matching checks and human evidence [983.77ms]
+(pass) empty or missing directories and failed checks still prevent acceptance [2945.20ms]
+
+src/runner/failed-resume.test.ts:
+(pass) explicit resume continues a stopped failed attempt with its history and receipt intact [400.15ms]
+(pass) failed-attempt resume preserves authorization, owner, and uncertain-effect guards [218.32ms]
+(pass) RETRY after failure still starts a distinct retained attempt [258.93ms]
+
+src/runner/outcome.test.ts:
+(pass) notifications carry a concise action and identity, not full check logs [0.23ms]
+
+src/webgpu/runtime-trace.test.ts:
+(pass) separates runtime and request clocks and detaches a terminal request immediately [0.41ms]
+
+src/webgpu/decision-runtime.test.ts:
+(pass) actual decision adapter preserves cleanup ownership through failed and cancelled loads [147.30ms]
+(pass) actual decision adapter and renderer retire only positively identified lost sessions [2686.72ms]
+
+src/webgpu/cache.test.ts:
+(pass) verified files persist across cache instances without another network request [5.75ms]
+(pass) corrupted files are reverified and replaced; incomplete downloads never become cached [3.29ms]
+(pass) cleanup only removes named model files, preserving task records and unrelated files [1.78ms]
+(pass) cache refuses directory symlinks and respects cancellation before downloading [0.70ms]
+(pass) verified reads reject subsequent file replacement, same-size mutation and symlinks [3.04ms]
+(pass) stopping a download drains its partial file before a new owner can verify [0.87ms]
+
+src/webgpu/decisions.test.ts:
+(pass) d1 probabilities use pinned temperature and preserve ambiguous nouls [0.34ms]
+(pass) typed and server callers reject plausible but mismatched decision payloads [3.29ms]
+(pass) System One preserves named options, rubric positions, and actual distributions [0.10ms]
+(pass) unsupported primitives, empty question maps, and invalid convenience schemas fail explicitly [0.31ms]
+
+src/webgpu/settings-read.test.ts:
+(pass) 54 staggered location polls share one authority read per interval [0.27ms]
+(pass) read errors are retried and cannot publish an old value as a successful refresh [0.12ms]
+(pass) different authorities remain independent and independent module copies share default authority [0.17ms]
+
+src/webgpu/inference-trace.test.ts:
+(pass) records bounded stage timing and execution metadata without inference content [0.47ms]
+(pass) classifies context overflow while retaining only numeric capacity metadata [0.08ms]
+(pass) keeps the trace ring bounded and clamps shapes and counters [0.08ms]
+(pass) supports a clocked runtime trace without inventing a request-stage event [0.03ms]
+
+src/webgpu/renderer-armed-capture.test.ts:
+(pass) arms only after acknowledged start and freezes the next caller-window job correlation [1.95ms]
+(pass) a job that starts during profiler preparation is recorded as a failure, not a full capture [0.25ms]
+(pass) refused profiler setup is meaningful and never detaches a pre-existing owner [0.09ms]
+(pass) profiler-enable timeout is surfaced and a late setup reply cannot touch a new owner [101.56ms]
+(pass) late stop replies after timeout cannot repeat detach or turn failure into success [21.50ms]
+(pass) no-job expiry preserves a failed stop command instead of replacing it with job-not-seen [31.31ms]
+(pass) a detach failure remains visible when no job was seen and cannot claim capture success [1.21ms]
+(pass) disarm aborts diagnostic intent but retains pending CDP ownership through late start settlement [2.95ms]
+(pass) late metadata write failure is separate from the original aborted capture outcome [2.03ms]
+(pass) a late successful Profiler.start keeps unresolved profiler ownership reserved [1.86ms]
+(pass) an external debugger detach finalizes without detaching a subsequent owner [0.65ms]
+(pass) renderer close finalizes owned profiling and releases per-window state [0.39ms]
+(pass) deadlines, manual disarm, and profile persistence failures remain bounded and truthful [33.54ms]
+(pass) recording deadline can produce a valid profile and stage history remains bounded [31.81ms]
+
+src/webgpu/resources.test.ts:
+(pass) failed inference and partially constructed feeds dispose every owned tensor [1.16ms]
+(pass) late microphone cleanup belongs to the cancelled capture, never to a newer recording [0.28ms]
+
+src/webgpu/task-review.test.ts:
+(pass) self-review questions cover unnecessary requirements and repetition as well as completeness [0.24ms]
+(pass) System One separates its transport envelope from measured token capacity [0.30ms]
+(pass) structural errors and oversized tasks never invoke the model or save a review [2.47ms]
+(pass) task adapter preserves its storage key, record/history shape, and result fields [1.42ms]
+(pass) one focused concern advances on equal score after a changed-state repair, retaining the concern [1.73ms]
+(pass) three worsening rounds continue with concerns; restart preserves budget, terminal replay and stale-draft protection [2.47ms]
+(pass) later revisions reopen regressed checks and return only the next focused correction [1.23ms]
+(pass) inference errors remain explicit and may retry identical state within the same three-round bound [1.75ms]
+(pass) review IDs are scoped and concurrent resumptions cannot consume another round [0.97ms]
+(pass) one review round splits a larger question collection into bounded complete batches [3.03ms]
+(pass) a 7,026-character shared state and 14 checks stay intact in one transport job [0.95ms]
+(pass) late and cancelled review responses retain measured usage but cannot merge answers or start another batch [3.20ms]
+(pass) a later batch error preserves prior answers and history without establishing any finding [2.38ms]
+(pass) interrupted attempts retain their reserved rounds and exhaust with an explicit limitation [1.42ms]
+(pass) a changed checklist cannot reuse an earlier review; a new review preserves parent intent [0.85ms]
+
+src/webgpu/main-trace.test.ts:
+(pass) IPC accepts the bounded content-free trace contract [0.80ms]
+(pass) IPC rejects invalid and unbounded metadata [0.53ms]
+(pass) armed-capture status IPC stays bounded and content-free [0.27ms]
+(pass) main persists the last trace and annotates renderer lifecycle events [3.34ms]
+(pass) host logging failures do not reject trace reporting or renderer callbacks [0.18ms]
+(pass) main exposes idempotent caller-window arm/status/stop controls and preserves target identity [1.40ms]
+(pass) armed unresponsive capture finalizes its owner instead of starting automatic capture [0.60ms]
+(pass) failed armed startup suppresses automatic CDP fallback across unresponsive/responsive events [1.74ms]
+
+src/webgpu/lease.test.ts:
+(pass) cache cleanup and retirement exclude new allocations until asynchronous work drains [0.23ms]
+(pass) a failed retirement retains ownership; a failed cleanup releases the maintenance barrier [0.09ms]
+
+src/webgpu/features.test.ts:
+(pass) master and dependency switches mask features while retaining individual preferences [0.83ms]
+(pass) concurrent partial settings writes preserve each other; failed persistence does not apply a toggle [0.20ms]
+
+src/webgpu/speech-events.test.ts:
+(pass) raw deltas and phase-marked commentary never become speech [0.26ms]
+(pass) identified final parts speak as available and retain split code-fence state [3.45ms]
+(pass) unmarked providers wait for successful final completion and use only the final step [0.09ms]
+(pass) replayed event parts, inactive sessions, and stopped turns cannot start stale playback [0.11ms]
+(pass) successful completion does not infer unmarked speech after commentary metadata [0.03ms]
+(pass) a comment and a fence split between parts remain excluded [0.09ms]
+(pass) duplicate execution starts preserve code-fence state and Stop suppression [0.07ms]
+(pass) split code lines cannot become closing fences mid-line [0.04ms]
+(pass) duplicate completion and stale previous-turn events cannot replay audio [0.09ms]
+
+src/webgpu/indicator.test.tsx:
+(pass) registered header renders truthful names and icon-only status [123.34ms]
+(pass) the indicator uses a native keyboard control, semantic theme colors and reduced motion [19.55ms]
+
+src/webgpu/speech-playback.test.ts:
+(pass) speech prepares exactly one chunk ahead during ordered playback [0.34ms]
+(pass) a prefetched generation failure waits for current speech to finish before surfacing [0.14ms]
+(pass) stop cancels current playback and prefetched inference without starting later chunks [0.15ms]
+
+src/webgpu/tools.test.ts:
+(pass) agent tools enforce permissions before RPC and apply bounded defaults [2.04ms]
+
+src/webgpu/audio.test.ts:
+(pass) bounded PCM transport round-trips without retaining recording files [1.51ms]
+(pass) maximum-duration audio stays bounded and malformed long encodings fail [69.86ms]
+
+src/webgpu/feature-server.test.ts:
+(pass) saved switches enforce public RPC, cancel only disabled work, and remove native tools and review guidance [3.22ms]
+
+src/webgpu/renderer-debug.test.ts:
+(pass) captures a meaningful graph profile, preserves samples, and detaches [101.75ms]
+(pass) does not take over an existing inspector or DevTools session [0.13ms]
+(pass) persists profiler stop timeout as a failure and always detaches [102.51ms]
+(pass) a stop-command rejection stays distinct from successful debugger cleanup [100.88ms]
+(pass) a detach failure prevents reporting a successful profile or cleanup [101.58ms]
+(pass) abort races the active profiler command and detaches [11.35ms]
+(pass) late metadata write failure does not replace an aborted profiler-start result [11.43ms]
+(pass) empty profiler output is not reported as a successful capture [101.37ms]
+(pass) persists metadata when the standalone profile artifact cannot be written [101.45ms]
+(pass) rejects dangling samples and oversized profiles instead of corrupting timing [215.28ms]
+(pass) retains a bounded profile at the observed multi-thousand-node scale [113.52ms]
+
+src/webgpu/runtime.test.ts:
+(pass) actual renderer lifecycle survives repeated loss, concurrent unload and failed disposal [5304.63ms]
+
+src/webgpu/lifecycle.test.ts:
+(pass) model switching releases the previous GPU before any next allocation, including concurrent calls [0.35ms]
+(pass) cleanup failure prevents another allocation; cancellation disposes a newly loaded model [0.15ms]
+(pass) loading retries only a bounded transient error and never retries invalid models [754.46ms]
+
+src/webgpu/review-tool.test.ts:
+(pass) the native review tool checks permission before reading review state and returns next-step guidance [3.80ms]
+
+src/webgpu/speech.test.ts:
+(pass) a very long unpunctuated reply retains every word within bounded speech chunks [1.40ms]
+(pass) read aloud honors native final-answer phase and excludes commentary, reasoning and tools [0.18ms]
+(pass) unmarked providers use only final-step text after tools, including steered input [0.05ms]
+(pass) active, failed, interrupted and tool-only turns never fall back to older answers [0.07ms]
+(pass) manual replay retains the latest successful final while newer work is active or failed [0.30ms]
+(pass) speech cleans Markdown without reading fenced code, comments, image paths or link destinations [0.07ms]
+(pass) long answers are spoken in bounded segments without dropping words [0.13ms]
+(pass) speech preserves complete larger sentences and decimal numbers [0.02ms]
+(pass) oversized sentences prefer clause boundaries and retain the entire reply [0.09ms]
+
+src/webgpu/broker.test.ts:
+(pass) FIFO requests run serially, and a polling busy renderer cannot consume the next job [0.17ms]
+(pass) queued cancellation removes only that request; active cancellation waits for renderer acknowledgement [0.15ms]
+(pass) queue capacity and ownership are enforced; heartbeat loss fails only delivered work [0.21ms]
+(pass) idle unload preserves a racing queued request; failed model loading fails the waiters [0.15ms]
+(pass) deadlines include time waiting in the queue and release capacity [1008.04ms]
+(pass) a cold request queues before renderer attachment and wakes on demand [0.19ms]
+(pass) System One uses its bounded transport envelope without widening ordinary chat [0.22ms]
+(pass) typed LocalInference.review forwards a measured request through the renderer mailbox [2.78ms]
+
+src/webgpu/files-fetch.test.ts:
+(pass) engine fetch reads pinned ranges through the cache and cannot fall back to the network [0.63ms]
+(pass) cancelling a cached response aborts all pending IPC reads without waiting for their data [0.50ms]
+(pass) a failed cache range aborts prefetched sibling reads and propagates the original failure [0.11ms]
+
+src/models/mapping.test.ts:
+(pass) all personas resolve task > project > shared, with explicit absence and inheritance after removal [10.72ms]
+(pass) project and task assignments are isolated while shared routes inherit across projects [11.88ms]
+(pass) SQLite retains revisions across reopen, rejects stale competing updates, and keeps prior snapshots stable [12.34ms]
+(pass) mapping persistence changes neither tasks nor runner scheduling state [6.49ms]
+
+src/models/source-refresh.test.ts:
+(pass) refresh records allowlisted native, OpenRouter catalog and dated benchmark evidence [26.95ms]
+(pass) public model metadata refreshes without credentials while benchmark credential status stays explicit [13.00ms]
+(pass) HTTP failures, malformed and oversized bodies are bounded and retain the previous successful snapshot [48.37ms]
+(pass) endpoint failures, malformed product selection and ambiguous records preserve last-good evidence [101.26ms]
+(pass) cached reads remain immediate and report refreshing while metadata requests are pending [12.51ms]
+(pass) cancellation before credential access or commit records cancellation without snapshots [9.31ms]
+(pass) cancellation after fetching but before persistence prevents any successful snapshot commit [7.89ms]
+(pass) cancellation during endpoint fetch keeps last-good scenarios and commits none of the cancelled generation [12.02ms]
+(pass) real router quote sentinel remains unknown without dropping normal or explicitly free records [9.65ms]
+(pass) published UTC price overrides are retained separately from context thresholds [7.35ms]
+
+src/models/comparison-presentation.test.ts:
+(pass) categorized effort parser reads the real versioned task basis and not legacy token scalars [29.55ms]
+(pass) missing categorized projection remains unavailable even when legacy scalar tokens exist [0.08ms]
+(pass) route identity comparison includes provider, model and exact variant [0.06ms]
+(pass) model names use exact provider/model metadata independent of effort and fallback without guessing [0.11ms]
+(pass) candidate keyboard focus is bounded and does not intercept unrelated keys [0.04ms]
+(pass) source presentation distinguishes no-cache failure from missing refresh history and dated cache [0.41ms]
+
+src/models/observation-ledger-read.test.ts:
+(pass) read-only ledger retains failed/retried work, genuine artifact acceptance, and explicit classification [51.28ms]
+(pass) shared sessions are captured once, never allocated to tasks, and route occurrences retain identity and omissions [39.52ms]
+(pass) all pages share one complete capture pin and reject tampered, foreign, mismatched, and stale cursors [80.89ms]
+(pass) missing and legacy databases are reported read-only without creating or migrating schema [6.31ms]
+
+src/models/service.test.ts:
+(pass) settings expose exact durable layers, revisions, route variants and inheritance [10.14ms]
+(pass) foreign and missing task targets fail without creating model mappings [7.06ms]
+
+src/models/dispatch-resolution.test.ts:
+(pass) dispatch decisions preserve explicit override, mapping precedence, and exact provenance [9.17ms]
+(pass) configured implementor is fallback, never an intentional override [8.57ms]
+(pass) legacy and foreign mapping snapshots cannot select a route or borrow provenance [7.42ms]
+(pass) decisions are deterministic, detached snapshots and do not mutate runtime state [7.02ms]
+
+src/models/decision-contract.test.ts:
+(pass) versioned reads share producer context while the global graph stays independent of row pages [8.03ms]
+(pass) inspection distinguishes complete accepted-task retry history and contributor membership [1.11ms]
+(pass) source-aware decision context preserves whole-model policy, mixed source pins, and unavailable prices [0.47ms]
+(pass) native-reported zero and execution route do not imply an available price source [0.43ms]
+(pass) zero accepted, one observation, partial, unknown, stale and backend-not-ready remain distinct [1.06ms]
+(pass) zero accepted tasks have no numeric graph coordinates or row efficiencies [0.94ms]
+(pass) the reader is injectable and inspection binds snapshot, exact configuration and contributor paging [0.42ms]
+(pass) contract import is schema/RPC-only and has no DOM, database, chart or scoring dependency [0.76ms]
+
+src/models/valuation.test.ts:
+(pass) prices each public token category once with exact units and visible output plus reasoning [7.66ms]
+(pass) reprices identical deduplicated usage from the supplied current index without changing reported cost [0.88ms]
+(pass) falls back only to a labelled unique-step cost subtotal when cumulative cost is absent [0.21ms]
+(pass) keeps missing usage and missing rates distinct from a known zero [0.41ms]
+(pass) unresolved SKU, configuration, tier, or schedule never applies a supplied rate [1.49ms]
+(pass) mixed, unavailable, or identity-lost observed routes do not inherit the assigned route price [0.59ms]
+(pass) retained progress routes participate in exact session allocation without multiplying usage [0.75ms]
+(pass) production-projected route-less lifecycle observations preserve retained start routes [20.00ms]
+(pass) route-less retained assistant recovery preserves its same-call start route across replay and reopen [54.69ms]
+(pass) orphan calls cannot borrow current or unrelated routes, while matching call evidence can resolve them [21.49ms]
+(pass) recovered message.model is call-local and current route B conflicts remain unallocated [27.65ms]
+(pass) same-call route conflicts stay durable through observation eviction, recovery replay, and reopen [77.18ms]
+(pass) malformed, invalid-effort, redacted, truncated, and explicitly lost routes stay unresolved [20.40ms]
+(pass) legacy stored route conflicts remain conservative without the durable evidence field [17.17ms]
+(pass) production projection preserves explicit loss of a legacy route identity [19.56ms]
+(pass) a production-projected unresolved start stays unallocated despite the current route [17.66ms]
+(pass) retained progress with unknown route identities stays unallocated [2.12ms]
+(pass) ambiguous current pins are not resolved by source preference or record order [0.32ms]
+(pass) route matching includes variant and does not borrow a same-model pin for another configuration [0.15ms]
+(pass) truncated route context retains the priced subtotal but does not present it as a complete value [0.27ms]
+(pass) nonfinite monetary multiplication is unavailable and never serialized as a fabricated total [0.31ms]
+
+src/models/decision-read.test.ts:
+(pass) production decision projection preserves exact route effort, adopted acceptance, retry history and global frontier before paging [84.66ms]
+(pass) decision capture streams complete progress beyond 15,000 facts and the former 64 MiB bound [6526.83ms]
+(pass) unavailable and incomplete market totals stay unknown while a sourced complete zero remains rankable [164.01ms]
+(pass) current price applicability uses retained usage and leaves incomplete, mixed, or tier-ambiguous inputs unknown [400.86ms]
+(pass) unrelated SQLite commits during capture, pricing and cached pages do not invalidate a project snapshot [63.80ms]
+(pass) relevant concurrent updates preserve pinned pages and the next read refreshes the whole snapshot [73.87ms]
+(pass) malformed retained evidence stays visibly partial rather than becoming an empty success [36.31ms]
+(pass) an ordered-source quote refresh reprices market efficiency without changing retained work or charges [66.88ms]
+(pass) endpoint scenarios reuse one coherent capture, pin pages, and reprice without changing v2 valuation [95.52ms]
+(pass) decision traversal cancellation and injected page failure publish no partial snapshot and close readers [151.55ms]
+(pass) pre-abort avoids capture and cancellation after awaited pricing rejects without leaking the ledger reader [40.46ms]
+
+src/models/comparison-state.test.ts:
+(pass) decision controller rejects mismatched snapshot, scope, and filters without publishing mixed pages [9.73ms]
+(pass) late decision overview from old filters cannot replace the current filtered snapshot [3.09ms]
+(pass) a stale inspection completion is ignored after its decision snapshot is refreshed [3.37ms]
+(pass) contributor paging appends entries without replacing accepted-history metadata [1.88ms]
+(pass) reconnect cancels pending decision reads and ignores their late responses [2.91ms]
+(pass) decision controller keeps missing RPC and backend-not-ready distinct without inventing rows [1.96ms]
+(pass) not-found inspection has no estimate and recovers after a later matching inspection [1.61ms]
+(pass) cached comparison rows publish while the one bounded source refresh is pending [1.57ms]
+(pass) late successful pagination cannot roll back a newer connection [3.77ms]
+(pass) late pagination failures cannot publish errors into a newer connection [2.69ms]
+(pass) disposing the panel fences a late pagination rollback [1.63ms]
+(pass) refresh reloads selected detail, effort and settings without discarding cached values [4.11ms]
+(pass) pending refresh for A cannot reselect A or replace B's detail, effort, or settings [4.54ms]
+(pass) pending B detail survives completion of A's refreshed task list [8.56ms]
+(pass) pending B effort survives completion of A's refreshed task list [8.34ms]
+(pass) reconnecting does not reuse or publish obsolete selected-task reads [5.98ms]
+(pass) failed refreshes retain cached values and report each unavailable read [2.95ms]
+(pass) selected task effort stays unknown when a valid response omits categorized data [2.94ms]
+(pass) native catalog loading and failure do not block exact manual mapping writes [3.62ms]
+(pass) mapping writes use exact routes and are saved only after matching settings readback [1.72ms]
+(pass) uncertain writes stay unconfirmed until an exact authoritative readback arrives [2.02ms]
+(pass) stale mapping revisions show the newer authoritative route without retrying [1.81ms]
+(pass) late mapping responses cannot replace a newly selected task [2.81ms]
+
+src/models/model-identity.test.ts:
+(pass) captured direct and OpenRouter routes resolve to the same source-backed products [0.28ms]
+(pass) identity distinguishes ambiguous, unsupported, absent, and unavailable evidence [0.25ms]
+(pass) aliases require exact route rules and exact catalog IDs, never names or slug suffixes [0.08ms]
+(pass) route-alias citations bind catalog provenance to the selected snapshot [0.19ms]
+(pass) exact OpenCode Go routes use source-backed OpenRouter identities and selected snapshots [0.79ms]
+
+src/models/model-group-read.test.ts:
+(pass) the six captured native rows form four source-backed product groups and 33 exact configurations [24.74ms]
+(pass) generic owner and owner-qualified matching groups extra routes without model-specific rules [16.76ms]
+(pass) adversarial shared-slug IDs remain distinct products and unsupported routes remain route-local [11.01ms]
+(pass) captured direct Anthropic Haiku and Sonnet punctuation aliases retain cited rule provenance [9.06ms]
+(pass) OpenCode Go and OpenRouter routes share products without merging measurements or efforts [11.93ms]
+(pass) group and configuration evidence retain omitted records without multiplying shared efforts [21.61ms]
+(pass) group and independent configuration pages stay complete across duplicates and refreshes [70.54ms]
+(pass) unreported effort remains null and metadata-only catalog products create no execution routes [7.70ms]
+
+src/models/price-source-settings.test.ts:
+(pass) price-source policy defaults to OpenRouter then OpenCode and persists across store reopen [4.67ms]
+(pass) source policy input rejects unsupported, duplicate, and credential-shaped entries before storage access [0.32ms]
+(pass) empty source list disables all price sources without weakening the whole-model rule [0.06ms]
+(pass) stale and concurrent writes return the current revision without overwriting it [0.12ms]
+(pass) concurrent writes from independently loaded module instances share the project lock [0.25ms]
+(pass) corrupt stored settings fail closed without echoing stored values [0.14ms]
+(pass) aborted writes do not mutate policy [0.15ms]
+
+src/models/source-store.test.ts:
+(pass) source snapshots persist by retained ID and cached records paginate within project [6.74ms]
+(pass) empty success, failures, and stale refresh completion keep status and selected data distinct [12.06ms]
+(pass) endpoint evidence reopens from append-only per-product snapshots and failed refresh keeps last-good data [16.14ms]
+(pass) a retained snapshot ID cannot be read by a foreign project [5.54ms]
+(pass) comparison reader reports missing tables without initializing source storage [0.70ms]
+(pass) comparison reader pins snapshots and scopes selected IDs to the project [10.24ms]
+
+src/models/tools.test.ts:
+(pass) registered Code Mode tools permission-check, restrict writes to Architect and use owned connections [17.25ms]
+
+src/models/current-price-index.test.ts:
+(pass) builds schema-valid pins from cached whole catalogs and values fixture usage exactly [14.45ms]
+(pass) observed category completeness values the captured GPT-5.2 quote without inventing cache-write price [9.90ms]
+(pass) policy order and configured access deterministically choose one complete whole-source quote [12.41ms]
+(pass) an incomplete preferred quote falls back to the next source's entire quote [4.71ms]
+(pass) unresolved tiers and schedules do not select a base/default quote [13.58ms]
+(pass) missing rates stay unknown while supported published zero remains a real quote [4.97ms]
+(pass) positive, unknown, and partial-zero categories require their whole-source rate [66.67ms]
+(pass) duplicate route selectors merge usage conservatively without treating amounts as selector conflicts [8.46ms]
+(pass) identity hashes policy, access, selectors and source state while pins retain authentic dates [11.61ms]
+(pass) the builder consumes complete snapshots, not the first evidence page [9.37ms]
+(pass) repricing refreshed cached pins changes market value without changing usage or reported charges [9.19ms]
+
+src/models/comparison-read.test.ts:
+(pass) comparison preserves exact route identity, dated evidence, original prices, and unknown effort [11.74ms]
+(pass) comparison pages bind filters and source snapshots across concurrent refreshes [12.52ms]
+(pass) comparison bounds duplicate-record variants while paging every candidate deterministically [232.19ms]
+(pass) comparison cursor rejects same-project source IDs swapped across source pins [8.21ms]
+(pass) comparison reports missing schemas and retained snapshots after a failed refresh [5.71ms]
+(pass) a missing pinned snapshot remains missing instead of falling forward to the latest [4.73ms]
+
+src/models/comparison-chart.test.ts:
+(pass) options preserve literal coordinates and only authoritative frontier members [7.30ms]
+(pass) synthetic crowded labels are bounded, shifted and moved away from the right plot edge [0.12ms]
+(pass) missing measurements are not converted to zero and a singleton emits no frontier line [0.06ms]
+
+src/models/market-range.test.ts:
+(pass) strict Luna prompt thresholds are selected only from complete per-call usage [2.24ms]
+(pass) mixed known Luna tiers sum each attributable call and aggregate usage stays an envelope [0.51ms]
+(pass) market identity supports direct OpenAI Luna and source-backed configured Go routes [0.79ms]
+(pass) unsupported, ambiguous, and absent route mappings do not borrow endpoint identity [0.33ms]
+(pass) Kimi cache-write documentation stays scoped and Qwen writes use only the retained endpoint rate [0.77ms]
+(pass) missing rates, missing categories, and measured zeros have different outcomes [1.32ms]
+(pass) stale endpoint rates remain visibly stale and incomplete retry histories cannot become totals [1.33ms]
+(pass) mixed routes and absent endpoint evidence remain unavailable rather than allocating unrelated usage [0.26ms]
+
+src/models/server.test.ts:
+(pass) registered tool and Desktop RPC share exact persisted mappings after setup connection closes [30.48ms]
+(pass) RPC validates live native session and permission before any settings access or mutation [8.28ms]
+(pass) price-source settings persist an ordered whole-model policy without changing model routes or exposing credentials [11.32ms]
+(pass) price-source RPCs authorize the live project session before storage or host metadata access [4.93ms]
+(pass) price-source access reports uncertainty from host metadata without leaking provider errors [4.44ms]
+(pass) cancelled price-source write cannot persist after a late native permission grant [6.97ms]
+(pass) cancelled Desktop configuration cannot save a route after a late permission grant [10.38ms]
+(pass) Models evidence RPC reads cached state without credentials and refreshes only after authorization [13.38ms]
+(pass) Models evidence denial, foreign and archived sessions do not initialize or access sources [5.87ms]
+(pass) Models comparison is an authorized read-only projection with honest missing-source state [7.04ms]
+(pass) registered model group RPCs resolve captured direct routes without credential or catalog access [16.91ms]
+(pass) registered model RPCs group captured direct Anthropic aliases with exact OpenRouter products and rule provenance [18.78ms]
+(pass) registered model group reads do not create a missing database [5.97ms]
+(pass) Models comparison denial, foreign or archived sessions and cancellation avoid source reads [6.46ms]
+(pass) Models group RPC rechecks session archival after awaited permission before opening evidence storage [5.59ms]
+(pass) cancelled Models group RPC cannot open evidence storage after a late permission grant [7.72ms]
+(pass) Models group RPC cancellation after source reads cannot publish a successful result [6.97ms]
+(pass) ModelsDecision registers and serves coherent production overview, rows, configurations and inspect [66.24ms]
+(pass) registered ModelsDecision reuses revision-bound unavailable contexts and invalidates on price or ledger changes [60.83ms]
+(pass) registered inspector maps exact configured Go routes to independently sourced market scenarios [59.03ms]
+(pass) registered inspector leaves unsupported, ambiguous, and absent mappings unknown despite endpoint rates [62.60ms]
+(pass) registered inspector pins scenario pages across retained writes and reprices only market evidence [98.87ms]
+(pass) registered inspector reports missing retained endpoint evidence without fabricating a value [61.12ms]
+(pass) ModelsDecision foreign scope, denial and pre-abort do not read price sources [6.63ms]
+(pass) cancelled ModelsDecision price/evidence read closes its source store and cannot publish [7.08ms]
+(pass) cancelled Models source refresh stops after late permission and writes no source state [5.98ms]
+
+src/observability/read.test.ts:
+(pass) session snapshots expose actual machine topology and recorded transitions separately, read-only [27.31ms]
+(pass) Radar reads legacy progress rows without recorded_at and performs no schema migration [34.49ms]
+(pass) trajectory projection preserves unique-session effort and refuses out-of-scope attempts [20.93ms]
+(pass) snapshot supplies complete task labels and recorded Timeline intervals without native history [20.50ms]
+(pass) associated task reads resolve references consistently for session queries and gets [20.99ms]
+(pass) captured history pages stay fixed while ten live status reads use no native context [48.98ms]
+(pass) history and status reads leave durable audits and repository watermarks unchanged [23.79ms]
+(pass) target trajectory reads survive unrelated project transition volume and keep scope boundaries truthful [78.93ms]
+(pass) target status rejects a source change during its read [19.73ms]
+(pass) target status rejects a native change during its read [24.49ms]
+(pass) metadata status fails explicitly instead of falling back to session context [17.32ms]
+(pass) Radar default and opt-in inventories preserve exact Project and Session identity scope [30.09ms]
+(pass) Radar expands only verified same-project ancestors before loading associated work [26.70ms]
+(pass) Radar marks missing, archived, and moved managed sessions stale without projecting routes [18.22ms]
+(pass) Radar reports native inventory failures instead of implying complete coverage [17.47ms]
+(pass) Radar separates configured, selected, and observed routes and links deduplicated event evidence [27.80ms]
+(pass) Radar keeps newest progress and chronological model/tool evidence at the truncation boundary [371.27ms]
+(pass) Radar retains recently coalesced step and tool observations beyond 5000 later rows [224.92ms]
+(pass) Radar preserves equal-time step order and ignores malformed observation metadata [25.73ms]
+(pass) Radar keeps durable effect and outbox delivery stages distinct from structural links [35.17ms]
+(pass) deferred Radar responses from an obsolete scope cannot become fresh in the next scope [23.82ms]
+(pass) Radar retains observation ordering when the host lacks JSONB iteration [23.65ms]
+
+src/observability/topology.test.ts:
+(pass) topology preserves the full current graph above the snapshot history ceiling without reading history payloads [64.05ms]
+(pass) topology shares session after-plan closure and excludes foreign project plans [23.71ms]
+
+src/observability/rpc.test.ts:
+(pass) durable writes publish without idle scans and recover delivery loss=%s [1128.23ms]
+(pass) durable writes publish without idle scans and recover delivery loss=%s [2130.42ms]
+(pass) history cache hits remain permission-first and continuation data stays scoped [27.05ms]
+(pass) progress diagnostics are project-isolated and process scheduler totals are Architect-only [23.53ms]
+
+src/observability/state.test.ts:
+(pass) Radar and lifecycle observations advance independently while live events keep a shared high-water mark [20.68ms]
+
+src/observability/source-revision.test.ts:
+(pass) observation invalidation is transactional, project scoped, and ignores unchanged writes [27.18ms]
+
+src/observability/changes.test.ts:
+(pass) loaded observers share membership reads only within the same durable revision and synchronous batch [15.66ms]
+(pass) filtered native sequences deduplicate without inventing gaps; disconnect requires resnapshot [16.73ms]
+(pass) progress, continuation, and outbox inserts and updates change Radar source fingerprints [27.21ms]
+(pass) runner tool-count changes invalidate even when the repository watermark is unchanged [18.13ms]
+
+src/observability/task-reads.test.ts:
+(pass) state filters paginate exact effective task states in project and associated session reads [45.60ms]
+
+src/review/progression.test.ts:
+(pass) a non-task handoff fixture uses shared focused progression, regression checks, replay, and exhaustion [0.31ms]
+
+src/trajectory/store.test.ts:
+(pass) trajectory store opens the project database read-only and rejects SQL mutations [16.43ms]
+
+src/trajectory/read.test.ts:
+(pass) full capture preserves every paged event and live status reads metadata only [24.86ms]
+(pass) trajectory specifications preserve legacy policy references and omit absent ones [33.62ms]
+(pass) trajectory presents commentary separately from automatic worker facts without granting authority [16.59ms]
+(pass) native-context timing keeps unknown endpoints null instead of using parent creation time [15.70ms]
+(pass) read-only trajectory access tolerates a pre-recorded_at progress table without migration [19.92ms]
+(pass) task reports include unsuccessful and accepted attempts, usage categories, checks and unknown cost [15.54ms]
+(pass) versioned task effort accounting survives task, attempt, paged, and read-only reopened reads [20.08ms]
+(pass) trajectory route accounting compares identical 121-character plan, policy, session, and step IDs losslessly [15.44ms]
+(pass) trajectory route accounting distinguishes 121-character IDs with the same retained prefix [16.53ms]
+(pass) trajectory accounting keeps long native context identities exact and marks truncated progress identities unavailable [18.01ms]
+(pass) unavailable-route cursors remain stable across trajectory reads [255.40ms]
+(pass) bounded pages preserve exact event order and reject stale or foreign continuations [32.83ms]
+(pass) visible export redacts nested credentials before truncation and fails closed on private parts [16.97ms]
+(pass) native tool arguments, JSON results and errors omit nested private state [17.16ms]
+(pass) tool multipart JSON and nesting-limit strings omit private reasoning while retaining safe siblings [17.18ms]
+(pass) attempt lookup rejects foreign IDs and session identity mismatches without exporting data [16.91ms]
+(pass) continuation cursors are bound to the project-owned source snapshot [39.47ms]
+(pass) native session errors are redacted before appearing in the report [15.74ms]
+(pass) trajectory reads leave seeded task, attempt, progress, effect, transition, audit rows and watermark unchanged [16.61ms]
+
+src/trajectory/native.test.ts:
+(pass) native adapter reads only the owned session context and projects public times/usage [6.07ms]
+(pass) native adapter refuses a foreign project before reading its transcript [0.11ms]
+(pass) lightweight native status reads current session facts without loading context [0.08ms]
+(pass) lightweight status rejects a foreign session before returning live metadata [0.05ms]
+(pass) native context access failures remain explicit and redact credentials [0.14ms]
+
+src/trajectory/history.test.ts:
+(pass) history cache pages an immutable sanitized capture in exact order [0.34ms]
+(pass) history cursors reject tampering and every foreign identity dimension [0.25ms]
+(pass) expired and evicted history cursors require explicit recapture [0.19ms]
+(pass) history cache rejects duplicate or oversized projections rather than serving partial pages [0.05ms]
+
+src/trajectory/privacy.test.ts:
+(pass) visible text redacts OpenCode credentials including embedded quoted JSON [0.05ms]
+(pass) structured projection omits tagged private content and unsupported values safely [0.22ms]
+(pass) structured JSON strings at the nesting limit fail closed without hiding safe siblings [0.07ms]
+(pass) text bounds count Unicode code points after redaction [0.07ms]
+
+src/trajectory/accounting.test.ts:
+(pass) shared-session steps compare only with their exact retained attempt owner [0.52ms]
+(pass) shared-session context and current selection remain visible without invented historical attempt ownership [0.13ms]
+(pass) deduplicates session references and never fills a current cumulative snapshot from older or additive observations [0.15ms]
+(pass) selects the latest retained cumulative snapshot deterministically without category gap filling [0.08ms]
+(pass) retained additive steps are a source-stamped subtotal, deduplicated by step and isolated from legacy scalars [0.17ms]
+(pass) keeps frozen assignment separate from mixed observed routes and exposes unavailable coverage honestly [0.20ms]
+(pass) route accounting compares exact identities behind bounded displays and leaves lost identities unavailable [0.17ms]
+(pass) unavailable route ordering follows source occurrences, not lossy displays or allocation order [0.14ms]
+(pass) ID-less unavailable routes retain distinct fact and observation-slot occurrences [0.24ms]
+
+src/trajectory/live.test.ts:
+(pass) live delivery retains unchanged events and updates the same ID across lost responses [0.21ms]
+(pass) foreign, expired, evicted and process-lost baselines reset with the current full data [0.07ms]
+(pass) a projection larger than the delivery cache is returned in full without truncation [0.02ms]
+
+src/radar/map-overview.test.ts:
+(pass) 35-session overview stays compact at 330/450px and discloses every scoped identity [203.99ms]
+(pass) current task context and overview links require the exact session-bound attempt [27.98ms]
+(pass) terminal attempts are labelled last and task state alone cannot promote work [25.02ms]
+(pass) status-only session updates keep the compact layout request and coordinates stable [21.20ms]
+(pass) recorded connection keys retain a focused row and resolve refreshed edge records [21.46ms]
+
+src/radar/projection.test.ts:
+(pass) Flow uses projected topology and only highlights a matching persisted snapshot [21.17ms]
+(pass) statechart positions remain stable when only the current snapshot changes [20.69ms]
+(pass) unsupported machine versions do not expose an active state [22.49ms]
+
+src/radar/presentation.test.ts:
+(pass) independent pane scroll restores once for each selection key [0.15ms]
+(pass) a pending restoration cannot write into a later scope [0.03ms]
+(pass) scope scroll restoration waits for async map readiness and preserves both axes [0.04ms]
+(pass) one mounted Flow inspector follows task, snapshot and selected-state changes [21.15ms]
+
+src/radar/packaging.test.ts:
+(pass) Desktop's filename-free bundle evaluator registers and runs the self-contained ELK worker [432.00ms]
+
+src/radar/state.test.ts:
+(pass) an idle event subscription performs no repeated projections and changes still refresh [3137.77ms]
+(pass) late session responses cannot replace a switched project observation [46.49ms]
+(pass) duplicates are ignored, event gaps invalidate, and a closed stream reconnects by resnapshot [43.92ms]
+(pass) a gap catch-up remains a quiet baseline until Radar covers the recovery sequence [35.80ms]
+(pass) lifecycle advancement revokes a previously ready quiet Radar baseline [37.15ms]
+(pass) wrong-project and wrong-scope snapshot responses remain unavailable [28.11ms]
+(pass) independently publishes changing Radar and lifecycle reads without claiming a coherent boundary [27.31ms]
+
+src/radar/layout.test.ts:
+(pass) Radar split uses live wrapped-header geometry and explicit percentage bounds [0.22ms]
+(pass) multiple pointer moves, short panels, and boundary keys stay in range [0.04ms]
+(pass) ELK places grouped nodes and typed edges in a separate native worker thread [437.00ms]
+(pass) IPC accepts large ELK graph and group extents while retaining individual measurement bounds [176.31ms]
+(pass) an aborted ELK request rejects instead of publishing obsolete layout [0.14ms]
+(pass) unchanged measured topology makes zero extra layout calls and preserves coordinates [0.16ms]
+(pass) late scope layout responses cannot overwrite the newest geometry [0.11ms]
+
+src/radar/timeline.test.ts:
+(pass) Timeline projects only selected-plan attempts, executions, checks and ordered transitions [21.73ms]
+(pass) Timeline retains reversed recorded endpoints and unknown times without inventing dates [19.05ms]
+
+src/radar/transport.test.ts:
+(pass) RPC adapter sends the explicit scope, directory, and abort signal [21.04ms]
+(pass) other worktree counters cannot trigger Radar gaps or suppress this location [0.31ms]
+
+test/task-links/handler.test.ts:
+(pass) copied Markdown uses the actual reference and a parser-recognized local path [0.60ms]
+(pass) native link exists/open resolve the reference in its live origin and open the UUID selection [0.48ms]
+(pass) malformed, missing, foreign and disposed links fail closed without unrelated reads or opens [0.31ms]
+(pass) reconnect uses current session references and disposal/cancellation prevents stale opens [0.43ms]
+
+test/context/isolated-reuse.test.ts:
+(pass) an owned implementor reuses its Architect publication across reopened real Git worktrees [450.31ms]
+(pass) tool denial precedes native lookup, and denied or revoked source permissions reveal no files or bytes [387.12ms]
+(pass) focused native reads check only cached matches against the worker and publication workspace [1137.96ms]
+(pass) a worker reads its parent's pinned snapshot, not a later workspace publication [864.38ms]
+(pass) native identity remains usable when Session.Info omits its optional agent field [454.98ms]
+(pass) foreign projects and unrelated parent sessions cannot select another Architect's publication [455.92ms]
+(pass) unavailable optional context does not rebuild or prevent an ordinary source read [94.61ms]
+
+test/runner/recovery.test.ts:
+(pass) legacy delivered outbox rows reopen as host-admitted with unknown consumption [71.59ms]
+(pass) fresh processes recover accepted session/prompt effects without replay [1248.84ms]
+(pass) scope instruction intent survives process death before and after native keyed delivery [1213.96ms]
+(pass) uncertain dispatch or verifier crash stays blocked without repeating its effect [1762.53ms]
+(pass) durable outbox survives process death before/after host delivery without duplicate notices [1130.86ms]
+(pass) legacy unowned transcript remains unknown rather than proving post-crash consumption [568.90ms]
+
+test/runner/outcome-delivery.test.ts:
+(pass) only an exactly owned queued synthetic outcome is eligible for cancellation [0.09ms]
+(pass) transcript ownership is distinct from queued delivery and requires synthetic identity [0.02ms]
+
+test/observability/native.test.ts:
+(pass) native radar inventory filters foreign projects and remains page- and cursor-bounded [0.88ms]
+(pass) native inventory terminates repeated cursors and forwards cancellation [0.18ms]
+(pass) native direct reads convert not-found to absence and preserve other failures [0.15ms]
+
+test/observability/registered.test.ts:
+(pass) registered Tasks RPC discovers durable worker links without widening project scope [21.14ms]
+(pass) registered observation RPC resolves scope through native sessions and enforces permission [31.37ms]
+(pass) registered targeted trajectory RPCs remain usable when broad history is over its cap [57.90ms]
+
+test/observability/state.test.ts:
+(pass) scope switches and reconnects reject late snapshots from the previous generation [0.10ms]
+(pass) duplicate and late events are ignored while gaps and live changes require resync [0.06ms]
+
+test/observation-panels/tasks-activity.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1045 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/tasks-panel-dom-test/tasks-panel-dom-test.js  2,886.30 kB │ gzip: 666.17 kB
+
+✓ built in 1.07s
+(pass) registered Tasks panel separates lifecycle, foreground activity and holds with working filters [1299.11ms]
+
+test/observation-panels/trajectory-timing.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1045 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/trajectory-panel-dom-test/trajectory-panel-dom-test.js  2,886.36 kB │ gzip: 666.19 kB
+
+✓ built in 819ms
+You appear to have multiple instances of Solid. This can lead to unexpected behavior.
+(pass) registered Trajectory panel renders proportional check intervals and precise selected timing [1033.68ms]
+
+test/observation-panels/root.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1045 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/models-panel-dom-test/models-panel-dom-test.js  2,886.26 kB │ gzip: 666.16 kB
+
+✓ built in 827ms
+You appear to have multiple instances of Solid. This can lead to unexpected behavior.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+(pass) gui.setup registers and mounts the real Models panel render with isolated, cancellable DOM state [2024.20ms]
+
+test/speech/read-aloud.test.tsx:
+(pass) registered speaker replays the last completed reply during new work and Stop cancels it [1.59ms]
+(pass) native menu and command enable final-only auto speech, deduplicate parts, and stop playback [505.13ms]
+(pass) a disconnected text stream cannot speak an unseen code tail [503.92ms]
+
+test/models-chart/chart.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 602 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/models-chart-dom-test/models-chart-dom-test.js  1,330.89 kB │ gzip: 328.30 kB
+
+✓ built in 132ms
+You appear to have multiple instances of Solid. This can lead to unexpected behavior.
+(pass) real Solid SVG rendering separately updates marker coordinates, frontier and accessible selection [62.46ms]
+(pass) real ECharts SVG uses literal observations and only straight segments between frontier points [15.73ms]
+(pass) actual tooltip renders markup-like model labels as literal text without injected elements [11.74ms]
+(pass) adapter owns one instance and completely disposes theme, resize and listener lifecycle [14.51ms]
+
+test/trajectory/registered.test.ts:
+(pass) registered trajectory tool is permission-first, structured, and pages exact stable events [41.27ms]
+(pass) permission denial precedes input validation, database reopen, and native session reads [17.00ms]
+(pass) Architect, implementor, and another permitted agent can read owned reports [23.07ms]
+(pass) retained callback survives setup connection disposal without changing durable read state [19.83ms]
+
+test/task-panel/menu-tab.test.ts:
+4:40:58 AM [vite] (client) Re-optimizing dependencies because vite config has changed
+(pass) tasks native affordances > plan nonterminal counts stay distinct from native activity [0.27ms]
+(pass) tasks native affordances > session.panel menu places Tasks after the native extra-panel entries [0.32ms]
+(pass) tasks native affordances > closable tab renders a themed task icon with the Tasks title [0.13ms]
+(pass) tasks native affordances > tab object stays stable while listed [0.04ms]
+(pass) tasks native affordances > open, closed, and reopened sessions drive the native strip [0.07ms]
+(pass) tasks native affordances > opening without a located session does nothing [0.02ms]
+
+test/task-panel/keyed-identity.test.ts:
+(pass) group and row render owners survive fresh models and live updates by canonical key [19.46ms]
+
+test/product-verification/owned-launch.test.ts:
+(pass) owned Desktop launch proof > canonicalizes candidate mtimes to whole milliseconds across JS runtimes [5.99ms]
+(pass) owned Desktop launch proof > uses an isolated effective state path and registration, and launches only after service identity is authenticated [1.46ms]
+(pass) owned Desktop launch proof > isolates HOME so Desktop default projects stay under the owned root [0.24ms]
+(pass) owned Desktop launch proof > blocks a pre-existing isolated registration before starting a service or Desktop [0.29ms]
+(pass) owned Desktop launch proof > blocks unsafe shell path changes before starting any service [0.11ms]
+(pass) owned Desktop launch proof > blocks when candidate and target directories differ [0.06ms]
+(pass) owned Desktop launch proof > cleans a prepared root only once when service startup fails [0.25ms]
+(pass) owned Desktop launch proof > persists spawned-service ownership before fallible identity discovery [0.71ms]
+(pass) owned Desktop launch proof > reopened pre-spawn intent preserves ownership when every post-spawn manifest write fails [0.56ms]
+(pass) owned Desktop launch proof > unconfirmed service ownership survives failed cleanup and permits cleanup after authoritative exit [0.28ms]
+(pass) owned Desktop launch proof > blocks a registration whose authenticated endpoint reports another process [0.23ms]
+(pass) owned Desktop launch proof > an unauthenticated endpoint blocks Desktop startup and retains the reservation if teardown fails [0.11ms]
+(pass) owned Desktop launch proof > a candidate identity mismatch tears down the owned launch rather than accepting another plugin [0.21ms]
+(pass) owned Desktop boundaries > distinguishes live, absent, malformed, and unavailable process observations [0.37ms]
+(pass) owned Desktop boundaries > uses actual ps observations for this worker and a non-existent PID [5.40ms]
+(pass) owned Desktop boundaries > classifies root helper inventories without turning failed ps into an empty list [0.20ms]
+(pass) owned Desktop boundaries > waits distinguish observed exit, a live main process, identity change, and unavailable observation [0.23ms]
+(pass) owned Desktop boundaries > retains a launch when process observation is unavailable or the PID identity changed [0.35ms]
+(pass) owned Desktop boundaries > does not call an exited Desktop clean while owned helpers remain [0.19ms]
+(pass) owned Desktop boundaries > keeps roots reserved when helper inventory is unavailable or the main process remains live [0.23ms]
+(pass) owned Desktop boundaries > normalizes the CLI's reported v-prefix to the packaged version form [0.05ms]
+(pass) owned Desktop boundaries > accepts only effective test-root paths [0.14ms]
+(pass) owned Desktop boundaries > keeps the explicit private base identity stable when owned TMPDIR changes [55.25ms]
+(pass) owned Desktop boundaries > rejects missing, non-loopback, wrong-port, and mismatched service identities [0.25ms]
+(pass) owned Desktop boundaries > captures a restorable protocol baseline and rejects a non-candidate Architect [0.04ms]
+(pass) owned Desktop boundaries > allows only scoped qualification evidence outputs without relaxing source identity [0.23ms]
+(pass) owned Desktop boundaries > same-revision GUI rebuild timestamps do not invalidate an owned candidate [0.06ms]
+(pass) owned Desktop boundaries > blocks all cleanup side effects while native interaction delivery is pending or ambiguous [0.23ms]
+(pass) owned Desktop boundaries > does not remove the root when owned process or helper observations are unresolved [0.21ms]
+(pass) owned Desktop boundaries > retains dirty resources on ambiguous teardown, then restores the handler before removing the root [0.17ms]
+
+test/product-verification/native-interaction.test.ts:
+(pass) owned native interaction broker > requires the exact owned service, root, version and adapter generation [0.32ms]
+(pass) owned native interaction broker > delivers each request at most once and returns the completed observation by ID [0.46ms]
+(pass) owned native interaction broker > rejects stale window generations, hidden targets and unfocused native input [0.35ms]
+(pass) owned native interaction broker > fails closed on ambiguous delivery and stale completion [0.20ms]
+(pass) owned native interaction broker > turns a delivered request into an ambiguous result when the adapter detaches [0.12ms]
+(pass) owned native interaction broker > expires stale adapter heartbeats rather than dispatching to a dead window [0.12ms]
+
+test/product-verification/native-interaction-main.test.ts:
+(pass) owned native Desktop adapter > shutdown forgets an already destroyed Electron window without accessing its webContents [0.45ms]
+(pass) owned native Desktop adapter > focuses only the referenced owned window and returns a fresh observation without input [0.89ms]
+(pass) owned native Desktop adapter > does not report focus success for a renderer replaced during activation [0.07ms]
+(pass) owned native Desktop adapter > categorizes startup failures without logging untrusted error details [0.24ms]
+(pass) owned native Desktop adapter > keeps startup failure hints bounded and redacts secrets, URLs, and local paths [0.17ms]
+(pass) owned native Desktop adapter > uses one fixed bounded rendered-DOM script without reading form values or invoking handlers [0.12ms]
+(pass) owned native Desktop adapter > redacts common visible credentials and rejects credential-bearing screenshot pages [0.12ms]
+(pass) owned native Desktop adapter > dispatches native input and returns a fresh post-action observation [0.30ms]
+(pass) owned native Desktop adapter > rejects a stale rendered snapshot without sending native input [0.08ms]
+(pass) owned native Desktop adapter > refuses native input if the owned Desktop window loses focus after observation [0.07ms]
+(pass) owned native Desktop adapter > rechecks focus and renderer identity after the awaited DOM read before any input [0.29ms]
+(pass) owned native Desktop adapter > rejects a changed renderer generation and never replays after delivery uncertainty [0.23ms]
+(pass) owned native Desktop adapter > uses capturePage and refuses credential-like text entry before any input [0.33ms]
+
+test/trajectory-panel/registration.test.ts:
+(pass) Trajectory registers as a closable optional panel with command and session menu entry [0.15ms]
+
+test/trajectory-panel/panel-state.test.ts:
+(pass) plan checks and unassociated events never inherit the latest worker attempt [36.78ms]
+(pass) projection-backed panel retains failed-attempt selection and all-attempt unique-session totals on late updates [33.67ms]
+(pass) scope reconnect keeps an in-scope task/attempt and rejects late responses from the previous scope [22.49ms]
+(pass) an external historical target bypasses snapshot choices and loads its reference and every attempt [19.55ms]
+(pass) a historical target loads over the broad snapshot cap through the real transport [58.22ms]
+(pass) target refresh ignores a covered event after capture [32.35ms]
+(pass) target refresh ignores a covered event during capture [33.94ms]
+(pass) a newer event after target capture causes one scoped status refresh [34.17ms]
+(pass) a newer event during target capture triggers one status follow-up and preserves selection [45.46ms]
+(pass) a target resnapshot request is honored even when its event sequence is covered [35.76ms]
+(pass) deferred task A cannot replace unavailable target B or fall back to A [21.56ms]
+(pass) a historical project target is rejected after switching to a different scope [15.78ms]
+(pass) disconnected transport retains scoped data and a reconnect refreshes it [24.57ms]
+(pass) expired history continuations retain old pages and require an explicit recapture [31.60ms]
+(pass) history recovery remains available after a healthy snapshot before the first capture [24.71ms]
+(pass) failed explicit recapture keeps the old capture and page union after healthy status [32.18ms]
+(pass) recapture rejects an empty nonadvancing continuation without replacing old history [29.28ms]
+(pass) replayed or reordered history pages retain the old union and cursor for explicit recovery [23.88ms]
+(pass) explicit projection gaps resnapshot even when their sequence is not newer [29.27ms]
+(pass) live status and progress do not cancel page-size-two history or rewrite its event selection [49.67ms]
+(pass) healthy trajectory stays quiet past the old poll interval and reconnect preserves captured history [4146.32ms]
+(pass) failed snapshot reads back off, recover without a new event, reset and cancel on close [29.33ms]
+(pass) a failed live status read recovers without recapturing selected historical activity [31.50ms]
+(pass) reconnect arriving during a snapshot forces one catch-up even at the same sequence [32.56ms]
+(pass) an in-flight event covered by the snapshot avoids a catch-up read [34.72ms]
+(pass) an in-flight event newer than the snapshot gets a catch-up read [31.30ms]
+(pass) a retired retry callback cannot disown the current view's recovery timer [20.12ms]
+(pass) a reset stream sequence during reconnect catches up without replacing captured history [35.09ms]
+
+test/trajectory-panel/events.test.ts:
+(pass) native connection announcements resnapshot; only valid scoped trajectory changes pass [1.05ms]
+(pass) aborted native subscriptions cannot invalidate a closed trajectory view [0.26ms]
+(pass) trajectory ignores missing and foreign locations even within the same project [0.13ms]
+
+test/trajectory-panel/live-delivery.test.ts:
+(pass) native status deltas preserve mutable tool progress, retry delivery and scoped full recovery [61.26ms]
+
+test/trajectory-panel/native-report.test.ts:
+(pass) captured and live reports render native execution outcomes with an unknown basis [24.70ms]
+
+test/trajectory-panel/projection.test.ts:
+(pass) timeline includes plan checks from every plan containing the task and excludes other plans [0.63ms]
+(pass) attempt timeline shares first-reservation origin and leaves recorded end unknown [0.08ms]
+(pass) target timeline renders from the scoped report when no broad snapshot exists [0.18ms]
+(pass) plan and attempt checks project only recorded intervals and preserve all endpoint states [0.12ms]
+(pass) Unix epoch zero is a known endpoint and LZ112 receipt pairs retain millisecond durations [0.06ms]
+(pass) execution with neither recorded endpoint is not assigned a reservation-time marker [0.04ms]
+(pass) task choices retain objective and state from all scoped plans [0.04ms]
+(pass) transport adapts scoped observation RPC calls without widening task trajectory reads [0.26ms]
+(pass) timeline split supports repeated pointer moves, keyboard steps and compact bounds [0.06ms]
+(pass) elapsed tick labels thin to fit plot width without moving their times [0.09ms]
+
+test/trajectory-panel/targeted-render.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1045 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/targeted-trajectory-dom-test/targeted-trajectory-dom-test.js  2,886.37 kB │ gzip: 666.20 kB
+
+✓ built in 905ms
+You appear to have multiple instances of Solid. This can lead to unexpected behavior.
+(pass) a task target renders its scoped report timeline without a broad snapshot [1114.30ms]
+
+test/radar/panel.test.ts:
+(pass) native registration exposes its closable tab and renders through real observation adapters [22.58ms]
+
+test/radar/map.test.ts:
+(pass) the map models actual scoped runtime, session, route and work records [22.76ms]
+(pass) same topology and text metrics reuse ELK geometry through status and activity changes [22.56ms]
+(pass) topology, font metrics and scope changes produce distinct measured layout keys [26.23ms]
+(pass) activity pulses consume only new live event IDs once and suppress stale motion [0.15ms]
+(pass) reconnect establishes a quiet pulse baseline before later live events animate [0.77ms]
+
+test/models-panel/registration.test.ts:
+(pass) Models registration opens a closable optional panel from /lz-models and the native menu [0.28ms]
+
+test/models-panel/panel.test.tsx:
+4:41:05 AM [vite] (client) Re-optimizing dependencies because vite config has changed
+(pass) candidate row exposes sourced route and separate external benchmark with keyboard selection semantics [0.25ms]
+(pass) candidate row bounds a missing-name ID visually and exposes its full exact route accessibly [0.07ms]
+(pass) unavailable chart and read-only assignments never fabricate values or imply active routing [0.05ms]
+(pass) known-usage inspector shows endpoint provenance and scoped documented cache-write zero [3.42ms]
+(pass) Luna tier envelopes stay conditional and per-call tier amounts stay exact to the scenario [2.41ms]
+(pass) Qwen cache-write rates are endpoint-scoped, while missing usage, rates and bounds are unavailable [2.51ms]
+(pass) incomplete retries expose a partial known subtotal without implying a task or history bound [0.80ms]
+
+src/recovery/handoff/store.test.ts:
+(pass) source-bound request and immutable draft history survive reopen and workspace removal [34.42ms]
+(pass) request authorization rejects task specifications detached from their runner node [16.53ms]
+(pass) review reservations are request-bound, immutable and atomically finalized with notification intent [39.12ms]
+(pass) the assigned worker can review and finalize only its current request; stale workers and Architect continuations cannot [29.07ms]
+(pass) disabled/unavailable review limitations and append-only Architect dispositions preserve unknown answers [29.01ms]
+
+src/recovery/handoff/review.test.ts:
+(pass) malformed, oversized, foreign, unauthorized, and stale review requests reserve no rounds [28.16ms]
+(pass) fixed checks persist raw probabilities, focused feedback, rechecks, non-regression, replay and exhaustion [42.39ms]
+(pass) an authorized current Architect can review; disabled and malformed inference stay explicit [29.37ms]
+(pass) aborted inference is durable without invented usage, and an authority revocation blocks its result [40.10ms]
+(pass) authorized Architect recovers expired worker reservations without substituting late outcomes [62.53ms]
+(pass) interrupted recovery exhausts shared rounds with recorded concerns and no semantic pass [55.91ms]
+(pass) authorized reviewers share one three-round chain across IDs and reopened connections [51.46ms]
+(pass) changed source task contracts cannot inherit a stored pass [22.42ms]
+
+src/verification/resources/store.test.ts:
+(pass) resource registrations are durable, idempotent, generation-bound, and project-exclusive [28.65ms]
+(pass) registration failure rolls back the whole batch before a caller can create fixtures [19.08ms]
+
+src/verification/resources/lifecycle.test.ts:
+(pass) committed registration precedes fixture creation; exact replay is inert and changed content conflicts [24.45ms]
+(pass) success, product failure, setup failure and cancellation all attempt owned teardown [45.24ms]
+(pass) failed cleanup is durable and retry does not replay the callback or change a passed verdict [21.18ms]
+(pass) reopened cleanup with a different filesystem root stays uncertain until the original root returns [25.54ms]
+(pass) reopen reconciles before-create and after-create-before-receipt cuts without duplicate creation [38.89ms]
+(pass) a concurrent replay cannot duplicate probe behavior or clean up another active invocation [20.41ms]
+(pass) reopen after delete-before-receipt accepts only authoritative absence and preserves pass [24.31ms]
+(pass) unknown observations stay claimed and foreign fixture content is never removed [25.91ms]
+(pass) shared and independent coordinators fail closed across canonical root aliases [43.12ms]
+(pass) unsafe fixture paths and failed registration prevent filesystem creation [16.70ms]
+
+src/verification/probe/store.test.ts:
+(pass) definitions cover every declared assertion and preserve authenticated Architect policy revisions [9.03ms]
+(pass) task and combined-candidate definitions reject foreign task and plan ownership [21.41ms]
+(pass) behavior satisfaction is independent of cleanup while failed and unfinished probes remain unsatisfied [22.31ms]
+(pass) SQLite reopen preserves independent, actor-bound probe receipts and cleanup remains separate from pass [28.59ms]
+(pass) run lifecycle, verdict, cleanup failures and transactional rollback remain distinct [19.00ms]
+(pass) durable record revisions invalidate only mismatched receipts without deleting them [17.46ms]
+
+ 1364 pass
+ 0 fail
+ 15208 expect() calls
+Ran 1364 tests across 154 files. [250.53s]
