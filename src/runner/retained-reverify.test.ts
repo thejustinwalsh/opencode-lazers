@@ -1470,173 +1470,214 @@ test("cancellation observes a real installer process group before removing parti
   ).toBe(true)
 })
 
-test("reopen reconciles persisted partial setup and link ownership before checks", async () => {
-  const f = await failedFixture({
-    retainedDependencyInstaller: async () => {},
-    requestTick: async () => {},
-  })
-  await f.runtime.command(retainedVerifyCommand(f, "verify-retained-crash-during-setup"), "owner")
-  const operation = f.store.atomic((db) =>
-    db
-      .query<{ payload: string }, []>("SELECT payload FROM runner_retained_verifications LIMIT 1")
-      .get(),
-  )
-  if (!operation) throw new Error("Retained verification operation was not reserved")
-  const retained = RetainedVerificationSchema.parse(JSON.parse(operation.payload))
-  const workspace = join(
-    realpathSync(f.state),
-    "runner",
-    "worktrees",
-    `retained-${retained.id}-task`,
-  )
-  await f.host.worktree({ directory: workspace, base: retained.artifact })
-  const checking = RetainedVerificationSchema.parse({
-    ...retained,
-    state: "task-checks",
-    taskWorkspace: workspace,
-    taskWorkspaceState: "owned",
-    updatedAt: Date.now(),
-  })
-  f.store.atomic((db) => saveRetainedVerification(db, checking))
+test.each([false, true])(
+  "reopen preserves a surviving installer after cancellation=%s",
+  async (cancelBeforeRestart) => {
+    const f = await failedFixture({
+      retainedDependencyInstaller: async () => {},
+      requestTick: async () => {},
+    })
+    await f.runtime.command(retainedVerifyCommand(f, "verify-retained-crash-during-setup"), "owner")
+    const operation = f.store.atomic((db) =>
+      db
+        .query<{ payload: string }, []>("SELECT payload FROM runner_retained_verifications LIMIT 1")
+        .get(),
+    )
+    if (!operation) throw new Error("Retained verification operation was not reserved")
+    const retained = RetainedVerificationSchema.parse(JSON.parse(operation.payload))
+    const workspace = join(
+      realpathSync(f.state),
+      "runner",
+      "worktrees",
+      `retained-${retained.id}-task`,
+    )
+    await f.host.worktree({ directory: workspace, base: retained.artifact })
+    const checking = RetainedVerificationSchema.parse({
+      ...retained,
+      state: "task-checks",
+      taskWorkspace: workspace,
+      taskWorkspaceState: "owned",
+      updatedAt: Date.now(),
+    })
+    f.store.atomic((db) => saveRetainedVerification(db, checking))
 
-  const rootDirectory = join(f.state, "runner", "retained-verification-resources")
-  mkdirSync(rootDirectory, { recursive: true, mode: 0o700 })
-  const check = f.task.proposal.verification[0]!
-  const procedure = retainedProcedurePlan(check.command)
-  if (procedure.status !== "supported") throw new Error(procedure.reason)
-  const register = (
-    resources: Array<{ name: string; realPath: string; device: number; inode: number }>,
-  ) =>
-    f.store.atomic((db) =>
-      registerRetainedVerificationResources(db, f.root, {
+    const rootDirectory = join(f.state, "runner", "retained-verification-resources")
+    mkdirSync(rootDirectory, { recursive: true, mode: 0o700 })
+    const check = f.task.proposal.verification[0]!
+    const procedure = retainedProcedurePlan(check.command)
+    if (procedure.status !== "supported") throw new Error(procedure.reason)
+    const register = (
+      resources: Array<{ name: string; realPath: string; device: number; inode: number }>,
+    ) =>
+      f.store.atomic((db) =>
+        registerRetainedVerificationResources(db, f.root, {
+          operationID: retained.id,
+          generation: retained.generation,
+          phase: "task",
+          checkID: check.id,
+          resources,
+          state: "creating",
+          now: Date.now(),
+        }),
+      )
+    const updateIdentity = (
+      resourceName: string,
+      realPath: string,
+      device: number,
+      inode: number,
+    ) => {
+      const updated = f.store.atomic((db) =>
+        updateRetainedVerificationResourceIdentity(db, {
+          operationID: retained.id,
+          phase: "task",
+          checkID: check.id,
+          resourceName,
+          realPath,
+          device,
+          inode,
+          now: Date.now(),
+        }),
+      )
+      if (!updated) throw new Error(`Setup ownership reservation changed: ${resourceName}`)
+    }
+    await expect(
+      createRetainedCheckContext({
+        rootDirectory,
         operationID: retained.id,
         generation: retained.generation,
         phase: "task",
         checkID: check.id,
-        resources,
-        state: "creating",
-        now: Date.now(),
+        originalWorkspace: retained.originalWorkspace,
+        candidateWorkspace: workspace,
+        taskDatabase: f.store.repository.path,
+        projectDirectory: f.root,
+        candidateArtifact: retained.artifact,
+        priorResourcePaths: [],
+        procedurePlan: procedure.plan,
+        dependencyInstaller: async () => {
+          throw new Error("simulated process loss during dependency setup")
+        },
+        onSetupPathReserved: (path) =>
+          register([{ name: "setup-root", realPath: path, device: -1, inode: -1 }]),
+        onSetupPathCreated: (resource) =>
+          updateIdentity("setup-root", resource.realPath, resource.device, resource.inode),
+        onResourcesCreated: register,
+        onDependencyLinkReserved: (link) =>
+          register([{ name: "dependency-link", realPath: link.path, device: -1, inode: -1 }]),
+        onDependencyLink: (link) =>
+          updateIdentity("dependency-link", link.path, link.device, link.inode),
+        onTemporaryDirectoryLinkReserved: (link) =>
+          register([{ name: "tmp-alias", realPath: link.path, device: -1, inode: -1 }]),
+        onTemporaryDirectoryLink: (link) =>
+          updateIdentity("tmp-alias", link.path, link.device, link.inode),
       }),
-    )
-  const updateIdentity = (
-    resourceName: string,
-    realPath: string,
-    device: number,
-    inode: number,
-  ) => {
-    const updated = f.store.atomic((db) =>
-      updateRetainedVerificationResourceIdentity(db, {
-        operationID: retained.id,
-        phase: "task",
-        checkID: check.id,
-        resourceName,
-        realPath,
-        device,
-        inode,
-        now: Date.now(),
-      }),
-    )
-    if (!updated) throw new Error(`Setup ownership reservation changed: ${resourceName}`)
-  }
-  await expect(
-    createRetainedCheckContext({
-      rootDirectory,
-      operationID: retained.id,
-      generation: retained.generation,
-      phase: "task",
-      checkID: check.id,
-      originalWorkspace: retained.originalWorkspace,
-      candidateWorkspace: workspace,
-      taskDatabase: f.store.repository.path,
-      projectDirectory: f.root,
-      candidateArtifact: retained.artifact,
-      priorResourcePaths: [],
-      procedurePlan: procedure.plan,
-      dependencyInstaller: async () => {
-        throw new Error("simulated process loss during dependency setup")
-      },
-      onSetupPathReserved: (path) =>
-        register([{ name: "setup-root", realPath: path, device: -1, inode: -1 }]),
-      onSetupPathCreated: (resource) =>
-        updateIdentity("setup-root", resource.realPath, resource.device, resource.inode),
-      onResourcesCreated: register,
-      onDependencyLinkReserved: (link) =>
-        register([{ name: "dependency-link", realPath: link.path, device: -1, inode: -1 }]),
-      onDependencyLink: (link) =>
-        updateIdentity("dependency-link", link.path, link.device, link.inode),
-      onTemporaryDirectoryLinkReserved: (link) =>
-        register([{ name: "tmp-alias", realPath: link.path, device: -1, inode: -1 }]),
-      onTemporaryDirectoryLink: (link) =>
-        updateIdentity("tmp-alias", link.path, link.device, link.inode),
-    }),
-  ).rejects.toThrow("simulated process loss during dependency setup")
+    ).rejects.toThrow("simulated process loss during dependency setup")
 
-  const setupRows = f.store.atomic((db) =>
-    db
-      .query<{ resource_name: string; canonical_path: string; state: string }, [string, string]>(
-        `SELECT resource_name,canonical_path,state FROM runner_retained_verification_resources
-         WHERE operation_id=? AND phase='task' AND check_id=?`,
-      )
-      .all(retained.id, check.id),
-  )
-  expect(setupRows.map((row) => row.resource_name)).toContain("setup-root")
-  expect(setupRows.map((row) => row.resource_name)).toContain("dependency-link")
-  expect(setupRows.every((row) => row.state === "creating")).toBe(true)
-  const setupRoot = setupRows.find((row) => row.resource_name === "setup-root")!
-  expect(existsSync(setupRoot.canonical_path)).toBe(true)
-  expect(existsSync(join(workspace, "node_modules"))).toBe(true)
-
-  await f.runtime.stop()
-  f.store.atomic((db) =>
-    db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
-  )
-  f.store.repository.close()
-  const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
-  cleanups.push(() => reopenedRepository.close())
-  const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
-    requestTick: async () => {},
-  })
-  await reopenedRuntime.tick()
-
-  const reconciled = reopenedStore.atomic((db) =>
-    db
-      .query<{ payload: string }, [string]>(
-        "SELECT payload FROM runner_retained_verifications WHERE id=?",
-      )
-      .get(retained.id),
-  )!
-  expect(JSON.parse(reconciled.payload)).toMatchObject({
-    state: "held",
-    holdReason: expect.stringContaining("Interrupted retained verification setup"),
-  })
-  expect(existsSync(setupRoot.canonical_path)).toBe(false)
-  expect(existsSync(join(workspace, "node_modules"))).toBe(false)
-  expect(
-    reopenedStore.atomic((db) =>
+    const setupRows = f.store.atomic((db) =>
       db
-        .query<{ state: string }, [string, string]>(
-          "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase='task' AND check_id=?",
+        .query<{ resource_name: string; canonical_path: string; state: string }, [string, string]>(
+          `SELECT resource_name,canonical_path,state FROM runner_retained_verification_resources
+         WHERE operation_id=? AND phase='task' AND check_id=?`,
         )
-        .all(retained.id, check.id)
-        .every((row) => row.state === "removed"),
-    ),
-  ).toBe(true)
-  expect(
-    reopenedStore.atomic(
-      (db) =>
+        .all(retained.id, check.id),
+    )
+    expect(setupRows.map((row) => row.resource_name)).toContain("setup-root")
+    expect(setupRows.map((row) => row.resource_name)).toContain("dependency-link")
+    expect(setupRows.every((row) => row.state === "creating")).toBe(true)
+    const setupRoot = setupRows.find((row) => row.resource_name === "setup-root")!
+    expect(existsSync(setupRoot.canonical_path)).toBe(true)
+    expect(existsSync(join(workspace, "node_modules"))).toBe(true)
+
+    const heartbeatPath = join(setupRoot.canonical_path, "installer-heartbeat")
+    const installer = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        "import {openSync,writeSync} from 'node:fs'; const fd=openSync(process.argv.at(-1),'a');writeSync(fd,'started\\n');setInterval(()=>writeSync(fd,'alive\\n'),20)",
+        heartbeatPath,
+      ],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+    )
+    try {
+      for (let i = 0; i < 200 && !existsSync(heartbeatPath); i++) await Bun.sleep(10)
+      expect(existsSync(heartbeatPath)).toBe(true)
+      expect(() => process.kill(installer.pid, 0)).not.toThrow()
+      if (cancelBeforeRestart) {
+        const cancel = {
+          requestID: "cancel-before-reopen-with-live-installer",
+          planID: f.planID,
+          expectedVersion: f.store.plan(f.planID)!.version,
+          action: "cancel-retained-verification" as const,
+          retainedVerificationID: retained.id,
+          reason: "Cancel before runtime restart with installer termination unknown",
+        }
+        expect(await f.runtime.command(cancel, "owner")).toMatchObject({
+          status: "retained-verification-cancelled",
+        })
+        expect(await f.runtime.command(cancel, "owner")).toMatchObject({
+          status: "retained-verification-cancelled",
+        })
+      }
+      await f.runtime.stop()
+      f.store.atomic((db) =>
+        db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(f.root),
+      )
+      f.store.repository.close()
+      const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+      cleanups.push(() => reopenedRepository.close())
+      const reopenedStore = new RunnerStore(reopenedRepository)
+      const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
+        requestTick: async () => {},
+      })
+      await reopenedRuntime.tick()
+
+      const reconciled = reopenedStore.atomic((db) =>
         db
-          .query<{ count: number }, [string]>(
-            "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=?",
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_retained_verifications WHERE id=?",
           )
-          .get(retained.id)!.count,
-    ),
-  ).toBe(0)
-  expect(reopenedStore.attempts(f.planID)).toHaveLength(1)
-  expect(f.prompts).toHaveLength(1)
-  await reopenedRuntime.stop()
-  reopenedRepository.close()
-})
+          .get(retained.id),
+      )!
+      expect(JSON.parse(reconciled.payload)).toMatchObject({
+        state: cancelBeforeRestart ? "cancelled" : "held",
+        holdReason: expect.stringContaining(
+          cancelBeforeRestart
+            ? "Cancel before runtime restart"
+            : "Interrupted retained verification setup",
+        ),
+      })
+      expect(existsSync(setupRoot.canonical_path)).toBe(true)
+      expect(existsSync(join(workspace, "node_modules"))).toBe(true)
+      expect(
+        reopenedStore.atomic((db) =>
+          db
+            .query<{ state: string }, [string, string]>(
+              "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase='task' AND check_id=?",
+            )
+            .all(retained.id, check.id)
+            .every((row) => row.state === "uncertain"),
+        ),
+      ).toBe(true)
+      expect(
+        reopenedStore.atomic(
+          (db) =>
+            db
+              .query<{ count: number }, [string]>(
+                "SELECT COUNT(*) AS count FROM runner_retained_verification_checks WHERE operation_id=?",
+              )
+              .get(retained.id)!.count,
+        ),
+      ).toBe(0)
+      expect(reopenedStore.attempts(f.planID)).toHaveLength(1)
+      expect(f.prompts).toHaveLength(1)
+      await reopenedRuntime.stop()
+      reopenedRepository.close()
+    } finally {
+      installer.kill("SIGKILL")
+      await installer.exited
+    }
+  },
+)
 
 test("an injected dependency setup failure cleans registered partial resources before holding", async () => {
   const setupStarted = deferred()

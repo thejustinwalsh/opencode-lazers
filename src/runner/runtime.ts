@@ -2922,6 +2922,10 @@ export class TaskRuntime {
           updatedAt: this.now(),
         }
         saveRetainedVerification(db, cancelled)
+        db.query(
+          `UPDATE runner_retained_verification_resources SET state='uncertain',updated_at=?
+           WHERE operation_id=? AND state IN ('creating','active')`,
+        ).run(this.now(), operation.id)
         this.retainedVerificationAborts.get(operation.id)?.abort()
         this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
           operationID: operation.id,
@@ -9177,49 +9181,11 @@ export class TaskRuntime {
         .all(operation.id, phase, check.id),
     )
     if (!resources.length) return false
-    const setupRoot = resources.find((item) => item.resource_name === "setup-root")
-    const rootDirectory = join(this.dataDirectory, "retained-verification-resources")
-    const root = setupRoot
-      ? {
-          path: setupRoot.canonical_path,
-          realPath: setupRoot.canonical_path,
-          device: setupRoot.device,
-          inode: setupRoot.inode,
-        }
-      : undefined
-    const dependency = resources.find((item) => item.resource_name === "dependency-link")
-    const temporary = resources.find((item) => item.resource_name === "tmp-alias")
-    const cleaned = this.cleanupRetainedCheckSetup(
-      operation,
-      phase,
-      check.id,
-      rootDirectory,
-      candidateWorkspace,
-      root,
-      dependency && root
-        ? {
-            path: dependency.canonical_path,
-            target: join(root.path, "dependencies"),
-            device: dependency.device,
-            inode: dependency.inode,
-          }
-        : undefined,
-      temporary && root
-        ? {
-            path: temporary.canonical_path,
-            target: join(root.path, "tmp"),
-            device: temporary.device,
-            inode: temporary.inode,
-          }
-        : undefined,
-    )
-    await this.holdRetainedVerification(
-      operation,
-      cleaned
-        ? `Interrupted retained verification setup ${phase}:${check.id} was reconciled; start a new verification generation rather than replaying this setup`
-        : `Interrupted retained verification setup ${phase}:${check.id} could not be safely cleaned and remains uncertain`,
-      fence,
-    )
+    // A restarted runtime has no completed installer/termination observation.
+    // Ownership identifies resources; it does not establish that their writer stopped.
+    const reason = `Interrupted retained verification setup ${phase}:${check.id} has unknown installer activity in ${candidateWorkspace}; preserve its resources`
+    this.markRetainedCheckSetupUncertain(operation, phase, check.id, reason)
+    await this.holdRetainedVerification(operation, reason, fence)
     return true
   }
 
