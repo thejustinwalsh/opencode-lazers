@@ -4,6 +4,18 @@ Updated 2026-11-06T06:26:49.099116+00:00. Goal remains active: drive OpenCode De
 active roadmap is implemented, verified, integrated and cleaned, then present
 an observation-based improvement plan. The scope is not limited to Models/Tasks.
 
+## Latest follow-through (2026-11-06)
+
+Read `design/reviews/retained-recovery-followthrough-20261106.md` before relying
+on the older active-state snapshot below. Root staged review tree is
+`/private/tmp/lz-native-log-contract-review` (HEAD5781ca8 at this checkpoint),
+not canonical. LZ-128 returned8f14285 and is inactive; same LZ-138 Luna Max worker
+is active on advice15, fixing retained-target qualification incorrectly waiting
+for queued successors. Do not activate watched source while implementors run.
+Baseline required retained suite559tests/7446assertions passes; the new dependency
+correction and native retained156 walkthrough are unproven. Advice text cap was
+already removed; current4tests/59assertions pass. Full roadmap goal stays active.
+
 ## Operating decisions
 
 - Model prompts through Desktop CUA; read-only SDK/SQLite inspection is allowed.
