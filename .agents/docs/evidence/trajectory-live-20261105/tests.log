@@ -1,0 +1,291 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+src/database-events.test.ts:
+(pass) native database notifications share a feed and reach independent service connections [164.62ms]
+(pass) independently loaded modules reuse the same process feed [0.21ms]
+
+src/tasks/corrections.test.ts:
+(pass) effective roots follow explicit chains and branches across reassignment and retraction [18.69ms]
+(pass) a pinned read-only SQLite snapshot hides concurrent correction writes until the next read [11.33ms]
+(pass) legacy missing correction tables are unreviewed, distinct from explicit independence, and read-only [3.17ms]
+(pass) an explicit independence review has durable history distinct from unreviewed membership [9.68ms]
+(pass) correction reads isolate project scope and do not infer generic supplementary relations [27.87ms]
+
+src/tasks/read.test.ts:
+(pass) older records, literal filters, sessions and keyset snapshots stay bounded and isolated [90.98ms]
+(pass) read observers cannot invalidate a committed receipt and a fresh process preserves the watermark [76.99ms]
+(pass) unplanned detail is encodable by the native JSON RPC boundary [16.84ms]
+(pass) task advice is explicit without legacy attachments and shared by planned and unplanned reads [18.83ms]
+(pass) get, query, history and exact classification revisions agree and mutations stale cursors [16.58ms]
+(pass) retired tasks disappear from open queries but direct detail preserves disposition [14.87ms]
+(pass) open, failed and cancelled filters separate effective plan and node states [30.74ms]
+
+src/tasks/panel-state.test.ts:
+(pass) state preferences remain independent while old history preferences retain their meaning [0.04ms]
+(pass) healthy connected Tasks does not repeat list and inspector reads without changes [3154.20ms]
+(pass) native reconnect catches missed state even when repository version did not advance [4.60ms]
+(pass) failed reads retry without events and stop retrying after recovery [4255.87ms]
+(pass) closing a failed view cancels its recovery reads [1104.92ms]
+(pass) old session/project/server/filter responses and old detail selections cannot replace the current view [5.10ms]
+(pass) duplicate Start clicks share a request, while reconnect retries through the new transport [1.43ms]
+(pass) invalidations during snapshot acquisition are caught up, foreign and duplicate events are ignored [8.76ms]
+(pass) a change already covered by the in-flight snapshot does not repeat the read [5.09ms]
+(pass) read failures retain stale scoped data and recovery preserves the selected task [1.54ms]
+(pass) topology is published only when it shares the task-page repository boundary [2.79ms]
+(pass) linked dependency details use the transport's same-scope authorization path [1.54ms]
+(pass) late optional topology cannot publish old tasks into a newly connected scope [4.03ms]
+(pass) restored inspectors load while topology is pending or the list fails [2.97ms]
+(pass) optional topology errors show only a readable public message: {"type":"rpc.internal","message":"RPC call failed"} [1.52ms]
+(pass) optional topology errors show only a readable public message: {"arbitrary":"private details"} [1.45ms]
+(pass) optional topology errors show only a readable public message: {} [1.31ms]
+
+src/tasks/events.test.ts:
+(pass) native connection announcements resnapshot; only valid scoped task changes pass [0.93ms]
+(pass) aborted native subscriptions cannot invalidate a closed task view [0.07ms]
+
+src/tasks/panel-view.test.ts:
+(pass) late Start failures/completions cannot affect another task or scope [0.10ms]
+(pass) scroll restoration waits for detail content independently of the list [0.10ms]
+(pass) default scroll restoration respects the browser scheduler receiver [0.89ms]
+(pass) planned queued work exposes Start, but ended or held work does not [0.06ms]
+
+src/tasks/execution-list.test.ts:
+(pass) chains keep admitted ordinals without implying parallel work and preserve off-page prerequisites [0.63ms]
+(pass) a diamond is one real expandable fork and its shared join stays on the root lane [0.66ms]
+(pass) disjoint forks remain separate and an overlapping cross-edge is never forced into a tree [0.30ms]
+(pass) real b50-shaped branches fold while external speech remains a join dependency [0.16ms]
+(pass) extra edges into branch heads and interiors and nonlinear branches remain flat [0.22ms]
+(pass) an external join prerequisite stays on the root lane with both branches folded [0.10ms]
+(pass) planless and unavailable topology remain honest ungrouped task rows [0.09ms]
+(pass) selecting an already visible planless task emits its canonical row once [0.03ms]
+(pass) grouped and context-only rows preserve the effective plan-blocked state [0.09ms]
+
+src/tasks/rpc.test.ts:
+(pass) RPC invalidations catch independent connections and retry transient read and delivery failures [3342.99ms]
+(pass) Tasks RPC restores persisted references on association-aware query summaries [20.11ms]
+(pass) native advice attachment is Architect-only, replay-safe, and returned through task reads [38.15ms]
+(pass) Start RPC checks actor ownership and native permission before entering runtime [18.80ms]
+
+src/tasks/instructions.test.ts:
+(pass) task instructions preserve goal, acceptance, boundaries, guidance, verification, and sources [0.37ms]
+(pass) task instructions retain readable missing-task and unavailable-revision outcomes [0.06ms]
+(pass) task instructions render only concise effective advice with its provenance and inert references [0.43ms]
+
+src/tasks/classification.test.ts:
+(pass) legacy annotation, embedded baseline and corrections have independent contiguous revisions [8.78ms]
+(pass) read-only classification reads tolerate a missing annotation table without migration or file creation [3.66ms]
+
+src/tasks/panel-layout.test.ts:
+(pass) split geometry subtracts the live wrapped header and separator [0.07ms]
+(pass) multiple pointer moves and short panes stay within the usable split range [0.03ms]
+
+src/tasks/advice.test.ts:
+(pass) advice persists append-only with exact replay, correction, conflicts, provenance, and reopen [19.08ms]
+(pass) foreign-project reads and writes do not expose or create attachment receipts [12.19ms]
+(pass) corrections continue past the bounded read projection without dropping history or changing task bytes [18.54ms]
+(pass) concurrent writers serialize expected-revision compare-and-append [70.76ms]
+
+src/observability/read.test.ts:
+(pass) session snapshots expose actual machine topology and recorded transitions separately, read-only [23.62ms]
+(pass) Radar reads legacy progress rows without recorded_at and performs no schema migration [31.80ms]
+(pass) trajectory projection preserves unique-session effort and refuses out-of-scope attempts [25.21ms]
+(pass) snapshot supplies complete task labels and recorded Timeline intervals without native history [17.63ms]
+(pass) associated task reads resolve references consistently for session queries and gets [21.66ms]
+(pass) captured history pages stay fixed while ten live status reads use no native context [60.77ms]
+(pass) history and status reads leave durable audits and repository watermarks unchanged [25.97ms]
+(pass) target trajectory reads survive unrelated project transition volume and keep scope boundaries truthful [65.24ms]
+(pass) target status rejects a source change during its read [21.17ms]
+(pass) target status rejects a native change during its read [19.96ms]
+(pass) metadata status fails explicitly instead of falling back to session context [19.84ms]
+(pass) Radar default and opt-in inventories preserve exact Project and Session identity scope [31.84ms]
+(pass) Radar expands only verified same-project ancestors before loading associated work [31.39ms]
+(pass) Radar marks missing, archived, and moved managed sessions stale without projecting routes [21.86ms]
+(pass) Radar reports native inventory failures instead of implying complete coverage [23.39ms]
+(pass) Radar separates configured, selected, and observed routes and links deduplicated event evidence [38.43ms]
+(pass) Radar keeps newest progress and chronological model/tool evidence at the truncation boundary [372.64ms]
+(pass) Radar retains recently coalesced step and tool observations beyond 5000 later rows [236.39ms]
+(pass) Radar preserves equal-time step order and ignores malformed observation metadata [32.62ms]
+(pass) Radar keeps durable effect and outbox delivery stages distinct from structural links [25.99ms]
+(pass) deferred Radar responses from an obsolete scope cannot become fresh in the next scope [20.31ms]
+(pass) Radar retains observation ordering when the host lacks JSONB iteration [23.35ms]
+
+src/observability/topology.test.ts:
+(pass) topology preserves the full current graph above the snapshot history ceiling without reading history payloads [73.34ms]
+(pass) topology shares session after-plan closure and excludes foreign project plans [24.49ms]
+
+src/observability/rpc.test.ts:
+(pass) durable writes publish without idle scans and recover delivery loss=%s [1125.59ms]
+(pass) durable writes publish without idle scans and recover delivery loss=%s [2123.15ms]
+(pass) history cache hits remain permission-first and continuation data stays scoped [30.76ms]
+(pass) progress diagnostics are project-isolated and process scheduler totals are Architect-only [32.18ms]
+
+src/observability/state.test.ts:
+(pass) Radar and lifecycle observations advance independently while live events keep a shared high-water mark [21.54ms]
+
+src/observability/source-revision.test.ts:
+(pass) observation invalidation is transactional, project scoped, and ignores unchanged writes [26.51ms]
+
+src/observability/changes.test.ts:
+(pass) loaded observers share membership reads only within the same durable revision and synchronous batch [18.66ms]
+(pass) filtered native sequences deduplicate without inventing gaps; disconnect requires resnapshot [19.75ms]
+(pass) progress, continuation, and outbox inserts and updates change Radar source fingerprints [28.93ms]
+(pass) runner tool-count changes invalidate even when the repository watermark is unchanged [19.28ms]
+
+src/observability/task-reads.test.ts:
+(pass) state filters paginate exact effective task states in project and associated session reads [40.09ms]
+
+src/trajectory/store.test.ts:
+(pass) trajectory store opens the project database read-only and rejects SQL mutations [16.22ms]
+
+src/trajectory/read.test.ts:
+(pass) full capture preserves every paged event and live status reads metadata only [36.92ms]
+(pass) trajectory specifications preserve legacy policy references and omit absent ones [42.89ms]
+(pass) trajectory presents commentary separately from automatic worker facts without granting authority [18.47ms]
+(pass) native-context timing keeps unknown endpoints null instead of using parent creation time [17.24ms]
+(pass) read-only trajectory access tolerates a pre-recorded_at progress table without migration [20.82ms]
+(pass) task reports include unsuccessful and accepted attempts, usage categories, checks and unknown cost [16.37ms]
+(pass) versioned task effort accounting survives task, attempt, paged, and read-only reopened reads [22.82ms]
+(pass) trajectory route accounting compares identical 121-character plan, policy, session, and step IDs losslessly [18.50ms]
+(pass) trajectory route accounting distinguishes 121-character IDs with the same retained prefix [17.97ms]
+(pass) trajectory accounting keeps long native context identities exact and marks truncated progress identities unavailable [17.38ms]
+(pass) unavailable-route cursors remain stable across trajectory reads [251.11ms]
+(pass) bounded pages preserve exact event order and reject stale or foreign continuations [35.66ms]
+(pass) visible export redacts nested credentials before truncation and fails closed on private parts [33.96ms]
+(pass) native tool arguments, JSON results and errors omit nested private state [27.33ms]
+(pass) tool multipart JSON and nesting-limit strings omit private reasoning while retaining safe siblings [26.07ms]
+(pass) attempt lookup rejects foreign IDs and session identity mismatches without exporting data [16.21ms]
+(pass) continuation cursors are bound to the project-owned source snapshot [32.27ms]
+(pass) native session errors are redacted before appearing in the report [17.10ms]
+(pass) trajectory reads leave seeded task, attempt, progress, effect, transition, audit rows and watermark unchanged [20.81ms]
+
+src/trajectory/native.test.ts:
+(pass) native adapter reads only the owned session context and projects public times/usage [1.78ms]
+(pass) native adapter refuses a foreign project before reading its transcript [0.10ms]
+(pass) lightweight native status reads current session facts without loading context [0.09ms]
+(pass) lightweight status rejects a foreign session before returning live metadata [0.06ms]
+(pass) native context access failures remain explicit and redact credentials [0.08ms]
+
+src/trajectory/history.test.ts:
+(pass) history cache pages an immutable sanitized capture in exact order [0.44ms]
+(pass) history cursors reject tampering and every foreign identity dimension [0.19ms]
+(pass) expired and evicted history cursors require explicit recapture [0.27ms]
+(pass) history cache rejects duplicate or oversized projections rather than serving partial pages [0.06ms]
+
+src/trajectory/privacy.test.ts:
+(pass) visible text redacts OpenCode credentials including embedded quoted JSON [0.04ms]
+(pass) structured projection omits tagged private content and unsupported values safely [0.48ms]
+(pass) structured JSON strings at the nesting limit fail closed without hiding safe siblings [0.10ms]
+(pass) text bounds count Unicode code points after redaction [0.07ms]
+
+src/trajectory/accounting.test.ts:
+(pass) shared-session steps compare only with their exact retained attempt owner [0.45ms]
+(pass) shared-session context and current selection remain visible without invented historical attempt ownership [0.17ms]
+(pass) deduplicates session references and never fills a current cumulative snapshot from older or additive observations [0.19ms]
+(pass) selects the latest retained cumulative snapshot deterministically without category gap filling [0.12ms]
+(pass) retained additive steps are a source-stamped subtotal, deduplicated by step and isolated from legacy scalars [0.27ms]
+(pass) keeps frozen assignment separate from mixed observed routes and exposes unavailable coverage honestly [0.22ms]
+(pass) route accounting compares exact identities behind bounded displays and leaves lost identities unavailable [0.17ms]
+(pass) unavailable route ordering follows source occurrences, not lossy displays or allocation order [0.13ms]
+(pass) ID-less unavailable routes retain distinct fact and observation-slot occurrences [0.21ms]
+
+src/trajectory/live.test.ts:
+(pass) live delivery retains unchanged events and updates the same ID across lost responses [0.19ms]
+(pass) foreign, expired, evicted and process-lost baselines reset with the current full data [0.07ms]
+(pass) a projection larger than the delivery cache is returned in full without truncation [0.02ms]
+
+test/observability/native.test.ts:
+(pass) native radar inventory filters foreign projects and remains page- and cursor-bounded [0.75ms]
+(pass) native inventory terminates repeated cursors and forwards cancellation [0.15ms]
+(pass) native direct reads convert not-found to absence and preserve other failures [0.12ms]
+
+test/observability/registered.test.ts:
+(pass) registered Tasks RPC discovers durable worker links without widening project scope [24.69ms]
+(pass) registered observation RPC resolves scope through native sessions and enforces permission [31.00ms]
+(pass) registered targeted trajectory RPCs remain usable when broad history is over its cap [65.00ms]
+
+test/observability/state.test.ts:
+(pass) scope switches and reconnects reject late snapshots from the previous generation [0.12ms]
+(pass) duplicate and late events are ignored while gaps and live changes require resync [0.06ms]
+
+test/task-panel/menu-tab.test.ts:
+(pass) tasks native affordances > plan counts stay visible only in Open while every filter has a meaningful group name [1.25ms]
+(pass) tasks native affordances > session.panel menu places Tasks after the native extra-panel entries [1.45ms]
+(pass) tasks native affordances > closable tab renders a themed task icon with the Tasks title [0.14ms]
+(pass) tasks native affordances > tab object stays stable while listed [0.02ms]
+(pass) tasks native affordances > open, closed, and reopened sessions drive the native strip [0.06ms]
+(pass) tasks native affordances > opening without a located session does nothing [0.02ms]
+
+test/task-panel/keyed-identity.test.ts:
+(pass) group and row render owners survive fresh models and live updates by canonical key [24.44ms]
+
+test/trajectory-panel/registration.test.ts:
+(pass) Trajectory registers as a closable optional panel with command and session menu entry [0.22ms]
+
+test/trajectory-panel/panel-state.test.ts:
+(pass) plan checks and unassociated events never inherit the latest worker attempt [37.22ms]
+(pass) projection-backed panel retains failed-attempt selection and all-attempt unique-session totals on late updates [43.06ms]
+(pass) scope reconnect keeps an in-scope task/attempt and rejects late responses from the previous scope [27.45ms]
+(pass) an external historical target bypasses snapshot choices and loads its reference and every attempt [23.97ms]
+(pass) a historical target loads over the broad snapshot cap through the real transport [65.25ms]
+(pass) target refresh ignores a covered event after capture [35.56ms]
+(pass) target refresh ignores a covered event during capture [36.42ms]
+(pass) a newer event after target capture causes one scoped status refresh [49.27ms]
+(pass) a newer event during target capture triggers one status follow-up and preserves selection [47.54ms]
+(pass) a target resnapshot request is honored even when its event sequence is covered [41.23ms]
+(pass) deferred task A cannot replace unavailable target B or fall back to A [29.53ms]
+(pass) a historical project target is rejected after switching to a different scope [19.45ms]
+(pass) disconnected transport retains scoped data and a reconnect refreshes it [27.27ms]
+(pass) expired history continuations retain old pages and require an explicit recapture [32.33ms]
+(pass) history recovery remains available after a healthy snapshot before the first capture [26.41ms]
+(pass) failed explicit recapture keeps the old capture and page union after healthy status [36.49ms]
+(pass) recapture rejects an empty nonadvancing continuation without replacing old history [29.13ms]
+(pass) replayed or reordered history pages retain the old union and cursor for explicit recovery [24.28ms]
+(pass) explicit projection gaps resnapshot even when their sequence is not newer [30.17ms]
+(pass) live status and progress do not cancel page-size-two history or rewrite its event selection [58.82ms]
+(pass) healthy trajectory stays quiet past the old poll interval and reconnect preserves captured history [4146.81ms]
+(pass) failed snapshot reads back off, recover without a new event, reset and cancel on close [28.26ms]
+(pass) a failed live status read recovers without recapturing selected historical activity [28.75ms]
+(pass) reconnect arriving during a snapshot forces one catch-up even at the same sequence [29.42ms]
+(pass) an in-flight event covered by the snapshot avoids a catch-up read [24.59ms]
+(pass) an in-flight event newer than the snapshot gets a catch-up read [29.12ms]
+(pass) a retired retry callback cannot disown the current view's recovery timer [18.27ms]
+(pass) a reset stream sequence during reconnect catches up without replacing captured history [39.85ms]
+
+test/trajectory-panel/events.test.ts:
+(pass) native connection announcements resnapshot; only valid scoped trajectory changes pass [0.85ms]
+(pass) aborted native subscriptions cannot invalidate a closed trajectory view [0.08ms]
+(pass) trajectory ignores missing and foreign locations even within the same project [0.08ms]
+
+test/trajectory-panel/live-delivery.test.ts:
+(pass) native status deltas preserve mutable tool progress, retry delivery and scoped full recovery [54.11ms]
+
+test/trajectory-panel/native-report.test.ts:
+(pass) captured and live reports render native execution outcomes with an unknown basis [25.98ms]
+
+test/trajectory-panel/projection.test.ts:
+(pass) timeline includes plan checks from every plan containing the task and excludes other plans [0.51ms]
+(pass) attempt timeline shares first-reservation origin and leaves recorded end unknown [0.05ms]
+(pass) target timeline renders from the scoped report when no broad snapshot exists [0.25ms]
+(pass) plan and attempt checks project only recorded intervals and preserve all endpoint states [0.20ms]
+(pass) Unix epoch zero is a known endpoint and LZ112 receipt pairs retain millisecond durations [0.20ms]
+(pass) execution with neither recorded endpoint is not assigned a reservation-time marker [0.06ms]
+(pass) task choices retain objective and state from all scoped plans [0.05ms]
+(pass) transport adapts scoped observation RPC calls without widening task trajectory reads [0.31ms]
+(pass) timeline split supports repeated pointer moves, keyboard steps and compact bounds [0.10ms]
+(pass) elapsed tick labels thin to fit plot width without moving their times [0.10ms]
+
+test/trajectory-panel/targeted-render.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1043 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/targeted-trajectory-dom-test/targeted-trajectory-dom-test.js  2,829.78 kB │ gzip: 655.38 kB
+
+✓ built in 980ms
+(pass) a task target renders its scoped report timeline without a broad snapshot [1276.18ms]
+
+ 201 pass
+ 0 fail
+ 1568 expect() calls
+Ran 201 tests across 38 files. [25.84s]

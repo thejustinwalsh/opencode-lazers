@@ -23,14 +23,36 @@ Broad lifecycle/cache policy consolidation stays behind visible delivery.
 ## Current actors
 
 - Main Architect: ses_e568438ebffeaoFbF9nBb942XM.
-- Retained coordinator: ses_f0d7cf74d4fb4f429b8df46f9998e9b6, successor of archived
-  c160/29e2/c553. Native timeout renewal transferred ownership automatically; do
+- Retained coordinator last observed: ses_3edc51f9aa40415480a3d722e92258b0,
+  successor of f0/c160/29e2/c553. Native timeout renewal transferred ownership automatically; do
   not revive those predecessors or request transfer approval.
 - Native service PID71027 after automatic crash recovery; Root did not restart it.
 - Presence helper /private/tmp/lz-native-presence-only.ts reads authoritative
   active/model/time/outcome. A timeout or changes:[] does not mean terminal.
 
 ## Integrated this pass
+
+Root integrated incremental trajectory delivery3a60370+b4c6e4b and shared
+observer membership reads7c758ba. Complete history and same-ID tool updates are
+preserved; retries/cache loss reset safely. Actual native reset4,127,977bytes
+versus455,266-byte patches (about89% smaller),955 events retained; a real native
+notification applied two upserts including one replacement, retaining all965
+events. Current-main201tests/1568assertions plus fmt/lint/types/GUI build pass.
+Desktop remained connected and tool counts advanced. CPU is still about53% of
+one core under active work; no quiet/battery qualification. Native API cleanup
+removed Root's clean, merged/private/tmp/lz-trajectory-live-delta tree.
+Report/evidence: design/reviews/trajectory-status-performance-20261105.md and
+.agents/docs/evidence/trajectory-live-20261105/.
+
+147 deliveredde71b6b but Root found a new five-second activity poller before
+integration. Main resumed the same original worker to replace it with scoped,
+coalesced native events and address metadata stability. Do not merge the poller.
+150 retainede132f90+f032327; latest failed attemptc701cf84-0a62-4a9b-bb78-81fe3dfd7007
+has artifactf03232776a6a2d947100cafa459c7ffe9ce05946. Its quality failures were
+only inherited formatting files already fixed by843ce17. Main is named sole
+150 integrator, directed to review/integrate on formatted main and use existing
+adopt-descendant verification instead of another worker turn on those files.
+Preserve actual failed checks and unresolved resource/native obligations.
 
 Root performance candidate29e3b32 received native Luna source approval and Main
 integrated it as7fe152b. Root's duplicate concurrent cherry-pick was empty and

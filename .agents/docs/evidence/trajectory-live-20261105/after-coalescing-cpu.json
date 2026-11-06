@@ -1,0 +1,9 @@
+{
+  "at": 1793924994466,
+  "pid": "71027",
+  "view": "trajectory-visible-after-coalescing",
+  "wallSeconds": 10.015,
+  "cpuSeconds": 5.35,
+  "percentOfOneCore": 53.4,
+  "qualification": "active workload; no controlled before/after or battery claim"
+}

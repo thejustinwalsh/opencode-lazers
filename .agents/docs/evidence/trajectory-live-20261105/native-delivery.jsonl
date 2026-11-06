@@ -1,0 +1,4 @@
+{"at":1793924309251,"read":1,"elapsedMs":131,"bytes":4127977,"mode":"reset","deliveredEvents":955,"mergedEvents":955,"totalEvents":955,"eventSequence":102}
+{"at":1793924309340,"read":2,"elapsedMs":81,"bytes":455266,"mode":"patch","deliveredEvents":0,"mergedEvents":955,"totalEvents":955,"eventSequence":102}
+{"at":1793924309431,"read":3,"elapsedMs":91,"bytes":455266,"mode":"patch","deliveredEvents":0,"mergedEvents":955,"totalEvents":955,"eventSequence":102}
+{"at":1793924309527,"read":4,"elapsedMs":95,"bytes":455266,"mode":"patch","deliveredEvents":0,"mergedEvents":955,"totalEvents":955,"eventSequence":102}

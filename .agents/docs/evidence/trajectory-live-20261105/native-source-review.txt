@@ -1,0 +1,20 @@
+## Source verdict: **hold for one focused edge-case fix/test**
+
+Candidate `995c046a8b87516ea74dbefa0d1dd9cb0fc3d3f7` is directly on current `main` `843ce1750a1c1ae96b68f885fb08d2713d56d689`; the worktree is clean. The live-delta path itself looks sound, but the targeted-read acceptance is incomplete for unrelated **syntactically invalid JSON** task bodies.
+
+### Required follow-up
+
+- **Targeted reads still touch every task body via `json_extract`.** `loadTaskObservationSource` calls `loadTopologyAssociations` (`src/observability/read.ts:342–350`), which calls `sourceStampFromDatabase` (`:206`). That reaches `associatedSessionIDs` (`src/observability/changes.ts:43`), whose query extracts `$.provenance.sessionID` from every task body without a `json_valid` guard (`src/observability/associations.ts:92–100`). SQLite can therefore fail on an unrelated invalid-JSON body before the new targeted path avoids `TaskSpecSchema.parse`. Session-scoped associations also extract task JSON at `associations.ts:14–20`.
+  
+  **Smallest fix/test:** guard both extractions with a `CASE WHEN json_valid(body) THEN json_extract(...) END`; add a targeted status/history regression with an unrelated invalid-JSON task row. Keep validating the requested task itself and leave full-topology parsing unchanged.
+
+### Otherwise the delta design checks out
+
+`src/observability/read.ts:2007–2028` binds baselines to project, directory, scope kind/session, and task; the RPC authorizes before reading or touching the cache (`src/observability/rpc.ts:212–225`). Cache state is immutable serialized data, old cursors remain replayable until eviction, and missing/expired/evicted or cross-identity baselines produce a full reset. Cache updates happen only after the existing before/after source checks. Panel patches verify the base cursor and task/project/scope, and task changes, close, and history recapture clear the cursor. Captured history and ordinary paged/HMAC paths remain separate and unchanged.
+
+The tests in `src/trajectory/live.test.ts`, `test/trajectory-panel/live-delivery.test.ts`, and the existing mutable-tool/history test in `test/trajectory-panel/panel-state.test.ts` cover retries, resets, updates, removals, and history separation. I did not run tests or builds; Root’s reported results remain unverified here.
+
+### Non-blocking resource notes
+
+- `TrajectoryStatusInput.live.cursor` has no maximum (`src/observability/contract.ts:481–485`), though generated cursors are UUIDs (`src/trajectory/live.ts:40`). Constrain it to UUID/36 characters.
+- Retained cache bytes are bounded, but `live.ts:23–50` serializes and builds a map for the entire event list before enforcing `maxBytes`; this reduces response size, not server-side event-scan cost. The status RPC’s signal-less handler is pre-existing; an aborted request may still finish this new cache work. Neither observation indicates data loss or cross-scope leakage.

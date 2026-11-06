@@ -1,0 +1,9 @@
+{
+  "at": 1793924534794,
+  "pid": "71027",
+  "view": "trajectory-visible-after-live-delta",
+  "wallSeconds": 10.009,
+  "cpuSeconds": 5.6,
+  "percentOfOneCore": 55.9,
+  "qualification": "active workers differ from earlier windows; no causal battery claim"
+}
