@@ -4,6 +4,28 @@ Updated 2026-11-06T06:26:49.099116+00:00. Goal remains active: drive OpenCode De
 active roadmap is implemented, verified, integrated and cleaned, then present
 an observation-based improvement plan. The scope is not limited to Models/Tasks.
 
+## Activation checkpoint
+
+Canonical HEAD7e80cac integrates the reviewed combined candidate a9235c8,
+preserving native2610e9f and3ea8b5d ancestry. Source activation is complete;
+older staged/red-fixture descriptions below are historical and superseded.
+All sessions were confirmed idle before activation. Desktop quit/reopened,
+service71027 survived; canonical GUI build passed. Normal Extensions → Plugins →
+Reload then actual local inference returned “local GPU ready.” (19in/4out).
+Six switches ON, Never unchanged. Not proof of all159 race cases.
+
+Postactivation3sec sample:21Tasks events/21versions (one copy each, previously14).
+Renderer78667 2.0%CPU, service71027 15.5%; observability still520events/3sec,
+separate129 work. See renderer-event-amplification report. Exact retained suite
+passed562/7497 in155.78sec without timeout override; boundary116/855,
+WebGPU22/122, quality/build pass. Actual retained156 native qualification pending.
+
+Root resumed Main Architect ses_e568438ebffeaoFbF9nBb942XM through Desktop with
+activation evidence, requested registered verify-retained on156 original b01121b
+without implementation prompts, then reconcile to release157→158. Main was
+observed actively inspecting native controls and refreshed project context.
+Continue full roadmap, preserving workers/history/resources and native gates.
+
 ## Latest follow-through (2026-11-06)
 
 Read `design/reviews/retained-recovery-followthrough-20261106.md` and

@@ -1,7 +1,6 @@
 # Renderer load and project-event amplification
 
-Observed in the running OpenCode2.2.5 Desktop/service. Source changes below remain
-isolated pending integration and native qualification.
+Observed in the running OpenCode2.2.5 Desktop/service. The reviewed repair is integrated at7e80cac; native post-activation observations follow below.
 
 ## Observed behavior
 
@@ -60,3 +59,32 @@ Private diagnostic artifacts:
 - `/private/tmp/lz-tasks-publisher-final-tests.log`
 
 The raw trace and extracted installed sources stay outside the repository.
+
+## Post-activation observation
+
+Canonical7e80cac integrates the reviewed combined candidate, including native
+2610e9f and3ea8b5d ancestry. All native sessions were confirmed inactive before
+activation. Desktop quit/reopened; native service PID71027 survived. Canonical
+GUI build and bundle evaluation passed. A subsequent ordinary Extensions →
+Plugins → Reload completed, and the settings local question returned exactly
+“local GPU ready.” (19 input/4 output tokens). Six inference flags stayed on;
+idle unload stayed Never. This observes normal reload and actual inference;
+not every cancellation, lost-response or cross-window race.
+
+A three-second event sample during resumed Architect work received21 Tasks
+invalidations for21 distinct versions: **one copy per version**, compared with
+14 copies previously. Renderer PID78667 measured2.0%CPU, service71027 15.5%.
+This is a short observation after cold Desktop initialization, not proof that
+all sustained performance defects are solved. Observability still emitted520
+invalidations in that interval and remains a separate LZ-129 investigation.
+
+The exact required retained suite, without a timeout override, passed562tests /
+7497assertions across30files in155.78s on the source-equivalent backend candidate.
+Boundary suite116tests/855assertions passed; corrected WebGPU22tests/122assertions
+passed; combined formatter/linter/typechecker and GUI build passed. These checks
+do not substitute for the real retained156 native walkthrough now requested.
+
+Logs: `/private/tmp/lz-canonical-activation-build.log`,
+`/private/tmp/lz-clean-backend-required-native-command.log`,
+`/private/tmp/lz-clean-backend-boundary-tests.log`,
+`/private/tmp/lz-final-backend-gpu-combined-tests.log`.
