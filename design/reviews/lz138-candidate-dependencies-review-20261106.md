@@ -1,4 +1,5 @@
 The unresolved boundary is concrete: candidate manifests are fingerprinted and candidate scripts are admitted correctly, but dependency isolation still requires lockfiles to match the installed project byte-for-byte and only clones the project’s existing `node_modules`. The positive dependency fixture has no lockfile, so it doesn’t cover a real candidate lockfile change. Separately, the read-only plan inspection still exposes no retained-check receipts; that leaves native qualification on its existing idle-lineage hold.
+
 ## Verdict: **Not ready**
 
 The fixed candidate has solid procedure admission, isolated-resource fixtures, and generation fencing, but it does **not** yet support legitimate candidate-owned dependency changes when those changes require a lockfile update. Native retained-candidate qualification is also still unproven and remains on its separate idle-lineage hold.
