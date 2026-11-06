@@ -7,14 +7,26 @@ an observation-based improvement plan. The scope is not limited to Models/Tasks.
 ## Latest follow-through (2026-11-06)
 
 Read `design/reviews/retained-recovery-followthrough-20261106.md` before relying
-on the older active-state snapshot below. Root staged review tree is
-`/private/tmp/lz-native-log-contract-review` (HEAD5781ca8 at this checkpoint),
-not canonical. LZ-128 returned8f14285 and is inactive; same LZ-138 Luna Max worker
-is active on advice15, fixing retained-target qualification incorrectly waiting
-for queued successors. Do not activate watched source while implementors run.
-Baseline required retained suite559tests/7446assertions passes; the new dependency
-correction and native retained156 walkthrough are unproven. Advice text cap was
-already removed; current4tests/59assertions pass. Full roadmap goal stays active.
+on the older active-state snapshot below. Canonical source remains unchanged;
+new documentation is at4a92aaa. Root isolated tree
+`/private/tmp/lz-native-log-contract-review` is at521a02c, including an intentionally
+FAILING normal-plugin-reload regression. Do not merge/activate that tree as ready.
+
+Same LZ-138 Luna Max worker is active on advice15: retained-target acceptance must
+not wait for queued successors. Baseline required suite559tests/7446assertions
+passes; the dependency correction and actual retained156 walkthrough are unproven.
+Same LZ-128 Luna Max worker is also active, correcting a NEW blocking finding:
+normal supported plugin reload replaces main provider, while8f14285 rejects that
+changed epoch despite proven old renderer disposal. Original same-provider-only
+specification excludes this recovery; Architect must reconcile real tasking and
+acceptance, not override it with advice or grant an impossible live gate. Root's
+26-line failing reproduction521a02c was delivered for reuse. Six flags/Never stay.
+No canonical activation while implementors run. Preserve original work/history.
+
+Advice text cap is already removed; current4tests/59assertions pass. Native review
+usage currently lacks LAZERS progress capture/attribution; Architect is reconciling
+that existing measurement requirement without delaying157/158. Full roadmap goal
+stays active: Models, Tasks/Trajectory, Radar and the remaining recovery/release work.
 
 ## Operating decisions
 

@@ -62,6 +62,19 @@ before claiming the LZ-128 live gate. No switches or inference preferences chang
 The combined staged GUI build completed and its bundle evaluated without a renderer
 process global. This is build evidence, not live inference evidence.
 
+Follow-through found a blocking source defect, superseding the earlier source-ready
+assessment: normal installed-plugin Reload/watch replaces the main provider, while
+window-local memory survives. Candidate8f14285 rejects the new provider epoch before
+loading, even after the previous renderer positively disposes its model. Root added
+the supported provider-replacement case to the registered runtime/main fixture in
+the isolated tree. It fails with `The main-process provider changed; previous
+ownership remains unproven`; log `/private/tmp/lz128-normal-reload-before.log`.
+Architect withdrew production readiness and is reconciling the accepted task's
+same-provider-only assumption through native tasking. Do not activate8f14285 alone
+or invent a private reload path to satisfy the old live gate. Preserve the useful
+same-provider tests, and correct/observe the actual supported lifecycle without
+blindly clearing ownership or losing failed-disposal/other-window protection.
+
 ## Observed effort and overhead coverage
 
 LZ-128's native busy/idle endpoints are1793948364178 and1793951814096:
