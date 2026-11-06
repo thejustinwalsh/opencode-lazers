@@ -81,6 +81,14 @@ function distinctReasons(reasons: readonly (string | null | undefined)[]) {
   return [...new Set(reasons.filter((reason): reason is string => Boolean(reason?.trim())))]
 }
 
+const terminalLifecycleStates = new Set([
+  "accepted",
+  "incorporated",
+  "failed",
+  "exhausted",
+  "cancelled",
+])
+
 function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskTrajectoryOpener }) {
   const ctx = props.ctx
   const Ui = ctx.ui
@@ -412,6 +420,8 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     )
   }
   const selectedIsWaiting = () => {
+    const recordedState = selectedRecordedState()
+    if (recordedState && terminalLifecycleStates.has(recordedState)) return false
     const taskID = visible()?.selectedID
     const execution = selectedExecution()
     const plan = visible()?.topology?.plans.find((item) => item.id === execution?.planID)
@@ -1255,11 +1265,16 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                 <dl>
                   <dt>Task ID</dt>
                   <dd style={{ "font-family": ctx.appearance.font("mono") }}>{task().id}</dd>
-                  <dt>Status</dt>
+                  <dt>Lifecycle</dt>
                   <dd>
-                    {selectedExecution()?.state ?? task().status} · specification revision{" "}
-                    {task().revision}
-                    <Show when={selectedExecution()?.reason}>{(reason) => <p>{reason()}</p>}</Show>
+                    Recorded lifecycle {selectedRecordedState() ?? task().status} · specification
+                    revision {task().revision}
+                    <Show when={selectedExecution()?.state !== selectedRecordedState()}>
+                      <p>Plan status {selectedExecution()?.state}</p>
+                    </Show>
+                    <Show when={selectedExecution()?.reason}>
+                      {(reason) => <p>Plan reason: {reason()}</p>}
+                    </Show>
                   </dd>
                   <dt>Session association</dt>
                   <dd>

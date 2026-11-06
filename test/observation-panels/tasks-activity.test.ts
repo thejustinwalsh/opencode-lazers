@@ -359,9 +359,12 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
         execution: {
           planID: currentPlan,
           taskID,
-          state,
+          state: taskID === ids.completed ? "blocked" : state,
           version: 1,
-          reason: taskID === ids.completed ? null : "Reconciliation hold: awaiting review",
+          reason:
+            taskID === ids.completed
+              ? "Combined checks remain open"
+              : "Reconciliation hold: awaiting review",
           waitingOn: [],
         },
         attempts: [],
@@ -690,6 +693,18 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     await until(() => queryCalls.at(-1)?.state === "completed" && Boolean(row(ids.completed)))
     expect(row(ids.completed)?.getAttribute("aria-label")).toContain("recorded lifecycle accepted")
     expect(row(ids.completed)?.getAttribute("aria-label")).not.toContain("waiting")
+    await until(
+      () => container.querySelector(".lazers-tasks-inspector-state")?.textContent === "accepted",
+    )
+    expect(
+      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("data-waiting"),
+    ).toBe("false")
+    const taskDetails = [
+      ...container.querySelectorAll<HTMLDetailsElement>(".lazers-tasks-section"),
+    ].find((details) => details.querySelector("summary")?.textContent?.includes("Details"))!
+    taskDetails.open = true
+    expect(taskDetails.textContent).toContain("Recorded lifecycle accepted")
+    expect(taskDetails.textContent).toContain("Plan status blocked")
     expect(
       queryCalls.some((call) => call.state === "queued" && call.cursor === "queued-page-three"),
     ).toBe(true)

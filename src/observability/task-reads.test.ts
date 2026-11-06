@@ -299,3 +299,65 @@ test("state filters paginate exact effective task states in project and associat
     }),
   ).toThrow("does not match")
 })
+
+test("precise lifecycle filters paginate recorded node states independently of plan holds", () => {
+  const repository = fixture()
+  const reads = new TaskReads(repository)
+  const associationReads = new AssociationTaskReads(repository)
+  const cases = [
+    { name: "Queued under hold one", plan: "blocked", node: "queued" },
+    { name: "Queued under hold two", plan: "blocked", node: "queued" },
+    { name: "Queued on running plan", plan: "running", node: "queued" },
+    { name: "Running under hold one", plan: "blocked", node: "running" },
+    { name: "Running under hold two", plan: "blocked", node: "running" },
+    { name: "Running on active plan", plan: "running", node: "running" },
+    { name: "Ready under hold", plan: "blocked", node: "ready" },
+    { name: "Node hold", plan: "running", node: "blocked" },
+    { name: "Verifying under hold", plan: "blocked", node: "verifying" },
+    { name: "Accepted under hold", plan: "blocked", node: "accepted" },
+    { name: "Incorporated under hold", plan: "blocked", node: "incorporated" },
+    { name: "Failed under hold", plan: "blocked", node: "failed" },
+    { name: "Exhausted under hold", plan: "blocked", node: "exhausted" },
+    { name: "Cancelled plan", plan: "cancelled", node: "queued" },
+  ] as const
+  const tasks = cases.map(({ name, plan, node }) => {
+    const task = addTask(repository, name, "session-a")
+    addExecution(reads, task.id, plan, node)
+    return { ...task, node, plan }
+  })
+  const expected = {
+    queued: tasks.filter((task) => task.node === "queued" && task.plan !== "cancelled"),
+    running: tasks.filter((task) => task.node === "running"),
+    blocked: tasks.filter(
+      (task) =>
+        task.plan !== "cancelled" &&
+        (task.node === "blocked" ||
+          (task.plan === "blocked" &&
+            !["accepted", "incorporated", "failed", "exhausted", "cancelled"].includes(task.node))),
+    ),
+    completed: tasks.filter((task) => task.node === "accepted" || task.node === "incorporated"),
+  }
+
+  for (const state of ["queued", "running", "blocked", "completed"] as const) {
+    const ids = new Set(expected[state].map((task) => task.id))
+    expect(collectPages((input) => reads.query(input), { state })).toEqual(ids)
+    expect(
+      collectPages((input) => associationReads.query({ ...input, sessionID: "session-a" }), {
+        state,
+      }),
+    ).toEqual(ids)
+  }
+
+  const queued = reads.query({ state: "queued", limit: 100 })
+  expect(queued.count).toBe(3)
+  expect(queued.tasks.every((task) => task.recordedState === "queued")).toBe(true)
+  expect(queued.tasks.filter((task) => task.status === "blocked")).toHaveLength(2)
+  const running = reads.query({ state: "running", limit: 100 })
+  expect(running.count).toBe(3)
+  expect(running.tasks.every((task) => task.recordedState === "running")).toBe(true)
+  const blocked = reads.query({ state: "blocked", limit: 100 })
+  expect(blocked.count).toBe(7)
+  expect(blocked.tasks.some((task) => task.recordedState === "accepted")).toBe(false)
+  expect(blocked.tasks.some((task) => task.recordedState === "incorporated")).toBe(false)
+  expect(reads.query({ state: "completed", limit: 100 }).count).toBe(2)
+})

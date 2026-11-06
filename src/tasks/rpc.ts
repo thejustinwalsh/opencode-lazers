@@ -203,6 +203,7 @@ export function registerTaskReads(
             const scopeChanged =
               currentScope.id !== initialScope.id ||
               currentScope.projectID !== initialScope.projectID ||
+              currentScope.location.directory !== initialScope.location.directory ||
               currentScope.agent !== initialScope.agent ||
               currentScope.time.archived !== initialScope.time.archived
             const currentByID = new Map(after.map((target) => [target.taskID, target]))

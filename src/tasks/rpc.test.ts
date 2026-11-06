@@ -309,6 +309,8 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
   let deferWorker = false
   let changingMetadata = false
   let changingMetadataReads = 0
+  let actorDirectory = "/project"
+  let workerBusy = false
   let sessionMetadataAttemptID: string = attemptID
   let permissionChecks = 0
   let resolveWorker!: (session: HostSession | null) => void
@@ -338,7 +340,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           time: { created: Date.now(), updated: Date.now() },
-          location: { directory: "/project" },
+          location: { directory: actorDirectory },
         }),
     },
   } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session">
@@ -349,7 +351,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
     agent: "lazers-implementor",
     metadata: { lazersAttemptID: sessionMetadataAttemptID || boundAttemptID },
     archived: false,
-    busy: false,
+    busy: workerBusy,
     pendingInput: true,
     pendingPermissions: 1,
     pendingForms: 0,
@@ -472,6 +474,37 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
     expect(workerCalls).toHaveLength(5)
 
     deferWorker = true
+    workerBusy = true
+    let startedMovedScopeWorker!: () => void
+    const movedScopeWorkerStarted = new Promise<void>((resolve) => {
+      startedMovedScopeWorker = resolve
+    })
+    workerStartSignal = startedMovedScopeWorker
+    const movedScope = Effect.runPromise(
+      currentActivity!({
+        sessionID: "ses_tasks_activity_owner",
+        scope: "session",
+        taskIDs: [taskID],
+      }),
+    )
+    await movedScopeWorkerStarted
+    actorDirectory = "/project/other-worktree"
+    resolveWorker(nativeWorker(workerID, attemptID))
+    const changedScope = await movedScope
+    workerBusy = false
+    actorDirectory = "/project"
+    expect(changedScope).toMatchObject({
+      activities: [
+        {
+          foreground: "unknown",
+          unknownReason: "unavailable",
+          pendingInput: null,
+          outcome: null,
+        },
+      ],
+    })
+
+    deferWorker = true
     let startedRacingWorker!: () => void
     const racingWorkerStarted = new Promise<void>((resolve) => {
       startedRacingWorker = resolve
@@ -520,7 +553,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
       ],
     })
     expect(workerCalls.at(-1)).toEqual({ id: workerID, messages: false })
-    expect(permissionChecks).toBe(5)
+    expect(permissionChecks).toBe(6)
 
     deferWorker = true
     let startedCancelledWorker!: () => void
