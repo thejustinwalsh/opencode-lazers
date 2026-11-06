@@ -1330,10 +1330,11 @@ function unavailableSnapshot(
     freshness: priceState.freshness,
     unavailableReason: reason,
     priceState,
+    ...(result.sourceRevision === null ? {} : { sourceRevision: result.sourceRevision }),
   })
   return {
     context,
-    sourceRevision: null,
+    sourceRevision: result.sourceRevision,
     routes: [],
     priceState,
     inputFingerprint: fingerprint({ scope: input.scope, filters: input.filters }),

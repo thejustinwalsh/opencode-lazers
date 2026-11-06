@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import {
   defaultModelPriceSourcePolicy,
   ModelPriceSourceSettingsSchema,
@@ -423,6 +424,120 @@ function valueFixture(
   }
 }
 
+type RetainedFactInput = {
+  at: number
+  kind: "step" | "usage-snapshot"
+  messageID: string | null
+  payload: Record<string, unknown>
+}
+
+function insertRetainedFacts(
+  fixture: ReturnType<typeof makeLedgerFixture>,
+  attemptID: string,
+  facts: Iterable<RetainedFactInput>,
+) {
+  const db = new Database(fixture.path, { strict: true })
+  const batchID = randomUUID()
+  try {
+    const owner = db
+      .query<
+        { task_id: string; plan_id: string; session_id: string; project_directory: string },
+        [string]
+      >(
+        `SELECT a.task_id,a.plan_id,a.session_id,p.project_directory
+         FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE a.id=?`,
+      )
+      .get(attemptID)
+    assert.ok(owner)
+    const insert = db.query(
+      `INSERT INTO runner_progress
+       (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,
+        source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    db.exec("BEGIN IMMEDIATE")
+    try {
+      let index = 0
+      for (const fact of facts) {
+        insert.run(
+          owner.project_directory,
+          fixture.projectID,
+          owner.plan_id,
+          owner.task_id,
+          attemptID,
+          owner.session_id,
+          fact.at,
+          fact.at + 1,
+          "runtime",
+          '["runtime"]',
+          fact.kind,
+          "[]",
+          null,
+          fact.messageID,
+          `decision-history-${attemptID}-${batchID}-${index}`,
+          JSON.stringify(fact.payload),
+        )
+        index++
+      }
+      db.exec("COMMIT")
+    } catch (error) {
+      db.exec("ROLLBACK")
+      throw error
+    }
+  } finally {
+    db.close()
+  }
+}
+
+async function observeDecisionProgressPages<T>(
+  action: () => Promise<T>,
+  options: { fail?: boolean; afterPage?: (page: number) => void } = {},
+) {
+  const pages: number[] = []
+  const prototype = Database.prototype
+  const originalQuery = prototype.query as unknown as (
+    this: Database,
+    sql: string,
+    ...parameters: unknown[]
+  ) => unknown
+  Object.defineProperty(prototype, "query", {
+    configurable: true,
+    writable: true,
+    value: function (this: Database, sql: string, ...parameters: unknown[]) {
+      if (sql.includes("FROM runner_progress r") && sql.includes("ORDER BY r.seq LIMIT ?")) {
+        if (options.fail) throw new Error("injected decision progress read failure")
+        const statement = originalQuery.call(this, sql, ...parameters) as {
+          all(...values: unknown[]): unknown
+        }
+        return new Proxy(statement, {
+          get(target, property) {
+            if (property === "all")
+              return (...values: unknown[]) => {
+                pages.push(Number(values.at(-1)))
+                const rows = target.all(...values)
+                options.afterPage?.(pages.length)
+                return rows
+              }
+            const value = Reflect.get(target, property, target)
+            return typeof value === "function" ? value.bind(target) : value
+          },
+        })
+      }
+      return originalQuery.call(this, sql, ...parameters)
+    },
+  })
+  try {
+    const value = await action()
+    return { value, pages }
+  } finally {
+    Object.defineProperty(prototype, "query", {
+      configurable: true,
+      writable: true,
+      value: originalQuery,
+    })
+  }
+}
+
 function cachedOpenRouterReader(
   fixture: ReturnType<typeof makeLedgerFixture>,
   options: {
@@ -652,6 +767,276 @@ test("production decision projection preserves exact route effort, adopted accep
     fixture.close()
   }
 })
+
+test("decision capture streams complete progress beyond 15,000 facts and the former 64 MiB bound", async () => {
+  const fixture = makeLedgerFixture()
+  const routeA = { providerID: "openrouter", modelID: "boundary-model-a", variant: "high" }
+  const routeB = { providerID: "anthropic", modelID: "boundary-model-b", variant: null }
+  const ballast = "x".repeat(5_000)
+  try {
+    insertRetainedFacts(
+      fixture,
+      fixture.attempts.failed.id,
+      (function* () {
+        for (let index = 0; index < 7_500; index++) {
+          if (index < 3) {
+            const route = index === 0 ? routeB : null
+            const routeEvidence =
+              index === 0 ? observedRoute(routeB) : { status: "identity-unavailable" as const }
+            yield {
+              at: 5_000 + index,
+              kind: "step" as const,
+              messageID: `failed-boundary-step-${index}`,
+              payload: {
+                measurementBasis: "additive-step-measurement",
+                usage: {
+                  input: 1,
+                  output: null,
+                  reasoning: null,
+                  cacheRead: null,
+                  cacheWrite: null,
+                },
+                route: route ?? null,
+                routeEvidence,
+                ballast,
+              },
+            }
+            continue
+          }
+          const route = index === 7_498 ? routeB : routeA
+          yield {
+            at: 10_000 + index,
+            kind: "usage-snapshot" as const,
+            messageID: null,
+            payload: {
+              additive: false,
+              measurementBasis: "cumulative-session-snapshot",
+              usage: {
+                input: index === 7_499 ? 0 : 100 + index,
+                output: 0,
+                reasoning: null,
+                cacheRead: 2,
+                cacheWrite: 0,
+              },
+              route,
+              routeEvidence: observedRoute(route),
+              ballast,
+            },
+          }
+        }
+      })(),
+    )
+    insertRetainedFacts(
+      fixture,
+      fixture.attempts.accepted.id,
+      (function* () {
+        for (let index = 0; index < 7_501; index++) {
+          let messageID: string
+          let route: ModelDecisionRoute | null = routeA
+          let routeEvidence: Record<string, unknown> = observedRoute(routeA)
+          let input = 1
+          if (index < 1_000) {
+            messageID = "repeated-progress-message"
+            input = index + 1
+          } else if (index < 7_498) {
+            messageID = `accepted-boundary-message-${index}`
+          } else if (index === 7_498) {
+            messageID = "accepted-boundary-route-b"
+            route = routeB
+            routeEvidence = observedRoute(routeB)
+          } else if (index === 7_499) {
+            messageID = "accepted-boundary-conflict"
+            route = null
+            routeEvidence = { status: "identity-unavailable" }
+          } else {
+            messageID = "accepted-boundary-unknown"
+            route = null
+            routeEvidence = { status: "identity-unavailable" }
+          }
+          yield {
+            at: 20_000 + index,
+            kind: "step" as const,
+            messageID,
+            payload: {
+              measurementBasis: "additive-step-measurement",
+              usage: { input, output: null, reasoning: null, cacheRead: null, cacheWrite: null },
+              route,
+              routeEvidence,
+              ballast,
+            },
+          }
+        }
+      })(),
+    )
+
+    const byteReader = new Database(fixture.path, { readonly: true, strict: true })
+    const storedPayloadBytes = byteReader
+      .query<{ bytes: number }, [string]>(
+        "SELECT SUM(length(payload)) AS bytes FROM runner_progress WHERE project_directory=?",
+      )
+      .get(fixture.projectDirectory)?.bytes
+    byteReader.close()
+    assert.ok(storedPayloadBytes)
+    expect(storedPayloadBytes).toBeGreaterThan(64 * 1024 * 1024)
+
+    const ledger = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+    let capture: ReturnType<typeof ledger.readDecision>
+    try {
+      capture = ledger.readDecision()
+    } finally {
+      ledger.close()
+    }
+    if (capture.status !== "captured") throw new Error("Large decision history was not captured")
+    expect(capture.progressFacts).toHaveLength(15_007)
+    expect(capture.progressFacts.some((fact) => JSON.stringify(fact).includes(ballast))).toBe(false)
+
+    const currentIndex = makePriceIndex([{ route: routeA }, { route: routeB }])
+    const valuation = projectTaskValuation({
+      attempts: capture.tasks.flatMap((task) => task.attempts.map((attempt) => attempt.accounting)),
+      progressFacts: capture.progressFacts,
+      progressTruncated: false,
+      truncatedContextSessionIDs: [],
+      currentIndex,
+    })
+    const usageFor = (sessionID: string) => {
+      const value = valuation.usage.sessions.find((session) => session.sessionID === sessionID)
+      assert.ok(value, `Usage for ${sessionID} is retained`)
+      return value
+    }
+    const failedUsage = usageFor(fixture.attempts.failed.session_id)
+    expect(failedUsage).toMatchObject({
+      selectedBasis: "retained-progress-cumulative-snapshot",
+      categories: {
+        uncachedInput: {
+          value: 0,
+          status: "observed",
+          basis: "retained-progress-cumulative-snapshot",
+          valueScope: "selected-cumulative-snapshot",
+        },
+        output: { value: 0, status: "observed" },
+        reasoning: { value: null, status: "missing" },
+        cacheRead: { value: 2, status: "observed" },
+        cacheWrite: { value: 0, status: "observed" },
+      },
+    })
+    const acceptedUsage = usageFor(fixture.attempts.accepted.session_id)
+    expect(acceptedUsage).toMatchObject({
+      selectedBasis: "retained-progress-additive-steps",
+      additiveStepCount: 6_504,
+      categories: {
+        uncachedInput: {
+          value: 7_551,
+          status: "partial",
+          valueScope: "retained-additive-subtotal",
+        },
+        output: { value: null, status: "missing" },
+        reasoning: { value: null, status: "missing" },
+        cacheRead: { value: null, status: "missing" },
+        cacheWrite: { value: null, status: "missing" },
+      },
+    })
+    const sharedUsage = usageFor("ses-shared-session")
+    expect(sharedUsage.attemptIDs).toHaveLength(2)
+    expect(sharedUsage.categories.uncachedInput.value).toBe(70)
+    expect(valuation.usage.categories.uncachedInput.value).toBe(7_621)
+    for (const sessionID of [
+      fixture.attempts.failed.session_id,
+      fixture.attempts.accepted.session_id,
+    ]) {
+      const market = valuation.marketEquivalentCost.sessions.find(
+        (session) => session.sessionID === sessionID,
+      )
+      expect(market?.routeAllocation.status).not.toBe("single-observed-route")
+      expect(market?.valueUSD).toBeNull()
+    }
+    const retryTask = capture.tasks.find((task) => task.taskID === fixture.tasks.retry!.id)
+    expect(retryTask).toMatchObject({
+      acceptance: { accepted: true, acceptedAt: 400 },
+      attempts: [{ accounting: { state: "failed" } }, { accounting: { state: "accepted" } }],
+    })
+
+    const priceReads: CurrentPriceApplicability[][] = []
+    let opens = 0
+    const reader = createModelDecisionReader({
+      projectDirectory: fixture.projectDirectory,
+      openLedger() {
+        opens++
+        return openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+      },
+      async readPriceState(routes) {
+        priceReads.push([...routes])
+        return { settings: priceSettings(), index: makePriceIndex(routes), freshness: "current" }
+      },
+    })
+    try {
+      const input = inputFor(fixture.projectDirectory)
+      const observed = await observeDecisionProgressPages(() => reader.overview(input))
+      expect(observed.pages.length).toBeGreaterThan(29)
+      expect(observed.pages.every((size) => size > 0 && size <= 512)).toBe(true)
+      expect(observed.value.configurationCount).toBe(0)
+      expect(observed.value.graph.points).toEqual([])
+      expect(observed.value.graph.frontierConfigurationIDs).toEqual([])
+      const firstPriceRead = priceReads[0]!
+      for (const route of [routeA, routeB])
+        expect(
+          firstPriceRead.find(
+            (item) =>
+              item.route.providerID === route.providerID && item.route.modelID === route.modelID,
+          )?.usage,
+        ).toBeUndefined()
+
+      const rowPage = await reader.rows({ ...input, limit: 100 })
+      expect(rowPage.context.snapshotID).toBe(observed.value.context.snapshotID)
+      expect(rowPage.rows).toEqual([])
+      expect(opens).toBeGreaterThan(0)
+
+      insertRetainedFacts(fixture, fixture.attempts.accepted.id, [
+        {
+          at: 100_000,
+          kind: "step",
+          messageID: "late-complete-history-fact",
+          payload: {
+            measurementBasis: "additive-step-measurement",
+            usage: { input: 10, output: null, reasoning: null, cacheRead: null, cacheWrite: null },
+            route: routeA,
+            routeEvidence: observedRoute(routeA),
+          },
+        },
+      ])
+      const next = await reader.overview(input)
+      expect(next.context.snapshotID).not.toBe(observed.value.context.snapshotID)
+      expect(next.context.priceIndex.note).toContain("project observation revision")
+      expect(next.graph.points).toEqual([])
+      expect(next.graph.frontierConfigurationIDs).toEqual([])
+
+      const updatedLedger = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+      try {
+        const updated = updatedLedger.readDecision()
+        if (updated.status !== "captured") throw new Error("Late progress fact was not captured")
+        const updatedValuation = projectTaskValuation({
+          attempts: updated.tasks.flatMap((task) =>
+            task.attempts.map((attempt) => attempt.accounting),
+          ),
+          progressFacts: updated.progressFacts,
+          progressTruncated: false,
+          truncatedContextSessionIDs: [],
+          currentIndex,
+        })
+        expect(
+          updatedValuation.usage.sessions.find(
+            (session) => session.sessionID === fixture.attempts.accepted.session_id,
+          )?.categories.uncachedInput.value,
+        ).toBe(7_561)
+      } finally {
+        updatedLedger.close()
+      }
+    } finally {
+      reader.close()
+    }
+  } finally {
+    fixture.close()
+  }
+}, 30_000)
 
 test("unavailable and incomplete market totals stay unknown while a sourced complete zero remains rankable", async () => {
   const route = { providerID: "openrouter", modelID: "a-model", variant: "medium" }
@@ -1451,6 +1836,96 @@ test("endpoint scenarios reuse one coherent capture, pin pages, and reprice with
   } finally {
     reader.close()
     endpointStore.close()
+    fixture.close()
+  }
+})
+
+test("decision traversal cancellation and injected page failure publish no partial snapshot and close readers", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openrouter", modelID: "page-failure-model", variant: "medium" }
+  insertRetainedFacts(
+    fixture,
+    fixture.attempts.failed.id,
+    (function* () {
+      for (let index = 0; index < 1_100; index++)
+        yield {
+          at: 5_000 + index,
+          kind: "step" as const,
+          messageID: `page-failure-message-${index}`,
+          payload: {
+            measurementBasis: "additive-step-measurement",
+            usage: { input: 1 },
+            route,
+            routeEvidence: observedRoute(route),
+          },
+        }
+    })(),
+  )
+  let opened = 0
+  let closed = 0
+  let priceReads = 0
+  const makeReader = () =>
+    createModelDecisionReader({
+      projectDirectory: fixture.projectDirectory,
+      openLedger() {
+        opened++
+        const ledger = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+        return {
+          decisionRevision: () => ledger.decisionRevision(),
+          readDecision: (signal) => ledger.readDecision(signal),
+          close() {
+            closed++
+            ledger.close()
+          },
+        }
+      },
+      async readPriceState(routes) {
+        priceReads++
+        return { settings: priceSettings(), index: makePriceIndex(routes), freshness: "current" }
+      },
+    })
+  const input = inputFor(fixture.projectDirectory)
+  try {
+    const controller = new AbortController()
+    const cancelledReader = makeReader()
+    let cancelledPageCount = 0
+    try {
+      await expect(
+        observeDecisionProgressPages(
+          () => cancelledReader.overview(input, { signal: controller.signal }),
+          {
+            afterPage(page) {
+              cancelledPageCount = page
+              if (page === 2) controller.abort()
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" })
+      expect(cancelledPageCount).toBe(2)
+      expect(opened).toBe(1)
+      expect(closed).toBe(1)
+      expect(priceReads).toBe(0)
+      const recovered = await cancelledReader.overview(input)
+      expect(recovered.context.priceIndex.note).toContain("project observation revision")
+      expect(opened).toBe(2)
+      expect(closed).toBe(2)
+      expect(priceReads).toBe(1)
+    } finally {
+      cancelledReader.close()
+    }
+
+    const failedReader = makeReader()
+    try {
+      await expect(
+        observeDecisionProgressPages(() => failedReader.overview(input), { fail: true }),
+      ).rejects.toThrow("injected decision progress read failure")
+      expect(opened).toBe(3)
+      expect(closed).toBe(3)
+      expect(priceReads).toBe(1)
+    } finally {
+      failedReader.close()
+    }
+  } finally {
     fixture.close()
   }
 })
