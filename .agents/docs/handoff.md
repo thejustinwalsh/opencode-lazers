@@ -7,29 +7,45 @@ Runtime/API readback is authoritative. Revalidate live handles before acting.
 
 ## Latest checkpoint — 2026-11-06 afternoon
 
-Root isolated integration preparation: native worktree.create made
-/private/tmp/lz-models-runtime-review (metadata
-/private/tmp/lz-models-runtime-review-worktree.json). Branch
-feat/models-runtime-integration-20261106 candidate79c748c merges original
-163efa5f11,1682bbf8a3 and1551ca1e1b, preserving worker commit ancestry. It is
-NOT merged/activated canonically and excludes still-active169. The same combined
-source passed733tests/10360assertions/56files, formatting828files, lint401files,
-typecheck389files, GUI build and diff checks. Logs:
-/private/tmp/lz-models-runtime-combined-tests.log and lz-models-runtime-quality.log.
-Initial cherry-picked branch feat/models-runtime-review-20261106 is retained
-only as the tested comparison; full tree diff to79c748c was empty after merging
-original commits into the proper integration branch. Do not use cherry-picks as
-native artifact ancestry. Wait169 delivery, merge/review its artifact and rerun
-affected consumers before quiet canonical integration/activation; preserve all
-real human/live gates. Root tree must later be natively removed clean force:false.
+Canonical `fab6bfe` now includes the original LZ-163, LZ-168, LZ-155 and
+LZ-169 artifacts by ancestry-preserving merges, plus Root's small partial-price
+summary correction. At an observed all-model-idle boundary Root built canonical
+GUI and used native Settings → Extensions → Plugins → lazers Reload. Actual
+Models and new LZ-155 trajectory market fields loaded in Desktop. This is source
+activation, not visual/cost acceptance.
 
-Root caught newly generated C4 HTML formatting during combined autoformat and
-fixed canonical docs only in d86e4f2: generated HTML now formatted, generator
-calls the same Bun formatter. Regeneration plus format check passed; no runtime
-source activation. Active169 focused26tests/318assertions and registered panel
-699assertions passed; final full chart/quality commands are running. Do not
-restart it based on observation timeout. Native CUA messages still show delayed
-or missing text entry; confirm actual SDK receipt before claiming delivery.
+Combined verification: 733 tests/10,360 assertions before LZ-169; final affected
+consumers 357 tests/4,779 assertions; Root partial-summary regression 11 tests/770
+assertions. Formatting/lint/typecheck/diff checks and canonical GUI build passed.
+Logs in /private/tmp/lz-models-runtime-{combined-tests,final-consumers,review-correction-build,canonical-build}.log.
+The native temporary review worktree /private/tmp/lz-models-runtime-review was
+clean, fully merged, and removed through native worktree.remove(force:false);
+subsequent existence check was false. Its branch retains source. Do not reuse
+the deleted directory or remove retained worker trees.
+
+Actual screenshots are design/reviews/models-live-fab6bfe-{narrow,wide}-20261106.png.
+Native Tera High review is tera-models-fab6bfe-visual-review-20261106.md: NOT
+visually accepted. Narrow ticks overlap, selected Luna mark lacks clear identity,
+and accounting text/controls dominate. Preserve full-width chart and details
+below, with no persistent table/right panel. Root owns interaction acceptance.
+
+Actual LZ-137 trajectory has nonzero usage (56,452 uncached, 820,992 cache-read,
+2,061 output, 2,202 reasoning), yet shows partial $0 subtotal with no selected
+cached price source. Capture: trajectory-live-lz137-unpriced-zero-20261106.png.
+Keep LZ-155 connected-cost gate open. Native read-only investigator
+ses_e4dc4687cffeFseohr89By1Hbk is OpenAI gpt-6-luna/max and was confirmed active;
+do not invent prices or infer a zero cost from absent quotes.
+
+Original LZ-129 substantive retained repair was admitted through supported tools
+in the SAME original attempt/session/workspace, OpenAI Luna Max; observed running
+session ses_aeff3e9ac5d24c6c944d35e31b050963. Admission and unchanged original
+parent/input association are recorded in ownership163-original129-admission-20261106.md.
+Main recorded the LZ-163 gate and requested native reconcile. This proves repair
+admission, not LZ-129 implementation/CPU recovery/cleanup. Revalidate result.
+Main ses_e568438ebffeaoFbF9nBb942XM remains OpenAI Sol High and is currently idle;
+its latest continuity tool records this boundary and follow-up investigations.
+Computer Use explicitly reports macOS locked; unlock request is pending. Both
+native Luna sessions above are running independently of Desktop control.
 
 Architecture review/ranking, timestamped inventory, flow probes and offline five-view
 ELK/SVG C4 are committed3b11cb2 under design/reviews/architecture-_-20261106._.
