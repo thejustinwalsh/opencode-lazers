@@ -646,6 +646,8 @@ try {
 
       replacement = makeMain()
       replacement.memory = original.memory
+      // GUI/main reload leaves the server-side inference broker running.
+      replacement.workerOwner = original.workerOwner
       const b = makeRuntime(replacement)
       assert.notEqual((await b.files.identity()).providerEpoch, oldEpoch)
       await until(() => b.runtime.state() === "ready", "normal reload replacement model")
