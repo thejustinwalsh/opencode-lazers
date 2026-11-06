@@ -76,7 +76,46 @@ The delivered task is visible in Desktop through Tasks → All → search LZ-158
 Open trajectory. Both models/quality check receipts appear twice in the timeline;
 the duplicate-projection finding is retained for existing trajectory follow-up.
 
-This record does not establish connected price-data correctness, narrow/wide
-visual fidelity, assignment behavior, final combined integration, or cleanup.
-Those remain pending actual Desktop observation and Tera High visual review.
-Independent review of the delivered UI/interface changes is also pending.
+## Integration and live verification
+
+Native e502 review of `03331c85` found no material source defects and passed
+81 focused tests. It noted a low-priority missing late-first-page reconnect test;
+generation guards appeared sound by inspection. Its attempted worker-progress
+report was rejected because the general reviewer was not an assigned implementor;
+the final review still returned normally. This is a review-reporting usability
+finding, not failed implementation verification.
+
+With all native model sessions confirmed idle, Root fast-forwarded main to
+`d1b0c5f` and rebuilt the canonical GUI successfully. Desktop settings activation
+was delayed; short read-only samples were captured at
+`/private/tmp/lz-models-activation-renderer.sample.txt` and
+`/private/tmp/lz-models-activation-service.sample.txt`. They do not establish the
+cause. The supported native Restart changed Desktop PID 78646 → 69562 and renderer
+78667 → 69585 while service PID 71027 remained. Native Extensions → Plugins showed
+LAZERS enabled; Reload was exercised. No inference flags were disabled.
+
+Actual Compare observations:
+
+- The chart renders real Kimi/Qwen market observations and separately marked
+  OpenRouter subtotals; Luna has a reference subtotal range.
+- Selecting `openai/gpt-6-luna · max` shows 112 accepted tasks and a matching
+  row/inspector subtotal range of `$0.353992451071–$0.674016373125` per accepted
+  task, with the remainder explicitly unknown.
+- A manual Refresh advanced source retrieval from 10:24:13 to 10:27:46 local time
+  on November 6, retained the selected Luna route, and produced no displayed
+  snapshot-disagreement error. Disclosure identifies exact OpenRouter record
+  `openai/gpt-6-luna`, snapshot `56d2686a-b792-4c9e-a145-e86b9d34e7e2`, generation
+  159, current/configured source. All positive usage categories have complete
+  rate coverage; partial attribution/retry history remains explicit (149 of 151
+  related sessions matched, two unknown routes). This is not complete-cost proof.
+
+**Visual acceptance fails.** Actual captures
+`/private/tmp/lz-models-live-narrow-first.png` and
+`/private/tmp/lz-models-live-wide-first.png` show the Accepted header breaking
+across lines, paragraph-height rows, truncated provider-ID chart labels, and
+multiple verbose pricing cards burying the primary estimate. Root sent both
+captures plus the approved reference to Architect for native Tera High review
+and small Luna Max corrections. Code checks do not close this visual gap.
+
+Assignment writes, theme/font changes, final visual acceptance, and native plan
+integration/cleanup remain open. The broader roadmap remains active.
