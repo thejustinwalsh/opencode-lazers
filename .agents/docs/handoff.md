@@ -131,9 +131,18 @@ Plan eade12ae-74f3-48af-874b-f5950f4a41c3:156→157→158, priority100.
 156 taskefd19c25-909e-4b06-aa4b-b6411785b4f7, original attempt
 ff55fda4-7c0d-4a43-b295-cdc29deefd1d, worker ses_507e57d6901a4928bfddd1e46d8f846b,
 b01121b now accepted on the original attempt after actualgen3 qualification.
-Main source-recorded and reconciled existingplan;157 is RUNNING on attempt
-3bc67a5f-2354-467d-ab99-e401dd940e8d, worker
-ses_b11e08847a034fb192a8c7b419c4fd94, OpenAI gpt-6-luna/max.158remainsQUEUED.
+Main source-recorded and reconciled existingplan.157 is now ACCEPTED at
+f8c5e2eb69427e5e6653a7d26c152e362297c4f1, original attempt
+3bc67a5f-2354-467d-ab99-e401dd940e8d/workerb11, clean; reported194Models tests and
+quality/build pass. Native Luna reviewer ses_e522ffd49ffeenRSBj8xvTAxMB is actively
+reviewing immutablef8 arithmetic/coverage/snapshot pinning. Reuse its review.
+Root has inspected portions, not completed whole-source signoff. f8 is NOT yet
+merged on canonical main; do not activate while158 is active.
+158 is RUNNING on attempt14be7721-297d-4a70-bbdc-8652c807f943, worker
+ses_af5f7ceb2def456db6c25a8c09096a30 (OpenAI gpt-6-luna/max), based on accepted
+producer. It passed through a transient permission/reconciliation hold without
+restart; current planRUNNINGv19. Native UI goal is approved chart/rows/inspector;
+review narrow+wide screenshots with Tera High before visual acceptance.
 Root opened Tasks→157→Trajectory→Open worker in Desktop and saw actual source
 reads/patches. /private/tmp/lz157-native-worker-running.png is a native capture.
 157 task74f716cd-cf3e-436e-b112-57de5403b20c adds cohort/reference estimates.
@@ -173,8 +182,8 @@ Main a concrete request to natively assign138currentreview with actualgen3proof,
 including Root's e36/63 fixes in reviewed integration. Do not claim00calone contains
 those host fixes. ParentID is launchhistory; no manual data/identity edits.
 Existing renewal work should provide a concrete admitted-plan/event wake and a
-clearly named human-accessible coordinator. Main is also planning a small138-linked
-operation-inspection tool improvement: full inspect currently lacks retained-op
+clearly named human-accessible coordinator. Main staged164 (138-linked operation inspection) and165 (window recovery), behind
+Models priority; no source activation while158 active. Operator finding: full inspect currently lacks retained-op
 summaries/checks and forces source/DB investigation. Keep Models first.
 
 ## Full scope still open
