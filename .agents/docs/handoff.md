@@ -133,7 +133,7 @@ model metrics and packaging/install/upgrade/cross-machine verification in scope.
 Use runtime records and [roadmap](roadmap-execution.md); the prior detailed
 [handoff](handoff-before-20261106-activation.md) is historical context only.
 
-One Root review worktree remains: `/private/tmp/lz147-integration-review`.
-Native metadata: `/private/tmp/lz147-root-review-worktree.json`. Remove it with
-OpenCode's native non-forced API after this landed batch/evidence is committed.
+Root removed `/private/tmp/lz147-integration-review` through OpenCode's native
+non-forced worktree API after the batch landed; physical absence was confirmed.
+Native metadata remains at `/private/tmp/lz147-root-review-worktree.json`.
 Do not delete retained worker trees or resources to clear a state flag.
