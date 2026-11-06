@@ -53,19 +53,23 @@ Main Architect: ses_e568438ebffeaoFbF9nBb942XM, Sol High.
 Current visual reviewer: ses_e52a5ae04ffeObat8Bt6imz4ci, general agent,
 OpenAI gpt-6.1-terra/high, canonical repository location. Main resumed this
 EXISTING session with THREE INLINE PNG image parts and current source/index:
+
 - /private/tmp/lz-models-live-narrow-first.png
 - /private/tmp/lz-models-live-wide-first.png
 - design/models-panel/models-approved.png
 
 Tera completed successfully; saved final plan:
-design/reviews/tera-models-live-visual-review-20261106.md. Main should reuse suitable
-queued UI work or create small linked corrections for Luna Max. The continuation
-request has NOT reached Main: CUA can read AX/screenshot and click native controls,
-but paste/type/setValue have not produced an enabled composer; coordinate clicks
-returned noWindowsAvailable. Rebinding, raising/Bring All to Front and REPL reset
-were attempted. Latest native user input remains the prior three-image review
-request. A foreground/composer-click question is pending with the user. Do not
-blindly duplicate submissions or replace Desktop prompts with CLI/API prompts.
+design/reviews/tera-models-live-visual-review-20261106.md.
+Desktop input recovered after native View Reload (briefly blank with a transport
+error/server-thrashing warning) then supported App Restart. No inference flags
+were changed and service71027 survived. Earlier AX-only draft values were not
+proof of submission. The recovered composer had an enabled Send; Root clicked it.
+Native user message msg_1b18e954500146adrbLH3kp6tg confirms the continuation reached
+Main exactly once, and session.active confirmed Sol High running. Main began
+reading the actual Tera final, checking existing tasks and refreshing the index.
+No user foreground/composer action remains necessary. Observe concrete task
+creation/dispatch before claiming implementation has resumed. Root cause of the
+CUA noWindowsAvailable/input delay is not established; do not attribute it to GPU.
 DESIGN.md and the approved image govern. Preserve the full goal; other read-only
 review is possible while input is unavailable.
 

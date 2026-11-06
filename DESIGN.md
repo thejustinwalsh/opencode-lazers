@@ -15,6 +15,11 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
 - A small title and native controls form the header. Scope/filter/search stay
   compact. Put explanations where they help a decision; avoid repeated labels,
   nested summary cards, full paths and implementation prose in the first view.
+- Write for the person using the product. Show facts and useful actions, not
+  internal review notes such as “partial evidence.” Show the current market
+  estimate when available; omit a cost when no applicable price exists instead
+  of displaying “Cost unavailable.” Explain estimate limits in a tooltip or
+  collapsed details. Keep values honest without repeated caveats.
 - Panels are optional entries near the bottom of the native extra-panel list.
   Each opens as a closable tab with an appropriate host icon. Never force a closed
   panel back open. Preserve session-local selection, filters, split and scroll;
@@ -98,11 +103,13 @@ measurement scope; unknown cost remains unknown. Never expose private reasoning.
 ## Models
 
 Approved visual reference: [models-approved](design/models-panel/models-approved.png).
-Use its narrow/wide composition: Compare first, compact filters, chart and
-candidate rows above a horizontal split, selected-model estimate and trajectories
-below, collapsed evidence, and a small assignment action. Assignments is secondary.
-In narrow panels the chart sits above the table; wide panels place them beside
-each other. Inherit OpenCode theme and fonts. Example values and the drawn curve
+Keep Compare first, compact filters, and the selected-model details below a
+horizontal split. The chart fills the comparison width at every panel size;
+there is no model table or separate information panel beside it. Point tooltips
+show model and cost details. Selecting a model shows a one- or two-line cost
+summary; detailed stats, related trajectories and assignment controls sit below.
+Secondary detail starts collapsed. Assignments is secondary. Inherit OpenCode
+theme and fonts. Example values and the drawn curve
 are illustrative; derive actual points and the frontier from compatible records.
 
 Help choose a capable model that completes the intended work efficiently, using
@@ -119,10 +126,15 @@ also supplies benchmark evidence and related model metadata. Retain dated source
 observations and refresh without blocking the panel. Native OpenCode remains
 the authority for available execution routes; the data source does not choose
 or restrict the execution provider.
-Show a focused Pareto plot and readable candidate rows with quality/acceptance,
-sample size, tokens, cost and time. Keep a complete keyboard-accessible table
-alternative. Selecting a model reveals the task estimate, relevant past runs,
-source dates and assumptions below the horizontal split.
+Show a focused Pareto plot. Keep a complete keyboard-accessible data alternative
+behind a disclosure, rather than a persistent competing table. Selecting a model
+reveals a concise task estimate, with quality/acceptance, sample size, tokens,
+cost, time, related runs and price details available below. Use current OpenRouter
+market prices for the estimate when available, with the configured source fallback.
+An estimate does not require exact historical billing reconstruction. Use readable
+rounded prices in the summary; retain precise values and the estimate basis in
+accessible detail. Do not invent missing prices or present a known subtotal as a
+complete total. Omit genuinely unpriced costs without an unavailable label.
 
 The researched default plot compares mean tokens and comparable cost per
 completed logical task, with acceptance quality alongside. Cost per accepted
