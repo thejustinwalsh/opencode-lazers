@@ -30,6 +30,15 @@ Reproduction: `/private/tmp/lz-label-review-probe.ts`, importing the active
 Architect to attach focused advice and steer the current worker. Delivery,
 correction, regression results and final source acceptance must be revalidated.
 
+Architect received the finding in native message
+`msg_1b217321a0013PB47aqkUX7b41`, attached task advice revision 2, and wrote a
+keyed native instruction to the same worker. Root then reran the same probe:
+the three labels now include `provider-a / model-a`, `provider-b / model-b` and
+`provider-a / model-c`. Worker tool output shows added presentation and rendered
+chart cases. This proves the correction reached code; final regression results,
+commit delivery and live visual acceptance remain separate checks. No replacement
+attempt, worker, worktree or scope expansion was used for this intervention.
+
 ## Combined preparation
 
 The independent integration candidate `79c748c` merges delivered LZ-163, LZ-168
