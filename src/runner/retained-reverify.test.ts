@@ -28,6 +28,11 @@ import { filesystemProbeLifecycle } from "../verification/resources/lifecycle.ts
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
 import { RetainedVerificationSchema } from "./retained-verification/schema.ts"
 import {
+  registerSourceGuard,
+  sourceQuarantine,
+  sourceReservationExcluded,
+} from "./source-quarantine.ts"
+import {
   createRetainedCheckContext,
   runRetainedSetupProcess,
 } from "./retained-verification/isolation.ts"
@@ -468,6 +473,148 @@ async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   return { ...f, plan, attempt, artifact: attempt.artifact }
 }
 
+async function addCompetingAttempt(
+  f: Awaited<ReturnType<typeof fixture>>,
+  quarantine: "sealed" | "none" | "held" | "misbound" | "unguarded" = "sealed",
+) {
+  const task = f.store.repository.insert({
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    revision: 1,
+    status: "submitted",
+    createdAt: new Date().toISOString(),
+    provenance: {
+      projectID: "project",
+      projectDirectory: f.root,
+      workspaceDirectory: f.root,
+      sessionID: "owner",
+      startingRevision: { kind: "git", commit: git(f.root, ["rev-parse", "HEAD"]) },
+    },
+    proposal: {
+      ...validProposal(),
+      objective: "Preserve a same-scope quarantined task attempt",
+      writeScope: ["result.txt"],
+    },
+  })
+  const sourcePlan = JSON.parse(f.store.plan(f.planID)!.body) as Record<string, unknown>
+  const plan = f.store.submit(
+    {
+      ...sourcePlan,
+      requestID: `competing-active-attempt-${task.id}`,
+      objective: "Keep the older same-scope attempt and its source quarantine intact",
+      nodes: [{ taskID: task.id, revision: task.revision }],
+      dependencies: [],
+      integrationOrder: [task.id],
+    },
+    "owner",
+  )
+  const workspace = join(f.state, `competing-${task.id}`)
+  const baseCommit = git(f.root, ["rev-parse", "HEAD"])
+  git(f.root, ["worktree", "add", "--detach", workspace, baseCommit])
+  const attemptID = crypto.randomUUID()
+  const sessionID = `worker-${task.id}`
+  const messageID = `message-${task.id}`
+  const startedAt = Date.now()
+  f.store.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_attempts(
+         id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,
+         policy,state,started_at,token_count,tool_count,retry_count,cost
+       ) VALUES(?,?,?,?,?,?,?,?,NULL,?,'running',?,NULL,0,0,NULL)`,
+    ).run(
+      attemptID,
+      plan.planID,
+      task.id,
+      1,
+      sessionID,
+      messageID,
+      workspace,
+      baseCommit,
+      f.store.attempts(f.planID)[0]!.policy,
+      startedAt,
+    )
+    db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?").run(
+      plan.planID,
+      task.id,
+    )
+    db.query("UPDATE runner_plans SET state='cleanup-blocked',reason=? WHERE id=?").run(
+      "Preserve the older unknown-background attempt and its source resources",
+      plan.planID,
+    )
+    if (quarantine !== "none") {
+      db.query(
+        `INSERT INTO runner_source_quarantines(
+           attempt_id,plan_id,session_id,assigned_message_id,requested_owner,workspace,
+           request_id,reason,phase,hold_reason,review_input_json,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?,?,?, 'sealed',?,?,?,?)`,
+      ).run(
+        attemptID,
+        plan.planID,
+        sessionID,
+        quarantine === "misbound" ? "wrong-original-message" : messageID,
+        "owner",
+        workspace,
+        `quarantine-${task.id}`,
+        "Retain the old writer and keep its source checkout guarded",
+        quarantine === "held" ? "The source quarantine still has an unresolved hold" : null,
+        JSON.stringify({ inputID: `review-${task.id}`, requestID: `quarantine-${task.id}` }),
+        startedAt,
+        startedAt,
+      )
+    }
+  })
+  if (quarantine !== "unguarded") cleanups.push(registerSourceGuard(f.store, workspace))
+  const worker: HostSession = {
+    id: sessionID,
+    projectID: "project",
+    directory: workspace,
+    agent: "worker",
+    archived: true,
+    busy: false,
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    background: {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "The older execution has no recoverable idle certificate",
+    },
+    tokens: null,
+    tools: 0,
+    cost: null,
+    messages: [],
+  }
+  f.sessions.set(sessionID, worker)
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_effects(id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
+         VALUES(?,?,?,?,?,'completed',?,?,0)`,
+      )
+      .run(
+        `preserved-${task.id}`,
+        plan.planID,
+        task.id,
+        attemptID,
+        "old-source-resource",
+        JSON.stringify({ resource: "task-122-checkout" }),
+        JSON.stringify({ completed: true }),
+      ),
+  )
+  return {
+    task,
+    planID: plan.planID,
+    attemptID,
+    workspace,
+    sessionID,
+    quarantine: sourceQuarantine(f.store, attemptID),
+    plan: f.store.plan(plan.planID),
+    attempt: f.store.attempts(plan.planID)[0]!,
+    effects: f.store.effects(plan.planID),
+    worker,
+  }
+}
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((done) => {
@@ -539,31 +686,58 @@ test("unrecorded running candidate qualifies under an idle hold and continues th
   expect(attempt.artifact).toBeNull()
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
   const artifact = git(attempt.workspace, ["rev-parse", "HEAD"])
-  const requested = (await f.runtime.command(
-    {
-      requestID: "qualify-unrecorded-running-candidate",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "verify-retained",
-      projectID: "project",
-      planRevision: 1,
-      taskID: f.task.id,
-      taskRevision: 1,
-      attemptID: attempt.id,
-      artifact,
-      reason: "Qualify actual committed work despite missing old idle lineage",
-    },
-    "owner",
-  )) as { operationID: string }
+  const old = await addCompetingAttempt(f)
+  expect(old.attempt).toMatchObject({ state: "running", artifact: null })
+  expect(old.worker.background?.state).toBe("unknown")
+  expect(sourceReservationExcluded(f.store, old.attempt, { mode: "isolated" })).toBe(true)
+  expect(sourceReservationExcluded(f.store, old.attempt, { mode: "shared" })).toBe(false)
+  expect(
+    sourceReservationExcluded(f.store, old.attempt, {
+      mode: "isolated",
+      workspace: old.workspace,
+    }),
+  ).toBe(false)
+  const oldPromptCount = f.prompts.filter(
+    (prompt) => prompt.sessionID === attempt.session_id,
+  ).length
+  const oldEffectHistory = old.effects
+  const request = {
+    requestID: "qualify-unrecorded-running-candidate",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "verify-retained" as const,
+    projectID: "project",
+    planRevision: 1,
+    taskID: f.task.id,
+    taskRevision: 1,
+    attemptID: attempt.id,
+    artifact,
+    reason: "Qualify actual committed work despite missing old idle lineage",
+  }
+  const control = await registeredPlanCommand(f.runtime)
+  const requested = (await control.execute(request)) as { operationID: string }
+  expect(await control.execute(request)).toEqual(requested)
+  expect(control.permissionChecks).toEqual(["lz-plan-command", "lz-plan-command"])
   for (let i = 0; i < 5 && f.store.nodes(f.planID)[0]?.state !== "accepted"; i++)
     await f.runtime.tick()
   expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
-  expect(f.prompts.filter((p) => p.sessionID === attempt.session_id)).toHaveLength(1)
+  expect(f.prompts.filter((p) => p.sessionID === attempt.session_id)).toHaveLength(oldPromptCount)
   const qualifiedAttempt = f.store.attempts(f.planID)[0]!
   expect(qualifiedAttempt.id).toBe(attempt.id)
   expect(qualifiedAttempt.state).toBe("accepted")
   expect(qualifiedAttempt.artifact).toBe(artifact)
   // Non-failure holds remain an explicit Architect decision, not an implicit bypass.
+  expect(
+    f.store
+      .nodes(f.planID)
+      .slice(1)
+      .map((node) => node.state),
+  ).toEqual(["queued", "queued"])
+  expect(f.store.attempts(old.planID)).toEqual([old.attempt])
+  expect(f.store.plan(old.planID)).toEqual(old.plan)
+  expect(f.store.effects(old.planID)).toEqual(oldEffectHistory)
+  expect(sourceQuarantine(f.store, old.attemptID)).toEqual(old.quarantine)
+  expect(f.sessions.get(old.sessionID)).toEqual(old.worker)
   await f.runtime.command(
     {
       requestID: "reconcile-qualified-held-plan",
@@ -580,11 +754,60 @@ test("unrecorded running candidate qualifies under an idle hold and continues th
     "accepted",
     "accepted",
   ])
-  expect(f.prompts.filter((p) => p.sessionID === attempt.session_id)).toHaveLength(1)
+  expect(f.prompts.filter((p) => p.sessionID === attempt.session_id)).toHaveLength(oldPromptCount)
   const worker = await f.host.session(attempt.session_id)
   expect(worker?.background?.state).toBe("unknown")
+  expect(f.store.attempts(old.planID)).toEqual([old.attempt])
+  expect(f.store.plan(old.planID)).toEqual(old.plan)
+  expect(f.store.effects(old.planID)).toEqual(oldEffectHistory)
+  expect(sourceQuarantine(f.store, old.attemptID)).toEqual(old.quarantine)
+  expect(f.sessions.get(old.sessionID)).toEqual(old.worker)
   expect(requested.operationID).toBeString()
 }, 30_000)
+
+test.each(["none", "held", "misbound", "unguarded"] as const)(
+  "retained verification still blocks a same-scope %s live source reservation",
+  async (quarantine) => {
+    const f = await failedFixture()
+    const old = await addCompetingAttempt(f, quarantine)
+    expect(sourceReservationExcluded(f.store, old.attempt, { mode: "isolated" })).toBe(false)
+    const checksBefore = f.store.atomic(
+      (db) =>
+        db
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM runner_retained_verification_checks",
+          )
+          .get()!.count,
+    )
+    await expect(
+      f.runtime.command(retainedVerifyCommand(f, `reject-active-${quarantine}`), "owner"),
+    ).rejects.toThrow("A conflicting active implementation attempt prevents retained verification")
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, []>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verifications",
+            )
+            .get()!.count,
+      ),
+    ).toBe(0)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ count: number }, []>(
+              "SELECT COUNT(*) AS count FROM runner_retained_verification_checks",
+            )
+            .get()!.count,
+      ),
+    ).toBe(checksBefore)
+    expect(f.store.attempts(old.planID)).toEqual([old.attempt])
+    expect(f.store.plan(old.planID)).toEqual(old.plan)
+    expect(sourceQuarantine(f.store, old.attemptID)).toEqual(old.quarantine)
+    expect(f.store.effects(old.planID)).toEqual(old.effects)
+  },
+)
 
 test(
   "owner verifies an exact failed-attempt candidate with zero replacement prompts",

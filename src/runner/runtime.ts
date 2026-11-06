@@ -685,6 +685,10 @@ export class TaskRuntime {
     if (node.state === "cancelled" || node.state === "exhausted" || node.state === "incorporated")
       throw new Error("A cancelled, exhausted or incorporated task cannot be retained-verified")
     const taskScope = this.store.effectiveWriteScope(task.id)
+    const id = crypto.randomUUID()
+    const taskWorkspace = this.retainedVerificationWorkspacePath(id, "task")
+    // Exclude only a valid sealed source quarantine, and only from this physical
+    // destination reserved for the isolated retained check.
     const competingAttempt = this.store
       .plans()
       .flatMap((candidatePlan) => this.store.attempts(candidatePlan.id))
@@ -692,7 +696,11 @@ export class TaskRuntime {
         (candidate) =>
           candidate.id !== attempt.id &&
           ["preparing", "running", "verifying"].includes(candidate.state) &&
-          scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)),
+          scopePatternsConflict(taskScope, this.store.effectiveWriteScope(candidate.task_id)) &&
+          !sourceReservationExcluded(this.store, candidate, {
+            mode: "isolated",
+            workspace: taskWorkspace,
+          }),
       )
     if (competingAttempt)
       throw new Error("A conflicting active implementation attempt prevents retained verification")
@@ -776,7 +784,6 @@ export class TaskRuntime {
       return latestRetainedVerificationGeneration(db, this.directory, plan.id, task.id) + 1
     })
     const environmentIdentity = retainedVerificationEnvironmentIdentity()
-    const id = crypto.randomUUID()
     const inputFingerprint = fingerprint({
       projectID: this.projectID,
       projectDirectory: this.directory,
@@ -821,7 +828,7 @@ export class TaskRuntime {
       artifact: command.artifact,
       combinedArtifact,
       combinedInputFingerprint: combinedArtifact ? inputFingerprint : null,
-      taskWorkspace: this.retainedVerificationWorkspacePath(id, "task"),
+      taskWorkspace,
       taskWorkspaceState: null,
       combinedWorkspace: combinedArtifact
         ? this.retainedVerificationWorkspacePath(id, "combined")
