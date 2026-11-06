@@ -11,7 +11,7 @@ import {
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
-import { LiveHistoryOutput, LiveRadarOutput } from "./contract.ts"
+import { LiveHistoryOutput, LiveRadarOutput, SnapshotOutput } from "./contract.ts"
 
 type LiveScope = { kind: "session"; sessionID: string } | { kind: "project"; sessionID: string }
 type LiveHandlers = {
@@ -20,6 +20,9 @@ type LiveHandlers = {
     input: { scope: LiveScope; sessionID: string; limit: number; cursor?: string },
     context: { error(type: string, message: string, data: unknown): unknown },
   ): Effect.Effect<unknown, unknown>
+}
+type RegisteredHandlers = LiveHandlers & {
+  snapshot(input: { scope: LiveScope }): Effect.Effect<unknown>
 }
 
 function insertLiveProgress(
@@ -161,27 +164,53 @@ test.each([false, true])(
   },
 )
 
-test("registered locations share one project publisher and fail over on unload", async () => {
+test("independent registrations share read boundaries and recover a failed gap on publisher handoff", async () => {
   const fixture = makeFixture()
-  const reads = new ObservationReads(
-    fixture.store,
-    { session: async (id) => fixture.host.session(id) },
-    "project",
-    new Uint8Array(32).fill(91),
-  )
+  const reads = [
+    new ObservationReads(
+      fixture.store,
+      { session: async (id) => fixture.host.session(id) },
+      "project",
+      crypto.getRandomValues(new Uint8Array(32)),
+    ),
+    new ObservationReads(
+      fixture.store,
+      { session: async (id) => fixture.host.session(id) },
+      "project",
+      crypto.getRandomValues(new Uint8Array(32)),
+    ),
+  ]
   const registrationReady = [Promise.withResolvers<void>(), Promise.withResolvers<void>()]
-  const deliveries: Array<Array<{ cause: string; sequence: number }>> = [[], []]
+  const subscriptionReady = Promise.withResolvers<void>()
+  const failedGapAttempt = Promise.withResolvers<void>()
+  const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
+  const deliveries: Array<Array<{ cause: string; sequence: number; resnapshotRequired: boolean }>> =
+    [[], []]
+  const handlers: Array<RegisteredHandlers | undefined> = []
   let registrationIndex = 0
+  let subscriptionIndex = 0
+  let failedGapOnce = false
   const ctx = {
     rpc: {
-      register: () => {
+      register: (_definition: unknown, methods: RegisteredHandlers) => {
         const index = registrationIndex++
+        handlers[index] = methods
         registrationReady[index]!.resolve()
         return Effect.succeed({
           dispose: Effect.void,
           events: {
-            emit: (_name: string, change: { cause: string; sequence: number }) =>
-              Effect.sync(() => deliveries[index]!.push(change)),
+            emit: (
+              _name: string,
+              change: { cause: string; sequence: number; resnapshotRequired: boolean },
+            ) =>
+              Effect.sync(() => {
+                if (index === 0 && change.cause === "gap" && !failedGapOnce) {
+                  failedGapOnce = true
+                  failedGapAttempt.resolve()
+                  throw new Error("gap delivery failed")
+                }
+                deliveries[index]!.push(change)
+              }),
           },
         })
       },
@@ -196,13 +225,21 @@ test("registered locations share one project publisher and fail over on unload",
         }),
     },
     permission: { assert: () => Effect.void },
-    event: { subscribe: () => Stream.never },
+    event: {
+      subscribe: () => {
+        if (subscriptionIndex++ === 0) {
+          subscriptionReady.resolve()
+          return Stream.fromQueue(eventQueue).pipe(Stream.take(1))
+        }
+        return Stream.never
+      },
+    },
   } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
-  const launch = () =>
+  const launch = (index: number) =>
     Effect.runFork(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* registerObservability(ctx, reads, "project")
+          yield* registerObservability(ctx, reads[index]!, "project")
           yield* Effect.never
         }),
       ),
@@ -212,34 +249,59 @@ test("registered locations share one project publisher and fail over on unload",
     expect(predicate()).toBe(true)
   }
 
-  const first = launch()
+  const first = launch(0)
   await registrationReady[0]!.promise
-  const second = launch()
+  const second = launch(1)
   await registrationReady[1]!.promise
+  await subscriptionReady.promise
   try {
-    fixture.store.atomic((db) =>
-      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID),
+    const scope = { kind: "project" as const, sessionID: "ses-owner" }
+    const snapshot = async (index: number) =>
+      SnapshotOutput.parse(await Effect.runPromise(handlers[index]!.snapshot({ scope })))
+    let firstSnapshot = await snapshot(0)
+    let secondSnapshot = await snapshot(1)
+    for (let index = 0; index < 3; index++) {
+      expect(firstSnapshot.boundary).toEqual(secondSnapshot.boundary)
+      expect(firstSnapshot.boundary.sourceFingerprint).toBe(
+        secondSnapshot.boundary.sourceFingerprint,
+      )
+      firstSnapshot = await snapshot(0)
+      secondSnapshot = await snapshot(1)
+    }
+    expect(deliveries.flat()).toEqual([])
+    const initialRadar = LiveRadarOutput.parse(
+      await Effect.runPromise(handlers[1]!.liveRadar({ scope, includeUnmanagedSessions: true })),
     )
-    await waitFor(() => deliveries.flat().length >= 1)
-    expect(
-      deliveries.map((items) => items.map(({ cause, sequence }) => ({ cause, sequence }))),
-    ).toEqual([[{ cause: "runner", sequence: 1 }], []])
+
+    await Effect.runPromise(
+      Queue.offer(eventQueue, {
+        id: "native-event-before-failed-gap",
+        type: "session.tool.progress",
+        durable: { aggregateID: "ses-failed", seq: 1 },
+        data: { sessionID: "ses-failed" },
+      }),
+    )
+    await waitFor(() => deliveries[0]!.some((change) => change.cause === "native"))
+    await failedGapAttempt.promise
+    await Bun.sleep(20)
 
     await Effect.runPromise(Fiber.interrupt(first))
     await waitFor(() => deliveries[1]!.some((change) => change.cause === "gap"))
-    fixture.store.atomic((db) =>
-      db.query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?").run(firstAttemptID),
-    )
-    await waitFor(() => deliveries[1]!.some((change) => change.cause === "runner"))
-    expect(
-      deliveries.map((items) => items.map(({ cause, sequence }) => ({ cause, sequence }))),
-    ).toEqual([
-      [{ cause: "runner", sequence: 1 }],
-      [
-        { cause: "gap", sequence: 2 },
-        { cause: "runner", sequence: 3 },
-      ],
+    expect(deliveries).toMatchObject([
+      [{ cause: "native", sequence: 1, resnapshotRequired: false }],
+      [{ cause: "gap", sequence: 3, resnapshotRequired: true }],
     ])
+    const recoveredSnapshot = await snapshot(1)
+    expect(recoveredSnapshot.boundary.eventSequence).toBe(3)
+    const recoveredRadar = LiveRadarOutput.parse(
+      await Effect.runPromise(handlers[1]!.liveRadar({ scope, includeUnmanagedSessions: true })),
+    )
+    expect(recoveredRadar.streamEpoch).not.toBe(initialRadar.streamEpoch)
+    expect(recoveredRadar.boundary.eventSequence).toBe(3)
+    expect(recoveredRadar.freshness.nativeEvents).toBe("gap-or-unavailable")
+    expect(recoveredSnapshot.boundary.nativeRevision).toBeGreaterThan(
+      secondSnapshot.boundary.nativeRevision,
+    )
   } finally {
     await Effect.runPromise(Fiber.interrupt(first))
     await Effect.runPromise(Fiber.interrupt(second))

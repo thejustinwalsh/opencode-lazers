@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from "node:crypto"
+import { createHmac, randomBytes, randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
@@ -25,6 +25,16 @@ const associationHost = globalThis as typeof globalThis & {
 }
 const associationReads: Map<string, AssociationRead> = (associationHost[associationReadsKey] ??=
   new Map<string, AssociationRead>())
+
+const sourceFingerprintSecretKey = Symbol.for(
+  "opencode-lazers.observation-source-fingerprint-key.v1",
+)
+const sourceFingerprintHost = globalThis as typeof globalThis & {
+  [sourceFingerprintSecretKey]?: Uint8Array
+}
+/** Per-process key keeps source identity opaque while making it stable across location secrets. */
+const sourceFingerprintSecret = (sourceFingerprintHost[sourceFingerprintSecretKey] ??=
+  randomBytes(32))
 
 /** Loaded locations share membership reads only for the same durable revision and sync batch. */
 function readAssociatedSessions(
@@ -54,7 +64,7 @@ function readAssociatedSessions(
 export function sourceStampFromDatabase(
   db: Database,
   projectDirectory: string,
-  secret: Uint8Array,
+  _readerSecret: Uint8Array,
 ): SourceStamp {
   const repositoryVersion = db
     .query<{ version: number }, [string]>(
@@ -70,7 +80,9 @@ export function sourceStampFromDatabase(
 
   return {
     repositoryVersion,
-    sourceFingerprint: createHmac("sha256", secret).update(String(revision)).digest("hex"),
+    sourceFingerprint: createHmac("sha256", sourceFingerprintSecret)
+      .update(JSON.stringify([realpathSync(db.filename), projectDirectory, revision]))
+      .digest("hex"),
     sessionIDs: readAssociatedSessions(db, projectDirectory, repositoryVersion, revision),
   }
 }
@@ -229,8 +241,8 @@ function applyNative(state: TrackerState, fact: NativeFact) {
   emit(state, "native", false)
 }
 
-function streamGap(state: TrackerState) {
-  if (state.gapActive) return
+function streamGap(state: TrackerState, forceResnapshot = false) {
+  if (state.gapActive && !forceResnapshot) return
   state.nativeRevision++
   state.eventStreamConnected = false
   state.gapActive = true
@@ -305,7 +317,6 @@ export class ObservationChangeTracker {
         realpathSync(this.repository.path),
         this.repository.projectDirectory,
         this.projectID,
-        createHash("sha256").update(this.secret).digest("hex"),
       ])
       this.state.members.delete(this)
       const existing = projectStates.get(key)
@@ -466,7 +477,9 @@ export class ObservationChangeTracker {
       state.pendingNativeKeys.clear()
       return
     }
-    if (wasPublisher && state.publishers.size) streamGap(state)
+    // A handoff is a fresh delivery boundary. In particular, don't let a gap
+    // whose publisher failed immediately before disposal vanish behind gapActive.
+    if (wasPublisher && state.publishers.size) streamGap(state, true)
     drainPending(state)
   }
 }

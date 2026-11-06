@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { ObservationChangeTracker } from "./changes.ts"
+import { ObservationChangeTracker, readSourceStamp } from "./changes.ts"
 import type { ObservationChange } from "./contract.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -53,7 +53,7 @@ test("filtered native sequences deduplicate without inventing gaps; disconnect r
   }
 })
 
-test("loaded project registrations publish canonically while reader event queues stay independent", async () => {
+test("loaded project registrations with distinct secrets share stamps and private reader queues", async () => {
   const fixture = makeFixture()
   const trackers: InstanceType<typeof ObservationChangeTracker>[] = []
   const deliveries: ObservationChange[][] = []
@@ -71,13 +71,27 @@ test("loaded project registrations publish canonically while reader event queues
       ObservationChangeTracker,
       ...copies.map((copy) => copy.ObservationChangeTracker),
     ]
+    const secrets = constructors.map((_, index) => new Uint8Array(32).fill(index + 20))
     for (let index = 0; index < constructors.length; index++) {
       const Tracker = constructors[index]!
-      const tracker = new Tracker(fixture.repository, new Uint8Array(32).fill(61), "project")
+      const tracker = new Tracker(fixture.repository, secrets[index]!, "project")
       trackers.push(tracker)
       deliveries.push([])
       tracker.initialize((change: ObservationChange) => deliveries[index]!.push(change))
     }
+    const fingerprints = [
+      readSourceStamp(fixture.repository.path, fixture.directory, secrets[0]!).sourceFingerprint,
+      ...copies.map(
+        (copy, index) =>
+          copy.readSourceStamp(fixture.repository.path, fixture.directory, secrets[index + 1]!)
+            .sourceFingerprint,
+      ),
+    ]
+    expect(new Set(fingerprints).size).toBe(1)
+    for (const tracker of trackers) tracker.refreshSource()
+    expect(trackers.map((tracker) => tracker.sequence)).toEqual(Array(14).fill(0))
+    expect(deliveries.flat()).toEqual([])
+
     trackers[1]!.trackScopedSessions(["ses-unmanaged-selected"])
 
     const selectedEvent = {
