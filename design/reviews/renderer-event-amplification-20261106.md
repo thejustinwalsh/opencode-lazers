@@ -88,3 +88,17 @@ Logs: `/private/tmp/lz-canonical-activation-build.log`,
 `/private/tmp/lz-clean-backend-required-native-command.log`,
 `/private/tmp/lz-clean-backend-boundary-tests.log`,
 `/private/tmp/lz-final-backend-gpu-combined-tests.log`.
+
+### Remaining observability producer amplification
+
+A second three-second sample at1793962552504 received368observability events /
+69distinct complete change identities. Exact project, sequence, repository,
+source/native revision and cause records repeat14times across14locations; two
+other location trackers carry different sequence baselines. Source
+`src/observability/rpc.ts:95` creates a tracker per registration; its publication
+and source/native subscriptions are also per registration. This directly supports
+a remaining duplicate-publication finding, not a claim that all368 are duplicates.
+Tracker-local sequence/session/live-event state means blindly deduplicating only
+sequence numbers would be unsound. Root queued this measured finding to Main for
+existing129 or appropriately linked scope, without making it a Models prerequisite.
+Read-only reproduction: `/private/tmp/lz-observability-amplification.ts`.
