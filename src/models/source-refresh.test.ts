@@ -488,7 +488,7 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
       ],
     })
     expect(kimi.records[0]!.pricing).not.toHaveProperty("inputCacheWrite")
-    expect(kimi.records[0]!.cacheWriteDocumentation?.retrievedAt).toBe("2026-11-05T23:33:23.000Z")
+    expect(kimi.records[0]!.cacheWriteDocumentation?.retrievedAt).toBe("2026-11-05T23:11:25.854Z")
     expect(kimi.records[0]!.pricing.inputCacheRead).toBe("0.0000002")
     expect(kimi.records[2]!.pricing).not.toHaveProperty("inputCacheWrite")
 
@@ -513,12 +513,14 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
       {
         providerName: "Alibaba",
         tag: "alibaba",
+        supportsImplicitCaching: false,
         pricing: { inputCacheWrite: "0.0000002" },
         cacheWriteDocumentation: null,
       },
       {
         providerName: "Alibaba",
         tag: "alibaba/us-east-1",
+        supportsImplicitCaching: false,
         cacheWriteDocumentation: null,
       },
     ])

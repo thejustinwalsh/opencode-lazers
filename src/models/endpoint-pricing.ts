@@ -348,7 +348,7 @@ const MOONSHOT_WRITE_DOCUMENTATION = {
   supportedRate: "0",
   sourceURL: "https://openrouter.ai/docs/guides/best-practices/prompt-caching",
   // This citation is a checked policy observation; refreshes do not refetch documentation.
-  retrievedAt: "2026-11-05T23:33:23.000Z",
+  retrievedAt: "2026-11-05T23:11:25.854Z",
   statement: "Moonshot AI prompt caching documentation: cache writes have no cost.",
   policyID: "openrouter-moonshot-kimi-mxfp4-cache-write-zero-v1",
   scope: {
