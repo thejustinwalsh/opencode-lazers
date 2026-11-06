@@ -219,3 +219,15 @@ LZ-157 (74f716cd-cf3e-436e-b112-57de5403b20c) adds actual-cohort reference estim
 They retain exact valuation, partial coverage and tier uncertainty; no fabricated
 frontier. Advisory hardening advanced with recorded OrtRun/fiber interruption
 concerns after its bounded rounds; no inference settings were changed.
+
+Latest readback:156 worker is now inactive/succeeded at b01121b,176 Models tests
+reported passing. Runtime still has its attempt running and plan waiting because
+actual idle hook entered with backgroundCount0 but rejected execution lineage;
+report remains null. Root sent exact observed sequence/listener facts to Main and
+requested bounded native Luna source/API research. Do not invent a proof-only
+worker turn or assume source activation during active work preserves listeners.
+No further source activation while implementors are active; use a quiet boundary.
+147 adoption v40 was blocked on combined:connected-task-review:human despite an
+earlier Main final claiming both evidence phases recorded. Root returned this exact
+readback to Main for matching-artifact completion.138 review reconciliation was
+actually admitted at v37; native verification is running before same-worker repair.
