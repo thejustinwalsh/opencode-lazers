@@ -14,6 +14,8 @@ import { registerModelTools } from "./tools.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
+import { buildCurrentPriceIndex } from "./current-price-index.ts"
+import { ModelPriceSourceSettingsSchema } from "./price-source-settings.ts"
 import { registerModelsServer } from "./server.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
@@ -101,11 +103,14 @@ function modelContext(options: {
   actor?: NativeSession | null
   denied?: () => boolean
   catalogFailure?: () => boolean
+  onModelList?: () => void
   permissionCalls?: unknown[]
   permissionWait?: () => Effect.Effect<void>
   sourceAccessCalls?: { active: number; resolve: number }
   sourceConnections?: Record<string, unknown>
   sourceAccessFailure?: () => boolean
+  nativeModels?: unknown[]
+  locationDirectory?: string
   storage?: Map<string, unknown>
   storageCalls?: { get: number; set: number }
 }) {
@@ -118,6 +123,8 @@ function modelContext(options: {
   const permissionCalls = options.permissionCalls ?? []
   const sourceAccessCalls = options.sourceAccessCalls ?? { active: 0, resolve: 0 }
   const sourceConnections = options.sourceConnections ?? {}
+  const sourceAccessIDs: string[] = []
+  const inferenceCalls = { prompt: 0, generate: 0 }
   const storage = options.storage ?? new Map<string, unknown>()
   const storageCalls = options.storageCalls ?? { get: 0, set: 0 }
   const modelListCalls = { count: 0 }
@@ -161,20 +168,33 @@ function modelContext(options: {
           return Effect.fail(Object.assign(new Error("missing"), { _tag: "SessionNotFoundError" }))
         return Effect.succeed(actor)
       },
+      prompt: () => {
+        inferenceCalls.prompt += 1
+        return Effect.die(new Error("Models reads must not prompt"))
+      },
+      generate: () => {
+        inferenceCalls.generate += 1
+        return Effect.die(new Error("Models reads must not generate"))
+      },
     },
-    location: { project: { id: projectID, canonical: projectDirectory } },
+    location: {
+      directory: options.locationDirectory ?? projectDirectory,
+      project: { id: projectID, canonical: projectDirectory },
+    },
     model: {
       list: () => {
         modelListCalls.count += 1
+        options.onModelList?.()
         return options.catalogFailure?.()
           ? Effect.fail(new Error("native catalog unavailable"))
-          : Effect.succeed({ data: [] })
+          : Effect.succeed({ data: options.nativeModels ?? [] })
       },
     },
     integration: {
       connection: {
         active: (integrationID: string) => {
           sourceAccessCalls.active += 1
+          sourceAccessIDs.push(integrationID)
           if (options.sourceAccessFailure?.())
             return Effect.fail(new Error("provider metadata contained secret credential-value"))
           return Effect.succeed(sourceConnections[integrationID] as never)
@@ -210,6 +230,8 @@ function modelContext(options: {
     },
     permissionCalls,
     sourceAccessCalls,
+    sourceAccessIDs,
+    inferenceCalls,
     modelListCalls,
     storage,
     storageCalls,
@@ -934,10 +956,11 @@ test("price-source settings persist an ordered whole-model policy without changi
         sources: ["openrouter", "opencode"],
         fallback: "whole-model",
       },
-      access: { openrouter: "configured", opencode: "reauthentication-required" },
+      access: { openrouter: "configured", opencode: "unknown" },
     })
     expect(JSON.stringify(initial)).not.toContain("credential")
-    expect(sourceAccessCalls).toEqual({ active: 2, resolve: 0 })
+    expect(sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
+    expect(harness.sourceAccessIDs).toEqual(["openrouter"])
     expect(harness.modelListCalls.count).toBe(0)
 
     const route = { providerID: "openai", id: "gpt-6", variant: "high" }
@@ -1007,6 +1030,299 @@ test("price-source settings persist an ordered whole-model policy without changi
       await Effect.runPromise(reopened.methods().priceSources({ sessionID: "ses-native" })),
     ).toMatchObject({ policy: { revision: 2, sources: ["opencode"] } })
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("registered price reads use the recorded native catalog outcome and preserve stale provenance", async () => {
+  const fixture = makeLedgerFixture()
+  const route = { providerID: "openai", modelID: "price-test", variant: null }
+  rewriteAttemptForMarket(fixture.path, fixture.projectID, fixture.attempts.failed.id, route, [100])
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    route,
+    [200],
+  )
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const sourceConnections: Record<string, unknown> = {}
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const permissionCalls: unknown[] = []
+  let nativeReadFails = false
+  let fetchCalls = 0
+  const harness = await register(repository, {
+    sourceConnections,
+    sourceAccessCalls,
+    permissionCalls,
+    locationDirectory: fixture.projectDirectory,
+    nativeModels: [
+      {
+        providerID: "openai",
+        id: "price-test",
+        name: "Native price test",
+        enabled: true,
+        type: "language",
+        limit: { context: 400_000 },
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        variants: null,
+        cost: [{ input: 2, output: 8, cache: { read: 0.2, write: 2 }, tier: {} }],
+      },
+    ],
+    catalogFailure: () => nativeReadFails,
+    fetcher: async (input, init) => {
+      fetchCalls += 1
+      expect(String(input)).toBe("https://openrouter.ai/api/v1/models")
+      expect(new Headers(init?.headers).get("authorization")).toBeNull()
+      return Response.json({
+        data: [
+          {
+            id: "openai/price-test",
+            name: "OpenRouter price test",
+            pricing: {
+              prompt: null,
+              completion: "0.000008",
+              input_cache_read: "0.0000002",
+              input_cache_write: "0.000002",
+            },
+          },
+        ],
+      })
+    },
+  })
+  repository.close()
+  const methods = harness.methods()
+  const decisionInput = {
+    sessionID: "ses-native",
+    scope: { projectDirectory: fixture.projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+
+  try {
+    expect(
+      await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
+    ).toMatchObject({ access: { openrouter: "not-configured", opencode: "unknown" } })
+    expect(harness.modelListCalls.count).toBe(0)
+
+    const refreshed = (await Effect.runPromise(
+      methods.refreshSources({ sessionID: "ses-native" }),
+    )) as {
+      sources: Array<{
+        source: string
+        state: string
+        errorCode: string | null
+        latestSnapshotID: string | null
+        latestRecordCount: number | null
+      }>
+    }
+    const nativeRefresh = refreshed.sources.find(({ source }) => source === "native-catalog")!
+    expect(nativeRefresh).toMatchObject({ state: "succeeded", latestRecordCount: 1 })
+    const nativeSnapshotID = nativeRefresh.latestSnapshotID!
+    expect(refreshed.sources.find(({ source }) => source === "openrouter-models")).toMatchObject({
+      state: "succeeded",
+      latestRecordCount: 1,
+    })
+    expect(harness.modelListCalls.count).toBe(1)
+    expect(sourceAccessCalls.resolve).toBe(0)
+    expect(harness.sourceAccessIDs).not.toContain("opencode")
+
+    // OpenRouter is the preferred price source, but its published route is incomplete.
+    // This connection is only an access marker; quote reads must not resolve credentials.
+    sourceConnections.openrouter = { id: "configured-openrouter-source" }
+    const priceSettings = ModelPriceSourceSettingsSchema.parse(
+      await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
+    )
+    expect(priceSettings).toMatchObject({
+      policy: { sources: ["openrouter", "opencode"], fallback: "whole-model" },
+      access: { openrouter: "configured", opencode: "configured" },
+    })
+
+    const readStore = new ModelEvidenceReadStore(fixture.path, fixture.projectDirectory)
+    try {
+      const index = buildCurrentPriceIndex({
+        sourceStore: readStore,
+        priceSources: priceSettings,
+        observedRoutes: [{ route }],
+      })
+      expect(index.pins).toHaveLength(1)
+      expect(index.pins[0]).toMatchObject({
+        route,
+        semantics: "quote",
+        rates: {
+          unit: "USD per million tokens",
+          uncachedInput: 2,
+          completion: 8,
+          cacheRead: 0.2,
+          cacheWrite: 2,
+        },
+        provenance: {
+          source: "native-catalog",
+          snapshotID: nativeSnapshotID,
+          generation: 1,
+          sourceURL: "https://opencode.ai/v2/docs/models/",
+          recordIndex: 0,
+          recordID: "price-test",
+        },
+      })
+    } finally {
+      readStore.close()
+    }
+
+    const currentOverview = (await Effect.runPromise(methods.overview(decisionInput))) as {
+      context: { priceIndex: { source: string; freshness: string; pins: unknown[] } }
+    }
+    expect(currentOverview.context.priceIndex).toMatchObject({
+      source: "opencode",
+      freshness: "current",
+      pins: [
+        {
+          source: "opencode",
+          snapshotID: nativeSnapshotID,
+          freshness: "current",
+          semantics: "exact-native-model-quotes",
+        },
+      ],
+    })
+    expect(fetchCalls).toBe(1)
+    expect(harness.modelListCalls.count).toBe(1)
+
+    // A later failed native read keeps the last-good snapshot, but decisions identify it as stale.
+    nativeReadFails = true
+    delete sourceConnections.openrouter
+    const failedRefresh = (await Effect.runPromise(
+      methods.refreshSources({ sessionID: "ses-native" }),
+    )) as { sources: Array<{ source: string; state: string; latestSnapshotID: string | null }> }
+    expect(failedRefresh.sources.find(({ source }) => source === "native-catalog")).toMatchObject({
+      state: "failed",
+      latestSnapshotID: nativeSnapshotID,
+    })
+    expect(
+      await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
+    ).toMatchObject({ access: { openrouter: "not-configured", opencode: "configured" } })
+    const staleOverview = (await Effect.runPromise(methods.overview(decisionInput))) as {
+      context: { priceIndex: { source: string; freshness: string; pins: unknown[] } }
+    }
+    expect(staleOverview.context.priceIndex).toMatchObject({
+      source: "opencode",
+      freshness: "stale",
+      pins: [
+        {
+          source: "opencode",
+          snapshotID: nativeSnapshotID,
+          freshness: "stale",
+        },
+      ],
+    })
+
+    // The snapshot alone is not a successful read outcome. Without its refresh record it is unknown.
+    const db = new Database(fixture.path, { strict: true })
+    try {
+      db.query(
+        "DELETE FROM model_evidence_refreshes WHERE project_directory=? AND source='native-catalog'",
+      ).run(fixture.projectDirectory)
+    } finally {
+      db.close()
+    }
+    expect(
+      await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
+    ).toMatchObject({ access: { opencode: "unknown" } })
+    const cacheOnlyOverview = (await Effect.runPromise(methods.overview(decisionInput))) as {
+      context: { priceIndex: { source: string; freshness: string; pins: unknown[] } }
+    }
+    expect(cacheOnlyOverview.context.priceIndex).toMatchObject({
+      source: "unavailable",
+      freshness: "unavailable",
+      pins: [],
+    })
+
+    expect(harness.modelListCalls.count).toBe(2)
+    expect(sourceAccessCalls.resolve).toBe(0)
+    expect(harness.sourceAccessIDs).not.toContain("opencode")
+    expect(harness.inferenceCalls).toEqual({ prompt: 0, generate: 0 })
+    expect(
+      permissionCalls.filter(
+        (call) => (call as { action: string }).action === "lz-refresh-model-evidence",
+      ),
+    ).toHaveLength(2)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("never-read, pending, cancelled, failed and empty native catalogs stay unknown", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  const evidence = new ModelEvidenceStore(path, projectDirectory)
+  const sourceAccessCalls = { active: 0, resolve: 0 }
+  const harness = await register(repository, {
+    sourceAccessCalls,
+    fetcher: async () => Response.json({ data: [] }),
+  })
+  repository.close()
+  const methods = harness.methods()
+  const readPriceSettings = () => methods.priceSources({ sessionID: "ses-native" })
+
+  try {
+    expect(await Effect.runPromise(readPriceSettings())).toMatchObject({
+      access: { opencode: "unknown" },
+    })
+
+    const pendingGeneration = evidence.beginRefresh()["native-catalog"]
+    expect(evidence.read().sources[0]).toMatchObject({
+      state: "refreshing",
+      latestSnapshotID: null,
+    })
+    expect(await Effect.runPromise(readPriceSettings())).toMatchObject({
+      access: { opencode: "unknown" },
+    })
+
+    evidence.cancelRefresh("native-catalog", pendingGeneration)
+    expect(evidence.read().sources[0]).toMatchObject({ state: "cancelled", latestSnapshotID: null })
+    expect(await Effect.runPromise(readPriceSettings())).toMatchObject({
+      access: { opencode: "unknown" },
+    })
+
+    const failedGeneration = evidence.beginRefresh()["native-catalog"]
+    evidence.failRefresh("native-catalog", failedGeneration, "native-unavailable")
+    expect(evidence.read().sources[0]).toMatchObject({ state: "failed", latestSnapshotID: null })
+    expect(await Effect.runPromise(readPriceSettings())).toMatchObject({
+      access: { opencode: "unknown" },
+    })
+
+    const refreshed = (await Effect.runPromise(
+      methods.refreshSources({ sessionID: "ses-native" }),
+    )) as { sources: Array<{ source: string; state: string; latestRecordCount: number | null }> }
+    expect(refreshed.sources.find(({ source }) => source === "native-catalog")).toMatchObject({
+      state: "succeeded",
+      latestRecordCount: 0,
+    })
+    const settings = ModelPriceSourceSettingsSchema.parse(
+      await Effect.runPromise(readPriceSettings()),
+    )
+    expect(settings.access.opencode).toBe("unknown")
+
+    const readStore = new ModelEvidenceReadStore(path, projectDirectory)
+    try {
+      expect(
+        buildCurrentPriceIndex({
+          sourceStore: readStore,
+          priceSources: settings,
+          observedRoutes: [
+            { route: { providerID: "openai", modelID: "settling-model", variant: null } },
+          ],
+        }).pins,
+      ).toEqual([])
+    } finally {
+      readStore.close()
+    }
+
+    expect(harness.modelListCalls.count).toBe(1)
+    expect(sourceAccessCalls.resolve).toBe(0)
+    expect(harness.sourceAccessIDs).not.toContain("opencode")
+    expect(harness.inferenceCalls).toEqual({ prompt: 0, generate: 0 })
+  } finally {
+    evidence.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
@@ -1092,7 +1408,8 @@ test("price-source access reports uncertainty from host metadata without leaking
       policy: { sources: ["openrouter", "opencode"] },
     })
     expect(JSON.stringify(output)).not.toContain("credential-value")
-    expect(harness.sourceAccessCalls).toEqual({ active: 2, resolve: 0 })
+    expect(harness.sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
+    expect(harness.sourceAccessIDs).toEqual(["openrouter"])
     expect(harness.modelListCalls.count).toBe(0)
   } finally {
     rmSync(root, { recursive: true, force: true })

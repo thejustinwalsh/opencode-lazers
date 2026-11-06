@@ -43,6 +43,7 @@ import {
   ModelDecisionRowsRPCInputSchema,
 } from "./decision-contract.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import { ModelSettingsService } from "./service.ts"
@@ -137,6 +138,33 @@ async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, si
   }
 }
 
+/** OpenCode quotes use an authorized, recorded native catalog read, not its execution login. */
+function nativeCatalogAccess(
+  source: ModelEvidenceComparisonSourceRead | undefined,
+): "configured" | "unknown" {
+  const snapshot = source?.snapshot
+  const refresh = source?.refresh
+  if (
+    source?.storage !== "ready" ||
+    source.snapshotState !== "available" ||
+    snapshot?.source !== "native-catalog" ||
+    snapshot.records.length === 0 ||
+    !refresh ||
+    refresh.state === "never" ||
+    refresh.generation === 0 ||
+    refresh.latestSnapshotID !== snapshot.snapshotID ||
+    refresh.latestRetrievedAt !== snapshot.retrievedAt ||
+    refresh.latestRecordCount !== snapshot.records.length
+  )
+    return "unknown"
+
+  const matchingOutcome =
+    refresh.state === "succeeded"
+      ? refresh.generation === snapshot.generation
+      : refresh.generation > snapshot.generation
+  return matchingOutcome ? "configured" : "unknown"
+}
+
 /** Desktop RPC and Code Mode tools share the same project-scoped SQLite mappings. */
 export function registerModelsServer(
   ctx: ModelsContext,
@@ -199,18 +227,20 @@ export function registerModelsServer(
       openLedger: () => openReadOnlyObservationLedger(path, projectDirectory),
       readPriceState: async (routes: readonly CurrentPriceApplicability[], signal) => {
         signal?.throwIfAborted()
-        const policy = await priceSourceSettings.read(signal)
-        const [openrouter, opencode] = await Promise.all([
+        const [policy, openrouter] = await Promise.all([
+          priceSourceSettings.read(signal),
           configuredAccess(ctx, "openrouter", signal ?? new AbortController().signal),
-          configuredAccess(ctx, "opencode", signal ?? new AbortController().signal),
         ])
         signal?.throwIfAborted()
-        const settings = ModelPriceSourceSettingsSchema.parse({
-          policy,
-          access: { openrouter, opencode },
-        })
         const state = withEvidenceReadStore((store) => {
           const sources = store.readComparisonSources()
+          const opencode = nativeCatalogAccess(
+            sources.find((source) => source.source === "native-catalog"),
+          )
+          const settings = ModelPriceSourceSettingsSchema.parse({
+            policy,
+            access: { openrouter, opencode },
+          })
           const index = buildCurrentPriceIndex({
             sourceStore: { readComparisonSources: () => sources },
             priceSources: settings,
@@ -228,6 +258,8 @@ export function registerModelsServer(
             )
           })
           return {
+            settings,
+            opencode,
             index,
             sources,
             freshness: index.pins.length
@@ -240,7 +272,7 @@ export function registerModelsServer(
         const endpointPricing = readEndpointPricingEvidence(path, projectDirectory, signal)
         signal?.throwIfAborted()
         return {
-          settings,
+          settings: state.settings,
           index: state.index,
           endpointPricing,
           identityCatalogSource: state.sources.find(
@@ -248,7 +280,7 @@ export function registerModelsServer(
           ),
           identityNativeSource: state.sources.find((source) => source.source === "native-catalog"),
           freshness: state.freshness,
-          note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
+          note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${state.opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
         }
       },
     })
@@ -311,11 +343,19 @@ export function registerModelsServer(
               signal,
             )
             signal.throwIfAborted()
-            const policy = await priceSourceSettings.read(signal)
-            const [openrouter, opencode] = await Promise.all([
+            const [policy, openrouter] = await Promise.all([
+              priceSourceSettings.read(signal),
               configuredAccess(ctx, "openrouter", signal),
-              configuredAccess(ctx, "opencode", signal),
             ])
+            signal.throwIfAborted()
+            const opencode = withEvidenceReadStore((store) => {
+              signal.throwIfAborted()
+              const sources = store.readComparisonSources()
+              signal.throwIfAborted()
+              return nativeCatalogAccess(
+                sources.find((source) => source.source === "native-catalog"),
+              )
+            })
             signal.throwIfAborted()
             return ModelPriceSourceSettingsSchema.parse({
               policy,
