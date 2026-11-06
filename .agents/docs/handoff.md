@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T03:37:49.001937+00:00. The goal remains active: drive OpenCode Desktop until the
+Updated 2026-11-06T04:08:00Z. The goal remains active: drive OpenCode Desktop until the
 active roadmap is implemented, verified, integrated and cleaned; then present
 an observation-based improvement plan. Preserve the full backlog.
 
@@ -48,9 +48,13 @@ records and integration ancestry, not every feature's current live behavior.
 
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM` (Sol High).
 Service last observed PID71027; revalidate actual service registration/state.
-Root held 151's explicit input reconciliation until this activation so 152 would
-not start immediately before listener replacement. Root must now report the
-final landing, release that hold and have Architect advance 152 and 153.
+151 was reconciled after activation; 152 and 153 are now running concurrently.
+Root fixed a reproduced Tasks row-removal crash in `7f5133b` and activated its
+GUI bundle. Reactive identity + mounted panel tests passed; broader Tasks suite
+34 tests / 152 assertions passed, with lint/types/build. Native Tasks selection,
+Start153 and Queued→Running filtering survived without blanking.
+See `design/reviews/tasks-keyed-row-crash-20261106.md`.
+No further Root activation planned while the current workers run.
 
 LZ-151: task `77155457-70ca-424b-b5cf-0598244fe738`, plan
 `9f7c80ad-a799-443e-8a40-f294e15f9d50`, attempt
@@ -60,19 +64,24 @@ clean at `bff60132ade3bd5bfafdb92886d32392dae6eaf3`, empty native controls,
 confirmed zero-background terminal for tagged input
 `msg_lz151_substantive_market_identity_repair_20261106_v1`.
 Metadata requestID: `lz151-substantive-market-identity-repair-20261106-v1`.
-Reconcile that actual input through existing controls; do not rewrite the old
-untagged notice or create another turn for proof. Plan was blocked v15 by the
-unreconciled input lineage; read its current version before commands.
+Architect reconciled the genuine tagged input and accepted151, allowing152.
+Do not rewrite the old untagged notice or create a turn for proof.
 
 LZ-152: `34de5cf6-afdd-41c0-82f5-6ea8356fba2e`, UI scenario presentation,
-same plan, depends on151. Preserve that dependency.
+same plan, depends on151. Running attempt
+`6c5b0677-3a6e-4956-ad23-cb8e3f54f70c`, worker
+`ses_06ae893559b2433d88f788baaf2e966c`, OpenAI LunaMax in its own native tree.
+Current edits are comparison-panel.tsx/css; review on completion.
 
 LZ-153: `5d4548ce-e5c0-4f7a-b3d1-3614e973e3f5`, plan
-`a27556ef-015b-4084-bc5a-ed12dea9329e`, draft / priority100 / Systems / LunaMax.
+`a27556ef-015b-4084-bc5a-ed12dea9329e`, running / priority100 / Systems / LunaMax.
+Root clicked Start in Desktop; native attempt
+`4e7fb2d5-e54f-4f9c-a153-58a38aa87dc2`, worker
+`ses_bb1ddbbe1ca84e498de9597792c602f6`, separate native tree.
+Trajectory navigation works and shows actual activity and usage.
 Growing history currently exceeds the producer's15,000-fact limit and creates
 inconsistent unavailable snapshot IDs. The real Models panel still needs this
-repair. After151 task-only source landing, select the actual reviewed baseline
-through supported scheduling and run153. It has no whole-plan prerequisite:
+repair. Architect prepared baseline ec00abd; Root started153 through Tasks. It has no whole-plan prerequisite:
 waiting for151+152 combined acceptance would create a cycle. Its producer scope
 and152's UI scope permit native isolated parallel work.
 
@@ -96,12 +105,14 @@ queued tasks and distinguishes recorded state from observed foreground activity.
 The visual pass is too noisy: Recorded/Foreground/nonterminal labels and long
 hold messages fill the list. Do not claim visual acceptance.
 
-Have native Tera High reviewer `ses_e52a5ae04ffeObat8Bt6imz4ci` compare
+Native Tera High reviewer `ses_e52a5ae04ffeObat8Bt6imz4ci` compared
 `design/task-panel/tasks-focus-v2.png` with
 `.agents/docs/evidence/dogfood-20261106/147-running-desktop.png`.
-Root has not yet requested this new review. Coordinate a focused presentation
-correction with147/149; preserve the functional distinctions and existing
-Now/Attention/Next grouping work. Use actual screenshots, not mockup-to-components.
+Tera completed review; visual acceptance remains open. Architect sent a genuine
+tagged correction to the original147 worker, now actively editing panel.tsx/css
+and the mounted activity test. Compact title-first rows; full hold reasons in
+selected inspector; preserve truthful foreground states and149 scope. Root owns
+keyed.ts separately. Use screenshots, not mockup-to-components.
 
 ## Retained recovery
 
@@ -120,8 +131,23 @@ and a real isolated full quality/build execution with an unchanged committed
 candidate and resource witness. Its only broad-suite failure is the transport
 fixture Root fixed in727274d. See [worker report](evidence/dogfood-20261106/138-worker-report.txt).
 Full independent review, integration and native retained-task walkthrough are
-still required. Reuse native Luna reviewer `ses_e522ffd49ffeenRSBj8xvTAxMB`.
+still required. Luna reviewer `ses_e522ffd49ffeenRSBj8xvTAxMB` completed: NOT READY.
+Candidate dependency lockfiles still must equal root installed state; fixture only
+adds already-installed package without lockfile. Root confirmed isolation.ts228-255
+and sent the concrete defect to Architect for genuine same-worker138 correction.
+See `design/reviews/lz138-candidate-dependencies-review-20261106.md`.
+Review tests14/156assertions plus quality/build passed; no durable native receipts
+proved. Do not integrate d378 as full candidate-dependency support.
 Do not accept based only on the binder or fixture tests.
+
+## Newly observed pricing connection gap
+
+Root opened153 trajectory: actual calls and token totals render, but API-equivalent
+cost remains unknown. `src/trajectory/accounting.ts` hardcodes
+marketEquivalentCostUSD null/unknown. Root asked Architect through Desktop to
+check102 and related work, then reuse/task the missing current-market valuation
+connection after active Models work. Preserve true missing coverage and retries;
+no subscription pricing. This is not a worker scope extension.
 
 ## Other backlog and cleanup
 
