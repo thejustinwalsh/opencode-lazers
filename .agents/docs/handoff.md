@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T04:15:00Z. The goal remains active: drive OpenCode Desktop until the
+Updated 2026-11-06T04:40:00Z. The goal remains active: drive OpenCode Desktop until the
 active roadmap is implemented, verified, integrated and cleaned; then present
 an observation-based improvement plan. Preserve the full backlog.
 
@@ -54,7 +54,14 @@ GUI bundle. Reactive identity + mounted panel tests passed; broader Tasks suite
 34 tests / 152 assertions passed, with lint/types/build. Native Tasks selection,
 Start153 and Queued→Running filtering survived without blanking.
 See `design/reviews/tasks-keyed-row-crash-20261106.md`.
-No further Root activation planned while the current workers run.
+Review batch HEAD `231805d29313ced9b3e73607a78cdacadb302d2d` in
+`/private/tmp/lz147-compact-review` contains147compact,3e09menu test fix,
+153c8530aa and15259cf8f8. Full independent regression1364tests/15208assertions
+passed (250.53s); fmt/lint/types/diff and combined GUI build pass. Logs in
+`evidence/dogfood-20261106/models-tasks-batch-{tests,build}.log`.
+147/152/153 workers are inactive/succeeded.138dependency correction remains
+active, now running its declared suite after focused15tests/169assertions pass.
+Use a completed-worker activation boundary; do not interrupt138's current execution.
 
 LZ-151: task `77155457-70ca-424b-b5cf-0598244fe738`, plan
 `9f7c80ad-a799-443e-8a40-f294e15f9d50`, attempt
@@ -156,8 +163,10 @@ Do not accept based only on the binder or fixture tests.
 152 initial committed candidate `26a0d882488e2615703e8b83bb58bd79733eea85`
 passes worker184tests/2794assertions and quality/build, but Root rejected default
 presentation: many caveat/metadata paragraphs above collapsed evidence contradict
-the approved compact mockup. Root sent concrete feedback through Architect; the
-same152 worker resumed. Keep summary price/endpoint/essential uncertainty visible,
+the approved compact mockup. Architect steered the same152worker, now inactive/succeeded and clean at
+`59cf8f8d23c027c0cb0b8c4e7fe8a72bfafee43c`. Worker184tests/2816assertions and
+quality/build pass. Root source review passes and merged it into review batch;
+Main natively reconciled its genuine correction and reports accepted152. Keep summary price/endpoint/essential uncertainty visible,
 detailed tier/retry/cache/source information under collapsed Evidence & assumptions.
 No data-policy expansion. Wait for corrected source before visual acceptance.
 

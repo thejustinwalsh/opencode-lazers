@@ -11,3 +11,5 @@ A read-only capture using this candidate against the real LAZERS project DB succ
 An independent fixture read retained 26 route observations, including an earlier conflicting model alongside later observations, matching baseline behavior. During implementation the worker briefly introduced a 25-observation SQL limit, then removed it before commit. Root did not send a premature repair request for that intermediate change.
 
 Pending: corrected 152 UI source, combined quality/build, canonical integration/activation at a completed-worker boundary, actual native Models reads and screenshot review. Retain source history and native verification state separately.
+
+Combined Tasks + Models review batch `231805d29313ced9b3e73607a78cdacadb302d2d` subsequently passed the full plugin suite: **1,364 tests, 15,208 assertions, 154 files**, 250.53 seconds. Formatting, lint, types, diff checks and GUI build/bundle evaluation pass. Retained logs are in `.agents/docs/evidence/dogfood-20261106/models-tasks-batch-tests.log` and `models-tasks-batch-build.log`. Canonical activation and native visual/producer acceptance remain pending the active LZ-138 worker's completed boundary.
