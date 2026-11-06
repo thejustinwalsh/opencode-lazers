@@ -573,6 +573,149 @@
   overflow-wrap: anywhere;
 }
 
+.lazers-models-market-scenario {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 12px 0;
+  padding: 10px;
+  border-left: 2px solid var(--border-selected);
+  background: var(--surface-base);
+}
+
+.lazers-models-market-scenario[data-status="range"],
+.lazers-models-market-scenario[data-status="partial"],
+.lazers-models-market-scenario[data-status="unavailable"] {
+  border-left-color: var(--text-warning, var(--border-selected));
+}
+
+.lazers-models-market-scenario > h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lazers-models-market-value {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 2px 0;
+}
+
+.lazers-models-market-value strong {
+  color: var(--text-strong);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-market-meta,
+.lazers-models-market-caveat {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-weak);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-market-caveat {
+  color: var(--text-weak);
+}
+
+.lazers-models-market-scenario[data-status="range"] .lazers-models-market-caveat,
+.lazers-models-market-scenario[data-status="partial"] .lazers-models-market-caveat,
+.lazers-models-market-scenario[data-status="unavailable"] .lazers-models-market-caveat {
+  color: var(--text-warning, var(--text-weak));
+}
+
+.lazers-models-market-scenario .lazers-models-market-evidence-details {
+  margin-top: 3px;
+  padding-top: 4px;
+}
+
+.lazers-models-market-evidence {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 0 8px;
+}
+
+.lazers-models-market-evidence a {
+  color: var(--text-base);
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-market-coverage,
+.lazers-models-market-rates {
+  min-width: 0;
+}
+
+.lazers-models-market-coverage h4,
+.lazers-models-market-rates h4 {
+  margin: 0 0 4px;
+  color: var(--text-base);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.lazers-models-market-coverage p,
+.lazers-models-market-rates > p {
+  min-width: 0;
+  margin: 3px 0;
+  color: var(--text-weak);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-market-coverage strong {
+  color: var(--text-base);
+  font-weight: 600;
+}
+
+.lazers-models-market-rates table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 9px;
+}
+
+.lazers-models-market-rates th,
+.lazers-models-market-rates td {
+  min-width: 0;
+  padding: 4px 3px;
+  border-bottom: 1px solid var(--border-weak-base);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.lazers-models-market-rates thead th {
+  color: var(--text-weak);
+  font-weight: 600;
+}
+
+.lazers-models-market-rates tbody th {
+  color: var(--text-base);
+  font-weight: 500;
+}
+
+.lazers-models-market-rates td {
+  color: var(--text-weak);
+  font-variant-numeric: tabular-nums;
+}
+
+.lazers-models-market-rates th:first-child {
+  width: 24%;
+}
+
+.lazers-models-market-rates th:not(:first-child) {
+  width: 19%;
+}
+
 .lazers-models-estimate .lazers-models-history-scope {
   padding-top: 4px;
   border-top: 1px solid var(--border-weak-base);
