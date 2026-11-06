@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -627,8 +628,16 @@ export async function createRetainedCheckContext(input: {
   if (candidateManifest)
     assertCandidateDependencySetup(candidateWorkspace, input.candidateArtifact, candidateManifest)
   const candidateDependencies = join(candidateWorkspace, "node_modules")
-  if (lstatIfPresent(candidateDependencies))
-    throw new Error("Candidate checkout already contains an unowned node_modules resource")
+  const nativeDependencies = lstatIfPresent(candidateDependencies)
+  if (nativeDependencies) {
+    if (
+      !candidateManifest ||
+      !nativeDependencies.isDirectory() ||
+      nativeDependencies.isSymbolicLink()
+    )
+      throw new Error("Candidate dependencies require a committed manifest and private directory")
+    assertOwnedDependencyTree(candidateDependencies)
+  }
   const directory = join(
     root,
     `retained-${input.operationID}-${input.generation}-${input.phase}-${input.checkID}`,
@@ -654,7 +663,11 @@ export async function createRetainedCheckContext(input: {
   const resources: RetainedCheckContext["resources"] = []
   for (const name of resourceNames) {
     const path = join(canonicalDirectory, name)
-    mkdirSync(path, { mode: 0o700 })
+    // Native worktree creation awaits the project's startup command, which may
+    // install dependencies. Move that private tree into this operation's resources
+    // before running the ordinary candidate-lock installer and linking it back.
+    if (name === "dependencies" && nativeDependencies) renameSync(candidateDependencies, path)
+    else mkdirSync(path, { mode: 0o700 })
     const realPath = realpathSync(path)
     const info = statSync(realPath)
     if (realPath !== path || !info.isDirectory())

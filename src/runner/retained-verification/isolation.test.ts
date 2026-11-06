@@ -170,128 +170,185 @@ function commitFixture(root: string): string {
   return git(root, ["rev-parse", "HEAD"])
 }
 
-test("an authored Bun test runs in an isolated checkout with private dependencies, SQLite and profile", async () => {
-  const root = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-repo-"))
-  const state = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-state-"))
-  const oldProfile = join(state, "old-profile")
-  const candidate = join(state, "candidate")
-  const database = join(state, "tasks.sqlite")
-  const receiptPath = join(state, "receipt.json")
-  cleanups.push(() => {
-    try {
-      git(root, ["worktree", "remove", candidate])
-    } catch {
-      // A failing assertion still cleans only this test fixture.
+test.each(["empty", "native", "shared", "external-child"] as const)(
+  "an authored Bun test isolates the %s dependency setup",
+  async (dependencySetup) => {
+    const root = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-repo-"))
+    const state = mkdtempSync(join(tmpdir(), "lazers-retained-isolation-state-"))
+    const oldProfile = join(state, "old-profile")
+    const candidate = join(state, "candidate")
+    const database = join(state, "tasks.sqlite")
+    const receiptPath = join(state, "receipt.json")
+    cleanups.push(() => {
+      try {
+        git(root, ["worktree", "remove", candidate])
+      } catch {
+        // A failing assertion still cleans only this test fixture.
+      }
+      rmSync(root, { recursive: true, force: true })
+      rmSync(state, { recursive: true, force: true })
+    })
+    writeFileSync(join(root, "tracked.txt"), "baseline\n")
+    writeFixtureProject(root)
+    const artifact = commitFixture(root)
+    git(root, ["worktree", "add", "--detach", candidate, artifact])
+    const canonicalCandidate = realpathSync(candidate)
+    const candidateDependencies = join(canonicalCandidate, "node_modules")
+    const sourceDependencyPath = join(root, "node_modules", "fixture-package", "index.js")
+    const sourceDependencyBefore = readFileSync(sourceDependencyPath, "utf8")
+    if (dependencySetup === "native") {
+      execFileSync(
+        process.execPath,
+        ["install", "--frozen-lockfile", "--ignore-scripts", "--no-progress"],
+        { cwd: canonicalCandidate },
+      )
+      writeFileSync(
+        join(candidateDependencies, "native-startup-sentinel"),
+        "native startup completed\n",
+      )
+    } else if (dependencySetup === "shared") {
+      symlinkSync(join(root, "node_modules"), candidateDependencies, "dir")
+    } else if (dependencySetup === "external-child") {
+      mkdirSync(candidateDependencies)
+      symlinkSync(
+        join(root, "node_modules", "fixture-package"),
+        join(candidateDependencies, "fixture-package"),
+        "dir",
+      )
     }
-    rmSync(root, { recursive: true, force: true })
-    rmSync(state, { recursive: true, force: true })
-  })
-  writeFileSync(join(root, "tracked.txt"), "baseline\n")
-  writeFixtureProject(root)
-  const artifact = commitFixture(root)
-  git(root, ["worktree", "add", "--detach", candidate, artifact])
-  const canonicalCandidate = realpathSync(candidate)
-  writeFileSync(database, "")
-  const old = new Database(database)
-  old.close()
-  mkdirSync(oldProfile)
-  writeFileSync(join(oldProfile, "sentinel"), "old sentinel\n")
-  const oldProfileContents = readFileSync(join(oldProfile, "sentinel"), "utf8")
-  const check = {
-    id: "isolated-runtime",
-    command:
-      "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
-    timeoutMs: 10_000,
-  } as const
-  const procedure = retainedProcedurePlan(check.command)
-  if (procedure.status !== "supported") throw new Error(procedure.reason)
-  const context = await createRetainedCheckContext({
-    rootDirectory: state,
-    operationID: crypto.randomUUID(),
-    generation: 1,
-    phase: "task",
-    checkID: check.id,
-    originalWorkspace: root,
-    candidateWorkspace: candidate,
-    taskDatabase: database,
-    projectDirectory: root,
-    candidateArtifact: artifact,
-    priorResourcePaths: [oldProfile],
-    procedurePlan: procedure.plan,
-  })
-  expect(context.candidateWorkspace).toBe(canonicalCandidate)
-  expect(context.directory).not.toBe(canonicalCandidate)
-  expect(context.dependencyLink).toMatchObject({
-    path: join(canonicalCandidate, "node_modules"),
-    target: join(context.directory, "dependencies"),
-  })
-  expect(context.environment.TMPDIR).toBe(
-    context.procedureBinding.temporaryDirectoryLink?.path ??
-      context.resources.find((resource) => resource.name === "tmp")?.realPath,
-  )
-  if (context.procedureBinding.temporaryDirectoryLink) {
-    const temporaryPath = context.environment.TMPDIR!
-    const temporaryResource = context.resources.find((resource) => resource.name === "tmp")!
-    expect(temporaryPath).toHaveLength(tmpdir().length)
-    expect(realpathSync(temporaryPath)).toBe(temporaryResource.realPath)
-  }
-  const sourceDependency = statSync(join(root, "node_modules", "fixture-package", "index.js"))
-  const privateDependency = statSync(
-    join(context.directory, "dependencies", "fixture-package", "index.js"),
-  )
-  expect(`${privateDependency.dev}:${privateDependency.ino}`).not.toBe(
-    `${sourceDependency.dev}:${sourceDependency.ino}`,
-  )
-  expect(observeRetainedCheckContext(context)).toBe(true)
+    const nativeDirectory =
+      dependencySetup === "native" ? statSync(candidateDependencies) : undefined
+    writeFileSync(database, "")
+    const old = new Database(database)
+    old.close()
+    mkdirSync(oldProfile)
+    writeFileSync(join(oldProfile, "sentinel"), "old sentinel\n")
+    const oldProfileContents = readFileSync(join(oldProfile, "sentinel"), "utf8")
+    const check = {
+      id: "isolated-runtime",
+      command:
+        "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
+      timeoutMs: 10_000,
+    } as const
+    const procedure = retainedProcedurePlan(check.command)
+    if (procedure.status !== "supported") throw new Error(procedure.reason)
+    const contextInput = {
+      rootDirectory: state,
+      operationID: crypto.randomUUID(),
+      generation: 1,
+      phase: "task",
+      checkID: check.id,
+      originalWorkspace: root,
+      candidateWorkspace: candidate,
+      taskDatabase: database,
+      projectDirectory: root,
+      candidateArtifact: artifact,
+      priorResourcePaths: [oldProfile],
+      procedurePlan: procedure.plan,
+    } satisfies Parameters<typeof createRetainedCheckContext>[0]
+    if (dependencySetup === "shared" || dependencySetup === "external-child") {
+      await expect(createRetainedCheckContext(contextInput)).rejects.toThrow(
+        /private directory|shared external resource/,
+      )
+      expect(readFileSync(sourceDependencyPath, "utf8")).toBe(sourceDependencyBefore)
+      expect(
+        realpathSync(
+          dependencySetup === "shared"
+            ? candidateDependencies
+            : join(candidateDependencies, "fixture-package"),
+        ),
+      ).toBe(
+        realpathSync(
+          dependencySetup === "shared"
+            ? join(root, "node_modules")
+            : join(root, "node_modules", "fixture-package"),
+        ),
+      )
+      return
+    }
+    const context = await createRetainedCheckContext(contextInput)
+    if (nativeDirectory) {
+      const adopted = statSync(join(context.directory, "dependencies"))
+      expect([adopted.dev, adopted.ino]).toEqual([nativeDirectory.dev, nativeDirectory.ino])
+      expect(
+        readFileSync(join(context.directory, "dependencies", "native-startup-sentinel"), "utf8"),
+      ).toBe("native startup completed\n")
+    }
 
-  const witness = retainedCheckIsolationWitness(context)
-  const receipt = await runCheck(canonicalCandidate, artifact, check, receiptPath, {
-    environment: context.environment,
-    environmentIdentity: context.environmentIdentity,
-    ownedUntrackedPaths: ["node_modules"],
-    isolation: witness,
-  })
-  expect(receipt.exitCode, receipt.stderr).toBe(0)
-  expect(receipt.unchanged).toBe(true)
-  expect(receipt.cwd).toBe(canonicalCandidate)
-  expect(readFileSync(join(oldProfile, "sentinel"), "utf8")).toBe(oldProfileContents)
-  expect(readFileSync(join(context.environment.HOME!, "profile", "sentinel"), "utf8")).toBe(
-    "verification only\n",
-  )
-  const privateDB = new Database(context.environment.LAZERS_VERIFICATION_SQLITE!)
-  try {
-    expect(privateDB.query<{ value: string }, []>("SELECT value FROM writes").get()?.value).toBe(
-      "private",
+    expect(context.candidateWorkspace).toBe(canonicalCandidate)
+    expect(context.directory).not.toBe(canonicalCandidate)
+    expect(context.dependencyLink).toMatchObject({
+      path: join(canonicalCandidate, "node_modules"),
+      target: join(context.directory, "dependencies"),
+    })
+    expect(context.environment.TMPDIR).toBe(
+      context.procedureBinding.temporaryDirectoryLink?.path ??
+        context.resources.find((resource) => resource.name === "tmp")?.realPath,
     )
-  } finally {
-    privateDB.close()
-  }
-  expect(existsSync(receiptPath)).toBe(true)
-  const expected = {
-    operationID: context.operationID,
-    generation: context.generation,
-    phase: context.phase,
-    checkID: context.checkID,
-    originalWorkspace: root,
-    candidateWorkspace: canonicalCandidate,
-    taskDatabase: database,
-    projectDirectory: root,
-    candidateArtifact: artifact,
-    projectIdentity: context.projectIdentity,
-    procedurePlan: procedure.plan,
-  }
-  expect(observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, expected)).toBe(
-    true,
-  )
-  expect(
-    new Set(context.resources.map((resource) => `${resource.device}:${resource.inode}`)).size,
-  ).toBe(context.resources.length)
-  removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, expected)
-  expect(existsSync(context.directory)).toBe(false)
-  expect(existsSync(join(canonicalCandidate, "node_modules"))).toBe(false)
-  if (context.procedureBinding.temporaryDirectoryLink)
-    expect(existsSync(context.procedureBinding.temporaryDirectoryLink.path)).toBe(false)
-})
+    if (context.procedureBinding.temporaryDirectoryLink) {
+      const temporaryPath = context.environment.TMPDIR!
+      const temporaryResource = context.resources.find((resource) => resource.name === "tmp")!
+      expect(temporaryPath).toHaveLength(tmpdir().length)
+      expect(realpathSync(temporaryPath)).toBe(temporaryResource.realPath)
+    }
+    const sourceDependency = statSync(join(root, "node_modules", "fixture-package", "index.js"))
+    const privateDependency = statSync(
+      join(context.directory, "dependencies", "fixture-package", "index.js"),
+    )
+    expect(`${privateDependency.dev}:${privateDependency.ino}`).not.toBe(
+      `${sourceDependency.dev}:${sourceDependency.ino}`,
+    )
+    expect(observeRetainedCheckContext(context)).toBe(true)
+
+    const witness = retainedCheckIsolationWitness(context)
+    const receipt = await runCheck(canonicalCandidate, artifact, check, receiptPath, {
+      environment: context.environment,
+      environmentIdentity: context.environmentIdentity,
+      ownedUntrackedPaths: ["node_modules"],
+      isolation: witness,
+    })
+    expect(receipt.exitCode, receipt.stderr).toBe(0)
+    expect(receipt.unchanged).toBe(true)
+    expect(receipt.cwd).toBe(canonicalCandidate)
+    expect(readFileSync(join(oldProfile, "sentinel"), "utf8")).toBe(oldProfileContents)
+    expect(readFileSync(join(context.environment.HOME!, "profile", "sentinel"), "utf8")).toBe(
+      "verification only\n",
+    )
+    const privateDB = new Database(context.environment.LAZERS_VERIFICATION_SQLITE!)
+    try {
+      expect(privateDB.query<{ value: string }, []>("SELECT value FROM writes").get()?.value).toBe(
+        "private",
+      )
+    } finally {
+      privateDB.close()
+    }
+    expect(existsSync(receiptPath)).toBe(true)
+    const expected = {
+      operationID: context.operationID,
+      generation: context.generation,
+      phase: context.phase,
+      checkID: context.checkID,
+      originalWorkspace: root,
+      candidateWorkspace: canonicalCandidate,
+      taskDatabase: database,
+      projectDirectory: root,
+      candidateArtifact: artifact,
+      projectIdentity: context.projectIdentity,
+      procedurePlan: procedure.plan,
+    }
+    expect(
+      observeRetainedCheckIsolationWitness(context.directory, receipt.isolation, expected),
+    ).toBe(true)
+    expect(
+      new Set(context.resources.map((resource) => `${resource.device}:${resource.inode}`)).size,
+    ).toBe(context.resources.length)
+    removeRetainedCheckContextFromWitness(context.directory, receipt.isolation, expected)
+    expect(existsSync(context.directory)).toBe(false)
+    expect(existsSync(join(canonicalCandidate, "node_modules"))).toBe(false)
+    if (context.procedureBinding.temporaryDirectoryLink)
+      expect(existsSync(context.procedureBinding.temporaryDirectoryLink.path)).toBe(false)
+  },
+)
 
 test("another project executes a new scoped target against its committed dependency manifest", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-other-project-"))
