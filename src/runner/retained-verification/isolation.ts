@@ -1,14 +1,11 @@
 import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
-import { constants } from "node:fs"
+import { execFileSync } from "node:child_process"
 import {
-  copyFileSync,
-  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
-  readlinkSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -17,7 +14,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { join, relative, sep } from "node:path"
 import { tmpdir } from "node:os"
 import { fingerprint } from "../../identity.ts"
 import {
@@ -84,7 +81,8 @@ function pathContains(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(sep))
 }
 
-function assertNoSymlinks(directory: string, allowedLinksWithin?: string) {
+function assertNoSymlinks(directory: string) {
+  const ownedRoot = realpathSync(directory)
   const pending = [directory]
   while (pending.length) {
     const current = pending.pop()!
@@ -92,9 +90,10 @@ function assertNoSymlinks(directory: string, allowedLinksWithin?: string) {
       const child = join(current, entry)
       const info = lstatSync(child)
       if (info.isSymbolicLink()) {
-        if (!allowedLinksWithin || !pathContains(allowedLinksWithin, realpathSync(child)))
+        const target = realpathSync(child)
+        if (!pathContains(ownedRoot, target))
           throw new Error(
-            "Verification resource contains a symbolic link outside its owned project dependency tree",
+            `Verification resource contains a symbolic link outside its owned context: ${child} -> ${target}`,
           )
         continue
       }
@@ -135,14 +134,21 @@ const dependencyFields = [
   "peerDependencies",
 ] as const
 
-const dependencyLockFiles = [
-  "bun.lock",
-  "bun.lockb",
+const bunDependencyLockFiles = ["bun.lock", "bun.lockb"] as const
+
+const unsupportedDependencyLockFiles = [
   "package-lock.json",
   "npm-shrinkwrap.json",
   "pnpm-lock.yaml",
   "yarn.lock",
 ] as const
+
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0)!
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+}
 
 function lstatIfPresent(path: string) {
   try {
@@ -177,7 +183,9 @@ function candidateDependencySpecs(manifest: Record<string, unknown>): Array<[str
       if (
         !/^(?:@[A-Za-z0-9_.-]+\/)?[A-Za-z0-9_.-]+$/.test(name) ||
         name.split("/").some((part) => part === "." || part === "..") ||
-        typeof specification !== "string"
+        typeof specification !== "string" ||
+        !specification.trim() ||
+        hasControlCharacters(specification)
       )
         throw new Error(`Candidate dependency ${name} cannot be safely resolved in isolation`)
       dependencies.push([name, specification])
@@ -186,11 +194,138 @@ function candidateDependencySpecs(manifest: Record<string, unknown>): Array<[str
   return dependencies.sort(([a], [b]) => a.localeCompare(b))
 }
 
+function assertCandidateFileCommitted(
+  candidateWorkspace: string,
+  candidateArtifact: string,
+  relativePath: string,
+): void {
+  const candidateRoot = realpathSync(candidateWorkspace)
+  const info = lstatIfPresent(join(candidateRoot, relativePath))
+  if (!info || info.isSymbolicLink() || !info.isFile())
+    throw new Error(
+      `Candidate dependency environment cannot be isolated: ${relativePath} is not a regular committed candidate file`,
+    )
+  let committed: string
+  try {
+    committed = execFileSync("git", ["rev-parse", `${candidateArtifact}:${relativePath}`], {
+      cwd: candidateRoot,
+      timeout: 30_000,
+      encoding: "utf8",
+    })
+  } catch {
+    throw new Error(
+      `Candidate dependency environment cannot be isolated: ${relativePath} is not present in the committed candidate`,
+    )
+  }
+  const working = execFileSync("git", ["hash-object", "--", relativePath], {
+    cwd: candidateRoot,
+    timeout: 30_000,
+    encoding: "utf8",
+  })
+  if (working.trim() !== committed.trim())
+    throw new Error(
+      `Candidate dependency environment cannot be isolated: ${relativePath} differs from the committed candidate`,
+    )
+}
+
+function assertCandidateDependencySetup(
+  candidateWorkspace: string,
+  candidateArtifact: string,
+  manifest: Record<string, unknown>,
+): void {
+  const candidateRoot = realpathSync(candidateWorkspace)
+  const dependencies = candidateDependencySpecs(manifest)
+  assertCandidateFileCommitted(candidateRoot, candidateArtifact, "package.json")
+  const lockfiles = bunDependencyLockFiles.filter((name) => {
+    const info = lstatIfPresent(join(candidateRoot, name))
+    if (!info) return false
+    if (info.isSymbolicLink() || !info.isFile())
+      throw new Error(`Candidate dependency lockfile ${name} is not a regular file`)
+    return true
+  })
+  const unsupported = unsupportedDependencyLockFiles.find((name) =>
+    lstatIfPresent(join(candidateRoot, name)),
+  )
+  if (unsupported)
+    throw new Error(
+      `Candidate dependency environment cannot be isolated: ${unsupported} is present but only committed Bun lockfiles are supported`,
+    )
+  if (lockfiles.length > 1)
+    throw new Error(
+      "Candidate dependency environment cannot be isolated: multiple Bun lockfiles are present",
+    )
+  const packageManager = manifest.packageManager
+  if (
+    typeof packageManager === "string" &&
+    !packageManager.startsWith("bun@") &&
+    (dependencies.length > 0 || lockfiles.length > 0)
+  )
+    throw new Error(
+      `Candidate dependency environment cannot be isolated: packageManager ${packageManager} is not Bun`,
+    )
+  if (dependencies.length > 0 && lockfiles.length === 0)
+    throw new Error(
+      "Candidate dependency environment cannot be isolated: candidate dependencies require a committed bun.lock or bun.lockb",
+    )
+  for (const lockfile of lockfiles)
+    assertCandidateFileCommitted(candidateRoot, candidateArtifact, lockfile)
+
+  for (const [name, specification] of dependencies) {
+    if (!specification.startsWith("file:")) continue
+    const relativePath = specification.slice("file:".length)
+    if (
+      !relativePath ||
+      relativePath.includes("\\") ||
+      relativePath.startsWith("/") ||
+      relativePath.split("/").some((part) => !part || part === "." || part === "..")
+    )
+      throw new Error(
+        `Candidate dependency environment cannot be isolated: ${name} uses a file source outside the candidate-relative package contract`,
+      )
+    const packagePath = join(candidateRoot, relativePath)
+    const info = lstatIfPresent(packagePath)
+    if (
+      !info ||
+      info.isSymbolicLink() ||
+      !info.isFile() ||
+      !pathContains(candidateRoot, realpathSync(packagePath))
+    )
+      throw new Error(
+        `Candidate dependency environment cannot be isolated: ${name} file source is unavailable inside the candidate`,
+      )
+    assertCandidateFileCommitted(candidateRoot, candidateArtifact, relativePath)
+  }
+}
+
+function installCandidateDependencies(
+  candidateWorkspace: string,
+  environment: Record<string, string>,
+) {
+  try {
+    execFileSync(
+      process.execPath,
+      ["install", "--frozen-lockfile", "--ignore-scripts", "--no-save", "--no-progress"],
+      {
+        cwd: candidateWorkspace,
+        env: environment,
+        timeout: 120_000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    )
+  } catch {
+    throw new Error(
+      "Candidate dependency environment cannot be isolated: Bun could not install the committed candidate lockfile",
+    )
+  }
+}
+
 function candidateDependencyEnvironmentIdentity(
   dependencyRoot: string,
   manifest: Record<string, unknown> | undefined,
+  candidateWorkspace: string,
 ): string {
   const root = realpathSync(dependencyRoot)
+  const candidateRoot = realpathSync(candidateWorkspace)
   const installed = (manifest ? candidateDependencySpecs(manifest) : []).map(
     ([name, specification]) => {
       const packageJSON = join(root, ...name.split("/"), "package.json")
@@ -205,88 +340,42 @@ function candidateDependencyEnvironmentIdentity(
         )
       const contents = readFileSync(resolved)
       const value: unknown = JSON.parse(contents.toString("utf8"))
-      const version =
-        typeof value === "object" && value !== null && !Array.isArray(value)
-          ? (value as { version?: unknown }).version
-          : undefined
-      let satisfies = false
-      try {
-        satisfies = typeof version === "string" && Bun.semver.satisfies(version, specification)
-      } catch {
-        // Unsupported protocols/ranges are a concrete missing candidate environment.
-      }
-      if (!satisfies)
+      if (typeof value !== "object" || value === null || Array.isArray(value))
         throw new Error(
-          `Candidate dependency environment cannot be isolated: private ${name}@${String(version ?? "unknown")} does not satisfy ${specification}`,
+          `Candidate dependency environment cannot be isolated: ${name} has an invalid private package manifest`,
         )
-      return { name, specification, version, manifest: contents.toString("base64") }
+      const packageManifest = value as { name?: unknown; version?: unknown }
+      return {
+        name,
+        specification,
+        installedName: typeof packageManifest.name === "string" ? packageManifest.name : null,
+        version: typeof packageManifest.version === "string" ? packageManifest.version : null,
+        manifest: contents.toString("base64"),
+      }
     },
   )
-  return fingerprint({ schemaVersion: 1, root, installed })
-}
-
-function assertCandidateDependencyEnvironment(
-  projectDirectory: string,
-  candidateWorkspace: string,
-  dependencySource: string,
-  manifest: Record<string, unknown>,
-): void {
-  for (const name of dependencyLockFiles) {
-    const projectPath = join(projectDirectory, name)
-    const candidatePath = join(candidateWorkspace, name)
-    const projectInfo = lstatIfPresent(projectPath)
-    const candidateInfo = lstatIfPresent(candidatePath)
-    const projectExists = projectInfo !== undefined
-    const candidateExists = candidateInfo !== undefined
-    if (projectExists !== candidateExists)
-      throw new Error(
-        `Candidate dependency environment cannot be isolated: ${name} differs from the installed project lock state`,
+  const sourceFiles = (manifest ? candidateDependencySpecs(manifest) : [])
+    .filter(([, specification]) => specification.startsWith("file:"))
+    .map(([name, specification]) => {
+      const relativePath = specification.slice("file:".length)
+      const source = join(candidateRoot, relativePath)
+      const info = lstatIfPresent(source)
+      if (
+        !info ||
+        info.isSymbolicLink() ||
+        !info.isFile() ||
+        !pathContains(candidateRoot, realpathSync(source))
       )
-    if (!projectInfo || !candidateInfo) continue
-    if (
-      projectInfo.isSymbolicLink() ||
-      candidateInfo.isSymbolicLink() ||
-      !projectInfo.isFile() ||
-      !candidateInfo.isFile() ||
-      !readFileSync(projectPath).equals(readFileSync(candidatePath))
-    )
-      throw new Error(
-        `Candidate dependency environment cannot be isolated: ${name} does not match the installed project lock`,
-      )
-  }
-
-  for (const [name, specification] of candidateDependencySpecs(manifest)) {
-    const packageJSON = join(dependencySource, ...name.split("/"), "package.json")
-    if (!existsSync(packageJSON))
-      throw new Error(
-        `Candidate dependency environment cannot be isolated: ${name}@${specification} is not installed`,
-      )
-    let installed: unknown
-    try {
-      const path = realpathSync(packageJSON)
-      if (!pathContains(realpathSync(dependencySource), path))
-        throw new Error("dependency manifest resolves outside its installed project tree")
-      installed = JSON.parse(readFileSync(path, "utf8"))
-    } catch {
-      throw new Error(
-        `Candidate dependency environment cannot be isolated: ${name}@${specification} has no readable installed manifest`,
-      )
-    }
-    const version =
-      typeof installed === "object" && installed !== null && !Array.isArray(installed)
-        ? (installed as { version?: unknown }).version
-        : undefined
-    let satisfies = false
-    try {
-      satisfies = typeof version === "string" && Bun.semver.satisfies(version, specification)
-    } catch {
-      // Unsupported protocols/ranges are a concrete inability to use this environment.
-    }
-    if (!satisfies)
-      throw new Error(
-        `Candidate dependency environment cannot be isolated: installed ${name}@${String(version ?? "unknown")} does not satisfy ${specification}`,
-      )
-  }
+        throw new Error(
+          `Candidate dependency environment cannot be isolated: ${name} file source is unavailable inside the candidate`,
+        )
+      return {
+        name,
+        specification,
+        sha256: createHash("sha256").update(readFileSync(source)).digest("hex"),
+      }
+    })
+  return fingerprint({ schemaVersion: 1, root, installed, sourceFiles })
 }
 
 function temporaryDirectoryAlias(input: {
@@ -329,69 +418,6 @@ function temporaryDirectoryAlias(input: {
   return { path, target: input.target, device: info.dev, inode: info.ino }
 }
 
-function cloneDependencyTree(sourceInput: string, destination: string): void {
-  const source = realpathSync(sourceInput)
-  const rootInfo = lstatSync(source)
-  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink())
-    throw new Error("Project dependency source is not a real directory")
-  if (readdirSync(destination).length)
-    throw new Error("Project dependency resource is not empty before snapshot")
-
-  const copyDirectory = (sourceDirectory: string, destinationDirectory: string): void => {
-    for (const entry of readdirSync(sourceDirectory)) {
-      if (sourceDirectory === source && [".cache", ".vite"].includes(entry)) continue
-      const sourcePath = join(sourceDirectory, entry)
-      const destinationPath = join(destinationDirectory, entry)
-      const info = lstatSync(sourcePath)
-      if (info.isSymbolicLink()) {
-        let target: string
-        try {
-          target = realpathSync(sourcePath)
-        } catch {
-          throw new Error("Project dependency source contains a dangling symbolic link")
-        }
-        if (!pathContains(source, target))
-          throw new Error("Project dependency source links to a shared external resource")
-        const link = readlinkSync(sourcePath)
-        const targetPath = isAbsolute(link)
-          ? join(destination, relative(source, target))
-          : resolve(dirname(sourcePath), link)
-        const clonedLink = isAbsolute(link) ? relative(dirname(destinationPath), targetPath) : link
-        symlinkSync(clonedLink, destinationPath)
-      } else if (info.isDirectory()) {
-        mkdirSync(destinationPath, { mode: info.mode & 0o777 })
-        copyDirectory(sourcePath, destinationPath)
-      } else if (info.isFile()) {
-        copyFileSync(sourcePath, destinationPath, constants.COPYFILE_FICLONE)
-        chmodSync(destinationPath, info.mode & 0o777)
-      } else {
-        throw new Error("Project dependency source contains a non-regular entry")
-      }
-    }
-  }
-  copyDirectory(source, destination)
-  const resolverRoot = join(destination, "node_modules")
-  try {
-    lstatSync(resolverRoot)
-    throw new Error(
-      "Project dependency snapshot already uses its reserved node_modules resolver path",
-    )
-  } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error
-  }
-  // Bun's test runner and Node resolve peer imports from real package paths.
-  // The candidate mount points here, so give canonicalized package paths the
-  // same node_modules ancestor that the source project had.
-  symlinkSync(".", resolverRoot, "dir")
-  assertOwnedDependencyTree(destination)
-}
-
 /** Allocate only runtime-owned, operation-specific writable check resources. */
 export function createRetainedCheckContext(input: {
   rootDirectory: string
@@ -427,6 +453,9 @@ export function createRetainedCheckContext(input: {
     pathContains(candidateWorkspace, originalWorkspace)
   )
     throw new Error("Original and candidate workspaces must be distinct canonical checkouts")
+  const candidateManifest = candidatePackageManifest(candidateWorkspace)
+  if (candidateManifest)
+    assertCandidateDependencySetup(candidateWorkspace, input.candidateArtifact, candidateManifest)
   const directory = join(
     root,
     `retained-${input.operationID}-${input.generation}`,
@@ -451,8 +480,6 @@ export function createRetainedCheckContext(input: {
     resources.push({ name, path, realPath, device: info.dev, inode: info.ino })
   }
 
-  const candidateManifest = candidatePackageManifest(candidateWorkspace)
-  const dependencySource = join(projectDirectory, "node_modules")
   const candidateDependencies = join(candidateWorkspace, "node_modules")
   let dependencyLink: RetainedCheckContext["dependencyLink"] = null
   if (candidateManifest) {
@@ -468,31 +495,7 @@ export function createRetainedCheckContext(input: {
       })()
     )
       throw new Error("Candidate checkout already contains an unowned node_modules resource")
-    const declaredDependencies = candidateDependencySpecs(candidateManifest)
-    let dependencySourcePath: string | undefined
-    if (declaredDependencies.length) {
-      if (!existsSync(dependencySource))
-        throw new Error(
-          `Candidate dependency environment cannot be isolated: ${declaredDependencies[0]![0]} is not installed`,
-        )
-      if (lstatSync(dependencySource).isSymbolicLink())
-        throw new Error(
-          "Candidate dependency environment cannot be isolated from a shared symbolic link",
-        )
-      assertCandidateDependencyEnvironment(
-        projectDirectory,
-        candidateWorkspace,
-        dependencySource,
-        candidateManifest,
-      )
-      dependencySourcePath = dependencySource
-    }
     const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
-    if (dependencySourcePath) cloneDependencyTree(dependencySourcePath, dependencyResource.realPath)
-    else {
-      symlinkSync(".", join(dependencyResource.realPath, "node_modules"), "dir")
-      assertOwnedDependencyTree(dependencyResource.realPath)
-    }
     const link = relative(candidateWorkspace, dependencyResource.realPath)
     symlinkSync(link, candidateDependencies, "dir")
     if (realpathSync(candidateDependencies) !== dependencyResource.realPath)
@@ -535,9 +538,56 @@ export function createRetainedCheckContext(input: {
     checkID: input.checkID,
     target: temporaryDirectoryResource.realPath,
   })
+  const byName = Object.fromEntries(resources.map((resource) => [resource.name, resource.realPath]))
+  const npmCache = join(byName.cache!, "npm")
+  mkdirSync(npmCache, { mode: 0o700 })
+  const globalGitConfig = join(byName.config!, "gitconfig")
+  writeFileSync(globalGitConfig, "", { flag: "wx", mode: 0o600 })
+  const environment: Record<string, string> = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: byName.home!,
+    TMPDIR: temporaryDirectoryLink?.path ?? byName.tmp!,
+    TMP: temporaryDirectoryLink?.path ?? byName.tmp!,
+    TEMP: temporaryDirectoryLink?.path ?? byName.tmp!,
+    XDG_CONFIG_HOME: byName.config!,
+    XDG_DATA_HOME: byName.data!,
+    XDG_CACHE_HOME: byName.cache!,
+    XDG_STATE_HOME: byName.state!,
+    BUN_INSTALL_CACHE_DIR: byName["bun-cache"]!,
+    BUN_CONFIG_DIR: byName.config!,
+    BUN_TMPDIR: byName.tmp!,
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(byName["bun-cache"]!, "transpiler-cache"),
+    npm_config_cache: npmCache,
+    NPM_CONFIG_CACHE: npmCache,
+    COREPACK_HOME: join(byName.data!, "corepack"),
+    GIT_CONFIG_GLOBAL: globalGitConfig,
+    GIT_CONFIG_NOSYSTEM: "1",
+    LAZERS_VERIFICATION_SQLITE: join(
+      resources.find((item) => item.name === "database")!.realPath,
+      "verification.sqlite",
+    ),
+    LANG: process.env.LANG ?? "C.UTF-8",
+    ...(process.env.LC_ALL === undefined ? {} : { LC_ALL: process.env.LC_ALL }),
+    ...(process.env.TZ === undefined ? {} : { TZ: process.env.TZ }),
+    ...(process.env.CI === undefined ? {} : { CI: process.env.CI }),
+    GIT_TERMINAL_PROMPT: "0",
+  }
+  if (candidateManifest && candidateDependencySpecs(candidateManifest).length > 0)
+    installCandidateDependencies(candidateWorkspace, environment)
+  const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
+  if (candidateManifest) {
+    const resolverRoot = join(dependencyResource.realPath, "node_modules")
+    if (lstatIfPresent(resolverRoot))
+      throw new Error("Candidate dependency install occupied its reserved peer resolver path")
+    // Package imports resolve peers through the same node_modules parent as the
+    // candidate checkout, while remaining entirely inside this owned resource.
+    symlinkSync(".", resolverRoot, "dir")
+  }
+  assertOwnedDependencyTree(dependencyResource.realPath)
   const dependencyEnvironmentIdentity = candidateDependencyEnvironmentIdentity(
-    resources.find((resource) => resource.name === "dependencies")!.realPath,
+    dependencyResource.realPath,
     candidateManifest,
+    candidateWorkspace,
   )
 
   const identity = fingerprint({
@@ -598,37 +648,6 @@ export function createRetainedCheckContext(input: {
     db.close()
   }
 
-  const byName = Object.fromEntries(resources.map((resource) => [resource.name, resource.realPath]))
-  const npmCache = join(byName.cache!, "npm")
-  mkdirSync(npmCache, { mode: 0o700 })
-  const globalGitConfig = join(byName.config!, "gitconfig")
-  writeFileSync(globalGitConfig, "", { flag: "wx", mode: 0o600 })
-  const environment: Record<string, string> = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
-    HOME: byName.home!,
-    TMPDIR: temporaryDirectoryLink?.path ?? byName.tmp!,
-    TMP: temporaryDirectoryLink?.path ?? byName.tmp!,
-    TEMP: temporaryDirectoryLink?.path ?? byName.tmp!,
-    XDG_CONFIG_HOME: byName.config!,
-    XDG_DATA_HOME: byName.data!,
-    XDG_CACHE_HOME: byName.cache!,
-    XDG_STATE_HOME: byName.state!,
-    BUN_INSTALL_CACHE_DIR: byName["bun-cache"]!,
-    BUN_CONFIG_DIR: byName.config!,
-    BUN_TMPDIR: byName.tmp!,
-    BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(byName["bun-cache"]!, "transpiler-cache"),
-    npm_config_cache: npmCache,
-    NPM_CONFIG_CACHE: npmCache,
-    COREPACK_HOME: join(byName.data!, "corepack"),
-    GIT_CONFIG_GLOBAL: globalGitConfig,
-    GIT_CONFIG_NOSYSTEM: "1",
-    LAZERS_VERIFICATION_SQLITE: database,
-    LANG: process.env.LANG ?? "C.UTF-8",
-    ...(process.env.LC_ALL === undefined ? {} : { LC_ALL: process.env.LC_ALL }),
-    ...(process.env.TZ === undefined ? {} : { TZ: process.env.TZ }),
-    ...(process.env.CI === undefined ? {} : { CI: process.env.CI }),
-    GIT_TERMINAL_PROMPT: "0",
-  }
   const environmentIdentity = fingerprint({
     base: retainedVerificationEnvironmentIdentity(),
     identity,
@@ -773,14 +792,23 @@ export function observeRetainedCheckContext(context: RetainedCheckContext): bool
     const dependencyRoot = context.resources.find(
       (resource) => resource.name === "dependencies",
     )!.realPath
+    const candidateManifest = candidatePackageManifest(context.candidateWorkspace)
+    if (candidateManifest)
+      assertCandidateDependencySetup(
+        context.candidateWorkspace,
+        procedureBinding.candidateArtifact,
+        candidateManifest,
+      )
     assertOwnedDependencyTree(dependencyRoot)
     if (
       candidateDependencyEnvironmentIdentity(
         dependencyRoot,
-        candidatePackageManifest(context.candidateWorkspace),
+        candidateManifest,
+        context.candidateWorkspace,
       ) !== procedureBinding.dependencyEnvironmentIdentity
     )
       return false
+    assertNoSymlinks(context.directory)
     const database = join(
       context.resources.find((item) => item.name === "database")!.realPath,
       "verification.sqlite",
@@ -846,10 +874,7 @@ export function removeRetainedCheckContext(context: RetainedCheckContext): void 
   if (context.dependencyLink) unlinkSync(context.dependencyLink.path)
   if (context.procedureBinding.temporaryDirectoryLink)
     unlinkSync(context.procedureBinding.temporaryDirectoryLink.path)
-  assertNoSymlinks(
-    context.directory,
-    context.resources.find((resource) => resource.name === "dependencies")!.realPath,
-  )
+  assertNoSymlinks(context.directory)
   rmSync(context.directory, { recursive: true, force: false })
 }
 
@@ -987,15 +1012,24 @@ export function observeRetainedCheckIsolationWitness(
     if (names.size !== resourceNames.length) {
       return false
     }
+    const candidateManifest = candidatePackageManifest(expected.candidateWorkspace)
+    if (candidateManifest)
+      assertCandidateDependencySetup(
+        expected.candidateWorkspace,
+        expected.candidateArtifact,
+        candidateManifest,
+      )
     assertOwnedDependencyTree(join(root, "dependencies"))
     if (
       candidateDependencyEnvironmentIdentity(
         join(root, "dependencies"),
-        candidatePackageManifest(expected.candidateWorkspace),
+        candidateManifest,
+        expected.candidateWorkspace,
       ) !== procedureBinding.dependencyEnvironmentIdentity
     ) {
       return false
     }
+    assertNoSymlinks(root)
     if (procedureBinding.dependencyLink) {
       const dependencyPath = join(record.candidateWorkspace as string, "node_modules")
       const dependencyResource = join(root, "dependencies")
@@ -1082,7 +1116,7 @@ export function removeRetainedCheckContextFromWitness(
   const binding = (witness as { procedureBinding: RetainedProcedureBinding }).procedureBinding
   if (binding.dependencyLink) unlinkSync(binding.dependencyLink.path)
   if (binding.temporaryDirectoryLink) unlinkSync(binding.temporaryDirectoryLink.path)
-  assertNoSymlinks(contextPath, join(contextPath, "dependencies"))
+  assertNoSymlinks(contextPath)
   rmSync(contextPath, { recursive: true, force: false })
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { execFileSync } from "node:child_process"
 import {
   existsSync,
   mkdirSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { git, runCheck } from "../artifacts.ts"
 import {
   createRetainedCheckContext,
@@ -35,6 +36,10 @@ function writeFixtureProject(root: string) {
     "src/verification/probe",
     "test/retained-verification",
     "scripts",
+    "vendor",
+    "node_modules/.bin",
+    "node_modules/fixture-package/bin",
+    "node_modules/fixture-peer",
   ])
     mkdirSync(join(root, directory), { recursive: true })
   for (const directory of [
@@ -43,12 +48,22 @@ function writeFixtureProject(root: string) {
     "test/retained-verification",
   ])
     writeFileSync(join(root, directory, ".keep"), "fixture target\n")
-  mkdirSync(join(root, "node_modules", ".bin"), { recursive: true })
-  mkdirSync(join(root, "node_modules", "fixture-package", "bin"), { recursive: true })
-  mkdirSync(join(root, "node_modules", "fixture-peer"), { recursive: true })
+  writeFixtureTarball(root, "fixture-peer", "1.0.0", {
+    "package.json":
+      '{"name":"fixture-peer","version":"1.0.0","type":"module","exports":"./index.js"}\n',
+    "index.js": 'export const peerMarker = "peer-resolved-through-private-node-modules"\n',
+  })
+  writeFixtureTarball(root, "fixture-package", "1.0.0", {
+    "package.json":
+      '{"name":"fixture-package","version":"1.0.0","type":"module","exports":"./index.js","bin":"bin/cli.js"}\n',
+    "index.js":
+      'import { peerMarker } from "fixture-peer"\n' +
+      "export const marker = `private dependency snapshot: ${peerMarker}`\n",
+    "bin/cli.js": "export {}\n",
+  })
   writeFileSync(
     join(root, "package.json"),
-    '{"name":"retained-fixture","version":"1.0.0","scripts":{"build:fixture":"bun scripts/build-fixture.ts"},"dependencies":{"fixture-package":"1.0.0"}}\n',
+    '{"name":"retained-fixture","version":"1.0.0","packageManager":"bun@1.4.4-canary.1","scripts":{"build:fixture":"bun scripts/build-fixture.ts"},"dependencies":{"fixture-package":"file:vendor/fixture-package-1.0.0.tgz","fixture-peer":"file:vendor/fixture-peer-1.0.0.tgz"}}\n',
   )
   writeFileSync(join(root, ".gitignore"), "node_modules/\n.cache/\ndist/\n")
   writeFileSync(
@@ -104,6 +119,45 @@ function writeFixtureProject(root: string) {
       `    expect(db.query("SELECT value FROM writes").get()).toEqual({ value: "private" })\n` +
       `  } finally { db.close() }\n` +
       `})\n`,
+  )
+  writeFixtureBunLock(root)
+}
+
+function writeFixtureTarball(
+  root: string,
+  name: string,
+  version: string,
+  files: Record<string, string>,
+): string {
+  const packageRoot = join(root, "vendor", `${name}-${version}`)
+  mkdirSync(packageRoot, { recursive: true })
+  for (const [path, contents] of Object.entries(files)) {
+    mkdirSync(dirname(join(packageRoot, path)), { recursive: true })
+    writeFileSync(join(packageRoot, path), contents)
+  }
+  const archive = join(root, "vendor", `${name}-${version}.tgz`)
+  execFileSync("tar", ["-czf", archive, "-C", packageRoot, "."])
+  return archive
+}
+
+function writeFixtureBunLock(root: string): void {
+  const cache = join(root, ".cache", "bun-install")
+  const config = join(root, ".cache", "bun-config")
+  mkdirSync(cache, { recursive: true })
+  mkdirSync(config, { recursive: true })
+  execFileSync(
+    process.execPath,
+    ["install", "--lockfile-only", "--save-text-lockfile", "--ignore-scripts", "--no-progress"],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        BUN_INSTALL_CACHE_DIR: cache,
+        BUN_CONFIG_DIR: config,
+      },
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    },
   )
 }
 
@@ -181,9 +235,6 @@ test("an authored Bun test runs in an isolated checkout with private dependencie
     expect(temporaryPath).toHaveLength(tmpdir().length)
     expect(realpathSync(temporaryPath)).toBe(temporaryResource.realPath)
   }
-  expect(realpathSync(join(canonicalCandidate, "node_modules", ".bin", "fixture"))).toBe(
-    join(context.directory, "dependencies", "fixture-package", "bin", "cli.js"),
-  )
   const sourceDependency = statSync(join(root, "node_modules", "fixture-package", "index.js"))
   const privateDependency = statSync(
     join(context.directory, "dependencies", "fixture-package", "index.js"),
@@ -269,8 +320,10 @@ test("another project executes a new scoped target against its committed depende
       `import { dirname, join } from "node:path"\n` +
       `import { expect, test } from "bun:test"\n` +
       `import { peerMarker } from "fixture-peer"\n` +
+      `import { candidateMarker } from "candidate-only-dependency"\n` +
       `test("runs the project-authored target with its candidate dependency environment", () => {\n` +
       `  expect(peerMarker).toBe("peer-resolved-through-private-node-modules")\n` +
+      `  expect(candidateMarker).toBe("only-in-committed-candidate-lockfile")\n` +
       `  const sentinel = join(process.env.HOME!, "profile", "candidate")\n` +
       `  mkdirSync(dirname(sentinel), { recursive: true })\n` +
       `  appendFileSync(sentinel, "candidate\\n")\n` +
@@ -283,17 +336,32 @@ test("another project executes a new scoped target against its committed depende
       `})\n`,
   )
   const baseline = commitFixture(root)
+  const baselineLock = readFileSync(join(root, "bun.lock"))
+  const baselineManifest = readFileSync(join(root, "package.json"))
   git(root, ["checkout", "-b", "candidate-dependency-change"])
+  writeFixtureTarball(root, "candidate-only-dependency", "2.3.4", {
+    "package.json":
+      '{"name":"candidate-only-dependency","version":"2.3.4","type":"module","exports":"./index.js"}\n',
+    "index.js": 'export const candidateMarker = "only-in-committed-candidate-lockfile"\n',
+  })
   const candidateManifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
     dependencies: Record<string, string>
   }
-  candidateManifest.dependencies["fixture-peer"] = "1.0.0"
+  candidateManifest.dependencies["candidate-only-dependency"] =
+    "file:vendor/candidate-only-dependency-2.3.4.tgz"
   writeFileSync(join(root, "package.json"), `${JSON.stringify(candidateManifest)}\n`)
-  git(root, ["add", "package.json"])
+  writeFixtureBunLock(root)
+  expect(readFileSync(join(root, "bun.lock")).equals(baselineLock)).toBe(false)
+  git(root, ["add", "package.json", "bun.lock", "vendor/candidate-only-dependency-2.3.4.tgz"])
   git(root, ["commit", "-m", "candidate dependency manifest"])
   const candidateArtifact = git(root, ["rev-parse", "HEAD"])
   git(root, ["checkout", "main"])
   git(root, ["worktree", "add", "--detach", candidate, candidateArtifact])
+  expect(readFileSync(join(candidate, "bun.lock")).equals(baselineLock)).toBe(false)
+  expect(readFileSync(join(root, "bun.lock")).equals(baselineLock)).toBe(true)
+  expect(readFileSync(join(root, "package.json")).equals(baselineManifest)).toBe(true)
+  expect(existsSync(join(root, "node_modules", "candidate-only-dependency"))).toBe(false)
+  const rootPeerContents = readFileSync(join(root, "node_modules", "fixture-peer", "index.js"))
 
   writeFileSync(taskDatabase, "")
   new Database(taskDatabase).close()
@@ -318,6 +386,17 @@ test("another project executes a new scoped target against its committed depende
     priorResourcePaths: [oldProfile],
     procedurePlan: procedure.plan,
   })
+  const privateOnlyPackage = JSON.parse(
+    readFileSync(
+      join(
+        context.resources.find((resource) => resource.name === "dependencies")!.realPath,
+        "candidate-only-dependency",
+        "package.json",
+      ),
+      "utf8",
+    ),
+  ) as { name?: string; version?: string }
+  expect(privateOnlyPackage).toMatchObject({ name: "candidate-only-dependency", version: "2.3.4" })
   const witness = retainedCheckIsolationWitness(context)
   const receipt = await runCheck(
     context.candidateWorkspace,
@@ -339,6 +418,12 @@ test("another project executes a new scoped target against its committed depende
   expect(receipt.unchanged).toBe(true)
   expect(observeRetainedCheckContext(context)).toBe(true)
   expect(readFileSync(join(oldProfile, "candidate"), "utf8")).toBe("old\n")
+  expect(readFileSync(join(root, "bun.lock")).equals(baselineLock)).toBe(true)
+  expect(readFileSync(join(root, "package.json")).equals(baselineManifest)).toBe(true)
+  expect(
+    readFileSync(join(root, "node_modules", "fixture-peer", "index.js")).equals(rootPeerContents),
+  ).toBe(true)
+  expect(existsSync(join(root, "node_modules", "candidate-only-dependency"))).toBe(false)
   expect(readFileSync(join(context.environment.HOME!, "profile", "candidate"), "utf8")).toBe(
     "candidate\n",
   )
@@ -379,6 +464,55 @@ test("another project executes a new scoped target against its committed depende
     procedurePlan: procedure.plan,
   })
   expect(existsSync(join(context.candidateWorkspace, "node_modules"))).toBe(false)
+})
+
+test("an unavailable candidate-committed dependency source blocks before resources or checks", () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-retained-missing-dependency-source-"))
+  const state = mkdtempSync(join(tmpdir(), "lazers-retained-missing-dependency-state-"))
+  const candidate = join(state, "candidate")
+  const taskDatabase = join(state, "tasks.sqlite")
+  cleanups.push(() => {
+    try {
+      git(root, ["worktree", "remove", candidate])
+    } catch {
+      // A failing assertion still cleans only this test fixture.
+    }
+    rmSync(root, { recursive: true, force: true })
+    rmSync(state, { recursive: true, force: true })
+  })
+
+  writeFileSync(join(root, "tracked.txt"), "missing locked source fixture\n")
+  writeFixtureProject(root)
+  const artifact = commitFixture(root)
+  git(root, ["worktree", "add", "--detach", candidate, artifact])
+  rmSync(join(candidate, "vendor", "fixture-peer-1.0.0.tgz"))
+  writeFileSync(taskDatabase, "")
+  new Database(taskDatabase).close()
+  const procedure = retainedProcedurePlan("bun test src/runner")
+  if (procedure.status !== "supported") throw new Error(procedure.reason)
+  const operationID = crypto.randomUUID()
+
+  expect(() =>
+    createRetainedCheckContext({
+      rootDirectory: state,
+      operationID,
+      generation: 1,
+      phase: "task",
+      checkID: "missing-dependency-source",
+      originalWorkspace: root,
+      candidateWorkspace: candidate,
+      taskDatabase,
+      projectDirectory: root,
+      candidateArtifact: artifact,
+      priorResourcePaths: [],
+      procedurePlan: procedure.plan,
+    }),
+  ).toThrow(
+    "Candidate dependency environment cannot be isolated: fixture-peer file source is unavailable",
+  )
+  expect(existsSync(join(state, `retained-${operationID}-1`))).toBe(false)
+  expect(existsSync(join(candidate, "node_modules"))).toBe(false)
+  expect(existsSync(join(root, "node_modules", "fixture-peer"))).toBe(true)
 })
 
 test("candidate-declared build scripts execute with private build outputs and mutable resources", async () => {
