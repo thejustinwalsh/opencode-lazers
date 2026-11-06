@@ -26,7 +26,7 @@ Independent checks:
 - The broader rerun with a 30-second default timeout completed with 599 pass,
   one failure and one subsequent error (7,679 assertions). The remaining test,
   `identical task and combined assertion/artifact evidence remains phase- and
-  task-bound`, has its own explicit ten-second timeout and exceeded it. It passed
+task-bound`, has its own explicit ten-second timeout and exceeded it. It passed
   in the earlier run. Log: `/private/tmp/lz138-current-runtime-bounded-tests.log`.
   This is still not a clean broad-suite pass. No production timeout or runtime
   acceptance rule changed. Repeat affected integration checks after the actual
