@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T04:08:00Z. The goal remains active: drive OpenCode Desktop until the
+Updated 2026-11-06T04:15:00Z. The goal remains active: drive OpenCode Desktop until the
 active roadmap is implemented, verified, integrated and cleaned; then present
 an observation-based improvement plan. Preserve the full backlog.
 
@@ -109,8 +109,12 @@ Native Tera High reviewer `ses_e52a5ae04ffeObat8Bt6imz4ci` compared
 `design/task-panel/tasks-focus-v2.png` with
 `.agents/docs/evidence/dogfood-20261106/147-running-desktop.png`.
 Tera completed review; visual acceptance remains open. Architect sent a genuine
-tagged correction to the original147 worker, now actively editing panel.tsx/css
-and the mounted activity test. Compact title-first rows; full hold reasons in
+tagged correction to the original147 worker, now inactive/succeeded at
+`ebdf41a044f761b78308f70eefedf24f2f113fc3`. Root source-reviewed the correction
+in native `/private/tmp/lz147-compact-review`, combined with keyed fix/current main.
+69 tests passed;6 menu tests passed after generating their required Radar build
+artifact. Mounted UI/keyed tests, fmt/lint/types/build passed. Keep the clean
+review tree for next combined integration; no canonical activation yet. Compact title-first rows; full hold reasons in
 selected inspector; preserve truthful foreground states and149 scope. Root owns
 keyed.ts separately. Use screenshots, not mockup-to-components.
 
@@ -134,7 +138,7 @@ Full independent review, integration and native retained-task walkthrough are
 still required. Luna reviewer `ses_e522ffd49ffeenRSBj8xvTAxMB` completed: NOT READY.
 Candidate dependency lockfiles still must equal root installed state; fixture only
 adds already-installed package without lockfile. Root confirmed isolation.ts228-255
-and sent the concrete defect to Architect for genuine same-worker138 correction.
+and sent the defect to Architect; original138 worker is active on the genuine correction.
 See `design/reviews/lz138-candidate-dependencies-review-20261106.md`.
 Review tests14/156assertions plus quality/build passed; no durable native receipts
 proved. Do not integrate d378 as full candidate-dependency support.
