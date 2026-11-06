@@ -631,6 +631,32 @@ try {
     }
   }
 
+  // Installed-plugin reload replaces main but retains the window's plugin memory.
+  {
+    const original = makeMain()
+    let replacement: MainHost | undefined
+    try {
+      const a = makeRuntime(original)
+      await until(() => a.runtime.state() === "ready", "normal reload original model")
+      const oldEpoch = (await a.files.identity()).providerEpoch
+      a.controller.abort()
+      await a.runtime.dispose()
+      assert.equal(allocations, 0, "the original renderer positively disposed its model")
+      await cleanupHost(original)
+
+      replacement = makeMain()
+      replacement.memory = original.memory
+      const b = makeRuntime(replacement)
+      assert.notEqual((await b.files.identity()).providerEpoch, oldEpoch)
+      await until(() => b.runtime.state() === "ready", "normal reload replacement model")
+      assert.equal(allocations, 1)
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (replacement) await cleanupHost(replacement)
+    }
+  }
+
   // A failed renderer disposal and a changed provider epoch never turn unknown ownership into a free cache.
   {
     const host = makeMain()
