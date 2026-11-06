@@ -57,9 +57,17 @@ EXISTING session with THREE INLINE PNG image parts and current source/index:
 - /private/tmp/lz-models-live-wide-first.png
 - design/models-panel/models-approved.png
 
-Main is awaiting Tera's source-grounded repair plan, then should reuse suitable
-queued UI work or create small linked corrections for Luna Max. Do not invent a
-new design or claim visual completion. DESIGN.md and the approved image govern.
+Tera completed successfully; saved final plan:
+design/reviews/tera-models-live-visual-review-20261106.md. Main should reuse suitable
+queued UI work or create small linked corrections for Luna Max. The continuation
+request has NOT reached Main: CUA can read AX/screenshot and click native controls,
+but paste/type/setValue have not produced an enabled composer; coordinate clicks
+returned noWindowsAvailable. Rebinding, raising/Bring All to Front and REPL reset
+were attempted. Latest native user input remains the prior three-image review
+request. A foreground/composer-click question is pending with the user. Do not
+blindly duplicate submissions or replace Desktop prompts with CLI/API prompts.
+DESIGN.md and the approved image govern. Preserve the full goal; other read-only
+review is possible while input is unavailable.
 
 VISUAL ACCEPTANCE FAILED in actual Desktop: Accepted header wraps across lines;
 rows become paragraphs; raw provider-ID chart labels truncate; multiple verbose
