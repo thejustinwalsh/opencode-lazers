@@ -14,16 +14,16 @@ Current desktop main log: `desktop/20261106T104644/main.log`; read-only extracti
 Relevant current-main records (local America/Detroit timestamps):
 
 -05:46:48.846 acquire: window1,generationSequence1,
- generationf68bb355-86b7-45ef-b5e1-f239615eaed3,
- providerb4431c07-5cc6-46b5-8285-c9455b4bed39.
+generationf68bb355-86b7-45ef-b5e1-f239615eaed3,
+providerb4431c07-5cc6-46b5-8285-c9455b4bed39.
 -05:47:39.374 handoff: window1,generationSequence2,
- generation0dcb4ae9-02db-4a98-a8fc-243482610ac0,
- provider360c28b8-1512-4db2-8054-d085c66c3531,
- operation9ab19199-b422-4c53-be4b-732bdc35e808,
- retirement7e347b41-dac9-4acc-a682-461cbd452e1c.
+generation0dcb4ae9-02db-4a98-a8fc-243482610ac0,
+provider360c28b8-1512-4db2-8054-d085c66c3531,
+operation9ab19199-b422-4c53-be4b-732bdc35e808,
+retirement7e347b41-dac9-4acc-a682-461cbd452e1c.
 -05:47:46.788 successor renderer session-ready.
 -05:48:01.756 actual questions job0b668e61-76c0-4625-b653-67b7ac042ff1
- completed425ms,19input/4outputtokens, matching Root's visible probe.
+completed425ms,19input/4outputtokens, matching Root's visible probe.
 
 `main.ts` logs handoff initiation, not its resolved result. Correlate subsequent
 success with the mechanical acquire/ensure/attach and renderer disposal predicates
