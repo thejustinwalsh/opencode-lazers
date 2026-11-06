@@ -870,6 +870,104 @@ test("adoption still rejects out-of-scope changes in the original worker artifac
   expect(f.store.adoptions(f.planID)).toHaveLength(0)
 })
 
+test("revoking a mistaken supplemental scope restores adoption without changing the task or history", async () => {
+  const f = fixture("failed-task")
+  const { node, attempt } = await strand(f)
+  const task = f.repository.get(f.task.id)
+  const candidate = landCandidate(f, node.artifact!)
+  await f.runtime.command(
+    {
+      requestID: "extra-scope",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "amend-scope",
+      taskID: f.task.id,
+      scopeAdditions: ["parallel-ui.txt"],
+      reason: "Mistaken attempt to authorize other integrated work",
+    },
+    "owner",
+  )
+  reserveActiveWriter(f, ["parallel-ui.txt"], "independent")
+  await expect(
+    f.runtime.command(adoptionCommand(f, attempt.id, node.artifact!, candidate), "owner"),
+  ).rejects.toThrow("conflicting worker")
+  const removal = {
+    requestID: "remove-mistaken-scope",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "amend-scope",
+    taskID: f.task.id,
+    scopeRemovals: ["parallel-ui.txt"],
+    reason: "Restore the task's actual authority",
+  }
+  await expect(f.runtime.command(removal, "foreign-owner")).rejects.toThrow("Only the plan owner")
+  await expect(
+    f.runtime.command({ ...removal, expectedVersion: removal.expectedVersion - 1 }, "owner"),
+  ).rejects.toThrow("Stale plan version")
+  await expect(
+    f.runtime.command({ ...removal, scopeRemovals: ["result.txt"] }, "owner"),
+  ).rejects.toThrow("cannot remove original task scope")
+  const result = await f.runtime.command(removal, "owner")
+  expect(await f.runtime.command(removal, "owner")).toEqual(result)
+  expect(f.store.effectiveWriteScope(f.task.id)).toEqual(["result.txt"])
+  expect(f.repository.get(f.task.id)).toEqual(task)
+  const history = f.store
+    .activity(f.planID, f.task.id)
+    .filter((entry) => entry.event === "SCOPE_AMENDED")
+  expect(history).toHaveLength(2)
+  expect(JSON.parse(history[0]!.payload)).toMatchObject({ additions: ["parallel-ui.txt"] })
+  expect(JSON.parse(history[1]!.payload)).toMatchObject({
+    removals: ["parallel-ui.txt"],
+    writeScope: ["result.txt"],
+  })
+  const requested = (await f.runtime.command(
+    adoptionCommand(f, attempt.id, node.artifact!, candidate),
+    "owner",
+  )) as { adoptionID: string }
+  expect(f.store.adoption(requested.adoptionID)?.state).toBe("pending")
+})
+
+test("supplemental scope cannot be revoked during a writer or an active adoption", async () => {
+  const f = fixture("failed-task")
+  const { node, attempt } = await strand(f)
+  const candidate = landCandidate(f, node.artifact!)
+  await f.runtime.command(
+    {
+      requestID: "extra-scope",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "amend-scope",
+      taskID: f.task.id,
+      scopeAdditions: ["extra.txt"],
+      reason: "Authorize a potential helper",
+    },
+    "owner",
+  )
+  const removal = () => ({
+    requestID: "revoke-extra",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "amend-scope",
+    taskID: f.task.id,
+    scopeRemovals: ["extra.txt"],
+    reason: "Helper is unnecessary",
+  })
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(attempt.id),
+  )
+  await expect(f.runtime.command(removal(), "owner")).rejects.toThrow(
+    "requires stopped task writers",
+  )
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attempt.id),
+  )
+  await f.runtime.command(adoptionCommand(f, attempt.id, node.artifact!, candidate), "owner")
+  await expect(f.runtime.command(removal(), "owner")).rejects.toThrow(
+    "A descendant adoption is pending",
+  )
+  expect(f.store.effectiveWriteScope(f.task.id)).toEqual(["result.txt", "extra.txt"])
+})
+
 test("identical task and combined assertion/artifact evidence remains phase- and task-bound", async () => {
   for (const firstPhase of ["task", "combined"] as const) {
     const f = fixture("failed-task", "shared-result")

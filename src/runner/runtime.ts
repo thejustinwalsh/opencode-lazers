@@ -2349,20 +2349,39 @@ export class TaskRuntime {
         }
       }
       if (command.action === "amend-scope") {
-        if (!command.taskID || !command.scopeAdditions?.length || !command.reason)
-          throw new Error("Scope amendment requires task, added paths and reason")
+        if (
+          !command.taskID ||
+          (!command.scopeAdditions?.length && !command.scopeRemovals?.length) ||
+          !command.reason
+        )
+          throw new Error("Scope amendment requires task, changed paths and reason")
         const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
         if (!node || terminal.has(plan.state) || ["accepted", "incorporated"].includes(node.state))
           throw new Error("Scope amendment requires unfinished work in this plan")
         const previous = this.store.effectiveWriteScope(node.task_id)
-        const writeScope = [...new Set([...previous, ...command.scopeAdditions])]
+        const original = this.store.repository.get(node.task_id)!.proposal.writeScope
+        const requestedRemovals = new Set(command.scopeRemovals ?? [])
+        if (original.some((path) => requestedRemovals.has(path)))
+          throw new Error("Scope amendment cannot remove original task scope")
+        if (command.scopeAdditions?.some((path) => requestedRemovals.has(path)))
+          throw new Error("Scope amendment cannot add and remove the same pattern")
+        const writeScope = [
+          ...new Set([
+            ...previous.filter((path) => !requestedRemovals.has(path)),
+            ...(command.scopeAdditions ?? []),
+          ]),
+        ]
         if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
         const additions = writeScope.filter((path) => !previous.includes(path))
-        if (!additions.length) return { status: "scope-unchanged", version: plan.version }
+        const removals = previous.filter((path) => !writeScope.includes(path))
+        if (!additions.length && !removals.length)
+          return { status: "scope-unchanged", version: plan.version }
         const active = ["preparing", "running", "verifying"]
         const writers = this.store
           .attempts(plan.id)
           .filter((a) => a.task_id === node.task_id && active.includes(a.state))
+        if (removals.length && writers.length)
+          throw new Error("Scope removal requires stopped task writers")
         if (writers.length) {
           for (const otherPlan of this.store.plans())
             for (const other of this.store.attempts(otherPlan.id))
@@ -2381,6 +2400,7 @@ export class TaskRuntime {
         }
         this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
           additions,
+          ...(removals.length ? { removals } : {}),
           writeScope,
           reason: command.reason,
           caller,

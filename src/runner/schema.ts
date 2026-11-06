@@ -217,6 +217,12 @@ export const CommandInput = z
         "Exact tagged native review input for reconcile or quarantine-source. Supply taskID and attemptID. Quarantine pins the current completed review for source-only archival; it does not establish task completion or background-idle proof.",
       ),
     scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
+    scopeRemovals: TaskProposalSchema.shape.writeScope
+      .min(1)
+      .optional()
+      .describe(
+        "Exact supplemental scope patterns to revoke for stopped work; original task scope remains.",
+      ),
     assertionID: z.string().max(64).optional(),
     artifact: z.string().max(128).optional(),
     descendantCommit: z
@@ -227,6 +233,12 @@ export const CommandInput = z
     targetBranch: z.string().min(1).max(200).optional(),
   })
   .superRefine((input, context) => {
+    if (input.scopeRemovals && input.action !== "amend-scope")
+      context.addIssue({
+        code: "custom",
+        path: ["scopeRemovals"],
+        message: "Scope removals require amend-scope",
+      })
     if (input.action === "retained-repair") {
       if (!input.taskID || !input.attemptID || !input.artifact || !input.reason?.trim())
         context.addIssue({
