@@ -7871,6 +7871,56 @@ test("a durably admitted same-attempt handoff reminder can finish with fresh mat
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
 })
 
+test("a verifying attempt reconciles its actual review input and resumes the same worker for correction", async () => {
+  const { f, attempt, reviewInputID } = await heldReviewInputFixture()
+  const planID = f.receipt.planID
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='verifying' WHERE id=?").run(attempt.id)
+    db.query("UPDATE runner_nodes SET state='verifying' WHERE plan_id=? AND task_id=?").run(
+      planID,
+      attempt.task_id,
+    )
+  })
+  const effects = f.store.effects(planID)
+  const reconciled = await f.runtime.command(reviewInputCommand(f, attempt, reviewInputID), "owner")
+  expect(reconciled).toMatchObject({ relationshipRecorded: true })
+  expect(f.store.attempts(planID)[0]!.state).toBe("verifying")
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Review found a concrete defect' WHERE id=?",
+      )
+      .run(planID),
+  )
+  const command = {
+    requestID: "resume-verifying-for-real-correction",
+    planID,
+    expectedVersion: f.store.plan(planID)!.version,
+    action: "resume" as const,
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    reason: "Correct the defect found during verification in the same worker",
+  }
+  expect(await f.runtime.command(command, "owner")).toMatchObject({ status: "resuming" })
+  const resumed = f.store.attempts(planID)[0]!
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(resumed).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+    workspace: attempt.workspace,
+    policy: attempt.policy,
+    state: "preparing",
+  })
+  expect(resumed.message_id).not.toBe(attempt.message_id)
+  expect(f.store.effects(planID)).toEqual(effects)
+  expect(f.store.nodes(planID)[0]!.state).toBe("running")
+  expect(await f.runtime.command(command, "owner")).toMatchObject({ status: "resuming" })
+  expect(f.store.attempts(planID)[0]!.message_id).toBe(resumed.message_id)
+  await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+})
+
 test("owner reconciliation binds an observed review input without replacing the assignment", async () => {
   const {
     f,

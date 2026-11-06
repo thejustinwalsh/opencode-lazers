@@ -31,6 +31,7 @@ export const taskMachine = createMachine({
     },
     verifying: {
       on: {
+        RESUME: "running",
         ACCEPT: "accepted",
         REPAIR: "ready",
         BLOCK: "blocked",

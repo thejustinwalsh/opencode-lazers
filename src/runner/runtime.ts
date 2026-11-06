@@ -991,14 +991,14 @@ export class TaskRuntime {
       !proposalNode ||
       !latest ||
       latest.id !== command.attemptID ||
-      latest.state !== "running" ||
-      node.state !== "running" ||
+      !["running", "verifying"].includes(latest.state) ||
+      node.state !== latest.state ||
       task.revision !== proposalNode.revision ||
       task.provenance.projectID !== this.projectID ||
       task.provenance.projectDirectory !== this.directory
     )
       throw new Error(
-        "Review input reconciliation must name the exact current running task attempt",
+        "Review input reconciliation must name the exact current running or verifying task attempt",
       )
 
     const model = ModelPolicy.parse(JSON.parse(latest.policy).model)
@@ -1947,7 +1947,7 @@ export class TaskRuntime {
           )
         : undefined
       const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
-      if (attempt?.state === "running" || terminalNativeFailure) {
+      if (attempt?.state === "running" || attempt?.state === "verifying" || terminalNativeFailure) {
         if (!command.attemptID || command.attemptID !== attempt.id)
           throw new Error("Terminal worker continuation requires the exact latest attemptID")
         const worker = await this.host.session(attempt.session_id, { messages: true })
@@ -2841,7 +2841,9 @@ export class TaskRuntime {
         if (
           !["blocked", "cancelled", "failed"].includes(plan.state) ||
           !node ||
-          !["exhausted", "cancelled", "running", "failed", "blocked"].includes(node.state) ||
+          !["exhausted", "cancelled", "running", "verifying", "failed", "blocked"].includes(
+            node.state,
+          ) ||
           !attempt ||
           (!continuingTerminalWorker &&
             !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state))
@@ -3042,12 +3044,12 @@ export class TaskRuntime {
           if (
             !latest ||
             latest.id !== binding.attemptID ||
-            latest.state !== "running" ||
+            !["running", "verifying"].includes(latest.state) ||
             latest.session_id !== binding.sessionID ||
             latest.workspace !== binding.workspace ||
             latest.message_id !== binding.assignedMessageID ||
             !node ||
-            node.state !== "running" ||
+            node.state !== latest.state ||
             !task ||
             task.provenance.projectID !== binding.projectID ||
             task.provenance.projectDirectory !== binding.projectDirectory ||

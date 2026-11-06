@@ -109,6 +109,26 @@ test("unknown background remains explicit while the exact interrupted assignment
   expect(terminalWorkerContinuationProblem(facts())).toBeUndefined()
 })
 
+test("a stopped verifying attempt can continue without a running-turn hold record", () => {
+  const value = facts()
+  value.node!.state = "verifying"
+  value.attempt!.state = "verifying"
+  value.worker!.outcome = "succeeded"
+  value.worker!.turn = { inputID, state: "completed" }
+  value.stopObservation = undefined
+  value.planHoldObservation = undefined
+  expect(terminalWorkerContinuationProblem(value)).toBeUndefined()
+
+  value.hasUnresolvedEffects = true
+  expect(terminalWorkerContinuationProblem(value)).toContain("uncertain effects")
+  value.hasUnresolvedEffects = false
+  value.worker!.busy = true
+  expect(terminalWorkerContinuationProblem(value)).toContain("active")
+  value.worker!.busy = false
+  value.assignedInputMatches = false
+  expect(terminalWorkerContinuationProblem(value)).toContain("input lineage")
+})
+
 test("a completed model turn can continue unfinished work without establishing task completion", () => {
   const value = facts()
   value.worker!.outcome = "succeeded"
