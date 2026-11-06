@@ -44,6 +44,7 @@ import type {
   ModelDecisionInspect,
   ModelDecisionRow,
 } from "../../src/models/decision-contract.ts"
+import { ModelDecisionEstimateSchema } from "../../src/models/decision-contract.ts"
 import { ModelDecisionReferenceEstimateSchema } from "../../src/models/reference-estimate.ts"
 import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-estimate.ts"
 import type { ModelMappingUpdate } from "../../src/models/mapping-schema.ts"
@@ -245,7 +246,7 @@ const highDecisionRow: ModelDecisionRow = {
     tokensPerAcceptedTask: sourceHighDecisionRow.efficiency.tokensPerAcceptedTask,
     currentMarketUSDPerAcceptedTask: null,
     observationCount: sourceHighDecisionRow.efficiency.observationCount,
-    missing: ["current-price"],
+    missing: ["current-price" as const],
   },
   referenceEstimate: highReferenceEstimate,
 }
@@ -360,6 +361,33 @@ const unknownPriceRoute: ModelDecisionConfiguration["route"] = {
   modelID: "model-identity-with-a-very-long-unrecognized-name",
   variant: null,
 }
+const longReferenceConfigurationID = "reference-only:provider-c/model-with-long-name"
+const longReferenceRoute: ModelDecisionConfiguration["route"] = {
+  providerID: "provider-c",
+  modelID: "model-with-long-name",
+  variant: "deep",
+}
+const longReferenceEstimate = openRouterReference(longReferenceRoute, "exact", 2)
+const sharedNameNullRoute: ModelDecisionConfiguration["route"] = {
+  providerID: "provider-a",
+  modelID: "model-a",
+  variant: null,
+}
+const sharedNameVariantRoute: ModelDecisionConfiguration["route"] = {
+  ...sharedNameNullRoute,
+  variant: "high",
+}
+const sharedNameOtherModelRoute: ModelDecisionConfiguration["route"] = {
+  providerID: "provider-a",
+  modelID: "model-c",
+  variant: null,
+}
+const sharedNameNullConfigurationID = "reference-only:provider-a/model-a"
+const sharedNameVariantConfigurationID = "reference-only:provider-a/model-a/high"
+const sharedNameOtherModelConfigurationID = "reference-only:provider-a/model-c"
+const sharedNameNullEstimate = openRouterReference(sharedNameNullRoute, "exact", 2)
+const sharedNameVariantEstimate = openRouterReference(sharedNameVariantRoute, "exact", 2)
+const sharedNameOtherModelEstimate = openRouterReference(sharedNameOtherModelRoute, "exact", 2)
 const unknownReferenceEstimate = openRouterReference(unknownPriceRoute, "partial", 1)
 const qwenReferenceEstimate = openRouterReference(qwenConfiguration.route, "partial", 1)
 const unknownPriceConfiguration: ModelDecisionConfiguration = {
@@ -451,6 +479,50 @@ const nativeModelCatalog = ModelCatalogOutputSchema.parse({
       capabilities: { tools: true, input: ["text"], output: ["text"] },
       pricesUSDPerMillionTokens: null,
       variants: ["high", "xhigh"],
+    },
+    {
+      providerID: "provider-b",
+      id: "model-b",
+      name: "GPT-6",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: ["50"],
+    },
+    {
+      providerID: "provider-a",
+      id: "model-a",
+      name: "GPT-6",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: ["high"],
+    },
+    {
+      providerID: "provider-a",
+      id: "model-c",
+      name: "GPT-6",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: [],
+    },
+    {
+      providerID: "provider-c",
+      id: "model-with-long-name",
+      name: "An unusually long catalog-backed model display name",
+      enabled: true,
+      type: "chat",
+      contextTokens: 128_000,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      pricesUSDPerMillionTokens: null,
+      variants: ["deep"],
     },
     {
       providerID: "openai",
@@ -1048,6 +1120,27 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                       configurationID: CONFIG_CROSS_ROUTE,
                       estimate: openRouterReference(crossRouteConfiguration.route, "exact", 1),
                     },
+                    {
+                      configurationID: longReferenceConfigurationID,
+                      label: "Misleading row-independent producer alias",
+                      tokensPerAcceptedTask: 32_000,
+                      estimate: longReferenceEstimate,
+                    },
+                    {
+                      configurationID: sharedNameNullConfigurationID,
+                      tokensPerAcceptedTask: 28_000,
+                      estimate: sharedNameNullEstimate,
+                    },
+                    {
+                      configurationID: sharedNameVariantConfigurationID,
+                      tokensPerAcceptedTask: 30_000,
+                      estimate: sharedNameVariantEstimate,
+                    },
+                    {
+                      configurationID: sharedNameOtherModelConfigurationID,
+                      tokensPerAcceptedTask: 32_000,
+                      estimate: sharedNameOtherModelEstimate,
+                    },
                   ]
               return ModelDecisionOverviewOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID, revision),
@@ -1192,7 +1285,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                       }
                     : contributor
               const isCrossRoute = input.configurationID === CONFIG_CROSS_ROUTE
-              const estimate = isCrossRoute
+              const estimate: ModelDecisionEstimate = isCrossRoute
                 ? crossRouteEstimate
                 : input.configurationID === CONFIG_ZERO
                   ? {
@@ -1204,7 +1297,16 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                     }
                   : input.configurationID === CONFIG_SINGLE
                     ? singleEstimate
-                    : template.estimate
+                    : isUnknownReference
+                      ? {
+                          ...ModelDecisionEstimateSchema.parse({
+                            ...template.estimate,
+                            status: "partial",
+                            range: { ...template.estimate.range, currentMarketUSD: null },
+                            missing: ["current-price"],
+                          }),
+                        }
+                      : template.estimate
               const historyScope =
                 input.configurationID === CONFIG_ONE
                   ? {
@@ -1618,7 +1720,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       comparePanel
         .querySelector(".lazers-models-comparison-chart [role=img]")
         ?.getAttribute("aria-label"),
-    ).toContain("GPT-6")
+    ).toContain("exact route openai / gpt-6 · high")
     const chartHost = comparePanel.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
@@ -1641,6 +1743,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     dom.window.dispatchEvent(new dom.Event("resize"))
     const chartSVG = () => chartHost.querySelector<SVGSVGElement>("svg")
     const chartSVGMarkup = () => chartSVG()?.outerHTML ?? ""
+    const chart = host.getComparisonChartInstance(chartHost)!
     const settleChart = async () => {
       for (let frame = 0; frame < 4; frame++)
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -1678,7 +1781,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const initialHighChoice = initialAlternative.querySelector<HTMLButtonElement>(
       `[data-configuration-id="${CONFIG_ONE}"]`,
     )!
-    expect(initialHighChoice.getAttribute("aria-label")).toContain("GPT-6 high")
+    expect(initialHighChoice.getAttribute("aria-label")).toContain(
+      "exact route openai / gpt-6 · high",
+    )
     expect(initialHighChoice.getAttribute("aria-pressed")).toBe("true")
     initialAlternative.open = true
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
@@ -1785,13 +1890,66 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       unknownPriceConfiguration.configurationID,
       CONFIG_SINGLE,
       CONFIG_CROSS_ROUTE,
+      longReferenceConfigurationID,
+      sharedNameNullConfigurationID,
+      sharedNameVariantConfigurationID,
+      sharedNameOtherModelConfigurationID,
     ])
-    expect(globalGraphDescription).toContain("Producer snapshot GPT-6 high")
+    const longReferenceButton = initialChartButtons.find(
+      (button) => button.dataset.configurationId === longReferenceConfigurationID,
+    )!
+    expect(longReferenceButton.getAttribute("aria-label")).toContain("model-with-long-name")
+    expect(longReferenceButton.getAttribute("aria-label")).not.toContain(
+      "An unusually long catalog-backed model display name",
+    )
+    expect(longReferenceButton.getAttribute("aria-label")).toContain(
+      "exact route provider-c / model-with-long-name · deep",
+    )
+    const chartSeries = (
+      chart.getOption() as unknown as {
+        series: Array<{ id?: string; data?: Array<{ configurationID?: string }> }>
+      }
+    ).series
+    const referenceSeriesIndex = chartSeries.findIndex(
+      (series) => series.id === "openrouter-reference-scalars",
+    )
+    const referenceDataIndex = chartSeries[referenceSeriesIndex]!.data!.findIndex(
+      (datum) => datum.configurationID === longReferenceConfigurationID,
+    )
+    expect(referenceDataIndex).toBeGreaterThanOrEqual(0)
+    chart.dispatchAction({
+      type: "showTip",
+      seriesIndex: referenceSeriesIndex,
+      dataIndex: referenceDataIndex,
+    })
+    const longReferenceTooltip = () =>
+      [...chartHost.children].find((child) => {
+        if (child.tagName !== "DIV") return false
+        const style = dom.getComputedStyle(
+          child as unknown as Parameters<typeof dom.getComputedStyle>[0],
+        )
+        return (
+          style.position === "absolute" &&
+          style.display === "block" &&
+          style.visibility !== "hidden" &&
+          child.textContent?.includes("model-with-long-name") === true
+        )
+      })
+    await until(() => longReferenceTooltip() !== undefined)
+    expect(longReferenceTooltip()?.textContent).toContain("≈$1.23e-11 / accepted task")
+    expect(longReferenceTooltip()?.textContent).toContain("scalar reference")
+    expect(globalGraphDescription).toContain("exact route openai / gpt-6 · high")
+    expect(globalGraphDescription).toContain("model-with-long-name")
+    expect(globalGraphDescription).toContain("exact route provider-c / model-with-long-name · deep")
+    expect(globalGraphDescription).not.toContain("Misleading row-independent producer alias")
+    expect(globalGraphDescription).toContain("model-b · exact route provider-b / model-b · 50")
+    expect(globalGraphDescription).not.toContain("Model B · 50")
     expect(globalGraphDescription).toContain("31,250 actual cohort tokens per accepted task")
-    expect(globalGraphDescription).toContain("Qwen reference · coordinate unknown")
+    expect(globalGraphDescription).toContain("qwen-7")
+    expect(globalGraphDescription).toContain("exact route qwen / qwen-7 · preview-effort")
     expect(globalGraphDescription).toContain("Actual cohort token coordinate unknown")
     expect(globalGraphDescription).toContain(
-      "Model B · 50: 50 actual cohort tokens per accepted task",
+      "model-b · exact route provider-b / model-b · 50; 50 actual tokens per accepted task",
     )
     expect(globalGraphDescription).not.toContain("Misleading paged cross-route label")
     expect(globalGraphDescription).not.toContain("Misleading inspected cross-route label")
@@ -1823,14 +1981,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         .find((button) => button.dataset.configurationId === CONFIG_SINGLE)
         ?.getAttribute("aria-label"),
     ).toContain("Not plotted")
-    expect(containerA.querySelector('[aria-label="Chart legend"]')?.textContent).toContain(
-      "Canonical actual-cohort market observation",
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
+      "Observed cohort",
     )
-    expect(containerA.querySelector('[aria-label="Chart legend"]')?.textContent).toContain(
-      "OpenRouter scalar reference",
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
+      "Scalar reference",
     )
-    expect(containerA.querySelector('[aria-label="Chart legend"]')?.textContent).toContain(
-      "Conditional OpenRouter range",
+    expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
+      "Conditional range",
     )
     expect(
       initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
@@ -2021,7 +2179,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(chartDescription()).toBe(globalGraphDescription)
     expect(chartDescription()).toContain("priced subtotal only")
     expect(chartDescription()).toContain(
-      "not plotted because a numeric actual cohort token coordinate or per-task amount is unavailable",
+      "not plotted because a numeric actual cohort token coordinate or per-task amount is missing",
     )
     expect(chartDescription()).toContain("31,250 actual cohort tokens per accepted task")
     expect(
@@ -2097,6 +2255,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
     expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
+      "model-identity-with-a-very-long-unrecognized-name",
+    )
+    expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
+      "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
+    )
+    expect(unknownReferenceButton.getAttribute("aria-label")).not.toContain(
       "Unknown route · OpenRouter subtotal",
     )
     expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
@@ -2125,6 +2289,27 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
       "OpenRouter priced subtotal only",
+    )
+    const partialMarketSummary = containerA.querySelector<HTMLElement>(
+      ".lazers-models-market-summary",
+    )!
+    expect(partialMarketSummary.textContent).toContain("≈$5e-8 priced portion / accepted task")
+    expect(partialMarketSummary.textContent).not.toContain("priced subtotal")
+    expect(partialMarketSummary.textContent).not.toContain("remainder unknown")
+    expect(partialMarketSummary.textContent).not.toContain("total and remainder unknown")
+    expect(partialMarketSummary.children).toHaveLength(2)
+    expect(partialMarketSummary.getAttribute("aria-label")).toContain("5e-8")
+    expect(partialMarketSummary.getAttribute("aria-label")).toContain("denominator 1 accepted task")
+    expect(partialMarketSummary.getAttribute("aria-label")).toContain("total and remainder unknown")
+    const estimateBasis = containerA.querySelector<HTMLDetailsElement>(
+      ".lazers-models-inspector .lazers-models-evidence-details",
+    )!
+    estimateBasis.open = true
+    expect(estimateBasis.querySelector(".lazers-models-market-basis")?.textContent).toContain(
+      "total and remainder unknown",
+    )
+    expect(estimateBasis.querySelector(".lazers-models-market-basis")?.textContent).toContain(
+      "denominator 1 accepted task",
     )
     expect(chartDescription()).toBe(globalGraphDescription)
     expect(chartSVGMarkup()).toBe(selectedUnknownReferenceSVG)
@@ -2393,12 +2578,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
     expect(
       containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent,
-    ).toContain("priced subtotal only · remainder unknown")
+    ).toContain("Priced subtotal · total unknown")
     const unknownPriceName = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
     expect(unknownPriceName.getAttribute("aria-label")).toContain(
-      "Unknown route · OpenRouter subtotal",
+      "model-identity-with-a-very-long-unrecognized-name",
+    )
+    expect(unknownPriceName.getAttribute("aria-label")).toContain(
+      "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
     )
     expect(containerA.querySelector(".lazers-models-market-summary")?.textContent).toContain(
       "≈$0.00015 / accepted task",
@@ -2701,6 +2889,158 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     compareTab.click()
     await until(() => containerA.querySelector(".lazers-models-decision-tools") !== null)
+    const catalogGraphDescription = chartDescription()
+    expect(catalogGraphDescription).toContain("An unusually long catalog-backed model display name")
+    expect(catalogGraphDescription).toContain("Qwen 7")
+    expect(catalogGraphDescription).toContain("GPT-6 · openai / gpt-6 · high")
+    expect(catalogGraphDescription).toContain("GPT-6 · provider-b / model-b · 50")
+    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-a")
+    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-a · high")
+    expect(catalogGraphDescription).toContain("GPT-6 · provider-a / model-c")
+    const catalogChartHost = containerA.querySelector<HTMLDivElement>(
+      ".lazers-models-comparison-chart > div[role=img]",
+    )!
+    const catalogChart = host.getComparisonChartInstance(catalogChartHost)!
+    const renderedCatalogSeries = (
+      catalogChart.getOption() as unknown as {
+        series: Array<{
+          id?: string
+          data?: Array<{
+            configurationID?: string
+            name?: string
+            label?: { formatter?: string }
+          }>
+        }>
+      }
+    ).series.find((series) => series.id === "observations")
+    expect(
+      renderedCatalogSeries?.data?.find((datum) => datum.configurationID === CONFIG_CROSS_ROUTE)
+        ?.label?.formatter,
+    ).toBe("GPT-6 · provider-…")
+    const renderedReferenceSeries = (
+      catalogChart.getOption() as unknown as {
+        series: Array<{ id?: string; data?: Array<{ configurationID?: string; name?: string }> }>
+      }
+    ).series.find((series) => series.id === "openrouter-reference-scalars")
+    expect(
+      renderedReferenceSeries?.data?.find((datum) => datum.configurationID === CONFIG_ONE)?.name,
+    ).toBe("GPT-6 · openai / gpt-6 · high")
+    expect(
+      renderedReferenceSeries?.data?.find(
+        (datum) => datum.configurationID === longReferenceConfigurationID,
+      )?.name,
+    ).toBe("An unusually long catalog-backed model display name")
+    const catalogReferenceButton = containerA.querySelector<HTMLButtonElement>(
+      `.lazers-models-comparison-chart-data [data-configuration-id="${longReferenceConfigurationID}"]`,
+    )!
+    expect(catalogReferenceButton.getAttribute("aria-label")).toContain(
+      "An unusually long catalog-backed model display name",
+    )
+    expect(catalogReferenceButton.getAttribute("aria-label")).toContain(
+      "exact route provider-c / model-with-long-name · deep",
+    )
+    Object.defineProperty(catalogChartHost, "clientWidth", {
+      configurable: true,
+      get: () => chartWidth,
+    })
+    Object.defineProperty(catalogChartHost, "clientHeight", {
+      configurable: true,
+      get: () => chartHeight,
+    })
+    Object.defineProperty(catalogChartHost, "getBoundingClientRect", {
+      configurable: true,
+      value: () =>
+        ({
+          top: 0,
+          left: 0,
+          right: chartWidth,
+          bottom: chartHeight,
+          width: chartWidth,
+          height: chartHeight,
+        }) as DOMRect,
+    })
+    catalogChart.resize()
+    await until(
+      () =>
+        Number.parseFloat(catalogChartHost.querySelector("svg")?.getAttribute("width") ?? "0") ===
+        chartWidth,
+    )
+    const catalogChartSeries = (
+      catalogChart.getOption() as unknown as {
+        series: Array<{
+          id?: string
+          data?: Array<{ configurationID?: string; name?: string }>
+        }>
+      }
+    ).series
+    const catalogReferenceSeriesIndex = catalogChartSeries.findIndex(
+      (series) => series.id === "openrouter-reference-scalars",
+    )
+    const catalogReferenceDataIndex = catalogChartSeries[
+      catalogReferenceSeriesIndex
+    ]!.data!.findIndex((datum) => datum.configurationID === longReferenceConfigurationID)
+    const catalogReferenceName = (configurationID: string) =>
+      catalogChartSeries[catalogReferenceSeriesIndex]!.data!.find(
+        (datum) => datum.configurationID === configurationID,
+      )?.name
+    expect(catalogReferenceName(sharedNameNullConfigurationID)).toBe("GPT-6 · provider-a / model-a")
+    expect(catalogReferenceName(sharedNameVariantConfigurationID)).toBe(
+      "GPT-6 · provider-a / model-a · high",
+    )
+    expect(catalogReferenceName(sharedNameOtherModelConfigurationID)).toBe(
+      "GPT-6 · provider-a / model-c",
+    )
+    expect(catalogReferenceName(CONFIG_CROSS_ROUTE)).toBe("GPT-6 · provider-b / model-b · 50")
+    expect(catalogReferenceName(CONFIG_ONE)).toBe("GPT-6 · openai / gpt-6 · high")
+    catalogChart.dispatchAction({
+      type: "showTip",
+      seriesIndex: catalogReferenceSeriesIndex,
+      dataIndex: catalogReferenceDataIndex,
+    })
+    const catalogReferenceTooltip = () =>
+      [...catalogChartHost.children].find((child) => {
+        if (child.tagName !== "DIV") return false
+        const style = dom.getComputedStyle(
+          child as unknown as Parameters<typeof dom.getComputedStyle>[0],
+        )
+        return (
+          style.position === "absolute" &&
+          style.display === "block" &&
+          style.visibility !== "hidden" &&
+          child.textContent?.includes("An unusually long catalog-backed mo…") === true
+        )
+      })
+    await until(() => catalogReferenceTooltip() !== undefined)
+    expect(catalogReferenceTooltip()?.textContent).toContain("≈$1.23e-11 / accepted task")
+    expect(catalogReferenceTooltip()?.textContent).toContain("scalar reference")
+    const visibleCatalogTooltip = (label: string) =>
+      [...catalogChartHost.children].find((child) => {
+        if (child.tagName !== "DIV") return false
+        const style = dom.getComputedStyle(
+          child as unknown as Parameters<typeof dom.getComputedStyle>[0],
+        )
+        return (
+          style.position === "absolute" &&
+          style.display === "block" &&
+          style.visibility !== "hidden" &&
+          child.textContent?.includes(label) === true
+        )
+      })
+    for (const [configurationID, label] of [
+      [sharedNameNullConfigurationID, "GPT-6 · provider-a / model-a"],
+      [sharedNameVariantConfigurationID, "GPT-6 · provider-a / model-a · high"],
+    ] as const) {
+      const referenceDataIndex = catalogChartSeries[catalogReferenceSeriesIndex]!.data!.findIndex(
+        (datum) => datum.configurationID === configurationID,
+      )
+      catalogChart.dispatchAction({
+        type: "showTip",
+        seriesIndex: catalogReferenceSeriesIndex,
+        dataIndex: referenceDataIndex,
+      })
+      await until(() => visibleCatalogTooltip(label) !== undefined)
+      expect(visibleCatalogTooltip(label)?.textContent).toContain("≈$1.23e-11 / accepted task")
+    }
     containerA.querySelector<HTMLDetailsElement>(".lazers-models-route-pages")!.open = true
     buttonWithText(containerA, "Load more model groups")?.click()
     await until(() =>
@@ -2788,12 +3128,37 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(nativePickerCalls.at(-1)).toMatchObject({
       title: "Choose a model",
       placeholder: "Search model name, provider, or ID",
+      current: undefined,
       options: [
         {
           title: "GPT-6",
           value: catalogSelection,
           description: "openai gpt-6 · chat",
           group: "openai",
+        },
+        {
+          title: "GPT-6",
+          value: JSON.stringify(["provider-b", "model-b"]),
+          description: "provider-b model-b · chat",
+          group: "provider-b",
+        },
+        {
+          title: "GPT-6",
+          value: JSON.stringify(["provider-a", "model-a"]),
+          description: "provider-a model-a · chat",
+          group: "provider-a",
+        },
+        {
+          title: "GPT-6",
+          value: JSON.stringify(["provider-a", "model-c"]),
+          description: "provider-a model-c · chat",
+          group: "provider-a",
+        },
+        {
+          title: "An unusually long catalog-backed model display name",
+          value: JSON.stringify(["provider-c", "model-with-long-name"]),
+          description: "provider-c model-with-long-name · chat",
+          group: "provider-c",
         },
         {
           title: "GPT-6 Luna",
@@ -3392,7 +3757,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(containerB.querySelector(".lazers-models-project")?.textContent).toContain("project-b")
     expect(containerB.querySelector(".lazers-models-comparison-chart-data")?.textContent).toContain(
-      "GPT-6",
+      "gpt-6",
     )
     const assignmentsTabB = containerB.querySelector<HTMLButtonElement>(
       '[role="tab"][aria-controls="lazers-models-assignments-panel"]',

@@ -261,7 +261,7 @@ test("synthetic crowded labels are bounded, shifted and moved away from the righ
   ).toEqual(["left", "left"])
   expect(series.labelLayout).toEqual({ hideOverlap: true, moveOverlap: "shiftY" })
   expect(option.aria.description).toContain(synthetic[0]!.label)
-  expect(option.aria.description).toContain("30,001 tokens per accepted task")
+  expect(option.aria.description).toContain("30,001 actual tokens per accepted task")
 })
 
 test("missing measurements are not converted to zero and a singleton emits no frontier line", () => {
@@ -357,12 +357,16 @@ test("reference scalars, conditional envelopes and priced subtotals remain disti
   const subtotalTooltip = option.tooltip.formatter({
     data: { configurationID: subtotal.configurationID, markKind: "reference" },
   })
-  expect(scalarTooltip).toContain("OpenRouter scalar reference")
-  expect(scalarTooltip).toContain("$0.000000000003075")
-  expect(rangeTooltip).toContain("OpenRouter conditional range")
-  expect(rangeTooltip).toContain("$0.00000001–$0.00000003")
-  expect(subtotalTooltip).toContain("priced subtotal only")
-  expect(subtotalTooltip).toContain("remainder unknown")
+  expect(scalarTooltip).toContain("scalar reference")
+  expect(scalarTooltip).toContain("≈$3.08e-12 / accepted task")
+  expect(rangeTooltip).toContain("conditional range")
+  expect(rangeTooltip).toContain("≈$1e-8–$3e-8 / accepted task")
+  expect(subtotalTooltip).toContain("priced portion")
+  expect(subtotalTooltip).toContain("total unknown")
+  expect(comparisonChartReferenceText(scalar)).toContain("exact route openai / gpt-6 · high")
+  expect(comparisonChartReferenceText(scalar)).toContain(
+    "basis OpenRouter published model-reference cost per accepted task",
+  )
   expect(option.aria.description).toContain("denominator 4 accepted tasks")
   expect(option.aria.description).toContain("not plotted because a numeric actual cohort token")
   expect(comparisonChartReferenceText(missingCoordinate)).toContain("token coordinate unknown")
