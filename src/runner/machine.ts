@@ -17,6 +17,7 @@ export const taskMachine = createMachine({
         CANCEL: "cancelled",
         EXHAUST: "exhausted",
         ADOPT_ACCEPT: "accepted",
+        RETAINED_ACCEPT: "accepted",
       },
     },
     running: {
@@ -27,6 +28,7 @@ export const taskMachine = createMachine({
         CANCEL: "cancelled",
         EXHAUST: "exhausted",
         RETRY: "ready",
+        RETAINED_ACCEPT: "accepted",
       },
     },
     verifying: {
@@ -37,11 +39,26 @@ export const taskMachine = createMachine({
         FAIL: "failed",
         CANCEL: "cancelled",
         EXHAUST: "exhausted",
+        RETAINED_ACCEPT: "accepted",
       },
     },
-    blocked: { on: { RECONCILE: "queued", CANCEL: "cancelled", RETRY: "ready" } },
+    blocked: {
+      on: {
+        RECONCILE: "queued",
+        CANCEL: "cancelled",
+        RETRY: "ready",
+        RETAINED_ACCEPT: "accepted",
+      },
+    },
     accepted: { on: { RETAINED_REPAIR: "ready" } },
-    failed: { on: { RESUME: "running", RETRY: "ready", ADOPT_ACCEPT: "accepted" } },
+    failed: {
+      on: {
+        RESUME: "running",
+        RETRY: "ready",
+        ADOPT_ACCEPT: "accepted",
+        RETAINED_ACCEPT: "accepted",
+      },
+    },
     cancelled: { on: { RESUME: "running", RETRY: "ready" } },
     exhausted: { on: { RESUME: "running", RETRY: "ready" } },
     incorporated: { type: "final" },

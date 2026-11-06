@@ -163,24 +163,30 @@ export const CommandInput = z
     requestID: z.string().trim().min(1).max(200),
     planID: z.uuid(),
     expectedVersion: z.int().positive(),
-    action: z.enum([
-      "run",
-      "cancel",
-      "audit",
-      "reconcile",
-      "reconcile-source-notices",
-      "reassign",
-      "human-evidence",
-      "resume",
-      "retry",
-      "integrated",
-      "schedule",
-      "amend-scope",
-      "adopt-descendant",
-      "quarantine-source",
-      "settle-startup",
-      "retained-repair",
-    ]),
+    action: z
+      .enum([
+        "run",
+        "cancel",
+        "audit",
+        "reconcile",
+        "reconcile-source-notices",
+        "reassign",
+        "human-evidence",
+        "resume",
+        "retry",
+        "integrated",
+        "schedule",
+        "amend-scope",
+        "adopt-descendant",
+        "quarantine-source",
+        "settle-startup",
+        "retained-repair",
+        "verify-retained",
+        "cancel-retained-verification",
+      ])
+      .describe(
+        "Plan controls include schedule/run/cancel, audit/reconcile, evidence, and reviewed integration. verify-retained binds projectID, planRevision, taskID/taskRevision, latest attemptID and exact artifact; it runs isolated ordinary checks without an implementation turn. cancel-retained-verification names retainedVerificationID. See each field description for the narrow retained-repair, descendant-adoption, startup-settlement and source-quarantine bindings.",
+      ),
     reason: z
       .string()
       .min(1)
@@ -206,8 +212,16 @@ export const CommandInput = z
       .describe(
         "For explicit reconciliation of positively owned queued legacy Architect source notices.",
       ),
-    taskID: z.uuid().optional(),
-    attemptID: z.uuid().optional(),
+    taskID: z
+      .uuid()
+      .optional()
+      .describe("Exact task revision for retained candidate verification."),
+    attemptID: z
+      .uuid()
+      .optional()
+      .describe(
+        "Latest original implementation attempt; verification does not create a replacement attempt.",
+      ),
     reviewInputID: z
       .string()
       .min(1)
@@ -218,13 +232,39 @@ export const CommandInput = z
       ),
     scopeAdditions: TaskProposalSchema.shape.writeScope.min(1).optional(),
     assertionID: z.string().max(64).optional(),
-    artifact: z.string().max(128).optional(),
+    artifact: z
+      .string()
+      .max(128)
+      .optional()
+      .describe("Exact full committed candidate identity for retained verification or evidence."),
     descendantCommit: z
       .string()
       .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
       .optional(),
     adoptionID: z.uuid().optional(),
     targetBranch: z.string().min(1).max(200).optional(),
+    projectID: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Current native project identity for retained verification."),
+    planRevision: z
+      .int()
+      .positive()
+      .optional()
+      .describe("Current plan revision for retained verification."),
+    taskRevision: z
+      .int()
+      .positive()
+      .optional()
+      .describe("Current task revision for retained verification."),
+    retainedVerificationID: z
+      .uuid()
+      .optional()
+      .describe(
+        "Exact durable retained-verification operation to cancel or provide human evidence for.",
+      ),
   })
   .superRefine((input, context) => {
     if (input.action === "retained-repair") {
@@ -275,14 +315,59 @@ export const CommandInput = z
       })
   })
   .superRefine((command, context) => {
-    if (command.action !== "settle-startup") return
-    for (const field of ["taskID", "attemptID", "reason"] as const)
-      if (!command[field])
+    if (command.action === "settle-startup")
+      for (const field of ["taskID", "attemptID", "reason"] as const)
+        if (!command[field])
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Startup settlement requires ${field}`,
+          })
+    if (command.action === "verify-retained") {
+      for (const field of [
+        "projectID",
+        "planRevision",
+        "taskRevision",
+        "taskID",
+        "attemptID",
+        "artifact",
+        "reason",
+      ] as const)
+        if (!command[field])
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `Retained verification requires ${field}`,
+          })
+      if (command.artifact && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(command.artifact))
         context.addIssue({
           code: "custom",
-          path: [field],
-          message: `Startup settlement requires ${field}`,
+          path: ["artifact"],
+          message: "Retained verification requires an exact full commit identity",
         })
+    }
+    if (command.action === "cancel-retained-verification" && !command.retainedVerificationID)
+      context.addIssue({
+        code: "custom",
+        path: ["retainedVerificationID"],
+        message: "Cancellation requires the exact retained verification operation ID",
+      })
+    if (command.adoptionID !== undefined && command.retainedVerificationID !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["retainedVerificationID"],
+        message: "Human evidence can name only one retained operation",
+      })
+    if (
+      command.retainedVerificationID !== undefined &&
+      command.action !== "cancel-retained-verification" &&
+      command.action !== "human-evidence"
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["retainedVerificationID"],
+        message: "Retained verification ID is valid only for cancellation or human evidence",
+      })
   })
 export type CommandInput = z.infer<typeof CommandInput>
 
