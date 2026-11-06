@@ -20,7 +20,12 @@ import { registerModelsServer } from "./server.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
 import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint-pricing.ts"
-import { ModelDecisionInspectOutputSchema } from "./decision-contract.ts"
+import {
+  ModelDecisionConfigurationsOutputSchema,
+  ModelDecisionInspectOutputSchema,
+  ModelDecisionOverviewOutputSchema,
+  ModelDecisionRowsOutputSchema,
+} from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
 import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
 
@@ -317,7 +322,7 @@ function writeCapturedModelEvidence(path: string) {
 function writeMarketIdentityEvidence(
   path: string,
   projectDirectory: string,
-  options: { duplicateLuna?: boolean; includeKimi?: boolean } = {},
+  options: { duplicateLuna?: boolean; includeKimi?: boolean; promptRate?: string } = {},
 ) {
   const directNative = ModelEvidenceSnapshotSchema.parse(captured.native.snapshot)
   const directCatalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
@@ -351,6 +356,17 @@ function writeMarketIdentityEvidence(
   ]
   if (options.duplicateLuna)
     catalogRecords.push(catalogRecords.find((record) => record.id === "openai/gpt-6-luna")!)
+  const savedCatalogRecords = catalogRecords.map((record) =>
+    record.id === "openai/gpt-6-luna" && record.prices && options.promptRate
+      ? {
+          ...record,
+          prices: {
+            ...record.prices,
+            tiers: record.prices.tiers.map((tier) => ({ ...tier, prompt: options.promptRate! })),
+          },
+        }
+      : record,
+  )
 
   const store = new ModelEvidenceStore(path, projectDirectory)
   try {
@@ -369,7 +385,7 @@ function writeMarketIdentityEvidence(
       projectDirectory,
       generation: generations["openrouter-models"],
       retrievedAt: new Date(Date.now() + generations["openrouter-models"]).toISOString(),
-      records: catalogRecords,
+      records: savedCatalogRecords,
     })
     store.saveSnapshot(nativeSnapshot)
     store.saveSnapshot(catalogSnapshot)
@@ -2232,6 +2248,13 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
     marketRoute,
     [20, 30],
   )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.adoption.id,
+    { ...marketRoute, variant: "high" },
+    [40],
+  )
   writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
   const endpointEvidence = writeLunaEndpointSnapshot(fixture.path, fixture.projectDirectory)
   const sourceWriter = new Database(fixture.path, { strict: true })
@@ -2240,7 +2263,9 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
     .run()
   sourceWriter.close()
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository)
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
   repository.close()
   try {
     const input = {
@@ -2248,38 +2273,39 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
       scope: { projectDirectory: fixture.projectDirectory },
       filters: { persona: null, taskKind: null, period: { from: null, to: null } },
     }
-    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string; availability: string }
-      graph: { scope: string; points: unknown[] }
-      configurationCount: number
-    }
+    const overview = ModelDecisionOverviewOutputSchema.parse(
+      await Effect.runPromise(harness.methods().overview(input)),
+    )
     expect(overview.context.availability).toBe("partial")
     expect(overview.graph.scope).toBe("global-filtered-snapshot")
 
-    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
-      context: { snapshotID: string }
-      rows: Array<{
-        configuration: {
-          configurationID: string
-          route: { providerID: string; modelID: string; variant: string | null }
-        }
-        efficiency: unknown
-        nativeReportedCost: unknown
-      }>
-      totalCount: number
-    }
-    const configurations = (await Effect.runPromise(
-      harness.methods().configurations({ ...input, limit: 100 }),
-    )) as {
-      context: { snapshotID: string }
-      configurations: Array<{ configurationID: string }>
-      totalCount: number
-    }
+    const rows = ModelDecisionRowsOutputSchema.parse(
+      await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 })),
+    )
+    const firstPage = ModelDecisionRowsOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().rows({ ...input, snapshotID: overview.context.snapshotID, limit: 1 }),
+      ),
+    )
+    const configurations = ModelDecisionConfigurationsOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().configurations({
+          ...input,
+          snapshotID: overview.context.snapshotID,
+          limit: 100,
+        }),
+      ),
+    )
     expect(rows.context.snapshotID).toBe(overview.context.snapshotID)
     expect(configurations.context.snapshotID).toBe(overview.context.snapshotID)
     expect(rows.totalCount).toBe(overview.configurationCount)
     expect(configurations.totalCount).toBe(overview.configurationCount)
     expect(rows.rows.length).toBeGreaterThan(0)
+    expect(firstPage.rows).toHaveLength(1)
+    const globalReferenceEstimates = overview.graph.referenceEstimates
+    if (!globalReferenceEstimates) throw new Error("Overview reference estimates are absent")
+    expect(globalReferenceEstimates).toHaveLength(overview.configurationCount)
+    expect(globalReferenceEstimates.length).toBeGreaterThan(firstPage.rows.length)
     const marketRow = rows.rows.find(
       (row) =>
         row.configuration.route.providerID === marketRoute.providerID &&
@@ -2287,14 +2313,37 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
         row.configuration.route.variant === marketRoute.variant,
     )
     expect(marketRow).toBeDefined()
+    if (!marketRow) throw new Error("OpenAI market configuration row is absent")
     expect(marketRow?.efficiency).toBeDefined()
     expect(marketRow?.nativeReportedCost).toBeDefined()
+    const marketEstimate = marketRow.referenceEstimate
+    if (!marketEstimate) throw new Error("Reference estimate is absent from the market row")
+    expect(marketEstimate).toMatchObject({
+      route: marketRoute,
+      acceptedTaskCount: marketRow?.cohort.acceptedTaskCount,
+      provenance: {
+        source: "openrouter-models",
+        recordID: "openai/gpt-6-luna",
+        freshness: "current",
+      },
+    })
+    expect(marketRow.configuration.referenceEstimate).toEqual(marketEstimate)
+    expect(globalReferenceEstimates).toContainEqual({
+      configurationID: marketRow.configuration.configurationID,
+      estimate: marketEstimate,
+    })
+    expect(
+      configurations.configurations.find(
+        (configuration) =>
+          configuration.configurationID === marketRow.configuration.configurationID,
+      )?.referenceEstimate,
+    ).toEqual(marketEstimate)
 
     const inspection = await Effect.runPromise(
       harness.methods().inspect({
         ...input,
         snapshotID: overview.context.snapshotID,
-        configurationID: marketRow!.configuration.configurationID,
+        configurationID: marketRow.configuration.configurationID,
         selectedTaskID: fixture.tasks.retry!.id,
         contributorLimit: 100,
       }),
@@ -2347,6 +2396,8 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
         ],
       },
     })
+    if (parsedInspection.status === "found")
+      expect(parsedInspection.referenceEstimate).toEqual(marketEstimate)
     if (parsedInspection.status === "found") {
       expect(parsedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
         0.000015,
@@ -2357,7 +2408,7 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
         12,
       )
     }
-    expect(harness.permissionCalls).toHaveLength(4)
+    expect(harness.permissionCalls).toHaveLength(5)
     expect(harness.permissionCalls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2368,6 +2419,120 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
     )
   } finally {
     endpointEvidence.store.close()
+    fixture.close()
+  }
+})
+
+test("registered first-page snapshot pins keep rows, configurations, and reference estimates coherent across usage and catalog updates", async () => {
+  const fixture = makeLedgerFixture()
+  const marketRoute = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.failed.id,
+    marketRoute,
+    [100],
+  )
+  rewriteAttemptForMarket(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    marketRoute,
+    [20, 30],
+  )
+  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
+  repository.close()
+  const input = {
+    sessionID: "ses-native",
+    scope: { projectDirectory: fixture.projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+  const configurationID = `configuration:${modelConfigurationID(
+    marketRoute.providerID,
+    marketRoute.modelID,
+    marketRoute.variant,
+  )}`
+  try {
+    const overviewA = ModelDecisionOverviewOutputSchema.parse(
+      await Effect.runPromise(harness.methods().overview(input)),
+    )
+    const estimateA = overviewA.graph.referenceEstimates?.find(
+      (item) => item.configurationID === configurationID,
+    )?.estimate
+    expect(estimateA?.status).toBe("conditional")
+    expect(estimateA?.provenance.freshness).toBe("current")
+    const numeratorA = estimateA?.numeratorRangeUSD
+    expect(numeratorA).not.toBeNull()
+
+    // Change relevant retained effort and the published price catalog before any first-page read.
+    rewriteAttemptForMarket(
+      fixture.path,
+      fixture.projectID,
+      fixture.attempts.failed.id,
+      marketRoute,
+      [1_000],
+    )
+    writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory, {
+      promptRate: "0.000001",
+    })
+
+    const pinnedRows = ModelDecisionRowsOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().rows({ ...input, snapshotID: overviewA.context.snapshotID, limit: 100 }),
+      ),
+    )
+    const pinnedConfigurations = ModelDecisionConfigurationsOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().configurations({
+          ...input,
+          snapshotID: overviewA.context.snapshotID,
+          limit: 100,
+        }),
+      ),
+    )
+    const pinnedRow = pinnedRows.rows.find(
+      (row) => row.configuration.configurationID === configurationID,
+    )
+    expect(pinnedRows.context.snapshotID).toBe(overviewA.context.snapshotID)
+    expect(pinnedConfigurations.context.snapshotID).toBe(overviewA.context.snapshotID)
+    expect(pinnedRow?.referenceEstimate).toEqual(estimateA)
+    expect(pinnedRow?.configuration.referenceEstimate).toEqual(estimateA)
+    expect(
+      pinnedConfigurations.configurations.find((item) => item.configurationID === configurationID)
+        ?.referenceEstimate,
+    ).toEqual(estimateA)
+
+    const pinnedInspection = ModelDecisionInspectOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().inspect({
+          ...input,
+          snapshotID: overviewA.context.snapshotID,
+          configurationID,
+          selectedTaskID: fixture.tasks.retry!.id,
+          contributorLimit: 100,
+        }),
+      ),
+    )
+    expect(pinnedInspection.status).toBe("found")
+    if (pinnedInspection.status === "found")
+      expect(pinnedInspection.referenceEstimate).toEqual(estimateA)
+
+    const refreshedRows = ModelDecisionRowsOutputSchema.parse(
+      await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 })),
+    )
+    const refreshedRow = refreshedRows.rows.find(
+      (row) => row.configuration.configurationID === configurationID,
+    )
+    expect(refreshedRows.context.snapshotID).not.toBe(overviewA.context.snapshotID)
+    expect(refreshedRow?.referenceEstimate?.provenance.snapshotID).not.toBe(
+      estimateA?.provenance.snapshotID,
+    )
+    expect(refreshedRow?.referenceEstimate?.numeratorRangeUSD).not.toEqual(numeratorA)
+  } finally {
     fixture.close()
   }
 })
@@ -2664,7 +2829,9 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
     },
   ])
   const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository)
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
   repository.close()
   const input = {
     sessionID: "ses-native",
@@ -2673,24 +2840,32 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
   }
 
   try {
-    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
-      context: { snapshotID: string }
-    }
+    const overview = ModelDecisionOverviewOutputSchema.parse(
+      await Effect.runPromise(harness.methods().overview(input)),
+    )
+    const rows = ModelDecisionRowsOutputSchema.parse(
+      await Effect.runPromise(
+        harness.methods().rows({ ...input, snapshotID: overview.context.snapshotID, limit: 100 }),
+      ),
+    )
     const cases = [
       {
         route: ambiguousRoute,
         selectedTaskID: fixture.tasks.retry!.id,
         identityStatus: "ambiguous",
+        estimateStatus: "zero-accepted",
       },
       {
         route: absentRoute,
         selectedTaskID: fixture.tasks.retry!.id,
         identityStatus: "supported-but-absent",
+        estimateStatus: "unavailable",
       },
       {
         route: unsupportedRoute,
         selectedTaskID: fixture.tasks.adoption!.id,
         identityStatus: "unsupported",
+        estimateStatus: "unavailable",
       },
     ] as const
     for (const item of cases) {
@@ -2717,6 +2892,26 @@ test("registered inspector leaves unsupported, ambiguous, and absent mappings un
           status: "not-applicable",
           identity: { status: item.identityStatus },
           scenarios: [],
+        },
+      })
+      const referenceEstimate = rows.rows.find(
+        (row) =>
+          row.configuration.route.providerID === item.route.providerID &&
+          row.configuration.route.modelID === item.route.modelID &&
+          row.configuration.route.variant === item.route.variant,
+      )?.referenceEstimate
+      expect(referenceEstimate).toMatchObject({
+        status: item.estimateStatus,
+        route: item.route,
+        identityStatus: item.identityStatus,
+        numeratorUSD: null,
+        numeratorRangeUSD: null,
+        valueUSDPerAcceptedTask: null,
+        rangeUSDPerAcceptedTask: null,
+        provenance: {
+          source: "openrouter-models",
+          recordID: null,
+          snapshotID: expect.any(String),
         },
       })
     }

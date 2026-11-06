@@ -44,6 +44,8 @@ import type {
   ReadOnlyObservationLedger,
 } from "./observation-ledger-read.ts"
 import { projectTaskValuation } from "./valuation.ts"
+import { calculateModelDecisionReferenceEstimate } from "./reference-estimate.ts"
+import type { ReferenceEstimateSession } from "./reference-estimate.ts"
 import {
   modelConfigurationID,
   modelIdentityReference,
@@ -191,6 +193,7 @@ function modelIdentitySourceIdentity(source: ModelEvidenceComparisonSourceRead |
     snapshotState: source.snapshotState,
     snapshotID: source.snapshotID,
     snapshotGeneration: source.snapshot?.generation ?? null,
+    refresh: source.refresh,
   }
 }
 
@@ -537,6 +540,7 @@ function buildSessionData(
 function configurationFromRoute(
   route: ModelDecisionRoute,
   pin: CurrentPricePin | undefined,
+  referenceEstimate: ModelDecisionRow["referenceEstimate"],
   policyRevision: number,
   freshness: ModelDecisionPriceState["freshness"],
 ): ModelDecisionConfiguration {
@@ -562,6 +566,7 @@ function configurationFromRoute(
         512,
       ),
     route,
+    referenceEstimate,
     currentPrice: {
       source,
       sourcePolicyRevision: policyRevision,
@@ -1009,6 +1014,8 @@ function buildSnapshotData(
     failedAttemptCount: number
     retryAttemptCount: number
     missingAttribution: boolean
+    unknownRouteTaskIDs: Set<string>
+    unattributedSessionIDs: Set<string>
   }
   const cohorts = new Map<string, Cohort>()
   const cohortFor = (route: ModelDecisionRoute) => {
@@ -1025,6 +1032,8 @@ function buildSnapshotData(
       failedAttemptCount: 0,
       retryAttemptCount: 0,
       missingAttribution: false,
+      unknownRouteTaskIDs: new Set(),
+      unattributedSessionIDs: new Set(),
     }
     cohorts.set(id, created)
     return created
@@ -1035,6 +1044,10 @@ function buildSnapshotData(
     if (!session.route) continue
     const cohort = cohortFor(session.route)
     cohort.sessions.set(session.sessionID, session)
+    if (!session.selectedTaskIDs.length) {
+      cohort.missingAttribution = true
+      cohort.unattributedSessionIDs.add(session.sessionID)
+    }
     for (const taskID of session.selectedTaskIDs) {
       const task = selectedTaskByID.get(taskID)
       if (!task) continue
@@ -1068,7 +1081,10 @@ function buildSnapshotData(
       continue
     for (const routeKey of knownRoutes) {
       const cohort = cohorts.get(routeKey)
-      if (cohort?.taskIDs.has(task.taskID)) cohort.missingAttribution = true
+      if (cohort?.taskIDs.has(task.taskID)) {
+        cohort.missingAttribution = true
+        cohort.unknownRouteTaskIDs.add(task.taskID)
+      }
     }
   }
 
@@ -1154,9 +1170,52 @@ function buildSnapshotData(
     const configuration = configurationFromRoute(
       cohort.route,
       pinsByRoute.get(key),
+      calculateModelDecisionReferenceEstimate({
+        route: cohort.route,
+        acceptedTaskCount,
+        relatedTaskCount: cohort.taskIDs.size,
+        unknownRouteTaskCount: cohort.unknownRouteTaskIDs.size,
+        relatedSessions: (() => {
+          const related = new Map<string, SessionData>()
+          for (const taskID of cohort.taskIDs)
+            for (const session of sessionsByTask.get(taskID) ?? [])
+              related.set(session.sessionID, session)
+          for (const session of cohort.sessions.values()) related.set(session.sessionID, session)
+          return [...related.values()].map((session): ReferenceEstimateSession => {
+            const attemptsByID = new Map<
+              string,
+              ObservationLedgerDecisionTask["attempts"][number]
+            >()
+            for (const taskID of cohort.taskIDs)
+              for (const attempt of session.attemptsByTask.get(taskID) ?? [])
+                attemptsByID.set(attempt.accounting.id, attempt)
+            return {
+              sessionID: session.sessionID,
+              route: session.route,
+              routeStatus: session.routeStatus,
+              shared: session.shared,
+              attributable: [...session.attemptsByTask.keys()].some((taskID) =>
+                cohort.taskIDs.has(taskID),
+              ),
+              categories: session.usageCategories,
+              attempts: [...attemptsByID.values()].map((attempt) => ({
+                id: attempt.accounting.id,
+                state: attempt.accounting.state,
+                retry: attempt.number > 1 || attempt.retryCount > 0,
+              })),
+            }
+          })
+        })(),
+        unattributedSessionCount: cohort.unattributedSessionIDs.size,
+        missingAttribution: cohort.missingAttribution,
+        settings: priceState.settings,
+        identityCatalogSource: priceState.identityCatalogSource,
+        identityNativeSource: priceState.identityNativeSource,
+      }),
       priceState.settings.policy.revision,
       priceState.freshness,
     )
+    const referenceEstimate = configuration.referenceEstimate!
     const row: ModelDecisionRow = {
       configuration,
       cohort: {
@@ -1175,6 +1234,7 @@ function buildSnapshotData(
       },
       efficiency,
       nativeReportedCost,
+      referenceEstimate,
     }
     rows.push(row)
     knownUsageMarkets.set(
@@ -1253,6 +1313,10 @@ function buildSnapshotData(
       frontierConfigurationIDs: frontier
         .map((point) => point.configurationID)
         .sort((left, right) => left.localeCompare(right)),
+      referenceEstimates: rows.map((row) => ({
+        configurationID: row.configuration.configurationID,
+        estimate: row.referenceEstimate!,
+      })),
     },
     contributors,
     estimates,
@@ -1340,7 +1404,12 @@ function unavailableSnapshot(
     inputFingerprint: fingerprint({ scope: input.scope, filters: input.filters }),
     rows: [],
     configurations: [],
-    graph: { scope: "global-filtered-snapshot", points: [], frontierConfigurationIDs: [] },
+    graph: {
+      scope: "global-filtered-snapshot",
+      points: [],
+      frontierConfigurationIDs: [],
+      referenceEstimates: [],
+    },
     contributors: new Map(),
     estimates: new Map(),
     knownUsageMarkets: new Map(),
@@ -1509,6 +1578,7 @@ function inspection(
     efficiency: row.efficiency,
     nativeReportedCost: row.nativeReportedCost,
     selectedTaskID: input.selectedTaskID,
+    referenceEstimate: row.referenceEstimate,
     estimate: snapshot.estimates.get(configKey) ?? {
       status: "zero-accepted",
       basis: "no-successful-task-efficiency",
@@ -1661,6 +1731,23 @@ export function createModelDecisionReader(
     return snapshot
   }
 
+  const fromSnapshot = async (
+    snapshotID: string,
+    input: ModelDecisionReadInput,
+    signal?: AbortSignal,
+  ) => {
+    if (disposed) throw new Error("Model decision reader is closed")
+    signal?.throwIfAborted()
+    const entry = snapshots.get(snapshotID)
+    if (!entry) throw new Error("Model decision snapshot is unavailable or expired")
+    const snapshot = entry.snapshot
+    if (!inputMatches(snapshot, input))
+      throw new Error("Model decision snapshot scope or filters do not match")
+    signal?.throwIfAborted()
+    touch(snapshotID)
+    return snapshot
+  }
+
   const reader: ModelDecisionReader & { close(): void } = {
     async overview(input, options) {
       const parsed = ModelDecisionReadInputSchema.parse(input)
@@ -1680,9 +1767,14 @@ export function createModelDecisionReader(
         const cursor = readPageCursor(secret, parsed.cursor)
         if (cursor.kind !== "rows" || cursor.limit !== parsed.limit)
           throw new Error("Model decision row cursor page does not match")
+        if (parsed.snapshotID && parsed.snapshotID !== cursor.snapshotID)
+          throw new Error("Model decision row cursor and snapshot pin do not match")
         snapshot = await fromCursor(cursor, parsed, options?.signal)
         offset = cursor.offset
-      } else snapshot = await freshForInput(parsed, options?.signal)
+      } else
+        snapshot = parsed.snapshotID
+          ? await fromSnapshot(parsed.snapshotID, parsed, options?.signal)
+          : await freshForInput(parsed, options?.signal)
       options?.signal?.throwIfAborted()
       return rowPage(snapshot, offset, parsed.limit, secret)
     },
@@ -1696,9 +1788,14 @@ export function createModelDecisionReader(
         const cursor = readPageCursor(secret, parsed.cursor)
         if (cursor.kind !== "configurations" || cursor.limit !== parsed.limit)
           throw new Error("Model decision configuration cursor page does not match")
+        if (parsed.snapshotID && parsed.snapshotID !== cursor.snapshotID)
+          throw new Error("Model decision configuration cursor and snapshot pin do not match")
         snapshot = await fromCursor(cursor, parsed, options?.signal)
         offset = cursor.offset
-      } else snapshot = await freshForInput(parsed, options?.signal)
+      } else
+        snapshot = parsed.snapshotID
+          ? await fromSnapshot(parsed.snapshotID, parsed, options?.signal)
+          : await freshForInput(parsed, options?.signal)
       options?.signal?.throwIfAborted()
       return configurationPage(snapshot, offset, parsed.limit, secret)
     },

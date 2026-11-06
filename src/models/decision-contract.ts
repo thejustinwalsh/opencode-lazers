@@ -4,6 +4,7 @@ import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { TaskReferenceSchema } from "../task.ts"
 import { ModelPriceSourcePolicySchema, ModelPriceSourceSchema } from "./price-source-settings.ts"
 import { KnownUsageMarketSchema } from "./market-range.ts"
+import { ModelDecisionReferenceEstimateSchema } from "./reference-estimate.ts"
 
 /** Versioned, producer-owned read contract for the Models decision view. */
 export const MODELS_DECISION_RPC_ID = "lazers.models.decision.v2"
@@ -65,6 +66,8 @@ const ReadShape = {
 export const ModelDecisionReadInputSchema = z.strictObject(ReadShape)
 export const ModelDecisionRowsInputSchema = z.strictObject({
   ...ReadShape,
+  /** Optional pin returned by overview; an omitted pin preserves legacy fresh reads. */
+  snapshotID: OpaqueID.optional(),
   cursor: Cursor.optional(),
   limit: z.int().min(1).max(100).default(50),
 })
@@ -354,13 +357,27 @@ function refineZeroAcceptedEfficiency(
   }
 }
 
-export const ModelDecisionConfigurationSchema = z.strictObject({
-  configurationID: OpaqueID,
-  groupID: OpaqueID,
-  label: z.string().min(1).max(512),
-  route: ModelDecisionRouteSchema,
-  currentPrice: ModelDecisionPricePinSchema,
-})
+export const ModelDecisionConfigurationSchema = z
+  .strictObject({
+    configurationID: OpaqueID,
+    groupID: OpaqueID,
+    label: z.string().min(1).max(512),
+    route: ModelDecisionRouteSchema,
+    currentPrice: ModelDecisionPricePinSchema,
+    /** Additive published-OpenRouter reference; omission remains valid for old v2 records. */
+    referenceEstimate: ModelDecisionReferenceEstimateSchema.optional(),
+  })
+  .superRefine((configuration, context) => {
+    if (
+      configuration.referenceEstimate &&
+      JSON.stringify(configuration.referenceEstimate.route) !== JSON.stringify(configuration.route)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["referenceEstimate", "route"],
+        message: "A reference estimate must use its configuration's exact route",
+      })
+  })
 export type ModelDecisionConfiguration = z.infer<typeof ModelDecisionConfigurationSchema>
 
 function refineConfigurationPricePolicy(
@@ -392,9 +409,35 @@ export const ModelDecisionRowSchema = z
     cohort: ModelDecisionCohortCountsSchema,
     efficiency: ModelDecisionEfficiencySchema,
     nativeReportedCost: ModelDecisionNativeCostSchema,
+    /** Same exact route/source estimate as the nested configuration, kept row-addressable. */
+    referenceEstimate: ModelDecisionReferenceEstimateSchema.optional(),
   })
   .superRefine((row, context) => {
     refineZeroAcceptedEfficiency(row.cohort.acceptedTaskCount, row.efficiency, context)
+    if (Boolean(row.referenceEstimate) !== Boolean(row.configuration.referenceEstimate))
+      context.addIssue({
+        code: "custom",
+        path: ["referenceEstimate"],
+        message: "A row and its configuration must either both include or both omit the estimate",
+      })
+    if (row.referenceEstimate) {
+      if (JSON.stringify(row.referenceEstimate.route) !== JSON.stringify(row.configuration.route))
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEstimate", "route"],
+          message: "A row reference estimate must use its configuration's exact route",
+        })
+      if (
+        row.configuration.referenceEstimate &&
+        JSON.stringify(row.referenceEstimate) !==
+          JSON.stringify(row.configuration.referenceEstimate)
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEstimate"],
+          message: "Row and configuration reference estimates must agree",
+        })
+    }
   })
 export type ModelDecisionRow = z.infer<typeof ModelDecisionRowSchema>
 
@@ -420,6 +463,15 @@ export const ModelDecisionGraphSchema = z.strictObject({
   scope: z.literal("global-filtered-snapshot"),
   points: z.array(ModelDecisionGraphPointSchema),
   frontierConfigurationIDs: z.array(OpaqueID),
+  /** Global filtered-cohort values are independent of loaded row/configuration pages. */
+  referenceEstimates: z
+    .array(
+      z.strictObject({
+        configurationID: OpaqueID,
+        estimate: ModelDecisionReferenceEstimateSchema,
+      }),
+    )
+    .optional(),
 })
 export type ModelDecisionGraph = z.infer<typeof ModelDecisionGraphSchema>
 
@@ -594,6 +646,7 @@ export const ModelDecisionInspectOutputSchema = z
       nativeReportedCost: ModelDecisionNativeCostSchema,
       selectedTaskID: z.uuid().nullable(),
       estimate: ModelDecisionEstimateSchema,
+      referenceEstimate: ModelDecisionReferenceEstimateSchema.optional(),
       contributorPage: ModelDecisionContributorPageSchema,
       /** Optional additive v1 known-usage endpoint-scenario surface; v2 values stay unchanged. */
       knownUsageMarket: KnownUsageMarketSchema.optional(),
@@ -618,6 +671,30 @@ export const ModelDecisionInspectOutputSchema = z
         ["configuration"],
         context,
       )
+    if (
+      inspection.status === "found" &&
+      Boolean(inspection.referenceEstimate) !== Boolean(inspection.configuration.referenceEstimate)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["referenceEstimate"],
+        message:
+          "An inspection and its configuration must either both include or both omit the estimate",
+      })
+    if (
+      inspection.status === "found" &&
+      inspection.referenceEstimate &&
+      (JSON.stringify(inspection.referenceEstimate.route) !==
+        JSON.stringify(inspection.configuration.route) ||
+        (inspection.configuration.referenceEstimate &&
+          JSON.stringify(inspection.referenceEstimate) !==
+            JSON.stringify(inspection.configuration.referenceEstimate)))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["referenceEstimate"],
+        message: "Inspection and configuration reference estimates must agree",
+      })
   })
 export type ModelDecisionInspect = z.infer<typeof ModelDecisionInspectOutputSchema>
 

@@ -1513,6 +1513,56 @@ test("relevant concurrent updates preserve pinned pages and the next read refres
   }
 })
 
+test("first-page pins reject expired or mismatched contexts while retaining legacy and cursor reads", async () => {
+  const fixture = makeLedgerFixture()
+  addAdoptedUsage(fixture, { providerID: "openrouter", modelID: "adopted-model", variant: null })
+  const reader = fixtureDecisionReader(fixture, (routes) => makePriceIndex(routes))
+  try {
+    const input = inputFor(fixture.projectDirectory)
+    const overviewA = await reader.overview(input)
+    const first = await reader.rows({
+      ...input,
+      snapshotID: overviewA.context.snapshotID,
+      limit: 1,
+    })
+    expect(first.context.snapshotID).toBe(overviewA.context.snapshotID)
+    expect(first.nextCursor).toBeTruthy()
+
+    const legacy = await reader.rows({ ...input, limit: 1 })
+    expect(legacy.context.snapshotID).toBe(overviewA.context.snapshotID)
+
+    await expect(
+      reader.rows({
+        ...input,
+        snapshotID: overviewA.context.snapshotID,
+        filters: { ...input.filters, persona: "ui" },
+        limit: 1,
+      }),
+    ).rejects.toThrow("scope or filters do not match")
+    await expect(
+      reader.configurations({ ...input, snapshotID: "models-decision-v2:expired", limit: 1 }),
+    ).rejects.toThrow("unavailable or expired")
+
+    rewriteAttemptUsage(fixture.path, fixture.attempts.failed.id, 901)
+    const overviewB = await reader.overview(input)
+    expect(overviewB.context.snapshotID).not.toBe(overviewA.context.snapshotID)
+    await expect(
+      reader.rows({
+        ...input,
+        snapshotID: overviewB.context.snapshotID,
+        cursor: first.nextCursor!,
+        limit: 1,
+      }),
+    ).rejects.toThrow("cursor and snapshot pin do not match")
+
+    const continued = await reader.rows({ ...input, cursor: first.nextCursor!, limit: 1 })
+    expect(continued.context.snapshotID).toBe(overviewA.context.snapshotID)
+  } finally {
+    reader.close()
+    fixture.close()
+  }
+})
+
 test("malformed retained evidence stays visibly partial rather than becoming an empty success", async () => {
   const fixture = makeLedgerFixture()
   const writer = new Database(fixture.path, { strict: true })

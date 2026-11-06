@@ -25,6 +25,10 @@ import {
   ModelDecisionInspectOutputSchema,
   ModelDecisionOverviewOutputSchema,
   ModelDecisionGraphPointSchema,
+  ModelDecisionRowsInputSchema,
+  ModelDecisionConfigurationsInputSchema,
+  ModelDecisionRowsRPCInputSchema,
+  ModelDecisionConfigurationsRPCInputSchema,
   ModelDecisionRowSchema,
   ModelDecisionRowsOutputSchema,
   ModelsDecision,
@@ -61,6 +65,9 @@ test("versioned reads share producer context while the global graph stays indepe
     variant: "high",
   })
   expect(rows.rows[0]?.configuration.currentPrice.source).toBe("openrouter")
+  expect(rows.rows[0]?.referenceEstimate).toBeUndefined()
+  expect(rows.rows[0]?.configuration.referenceEstimate).toBeUndefined()
+  expect(overview.graph.referenceEstimates).toBeUndefined()
   expect(configurations.configurations[0]?.configurationID).toBe(CONFIG_ONE)
 
   if (inspect.status !== "found") throw new Error("Expected a found inspection fixture")
@@ -84,6 +91,35 @@ test("versioned reads share producer context while the global graph stays indepe
   expect(inspect.contributorPage.contributors[0]?.route).toBeUndefined()
   expect(inspect.contributorPage.contributors[0]?.membership).toBeUndefined()
   expect(inspect.estimate.confidenceInterval).toBeNull()
+  expect(inspect.referenceEstimate).toBeUndefined()
+})
+
+test("first-page snapshot pins are additive to legacy v2 inputs and registered RPC schemas", () => {
+  const legacyRows = ModelDecisionRowsInputSchema.parse(decisionRead)
+  const legacyConfigurations = ModelDecisionConfigurationsInputSchema.parse(decisionRead)
+  const snapshotID = "models-decision-v2:retained-snapshot"
+  const pinnedRows = ModelDecisionRowsInputSchema.parse({ ...decisionRead, snapshotID })
+  const pinnedConfigurations = ModelDecisionConfigurationsInputSchema.parse({
+    ...decisionRead,
+    snapshotID,
+  })
+  const rpcRows = ModelDecisionRowsRPCInputSchema.parse({
+    ...decisionRead,
+    sessionID: "ses-native",
+    snapshotID,
+  })
+  const rpcConfigurations = ModelDecisionConfigurationsRPCInputSchema.parse({
+    ...decisionRead,
+    sessionID: "ses-native",
+    snapshotID,
+  })
+
+  expect(legacyRows.snapshotID).toBeUndefined()
+  expect(legacyConfigurations.snapshotID).toBeUndefined()
+  expect(pinnedRows.snapshotID).toBe(snapshotID)
+  expect(pinnedConfigurations.snapshotID).toBe(snapshotID)
+  expect(rpcRows.snapshotID).toBe(snapshotID)
+  expect(rpcConfigurations.snapshotID).toBe(snapshotID)
 })
 
 test("inspection distinguishes complete accepted-task retry history and contributor membership", () => {
