@@ -401,6 +401,7 @@ function rangesFromSchedules(
 
   let subtotalMinimum = 0
   let subtotalMaximum = 0
+  let hasPricedUsage = false
   let complete = !missingUsage && !missingRate
   // Aggregate token counts cannot identify each call's tier, so bound every category
   // across all schedules instead of assigning the whole cohort to one schedule.
@@ -417,6 +418,7 @@ function rangesFromSchedules(
 
     const rates = schedules.map((schedule) => rateNumber(categoryRate(category, schedule)))
     const knownRates = rates.flatMap((rate) => (rate.value === null ? [] : [rate.value]))
+    hasPricedUsage ||= knownRates.length > 0
     if (knownRates.length === schedules.length) {
       const minimum = usage.tokens * Math.min(...knownRates)
       const maximum = usage.tokens * Math.max(...knownRates)
@@ -455,7 +457,7 @@ function rangesFromSchedules(
     missingRate,
     missingUsage,
     knownSubtotal:
-      nonfinite || !hasObservedUsage
+      nonfinite || !hasObservedUsage || !hasPricedUsage
         ? null
         : { minimum: subtotalMinimum, maximum: subtotalMaximum },
     completeRange:
@@ -834,6 +836,18 @@ export function calculateModelDecisionReferenceEstimate(input: {
   const usage = aggregateUsage(includedSessions)
   const calculation = rangesFromSchedules(usage.categories, schedules, usage.hasObserved)
   calculation.nonfinite ||= usage.nonfinite
+  if (input.acceptedTaskCount > 0) {
+    const amounts = [
+      calculation.completeRange?.minimum,
+      calculation.completeRange?.maximum,
+      calculation.knownSubtotal?.minimum,
+      calculation.knownSubtotal?.maximum,
+    ]
+    calculation.nonfinite ||= amounts.some(
+      (amount) => amount !== undefined && amount > 0 && amount / input.acceptedTaskCount === 0,
+    )
+  }
+  if (calculation.nonfinite) calculation.knownSubtotal = null
   const attributionComplete =
     coverage.attribution.status === "complete" &&
     coverage.retries.status === "complete" &&

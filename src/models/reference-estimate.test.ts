@@ -13,6 +13,78 @@ import {
 } from "./price-source-settings.ts"
 
 const route = { providerID: "openai", modelID: "fixture-model", variant: null }
+
+test("unpriced positive usage has no known subtotal; an explicitly free rate does", () => {
+  const categories: ReferenceEstimateSession["categories"] = {
+    uncachedInput: { tokens: 1, status: "observed" },
+    output: { tokens: 0, status: "observed" },
+    reasoning: { tokens: 0, status: "observed" },
+    cacheRead: { tokens: 0, status: "observed" },
+    cacheWrite: { tokens: 1, status: "observed" },
+  }
+  for (const prompt of [null, "0"]) {
+    const result = estimate({
+      relatedSessions: [session("unpriced", { categories })],
+      catalog: source({
+        tiers: [
+          {
+            minPromptTokens: null,
+            prompt,
+            completion: null,
+            inputCacheRead: null,
+            inputCacheWrite: null,
+          },
+        ],
+      }),
+    })
+    expect(result.status).toBe("partial")
+    expect(result.numeratorUSD).toBeNull()
+    expect(result.valueUSDPerAcceptedTask).toBeNull()
+    expect(result.knownSubtotalUSD).toBe(prompt === null ? null : 0)
+    expect(result.knownSubtotalUSDPerAcceptedTask).toBe(prompt === null ? null : 0)
+    expect(result.knownSubtotalRangeUSD).toBeNull()
+  }
+})
+
+test("positive per-task division underflow cannot publish a zero total, range or subtotal", () => {
+  for (const kind of ["exact", "conditional", "partial"] as const) {
+    const tier = {
+      minPromptTokens: null,
+      prompt: "1e-320",
+      completion: "0",
+      inputCacheRead: "0",
+      inputCacheWrite: null,
+    }
+    const result = estimate({
+      acceptedTaskCount: 100_000,
+      relatedTaskCount: 100_000,
+      relatedSessions: [
+        session("small-positive", {
+          categories: {
+            uncachedInput: { tokens: 1, status: "observed" },
+            output: { tokens: 0, status: "observed" },
+            reasoning: { tokens: 0, status: "observed" },
+            cacheRead: { tokens: 0, status: "observed" },
+            cacheWrite: { tokens: kind === "partial" ? 1 : 0, status: "observed" },
+          },
+        }),
+      ],
+      catalog: source({
+        tiers:
+          kind === "conditional"
+            ? [tier, { ...tier, minPromptTokens: 100, prompt: "2e-320" }]
+            : [tier],
+      }),
+    })
+    expect(result.status).toBe("partial")
+    expect(result.reasons).toContain("nonfinite-arithmetic")
+    expect(result.valueUSDPerAcceptedTask).toBeNull()
+    expect(result.rangeUSDPerAcceptedTask).toBeNull()
+    expect(result.knownSubtotalUSDPerAcceptedTask).toBeNull()
+    expect(result.knownSubtotalRangeUSDPerAcceptedTask).toBeNull()
+  }
+})
+
 const completeCategories: ReferenceEstimateSession["categories"] = {
   uncachedInput: { tokens: 10, status: "observed" },
   output: { tokens: 20, status: "observed" },
@@ -213,7 +285,7 @@ test("conditional tier bounds contain independently priced mixed low- and high-p
         inputCacheWrite: "0",
       },
       {
-        minPromptTokens: 100,
+        minPromptTokens: 99,
         prompt: "0.0001",
         completion: "0.000001",
         inputCacheRead: "0",
@@ -261,7 +333,7 @@ test("conditional tier bounds contain independently priced mixed low- and high-p
   expect(result.rangeUSDPerAcceptedTask?.maximum).toBeCloseTo(0.0201 / 4, 12)
 })
 
-test("conditional tier bounds contain independently enumerated small mixed-call assignments", () => {
+test("conditional tier bounds contain arbitrary tier allocations conservatively", () => {
   const catalog = source({
     tiers: [
       {
@@ -335,7 +407,7 @@ test("known mixed-tier subtotals are bounded while a missing positive rate keeps
         inputCacheWrite: null,
       },
       {
-        minPromptTokens: 100,
+        minPromptTokens: 99,
         prompt: "0.0001",
         completion: "0.000001",
         inputCacheRead: "0",
