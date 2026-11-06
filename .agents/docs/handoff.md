@@ -69,11 +69,28 @@ has sealed source quarantine. Runtime guard scans raw attempt states; existing
 sourceReservationExcluded has a narrow isolation-aware exclusion. Investigate and
 reuse existing policy; do not clear historical state or invent idle success.
 
-Native Luna ses_e522ffd49ffeenRSBj8xvTAxMB is actively investigating this exact
-admission mismatch, read-only. Native Luna ses_e502151b3ffeBPGscw9thFkXM4 is actively
-reviewing actual159 reload diagnostics. Reuse their sessions; do not duplicate.
-Main is also attempting substantive original129 repair; latest retained-repair
-returned worker identity/location/route mismatch and is under investigation.
+Luna e522 confirmed the exact admission defect. Current138 owner resumed SAME
+worker ses_9e11e5a8fae643a79c50b2346bfb48a9 through native controls. It now has a
+narrow two-file patch reusing sourceReservationExcluded for isolated verification,
+plus registered positive/negative regression. First full affected suite561/7486
+passed153.24s with timeout30000/parallel1; quality passed. Worker then added actual
+destination workspace to the exclusion (same-physical protection) and is rerunning
+tests. Current patch is NOT yet committed or activated. Root reviewed initial diff,
+will review final delta; no duplicate model review needed without a new finding.
+
+Original129 repair hit parentID===currentOwner despite valid ownership transfer.
+Root corrected research scope: supported reassignment as well as renewal must work;
+immutable native launch parent is not current plan authority. Preserve exact
+worker/attempt/project/route/input/current-owner epoch bindings; do not invent a
+predecessor-archival/ancestry ceremony that invalidates the58approved transfers.
+Main is planning a proportional correction in existing57 or linked remaining work.
+
+Root used native Help→ExportLogs; current main extract is
+/private/tmp/lz-native-export-current-main.log. Actual provider/generation1→2,
+handoff retirement and successor-ready/probe records correlate to the witnessed
+reload. See design/reviews/native-plugin-reload-observation-20261106.md. e502 is
+reused to assess these logs+mechanical source predicates for159; gate still open.
+Reuse existing research sessions; do not duplicate.
 
 138 task0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4;
 plane48290a6-a871-42a2-94f1-c88f700c0d11. Latest attempt091ee91c-c6e3-43d3-b7f9-858028336150,
