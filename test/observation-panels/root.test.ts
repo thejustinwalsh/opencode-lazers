@@ -1475,6 +1475,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modelCss).not.toContain("@media (min-width: 720px)")
     expect(modelCss).not.toContain("@media (max-width: 500px)")
     expect(modelCss).not.toContain("450px")
+    const overviewRules = [...modelCss.matchAll(/\.lazers-models-overview\s*\{([^}]+)\}/g)].map(
+      (match) => match[1] ?? "",
+    )
+    expect(overviewRules).toHaveLength(1)
+    expect(overviewRules[0]).toContain("grid-template-columns: minmax(0, 1fr)")
+    const summaryRule = modelCss.match(/\.lazers-models-market-summary\s*\{([^}]+)\}/)?.[1] ?? ""
+    expect(summaryRule).toContain("min-width: 0")
+    expect(modelCss).toMatch(
+      /\.lazers-models-market-summary strong\s*\{[^}]*overflow-wrap: anywhere/s,
+    )
+    expect(modelCss).toMatch(
+      /\.lazers-models-market-summary small\s*\{[^}]*overflow-wrap: anywhere/s,
+    )
     const style = browserDocument.createElement("style")
     style.textContent = modelCss ?? ""
     browserDocument.head.append(style)
@@ -1597,6 +1610,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(overview.querySelector(".lazers-models-chart")).not.toBeNull()
     expect(overview.querySelector(".lazers-models-candidates")).toBeNull()
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
+    expect(comparePanel.querySelector("table")).toBeNull()
     expect(sourceDetails.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
@@ -1608,7 +1622,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const chartHost = comparePanel.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
-    let chartWidth = 640
+    let chartWidth = 360
     const chartHeight = 280
     Object.defineProperty(chartHost, "clientWidth", { configurable: true, get: () => chartWidth })
     Object.defineProperty(chartHost, "clientHeight", { configurable: true, get: () => chartHeight })
@@ -1633,6 +1647,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       return chartSVGMarkup()
     }
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(360)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
     const initialSVGGeometry = await settleChart()
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
@@ -1647,9 +1662,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     })
     await until(() => chartSVGMarkup() !== themedSVGGeometry)
     await settleChart()
-    chartWidth = 720
+    chartWidth = 960
     dom.window.dispatchEvent(new dom.Event("resize"))
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(960)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
     await settleChart()
     const initialAlternative = comparePanel.querySelector<HTMLDetailsElement>(

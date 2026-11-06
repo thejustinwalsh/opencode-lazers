@@ -53,6 +53,7 @@ Main Architect: ses_e568438ebffeaoFbF9nBb942XM, Sol High.
 Current visual reviewer: ses_e52a5ae04ffeObat8Bt6imz4ci, general agent,
 OpenAI gpt-6.1-terra/high, canonical repository location. Main resumed this
 EXISTING session with THREE INLINE PNG image parts and current source/index:
+
 - /private/tmp/lz-models-live-narrow-first.png
 - /private/tmp/lz-models-live-wide-first.png
 - design/models-panel/models-approved.png
