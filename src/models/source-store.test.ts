@@ -4,6 +4,12 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  ENDPOINT_PRICING_PRODUCTS,
+  EndpointPricingSnapshotSchema,
+  parseEndpointPricingResponse,
+} from "./endpoint-pricing.ts"
+import type { EndpointPricingProductID } from "./endpoint-pricing.ts"
+import {
   MODEL_EVIDENCE_QUERIES,
   MODEL_EVIDENCE_SOURCE_URLS,
   ModelEvidenceSnapshotSchema,
@@ -63,6 +69,42 @@ function nativeRecord(id: string) {
       ],
     },
   }
+}
+
+function endpointSnapshot(productID: EndpointPricingProductID, generation: number, prompt: string) {
+  const sourceURL = ENDPOINT_PRICING_PRODUCTS.find(
+    (product) => product.productID === productID,
+  )!.sourceURL
+  const records = parseEndpointPricingResponse(
+    {
+      data: {
+        id: productID,
+        endpoints: [
+          {
+            name: `Test endpoint ${productID}`,
+            model_id: productID,
+            provider_name: "Test Provider",
+            tag: "test/standard",
+            service_tier: null,
+            status: 0,
+            pricing: { prompt, completion: "0.00002", input_cache_write: null },
+            supports_implicit_caching: false,
+          },
+        ],
+      },
+    },
+    productID,
+  )
+  return EndpointPricingSnapshotSchema.parse({
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    productID,
+    generation,
+    retrievedAt: new Date().toISOString(),
+    sourceURL,
+    httpStatus: 200,
+    records,
+  })
 }
 
 test("source snapshots persist by retained ID and cached records paginate within project", () => {
@@ -166,6 +208,115 @@ test("empty success, failures, and stale refresh completion keep status and sele
       latestSnapshotID: newest.snapshotID,
       latestRecordCount: 0,
     })
+  } finally {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("endpoint evidence reopens from append-only per-product snapshots and failed refresh keeps last-good data", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  let store = new ModelEvidenceStore(path, projectDirectory)
+  let modelSnapshotID!: string
+  const kimiID = "moonshotai/kimi-k3.1-pro"
+  const qwenID = "qwen/qwen3.8-flash"
+  const lunaID = "openai/gpt-6-luna"
+  let firstKimiSnapshotID!: string
+  try {
+    const sourceGenerations = store.beginRefresh()
+    const modelSnapshot = snapshot(
+      "openrouter-models",
+      projectDirectory,
+      sourceGenerations["openrouter-models"],
+      [],
+    )
+    modelSnapshotID = modelSnapshot.snapshotID
+    store.saveSnapshot(modelSnapshot)
+
+    const firstGenerations = store.beginEndpointPricingRefresh()
+    const firstKimi = endpointSnapshot(kimiID, firstGenerations[kimiID], "0.000002")
+    store.saveEndpointPricingSnapshot(firstKimi)
+    firstKimiSnapshotID = firstKimi.snapshotID
+    for (const productID of [qwenID, lunaID] as const)
+      store.saveEndpointPricingSnapshot(
+        endpointSnapshot(productID, firstGenerations[productID], "0.000001"),
+      )
+    expect(store.read().endpointPricing).toMatchObject({ state: "succeeded", complete: true })
+    store.close()
+
+    store = new ModelEvidenceStore(path, projectDirectory)
+    const reopened = store.read()
+    expect(reopened.endpointPricing?.scenarios[0]).toMatchObject({
+      productID: kimiID,
+      state: "succeeded",
+      latestSnapshotID: firstKimiSnapshotID,
+      snapshot: {
+        snapshotID: firstKimiSnapshotID,
+        records: [{ productID: kimiID, pricing: { prompt: "0.000002" } }],
+      },
+    })
+    expect(store.read({ snapshotID: modelSnapshotID }).snapshot?.snapshot.snapshotID).toBe(
+      modelSnapshotID,
+    )
+
+    const failedGenerations = store.beginEndpointPricingRefresh()
+    store.failEndpointPricingRefresh(kimiID, failedGenerations[kimiID], "rate-limited", 429)
+    store.cancelEndpointPricingRefresh(qwenID, failedGenerations[qwenID])
+    store.cancelEndpointPricingRefresh(lunaID, failedGenerations[lunaID])
+    expect(store.read().endpointPricing).toMatchObject({
+      state: "partial",
+      complete: false,
+      scenarios: [
+        {
+          productID: kimiID,
+          state: "failed",
+          errorCode: "rate-limited",
+          httpStatus: 429,
+          latestSnapshotID: firstKimiSnapshotID,
+          snapshot: { snapshotID: firstKimiSnapshotID },
+        },
+        { productID: qwenID, state: "cancelled" },
+        { productID: lunaID, state: "cancelled" },
+      ],
+    })
+    expect(store.read({ snapshotID: modelSnapshotID }).snapshot?.snapshot.snapshotID).toBe(
+      modelSnapshotID,
+    )
+
+    const nextGenerations = store.beginEndpointPricingRefresh()
+    const replacement = endpointSnapshot(kimiID, nextGenerations[kimiID], "0.000003")
+    store.saveEndpointPricingSnapshot(replacement)
+    store.failEndpointPricingRefresh(qwenID, nextGenerations[qwenID], "missing-credentials")
+    store.cancelEndpointPricingRefresh(lunaID, nextGenerations[lunaID])
+    expect(store.read().endpointPricing?.scenarios[0]).toMatchObject({
+      state: "succeeded",
+      latestSnapshotID: replacement.snapshotID,
+      snapshot: {
+        generation: nextGenerations[kimiID],
+        records: [{ pricing: { prompt: "0.000003" } }],
+      },
+    })
+    expect(store.read({ snapshotID: modelSnapshotID }).snapshot?.snapshot.snapshotID).toBe(
+      modelSnapshotID,
+    )
+    const db = new Database(path, { readonly: true, strict: true })
+    try {
+      expect(
+        db
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM model_endpoint_pricing_snapshots",
+          )
+          .get()!.count,
+      ).toBe(4)
+      expect(
+        db
+          .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM model_evidence_snapshots")
+          .get()!.count,
+      ).toBe(1)
+    } finally {
+      db.close()
+    }
   } finally {
     store.close()
     rmSync(root, { recursive: true, force: true })

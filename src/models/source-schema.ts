@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { EndpointPricingReadSchema } from "./endpoint-pricing.ts"
 
 export const MODEL_EVIDENCE_SOURCES = [
   "native-catalog",
@@ -228,6 +229,8 @@ export const ModelEvidencePageSchema = z.strictObject({
 export const ModelEvidenceOutputSchema = z.strictObject({
   sources: z.array(ModelEvidenceRefreshStatusSchema).length(MODEL_EVIDENCE_SOURCES.length),
   snapshot: ModelEvidencePageSchema.nullable(),
+  // Optional for compatibility with already-retained whole-model source snapshots and clients.
+  endpointPricing: EndpointPricingReadSchema.optional(),
 })
 export type ModelEvidenceOutput = z.infer<typeof ModelEvidenceOutputSchema>
 

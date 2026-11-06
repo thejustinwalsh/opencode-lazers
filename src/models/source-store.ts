@@ -1,5 +1,17 @@
 import { Database } from "bun:sqlite"
 import {
+  ENDPOINT_PRICING_PRODUCTS,
+  EndpointPricingProductIDSchema,
+  EndpointPricingReadSchema,
+  EndpointPricingScenarioSchema,
+  EndpointPricingSnapshotSchema,
+} from "./endpoint-pricing.ts"
+import type {
+  EndpointPricingProductID,
+  EndpointPricingRead,
+  EndpointPricingSnapshot,
+} from "./endpoint-pricing.ts"
+import {
   MODEL_EVIDENCE_SOURCES,
   ModelEvidenceErrorCodeSchema,
   ModelEvidenceOutputSchema,
@@ -36,6 +48,33 @@ type SnapshotRow = {
   source: ModelEvidenceSource
   generation: number
   retrieved_at: string
+  record_count: number
+  body: string
+}
+
+type EndpointPricingGeneration = Record<EndpointPricingProductID, number>
+
+type EndpointPricingRefreshRow = {
+  product_id: EndpointPricingProductID
+  state: "never" | "refreshing" | "succeeded" | "failed" | "cancelled"
+  generation: number
+  started_at: string | null
+  completed_at: string | null
+  latest_snapshot_id: string | null
+  latest_retrieved_at: string | null
+  latest_record_count: number | null
+  error_code: string | null
+  http_status: number | null
+}
+
+type EndpointPricingSnapshotRow = {
+  snapshot_id: string
+  project_directory: string
+  product_id: EndpointPricingProductID
+  generation: number
+  retrieved_at: string
+  source_url: string
+  http_status: number
   record_count: number
   body: string
 }
@@ -79,6 +118,35 @@ export class ModelEvidenceStore {
           http_status INTEGER,
           PRIMARY KEY(project_directory, source)
         );
+        CREATE TABLE IF NOT EXISTS model_endpoint_pricing_snapshots (
+          snapshot_id TEXT PRIMARY KEY,
+          project_directory TEXT NOT NULL,
+          product_id TEXT NOT NULL,
+          generation INTEGER NOT NULL CHECK(generation > 0),
+          retrieved_at TEXT NOT NULL,
+          source_url TEXT NOT NULL,
+          http_status INTEGER NOT NULL CHECK(http_status BETWEEN 100 AND 599),
+          record_count INTEGER NOT NULL CHECK(record_count BETWEEN 0 AND 200),
+          body TEXT NOT NULL,
+          UNIQUE(project_directory, product_id, generation)
+        );
+        CREATE INDEX IF NOT EXISTS model_endpoint_pricing_snapshots_project_product
+          ON model_endpoint_pricing_snapshots(project_directory, product_id, generation DESC);
+        CREATE TABLE IF NOT EXISTS model_endpoint_pricing_refreshes (
+          project_directory TEXT NOT NULL,
+          product_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('never','refreshing','succeeded','failed','cancelled')),
+          generation INTEGER NOT NULL DEFAULT 0 CHECK(generation >= 0),
+          started_at TEXT,
+          completed_at TEXT,
+          latest_snapshot_id TEXT,
+          latest_snapshot_generation INTEGER,
+          latest_retrieved_at TEXT,
+          latest_record_count INTEGER,
+          error_code TEXT,
+          http_status INTEGER,
+          PRIMARY KEY(project_directory, product_id)
+        );
       `)
     } catch (error) {
       this.db.close()
@@ -120,6 +188,156 @@ export class ModelEvidenceStore {
         return generations
       })
       .immediate()
+  }
+
+  beginEndpointPricingRefresh(): EndpointPricingGeneration {
+    const now = new Date().toISOString()
+    return this.db
+      .transaction(() => {
+        const generations = {} as EndpointPricingGeneration
+        for (const { productID } of ENDPOINT_PRICING_PRODUCTS) {
+          this.db
+            .query(
+              `INSERT OR IGNORE INTO model_endpoint_pricing_refreshes
+               (project_directory, product_id, state, generation)
+               VALUES (?, ?, 'never', 0)`,
+            )
+            .run(this.projectDirectory, productID)
+          const current = this.db
+            .query<{ generation: number }, [string, EndpointPricingProductID]>(
+              `SELECT generation FROM model_endpoint_pricing_refreshes
+               WHERE project_directory=? AND product_id=?`,
+            )
+            .get(this.projectDirectory, productID)!.generation
+          if (!Number.isSafeInteger(current) || current >= Number.MAX_SAFE_INTEGER)
+            throw new Error("Endpoint pricing refresh generation is exhausted")
+          const generation = current + 1
+          this.db
+            .query(
+              `UPDATE model_endpoint_pricing_refreshes SET state='refreshing', generation=?,
+                 started_at=?, completed_at=NULL, error_code=NULL, http_status=NULL
+               WHERE project_directory=? AND product_id=?`,
+            )
+            .run(generation, now, this.projectDirectory, productID)
+          generations[productID] = generation
+        }
+        return generations
+      })
+      .immediate()
+  }
+
+  saveEndpointPricingSnapshot(input: EndpointPricingSnapshot): void {
+    const snapshot = EndpointPricingSnapshotSchema.parse(input)
+    if (snapshot.projectDirectory !== this.projectDirectory)
+      throw new Error("Endpoint pricing snapshot does not belong to this project")
+    const now = new Date().toISOString()
+    this.db
+      .transaction(() => {
+        this.db
+          .query(
+            `INSERT INTO model_endpoint_pricing_snapshots
+             (snapshot_id, project_directory, product_id, generation, retrieved_at, source_url,
+              http_status, record_count, body)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            snapshot.snapshotID,
+            snapshot.projectDirectory,
+            snapshot.productID,
+            snapshot.generation,
+            snapshot.retrievedAt,
+            snapshot.sourceURL,
+            snapshot.httpStatus,
+            snapshot.records.length,
+            JSON.stringify(snapshot),
+          )
+        const current = this.db
+          .query<
+            { generation: number; latest_snapshot_generation: number | null },
+            [string, EndpointPricingProductID]
+          >(
+            `SELECT generation, latest_snapshot_generation FROM model_endpoint_pricing_refreshes
+             WHERE project_directory=? AND product_id=?`,
+          )
+          .get(this.projectDirectory, snapshot.productID)
+        if (!current) throw new Error("Endpoint pricing refresh was not started")
+        if (snapshot.generation > current.generation)
+          throw new Error("Endpoint pricing refresh generation is unavailable")
+
+        if (
+          current.latest_snapshot_generation === null ||
+          snapshot.generation > current.latest_snapshot_generation
+        ) {
+          this.db
+            .query(
+              `UPDATE model_endpoint_pricing_refreshes SET latest_snapshot_id=?,
+                 latest_snapshot_generation=?, latest_retrieved_at=?, latest_record_count=?
+               WHERE project_directory=? AND product_id=?`,
+            )
+            .run(
+              snapshot.snapshotID,
+              snapshot.generation,
+              snapshot.retrievedAt,
+              snapshot.records.length,
+              this.projectDirectory,
+              snapshot.productID,
+            )
+        }
+        if (current.generation === snapshot.generation) {
+          this.db
+            .query(
+              `UPDATE model_endpoint_pricing_refreshes SET state='succeeded', completed_at=?,
+                 error_code=NULL, http_status=NULL
+               WHERE project_directory=? AND product_id=? AND generation=?`,
+            )
+            .run(now, this.projectDirectory, snapshot.productID, snapshot.generation)
+        }
+      })
+      .immediate()
+  }
+
+  failEndpointPricingRefresh(
+    productID: EndpointPricingProductID,
+    generation: number,
+    errorCode: ModelEvidenceErrorCode,
+    httpStatus: number | null = null,
+  ): void {
+    EndpointPricingProductIDSchema.parse(productID)
+    const code = ModelEvidenceErrorCodeSchema.parse(errorCode)
+    this.finishEndpointPricingRefresh(productID, generation, "failed", code, httpStatus)
+  }
+
+  cancelEndpointPricingRefresh(
+    productID: EndpointPricingProductID,
+    generation: number,
+    httpStatus: number | null = null,
+  ): void {
+    EndpointPricingProductIDSchema.parse(productID)
+    this.finishEndpointPricingRefresh(productID, generation, "cancelled", null, httpStatus)
+  }
+
+  private finishEndpointPricingRefresh(
+    productID: EndpointPricingProductID,
+    generation: number,
+    state: "failed" | "cancelled",
+    errorCode: string | null,
+    httpStatus: number | null,
+  ): void {
+    this.db
+      .query(
+        `UPDATE model_endpoint_pricing_refreshes SET state=?, completed_at=?, error_code=?,
+           http_status=?
+         WHERE project_directory=? AND product_id=? AND generation=?`,
+      )
+      .run(
+        state,
+        new Date().toISOString(),
+        errorCode,
+        httpStatus,
+        this.projectDirectory,
+        productID,
+        generation,
+      )
   }
 
   saveSnapshot(input: ModelEvidenceSnapshot): void {
@@ -233,8 +451,107 @@ export class ModelEvidenceStore {
       const snapshot = request.snapshotID
         ? this.readPage(request.snapshotID, request.cursor ?? "0", request.limit)
         : null
-      return ModelEvidenceOutputSchema.parse({ sources, snapshot })
+      return ModelEvidenceOutputSchema.parse({
+        sources,
+        snapshot,
+        endpointPricing: this.readEndpointPricing(),
+      })
     })()
+  }
+
+  private readEndpointPricing(): EndpointPricingRead {
+    const rows = this.db
+      .query<EndpointPricingRefreshRow, [string]>(
+        `SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id,
+                latest_retrieved_at, latest_record_count, error_code, http_status
+         FROM model_endpoint_pricing_refreshes WHERE project_directory=?`,
+      )
+      .all(this.projectDirectory)
+    const byProduct = new Map(rows.map((row) => [row.product_id, row]))
+    const scenarios = ENDPOINT_PRICING_PRODUCTS.map(({ productID, sourceURL }) => {
+      const row = byProduct.get(productID)
+      const snapshot = row?.latest_snapshot_id
+        ? this.readEndpointPricingSnapshot(productID, row.latest_snapshot_id)
+        : null
+      return EndpointPricingScenarioSchema.parse(
+        row
+          ? {
+              productID,
+              sourceURL,
+              state: row.state,
+              generation: row.generation,
+              startedAt: row.started_at,
+              completedAt: row.completed_at,
+              latestSnapshotID: row.latest_snapshot_id,
+              latestRetrievedAt: row.latest_retrieved_at,
+              latestRecordCount: row.latest_record_count,
+              errorCode: row.error_code,
+              httpStatus: row.http_status,
+              snapshot,
+            }
+          : {
+              productID,
+              sourceURL,
+              state: "never",
+              generation: 0,
+              startedAt: null,
+              completedAt: null,
+              latestSnapshotID: null,
+              latestRetrievedAt: null,
+              latestRecordCount: null,
+              errorCode: null,
+              httpStatus: null,
+              snapshot: null,
+            },
+      )
+    })
+    const states = scenarios.map(({ state }) => state)
+    const state: EndpointPricingRead["state"] = states.every((value) => value === "never")
+      ? "never"
+      : states.some((value) => value === "refreshing")
+        ? "refreshing"
+        : states.every((value) => value === "succeeded")
+          ? "succeeded"
+          : states.every((value) => value === "cancelled")
+            ? "cancelled"
+            : states.every((value) => value === "failed")
+              ? "failed"
+              : "partial"
+    return EndpointPricingReadSchema.parse({
+      state,
+      generation: Math.max(...scenarios.map(({ generation }) => generation)),
+      complete: states.every((value) => value === "succeeded"),
+      scenarios,
+    })
+  }
+
+  private readEndpointPricingSnapshot(
+    productID: EndpointPricingProductID,
+    snapshotID: string,
+  ): EndpointPricingSnapshot {
+    const row = this.db
+      .query<EndpointPricingSnapshotRow, [string, string]>(
+        `SELECT snapshot_id, project_directory, product_id, generation, retrieved_at,
+                source_url, http_status, record_count, body
+         FROM model_endpoint_pricing_snapshots WHERE project_directory=? AND snapshot_id=?`,
+      )
+      .get(this.projectDirectory, snapshotID)
+    if (!row) throw new Error("Endpoint pricing snapshot is unavailable in this project")
+    if (row.product_id !== productID)
+      throw new Error("Endpoint pricing snapshot product does not match its selection")
+    const snapshot = EndpointPricingSnapshotSchema.parse(JSON.parse(row.body))
+    if (
+      snapshot.snapshotID !== row.snapshot_id ||
+      snapshot.projectDirectory !== row.project_directory ||
+      snapshot.productID !== row.product_id ||
+      snapshot.generation !== row.generation ||
+      snapshot.retrievedAt !== row.retrieved_at ||
+      snapshot.sourceURL !== row.source_url ||
+      snapshot.httpStatus !== row.http_status ||
+      snapshot.records.length !== row.record_count
+    )
+      throw new Error("Endpoint pricing snapshot is inconsistent")
+    return snapshot
   }
 
   private readStatuses(): ModelEvidenceRefreshStatus[] {

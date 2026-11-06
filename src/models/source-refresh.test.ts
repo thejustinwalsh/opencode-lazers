@@ -4,6 +4,7 @@ import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { ENDPOINT_PRICING_PRODUCTS, parseEndpointPricingResponse } from "./endpoint-pricing.ts"
 import { ModelEvidenceRefresher } from "./source-refresh.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
 import { ModelEvidenceStore } from "./source-store.ts"
@@ -104,6 +105,157 @@ function benchmarkResponse() {
   }
 }
 
+function endpointResponse(productID: string) {
+  const base = (input: {
+    provider: string
+    tag: string
+    serviceTier?: string | null
+    pricing: Record<string, unknown>
+    supportsImplicitCaching?: boolean | null
+  }) => ({
+    name: `${input.provider} | ${productID}`,
+    model_id: productID,
+    provider_name: input.provider,
+    tag: input.tag,
+    service_tier: input.serviceTier ?? null,
+    status: 0,
+    context_length: 1_000_000,
+    pricing: input.pricing,
+    supported_parameters: ["tools", "reasoning_effort"],
+    supports_implicit_caching: input.supportsImplicitCaching ?? false,
+  })
+
+  const endpoints =
+    productID === "moonshotai/kimi-k3.1-pro"
+      ? [
+          base({
+            provider: "Moonshot AI",
+            tag: "moonshotai/mxfp4",
+            pricing: {
+              prompt: "0.000002",
+              completion: "0.00001",
+              input_cache_read: "0.0000002",
+              discount: 0,
+            },
+            supportsImplicitCaching: true,
+          }),
+          base({
+            provider: "Moonshot AI",
+            tag: "moonshotai/highspeed",
+            serviceTier: "priority",
+            pricing: {
+              prompt: "0.000004",
+              completion: "0.00002",
+              input_cache_read: "0.0000002",
+              input_cache_write: null,
+            },
+            supportsImplicitCaching: true,
+          }),
+          base({
+            provider: "Moonshot AI",
+            tag: "moonshotai/mxfp4",
+            serviceTier: "priority",
+            pricing: {
+              prompt: "0.000003",
+              completion: "0.000015",
+              input_cache_read: "0.0000003",
+            },
+            supportsImplicitCaching: true,
+          }),
+        ]
+      : productID === "qwen/qwen3.8-flash"
+        ? [
+            base({
+              provider: "Alibaba",
+              tag: "alibaba",
+              pricing: {
+                prompt: "0.00000015",
+                completion: "0.00000047",
+                input_cache_read: "0.000000016",
+                input_cache_write: "0.0000002",
+                discount: 0,
+              },
+            }),
+            base({
+              provider: "Alibaba",
+              tag: "alibaba/us-east-1",
+              pricing: {
+                prompt: "0.00000015",
+                completion: "0.00000047",
+                input_cache_read: "0.000000016",
+              },
+            }),
+          ]
+        : [
+            base({
+              provider: "OpenAI",
+              tag: "openai",
+              pricing: {
+                prompt: "0.0000001",
+                completion: "0.0000005",
+                web_search: "0.01",
+                input_cache_read: "0.00000001",
+                input_cache_write: "0.000000125",
+                overrides: [
+                  {
+                    min_prompt_tokens: 272_000,
+                    prompt: "0.0000002",
+                    completion: "0.00000075",
+                    input_cache_read: "0.00000002",
+                    input_cache_write: "0.00000025",
+                  },
+                ],
+              },
+            }),
+            base({
+              provider: "OpenAI",
+              tag: "openai/flex",
+              serviceTier: "flex",
+              pricing: {
+                prompt: "0.00000005",
+                completion: "0.00000025",
+                input_cache_read: "0.000000005",
+                input_cache_write: "0.0000000625",
+                overrides: [
+                  {
+                    min_prompt_tokens: 272_000,
+                    prompt: "0.0000001",
+                    completion: "0.000000375",
+                    input_cache_read: "0.00000001",
+                    input_cache_write: "0.000000125",
+                  },
+                ],
+              },
+            }),
+            base({
+              provider: "OpenAI",
+              tag: "openai/fast",
+              serviceTier: "priority",
+              pricing: {
+                prompt: "0.0000002",
+                completion: "0.000001",
+                input_cache_read: "0.00000002",
+                input_cache_write: "0.00000025",
+                overrides: [
+                  {
+                    min_prompt_tokens: 272_000,
+                    prompt: "0.0000004",
+                    completion: "0.0000015",
+                    input_cache_read: "0.00000004",
+                    input_cache_write: "0.0000005",
+                  },
+                ],
+              },
+            }),
+          ]
+
+  return { data: { id: productID, endpoints } }
+}
+
+function productFromEndpointURL(url: string): string | null {
+  return ENDPOINT_PRICING_PRODUCTS.find(({ sourceURL }) => sourceURL === url)?.productID ?? null
+}
+
 function context(options: {
   key?: string | null
   credentialType?: "key" | "oauth" | "external"
@@ -150,10 +302,16 @@ function context(options: {
 function rowsFromDatabase(path: string) {
   const db = new Database(path, { readonly: true, strict: true })
   try {
-    return db
-      .query<{ body: string }, []>("SELECT body FROM model_evidence_snapshots ORDER BY source")
-      .all()
-      .map((row) => row.body)
+    return [
+      ...db
+        .query<{ body: string }, []>("SELECT body FROM model_evidence_snapshots ORDER BY source")
+        .all(),
+      ...db
+        .query<{ body: string }, []>(
+          "SELECT body FROM model_endpoint_pricing_snapshots ORDER BY product_id",
+        )
+        .all(),
+    ].map((row) => row.body)
   } finally {
     db.close()
   }
@@ -167,14 +325,22 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
   const requests: Array<{ url: string; method: string; redirect: string; authorization: string }> =
     []
   const fetcher: ModelEvidenceFetcher = async (input, init) => {
+    const url = String(input)
     requests.push({
-      url: String(input),
+      url,
       method: init?.method ?? "",
       redirect: init?.redirect ?? "",
       authorization: new Headers(init?.headers).get("authorization") ?? "",
     })
+    const productID = productFromEndpointURL(url)
     return new Response(
-      JSON.stringify(String(input).includes("benchmarks") ? benchmarkResponse() : modelResponse()),
+      JSON.stringify(
+        productID
+          ? endpointResponse(productID)
+          : url.includes("benchmarks")
+            ? benchmarkResponse()
+            : modelResponse(),
+      ),
       { headers: { "x-synthetic-secret": syntheticKey } },
     )
   }
@@ -188,7 +354,7 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
       ["openrouter-benchmarks", "succeeded"],
     ])
     expect(calls).toEqual({ active: 1, resolve: 1 })
-    expect(requests).toHaveLength(2)
+    expect(requests).toHaveLength(5)
     expect(requests).toEqual(
       expect.arrayContaining([
         {
@@ -203,6 +369,12 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
           redirect: "error",
           authorization: `Bearer ${syntheticKey}`,
         },
+        ...ENDPOINT_PRICING_PRODUCTS.map(({ sourceURL }) => ({
+          url: sourceURL,
+          method: "GET",
+          redirect: "error",
+          authorization: `Bearer ${syntheticKey}`,
+        })),
       ]),
     )
 
@@ -265,6 +437,117 @@ test("refresh records allowlisted native, OpenRouter catalog and dated benchmark
       ],
     })
 
+    const endpointPricing = output.endpointPricing!
+    expect(endpointPricing).toMatchObject({ state: "succeeded", complete: true, generation: 1 })
+    const kimi = endpointPricing.scenarios.find(
+      ({ productID }) => productID === "moonshotai/kimi-k3.1-pro",
+    )!.snapshot!
+    expect(kimi).toMatchObject({
+      sourceURL: ENDPOINT_PRICING_PRODUCTS[0].sourceURL,
+      httpStatus: 200,
+      records: [
+        {
+          providerName: "Moonshot AI",
+          tag: "moonshotai/mxfp4",
+          serviceTier: null,
+          status: 0,
+          supportsImplicitCaching: true,
+          pricing: {
+            unit: "USD per token",
+            prompt: "0.000002",
+            completion: "0.00001",
+            inputCacheRead: "0.0000002",
+          },
+          cacheWriteDocumentation: {
+            field: "input_cache_write",
+            supportedRate: "0",
+            sourceURL: "https://openrouter.ai/docs/guides/best-practices/prompt-caching",
+            statement: "Moonshot AI prompt caching documentation: cache writes have no cost.",
+            policyID: "openrouter-moonshot-kimi-mxfp4-cache-write-zero-v1",
+            scope: {
+              productID: "moonshotai/kimi-k3.1-pro",
+              providerName: "Moonshot AI",
+              tag: "moonshotai/mxfp4",
+              serviceTier: null,
+            },
+          },
+        },
+        {
+          providerName: "Moonshot AI",
+          tag: "moonshotai/highspeed",
+          serviceTier: "priority",
+          pricing: { inputCacheWrite: null },
+          cacheWriteDocumentation: null,
+        },
+        {
+          providerName: "Moonshot AI",
+          tag: "moonshotai/mxfp4",
+          serviceTier: "priority",
+          cacheWriteDocumentation: null,
+        },
+      ],
+    })
+    expect(kimi.records[0]!.pricing).not.toHaveProperty("inputCacheWrite")
+    expect(kimi.records[0]!.cacheWriteDocumentation?.retrievedAt).toBe("2026-11-05T23:11:25.854Z")
+    expect(kimi.records[0]!.pricing.inputCacheRead).toBe("0.0000002")
+    expect(kimi.records[2]!.pricing).not.toHaveProperty("inputCacheWrite")
+
+    const explicitNullPayload = endpointResponse("moonshotai/kimi-k3.1-pro")
+    explicitNullPayload.data.endpoints = [
+      {
+        ...explicitNullPayload.data.endpoints[0]!,
+        pricing: { ...explicitNullPayload.data.endpoints[0]!.pricing, input_cache_write: null },
+      },
+    ]
+    const explicitNull = parseEndpointPricingResponse(
+      explicitNullPayload,
+      "moonshotai/kimi-k3.1-pro",
+    )[0]!
+    expect(explicitNull.pricing.inputCacheWrite).toBeNull()
+    expect(explicitNull.cacheWriteDocumentation).toBeNull()
+
+    const qwen = endpointPricing.scenarios.find(
+      ({ productID }) => productID === "qwen/qwen3.8-flash",
+    )!.snapshot!
+    expect(qwen.records).toMatchObject([
+      {
+        providerName: "Alibaba",
+        tag: "alibaba",
+        supportsImplicitCaching: false,
+        pricing: { inputCacheWrite: "0.0000002" },
+        cacheWriteDocumentation: null,
+      },
+      {
+        providerName: "Alibaba",
+        tag: "alibaba/us-east-1",
+        supportsImplicitCaching: false,
+        cacheWriteDocumentation: null,
+      },
+    ])
+    expect(qwen.records[1]!.pricing).not.toHaveProperty("inputCacheWrite")
+
+    const luna = endpointPricing.scenarios.find(
+      ({ productID }) => productID === "openai/gpt-6-luna",
+    )!.snapshot!
+    expect(luna.records.map(({ tag, serviceTier }) => [tag, serviceTier])).toEqual([
+      ["openai", null],
+      ["openai/flex", "flex"],
+      ["openai/fast", "priority"],
+    ])
+    expect(luna.records[0]!.pricing.overrides).toEqual([
+      {
+        minPromptTokens: 272_000,
+        prompt: "0.0000002",
+        completion: "0.00000075",
+        inputCacheRead: "0.00000002",
+        inputCacheWrite: "0.00000025",
+      },
+    ])
+    expect(luna.records[1]!.pricing.prompt).toBe("0.00000005")
+    expect(luna.records[2]!.pricing.prompt).toBe("0.0000002")
+    expect(luna.records[0]!.pricing.webSearchUSDPerRequest).toBe("0.01")
+    expect(store.read().endpointPricing).toEqual(endpointPricing)
+
     const outputText = JSON.stringify(output)
     const savedText = rowsFromDatabase(path).join("\n")
     for (const forbidden of [
@@ -314,6 +597,18 @@ test("public model metadata refreshes without credentials while benchmark creden
         }),
       ]),
     )
+    expect(noKey.endpointPricing).toMatchObject({
+      state: "failed",
+      complete: false,
+      scenarios: ENDPOINT_PRICING_PRODUCTS.map(({ productID, sourceURL }) => ({
+        productID,
+        sourceURL,
+        state: "failed",
+        errorCode: "missing-credentials",
+        httpStatus: null,
+        snapshot: null,
+      })),
+    })
     const unsupported = context({ credentialType: "oauth" })
     const noSupportedCredential = await new ModelEvidenceRefresher(
       unsupported.native,
@@ -328,6 +623,11 @@ test("public model metadata refreshes without credentials while benchmark creden
           state: "failed",
           errorCode: "unsupported-credentials",
         }),
+      ]),
+    )
+    expect(noSupportedCredential.endpointPricing?.scenarios).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: "failed", errorCode: "unsupported-credentials" }),
       ]),
     )
     expect(requests).toEqual([
@@ -349,7 +649,10 @@ test("HTTP failures, malformed and oversized bodies are bounded and retain the p
   let fetchCount = 0
   const fetcher: ModelEvidenceFetcher = async (input) => {
     fetchCount += 1
-    if (!String(input).includes("benchmarks")) return new Response(JSON.stringify(modelResponse()))
+    const url = String(input)
+    const productID = productFromEndpointURL(url)
+    if (productID) return new Response(JSON.stringify(endpointResponse(productID)))
+    if (!url.includes("benchmarks")) return new Response(JSON.stringify(modelResponse()))
     if (failBenchmarks === "malformed") return new Response("{invalid json")
     if (failBenchmarks === "oversized")
       return new Response(JSON.stringify({ data: ["x".repeat(4 * 1024 * 1024)] }))
@@ -380,7 +683,85 @@ test("HTTP failures, malformed and oversized bodies are bounded and retain the p
         latestSnapshotID: firstBenchmarkID,
       })
     }
-    expect(fetchCount).toBe(14)
+    expect(fetchCount).toBe(35)
+    expect(rowsFromDatabase(path).join("\n")).not.toContain(syntheticKey)
+  } finally {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("endpoint failures, malformed product selection and ambiguous records preserve last-good evidence", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const store = new ModelEvidenceStore(path, projectDirectory)
+  const { native } = context({})
+  let failure:
+    | number
+    | "malformed-json"
+    | "oversized"
+    | "duplicate"
+    | "wrong-product"
+    | "conflicting-record"
+    | "invalid-rate"
+    | "exception"
+    | null = null
+  const fetcher: ModelEvidenceFetcher = async (input) => {
+    const url = String(input)
+    const productID = productFromEndpointURL(url)
+    if (productID === "moonshotai/kimi-k3.1-pro") {
+      if (failure === "malformed-json") return new Response("{invalid json")
+      if (failure === "oversized")
+        return new Response(JSON.stringify({ data: "x".repeat(4 * 1024 * 1024) }))
+      if (failure === "exception") throw new Error(`Authorization: Bearer ${syntheticKey}`)
+      if (typeof failure === "number") return new Response("upstream", { status: failure })
+      const payload = endpointResponse(productID)
+      if (failure === "duplicate") payload.data.endpoints.push({ ...payload.data.endpoints[0]! })
+      if (failure === "wrong-product") payload.data.id = "qwen/qwen3.8-flash"
+      if (failure === "conflicting-record")
+        payload.data.endpoints[0]!.model_id = "qwen/qwen3.8-flash"
+      if (failure === "invalid-rate") payload.data.endpoints[0]!.pricing.prompt = syntheticKey
+      return new Response(JSON.stringify(payload))
+    }
+    if (productID) return new Response(JSON.stringify(endpointResponse(productID)))
+    return new Response(
+      JSON.stringify(url.includes("benchmarks") ? benchmarkResponse() : modelResponse()),
+    )
+  }
+  try {
+    const refresh = () =>
+      new ModelEvidenceRefresher(native, store, fetcher).refresh(new AbortController().signal)
+    const first = await refresh()
+    const firstKimi = first.endpointPricing!.scenarios[0]!
+    expect(firstKimi.state).toBe("succeeded")
+    const firstSnapshotID = firstKimi.latestSnapshotID
+
+    for (const [fault, errorCode, httpStatus] of [
+      [503, "server-error", 503],
+      ["malformed-json", "malformed-response", 200],
+      ["oversized", "response-too-large", 200],
+      ["duplicate", "malformed-response", 200],
+      ["wrong-product", "malformed-response", 200],
+      ["conflicting-record", "malformed-response", 200],
+      ["invalid-rate", "malformed-response", 200],
+      ["exception", "network-error", null],
+    ] as const) {
+      failure = fault
+      const result = await refresh()
+      expect(result.endpointPricing).toMatchObject({ state: "partial", complete: false })
+      expect(result.endpointPricing?.scenarios[0]).toMatchObject({
+        productID: "moonshotai/kimi-k3.1-pro",
+        sourceURL: ENDPOINT_PRICING_PRODUCTS[0].sourceURL,
+        state: "failed",
+        errorCode,
+        httpStatus,
+        latestSnapshotID: firstSnapshotID,
+        snapshot: { snapshotID: firstSnapshotID },
+      })
+      expect(result.endpointPricing?.scenarios[0]?.snapshot?.records).toEqual(
+        firstKimi.snapshot?.records,
+      )
+    }
     expect(rowsFromDatabase(path).join("\n")).not.toContain(syntheticKey)
   } finally {
     store.close()
@@ -406,8 +787,16 @@ test("cached reads remain immediate and report refreshing while metadata request
     requests += 1
     if (requests === 2) entered()
     await waiting
+    const url = String(input)
+    const productID = productFromEndpointURL(url)
     return new Response(
-      JSON.stringify(String(input).includes("benchmarks") ? benchmarkResponse() : modelResponse()),
+      JSON.stringify(
+        productID
+          ? endpointResponse(productID)
+          : url.includes("benchmarks")
+            ? benchmarkResponse()
+            : modelResponse(),
+      ),
     )
   }
   try {
@@ -425,12 +814,15 @@ test("cached reads remain immediate and report refreshing while metadata request
       null,
       null,
     ])
+    expect(store.read().endpointPricing?.state).toBe("refreshing")
     release()
-    expect((await pending).sources.map(({ state }) => state)).toEqual([
+    const refreshed = await pending
+    expect(refreshed.sources.map(({ state }) => state)).toEqual([
       "succeeded",
       "succeeded",
       "succeeded",
     ])
+    expect(refreshed.endpointPricing).toMatchObject({ state: "succeeded", complete: true })
   } finally {
     release()
     store.close()
@@ -454,6 +846,12 @@ test("cancellation before credential access or commit records cancellation witho
       controller.signal,
     )
     expect(output.sources.map(({ state }) => state)).toEqual([
+      "cancelled",
+      "cancelled",
+      "cancelled",
+    ])
+    expect(output.endpointPricing).toMatchObject({ state: "cancelled", complete: false })
+    expect(output.endpointPricing?.scenarios.map(({ state }) => state)).toEqual([
       "cancelled",
       "cancelled",
       "cancelled",
@@ -488,7 +886,79 @@ test("cancellation after fetching but before persistence prevents any successful
       "cancelled",
       "cancelled",
     ])
+    expect(output.endpointPricing).toMatchObject({ state: "cancelled", complete: false })
     expect(rowsFromDatabase(path)).toEqual([])
+  } finally {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("cancellation during endpoint fetch keeps last-good scenarios and commits none of the cancelled generation", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const store = new ModelEvidenceStore(path, projectDirectory)
+  const { native } = context({})
+  const fetcher: ModelEvidenceFetcher = async (input) => {
+    const url = String(input)
+    const productID = productFromEndpointURL(url)
+    return new Response(
+      JSON.stringify(
+        productID
+          ? endpointResponse(productID)
+          : url.includes("benchmarks")
+            ? benchmarkResponse()
+            : modelResponse(),
+      ),
+    )
+  }
+  try {
+    const first = await new ModelEvidenceRefresher(native, store, fetcher).refresh(
+      new AbortController().signal,
+    )
+    const firstSnapshots = first.endpointPricing!.scenarios.map(
+      ({ latestSnapshotID }) => latestSnapshotID,
+    )
+    const controller = new AbortController()
+    const cancellingFetcher: ModelEvidenceFetcher = async (input) => {
+      const url = String(input)
+      if (url === ENDPOINT_PRICING_PRODUCTS[0].sourceURL) controller.abort()
+      const productID = productFromEndpointURL(url)
+      return new Response(
+        JSON.stringify(
+          productID
+            ? endpointResponse(productID)
+            : url.includes("benchmarks")
+              ? benchmarkResponse()
+              : modelResponse(),
+        ),
+      )
+    }
+    const cancelled = await new ModelEvidenceRefresher(native, store, cancellingFetcher).refresh(
+      controller.signal,
+    )
+    expect(cancelled.endpointPricing).toMatchObject({ state: "cancelled", complete: false })
+    expect(cancelled.endpointPricing?.scenarios.map(({ state }) => state)).toEqual([
+      "cancelled",
+      "cancelled",
+      "cancelled",
+    ])
+    expect(cancelled.endpointPricing?.scenarios[0]?.httpStatus).toBe(200)
+    expect(
+      cancelled.endpointPricing?.scenarios.map(({ latestSnapshotID }) => latestSnapshotID),
+    ).toEqual(firstSnapshots)
+    const db = new Database(path, { readonly: true, strict: true })
+    try {
+      expect(
+        db
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM model_endpoint_pricing_snapshots",
+          )
+          .get()!.count,
+      ).toBe(3)
+    } finally {
+      db.close()
+    }
   } finally {
     store.close()
     rmSync(root, { recursive: true, force: true })
