@@ -1,9 +1,11 @@
 import type { Plugin } from "@opencode/plugin/gui"
+import { Schema } from "effect"
 import { ModelCache, modelCacheDirectory } from "./cache.ts"
 import { ModelFiles } from "./ipc.ts"
+import type { ModelLeaseAcquire, ModelLeaseIdentity } from "./ipc.ts"
 import { DECISION_FILES, DECISION_REVISION, decisionURL } from "./manifest.ts"
 import { dirname, join } from "node:path"
-import { ModelLease } from "./lease.ts"
+import { ModelLease, ModelLeasePersistenceSchema } from "./lease.ts"
 import type { InferenceTraceEvent } from "./inference-trace.ts"
 import {
   captureRendererDebug,
@@ -38,9 +40,35 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     fetch,
     decisionURL,
   )
-  const lease = new ModelLease(async () => {
-    await Promise.all([cache.stop(), decisions.stop()])
+  const persistedLease = ctx.storage.store("webgpu-model-lease", {
+    schema: Schema.Unknown,
+    initial: null,
   })
+  const persistedValue = persistedLease.value
+  const previousLease =
+    persistedValue === null
+      ? undefined
+      : Schema.decodeUnknownSync(ModelLeasePersistenceSchema)(persistedValue)
+  let providerEpoch = ""
+  const lease = new ModelLease(
+    async () => {
+      await Promise.all([cache.stop(), decisions.stop()])
+    },
+    previousLease,
+    (state) => {
+      const current = persistedLease.value
+      if (current !== null) {
+        const currentEpoch = Schema.decodeUnknownSync(ModelLeasePersistenceSchema)(
+          current,
+        ).providerEpoch
+        if (currentEpoch !== providerEpoch && currentEpoch !== previousLease?.providerEpoch)
+          throw new Error("A stale main-process provider cannot replace newer ownership state")
+      }
+      persistedLease.set(state)
+    },
+  )
+  providerEpoch = lease.providerEpoch
+  lease.persist()
   const lastTrace = new Map<number, InferenceTraceEvent>()
   const freezeCaptures = new Set<number>()
   const diagnosticsDirectory = join(dirname(dirname(cache.directory)), "diagnostics")
@@ -54,6 +82,41 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     } catch {
       // Diagnostics must never interrupt inference or lease cleanup.
     }
+  }
+  const leaseLogOperations = new Set<string>()
+  const inFlightLeaseOperations = new Set<Promise<unknown>>()
+  const trackLeaseOperation = <T>(operation: Promise<T>) => {
+    inFlightLeaseOperations.add(operation)
+    void operation.then(
+      () => inFlightLeaseOperations.delete(operation),
+      () => inFlightLeaseOperations.delete(operation),
+    )
+    return operation
+  }
+  const logLeaseOperation = (
+    event: string,
+    windowID: number,
+    identity: {
+      generationID: string
+      generationSequence: number
+      operationID: string
+      providerEpoch: string
+    },
+    retirementID?: string,
+  ) => {
+    const key = `${event}:${identity.operationID}:${retirementID ?? ""}`
+    if (leaseLogOperations.has(key)) return
+    leaseLogOperations.add(key)
+    if (leaseLogOperations.size > 32)
+      leaseLogOperations.delete(leaseLogOperations.values().next().value!)
+    writeLog("info", `LAZERS WebGPU lease ${event}`, {
+      windowID,
+      generationID: identity.generationID.slice(0, 100),
+      generationSequence: identity.generationSequence,
+      operationID: identity.operationID.slice(0, 100),
+      providerEpoch: identity.providerEpoch.slice(0, 100),
+      ...(retirementID ? { retirementID: retirementID.slice(0, 100) } : {}),
+    })
   }
   const armedCaptures = new RendererArmedCaptureManager({
     directory: diagnosticsDirectory,
@@ -89,7 +152,8 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     }
   }
   const lost = (window: number) => {
-    void lease.lost(window).catch((error: unknown) => {
+    const operation = lease.lost(window).then(() => {})
+    void trackLeaseOperation(operation).catch((error: unknown) => {
       writeLog("error", "LAZERS cache ownership cleanup failed", {
         windowID: window,
         error: String(error),
@@ -174,30 +238,78 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     lost(window.id)
   })
   ctx.provide(ModelFiles, {
+    identity: (_input, caller) => ({
+      providerEpoch: lease.providerEpoch,
+      windowID: caller.window,
+      ...(lease.previousProviderEpoch && lease.previousProviderState
+        ? {
+            previousProviderEpoch: lease.previousProviderEpoch,
+            previousProviderState: lease.previousProviderState,
+          }
+        : {}),
+    }),
+    registerGeneration: ({ generationID, generationSequence }, caller) => {
+      caller.signal.throwIfAborted()
+      lease.registerGeneration(caller.window, generationID, generationSequence)
+    },
     status: async () => ({ ...(await cache.status()), occupied: lease.occupied() }),
     decisionStatus: async () => ({ ...(await decisions.status()), occupied: lease.occupied() }),
-    acquire: (_, caller) => lease.acquire(caller.window),
-    ensure: async ({ owner: token }, caller) => {
-      lease.assert(caller.window, token)
+    acquire: (request: ModelLeaseAcquire, caller) => {
+      caller.signal.throwIfAborted()
+      const acquisition = trackLeaseOperation(lease.acquire(caller.window, request))
+      logLeaseOperation(
+        request.predecessor ? "handoff" : "acquire",
+        caller.window,
+        request,
+        request.predecessor?.retirementID,
+      )
+      return acquisition
+    },
+    reconcileAcquire: async (identity, caller) => {
+      caller.signal.throwIfAborted()
+      const found = await lease.reconcileAcquire(caller.window, identity)
+      return { lease: found ?? null }
+    },
+    ensure: async (identity: ModelLeaseIdentity, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       await cache.ensure(caller.signal)
     },
-    decisionEnsure: async ({ owner: token }, caller) => {
-      lease.assert(caller.window, token)
+    decisionEnsure: async (identity: ModelLeaseIdentity, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       await decisions.ensure(caller.signal)
     },
-    decisionRead: ({ owner: token, id, offset, length }, caller) => {
-      lease.assert(caller.window, token)
+    decisionRead: ({ id, offset, length, ...identity }, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       return decisions.read(id, offset, length)
     },
-    read: ({ owner: token, id, offset, length }, caller) => {
-      lease.assert(caller.window, token)
+    read: ({ id, offset, length, ...identity }, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       return cache.read(id, offset, length)
     },
-    release: ({ owner: token }, caller) => {
-      return lease.release(caller.window, token)
+    release: ({ lease: identity, retirementID, rendererDisposalID }, caller) => {
+      caller.signal.throwIfAborted()
+      const retirement = trackLeaseOperation(
+        lease.release(caller.window, {
+          lease: identity,
+          retirementID,
+          rendererDisposalID,
+        }),
+      )
+      logLeaseOperation("retirement", caller.window, identity, retirementID)
+      return retirement
     },
-    cancel: ({ owner: token }, caller) => {
-      lease.assert(caller.window, token)
+    reconcileRelease: async (request, caller) => {
+      caller.signal.throwIfAborted()
+      const retirement = await lease.reconcileRelease(caller.window, request)
+      return { retirement: retirement ?? null }
+    },
+    cancel: (identity, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       cache.cancel()
       decisions.cancel()
     },
@@ -217,10 +329,12 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     },
     stopRendererCapture: (_, caller) => armedCaptures.stop(caller.window),
     clear: async () => {
-      await lease.clear(async () => {
-        await cache.clear()
-        await decisions.clear()
-      })
+      await trackLeaseOperation(
+        lease.clear(async () => {
+          await cache.clear()
+          await decisions.clear()
+        }),
+      )
     },
   })
   writeLog("info", "LAZERS WebGPU cache available", {
@@ -233,8 +347,26 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     rendererArmedSamplingIntervalUs: RENDERER_ARMED_SAMPLING_INTERVAL_US,
     rendererArmedStopMs: RENDERER_ARMED_STOP_MS,
   })
-  return async () => {
-    await armedCaptures.shutdown()
-    await Promise.all([cache.stop(), decisions.stop()])
+  let stopping: Promise<void> | undefined
+  return () => {
+    if (stopping) return stopping
+    lease.seal()
+    stopping = (async () => {
+      try {
+        while (inFlightLeaseOperations.size)
+          await Promise.allSettled(Array.from(inFlightLeaseOperations))
+        await armedCaptures.shutdown()
+        await Promise.all([cache.stop(), decisions.stop()])
+        lease.providerStopped()
+      } catch (error) {
+        try {
+          lease.providerStopFailed()
+        } catch {
+          // A failed persistent write must leave the prior durable state unproven.
+        }
+        throw error
+      }
+    })()
+    return stopping
   }
 }
