@@ -102,3 +102,23 @@ Tracker-local sequence/session/live-event state means blindly deduplicating only
 sequence numbers would be unsound. Root queued this measured finding to Main for
 existing129 or appropriately linked scope, without making it a Models prerequisite.
 Read-only reproduction: `/private/tmp/lz-observability-amplification.ts`.
+
+### Follow-up during original LZ-129 repair
+
+At Unix milliseconds 1793992152999, the same read-only three-second subscription
+received 435 observability events and 319 distinct complete identities. The
+printed sample includes identity `(project b5da4cad…, sequence 9916, repository
+658728, source 9339, native 577, cause native)` repeated five times across five
+locations; sequence 9917/source 9339/native 578 also repeats five times across
+five locations. Other sampled identities differ. This confirms duplicate
+publication remains present before the original LZ-129 repair lands. It does
+not mean all 435 events are redundant, establish a sustained event rate, or
+isolate their CPU cost; subscription initialization and current activity differ
+from the earlier sample.
+
+A separate process snapshot during the locked Desktop interval showed Desktop
+PID 64668 at 0.0% CPU / 141,760 KiB RSS, renderer 64689 at 0.0% / 372,480 KiB,
+and service 71027 at 1.9% / 1,649,104 KiB. This is a point observation, not an
+interactive performance acceptance. OpenAI Luna Max original LZ-129 session
+`ses_aeff3e9ac5d24c6c944d35e31b050963` remained active; Root did not interrupt it
+or reload runtime source under it.
