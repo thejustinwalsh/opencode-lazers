@@ -27,8 +27,11 @@ improvements. Runtime/API readback is authoritative; revalidate live handles.
 
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol High.
 Service PID71027. Canonical project `b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df`.
-CUA explicitly reports macOS locked; an unlock request is pending. Do not replace
-Desktop prompts with API prompts. Native workers continue while Desktop is locked.
+User unlocked macOS and Root resumed Desktop. Broad continuation receipt
+`msg_1b2775fe80011WkNsIBR16Mvqc` authorizes Models/pricing repairs without another
+Root approval. Native input showed severe delayed application/noWindowsAvailable;
+resetting the CUA runtime eventually exposed the review draft. Verify actual
+message receipts, never repeat blind or replace Desktop prompts with API prompts.
 
 Original LZ-129 performance repair is active on OpenAI Luna Max:
 
@@ -72,6 +75,24 @@ Original129 worktree remains. This closes163, not129's source/CPU acceptance.
 
 ## Models and Trajectory follow-up
 
+LZ-172 `32810daa-f8dc-4c50-a2fc-f7000c480ad8`, plan
+`09cb85ba-dc17-40ed-adff-c0e7e50ad135`, is the native four-defect Models visual
+correction. Original worker `ses_83bd7a96b951462e9aa31f80043e8940`, attempt
+`14b02650-aea7-43fa-a7dd-3e60228f00b5`, was confirmed active on OpenAI Luna Max
+in its distinct native worktree. Plan may show transient approval holds while
+node/session remain running; inspect exact native queues before acting.
+Main is scoping a compatible shared market-pricing repair; no submitted reference
+was present at the last check. Do not claim it dispatched yet.
+
+Original LZ-129 now has a substantive uncommitted patch. Root source review
+`design/reviews/task129-retained-repair-review-20261106.md` identifies unconditional
+historical-attempt backfill in every RunnerStore constructor. Desktop feedback
+receipt `msg_1b2848f410010H1rdwuufM9XsZ` requests same-worker correction and
+upgrade/reopen verification. Current observability112/consumer50 tests and quality
+pass; runtime rerun still needs its actual outcome. Source not accepted or loaded.
+Cleared-permission loop diagnosis stays in existing LZ-88; see
+`design/reviews/lz129-cleared-permission-holds-investigation-20261106.md`.
+
 Models plan `145cde90-22ae-4521-b58a-cd0147f1eb55` contains delivered168→169.
 Task169 `3b5ed421-d8b4-42bb-b238-7ea15c70286e`, original worker
 `ses_eab54443be664e52902ecdfe7b0aea47`, delivered e743a6e after same-worker naming
@@ -100,7 +121,8 @@ zero unused cache-write contribution becomes misleading displayed subtotal.
 Root product review `design/reviews/lz155-market-estimate-product-review-20261106.md`
 requires useful published current-market estimates/ranges, not UI-only hiding or
 exact-billing prerequisites. Existing market-range.ts is a source starting point.
-**Root still needs to relay that product review through Desktop when unlocked.**
+Root relayed the product review through Desktop in the continuation receipt above;
+Main attached the estimate clarification to LZ-155 and is tasking the repair.
 Do not invent rates, infer per-call tier from cumulative usage, or use subscription
 charges. Use configured OpenRouter→OpenCode source order and shared valuation
 owner; source-backed estimate assumptions belong in secondary detail.
