@@ -38,3 +38,20 @@ Root integratede36a42c while implementation workers were idle, then directed
 Architect through Desktop to use a justified native retry/new generation on
 original156 ff55/b011, preserving failed setup history and zero model prompts.
 Actual156 qualification, normal reconciliation and157→158 dispatch remain pending.
+
+## Compiled-host installer correction
+
+Real generation2 reached the installer but held before checks. `process.execPath`
+in OpenCode's bundled service is opencode-cli, which has no install subcommand;
+stdout/stderr were discarded by the old setup runner. This was not evidence of a
+bad committed lockfile. Root reproduced the exact failure with an actual compiled
+Bun executable, then fixed installation to resolve standalone Bun from the check
+PATH (63d5001). The compiled fixture now passes.
+
+Final coupled31tests/375assertions passed17.48s with quality checks. An initial
+sandboxed run failed because the newly added native-startup fixture used global
+Bun cache;62b0170 moves that fixture cache into disposable state. The failure is
+retained in /private/tmp/lz-compiled-host-coupled-tests.log; final results are in
+/private/tmp/lz-compiled-host-coupled-tests-final.log. Source is active; Architect
+was directed through Desktop to use the supported cancel/new-generation flow on
+the same original156 attempt. Generation2 was not claimed as passed.

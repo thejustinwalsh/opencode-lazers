@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06 after canonical activation at7e80cac (documentationc85f782).
+Updated 2026-11-06T11:47:30.053836+00:00. Canonical source now62b0170.
 Goal remains active: drive OpenCode Desktop until the full roadmap is implemented,
 verified, integrated and cleaned, then propose observation-based improvements.
 Runtime/API readback is authoritative. This replaces contradictory historical
@@ -69,14 +69,30 @@ has sealed source quarantine. Runtime guard scans raw attempt states; existing
 sourceReservationExcluded has a narrow isolation-aware exclusion. Investigate and
 reuse existing policy; do not clear historical state or invent idle success.
 
-Luna e522 confirmed the exact admission defect. Current138 owner resumed SAME
-worker ses_9e11e5a8fae643a79c50b2346bfb48a9 through native controls. It now has a
-narrow two-file patch reusing sourceReservationExcluded for isolated verification,
-plus registered positive/negative regression. First full affected suite561/7486
-passed153.24s with timeout30000/parallel1; quality passed. Worker then added actual
-destination workspace to the exclusion (same-physical protection) and is rerunning
-tests. Current patch is NOT yet committed or activated. Root reviewed initial diff,
-will review final delta; no duplicate model review needed without a new finding.
+Luna e522 confirmed the admission defect. SAME138 worker delivered00c20ad;
+worker suites561/7486 passed, native registered checks finished, then Root merged
+atd998ea6. Canonical retained21/254 and quality passed. No extra worker turn.
+Real156 generation1 f0a3a894 was ADMITTED, but HELD before checks because native
+worktree startup had already populated node_modules. Pinned native worktree.create
+awaits project.commands.start; the original empty-directory assumption was wrong.
+Root owns this isolation repair lane; do not duplicate native implementors.
+
+Roote36a42c adopts only a physically private native dependency directory into the
+operation's resource root, preserves unsafe-link rejection and ordinary installer/
+cleanup, and passed30/355 plus real native-created LAZERS checkout buncheck/cleanup.
+Root review tree was removed with nativeforce:false, physical absence confirmed.
+Gen1 was cancelled through native control; old history/resources preserved.
+
+Real156 generation2 41d43759 then reached installer but HELD: server process.execPath
+is compiled opencode-cli, not Bun. Root reproduced this with an ACTUAL compiled
+executable fixture.63d5001 resolves standalone Bun from verificationPATH;62b0170
+keeps the fixture's own native-startup cache private. Final31coupledtests/
+375assertions17.48s +quality pass. Initial sandboxed suite30pass/1fail was the new
+fixture writing global Bun cache; corrected and rerun, not a production lock error.
+Source fixes are active. Root directed Main to cancel only heldgen2 then request
+justifiedgen3 on SAME ff55/b011, zero implementation/modelturns. Actual qualification
+and reconcile to release157→158 are still pending. See native-worktree-dependencies
+review and /private/tmp/lz-compiled-host-coupled-tests-final.log.
 
 Original129 repair hit parentID===currentOwner despite valid ownership transfer.
 Root corrected research scope: supported reassignment as well as renewal must work;
@@ -88,9 +104,10 @@ Main is planning a proportional correction in existing57 or linked remaining wor
 Root used native Help→ExportLogs; current main extract is
 /private/tmp/lz-native-export-current-main.log. Actual provider/generation1→2,
 handoff retirement and successor-ready/probe records correlate to the witnessed
-reload. See design/reviews/native-plugin-reload-observation-20261106.md. e502 is
-reused to assess these logs+mechanical source predicates for159; gate still open.
-Reuse existing research sessions; do not duplicate.
+reload. See design/reviews/native-plugin-reload-observation-20261106.md. e502 independently accepted the bounded native gate via correlated source-gated
+successor readiness and probe.159 plan is INTEGRATEDv14 at3ea8b5d; native worktree
+removal completed and physical absence verified. No claim covers every race or
+physical GPU EP (trace observedEP is unknown). Reuse research sessions; do not duplicate.
 
 138 task0d18d8c6-959f-4b0f-9f37-bb79c5aee0c4;
 plane48290a6-a871-42a2-94f1-c88f700c0d11. Latest attempt091ee91c-c6e3-43d3-b7f9-858028336150,
@@ -101,7 +118,7 @@ running attempt; only running/verifying rows advance, historical failed stays fa
 
 159 taskb3781cfa-4c99-4274-ae58-f762cf7aa301;
 planb171f745-0676-48e5-b517-cb5a8aad56d6, worker ses_f1562a517796402694b1fc3a7c26d148
-inactive/succeeded3ea8b5d, attempt accepted; native gate disposition pending.
+inactive/succeeded3ea8b5d; plan integratedv14 and worker worktree removed.
 128 is superseded/cancelled, not fulfilled. Old impossible same-provider gate is
 not granted. Peer retracted broker-idle fixture false positive; no extra proof turn.
 
