@@ -380,6 +380,17 @@ export class TaskRuntime {
     return baseline
   }
 
+  private adoptionArtifactScopeViolations(attempt: AttemptRow, artifact: string, branch: string) {
+    // Worker scope belongs to its patch. The owner reviews the integrated branch
+    // separately, and fresh checks qualify that exact descendant.
+    const reviewed = this.reviewedAdoptionBaseline(branch, attempt.base_commit, artifact)
+    const base = reviewedScopeBase(this.directory, attempt.base_commit, artifact, reviewed)
+    const paths = git(this.directory, ["diff", "--name-only", "--no-renames", "-z", base, artifact])
+      .split("\0")
+      .filter(Boolean)
+    return scopeViolations(paths, this.store.effectiveWriteScope(attempt.task_id))
+  }
+
   private adoptionWorkerIdle(attempt: AttemptRow, worker: HostSession): boolean {
     return (
       worker.busy === false &&
@@ -508,16 +519,10 @@ export class TaskRuntime {
       throw new Error("Reviewed candidate must be a strict descendant of the old artifact")
     git(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
     const reviewedBaseline = this.reviewedAdoptionBaseline(branch, oldArtifact, descendantCommit)
-    const scopeBase = reviewedScopeBase(
-      this.directory,
-      oldArtifact,
-      descendantCommit,
-      reviewedBaseline,
-    )
-    const violations = scopeViolations(changedPaths(this.directory, scopeBase), scopes)
+    const violations = this.adoptionArtifactScopeViolations(latest, oldArtifact, branch)
     if (violations.length)
       throw new Error(
-        `Descendant contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
+        `Worker artifact contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
       )
     const candidateTree = git(this.directory, ["rev-parse", `${descendantCommit}^{tree}`])
     const branches = input.integrationOrder.map((taskID) => {
@@ -7265,10 +7270,10 @@ export class TaskRuntime {
     )
     if (reviewedBaseline !== adoption.reviewed_baseline)
       throw new Error("Reviewed adoption baseline changed during adoption")
-    const scopeBase = reviewedScopeBase(this.directory, oldArtifact, candidate, reviewedBaseline)
-    const violations = scopeViolations(
-      changedPaths(this.directory, scopeBase),
-      this.store.effectiveWriteScope(adoption.task_id),
+    const violations = this.adoptionArtifactScopeViolations(
+      attempt,
+      oldArtifact,
+      adoption.target_branch,
     )
     if (violations.length)
       throw new Error(

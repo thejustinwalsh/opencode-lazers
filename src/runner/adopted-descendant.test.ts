@@ -793,68 +793,80 @@ test("adoption scope uses the latest reviewed integration baseline, not interven
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
 })
 
-test("reviewed baseline does not authorize later out-of-scope candidate changes", async () => {
-  const f = fixture("blocked-combined")
+test("adoption verifies reviewed main with independent work without widening worker scope", async () => {
+  const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   const oldArtifact = node.artifact!
-  git(f.root, ["merge", "--ff-only", oldArtifact])
-  await f.runtime.command(
-    {
-      requestID: "record-task-before-unreviewed-work",
-      planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
-      action: "integrated",
-      taskID: f.task.id,
-      artifact: oldArtifact,
-      targetBranch: "main",
-      reason: "Reviewed the accepted task source landing",
-    },
+  const prompts = f.events.filter((event) => event.startsWith("prompt:"))
+  const oldReceipts = trackedHistory(f).receipts
+  writeFileSync(join(f.root, "parallel-ui.txt"), "independently reviewed UI work\n")
+  git(f.root, ["add", "parallel-ui.txt"])
+  git(f.root, [
+    "-c",
+    "user.name=reviewer",
+    "-c",
+    "user.email=reviewer@example.invalid",
+    "commit",
+    "-m",
+    "Integrate independent work",
+  ])
+  git(f.root, [
+    "-c",
+    "user.name=reviewer",
+    "-c",
+    "user.email=reviewer@example.invalid",
+    "merge",
+    "--no-ff",
+    "--no-edit",
+    oldArtifact,
+  ])
+  const candidate = landCandidate(f, oldArtifact)
+  const requested = (await f.runtime.command(
+    adoptionCommand(f, attempt.id, oldArtifact, candidate),
     "owner",
+  )) as { adoptionID: string }
+  await drive(f.runtime, 4)
+  expect(f.store.adoption(requested.adoptionID)?.state).toBe("waiting-human")
+  await recordHumanEvidence(f, requested.adoptionID, candidate, true)
+  await drive(f.runtime, 3)
+  expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
+  expect(f.store.effectiveWriteScope(f.task.id)).toEqual(["result.txt"])
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toEqual(prompts)
+  expect(trackedHistory(f).receipts).toEqual(oldReceipts)
+  expect(readFileSync(join(f.root, "parallel-ui.txt"), "utf8")).toBe(
+    "independently reviewed UI work\n",
   )
-  writeFileSync(join(f.root, "reviewed-other.txt"), "independent integrated work\n")
-  git(f.root, ["add", "reviewed-other.txt"])
+})
+
+test("adoption still rejects out-of-scope changes in the original worker artifact", async () => {
+  const f = fixture("failed-task")
+  const { node, attempt } = await strand(f)
+  git(f.root, ["merge", "--ff-only", node.artifact!])
+  writeFileSync(join(f.root, "unauthorized-worker.txt"), "outside worker scope\n")
+  git(f.root, ["add", "unauthorized-worker.txt"])
   git(f.root, [
     "-c",
-    "user.name=reviewer",
+    "user.name=fixture",
     "-c",
-    "user.email=reviewer@example.invalid",
+    "user.email=fixture@example.invalid",
     "commit",
     "-m",
-    "independent integrated work",
+    "Legacy unscoped worker artifact",
   ])
-  const reviewedBaseline = git(f.root, ["rev-parse", "HEAD"])
-  f.store.record(f.planID, null, "INTEGRATION_RECORDED", {
-    artifact: reviewedBaseline,
-    branch: "main",
-    head: reviewedBaseline,
-    reason: "An independent accepted plan was integrated",
+  const oldArtifact = git(f.root, ["rev-parse", "HEAD"])
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(oldArtifact, attempt.id)
+    db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?").run(
+      oldArtifact,
+      f.planID,
+      f.task.id,
+    )
   })
-  writeFileSync(join(f.root, "unreviewed.txt"), "not part of the reviewed baseline\n")
-  git(f.root, ["add", "unreviewed.txt"])
-  git(f.root, [
-    "-c",
-    "user.name=reviewer",
-    "-c",
-    "user.email=reviewer@example.invalid",
-    "commit",
-    "-m",
-    "unreviewed out-of-scope change",
-  ])
-  writeFileSync(join(f.root, "result.txt"), "good\n")
-  git(f.root, ["add", "result.txt"])
-  git(f.root, [
-    "-c",
-    "user.name=reviewer",
-    "-c",
-    "user.email=reviewer@example.invalid",
-    "commit",
-    "-m",
-    "reviewed task correction",
-  ])
-  const candidate = git(f.root, ["rev-parse", "HEAD"])
+  const candidate = landCandidate(f, oldArtifact)
   await expect(
     f.runtime.command(adoptionCommand(f, attempt.id, oldArtifact, candidate), "owner"),
-  ).rejects.toThrow("outside the task's authorized scope")
+  ).rejects.toThrow("Worker artifact contains changes outside the task's authorized scope")
   expect(f.store.adoptions(f.planID)).toHaveLength(0)
 })
 
@@ -1143,28 +1155,6 @@ test("dirty candidates, wrong bindings, foreign owners, and worker controls fail
     f.runtime.command({ ...good, requestID: "dirty-candidate" }, "owner"),
   ).rejects.toThrow("Dirty or unmerged candidate checkout")
   rmSync(join(f.root, "unrelated.txt"))
-  writeFileSync(join(f.root, "notes.md"), "outside authorized task scope\n")
-  git(f.root, ["add", "notes.md"])
-  git(f.root, [
-    "-c",
-    "user.name=reviewer",
-    "-c",
-    "user.email=reviewer@example.invalid",
-    "commit",
-    "-m",
-    "out-of-scope descendant",
-  ])
-  const outOfScope = git(f.root, ["rev-parse", "HEAD"])
-  await expect(
-    f.runtime.command(
-      {
-        ...good,
-        requestID: "out-of-scope-candidate",
-        descendantCommit: outOfScope,
-      },
-      "owner",
-    ),
-  ).rejects.toThrow("outside the task's authorized scope")
   git(f.root, ["branch", "conflict-candidate", f.base])
   git(f.root, ["switch", "conflict-candidate"])
   writeFileSync(join(f.root, "result.txt"), "conflict\n")
@@ -1183,7 +1173,7 @@ test("dirty candidates, wrong bindings, foreign owners, and worker controls fail
   expect(merge.exitCode).not.toBe(0)
   await expect(
     f.runtime.command(
-      { ...good, requestID: "unmerged-candidate", descendantCommit: outOfScope },
+      { ...good, requestID: "unmerged-candidate", descendantCommit: candidate },
       "owner",
     ),
   ).rejects.toThrow("Dirty or unmerged candidate checkout")
