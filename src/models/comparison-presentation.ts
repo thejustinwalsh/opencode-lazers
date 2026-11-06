@@ -192,16 +192,16 @@ const scientificMarketCurrency = new Intl.NumberFormat("en-US", {
   maximumSignificantDigits: 3,
 })
 
-function marketAmount(value: number) {
+export function formatMarketAmount(value: number) {
   return value !== 0 && (Math.abs(value) < 0.000001 || Math.abs(value) >= 1_000_000_000_000)
     ? scientificMarketCurrency.format(value).replace("E", "e")
     : compactMarketCurrency.format(value)
 }
 
-function marketRange(range: { minimum: number; maximum: number }) {
+export function formatMarketRange(range: { minimum: number; maximum: number }) {
   return range.minimum === range.maximum
-    ? marketAmount(range.minimum)
-    : `${marketAmount(range.minimum)}–${marketAmount(range.maximum)}`
+    ? formatMarketAmount(range.minimum)
+    : `${formatMarketAmount(range.minimum)}–${formatMarketAmount(range.maximum)}`
 }
 
 function marketFreshness(value: "current" | "stale" | "unknown" | "unavailable") {
@@ -213,37 +213,38 @@ function referenceMarketSummary(estimate: ModelDecisionReferenceEstimate) {
   const retrievedAt = estimate.provenance.retrievedAt
     ? ` · retrieved ${estimate.provenance.retrievedAt}`
     : " · retrieval date unavailable"
+  const denominator = `${estimate.acceptedTaskCount} accepted task${estimate.acceptedTaskCount === 1 ? "" : "s"}`
 
   if (estimate.acceptedTaskCount < 1) return undefined
 
   if (estimate.status === "exact" && estimate.valueUSDPerAcceptedTask !== null) {
     return {
-      amount: `≈${marketAmount(estimate.valueUSDPerAcceptedTask)} / accepted task`,
+      amount: `≈${formatMarketAmount(estimate.valueUSDPerAcceptedTask)} / accepted task`,
       context: `OpenRouter · ${freshness}`,
-      title: `OpenRouter scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · ${freshness}${retrievedAt}`,
+      title: `OpenRouter scalar reference · exact USD per accepted task ${String(estimate.valueUSDPerAcceptedTask)} · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.status === "conditional" && estimate.rangeUSDPerAcceptedTask !== null) {
     return {
-      amount: `≈${marketRange(estimate.rangeUSDPerAcceptedTask)} / accepted task`,
-      context: `OpenRouter conditional range · ${freshness}`,
-      title: `OpenRouter conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · ${freshness}${retrievedAt}`,
+      amount: `≈${formatMarketRange(estimate.rangeUSDPerAcceptedTask)} / accepted task`,
+      context: `OpenRouter range · ${freshness}`,
+      title: `OpenRouter conditional range · exact USD per accepted task ${String(estimate.rangeUSDPerAcceptedTask.minimum)}–${String(estimate.rangeUSDPerAcceptedTask.maximum)} · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.status !== "partial") return undefined
 
   if (estimate.knownSubtotalUSDPerAcceptedTask !== null) {
     return {
-      amount: `≈${marketAmount(estimate.knownSubtotalUSDPerAcceptedTask)} priced subtotal / accepted task`,
-      context: `OpenRouter · remainder unknown · ${freshness}`,
-      title: `OpenRouter known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · remainder unknown · ${freshness}${retrievedAt}`,
+      amount: `≈${formatMarketAmount(estimate.knownSubtotalUSDPerAcceptedTask)} priced portion / accepted task`,
+      context: `OpenRouter · ${freshness}`,
+      title: `OpenRouter known subtotal · exact USD per accepted task ${String(estimate.knownSubtotalUSDPerAcceptedTask)} · total and remainder unknown · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   if (estimate.knownSubtotalRangeUSDPerAcceptedTask !== null) {
     return {
-      amount: `≈${marketRange(estimate.knownSubtotalRangeUSDPerAcceptedTask)} priced subtotal / accepted task`,
-      context: `OpenRouter · remainder unknown · ${freshness}`,
-      title: `OpenRouter known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · remainder unknown · ${freshness}${retrievedAt}`,
+      amount: `≈${formatMarketRange(estimate.knownSubtotalRangeUSDPerAcceptedTask)} priced portion / accepted task`,
+      context: `OpenRouter · ${freshness}`,
+      title: `OpenRouter known subtotal range · exact USD per accepted task ${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.minimum)}–${String(estimate.knownSubtotalRangeUSDPerAcceptedTask.maximum)} · total and remainder unknown · denominator ${denominator} · published model-reference cost per accepted task · ${freshness}${retrievedAt}`,
     }
   }
   return undefined
@@ -269,13 +270,16 @@ export function currentMarketEstimateSummary(input: {
           ? "OpenCode"
           : input.priceSource === "mixed"
             ? "Configured price sources"
-            : "Price source unknown"
+            : "Configured price source"
     const partial = input.estimate.status === "partial"
-    const amount = marketRange(currentMarket)
+    const amount = formatMarketRange(currentMarket)
+    const isRange = currentMarket.minimum !== currentMarket.maximum
+    const missing =
+      input.estimate.status === "partial" ? ` · missing ${input.estimate.missing.join(", ")}` : ""
     return {
       amount: `≈${amount} / accepted task`,
-      context: `${source}${partial ? " · partial observed cohort" : ""} · ${freshness}`,
-      title: `Producer current-market estimate · exact USD per accepted task ${String(currentMarket.minimum)}–${String(currentMarket.maximum)} · ${input.estimate.observationCount} observation(s) · ${source} · ${freshness}`,
+      context: `${source}${isRange ? " · range" : ""} · ${freshness}`,
+      title: `Producer current-market estimate · exact USD per accepted task ${String(currentMarket.minimum)}${isRange ? `–${String(currentMarket.maximum)}` : ""} · ${input.estimate.observationCount} observation(s) · denominator ${input.acceptedTaskCount} accepted task${input.acceptedTaskCount === 1 ? "" : "s"} · ${source} · ${freshness}${partial ? " · partial observed cohort" : ""}${missing}`,
     }
   }
 
@@ -317,17 +321,47 @@ export function modelDisplayName(
   candidates: readonly CandidateDisplayMetadata[],
   catalog: readonly CatalogDisplayMetadata[],
 ) {
-  const catalogName = catalog.find(
-    (entry) => entry.providerID === route.providerID && entry.id === route.modelID,
-  )?.name
-  if (catalogName?.trim()) return catalogName.trim()
+  const uniqueName = (names: readonly string[]) => {
+    const unique = new Set(names.map((name) => name.trim()).filter(Boolean))
+    return unique.size === 1 ? unique.values().next().value : undefined
+  }
+  const catalogName = uniqueName(
+    catalog
+      .filter((entry) => entry.providerID === route.providerID && entry.id === route.modelID)
+      .map((entry) => entry.name),
+  )
+  if (catalogName) return catalogName
 
-  const candidateName = candidates.find(
-    (candidate) =>
-      candidate.identity.providerID === route.providerID &&
-      candidate.identity.modelID === route.modelID,
-  )?.native.name
-  return candidateName?.trim() || route.modelID
+  const candidateName = uniqueName(
+    candidates
+      .filter(
+        (candidate) =>
+          candidate.identity.providerID === route.providerID &&
+          candidate.identity.modelID === route.modelID,
+      )
+      .flatMap((candidate) => (candidate.native.name ? [candidate.native.name] : [])),
+  )
+  return candidateName || route.modelID
+}
+
+/** Keep duplicate catalog names distinguishable without losing the exact catalog name. */
+export function modelDisplayLabel(
+  route: ModelDisplayRoute,
+  routes: readonly ModelDisplayRoute[],
+  candidates: readonly CandidateDisplayMetadata[],
+  catalog: readonly CatalogDisplayMetadata[],
+) {
+  const name = modelDisplayName(route, candidates, catalog)
+  const routeKey = (candidate: ModelDisplayRoute) =>
+    `${candidate.providerID}\u0000${candidate.modelID}\u0000${candidate.variant ?? ""}`
+  const matchingRoutes = new Map(
+    routes
+      .filter((candidate) => modelDisplayName(candidate, candidates, catalog) === name)
+      .map((candidate) => [routeKey(candidate), candidate]),
+  )
+  if (matchingRoutes.size < 2) return name
+
+  return `${name} · ${routeLabel(route)}`
 }
 
 /** Bound visible model labels while preserving full names and routes for accessible names/tooltips. */

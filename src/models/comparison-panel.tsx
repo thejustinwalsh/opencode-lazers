@@ -15,7 +15,7 @@ import type {
   ModelDecisionTaskKind,
 } from "./decision-contract.ts"
 import { ComparisonChart, comparisonChartHasPlottablePoints } from "./comparison-chart.tsx"
-import type { ComparisonChartReference } from "./comparison-chart.tsx"
+import type { ComparisonChartPoint, ComparisonChartReference } from "./comparison-chart.tsx"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
@@ -35,6 +35,7 @@ import {
   candidateLabel,
   formatDate,
   currentMarketEstimateSummary,
+  modelDisplayLabel,
   modelDisplayName,
   numericValue,
   recordReferenceLabel,
@@ -209,19 +210,23 @@ function moneyRangeLabel(range: { minimum: number; maximum: number }) {
 function referenceCostLabel(estimate: ModelDecisionReferenceEstimate) {
   switch (estimate.status) {
     case "exact":
-      return `OpenRouter scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
+      return estimate.valueUSDPerAcceptedTask === null
+        ? "No numeric OpenRouter reference amount"
+        : `OpenRouter scalar reference · ${formatMoney(estimate.valueUSDPerAcceptedTask)} / accepted task`
     case "conditional":
-      return `OpenRouter conditional range · ${estimate.rangeUSDPerAcceptedTask ? moneyRangeLabel(estimate.rangeUSDPerAcceptedTask) : "Unavailable"} / accepted task`
+      return estimate.rangeUSDPerAcceptedTask
+        ? `OpenRouter conditional range · ${moneyRangeLabel(estimate.rangeUSDPerAcceptedTask)} / accepted task`
+        : "No numeric OpenRouter range amount"
     case "partial":
       if (estimate.knownSubtotalUSDPerAcceptedTask !== null)
         return `OpenRouter priced subtotal only · ${formatMoney(estimate.knownSubtotalUSDPerAcceptedTask)} / accepted task · remainder unknown`
       if (estimate.knownSubtotalRangeUSDPerAcceptedTask)
         return `OpenRouter priced subtotal range only · ${moneyRangeLabel(estimate.knownSubtotalRangeUSDPerAcceptedTask)} / accepted task · remainder unknown`
-      return "OpenRouter partial pricing · subtotal unavailable; total unknown"
+      return "No priced portion is shown; total unknown"
     case "zero-accepted":
       return "No accepted tasks · no reference per-task amount"
     case "unavailable":
-      return "OpenRouter reference unavailable"
+      return "No numeric OpenRouter reference amount"
   }
 }
 
@@ -1035,19 +1040,31 @@ function ModelPanel(
   type DecisionChartGraph = NonNullable<ModelComparisonPanelData["decisionOverview"]>["graph"]
   let chartReferencePoints: DecisionChartGraph["points"] | undefined
   let chartReferenceEstimates: DecisionChartGraph["referenceEstimates"] | undefined
+  let chartReferenceCandidates: ModelComparisonPanelData["candidates"] | undefined
+  let chartReferenceCatalog: ModelCatalogOutput["options"] | undefined
   let chartReferences: ComparisonChartReference[] = []
   const decisionChartReferences = createMemo(() => {
-    const graph = visible()?.decisionOverview?.graph
+    const current = visible()
+    const graph = current?.decisionOverview?.graph
     if (!graph) return []
+
+    const candidates = current.candidates
+    const catalogOptions = current.catalog?.options
     if (
       chartReferencePoints === graph.points &&
-      chartReferenceEstimates === graph.referenceEstimates
+      chartReferenceEstimates === graph.referenceEstimates &&
+      chartReferenceCandidates === candidates &&
+      chartReferenceCatalog === catalogOptions
     )
       return chartReferences
 
     const points = new Map(graph.points.map((point) => [point.configurationID, point] as const))
+    const catalog = catalogOptions ?? []
+    const routes = (graph.referenceEstimates ?? []).map((item) => item.estimate.route)
     chartReferencePoints = graph.points
     chartReferenceEstimates = graph.referenceEstimates
+    chartReferenceCandidates = candidates
+    chartReferenceCatalog = catalogOptions
     chartReferences = (graph.referenceEstimates ?? []).map((item) => {
       const point = points.get(item.configurationID)
       return {
@@ -1058,10 +1075,60 @@ function ModelPanel(
         tokensPerAcceptedTask: Object.hasOwn(item, "tokensPerAcceptedTask")
           ? (item.tokensPerAcceptedTask ?? null)
           : (point?.tokensPerAcceptedTask ?? null),
-        label: item.label ?? point?.label ?? item.configurationID,
+        label: modelDisplayLabel(item.estimate.route, routes, candidates, catalog),
       }
     })
     return chartReferences
+  })
+  let chartPointSource: DecisionChartGraph["points"] | undefined
+  let chartPointReferences: ComparisonChartReference[] | undefined
+  let chartPointCandidates: ModelComparisonPanelData["candidates"] | undefined
+  let chartPointCatalog: ModelCatalogOutput["options"] | undefined
+  let chartPointMarketSource:
+    | NonNullable<ModelComparisonPanelData["decisionOverview"]>["context"]["priceIndex"]["source"]
+    | undefined
+  let chartPoints: ComparisonChartPoint[] = []
+  const decisionChartPoints = createMemo(() => {
+    const current = visible()
+    const overview = current?.decisionOverview
+    if (!overview) return []
+    const references = decisionChartReferences()
+    const candidates = current.candidates
+    const catalogOptions = current.catalog?.options
+    const marketSource = overview.context.priceIndex.source
+    if (
+      chartPointSource === overview.graph.points &&
+      chartPointReferences === references &&
+      chartPointCandidates === candidates &&
+      chartPointCatalog === catalogOptions &&
+      chartPointMarketSource === marketSource
+    )
+      return chartPoints
+
+    const routeByConfiguration = new Map(
+      references.map((reference) => [reference.configurationID, reference.estimate.route] as const),
+    )
+    const routes = references.map((reference) => reference.estimate.route)
+    const catalog = catalogOptions ?? []
+    chartPointSource = overview.graph.points
+    chartPointReferences = references
+    chartPointCandidates = candidates
+    chartPointCatalog = catalogOptions
+    chartPointMarketSource = marketSource
+    chartPoints = overview.graph.points.map((point) => {
+      const route = routeByConfiguration.get(point.configurationID)
+      return {
+        ...point,
+        ...(route
+          ? {
+              label: modelDisplayLabel(route, routes, candidates, catalog),
+              route,
+            }
+          : {}),
+        marketSource,
+      }
+    })
+    return chartPoints
   })
   const availableConfigurations = (): ModelDecisionConfiguration[] => {
     const current = visible()
@@ -1942,7 +2009,7 @@ function ModelPanel(
                 >
                   {(overview) => (
                     <ComparisonChart
-                      points={overview().graph.points}
+                      points={decisionChartPoints()}
                       references={decisionChartReferences()}
                       frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
                       selectedConfigurationID={visible()?.selectedConfigurationID}
@@ -2169,7 +2236,7 @@ function ModelPanel(
                       <p
                         class="lazers-models-market-summary"
                         role="status"
-                        aria-label={`Current market estimate ${summary().amount}; ${summary().context}`}
+                        aria-label={`Current market estimate ${summary().amount}; ${summary().context}. ${summary().title}`}
                         title={summary().title}
                       >
                         <strong>{summary().amount}</strong>
@@ -2187,6 +2254,11 @@ function ModelPanel(
                         >
                           <summary>Estimate basis, coverage and model stats</summary>
                           <div class="lazers-models-evidence-content">
+                            <Show when={selectedMarketEstimate()}>
+                              {(summary) => (
+                                <p class="lazers-models-market-basis">{summary().title}</p>
+                              )}
+                            </Show>
                             <p class="lazers-models-estimate">
                               {estimateLabel(inspection().estimate)} ·{" "}
                               {estimateValuesLabel(inspection().estimate)}

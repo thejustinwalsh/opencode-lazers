@@ -8,6 +8,7 @@ import {
   boundedModelLabel,
   currentMarketEstimateSummary,
   modelDisplayName,
+  modelDisplayLabel,
   readTaskEffortBasis,
   routeLabel,
   sourceState,
@@ -97,6 +98,41 @@ test("model names use exact provider/model metadata independent of effort and fa
   )
 })
 
+test("ambiguous metadata falls back to the route and colliding catalog names remain distinguishable", () => {
+  const routeA = { providerID: "provider-a", modelID: "model-a", variant: null }
+  const routeB = { providerID: "provider-b", modelID: "model-b", variant: null }
+  const routeC = { providerID: "provider-a", modelID: "model-c", variant: null }
+  const routeAHigh = { ...routeA, variant: "high" }
+  const collidingCatalog = [
+    { providerID: "provider-a", id: "model-a", name: "Same long catalog display name" },
+    { providerID: "provider-b", id: "model-b", name: "Same long catalog display name" },
+    { providerID: "provider-a", id: "model-c", name: "Same long catalog display name" },
+  ]
+  expect(modelDisplayName(routeA, [], collidingCatalog)).toBe("Same long catalog display name")
+  const routes = [routeA, routeB, routeC, routeAHigh]
+  const labels = routes.map((route) => modelDisplayLabel(route, routes, [], collidingCatalog))
+  expect(labels).toEqual([
+    "Same long catalog display name · provider-a / model-a",
+    "Same long catalog display name · provider-b / model-b",
+    "Same long catalog display name · provider-a / model-c",
+    "Same long catalog display name · provider-a / model-a · high",
+  ])
+  expect(new Set(labels).size).toBe(routes.length)
+  expect(modelDisplayLabel(routeA, [routeA, routeAHigh], [], collidingCatalog)).toBe(
+    "Same long catalog display name · provider-a / model-a",
+  )
+  expect(modelDisplayLabel(routeAHigh, [routeA, routeAHigh], [], collidingCatalog)).toBe(
+    "Same long catalog display name · provider-a / model-a · high",
+  )
+
+  const ambiguousCatalog = [
+    { providerID: "provider-a", id: "model-a", name: "Conflicting name one" },
+    { providerID: "provider-a", id: "model-a", name: "Conflicting name two" },
+  ]
+  expect(modelDisplayName(routeA, [], ambiguousCatalog)).toBe("model-a")
+  expect(modelDisplayName(routeA, [], [])).toBe("model-a")
+})
+
 test("candidate keyboard focus is bounded and does not intercept unrelated keys", () => {
   expect(candidateFocusIndex(0, 3, "ArrowUp")).toBe(0)
   expect(candidateFocusIndex(0, 3, "ArrowDown")).toBe(1)
@@ -141,6 +177,7 @@ const marketEstimate = (
     status,
     observationCount,
     range: { tokens: null, currentMarketUSD },
+    ...(status === "partial" ? { missing: ["current-price"] } : {}),
   }) as ModelDecisionEstimate
 
 const referenceEstimate = (change: Partial<ModelDecisionReferenceEstimate> = {}) =>
@@ -242,8 +279,11 @@ test("selected current-market summary rounds producer scalars and preserves tiny
     priceFreshness: "stale",
   })
   expect(staleProducer?.amount).toBe("≈$4e-8–$1.2e-7 / accepted task")
-  expect(staleProducer?.context).toBe("OpenRouter · partial observed cohort · stale")
+  expect(staleProducer?.context).toBe("OpenRouter · range · stale")
   expect(staleProducer?.title).toContain("exact USD per accepted task 4e-8–1.2e-7")
+  expect(staleProducer?.title).toContain("partial observed cohort")
+  expect(staleProducer?.title).toContain("denominator 3 accepted tasks")
+  expect(staleProducer?.context).not.toContain("partial observed cohort")
 })
 
 test("selected current-market summary identifies conditional ranges and stale producer prices", () => {
@@ -265,8 +305,9 @@ test("selected current-market summary identifies conditional ranges and stale pr
     priceFreshness: "current",
   })
   expect(conditional?.amount).toBe("≈$4e-8–$1.2e-7 / accepted task")
-  expect(conditional?.context).toBe("OpenRouter conditional range · stale")
+  expect(conditional?.context).toBe("OpenRouter range · stale")
   expect(conditional?.title).toContain("retrieved 2026-11-05T12:00:00.000Z")
+  expect(conditional?.title).toContain("denominator 2 accepted tasks")
 })
 
 test("selected current-market summary keeps partial subtotals qualified and omits unknown costs", () => {
@@ -287,9 +328,12 @@ test("selected current-market summary keeps partial subtotals qualified and omit
     priceSource: "openrouter",
     priceFreshness: "current",
   })
-  expect(partial?.amount).toBe("≈$5e-8 priced subtotal / accepted task")
-  expect(partial?.context).toContain("remainder unknown")
-  expect(partial?.title).toContain("remainder unknown")
+  expect(partial?.amount).toBe("≈$5e-8 priced portion / accepted task")
+  expect(partial?.context).toBe("OpenRouter · current")
+  expect(partial?.amount).not.toContain("priced subtotal")
+  expect(partial?.context).not.toContain("remainder unknown")
+  expect(partial?.title).toContain("total and remainder unknown")
+  expect(partial?.title).toContain("denominator 2 accepted tasks")
   expect(partial?.amount).not.toContain("complete")
 
   const zeroDenominator = currentMarketEstimateSummary({

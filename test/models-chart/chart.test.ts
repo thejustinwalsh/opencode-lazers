@@ -67,6 +67,8 @@ const points: ComparisonChartPoint[] = [
     configurationID: "cfg:opaque/one::high|exact",
     groupID: "group:opaque/one",
     label: "Luna · Max",
+    route: { providerID: "openai", modelID: "luna-1", variant: "max" },
+    marketSource: "openrouter",
     tokensPerAcceptedTask: 12_345.5,
     currentMarketUSDPerAcceptedTask: 0.123456,
     observationCount: 1,
@@ -464,10 +466,10 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(originalSVG?.getAttribute("width")).toBe("480")
   expect(originalSVG?.getAttribute("height")).toBe("320")
   expect(chartHost.getAttribute("role")).toBe("img")
-  expect(chartHost.getAttribute("aria-label")).toContain("12,345.5 tokens per accepted task")
+  expect(chartHost.getAttribute("aria-label")).toContain("12,345.5 actual tokens per accepted task")
   const descriptionID = chartHost.getAttribute("aria-describedby")
   const description = container.querySelector(`[id="${descriptionID}"]`)
-  expect(description?.textContent).toContain("12,345.5 tokens per accepted task")
+  expect(description?.textContent).toContain("12,345.5 actual tokens per accepted task")
   expect(chartHost.getAttribute("style")).toContain("overflow: hidden")
 
   const buttonFor = (configurationID: string) =>
@@ -477,13 +479,35 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   const exact = points[0]!.configurationID
   expect(buttonFor(exact)?.getAttribute("aria-pressed")).toBe("true")
   expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
-    "12,345.5 tokens per accepted task",
+    "12,345.5 actual tokens per accepted task",
   )
   expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
-    "canonical current-market observation $0.123456 per accepted task",
+    "canonical current-market value $0.123456 per accepted task",
+  )
+  expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
+    "exact route openai / luna-1 · max",
   )
   buttonFor(exact)?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
   expect(selections).toEqual([exact])
+
+  chart.dispatchAction({ type: "showTip", seriesIndex: 0, dataIndex: 0 })
+  const pointTooltip = () =>
+    Array.from(chartHost.children).find((child) => {
+      if (child.tagName !== "DIV") return false
+      const style = dom.getComputedStyle(
+        child as unknown as Parameters<typeof dom.getComputedStyle>[0],
+      )
+      return (
+        style.position === "absolute" &&
+        style.display === "block" &&
+        style.visibility !== "hidden" &&
+        style.opacity !== "0" &&
+        child.textContent?.includes("≈$0.123 / accepted task") === true
+      )
+    })
+  await until(() => pointTooltip() !== undefined)
+  expect(pointTooltip()?.textContent).toContain("12.3K tokens")
+  expect(pointTooltip()?.textContent).not.toContain("0.123456")
 
   const originalQwen = points[1]!
   const originalQwenTransform = requiredMarkerTransform(chartHost, chart, originalQwen)
@@ -548,8 +572,16 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   const scalar = reference("reference:scalar", "exact", 12_000)
   const conditional = reference("reference:conditional", "conditional", 18_000)
   const subtotal = reference("reference:subtotal", "partial", 24_000)
+  const subtotalRange = reference("reference:subtotal-range", "partial", 30_000)
+  subtotalRange.estimate = ModelDecisionReferenceEstimateSchema.parse({
+    ...subtotalRange.estimate,
+    knownSubtotalUSD: null,
+    knownSubtotalRangeUSD: { minimum: 0.00006, maximum: 0.00015 },
+    knownSubtotalUSDPerAcceptedTask: null,
+    knownSubtotalRangeUSDPerAcceptedTask: { minimum: 0.00002, maximum: 0.00005 },
+  })
   const missingCoordinate = reference("reference:missing-token-coordinate", "partial", null)
-  const references = [scalar, conditional, subtotal, missingCoordinate]
+  const references = [scalar, conditional, subtotal, subtotalRange, missingCoordinate]
   const selections: string[] = []
   const [selected, setSelected] = browser.createSignal<string | null>(null)
   const dispose = browser.render(
@@ -595,7 +627,12 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
       configurationID: subtotal.configurationID,
     },
   ])
-  expect(series("openrouter-subtotal-ranges")?.data).toEqual([])
+  expect(series("openrouter-subtotal-ranges")?.data).toMatchObject([
+    {
+      value: [30_000, 0.00002, 0.00005],
+      configurationID: subtotalRange.configurationID,
+    },
+  ])
   expect(
     rendered.series
       ?.flatMap((entry) => entry.data ?? [])
@@ -608,23 +645,28 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(host.getAttribute("aria-label")).toContain("OpenRouter scalar reference")
   expect(host.getAttribute("aria-label")).toContain("conditional range")
   expect(host.getAttribute("aria-label")).toContain("remainder unknown")
-  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).toContain(
-    "OpenRouter scalar reference",
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
+    "Scalar reference",
   )
-  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).toContain(
-    "Conditional OpenRouter range",
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
+    "Conditional range",
   )
-  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).toContain(
-    "priced subtotal only · remainder unknown",
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
+    "Priced subtotal · total unknown",
   )
-  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).not.toContain(
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
+    "Priced subtotal range · total unknown",
+  )
+  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).not.toContain(
     "Canonical actual-cohort",
   )
 
   const disclosure = container.querySelector(
     ".lazers-models-comparison-chart-data",
   ) as unknown as HTMLDetailsElement
-  expect(disclosure.querySelector("summary")?.textContent).toContain("legend and point selection")
+  expect(disclosure.querySelector("summary")?.textContent).toContain(
+    "Accessible chart data and point selection",
+  )
   disclosure.open = true
   const buttonFor = (configurationID: string) =>
     container.querySelector(
@@ -662,25 +704,32 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
     (entry) => entry.id === "openrouter-reference-scalars",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: scalarSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("OpenRouter scalar reference") !== undefined)
-  expect(visibleTooltip("OpenRouter scalar reference")?.textContent).toContain(
-    "$0.0000000000123 per accepted task",
-  )
-  expect(visibleTooltip("OpenRouter scalar reference")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
+  await until(() => visibleTooltip("scalar reference") !== undefined)
+  expect(visibleTooltip("scalar reference")?.textContent).toContain("≈$1.23e-11 / accepted task")
+  expect(visibleTooltip("scalar reference")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
   const rangeSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-conditional-ranges",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: rangeSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("OpenRouter conditional range") !== undefined)
-  expect(visibleTooltip("OpenRouter conditional range")?.textContent).toContain(
-    "$0.00000004–$0.00000012 per accepted task",
+  await until(() => visibleTooltip("conditional range") !== undefined)
+  expect(visibleTooltip("conditional range")?.textContent).toContain(
+    "≈$4e-8–$1.2e-7 / accepted task",
   )
   const subtotalSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-reference-subtotals",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: subtotalSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("priced subtotal only") !== undefined)
-  expect(visibleTooltip("priced subtotal only")?.textContent).toContain("remainder unknown")
+  await until(() => visibleTooltip("priced subtotal") !== undefined)
+  expect(visibleTooltip("priced portion")?.textContent).toContain("total unknown")
+  const subtotalRangeSeries = rendered.series?.findIndex(
+    (entry) => entry.id === "openrouter-subtotal-ranges",
+  )
+  chart.dispatchAction({ type: "showTip", seriesIndex: subtotalRangeSeries, dataIndex: 0 })
+  await until(() => visibleTooltip("priced subtotal range") !== undefined)
+  expect(visibleTooltip("priced subtotal range")?.textContent).toContain(
+    "≈$0.00002–$0.00005 priced portion / accepted task",
+  )
+  expect(visibleTooltip("priced subtotal range")?.textContent).toContain("total unknown")
 })
 
 test("real ECharts SVG uses literal observations and only straight segments between frontier points", async () => {
@@ -745,6 +794,7 @@ test("actual tooltip renders markup-like model labels as literal text without in
   dom.document.body.append(host)
   size(host, 480, 320)
   const label = '<img src=x onerror="alert(1)"> A&B "Qwen" <script>alert(2)</script>'
+  const shortLabel = `${Array.from(label).slice(0, 35).join("")}…`
   const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, () => {})
   try {
     adapter.update({ points: [{ ...points[0]!, label }], frontierConfigurationIDs: [] }, theme)
@@ -758,14 +808,14 @@ test("actual tooltip renders markup-like model labels as literal text without in
           style.display === "block" &&
           style.visibility !== "hidden" &&
           style.opacity !== "0" &&
-          child.textContent?.includes(label) === true
+          child.textContent?.includes(shortLabel) === true
         )
       })
     await until(() => visibleTooltip() !== undefined)
     const tooltip = visibleTooltip()
     expect(tooltip).toBeDefined()
     expect(dom.getComputedStyle(tooltip!).display).toBe("block")
-    expect(tooltip!.textContent).toContain(label)
+    expect(tooltip!.textContent).toContain(shortLabel)
     expect(tooltip!.querySelector("img")).toBeNull()
     expect(tooltip!.querySelector("script")).toBeNull()
     expect(tooltip!.querySelector("[onerror]")).toBeNull()
