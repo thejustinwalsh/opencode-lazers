@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { ModelLease } from "./lease.ts"
+import type { ModelLeasePersistence } from "./lease.ts"
 import type { ModelLeaseAcquire, ModelLeaseGrant } from "./ipc.ts"
 
 const request = (
@@ -245,4 +246,97 @@ test("a late old cleanup acknowledgement cannot free ownership after a successor
   const b = await lease.acquire(1, handoff(lease, a, "generation-b", 2))
   expect(b.retired?.retirementID).toBe("retire-acquire-generation-a-to-generation-b")
   lease.assert(1, b)
+})
+
+test("a replacement main adopts only the exact predecessor persisted after provider shutdown", async () => {
+  let persisted: ModelLeasePersistence | undefined
+  const original = new ModelLease(
+    async () => {},
+    undefined,
+    (state) => (persisted = state),
+  )
+  register(original, 1, "generation-a", 1)
+  const aRequest = request(original, "generation-a", 1)
+  const a = await original.acquire(1, aRequest)
+  expect(persisted?.state).toBe("active")
+
+  original.providerStopped()
+  expect(persisted?.state).toBe("retired")
+  const replacement = new ModelLease(
+    async () => {},
+    persisted,
+    (state) => (persisted = state),
+  )
+  expect(replacement.previousProviderEpoch).toBe(original.providerEpoch)
+  expect(replacement.previousProviderState).toBe("retired")
+  register(replacement, 1, "generation-b", 2)
+  const bRequest: ModelLeaseAcquire = {
+    ...request(replacement, "generation-b", 2),
+    predecessor: {
+      owner: a.owner,
+      generationID: a.generationID,
+      generationSequence: a.generationSequence,
+      operationID: a.operationID,
+      providerEpoch: a.providerEpoch,
+      retirementID: "retire-a-to-b",
+      rendererDisposalID: "dispose-a",
+    },
+  }
+  const b = await replacement.acquire(1, bRequest)
+  expect(b.owner).toBe(a.owner)
+  expect(b.providerEpoch).toBe(replacement.providerEpoch)
+  expect(b.retired).toMatchObject({
+    generationID: a.generationID,
+    operationID: a.operationID,
+    providerEpoch: original.providerEpoch,
+    rendererDisposalID: "dispose-a",
+    windowID: 1,
+  })
+  expect(persisted?.state).toBe("active")
+
+  register(replacement, 2, "foreign", 1)
+  expect(() => replacement.acquire(2, request(replacement, "foreign", 1))).toThrow("owned")
+  await expect(replacement.clear(async () => {})).rejects.toThrow("Unload the model")
+})
+
+test("unknown provider shutdown stays occupied and lost retirement replies reconcile after replacement", async () => {
+  let persisted: ModelLeasePersistence | undefined
+  const original = new ModelLease(
+    async () => {},
+    undefined,
+    (state) => (persisted = state),
+  )
+  register(original, 1, "generation-a", 1)
+  const a = await original.acquire(1, request(original, "generation-a", 1))
+  const unproven = new ModelLease(async () => {}, persisted)
+  expect(unproven.previousProviderState).toBe("unproven")
+  expect(unproven.occupied()).toBe(true)
+  register(unproven, 1, "unproven-successor", 2)
+  expect(() => unproven.acquire(1, request(unproven, "unproven-successor", 2))).toThrow("owned")
+  await expect(unproven.clear(async () => {})).rejects.toThrow("Unload the model")
+
+  const inconsistentIdle = new ModelLease(async () => {}, { ...persisted!, state: "idle" })
+  expect(inconsistentIdle.previousProviderState).toBe("unproven")
+  expect(inconsistentIdle.occupied()).toBe(true)
+
+  const release = {
+    lease: {
+      owner: a.owner,
+      generationID: a.generationID,
+      generationSequence: a.generationSequence,
+      operationID: a.operationID,
+      providerEpoch: a.providerEpoch,
+    },
+    retirementID: "lost-release-a",
+    rendererDisposalID: "dispose-a",
+  }
+  const ack = await original.release(1, release)
+  expect(persisted?.state).toBe("idle")
+  const replacement = new ModelLease(async () => {}, persisted)
+  expect(replacement.previousProviderState).toBe("idle")
+  expect(await replacement.reconcileRelease(1, release)).toEqual(ack)
+  register(replacement, 1, "generation-b", 2)
+  const b = await replacement.acquire(1, request(replacement, "generation-b", 2))
+  expect(b.retired).toBeUndefined()
+  expect(replacement.occupied()).toBe(true)
 })

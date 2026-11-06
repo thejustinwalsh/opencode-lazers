@@ -76,6 +76,7 @@ type MainHost = {
   invocations: Array<{ method: string; window: number; input: unknown }>
   logs: Array<{ level: string; message: string; data?: Record<string, unknown> }>
   memory: Map<string, object>
+  persistent: Map<string, unknown>
   gate?: ResponseGate
   cleanup: Array<() => void>
   stop?: () => void | Promise<void>
@@ -107,7 +108,7 @@ class FakeBrowserWindow extends EventEmitter {
   }
 }
 
-const makeMain = (): MainHost => {
+const makeMain = (persistent = new Map<string, unknown>()): MainHost => {
   const window = new FakeBrowserWindow(17, 4217)
   const otherWindow = new FakeBrowserWindow(18, 4218)
   const cleanup: Array<() => void> = []
@@ -118,6 +119,24 @@ const makeMain = (): MainHost => {
   let implementation: Record<string, MainHandler> = {}
   const ctx = {
     options: { dataDirectory: join(tmpdir(), `lazers-main-lease-${crypto.randomUUID()}`) },
+    storage: {
+      store: (key: string, options: { initial: unknown }) => {
+        if (!persistent.has(key)) persistent.set(key, options.initial)
+        return {
+          get value() {
+            return persistent.get(key)
+          },
+          ready: () => true,
+          set: (value: unknown) => persistent.set(key, value),
+          update: (mutate: (draft: unknown) => void) => {
+            const draft = structuredClone(persistent.get(key))
+            mutate(draft)
+            persistent.set(key, draft)
+          },
+        }
+      },
+      remove: (key: string) => persistent.delete(key),
+    },
     signal: new AbortController().signal,
     log: {
       write: (level: string, message: string, data?: Record<string, unknown>) =>
@@ -146,6 +165,7 @@ const makeMain = (): MainHost => {
     invocations,
     logs,
     memory: new Map(),
+    persistent,
     foreignSequence: 0,
     cleanup,
     stop: typeof stop === "function" ? stop : undefined,
@@ -383,6 +403,16 @@ const cleanupHost = async (host: MainHost) => {
 }
 
 try {
+  assert.throws(
+    () =>
+      makeMain(
+        new Map([
+          ["webgpu-model-lease", { schemaVersion: 1, providerEpoch: "unknown", state: "idle" }],
+        ]),
+      ),
+    "invalid persisted ownership cannot silently reset to a free lease",
+  )
+
   // A blocked renderer disposal keeps the exact predecessor occupied until its proof is recorded.
   {
     const host = makeMain()
@@ -628,6 +658,92 @@ try {
       await b.runtime.dispose()
     } finally {
       await cleanupHost(host)
+    }
+  }
+
+  // Installed-plugin reload replaces main but retains the window's plugin memory.
+  {
+    const original = makeMain()
+    let replacement: MainHost | undefined
+    try {
+      const a = makeRuntime(original)
+      await until(() => a.runtime.state() === "ready", "normal reload original model")
+      const oldEpoch = (await a.files.identity()).providerEpoch
+      const oldWorkerOwner = original.workerOwner
+      a.controller.abort()
+      await a.runtime.dispose()
+      assert.equal(allocations, 0, "the original renderer positively disposed its model")
+      await cleanupHost(original)
+
+      replacement = makeMain(original.persistent)
+      replacement.memory = original.memory
+      // GUI/main reload leaves the server-side inference broker running.
+      replacement.workerOwner = original.workerOwner
+      const b = makeRuntime(replacement)
+      assert.notEqual((await b.files.identity()).providerEpoch, oldEpoch)
+      await until(() => b.runtime.state() === "ready", "normal reload replacement model")
+      assert.equal(allocations, 1)
+      assert.equal(replacement.workerOwner, oldWorkerOwner)
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (replacement) await cleanupHost(replacement)
+    }
+  }
+
+  // Main cleanup can finish first; the replacement must wait for the renderer's disposal proof.
+  {
+    const original = makeMain()
+    let replacement: MainHost | undefined
+    try {
+      const a = makeRuntime(original)
+      await until(() => a.runtime.state() === "ready", "main-first reload original model")
+      const oldEpoch = (await a.files.identity()).providerEpoch
+      const oldWorkerOwner = original.workerOwner
+      const disposal = holdNextDisposal()
+      a.controller.abort()
+      const cleanupA = a.runtime.dispose()
+      await disposal.started
+      assert.equal(allocations, 1, "the renderer model remains allocated while disposal is pending")
+
+      for (const fn of original.cleanup.reverse()) fn()
+      original.cleanup.length = 0
+      await original.stop?.()
+      original.stop = undefined
+
+      replacement = makeMain(original.persistent)
+      replacement.memory = original.memory
+      replacement.workerOwner = original.workerOwner
+      const b = makeRuntime(replacement)
+      const newIdentity = await b.files.identity()
+      assert.notEqual(newIdentity.providerEpoch, oldEpoch)
+      await until(
+        () => callCount(replacement!, "registerGeneration", 17) === 1,
+        "main-first replacement registration",
+      )
+      await Bun.sleep(60)
+      assert.equal(
+        callCount(replacement, "acquire", 17),
+        0,
+        "the new provider cannot acquire before old renderer disposal is proven",
+      )
+      assert.equal(allocations, 1)
+      await assertOtherWindowBlocked(replacement, newIdentity.providerEpoch, "main-first-pending")
+
+      disposal.release()
+      await cleanupA
+      assert.equal(allocations, 0, "the old renderer disposal is positively observed")
+      await until(() => b.runtime.state() === "ready", "main-first replacement handoff")
+      const current = entryFor(replacement, 2)
+      assert.equal(current.grant?.owner, oldWorkerOwner)
+      assert.equal(current.grant?.retired?.generationID, entryFor(replacement, 1).generationID)
+      assert.equal(allocations, 1)
+      await assertOtherWindowBlocked(replacement, newIdentity.providerEpoch, "main-first-after")
+      b.controller.abort()
+      await b.runtime.dispose()
+    } finally {
+      if (replacement) await cleanupHost(replacement)
+      await cleanupHost(original)
     }
   }
 

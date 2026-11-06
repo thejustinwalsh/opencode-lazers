@@ -452,20 +452,40 @@ export function createInferenceRuntime(
     const provider = await files.identity({ signal })
     if (handoff.windowID !== undefined && handoff.windowID !== provider.windowID)
       throw new Error("The renderer window changed; previous ownership remains unproven")
-    if (handoff.providerEpoch && handoff.providerEpoch !== provider.providerEpoch)
-      throw new Error("The main-process provider changed; previous ownership remains unproven")
-    if (!handoff.providerEpoch || handoff.windowID === undefined)
+    const previous = ancestors()
+    const providerChanged = Boolean(
+      handoff.providerEpoch && handoff.providerEpoch !== provider.providerEpoch,
+    )
+    if (providerChanged) {
+      if (
+        provider.previousProviderEpoch !== handoff.providerEpoch ||
+        !provider.previousProviderState ||
+        provider.previousProviderState === "unproven"
+      )
+        throw new Error("The main-process provider changed without exact retirement evidence")
+    } else if (
+      (!handoff.providerEpoch || handoff.windowID === undefined) &&
+      previous.some((entry) => entry.grant || entry.acquire || entry.release)
+    ) {
+      throw new Error("Previous main-process ownership identity is missing")
+    }
+    await files.registerGeneration({ generationID, generationSequence }, { signal })
+    await waitForRendererDisposal(previous, signal)
+    await reconcileAncestors(previous, signal)
+    const predecessor = currentPredecessor(previous)
+    if (providerChanged) {
+      if (provider.previousProviderState === "retired" && !predecessor)
+        throw new Error("The replacement provider retains an unidentified predecessor")
+      if (provider.previousProviderState === "idle" && predecessor)
+        throw new Error("The replacement provider does not acknowledge previous ownership")
+    }
+    if (!handoff.providerEpoch || providerChanged || handoff.windowID === undefined)
       setHandoff((draft) => {
         draft.providerEpoch = provider.providerEpoch
         draft.windowID = provider.windowID
       })
-    await files.registerGeneration({ generationID, generationSequence }, { signal })
-    const previous = ancestors()
-    await waitForRendererDisposal(previous, signal)
-    await reconcileAncestors(previous, signal)
     let request = generation().releaseAck ? undefined : generation().acquire
     if (!request) {
-      const predecessor = currentPredecessor(previous)
       if (predecessor) {
         const predecessorEntry = previous.find(
           (entry) => entry.generationID === predecessor.generationID,
@@ -473,8 +493,7 @@ export function createInferenceRuntime(
         if (
           !predecessorEntry ||
           predecessorEntry.state !== "disposed" ||
-          !predecessorEntry.disposalID ||
-          predecessor.providerEpoch !== provider.providerEpoch
+          !predecessorEntry.disposalID
         )
           throw new Error("Previous renderer disposal or provider ownership is unconfirmed")
         request = {

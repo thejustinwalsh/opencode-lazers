@@ -1,10 +1,11 @@
 import type { Plugin } from "@opencode/plugin/gui"
+import { Schema } from "effect"
 import { ModelCache, modelCacheDirectory } from "./cache.ts"
 import { ModelFiles } from "./ipc.ts"
 import type { ModelLeaseAcquire, ModelLeaseIdentity } from "./ipc.ts"
 import { DECISION_FILES, DECISION_REVISION, decisionURL } from "./manifest.ts"
 import { dirname, join } from "node:path"
-import { ModelLease } from "./lease.ts"
+import { ModelLease, ModelLeasePersistenceSchema } from "./lease.ts"
 import type { InferenceTraceEvent } from "./inference-trace.ts"
 import {
   captureRendererDebug,
@@ -39,9 +40,35 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     fetch,
     decisionURL,
   )
-  const lease = new ModelLease(async () => {
-    await Promise.all([cache.stop(), decisions.stop()])
+  const persistedLease = ctx.storage.store("webgpu-model-lease", {
+    schema: Schema.Unknown,
+    initial: null,
   })
+  const persistedValue = persistedLease.value
+  const previousLease =
+    persistedValue === null
+      ? undefined
+      : Schema.decodeUnknownSync(ModelLeasePersistenceSchema)(persistedValue)
+  let providerEpoch = ""
+  const lease = new ModelLease(
+    async () => {
+      await Promise.all([cache.stop(), decisions.stop()])
+    },
+    previousLease,
+    (state) => {
+      const current = persistedLease.value
+      if (current !== null) {
+        const currentEpoch = Schema.decodeUnknownSync(ModelLeasePersistenceSchema)(
+          current,
+        ).providerEpoch
+        if (currentEpoch !== providerEpoch && currentEpoch !== previousLease?.providerEpoch)
+          throw new Error("A stale main-process provider cannot replace newer ownership state")
+      }
+      persistedLease.set(state)
+    },
+  )
+  providerEpoch = lease.providerEpoch
+  lease.persist()
   const lastTrace = new Map<number, InferenceTraceEvent>()
   const freezeCaptures = new Set<number>()
   const diagnosticsDirectory = join(dirname(dirname(cache.directory)), "diagnostics")
@@ -57,6 +84,15 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     }
   }
   const leaseLogOperations = new Set<string>()
+  const inFlightLeaseOperations = new Set<Promise<unknown>>()
+  const trackLeaseOperation = <T>(operation: Promise<T>) => {
+    inFlightLeaseOperations.add(operation)
+    void operation.then(
+      () => inFlightLeaseOperations.delete(operation),
+      () => inFlightLeaseOperations.delete(operation),
+    )
+    return operation
+  }
   const logLeaseOperation = (
     event: string,
     windowID: number,
@@ -116,7 +152,8 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     }
   }
   const lost = (window: number) => {
-    void lease.lost(window).catch((error: unknown) => {
+    const operation = lease.lost(window).then(() => {})
+    void trackLeaseOperation(operation).catch((error: unknown) => {
       writeLog("error", "LAZERS cache ownership cleanup failed", {
         windowID: window,
         error: String(error),
@@ -204,6 +241,12 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     identity: (_input, caller) => ({
       providerEpoch: lease.providerEpoch,
       windowID: caller.window,
+      ...(lease.previousProviderEpoch && lease.previousProviderState
+        ? {
+            previousProviderEpoch: lease.previousProviderEpoch,
+            previousProviderState: lease.previousProviderState,
+          }
+        : {}),
     }),
     registerGeneration: ({ generationID, generationSequence }, caller) => {
       caller.signal.throwIfAborted()
@@ -213,7 +256,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     decisionStatus: async () => ({ ...(await decisions.status()), occupied: lease.occupied() }),
     acquire: (request: ModelLeaseAcquire, caller) => {
       caller.signal.throwIfAborted()
-      const acquisition = lease.acquire(caller.window, request)
+      const acquisition = trackLeaseOperation(lease.acquire(caller.window, request))
       logLeaseOperation(
         request.predecessor ? "handoff" : "acquire",
         caller.window,
@@ -249,11 +292,13 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     },
     release: ({ lease: identity, retirementID, rendererDisposalID }, caller) => {
       caller.signal.throwIfAborted()
-      const retirement = lease.release(caller.window, {
-        lease: identity,
-        retirementID,
-        rendererDisposalID,
-      })
+      const retirement = trackLeaseOperation(
+        lease.release(caller.window, {
+          lease: identity,
+          retirementID,
+          rendererDisposalID,
+        }),
+      )
       logLeaseOperation("retirement", caller.window, identity, retirementID)
       return retirement
     },
@@ -284,10 +329,12 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     },
     stopRendererCapture: (_, caller) => armedCaptures.stop(caller.window),
     clear: async () => {
-      await lease.clear(async () => {
-        await cache.clear()
-        await decisions.clear()
-      })
+      await trackLeaseOperation(
+        lease.clear(async () => {
+          await cache.clear()
+          await decisions.clear()
+        }),
+      )
     },
   })
   writeLog("info", "LAZERS WebGPU cache available", {
@@ -300,8 +347,26 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     rendererArmedSamplingIntervalUs: RENDERER_ARMED_SAMPLING_INTERVAL_US,
     rendererArmedStopMs: RENDERER_ARMED_STOP_MS,
   })
-  return async () => {
-    await armedCaptures.shutdown()
-    await Promise.all([cache.stop(), decisions.stop()])
+  let stopping: Promise<void> | undefined
+  return () => {
+    if (stopping) return stopping
+    lease.seal()
+    stopping = (async () => {
+      try {
+        while (inFlightLeaseOperations.size)
+          await Promise.allSettled(Array.from(inFlightLeaseOperations))
+        await armedCaptures.shutdown()
+        await Promise.all([cache.stop(), decisions.stop()])
+        lease.providerStopped()
+      } catch (error) {
+        try {
+          lease.providerStopFailed()
+        } catch {
+          // A failed persistent write must leave the prior durable state unproven.
+        }
+        throw error
+      }
+    })()
+    return stopping
   }
 }
