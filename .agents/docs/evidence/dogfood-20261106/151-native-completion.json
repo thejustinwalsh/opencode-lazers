@@ -1,0 +1,54 @@
+{
+  "at": 1793935003287,
+  "sessionID": "ses_ba3fb8caf0734f65b0d68cc6db11e0b9",
+  "active": false,
+  "model": {
+    "id": "gpt-6-luna",
+    "providerID": "openai",
+    "variant": "max"
+  },
+  "time": {
+    "created": 1793929181148,
+    "updated": 1793934261804,
+    "busy": 1793932910370,
+    "idle": 1793934262068
+  },
+  "outcome": "succeeded",
+  "attemptID": "8bc20618-e418-4edc-81b2-20a085edd9f8",
+  "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8bc20618-e418-4edc-81b2-20a085edd9f8",
+  "pending": {
+    "inbox": 0,
+    "permissions": 0,
+    "forms": 0
+  },
+  "input": {
+    "id": "msg_lz151_substantive_market_identity_repair_20261106_v1",
+    "type": "synthetic",
+    "metadata": {
+      "lazersReview": {
+        "taskID": "77155457-70ca-424b-b5cf-0598244fe738",
+        "attemptID": "8bc20618-e418-4edc-81b2-20a085edd9f8",
+        "requestID": "lz151-substantive-market-identity-repair-20261106-v1"
+      }
+    },
+    "time": {
+      "created": 1793932910404
+    }
+  },
+  "latestSynthetic": [
+    {
+      "id": "msg_lz151_substantive_market_identity_repair_20261106_v1",
+      "time": {
+        "created": 1793932910404
+      }
+    }
+  ],
+  "latestUser": [
+    {
+      "id": "msg_68bd7194a1ca43d5a40dacaec7a6bcc7",
+      "time": {
+        "created": 1793929183373
+      }
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+src/tasks/corrections.test.ts:
+(pass) effective roots follow explicit chains and branches across reassignment and retraction [31.46ms]
+(pass) a pinned read-only SQLite snapshot hides concurrent correction writes until the next read [7.98ms]
+(pass) legacy missing correction tables are unreviewed, distinct from explicit independence, and read-only [3.37ms]
+(pass) an explicit independence review has durable history distinct from unreviewed membership [6.88ms]
+(pass) correction reads isolate project scope and do not infer generic supplementary relations [29.85ms]
+
+src/tasks/read.test.ts:
+(pass) older records, literal filters, sessions and keyset snapshots stay bounded and isolated [83.37ms]
+(pass) read observers cannot invalidate a committed receipt and a fresh process preserves the watermark [77.69ms]
+(pass) unplanned detail is encodable by the native JSON RPC boundary [17.49ms]
+(pass) task advice is explicit without legacy attachments and shared by planned and unplanned reads [19.88ms]
+(pass) get, query, history and exact classification revisions agree and mutations stale cursors [17.43ms]
+(pass) retired tasks disappear from open queries but direct detail preserves disposition [16.25ms]
+(pass) open, failed and cancelled filters separate effective plan and node states [34.12ms]
+(pass) queued, running and blocked filters use recorded node and plan states across pages [28.53ms]
+(pass) current activity candidates are limited to requested, authorized latest attempt rows [16.51ms]
+
+src/tasks/panel-state.test.ts:
+(pass) state preferences remain independent while old history preferences retain their meaning [0.09ms]
+(pass) healthy connected Tasks does not repeat list and inspector reads without changes [5155.21ms]
+(pass) native activity events refresh only matching tasks and coalesce repeated notifications [136.61ms]
+(pass) native reconnect refreshes current activity once on the connected stream [7.31ms]
+(pass) disposed task connections ignore late native activity notifications [87.31ms]
+(pass) late current-activity responses cannot cross a changed Tasks scope [56.48ms]
+(pass) native reconnect catches missed state even when repository version did not advance [7.30ms]
+(pass) failed reads retry without events and stop retrying after recovery [4254.18ms]
+(pass) closing a failed view cancels its recovery reads [1102.87ms]
+(pass) old session/project/server/filter responses and old detail selections cannot replace the current view [5.30ms]
+(pass) duplicate Start clicks share a request, while reconnect retries through the new transport [1.87ms]
+(pass) invalidations during snapshot acquisition are caught up, foreign and duplicate events are ignored [8.52ms]
+(pass) a change already covered by the in-flight snapshot does not repeat the read [4.92ms]
+(pass) read failures retain stale scoped data and recovery preserves the selected task [3.19ms]
+(pass) topology is published only when it shares the task-page repository boundary [3.01ms]
+(pass) linked dependency details use the transport's same-scope authorization path [1.80ms]
+(pass) late optional topology cannot publish old tasks into a newly connected scope [3.90ms]
+(pass) restored inspectors load while topology is pending or the list fails [3.30ms]
+(pass) optional topology errors show only a readable public message: {"type":"rpc.internal","message":"RPC call failed"} [1.56ms]
+(pass) optional topology errors show only a readable public message: {"arbitrary":"private details"} [1.24ms]
+(pass) optional topology errors show only a readable public message: {} [1.23ms]
+
+src/tasks/events.test.ts:
+(pass) native connection announcements resnapshot; only valid scoped task changes pass [1.63ms]
+(pass) aborted native subscriptions cannot invalidate a closed task view [0.25ms]
+
+src/tasks/panel-view.test.ts:
+(pass) late Start failures/completions cannot affect another task or scope [0.12ms]
+(pass) scroll restoration waits for detail content independently of the list [0.12ms]
+(pass) default scroll restoration respects the browser scheduler receiver [0.85ms]
+(pass) planned queued work exposes Start, but ended or held work does not [0.09ms]
+
+src/tasks/execution-list.test.ts:
+(pass) chains keep admitted ordinals without implying parallel work and preserve off-page prerequisites [0.95ms]
+(pass) a diamond is one real expandable fork and its shared join stays on the root lane [0.52ms]
+(pass) disjoint forks remain separate and an overlapping cross-edge is never forced into a tree [0.24ms]
+(pass) real b50-shaped branches fold while external speech remains a join dependency [0.17ms]
+(pass) extra edges into branch heads and interiors and nonlinear branches remain flat [0.27ms]
+(pass) an external join prerequisite stays on the root lane with both branches folded [0.12ms]
+(pass) planless and unavailable topology remain honest ungrouped task rows [0.12ms]
+(pass) selecting an already visible planless task emits its canonical row once [0.04ms]
+(pass) grouped and context-only rows preserve recorded lifecycle beside plan holds [0.18ms]
+(pass) rows keep raw recorded node state when an older summary contains effective held status [0.07ms]
+
+src/tasks/rpc.test.ts:
+(pass) RPC invalidations catch independent connections and retry transient read and delivery failures [3330.27ms]
+(pass) Tasks RPC restores persisted references on association-aware query summaries [22.34ms]
+(pass) current-activity RPC observes only authorized latest metadata and rejects changed attempts [21.47ms]
+(pass) native advice attachment is Architect-only, replay-safe, and returned through task reads [30.00ms]
+(pass) Start RPC checks actor ownership and native permission before entering runtime [13.19ms]
+
+src/tasks/instructions.test.ts:
+(pass) task instructions preserve goal, acceptance, boundaries, guidance, verification, and sources [0.34ms]
+(pass) task instructions retain readable missing-task and unavailable-revision outcomes [0.07ms]
+(pass) task instructions render only concise effective advice with its provenance and inert references [0.20ms]
+
+src/tasks/classification.test.ts:
+(pass) legacy annotation, embedded baseline and corrections have independent contiguous revisions [6.46ms]
+(pass) read-only classification reads tolerate a missing annotation table without migration or file creation [2.71ms]
+
+src/tasks/panel-layout.test.ts:
+(pass) split geometry subtracts the live wrapped header and separator [0.06ms]
+(pass) multiple pointer moves and short panes stay within the usable split range [0.03ms]
+
+src/tasks/advice.test.ts:
+(pass) advice persists append-only with exact replay, correction, conflicts, provenance, and reopen [16.22ms]
+(pass) foreign-project reads and writes do not expose or create attachment receipts [6.78ms]
+(pass) corrections continue past the bounded read projection without dropping history or changing task bytes [17.22ms]
+(pass) concurrent writers serialize expected-revision compare-and-append [66.89ms]
+
+src/observability/task-reads.test.ts:
+(pass) state filters paginate exact effective task states in project and associated session reads [39.62ms]
+
+test/observation-panels/tasks-activity.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1044 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/tasks-panel-dom-test/tasks-panel-dom-test.js  2,856.79 kB │ gzip: 660.40 kB
+
+✓ built in 936ms
+(pass) registered Tasks panel separates lifecycle, foreground activity and holds with working filters [1226.44ms]
+
+test/observation-panels/root.test.ts:
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 1044 modules transformed.
+rendering chunks...
+computing gzip size...
+node_modules/.cache/models-panel-dom-test/models-panel-dom-test.js  2,856.75 kB │ gzip: 660.38 kB
+
+✓ built in 805ms
+You appear to have multiple instances of Solid. This can lead to unexpected behavior.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+[ECharts] Can't get DOM width or height. Please check dom.clientWidth and dom.clientHeight. They should not be 0.For example, you may need to call this in the callback of window.onload.
+(pass) gui.setup registers and mounts the real Models panel render with isolated, cancellable DOM state [1821.33ms]
+
+test/task-panel/menu-tab.test.ts:
+(pass) tasks native affordances > plan nonterminal counts stay distinct from native activity [0.46ms]
+(pass) tasks native affordances > session.panel menu places Tasks after the native extra-panel entries [0.26ms]
+(pass) tasks native affordances > closable tab renders a themed task icon with the Tasks title [0.07ms]
+(pass) tasks native affordances > tab object stays stable while listed [0.02ms]
+(pass) tasks native affordances > open, closed, and reopened sessions drive the native strip [0.05ms]
+(pass) tasks native affordances > opening without a located session does nothing [0.01ms]
+
+test/task-panel/keyed-identity.test.ts:
+(pass) group and row render owners survive fresh models and live updates by canonical key [19.41ms]
+
+ 77 pass
+ 0 fail
+ 1266 expect() calls
+Ran 77 tests across 16 files. [18.66s]

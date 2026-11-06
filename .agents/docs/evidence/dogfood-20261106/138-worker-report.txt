@@ -1,0 +1,7 @@
+Committed as `d37858f` (`Support candidate-authored retained build verification`); the worktree is clean.
+
+**Changed:** `artifacts.ts`, `runtime.ts`, `retained-reverify.test.ts`, and the retained-verification procedure, isolation, and isolation-test files. Verification now supports scoped Bun tests and candidate-declared `bun run` scripts while binding them to the candidate manifest and isolated resources.
+
+**Checks:** Focused tests 14/14; LZ-138 suite 548/548; LZ-129 suite 128/128; models 154/154; formatting, lint, typecheck, and diff checks passed. The exact full quality/build chain also passed in a committed isolated candidate, with an unchanged candidate and observed isolation witness.
+
+**Unresolved:** Full `bun test` had 1 failure among 1,336 tests at `src/webgpu/task-review.test.ts:388` (expected >6000, received 5945). Native qualification remains blocked by the existing success/idle-lineage mismatch; no acceptance or activation is claimed.

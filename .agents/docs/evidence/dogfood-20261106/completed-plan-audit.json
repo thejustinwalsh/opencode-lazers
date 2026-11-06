@@ -1,0 +1,2879 @@
+{
+  "capturedAt": 1793934501372,
+  "mainHead": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+  "scope": "Integrated-plan ledger and recorded check/landing audit; does not prove feature behavior or substitute live probes. Cleanup is independent. Git ancestry is integration bookkeeping, not verification evidence.",
+  "integratedPlans": 39,
+  "taskCount": 47,
+  "flagCounts": {},
+  "tasks": [
+    {
+      "reference": "LZ-1",
+      "taskID": "5f5743c3-1bd0-4a53-a86b-a347dd961e1a",
+      "planID": "6d1d3afe-f236-4a33-a5a2-86328e838249",
+      "objective": "Make LAZERS task submission durably idempotent using an explicit caller-supplied idempotency key: retrying the same key and validated task content in the same canonical repository returns the original task ID after a lost response or host restart, without creating duplicate tasks.",
+      "nodeState": "accepted",
+      "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "schema-tests",
+          "command": "bun test src/task.test.ts",
+          "timeoutMs": 60000
+        },
+        {
+          "id": "submission-tests",
+          "command": "bun test src/storage.test.ts src/tools.test.ts src/submission.test.ts",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "all-tests",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "schema-tests",
+          "command": "bun test src/task.test.ts",
+          "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb",
+          "startedAt": 1793442965810,
+          "endedAt": 1793442965846,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "submission-tests",
+          "command": "bun test src/storage.test.ts src/tools.test.ts src/submission.test.ts",
+          "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb",
+          "startedAt": 1793442965859,
+          "endedAt": 1793442966808,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all-tests",
+          "command": "bun test",
+          "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb",
+          "startedAt": 1793442966820,
+          "endedAt": 1793442983307,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "38be10db9c398e978c68638fc8b7105070cd56cb",
+          "startedAt": 1793442983320,
+          "endedAt": 1793442983450,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-7",
+      "taskID": "71e53745-0ce8-4798-b453-17f260d03aa0",
+      "planID": "7d903c35-5a45-4d2d-a321-e6ffb91faa0a",
+      "objective": "Add a read-only Architect tool for redacted worker-attempt trajectory JSON and total task effort through acceptance, including unsuccessful work.",
+      "nodeState": "accepted",
+      "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory test/trajectory",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory test/trajectory",
+          "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a",
+          "startedAt": 1793453473262,
+          "endedAt": 1793453473631,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a",
+          "startedAt": 1793453473648,
+          "endedAt": 1793453495401,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "64db756226d161d1ea315187f7c738e4ae110b8a",
+          "startedAt": 1793453495420,
+          "endedAt": 1793453495662,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-8",
+      "taskID": "8a2c9ed1-ff42-427f-9fb2-8583b1e81d97",
+      "planID": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "objective": "Make admitted workers retrieve readable task instructions as their actual Code Mode value while preserving structured task reads/queries.",
+      "nodeState": "accepted",
+      "artifact": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tools.test.ts src/tasks src/runner/runtime.test.ts src/architect.test.ts",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tools.test.ts src/tasks src/runner/runtime.test.ts src/architect.test.ts",
+          "artifact": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+          "startedAt": 1793454998588,
+          "endedAt": 1793455005989,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+          "startedAt": 1793455006003,
+          "endedAt": 1793455026278,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "4267db97bfbea7659b9897aaff8079c07b0a5376",
+          "startedAt": 1793455026293,
+          "endedAt": 1793455026502,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-9",
+      "taskID": "970b0feb-1fd3-40bb-a61d-f8decccb8a9f",
+      "planID": "bc4d5dc0-3ad1-458c-bbde-fa9ce8cc1dc9",
+      "objective": "Make worker skills optional, progressively loaded suggestions and put reusable source-discovery guidance in the shared worker template, leaving tasks focused on goal/done conditions, code findings and relevant research.",
+      "nodeState": "accepted",
+      "artifact": "dade430d964f677f364969d6e94a384f328c07ca",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner src/task.test.ts src/tasks src/tools.test.ts src/architect.test.ts test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner src/task.test.ts src/tasks src/tools.test.ts src/architect.test.ts test/runner",
+          "artifact": "dade430d964f677f364969d6e94a384f328c07ca",
+          "startedAt": 1793457992433,
+          "endedAt": 1793458003035,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "dade430d964f677f364969d6e94a384f328c07ca",
+          "startedAt": 1793458003049,
+          "endedAt": 1793458024171,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "dade430d964f677f364969d6e94a384f328c07ca",
+          "startedAt": 1793458024186,
+          "endedAt": 1793458024336,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-10",
+      "taskID": "b9d649d7-5d15-4406-824b-6681865072d4",
+      "planID": "e07cea4d-1f61-4f3d-92cd-215e63e4cb45",
+      "objective": "Allow any natively authorized caller, including implementation workers, to inspect project-owned trajectory references without an Architect-name gate.",
+      "nodeState": "accepted",
+      "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory test/trajectory",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory test/trajectory",
+          "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc",
+          "startedAt": 1793468688303,
+          "endedAt": 1793468688527,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc",
+          "startedAt": 1793468688541,
+          "endedAt": 1793468711870,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "1dd6ccbb82cbb576a399ab6822ea3b9101edd9fc",
+          "startedAt": 1793468711884,
+          "endedAt": 1793468712015,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-12",
+      "taskID": "f55e7013-630e-4b3e-ab3c-407e61c75ccc",
+      "planID": "aa71e2c0-3f4c-4cff-82f2-b3afc8b661a8",
+      "objective": "Build and refresh one reusable Repomix workspace index as Architect, serving worker/specialist queries read-only without recollecting the workspace for every selection.",
+      "nodeState": "accepted",
+      "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/context src/tools.test.ts src/architect.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/context src/tools.test.ts src/architect.test.ts",
+          "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e",
+          "startedAt": 1793470692156,
+          "endedAt": 1793470697662,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e",
+          "startedAt": 1793470697676,
+          "endedAt": 1793470723665,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "c787af3df1d1396415848988873c3ca9143f8b5e",
+          "startedAt": 1793470723679,
+          "endedAt": 1793470723835,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-13",
+      "taskID": "01d89f85-5eeb-4797-a0a8-18b2521e1cfa",
+      "planID": "b9e55d09-7f0d-446a-9a13-fe24133bea70",
+      "objective": "Automatically retain worker execution facts and concise progress handoffs in one durable SQLite log, with a simple lazers_report_progress tool using the same recorder as native hooks.",
+      "nodeState": "accepted",
+      "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e",
+        "branch": "main",
+        "head": "a6e05e3c88b5f1d2995ef30d1276a3090d07b8f1",
+        "reason": "SOURCE LANDING ONLY, not whole-plan finalization: accepted original b7f036b retained unchanged; after native session confirmed idle, Architect repaired its3 reproduced recorder defects in descendant9d341de and merged asa6e05e3 without newtask/attempt/worker. Hidden structured Tool.Result.output/JSON context and full inputs omitted at durable write/read; cumulative payloads ordered with timestamp; terminal event+idle exact native ID coalescing, unidentified session aggregate separately nonadditive time.idle snapshot.20progress tests117assertions, merged focused127tests1715assertions, full376tests3449assertions75files andfmt/lint/types pass. Current main retains Rootb4fcd61,f2beb81,5a2b39c,packagecac6750 and all later UI/runtime evidence. Single supported public location.reload rebuilt all3 existing loaded locations from merged repaired plugin;PID16786 and original worker/Architect routes and busyidle timestamps unchanged. Actual trajectory now reports49automaticfacts,13additive steps,1cumulative usage,2explicit recoverygaps for original attempt. Successful live report-tool roundtrip is still absent(commentary0); original worker is already accepted and report tool deliberately requires active assignment. Leave plan unfinalized and lifecycle prerequisite intact pending native-proof decision. No mocked/native equivalence claim, forced cleanup, history rewrite or unsafe original deployment."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/progress test/progress src/trajectory test/trajectory src/runner/runtime.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/progress test/progress src/trajectory test/trajectory src/runner/runtime.test.ts",
+          "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e",
+          "startedAt": 1793494036644,
+          "endedAt": 1793494060314,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e",
+          "startedAt": 1793494060334,
+          "endedAt": 1793494112246,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "b7f036b10d27cc450679f8d5280657079748cb4e",
+          "startedAt": 1793494112266,
+          "endedAt": 1793494112513,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-16",
+      "taskID": "6edcc32f-bac1-45c6-b785-2087fb75a93c",
+      "planID": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "objective": "Make an explicit corrected retry baseline govern the next worker attempt instead of being silently replaced by an older attempt or predecessor artifact.",
+      "nodeState": "accepted",
+      "artifact": "134f5c3d38ee128867427b7756d11b755480821b",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/runtime.test.ts src/runner/artifacts.test.ts test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/runtime.test.ts src/runner/artifacts.test.ts test/runner",
+          "artifact": "134f5c3d38ee128867427b7756d11b755480821b",
+          "startedAt": 1793460581565,
+          "endedAt": 1793460590251,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "134f5c3d38ee128867427b7756d11b755480821b",
+          "startedAt": 1793460590266,
+          "endedAt": 1793460613285,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "134f5c3d38ee128867427b7756d11b755480821b",
+          "startedAt": 1793460613300,
+          "endedAt": 1793460613528,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-15",
+      "taskID": "fc88ccc0-0265-4f71-a688-c19f99c76a58",
+      "planID": "db24c4b4-93c7-4c8f-b562-8b6f168c65c0",
+      "objective": "Honor any user-selected native provider/model/effort through OpenCode, and offer three short model-independent worker personas with guided native route selection.",
+      "nodeState": "accepted",
+      "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner src/architect.test.ts test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner src/architect.test.ts test/runner",
+          "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a",
+          "startedAt": 1793476082562,
+          "endedAt": 1793476093789,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a",
+          "startedAt": 1793476093805,
+          "endedAt": 1793476123181,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "d1c52ab030e2f0848fc7a3f0f30399ea9b8f6a7a",
+          "startedAt": 1793476123197,
+          "endedAt": 1793476123398,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-17",
+      "taskID": "08e3d569-5081-4eb4-b79a-e4ac9dc42176",
+      "planID": "7b602667-38d8-4350-9e20-46c09b75b934",
+      "objective": "Make Tasks Start launch real work, with truthful state icons, a compact fully readable inspector and durable Architect continuation for actionable queued work.",
+      "nodeState": "accepted",
+      "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tasks src/runner src/architect.test.ts test/task-panel test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tasks src/runner src/architect.test.ts test/task-panel test/runner",
+          "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021",
+          "startedAt": 1793464588416,
+          "endedAt": 1793464600252,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021",
+          "startedAt": 1793464600266,
+          "endedAt": 1793464601834,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021",
+          "startedAt": 1793464601851,
+          "endedAt": 1793464625568,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "d215cc8f052af762af52e4cee550ffe58aedb021",
+          "startedAt": 1793464625583,
+          "endedAt": 1793464625737,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-18",
+      "taskID": "2958fa32-9f7a-43d9-9252-3d30f2d4dca1",
+      "planID": "6ed421e4-88cc-4324-b521-8f9a32d5de43",
+      "objective": "Dispatch independent tasks concurrently in owned native isolated worktrees, while retaining shared serial execution and deterministic verified integration.",
+      "nodeState": "accepted",
+      "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner test/runner",
+          "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e",
+          "startedAt": 1793467521050,
+          "endedAt": 1793467533135,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e",
+          "startedAt": 1793467533149,
+          "endedAt": 1793467558860,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "3c6ee1ef75a90431d586f1bb6bcaeca34cddd83e",
+          "startedAt": 1793467558875,
+          "endedAt": 1793467559012,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-20",
+      "taskID": "3af64c61-ff16-43a9-8983-a11763ccf415",
+      "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "objective": "Keep last completed final prose speakable during new work and add deduplicated optional auto-speech using supported speaker controls.",
+      "nodeState": "accepted",
+      "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/webgpu/speech.test.ts src/webgpu/speech-playback.test.ts src/webgpu/speech-events.test.ts test/speech",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/webgpu/speech.test.ts src/webgpu/speech-playback.test.ts src/webgpu/speech-events.test.ts test/speech",
+          "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b",
+          "startedAt": 1793481042187,
+          "endedAt": 1793481042727,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b",
+          "startedAt": 1793481042773,
+          "endedAt": 1793481082445,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "7dc6b4ad10a20601f6a3a0c960c9c0eb591d956b",
+          "startedAt": 1793481082465,
+          "endedAt": 1793481082711,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-23",
+      "taskID": "8db1b281-c288-4c2e-abaa-f846dd642246",
+      "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "objective": "Connect Radar and Trajectory to the shipped native GUI and verify their live behavior on actual scheduler work.",
+      "nodeState": "accepted",
+      "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test test/observation-panels src/radar test/radar src/trajectory-panel test/trajectory-panel src/observability test/observability",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test test/observation-panels src/radar test/radar src/trajectory-panel test/trajectory-panel src/observability test/observability",
+          "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+          "startedAt": 1793488456421,
+          "endedAt": 1793488457967,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+          "startedAt": 1793488457986,
+          "endedAt": 1793488460773,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+          "startedAt": 1793488460820,
+          "endedAt": 1793488507268,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "ce270c56651c8710a54aae21f3eb408bbcd393b1",
+          "startedAt": 1793488507288,
+          "endedAt": 1793488507750,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-21",
+      "taskID": "c1cc0d39-42d7-4845-bcce-8d91aee4935b",
+      "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "objective": "Render live Radar Flow and Timeline over the actual runner machine and recorded transitions in a native closable panel.",
+      "nodeState": "accepted",
+      "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+        "branch": "main",
+        "head": "ff4a717105e9e88b25045ec816aa4671644f4845",
+        "reason": "Reviewed accepted Radar source, native canonical-path/project-ID regression and actual machine/recorded Timeline projections; 498b0dd already merged as710814a with native wiring bc2f7e9/9e6ae92 and preserved Terra refinements dec6088/c22af24/ee586a6/631b45e. Current focused checks pass24 tests/175 assertions and quality passes. Record task source landing only; assembly remains active and owns mounted native/Terra combined observations. No plan finalization, cleanup or worker changes."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/radar test/radar src/observability test/observability",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/radar test/radar src/observability test/observability",
+          "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+          "startedAt": 1793486249617,
+          "endedAt": 1793486250069,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+          "startedAt": 1793486250089,
+          "endedAt": 1793486297138,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "498b0ddacf7c3539cf21103922b6c534c1312cde",
+          "startedAt": 1793486297158,
+          "endedAt": 1793486297417,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-19",
+      "taskID": "efd8459f-1dbe-4472-968b-f26f59504291",
+      "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "objective": "Expose shared scoped read-only GUI projections for live Radar state and Trajectory review without conflating machine snapshots and historical events.",
+      "nodeState": "accepted",
+      "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/observability test/observability src/trajectory test/trajectory src/tasks/rpc.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/observability test/observability src/trajectory test/trajectory src/tasks/rpc.test.ts",
+          "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443",
+          "startedAt": 1793481991721,
+          "endedAt": 1793481995461,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443",
+          "startedAt": 1793481995479,
+          "endedAt": 1793482035755,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "bb2c78d0dcb9d0aff659096774659b443206a443",
+          "startedAt": 1793482035776,
+          "endedAt": 1793482035970,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-22",
+      "taskID": "f1b1a687-31b7-4edb-a6bc-1865f61e0bdd",
+      "planID": "b50a1a71-1a54-4d89-8ef2-0644bcccc327",
+      "objective": "Render approved native Trajectory review with real attempt timing above a horizontal inspector and scoped check/token details below.",
+      "nodeState": "accepted",
+      "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory-panel test/trajectory-panel src/observability test/observability",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory-panel test/trajectory-panel src/observability test/observability",
+          "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8",
+          "startedAt": 1793485461297,
+          "endedAt": 1793485461665,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8",
+          "startedAt": 1793485461684,
+          "endedAt": 1793485505512,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "4a518cb03dd682427b351b8850660bbd8948f1e8",
+          "startedAt": 1793485505531,
+          "endedAt": 1793485505803,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-24",
+      "taskID": "7548e7f8-d33b-4768-b8a1-9c81222da176",
+      "planID": "8d505ab3-e279-4c54-bd0f-dc5169f228e9",
+      "objective": "Place Tasks at the bottom of the extra-panel menu and add an icon to its closable native tab.",
+      "nodeState": "accepted",
+      "artifact": "5a7bb9984bb2a2b50d23b2f39a31b51856055a65",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test test/task-panel src/tasks",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test test/task-panel src/tasks",
+          "artifact": "5a7bb9984bb2a2b50d23b2f39a31b51856055a65",
+          "startedAt": 1793480062052,
+          "endedAt": 1793480065650,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "5a7bb9984bb2a2b50d23b2f39a31b51856055a65",
+          "startedAt": 1793480065676,
+          "endedAt": 1793480106996,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "5a7bb9984bb2a2b50d23b2f39a31b51856055a65",
+          "startedAt": 1793480107014,
+          "endedAt": 1793480107177,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-25",
+      "taskID": "7207e67f-927e-41a2-b382-a3a8904ee54f",
+      "planID": "58146c54-d236-4235-9704-630ad550c084",
+      "objective": "Give tasks durable project-local references, compact submission summaries and native Copy task link navigation while preserving UUID compatibility.",
+      "nodeState": "accepted",
+      "artifact": "d1f58b48c0f34615c8c7d1ed9226cce96cd07efc",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "d1f58b48c0f34615c8c7d1ed9226cce96cd07efc",
+        "branch": "main",
+        "head": "955036c66033cbcddcd1d1998068242efd659fde",
+        "reason": "Reviewed existing accepted references artifact without duplicating its merge: d1f58b4 already landed as053338d. Root1f9fb6a restores legitimate AssociationTaskReads reference summaries/search and LZ resolution before Session membership, makes TaskSummary.reference required again and removes masking wrapper behavior;653e2c4 cancelled-plan Open filtering remains. Root5d9be1f retains first239e728 ancestry after independent source/test review. Fresh references/association/registered RPC/links checks pass63 tests527assertions. Record source landing only: spike029 still explicitly lacks verified native Desktop copy/paste/rendered-link-click selection observation; do not claim that from fixtures or from returning a Markdown link. Grouping remains running on original f0eee1ec, with progress independently running and Root's runtime fixes untouched. No combined-plan finalization, cleanup, new task/worker or active session change."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/storage.test.ts src/submission.test.ts src/tools.test.ts src/tasks test/task-links",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/storage.test.ts src/submission.test.ts src/tools.test.ts src/tasks test/task-links",
+          "artifact": "d1f58b48c0f34615c8c7d1ed9226cce96cd07efc",
+          "startedAt": 1793486675904,
+          "endedAt": 1793486680958,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "d1f58b48c0f34615c8c7d1ed9226cce96cd07efc",
+          "startedAt": 1793486680975,
+          "endedAt": 1793486727864,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "d1f58b48c0f34615c8c7d1ed9226cce96cd07efc",
+          "startedAt": 1793486727884,
+          "endedAt": 1793486728101,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-26",
+      "taskID": "f09ad402-f70b-4cde-a531-958fec8bfa1a",
+      "planID": "58146c54-d236-4235-9704-630ad550c084",
+      "objective": "Show recorded sequential work and expandable unambiguous parallel branches in the quiet Tasks list with selectable dependency references.",
+      "nodeState": "accepted",
+      "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8",
+        "branch": "main",
+        "head": "d974597ccf8539dcc34ae6e38a1c58e3fad298dd",
+        "reason": "Record this accepted task's SOURCE LANDING ONLY: normal merge0b880a8 retains accepted dcba900 ancestry; integration repaird974597 addresses Root's independent review. Valid b50 projection\u2192Radar/Trajectory\u2192assembly retains fork with external speech\u2192assembly dependency, join stays root lane, branch head/interior extraedges and nonlinear/overlap remain rejected; real b50 IDs regression added. Legacy groups use short actual planID, authored titles preserved. Isolated menu-tab now uses real Solid/Vite SSR/plugin context, no fake JSX mocks or listener. Fresh349tests3298assertions71files pass; isolated5tests19assertions; focused48tests353assertions; lint/types and production GUI build pass. Whole quality still flags Root's audit JSON formatting, left untouched. Rootb4fcd61, tasklink/search corrections and81b410b handoff retained. GUI rebuilt for Root/Terra native tests; native chain/fork/dependency/copy/click/resize remains PENDING per native.md. Do not finalize plan, clean worktrees or imply native acceptance. Original active progress worker and lifecycle prerequisite untouched."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tasks test/task-panel src/observability test/observability test/task-links",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tasks test/task-panel src/observability test/observability test/task-links",
+          "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8",
+          "startedAt": 1793490013874,
+          "endedAt": 1793490017603,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8",
+          "startedAt": 1793490017623,
+          "endedAt": 1793490063534,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "dcba90024f8cd902183c9bb830e6a9eccb9b26a8",
+          "startedAt": 1793490063551,
+          "endedAt": 1793490063769,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-27",
+      "taskID": "1532ce08-7aac-434f-a8e1-a92e5d7e3cb3",
+      "planID": "5074d494-b627-4cf7-b6c5-76c3abcfa64f",
+      "objective": "Allow an optional Architect-authored plan title in the versioned plan source without rewriting legacy plan bodies.",
+      "nodeState": "accepted",
+      "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/schema.test.ts src/runner/store.test.ts test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/schema.test.ts src/runner/store.test.ts test/runner",
+          "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca",
+          "startedAt": 1793468073797,
+          "endedAt": 1793468075708,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca",
+          "startedAt": 1793468075722,
+          "endedAt": 1793468097048,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "307cc40f384f675e8d9c37483bbf8d62ff51f4ca",
+          "startedAt": 1793468097064,
+          "endedAt": 1793468097228,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-29",
+      "taskID": "430e08d8-ce98-45db-811f-4362a45174b6",
+      "planID": "caa8c80c-130f-45fd-bd64-a446a59bfd65",
+      "objective": "Make Architect-selected published Repomix context readable by an owned isolated implementor without rebuilding or blocking work when optional context is absent.",
+      "nodeState": "accepted",
+      "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "test -f test/context/isolated-reuse.test.ts && bun test src/context test/context/isolated-reuse.test.ts",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "test -f test/context/isolated-reuse.test.ts && bun test src/context test/context/isolated-reuse.test.ts",
+          "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+          "startedAt": 1793483880668,
+          "endedAt": 1793483890192,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+          "startedAt": 1793483890213,
+          "endedAt": 1793483933298,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+          "startedAt": 1793483933319,
+          "endedAt": 1793483933519,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": ["native"],
+      "missingHumanAssertions": [],
+      "humanRecords": [
+        {
+          "assertion_id": "native",
+          "artifact": "7913a14170e7b2b3318c3b25b2bfc19505a4b38f",
+          "created_at": 1793484660291
+        }
+      ],
+      "flags": []
+    },
+    {
+      "reference": "LZ-30",
+      "taskID": "44fb4817-4826-481f-acac-7840caf14341",
+      "planID": "1d4a866e-1ffd-4255-a68c-d72f8f1a6a25",
+      "objective": "Prevent obsolete queued LAZERS outcomes from causing redundant Architect wakes while preserving durable history and timely actionable partial-task review.",
+      "nodeState": "accepted",
+      "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "test -f test/runner/outcome-delivery.test.ts && bun test src/runner test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "test -f test/runner/outcome-delivery.test.ts && bun test src/runner test/runner",
+          "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094",
+          "startedAt": 1793487988737,
+          "endedAt": 1793488018354,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094",
+          "startedAt": 1793488018382,
+          "endedAt": 1793488070665,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094",
+          "startedAt": 1793488070683,
+          "endedAt": 1793488070989,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": ["native-observation"],
+      "missingHumanAssertions": [],
+      "humanRecords": [
+        {
+          "assertion_id": "native-observation",
+          "artifact": "1356ce31ac60292b18ebfb8cc6d43dcc4a800094",
+          "created_at": 1793489171206
+        }
+      ],
+      "flags": []
+    },
+    {
+      "reference": "LZ-31",
+      "taskID": "83a61fc2-88f5-40d2-97a7-f39c37b2bb13",
+      "planID": "fdba0229-dbe5-4ebf-8fb4-0c39c1e1390c",
+      "objective": "Close the roadmap Phase 1 trajectory privacy defect: prevent native inspection from exposing nested private reasoning, replay/context and full tool-state payloads while retaining useful safe visible activity.",
+      "nodeState": "accepted",
+      "artifact": "2fff6bbc94baeece2b3629c40632642082671316",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "privacy",
+          "command": "bun test src/trajectory test/trajectory",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "privacy",
+          "command": "bun test src/trajectory test/trajectory",
+          "artifact": "2fff6bbc94baeece2b3629c40632642082671316",
+          "startedAt": 1793542029240,
+          "endedAt": 1793542029878,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "2fff6bbc94baeece2b3629c40632642082671316",
+          "startedAt": 1793542029896,
+          "endedAt": 1793542086911,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "2fff6bbc94baeece2b3629c40632642082671316",
+          "startedAt": 1793542086934,
+          "endedAt": 1793542087217,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-32",
+      "taskID": "ee7e317c-b5f9-45e3-9e7e-86f7d186ea6c",
+      "planID": "c4be742b-4d11-485f-a657-48bbbd0cd554",
+      "objective": "Add independent task-state filters and an Open trajectory action for the selected historical task, preserving its reference and attempts.",
+      "nodeState": "accepted",
+      "artifact": "b21e3e30309616713a206278de7b5011cb7f7953",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tasks src/observability test/observability test/task-panel test/task-links test/trajectory-panel test/observation-panels",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/tasks src/observability test/observability test/task-panel test/task-links test/trajectory-panel test/observation-panels",
+          "artifact": "b21e3e30309616713a206278de7b5011cb7f7953",
+          "startedAt": 1793545676414,
+          "endedAt": 1793545681161,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "b21e3e30309616713a206278de7b5011cb7f7953",
+          "startedAt": 1793545681181,
+          "endedAt": 1793545741070,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "b21e3e30309616713a206278de7b5011cb7f7953",
+          "startedAt": 1793545741095,
+          "endedAt": 1793545741364,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "artifact": "b21e3e30309616713a206278de7b5011cb7f7953",
+          "startedAt": 1793545741383,
+          "endedAt": 1793545743467,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": ["native-usable"],
+      "missingHumanAssertions": [],
+      "humanRecords": [
+        {
+          "assertion_id": "native-usable",
+          "artifact": "b21e3e30309616713a206278de7b5011cb7f7953",
+          "created_at": 1793545960083
+        }
+      ],
+      "flags": []
+    },
+    {
+      "reference": "LZ-35",
+      "taskID": "bde43cbd-4ecc-4385-8bca-94de50fddab0",
+      "planID": "6a7c2c02-31b5-4a7b-8733-1384b6beeba0",
+      "objective": "Close the two reproduced residual trajectory privacy leaks in LZ-31: multipart JSON tool results and structured strings at the nesting limit.",
+      "nodeState": "accepted",
+      "artifact": "15eff84067a91a26250c1b084053cccf3e8f6851",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory test/trajectory",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/trajectory test/trajectory",
+          "artifact": "15eff84067a91a26250c1b084053cccf3e8f6851",
+          "startedAt": 1793542960219,
+          "endedAt": 1793542960793,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "15eff84067a91a26250c1b084053cccf3e8f6851",
+          "startedAt": 1793542960814,
+          "endedAt": 1793543021790,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "15eff84067a91a26250c1b084053cccf3e8f6851",
+          "startedAt": 1793543021817,
+          "endedAt": 1793543022094,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-37",
+      "taskID": "4971ffe9-9d50-49cd-bdd7-775ffc681c39",
+      "planID": "8332f91a-b697-4697-993e-8be4740ed9d6",
+      "objective": "Make renderer-lag diagnostics use coherent request-relative timing so recorded inference timelines can be interpreted without mixing renderer uptime with request elapsed time.",
+      "nodeState": "accepted",
+      "artifact": "be760cb2c31ca75bd4608354150629b8060bf73a",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/webgpu",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/webgpu",
+          "artifact": "be760cb2c31ca75bd4608354150629b8060bf73a",
+          "startedAt": 1793551652893,
+          "endedAt": 1793551660923,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "be760cb2c31ca75bd4608354150629b8060bf73a",
+          "startedAt": 1793551660945,
+          "endedAt": 1793551721551,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "be760cb2c31ca75bd4608354150629b8060bf73a",
+          "startedAt": 1793551721577,
+          "endedAt": 1793551721875,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "artifact": "be760cb2c31ca75bd4608354150629b8060bf73a",
+          "startedAt": 1793551721893,
+          "endedAt": 1793551724097,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-40",
+      "taskID": "44715414-30fd-41cc-bdd4-5fdc7591ad5e",
+      "planID": "aee3ba37-ec68-4c4b-a2ad-b311a9643ff8",
+      "objective": "Accept genuine workspace-contained evidence directory references at the artifact gate while preserving file validation, path safety and all verification/human acceptance requirements.",
+      "nodeState": "accepted",
+      "artifact": "00d91a9fcc6f48c7d7172f19865ff876fd063752",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/artifacts.test.ts src/runner/artifact-evidence.test.ts src/task.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/artifacts.test.ts src/runner/artifact-evidence.test.ts src/task.test.ts",
+          "artifact": "00d91a9fcc6f48c7d7172f19865ff876fd063752",
+          "startedAt": 1793551393909,
+          "endedAt": 1793551397646,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "all",
+          "command": "bun test",
+          "artifact": "00d91a9fcc6f48c7d7172f19865ff876fd063752",
+          "startedAt": 1793551397665,
+          "endedAt": 1793551461908,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "00d91a9fcc6f48c7d7172f19865ff876fd063752",
+          "startedAt": 1793551461932,
+          "endedAt": 1793551462250,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "build",
+          "command": "bun run build:gui",
+          "artifact": "00d91a9fcc6f48c7d7172f19865ff876fd063752",
+          "startedAt": 1793551462273,
+          "endedAt": 1793551464388,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-41",
+      "taskID": "312a2e4f-ec16-4608-bc66-2f428a6dbf07",
+      "planID": "c4f5e9be-9b81-4914-a3a5-24dfd14f345c",
+      "objective": "Scope isolated worker changes against the ordinary merged baseline of admitted work and incorporated reviewed-main contributions, so divergent repair baselines do not falsely attribute reviewed changes to the worker.",
+      "nodeState": "accepted",
+      "artifact": "bdb26a013aaab1394705409f72c72c3ba0465203",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/artifacts.test.ts src/runner/artifact-evidence.test.ts",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/artifacts.test.ts src/runner/artifact-evidence.test.ts",
+          "artifact": "bdb26a013aaab1394705409f72c72c3ba0465203",
+          "startedAt": 1793554381149,
+          "endedAt": 1793554388010,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-42",
+      "taskID": "af0199a8-8c28-4fdd-b410-96f31eabf0c4",
+      "planID": "bff93c8b-3be6-4b4e-8a51-affcf42a8b60",
+      "objective": "Make explicit owner-requested resume of a failed stopped task reuse its latest retained attempt, matching the runtime command contract instead of rejecting failed \u2192 RESUME.",
+      "nodeState": "accepted",
+      "artifact": "fd4e474a07eae1caab1505618f1f7a9fc300b2f7",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/machine.test.ts src/runner/failed-resume.test.ts",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/machine.test.ts src/runner/failed-resume.test.ts",
+          "artifact": "fd4e474a07eae1caab1505618f1f7a9fc300b2f7",
+          "startedAt": 1793554688264,
+          "endedAt": 1793554689242,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-44",
+      "taskID": "72f6a045-1b47-440f-92f5-3379e2de2487",
+      "planID": "ae4cea99-bfc1-47d9-a11e-8c99714e40d0",
+      "objective": "Make the shipped GUI registration test independent of the unused generated inference engine while preserving its real root/panel registration coverage.",
+      "nodeState": "accepted",
+      "artifact": "240f1e24d2487033bd7d83ff9d7e5700d847f670",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test ./test/observation-panels/root.test.ts ./src/webgpu/runtime.test.ts",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "engine-free",
+          "command": "set -eu; scratch=$(mktemp -d /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-engine-free.XXXXXX); git archive HEAD | tar -x -C \"$scratch\"; (cd \"$scratch\"; \"$HOME/.bun/bin/bun\" install --frozen-lockfile; test ! -e .cache/lfm3-engine.js; \"$HOME/.bun/bin/bun\" test ./test/observation-panels/root.test.ts ./src/webgpu/runtime.test.ts; test ! -e .cache/lfm3-engine.js)",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test ./test/observation-panels/root.test.ts ./src/webgpu/runtime.test.ts",
+          "artifact": "240f1e24d2487033bd7d83ff9d7e5700d847f670",
+          "startedAt": 1793559962413,
+          "endedAt": 1793559968564,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "engine-free",
+          "command": "set -eu; scratch=$(mktemp -d /private/var/folders/tr/3_qw264x55z9g8391dqb7tb40000gn/T/opencode/lazers-engine-free.XXXXXX); git archive HEAD | tar -x -C \"$scratch\"; (cd \"$scratch\"; \"$HOME/.bun/bin/bun\" install --frozen-lockfile; test ! -e .cache/lfm3-engine.js; \"$HOME/.bun/bin/bun\" test ./test/observation-panels/root.test.ts ./src/webgpu/runtime.test.ts; test ! -e .cache/lfm3-engine.js)",
+          "artifact": "240f1e24d2487033bd7d83ff9d7e5700d847f670",
+          "startedAt": 1793559968586,
+          "endedAt": 1793559975675,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": ["engine-free-registration"],
+      "missingHumanAssertions": [],
+      "humanRecords": [
+        {
+          "assertion_id": "engine-free-registration",
+          "artifact": "240f1e24d2487033bd7d83ff9d7e5700d847f670",
+          "created_at": 1793560045136
+        }
+      ],
+      "flags": []
+    },
+    {
+      "reference": "LZ-45",
+      "taskID": "5f18c175-6d8d-4ca9-8036-4fcc67c73644",
+      "planID": "45c80906-d616-4bed-94f2-d9f0aa36a24c",
+      "objective": "Restore a never-started cancelled successor within its original admitted plan through an explicit supported recovery command, so cancellation does not strand authorized dependency work or require cloned tasks/plans.",
+      "nodeState": "accepted",
+      "artifact": "5a0466132aa824b31b76d24c2eacd8b864dd52b0",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "5a0466132aa824b31b76d24c2eacd8b864dd52b0",
+        "branch": "main",
+        "head": "92e4ad26a0b656f69195334785ad055fafc48838",
+        "reason": "Reviewed source landed in main 92e4ad2. Merged focused checks passed 89 tests/1,708 assertions; changed-file format, lint and typecheck pass. Broad formatting encountered unrelated in-progress documentation. Runtime combined checks passed. Record task landing only; actual original-LZ34 native requeue proof follows activation."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/runtime.test.ts src/runner/failed-resume.test.ts src/runner/machine.test.ts src/runner/tools.test.ts",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/runner/runtime.test.ts src/runner/failed-resume.test.ts src/runner/machine.test.ts src/runner/tools.test.ts",
+          "artifact": "5a0466132aa824b31b76d24c2eacd8b864dd52b0",
+          "startedAt": 1793561746728,
+          "endedAt": 1793561778663,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-48",
+      "taskID": "446fc27e-2ae3-438e-8ada-a498939f7fe4",
+      "planID": "9ae669d7-f1a8-434f-8272-a9ace9251d48",
+      "objective": "Keep recent coalesced activity and verified ancestor-associated work visible in Radar\u2019s bounded live projection.",
+      "nodeState": "accepted",
+      "artifact": "776a070da3b121891210d8e47f10e900120fdb46",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/observability src/progress test/observability test/progress",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/observability src/progress test/observability test/progress",
+          "artifact": "776a070da3b121891210d8e47f10e900120fdb46",
+          "startedAt": 1793564465500,
+          "endedAt": 1793564466786,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-49",
+      "taskID": "7b71574c-8b07-471f-8b96-37fa2df02291",
+      "planID": "59987993-9ec5-4f75-99cc-2a68f08e2b58",
+      "objective": "Provide a durable journal of worker-progress insertions and modifications, with bounded resumable consumption and explicit coverage, as the persistence foundation for proactive recovery.",
+      "nodeState": "accepted",
+      "artifact": "890fa16437dd62970468de227c19ea4d56d799bc",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "890fa16437dd62970468de227c19ea4d56d799bc",
+        "branch": "main",
+        "head": "e18b826bcc7356bd271f367484b4f7a6cb2139fb",
+        "reason": "Record accepted original R1 source landing, preserving history: ancestry890fa164\u21929cfec0c\u2192Root603ec24/b35d0fb independently reviewed clear and merged e18b826bcc7356bd271f367484b4f7a6cb2139fb. Root prefix/sparse repairs retain attribution; merged recovery16tests172assertions and format/lint236/type227 passed. Module-only persistence, not native producer/concern/notification/steering proof."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/recovery",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/recovery",
+          "artifact": "890fa16437dd62970468de227c19ea4d56d799bc",
+          "startedAt": 1793565626933,
+          "endedAt": 1793565627171,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-51",
+      "taskID": "6aac9f1e-f4dc-4adc-9540-12513f05929e",
+      "planID": "1cf7467a-398f-4936-b5db-b541e749f39e",
+      "objective": "Provide versioned, durable live-probe definitions and run receipts bound to candidate and actor identity, without activating scheduling or changing historical task meaning.",
+      "nodeState": "accepted",
+      "artifact": "cf7a80bf374588a72ea8a6958243321c6d17f55a",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "cf7a80bf374588a72ea8a6958243321c6d17f55a",
+        "branch": "main",
+        "head": "e18b826bcc7356bd271f367484b4f7a6cb2139fb",
+        "reason": "Accepted original module source plus Root2b31e5a landed235b9fd; subsequent Root a360ddc independently reviewed clear corrects behavior satisfaction to current+completed+passed regardless cleanup, retaining same run/negative/freshness controls and independent cleanup obligation. Root25tests252assertions/quality pass; integration recovery/quality also pass. Preserve original accepted history and Root attribution. No live-probe, automatic teardown/restart or rollout proof claimed; no re-probe/implementation repair for cleanup failure."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/verification/probe src/task.test.ts src/submission.test.ts",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/verification/probe src/task.test.ts src/submission.test.ts",
+          "artifact": "cf7a80bf374588a72ea8a6958243321c6d17f55a",
+          "startedAt": 1793567912426,
+          "endedAt": 1793567913710,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-52",
+      "taskID": "5ae08168-c6d9-44a9-935c-eec76ac29143",
+      "planID": "907c6403-6f46-465b-83c7-79cf39e92b35",
+      "objective": "Prevent recovery journal consumers from skipping or misrepresenting captured facts through tampered pages or late project initialization.",
+      "nodeState": "accepted",
+      "artifact": "9cfec0c40c2cd9d48491d9a005f23571482937bd",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "9cfec0c40c2cd9d48491d9a005f23571482937bd",
+        "branch": "main",
+        "head": "e18b826bcc7356bd271f367484b4f7a6cb2139fb",
+        "reason": "Record accepted original journal-hardening source landing with honest Root return corrections:603ec24 fixes captured prefix despite later append; b35d0fb validates every stored index against sparse omission and transaction rollback. Independent re-review clear, all ancestry merged main e18b826; merged recovery16tests172assertions/quality pass. Original accepted attempt/artifact/history unchanged; Root repairs not Luna execution. Native producer/rule/steering gates remain future."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/recovery",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/recovery",
+          "artifact": "9cfec0c40c2cd9d48491d9a005f23571482937bd",
+          "startedAt": 1793567832702,
+          "endedAt": 1793567833178,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-55",
+      "taskID": "56ec6d65-a1e6-4b31-9815-2d3aaeec3b53",
+      "planID": "1cc98779-07b7-42f7-bc27-ba6dc697989b",
+      "objective": "Persist authorized source-attached recovery handoff requests, immutable drafts/review history and finalized reports in SQLite, independently of worker tools or native delivery.",
+      "nodeState": "accepted",
+      "artifact": "6b3e37c4348bf64093ba28fd856d20f59a85552a",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "6b3e37c4348bf64093ba28fd856d20f59a85552a",
+        "branch": "main",
+        "head": "06b635b7b0aa45e852ee0a129b2da27895398691",
+        "reason": "Returned H2 source independently reviewed by Root and native review agent without blocker; exact candidate merged into main06b635b7b0aa45e852ee0a129b2da27895398691. Root5tests80assertions pass, runtime task/combined receipts pass and merged autoformat/lint218/typecheck210 pass. Record task source landing only: atomic notification intent is not live delivery. H3 must enforce shared maximum3rounds and notify CURRENT Architect after renewal; no native-tool or quiescence claim."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/recovery/handoff",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/recovery/handoff",
+          "artifact": "6b3e37c4348bf64093ba28fd856d20f59a85552a",
+          "startedAt": 1793580574632,
+          "endedAt": 1793580575108,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-54",
+      "taskID": "d121102a-21e2-46db-b8e1-7137c29a92a9",
+      "planID": "1cc98779-07b7-42f7-bc27-ba6dc697989b",
+      "objective": "Reuse one subject-independent hardening policy for task and future handoff reviews while preserving existing task-review behavior and history.",
+      "nodeState": "accepted",
+      "artifact": "d4bd2dfc69dabe8ea40f9c36813351bd9a90c51f",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "d4bd2dfc69dabe8ea40f9c36813351bd9a90c51f",
+        "branch": "main",
+        "head": "6c1af3ed70119bb97ffedd35faeb1eb573e3cf26",
+        "reason": "Root independently reviewed five-file extraction without blocker. Runtime focused receipt passed; exact returned candidate merged into main6c1af3ed70119bb97ffedd35faeb1eb573e3cf26. Merged12tests/82assertions and formatting/lint/typecheck passed. Record task landing only; preserve active LZ55, combined checks/acceptance and native enabled hardening/handoff boundaries. This source inclusion does not establish live inference or full handoff delivery."
+      },
+      "declaredChecks": [
+        {
+          "id": "focused",
+          "command": "bun test src/review src/webgpu/task-review.test.ts",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "focused",
+          "command": "bun test src/review src/webgpu/task-review.test.ts",
+          "artifact": "d4bd2dfc69dabe8ea40f9c36813351bd9a90c51f",
+          "startedAt": 1793569821251,
+          "endedAt": 1793569821503,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-73",
+      "taskID": "2ee1dac1-3940-489c-98f6-ee5eb8f8eda7",
+      "planID": "af09b8ea-8188-4d2d-80c2-f0b319058522",
+      "objective": "Make Radar current and last task-assignment context depend on exact recorded session-bound attempts, never task authorship or task state elsewhere.",
+      "nodeState": "accepted",
+      "artifact": "23d1706ad152c381eef034386ceb518ca6d52dcd",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "23d1706ad152c381eef034386ceb518ca6d52dcd",
+        "branch": "main",
+        "head": "bf4d6673ef50ce94dcf1293cf45a232173e476ea",
+        "reason": "Independently cleared assignment correction merged as bf4d667, preserving all Root driver repairs. Retained and merged Radar36/295 plus quality pass; nine extra public-builder edge cases pass. This records source only, not native visual/pulse/recovery acceptance."
+      },
+      "declaredChecks": [
+        {
+          "id": "overview",
+          "command": "bun test src/radar/map-overview.test.ts",
+          "timeoutMs": 120000
+        },
+        {
+          "id": "radar",
+          "command": "bun scripts/build-radar-layout.ts && bun test src/radar test/radar test/observation-panels",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "overview",
+          "command": "bun test src/radar/map-overview.test.ts",
+          "artifact": "23d1706ad152c381eef034386ceb518ca6d52dcd",
+          "startedAt": 1793650620052,
+          "endedAt": 1793650620582,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "radar",
+          "command": "bun scripts/build-radar-layout.ts && bun test src/radar test/radar test/observation-panels",
+          "artifact": "23d1706ad152c381eef034386ceb518ca6d52dcd",
+          "startedAt": 1793650620607,
+          "endedAt": 1793650623751,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "23d1706ad152c381eef034386ceb518ca6d52dcd",
+          "startedAt": 1793650623774,
+          "endedAt": 1793650624163,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-98",
+      "taskID": "e27bad48-ffe1-4d4b-8d2e-edaacd25511b",
+      "planID": "e1e809c7-2b5f-41e1-9a22-36a01daec97f",
+      "objective": "Repair four source-review defects in the retained offline maintenance preflight so it accepts real production bindings and detects contradictory or changing evidence without granting recovery authority.",
+      "nodeState": "accepted",
+      "artifact": "055ab04de034f0aa3000c4fccac9841b68032e0e",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "055ab04de034f0aa3000c4fccac9841b68032e0e",
+        "branch": "main",
+        "head": "f50d2b18bc02d7565fe2af749c77e332d4ecfdf6",
+        "reason": "Reviewed production-binding repair merged with retained preflight; own exact-candidate 11 tests/106 assertions and Main 21/199 plus quality pass. No containment or replay authority claimed."
+      },
+      "declaredChecks": [
+        {
+          "id": "preflight",
+          "command": "bun test test/maintenance-preflight.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "preflight",
+          "command": "bun test test/maintenance-preflight.test.ts",
+          "artifact": "055ab04de034f0aa3000c4fccac9841b68032e0e",
+          "startedAt": 1793739418217,
+          "endedAt": 1793739419434,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "055ab04de034f0aa3000c4fccac9841b68032e0e",
+          "startedAt": 1793739419457,
+          "endedAt": 1793739419849,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-113",
+      "taskID": "a75c5b17-ec4f-4641-a7dc-99470341846c",
+      "planID": "5e57d2d2-c91c-45e2-8c05-c675395c6af4",
+      "objective": "Remove redundant supplied per-file Git manifests from offline maintenance preflight while preserving real candidate, receipt and containment checks.",
+      "nodeState": "accepted",
+      "artifact": "6203a693337a977bb0ac605665f6a690f94e971f",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "6203a693337a977bb0ac605665f6a690f94e971f",
+        "branch": "main",
+        "head": "428c6ad39392a411f6a33c34f3194ec7d6910060",
+        "reason": "Root exact-source review cleared6203a693 and independent candidate/merged checks passed12tests126assertions plus quality. Main428c6ad contains the reviewed manifest removal while retaining candidate/receipt Git brackets and containment limits. Record task landing; preserve original ENOSPC and same-attempt recovery history."
+      },
+      "declaredChecks": [
+        {
+          "id": "maintenance",
+          "command": "bun test test/maintenance-preflight.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "maintenance",
+          "command": "bun test test/maintenance-preflight.test.ts",
+          "artifact": "6203a693337a977bb0ac605665f6a690f94e971f",
+          "startedAt": 1793802715512,
+          "endedAt": 1793802715876,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "6203a693337a977bb0ac605665f6a690f94e971f",
+          "startedAt": 1793802715902,
+          "endedAt": 1793802716630,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-118",
+      "taskID": "e52de935-9519-4167-a7b6-e2390a7280d7",
+      "planID": "2e5b7147-426f-45b6-934f-6da2b07205e7",
+      "objective": "Recover conclusively failed native startup-worktree creation within its original retained attempt through explicit durable settlement and guarded resource-ready continuation, without replaying an uncertain operation.",
+      "nodeState": "accepted",
+      "artifact": "53cc05d3b566df865372bcd3d63b0fc1e2f95fbf",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "startup",
+          "command": "bun test src/runner/startup-recovery.test.ts src/runner/native.test.ts src/runner/tools.test.ts src/runner/schema.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "runner",
+          "command": "bun test src/runner test/runner",
+          "timeoutMs": 240000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "startup",
+          "command": "bun test src/runner/startup-recovery.test.ts src/runner/native.test.ts src/runner/tools.test.ts src/runner/schema.test.ts",
+          "artifact": "53cc05d3b566df865372bcd3d63b0fc1e2f95fbf",
+          "startedAt": 1793883590843,
+          "endedAt": 1793883593657,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "runner",
+          "command": "bun test src/runner test/runner",
+          "artifact": "53cc05d3b566df865372bcd3d63b0fc1e2f95fbf",
+          "startedAt": 1793883593679,
+          "endedAt": 1793883697614,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "53cc05d3b566df865372bcd3d63b0fc1e2f95fbf",
+          "startedAt": 1793883697646,
+          "endedAt": 1793883698022,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-126",
+      "taskID": "2ba384f5-142d-46ff-abd0-c6fe2ae19f2c",
+      "planID": "c64e0231-b47c-4432-96a9-5e5e39fe6a6b",
+      "objective": "Provide durable explicit same-original-goal correction links through Architect-owned native controls and coherent project-scoped reads, enabling Models grouping without inferred intent or rewritten physical history.",
+      "nodeState": "accepted",
+      "artifact": "bb26ab267863601338102747f99d3fc94539f29b",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "bb26ab267863601338102747f99d3fc94539f29b",
+        "branch": "main",
+        "head": "3999968c0c65988bf8a69d094cec68fc93a41fe5",
+        "reason": "Reviewed normal two-parent merge3999968 contains exact accepted artifact and preserves current Code Mode/134 source tree. Independent merge-seam review and shell ancestry check pass; all task/graph checks passed. Authorized124\u2192119 and125\u2192120 native records and all-four revisioned membership/audit readbacks completed without physical-history rewrites."
+      },
+      "declaredChecks": [
+        {
+          "id": "corrections",
+          "command": "bun test src/task-correction*.test.ts src/tasks/corrections*.test.ts src/storage.test.ts src/tools.test.ts src/submission.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "compatibility",
+          "command": "bun test src/tasks test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "corrections",
+          "command": "bun test src/task-correction*.test.ts src/tasks/corrections*.test.ts src/storage.test.ts src/tools.test.ts src/submission.test.ts",
+          "artifact": "bb26ab267863601338102747f99d3fc94539f29b",
+          "startedAt": 1793898202103,
+          "endedAt": 1793898205015,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "compatibility",
+          "command": "bun test src/tasks test/runner",
+          "artifact": "bb26ab267863601338102747f99d3fc94539f29b",
+          "startedAt": 1793898205037,
+          "endedAt": 1793898214383,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "bb26ab267863601338102747f99d3fc94539f29b",
+          "startedAt": 1793898214406,
+          "endedAt": 1793898214915,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-132",
+      "taskID": "5cdc0405-0e7f-4b18-933d-d0a331b37cd5",
+      "planID": "10964078-2262-4b2c-8f5a-101222a16e55",
+      "objective": "Attach concise research findings and implementation advice durably to an existing task through an Architect-owned native tool, and return the effective advice through structured task and readable instruction fetches to current or replacement workers.",
+      "nodeState": "accepted",
+      "artifact": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+        "branch": "main",
+        "head": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+        "reason": "Reviewed corrected132 descendant now adopted with all fresh checks and exact-artifact native Code Mode attach/replay/getter evidence. Record adopted task source landing on unchanged clean maincf463209; original attempt/history retained."
+      },
+      "declaredChecks": [
+        {
+          "id": "advice",
+          "command": "bun test src/tasks/advice src/tasks/read.test.ts src/tasks/instructions.test.ts src/tasks/rpc.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "compatibility",
+          "command": "bun test src/tools.test.ts src/tasks src/observability/task-reads.test.ts src/task.test.ts src/storage.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "advice",
+          "command": "bun test src/tasks/advice src/tasks/read.test.ts src/tasks/instructions.test.ts src/tasks/rpc.test.ts",
+          "artifact": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+          "startedAt": 1793866535322,
+          "endedAt": 1793866540172,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "compatibility",
+          "command": "bun test src/tools.test.ts src/tasks src/observability/task-reads.test.ts src/task.test.ts src/storage.test.ts",
+          "artifact": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+          "startedAt": 1793866540257,
+          "endedAt": 1793866555594,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+          "startedAt": 1793866555713,
+          "endedAt": 1793866557166,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-133",
+      "taskID": "051be9d5-f03b-4ef8-b75e-7758fbe03d8c",
+      "planID": "5a8a96ed-839a-41d7-9e97-ba7845174fd3",
+      "objective": "Expose bounded project-authorized progressive Architect source-journal inspection through lz-inspect-plan so renewal handoffs can point to retained input/result records instead of pushing historical batches into context.",
+      "nodeState": "accepted",
+      "artifact": "ac4eb1a02905c29ebf7c8ef573e0984a28f05ee0",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": null,
+      "declaredChecks": [
+        {
+          "id": "journal",
+          "command": "bun test src/runner/inspection.test.ts src/runner/tools.test.ts src/runner/store.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "journal",
+          "command": "bun test src/runner/inspection.test.ts src/runner/tools.test.ts src/runner/store.test.ts",
+          "artifact": "ac4eb1a02905c29ebf7c8ef573e0984a28f05ee0",
+          "startedAt": 1793872229668,
+          "endedAt": 1793872230319,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun run verify",
+          "artifact": "ac4eb1a02905c29ebf7c8ef573e0984a28f05ee0",
+          "startedAt": 1793872230342,
+          "endedAt": 1793872230795,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": ["native-journal"],
+      "missingHumanAssertions": [],
+      "humanRecords": [
+        {
+          "assertion_id": "native-journal",
+          "artifact": "ac4eb1a02905c29ebf7c8ef573e0984a28f05ee0",
+          "created_at": 1793873557736
+        },
+        {
+          "assertion_id": "native-journal",
+          "artifact": "ac4eb1a02905c29ebf7c8ef573e0984a28f05ee0",
+          "created_at": 1793873650410
+        }
+      ],
+      "flags": []
+    },
+    {
+      "reference": "LZ-136",
+      "taskID": "06fc208a-e4ed-4fe6-9b5b-33905840f8a8",
+      "planID": "ad6cb637-d5d7-4ee4-974e-727216f2bdd5",
+      "objective": "Allow an explicit owner-authorized reconciliation of a genuinely received same-attempt review-steering input so an unchanged original worker can proceed through normal matching-input verification without another prompt or fabricated idle evidence.",
+      "nodeState": "accepted",
+      "artifact": "4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1",
+        "branch": "main",
+        "head": "6bf4a8bab40b5f94dd4c6e304fbb6c2b77cf56af",
+        "reason": "Fresh Git observation confirms Root's ancestry-preserving merge6bf4a8bab40b5f94dd4c6e304fbb6c2b77cf56af contains accepted4a9a8d6 on main; merge-base --is-ancestor now exits0. Independent final source review and registered original133/135 completion qualification passed. Record only this accepted task's source landing; preserve the active combined check and other workers, without cleanup or premature plan finalization."
+      },
+      "declaredChecks": [
+        {
+          "id": "steering",
+          "command": "bun test src/runner/runtime.test.ts src/runner/schema.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "runner",
+          "command": "bun test src/runner src/progress test/runner",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "steering",
+          "command": "bun test src/runner/runtime.test.ts src/runner/schema.test.ts",
+          "artifact": "4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1",
+          "startedAt": 1793852742578,
+          "endedAt": 1793852810329,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "runner",
+          "command": "bun test src/runner src/progress test/runner",
+          "artifact": "4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1",
+          "startedAt": 1793852810354,
+          "endedAt": 1793852938215,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1",
+          "startedAt": 1793852938246,
+          "endedAt": 1793852938739,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": ["native-owned-completion"],
+      "missingHumanAssertions": [],
+      "humanRecords": [
+        {
+          "assertion_id": "native-owned-completion",
+          "artifact": "4a9a8d6a260cd2761f8972852f9bfa3285c1f7b1",
+          "created_at": 1793853316335
+        }
+      ],
+      "flags": []
+    },
+    {
+      "reference": "LZ-137",
+      "taskID": "0f6bb558-101b-4d57-a9d9-80428df78fce",
+      "planID": "181baf24-b3dc-49c5-adad-338d0ec9fe34",
+      "objective": "Set lz-attach-task-advice native registration to codemode:true and assert that exposure in its registration test.",
+      "nodeState": "accepted",
+      "artifact": "7262d827d166808a43b77f8f5e3f34920a6b2e11",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "7262d827d166808a43b77f8f5e3f34920a6b2e11",
+        "branch": "main",
+        "head": "cf46320948d04e4932fe09305dc5a9c1a49ddf81",
+        "reason": "Root merged reviewed137 correction preserving ancestry at clean stable maincf463209. Source and actual Code Mode registration/attachment/getter walkthrough qualified via132 adoption; record task-only landing before combined integration and native nonforced cleanup."
+      },
+      "declaredChecks": [
+        {
+          "id": "registration",
+          "command": "bun test src/tasks/rpc.test.ts src/tasks/advice.test.ts src/tasks/read.test.ts src/tasks/instructions.test.ts",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "timeoutMs": 120000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "registration",
+          "command": "bun test src/tasks/rpc.test.ts src/tasks/advice.test.ts src/tasks/read.test.ts src/tasks/instructions.test.ts",
+          "artifact": "7262d827d166808a43b77f8f5e3f34920a6b2e11",
+          "startedAt": 1793863275851,
+          "endedAt": 1793863279966,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check",
+          "artifact": "7262d827d166808a43b77f8f5e3f34920a6b2e11",
+          "startedAt": 1793863279991,
+          "endedAt": 1793863280498,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    },
+    {
+      "reference": "LZ-150",
+      "taskID": "6a04ee4f-06b8-44b7-a176-cec0459e1475",
+      "planID": "7f4b0a7c-4b2f-44ac-91e7-32c4d77fe453",
+      "objective": "Capture current exact-model OpenRouter endpoint pricing as separate scenario evidence, including narrowly supported cache-write documentation, through the existing explicit Models refresh.",
+      "nodeState": "accepted",
+      "artifact": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+      "artifactInCurrentMainHistory": true,
+      "recordedLanding": {
+        "artifact": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+        "branch": "main",
+        "head": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+        "reason": "Reviewed accepted descendant is already exact clean mainHEAD, retaining the pricing merge. Native task and combined Models/quality checks all passed unchanged on this artifact. Record the task landing without another merge or worker turn; preserve both failed attempts and old resource history."
+      },
+      "declaredChecks": [
+        {
+          "id": "models",
+          "command": "bun test src/models",
+          "timeoutMs": 180000
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check && bun run build:gui",
+          "timeoutMs": 180000
+        }
+      ],
+      "missingPassingCheckReceipts": [],
+      "checks": [
+        {
+          "id": "models",
+          "command": "bun test src/models",
+          "artifact": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+          "startedAt": 1793928286897,
+          "endedAt": 1793928291294,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        },
+        {
+          "id": "quality",
+          "command": "bun fmt --check && bun lint && bun check && git diff --check && bun run build:gui",
+          "artifact": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+          "startedAt": 1793928291343,
+          "endedAt": 1793928295559,
+          "exitCode": 0,
+          "timedOut": false,
+          "unchanged": true
+        }
+      ],
+      "declaredHumanAssertions": [],
+      "missingHumanAssertions": [],
+      "humanRecords": [],
+      "flags": []
+    }
+  ]
+}

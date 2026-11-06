@@ -1,0 +1,30 @@
+{
+  "binding": {
+    "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+    "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+    "attemptID": "8bc20618-e418-4edc-81b2-20a085edd9f8",
+    "sessionID": "ses_ba3fb8caf0734f65b0d68cc6db11e0b9",
+    "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/8bc20618-e418-4edc-81b2-20a085edd9f8",
+    "assignedMessageID": "msg_68bd7194a1ca43d5a40dacaec7a6bcc7"
+  },
+  "revision": 18,
+  "executionStartSequence": 2399,
+  "report": {
+    "observedAt": 1793934262055,
+    "inputID": "msg_lz151_substantive_market_identity_repair_20261106_v1",
+    "executionStartSequence": 2399,
+    "eventSequence": 2400,
+    "count": 0,
+    "kinds": {
+      "shell": 0,
+      "subagent": 0,
+      "image": 0
+    }
+  },
+  "terminal": {
+    "sequence": 3491,
+    "eventID": "evt_1aed07f340013dbalrF7xQYwvG",
+    "messageID": "msg_1aed07f340013dbalrF7xQYwvG"
+  },
+  "invalidation": null
+}

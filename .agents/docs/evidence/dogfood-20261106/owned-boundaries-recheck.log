@@ -1,0 +1,11 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+test/product-verification/owned-launch.test.ts:
+(pass) owned Desktop boundaries > uses actual ps observations for this worker and a non-existent PID [6.93ms]
+(pass) owned Desktop boundaries > keeps the explicit private base identity stable when owned TMPDIR changes [53.60ms]
+
+ 2 pass
+ 28 filtered out
+ 0 fail
+ 10 expect() calls
+Ran 2 tests across 1 file. [143.00ms]

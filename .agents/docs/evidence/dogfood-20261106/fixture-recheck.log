@@ -1,0 +1,23 @@
+bun test v1.4.4-canary.1 (da867c60b)
+
+src/webgpu/task-review.test.ts:
+(pass) self-review questions cover unnecessary requirements and repetition as well as completeness [1.61ms]
+(pass) System One separates its transport envelope from measured token capacity [3.05ms]
+(pass) structural errors and oversized tasks never invoke the model or save a review [8.11ms]
+(pass) task adapter preserves its storage key, record/history shape, and result fields [4.42ms]
+(pass) one focused concern advances on equal score after a changed-state repair, retaining the concern [2.80ms]
+(pass) three worsening rounds continue with concerns; restart preserves budget, terminal replay and stale-draft protection [7.98ms]
+(pass) later revisions reopen regressed checks and return only the next focused correction [1.91ms]
+(pass) inference errors remain explicit and may retry identical state within the same three-round bound [1.78ms]
+(pass) review IDs are scoped and concurrent resumptions cannot consume another round [1.06ms]
+(pass) one review round splits a larger question collection into bounded complete batches [4.19ms]
+(pass) a 7,026-character shared state and 14 checks stay intact in one transport job [1.11ms]
+(pass) late and cancelled review responses retain measured usage but cannot merge answers or start another batch [3.05ms]
+(pass) a later batch error preserves prior answers and history without establishing any finding [6.29ms]
+(pass) interrupted attempts retain their reserved rounds and exhaust with an explicit limitation [3.44ms]
+(pass) a changed checklist cannot reuse an earlier review; a new review preserves parent intent [1.11ms]
+
+ 15 pass
+ 0 fail
+ 145 expect() calls
+Ran 15 tests across 1 file. [172.00ms]

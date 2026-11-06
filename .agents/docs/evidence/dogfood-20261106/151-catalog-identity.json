@@ -1,0 +1,30 @@
+{
+  "at": 1793934821389,
+  "scope": "Actual retained catalog identity and scenario recognition; no usage/cost or full-product availability claim",
+  "rows": [
+    {
+      "route": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "max" },
+      "identity": "exact",
+      "productID": "openai/gpt-6-luna",
+      "scenarios": 1,
+      "status": "unavailable",
+      "nativeRecordCount": 1
+    },
+    {
+      "route": { "providerID": "opencode-go", "modelID": "kimi-k3.1-pro", "variant": null },
+      "identity": "exact",
+      "productID": "moonshotai/kimi-k3.1-pro",
+      "scenarios": 1,
+      "status": "unavailable",
+      "nativeRecordCount": 1
+    },
+    {
+      "route": { "providerID": "opencode-go", "modelID": "qwen3.8-flash", "variant": null },
+      "identity": "exact",
+      "productID": "qwen/qwen3.8-flash",
+      "scenarios": 1,
+      "status": "unavailable",
+      "nativeRecordCount": 1
+    }
+  ]
+}

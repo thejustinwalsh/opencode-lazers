@@ -1,0 +1,208 @@
+{
+  "at": 1793929849310,
+  "results": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "name": "overview",
+        "elapsed": 5843,
+        "context": {
+          "schemaVersion": 2,
+          "snapshotID": "models-decision-v2:300d34d1-2f5d-4026-a8bc-41694b20fbd4",
+          "producedAt": "2026-11-06T01:50:45.438Z",
+          "scope": {
+            "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+          },
+          "filters": {
+            "persona": null,
+            "taskKind": null,
+            "period": {
+              "from": null,
+              "to": null
+            }
+          },
+          "priceSourcePolicy": {
+            "schemaVersion": 1,
+            "revision": 0,
+            "sources": ["openrouter", "opencode"],
+            "fallback": "whole-model"
+          },
+          "availability": "backend-not-ready",
+          "freshness": "unknown",
+          "unavailableReason": "Retained decision usage and route history exceeds the 15000 compact fact limit.",
+          "accounting": {
+            "id": "attributable-cohort-effort-per-accepted-logical-task-v1",
+            "numerator": "all-attributable-cohort-failed-retry-and-accepted-effort",
+            "denominator": "accepted-logical-tasks",
+            "acceptanceThreshold": null,
+            "sampleSizeThreshold": null,
+            "valuation": "current-ordered-whole-model-price-source-pins",
+            "nativeReportedCosts": "retained-separately-not-market-equivalent"
+          },
+          "taskKindCatalog": {
+            "id": "task-kind/v1",
+            "kinds": [
+              "bug-repair",
+              "feature-implementation",
+              "refactoring",
+              "testing",
+              "documentation",
+              "maintenance"
+            ]
+          },
+          "classification": {
+            "status": "backend-not-ready",
+            "classifiedTaskCount": 0,
+            "unclassifiedTaskCount": 0,
+            "excludedTaskCount": 0,
+            "totalTaskCount": 0
+          },
+          "priceIndex": {
+            "source": "unavailable",
+            "sourcePolicyRevision": 0,
+            "pins": [],
+            "freshness": "unavailable",
+            "semantics": "unknown",
+            "note": "Ordered source access: OpenRouter configured; OpenCode not-configured. No applicable configured cached quote is available."
+          }
+        }
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "name": "rows",
+        "elapsed": 9518,
+        "context": {
+          "schemaVersion": 2,
+          "snapshotID": "models-decision-v2:2c7388c3-cc22-43b9-8dd3-ec2e6450e48e",
+          "producedAt": "2026-11-06T01:50:49.277Z",
+          "scope": {
+            "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+          },
+          "filters": {
+            "persona": null,
+            "taskKind": null,
+            "period": {
+              "from": null,
+              "to": null
+            }
+          },
+          "priceSourcePolicy": {
+            "schemaVersion": 1,
+            "revision": 0,
+            "sources": ["openrouter", "opencode"],
+            "fallback": "whole-model"
+          },
+          "availability": "backend-not-ready",
+          "freshness": "unknown",
+          "unavailableReason": "Retained decision usage and route history exceeds the 15000 compact fact limit.",
+          "accounting": {
+            "id": "attributable-cohort-effort-per-accepted-logical-task-v1",
+            "numerator": "all-attributable-cohort-failed-retry-and-accepted-effort",
+            "denominator": "accepted-logical-tasks",
+            "acceptanceThreshold": null,
+            "sampleSizeThreshold": null,
+            "valuation": "current-ordered-whole-model-price-source-pins",
+            "nativeReportedCosts": "retained-separately-not-market-equivalent"
+          },
+          "taskKindCatalog": {
+            "id": "task-kind/v1",
+            "kinds": [
+              "bug-repair",
+              "feature-implementation",
+              "refactoring",
+              "testing",
+              "documentation",
+              "maintenance"
+            ]
+          },
+          "classification": {
+            "status": "backend-not-ready",
+            "classifiedTaskCount": 0,
+            "unclassifiedTaskCount": 0,
+            "excludedTaskCount": 0,
+            "totalTaskCount": 0
+          },
+          "priceIndex": {
+            "source": "unavailable",
+            "sourcePolicyRevision": 0,
+            "pins": [],
+            "freshness": "unavailable",
+            "semantics": "unknown",
+            "note": "Ordered source access: OpenRouter configured; OpenCode not-configured. No applicable configured cached quote is available."
+          }
+        },
+        "rows": 0
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "name": "configurations",
+        "elapsed": 9518,
+        "context": {
+          "schemaVersion": 2,
+          "snapshotID": "models-decision-v2:2c7388c3-cc22-43b9-8dd3-ec2e6450e48e",
+          "producedAt": "2026-11-06T01:50:49.277Z",
+          "scope": {
+            "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+          },
+          "filters": {
+            "persona": null,
+            "taskKind": null,
+            "period": {
+              "from": null,
+              "to": null
+            }
+          },
+          "priceSourcePolicy": {
+            "schemaVersion": 1,
+            "revision": 0,
+            "sources": ["openrouter", "opencode"],
+            "fallback": "whole-model"
+          },
+          "availability": "backend-not-ready",
+          "freshness": "unknown",
+          "unavailableReason": "Retained decision usage and route history exceeds the 15000 compact fact limit.",
+          "accounting": {
+            "id": "attributable-cohort-effort-per-accepted-logical-task-v1",
+            "numerator": "all-attributable-cohort-failed-retry-and-accepted-effort",
+            "denominator": "accepted-logical-tasks",
+            "acceptanceThreshold": null,
+            "sampleSizeThreshold": null,
+            "valuation": "current-ordered-whole-model-price-source-pins",
+            "nativeReportedCosts": "retained-separately-not-market-equivalent"
+          },
+          "taskKindCatalog": {
+            "id": "task-kind/v1",
+            "kinds": [
+              "bug-repair",
+              "feature-implementation",
+              "refactoring",
+              "testing",
+              "documentation",
+              "maintenance"
+            ]
+          },
+          "classification": {
+            "status": "backend-not-ready",
+            "classifiedTaskCount": 0,
+            "unclassifiedTaskCount": 0,
+            "excludedTaskCount": 0,
+            "totalTaskCount": 0
+          },
+          "priceIndex": {
+            "source": "unavailable",
+            "sourcePolicyRevision": 0,
+            "pins": [],
+            "freshness": "unavailable",
+            "semantics": "unknown",
+            "note": "Ordered source access: OpenRouter configured; OpenCode not-configured. No applicable configured cached quote is available."
+          }
+        },
+        "configurations": 0
+      }
+    }
+  ]
+}

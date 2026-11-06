@@ -1,0 +1,137 @@
+{
+  "recordedAt": 1793933913779,
+  "mainHead": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+  "observations": [
+    {
+      "feature": "task advice",
+      "result": "8 tests passed, 101 assertions; no advice character cap in current schema",
+      "commit": "b0548ba"
+    },
+    {
+      "feature": "Models source refresh",
+      "driver": "OpenCode Desktop Refresh button",
+      "completedAt": "2026-11-06T01:47:16Z",
+      "result": {
+        "nativeModels": 486,
+        "openRouterModels": 418,
+        "codingBenchmarks": 152,
+        "endpointRecords": {
+          "moonshotai/kimi-k3.1-pro": 23,
+          "qwen/qwen3.8-flash": 2,
+          "openai/gpt-6-luna": 8
+        }
+      },
+      "qualification": "Actual persisted successful refresh; Compare still fails"
+    },
+    {
+      "feature": "Models Compare",
+      "result": "Initial open and explicit Refresh both fail; actual RPC context says retained usage/route history exceeds 15000 compact fact limit; unavailable snapshot IDs differ",
+      "evidence": "/private/tmp/lz-models-live-read-contexts.json",
+      "action": "Reported through Desktop to Main Architect; existing native Luna reviewer active"
+    },
+    {
+      "feature": "retained verification",
+      "result": "Dirty correction supports exact bun test src/models but rejects bun test src/models/valuation.test.ts and bun test src/tasks; candidate/current-root manifest equality remains",
+      "review": "/private/tmp/lz138-procedure-boundary-review.txt",
+      "action": "Main relayed review to current owner ses_134644730a8740be92e561c8952881bc for same-worker correction",
+      "qualification": "Moving WIP source observations, not acceptance"
+    },
+    {
+      "task": "LZ-151",
+      "attemptID": "8bc20618-e418-4edc-81b2-20a085edd9f8",
+      "sessionID": "ses_ba3fb8caf0734f65b0d68cc6db11e0b9",
+      "model": {
+        "provider": "openai",
+        "model": "gpt-6-luna",
+        "effort": "max"
+      },
+      "result": "Native active; real source edits started; no completion claim",
+      "screenshot": "/private/tmp/lz151-live-trajectory-20261106.png",
+      "trajectoryDefect": "Live elapsed axis stays 0m-1m and running interval absent despite timestamped attempt and continuing tools"
+    },
+    {
+      "feature": "uncapped native advice",
+      "task": "LZ-151",
+      "revision": 1,
+      "findingsCharacters": [400, 218],
+      "adviceCharacters": [284, 366],
+      "result": "Actual registered tool succeeded and full text persisted; same worker notified"
+    },
+    {
+      "feature": "active-work CPU",
+      "startAt": 1793930854305,
+      "elapsedMs": 12022,
+      "servicePercentOfOneCore": 52.4,
+      "rendererPercentOfOneCore": 13.31,
+      "gpuProcessPercentOfOneCore": 12.81,
+      "qualification": "Single active-work window, no battery/quiet-workload qualification or causal improvement claim"
+    },
+    {
+      "feature": "Architect background review wake",
+      "sessionID": "ses_e568438ebffeaoFbF9nBb942XM",
+      "before": {
+        "active": false,
+        "idleAt": 1793930514987
+      },
+      "after": {
+        "active": true,
+        "busyAt": 1793931089211
+      },
+      "result": "Automatically resumed after native background reviewer completion; no manual resume prompt"
+    },
+    {
+      "feature": "retained coordinator stall",
+      "sessionID": "ses_134644730a8740be92e561c8952881bc",
+      "result": "Found running question asking which plan belonged to previous coordinator. Answered through Desktop with current registry plan IDs; question dismissed, tools resumed. Then observed historical LZ142 journal paging instead of138 correction. Main notified and directly steered same138 worker at1793931535730 to read advice5.",
+      "qualification": "Delivery observed; actual source correction still pending"
+    },
+    {
+      "task": "LZ-153",
+      "taskID": "5d4548ce-e5c0-4f7a-b3d1-3614e973e3f5",
+      "planID": "a27556ef-015b-4084-bc5a-ed12dea9329e",
+      "state": "draft",
+      "persona": "systems",
+      "route": "openai/gpt-6-luna#max",
+      "priority": 100,
+      "result": "Native Architect self-reviewed/submitted growing-history Models repair; reserved to run after151 task-only source landing. Does not wait for whole151/152 plan;152 dependency preserved."
+    },
+    {
+      "task": "LZ-147",
+      "fixedCandidate": "f5699708b400d0cda8d703963872b0af1fea9ff7",
+      "reviewedMerge": "7461df7a0e2e6eb9a72d2d156a677d003c260017",
+      "base": "b2031aa2a857cf394ddcde07dc7da5db94a1ad08",
+      "nativeReviewTree": "/private/tmp/lz147-integration-review",
+      "worktreeMetadata": "/private/tmp/lz147-root-review-worktree.json",
+      "result": "Clean merge; exact declared task check77 tests1266 assertions passed; fmt/lint/types/diff and GUI build passed. Main unchanged. Native live UI qualification still pending.",
+      "tests": "/private/tmp/lz147-review-declared-tests.log"
+    },
+    {
+      "task": "LZ-151",
+      "candidate": "c800e46579d645255365c6afadc32207dd5c414a",
+      "reviewResult": "HOLD: calculator only accepts OpenRouter execution provider. Actual OpenAI LunaMax route returns not-applicable despite8 retained endpoints; OpenRouter form recognizes scenario. New calculator tests only cover OR execution routes. Production per-call attribution not wired; aggregate-tier bounds only, honest limitation under current scope.",
+      "repairInput": "msg_lz151_substantive_market_identity_repair_20261106_v1",
+      "repairRequestID": "lz151-substantive-market-identity-repair-20261106-v1",
+      "repairSentAt": 1793932910419,
+      "repairMetadata": "lazersReview: same taskID, attemptID, requestID",
+      "result": "Main sent genuine correction to SAME original worker with existing native metadata contract, not proof-only turn; no merge or main activation yet."
+    },
+    {
+      "task": "LZ-138",
+      "result": "Actual WIP removes authoredTestTargets Map and root/candidate manifest equality. Pure function still rejects actual147 quality command ending bun run build:gui; reported to Main for same-worker correction.",
+      "qualification": "Moving WIP source observations; no candidate approval"
+    },
+    {
+      "feature": "normal Architect steering",
+      "result": "A raw native coordination steer without lazersReview metadata made151 actual completed zero-background turn unmatched. Existing tagged genuine correction path can proceed, but normal runtime steering control must apply metadata/association automatically. Asked Architect to task it within existing recovery roadmap behind current Models/Tasks priorities, reusing queued work."
+    },
+    {
+      "feature": "concise current-truth agent guidance",
+      "commit": "7d8a198",
+      "reviewTree": "/private/tmp/lz147-integration-review",
+      "result": "Prepared separately after reviewed147 merge7461df7; no main activation. Architect definition758\u2192663 words. New tasks select a persona; route documentation now describes live task/project/shared mapping and explicit override. Continuity excludes queryable runtime status/history. Classification details remain in progressive guide. Optional implementation note distinguishes execution provider from market-price source and covers actual configured entry points.",
+      "checks": "Bun formatter unchanged; packaged Architect registration1 test26 assertions passed; git diff check clean",
+      "qualification": "Prompt behavior after activation still needs native observation."
+    }
+  ],
+  "logPresentation": "Committed log copies remove ANSI styling and trailing whitespace only; original raw captures remain at the recorded /private/tmp paths."
+}
