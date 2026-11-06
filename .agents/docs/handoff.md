@@ -30,8 +30,10 @@ Canonical7e80cac preserves native2610e9f (retained verification) and3ea8b5d
 (GPU normal reload) ancestry, plus catalog accessb01121b, native replay08166cf,
 and shared Tasks publisher20d9736. Combined reviewed tree was a9235c8 at
 /private/tmp/lz-native-log-contract-review. Clean backend-only review tree
-/private/tmp/lz-backend-release-review was129c750. Both remain native worktrees;
-remove through native API only after review/cleanup, not by deleting directories.
+/private/tmp/lz-backend-release-review was129c750. Root removed both finished review trees through native worktree.remove(force:false);
+physical absence confirmed. Backend review commit retained by branch
+feat/backend-release-review-record; integrated full candidate is in main ancestry.
+Active worker worktrees remain untouched.
 
 All native sessions were confirmed inactive before activation. Root quit/reopened
 Desktop; service PID71027 survived. Canonical GUI build/bundle evaluation passed.
