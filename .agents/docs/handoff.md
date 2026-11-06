@@ -143,3 +143,32 @@ Active-performance sample found service~100%CPU during parallel work, renderer
 ~20–27%, GPU process~13–18%; not an idle/battery qualification. No repeat2000% spike
 in those samples. Source profile is unsymbolicated; no speculative attribution.
 See design/reviews/active-dogfood-performance-20261106.md and retained native sample.
+
+## Latest follow-through
+
+147 inspector candidate14e8928 is committed. Root found its Waiting on references
+were hidden inside Activity and holds, contrary to the user request. Main resumed
+the original3b4bad86 worker for a narrow visible-links regression/fix. Preserve the
+objective-first hierarchy. A separate failed147attempt59b56192-a6e3-4419-b802-df2ee7ed2e53
+retains50cc2f2dcb4b9a83389f6bead072dbfafe80cf3f (child of14e): terminal lifecycle /
+Completed tasks must not be Waiting because a plan has a hold. Main has native
+Luna reviewer ses_e50a3b4ccffesHNeu80o108Z04 reviewing that fixed source. Root must
+combine both useful changes in the next integration; do not delete failed work or
+assume original3b is the latest runtime attempt. Native records are authoritative.
+
+Pricing researcher completed the actual diagnosis: exact identity matches exist.
+Kimi/Qwen whole-model OpenRouter quotes lack a cache-write rate despite positive
+observed writes. Luna's two published prompt tiers have no captured selector.
+Current exact unknowns are therefore expected under old contracts; they do not
+complete the requested estimation UI. Root asked Architect to deliver clearly
+labelled current-market reference estimates/ranges and partial coverage, preserving
+exact accounting and genuine missing rates. In a native interview Root chose actual
+observed cohorts first, including failed/retry effort per accepted task, labelled
+for differing task mixes; no invented shared-workload frontier. Main is planning
+that missing feature without interrupting138/147.
+
+Root also asked Main to verify source semantics against pinned API/source:
+OpenCode fallback means accessible published native model/catalog market data,
+not subscription/session charges or requiring an unrelated execution-provider
+login. Explicit source settings and true missing data remain. Research before
+carrying the old connection gate into the new estimation path.
