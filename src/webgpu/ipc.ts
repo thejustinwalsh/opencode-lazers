@@ -29,6 +29,52 @@ const captureTimestamp = Schema.Number.check(
   Schema.isInt(),
   Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 )
+const leaseID = Schema.String.check(Schema.isBetweenLength(1, 100))
+const leaseSequence = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+)
+const LeaseIdentity = Schema.Struct({
+  owner: leaseID,
+  generationID: leaseID,
+  generationSequence: leaseSequence,
+  operationID: leaseID,
+  providerEpoch: leaseID,
+})
+const LeasePredecessor = Schema.Struct({
+  ...LeaseIdentity.fields,
+  retirementID: leaseID,
+  rendererDisposalID: leaseID,
+})
+const LeaseRetirement = Schema.Struct({
+  windowID: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  retirementID: leaseID,
+  generationID: leaseID,
+  generationSequence: leaseSequence,
+  operationID: leaseID,
+  providerEpoch: leaseID,
+  rendererDisposalID: leaseID,
+})
+const LeaseGrant = Schema.Struct({
+  ...LeaseIdentity.fields,
+  retired: Schema.optionalKey(LeaseRetirement),
+})
+const LeaseAcquire = Schema.Struct({
+  generationID: leaseID,
+  generationSequence: leaseSequence,
+  operationID: leaseID,
+  providerEpoch: leaseID,
+  predecessor: Schema.optionalKey(LeasePredecessor),
+})
+const LeaseRelease = Schema.Struct({
+  lease: LeaseIdentity,
+  retirementID: leaseID,
+  rendererDisposalID: leaseID,
+})
+export type ModelLeaseIdentity = typeof LeaseIdentity.Type
+export type ModelLeaseGrant = typeof LeaseGrant.Type
+export type ModelLeaseAcquire = typeof LeaseAcquire.Type
+export type ModelLeaseRetirement = typeof LeaseRetirement.Type
 const ProfilerCommand = Schema.Struct({
   method: Schema.Literals([
     "Profiler.enable",
@@ -186,14 +232,31 @@ export const CacheStatus = Schema.Struct({
 export const ModelFiles = Ipc.define({
   id: "lazers.webgpu-files",
   methods: {
+    identity: {
+      output: Schema.Struct({
+        providerEpoch: leaseID,
+        windowID: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+      }),
+    },
+    registerGeneration: {
+      input: Schema.Struct({ generationID: leaseID, generationSequence: leaseSequence }),
+    },
     status: { output: CacheStatus },
     decisionStatus: { output: CacheStatus },
-    acquire: { output: Schema.String },
-    ensure: { input: Schema.Struct({ owner: Schema.String }) },
-    decisionEnsure: { input: Schema.Struct({ owner: Schema.String }) },
+    acquire: { input: LeaseAcquire, output: LeaseGrant },
+    reconcileAcquire: {
+      input: Schema.Struct({
+        generationID: leaseID,
+        operationID: leaseID,
+        providerEpoch: leaseID,
+      }),
+      output: Schema.Struct({ lease: Schema.NullOr(LeaseGrant) }),
+    },
+    ensure: { input: LeaseIdentity },
+    decisionEnsure: { input: LeaseIdentity },
     decisionRead: {
       input: Schema.Struct({
-        owner: Schema.String,
+        ...LeaseIdentity.fields,
         id: Schema.String,
         offset: Schema.Number,
         length: Schema.Number,
@@ -202,15 +265,19 @@ export const ModelFiles = Ipc.define({
     },
     read: {
       input: Schema.Struct({
-        owner: Schema.String,
+        ...LeaseIdentity.fields,
         id: Schema.String,
         offset: Schema.Number,
         length: Schema.Number,
       }),
       output: Schema.String,
     },
-    release: { input: Schema.Struct({ owner: Schema.String }) },
-    cancel: { input: Schema.Struct({ owner: Schema.String }) },
+    release: { input: LeaseRelease, output: LeaseRetirement },
+    reconcileRelease: {
+      input: LeaseRelease,
+      output: Schema.Struct({ retirement: Schema.NullOr(LeaseRetirement) }),
+    },
+    cancel: { input: LeaseIdentity },
     trace: { input: InferenceTrace },
     rendererCaptureStatus: { output: RendererCaptureStatus },
     armRendererCapture: { output: RendererCaptureStatus },

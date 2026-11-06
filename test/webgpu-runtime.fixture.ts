@@ -135,15 +135,51 @@ const worker = {
     : never) => broker.complete(owner, id, result),
   demand: async () => broker.demand(),
 }
+const memoryStores = new Map<string, object>()
+const storage = {
+  memory: <T extends object>(
+    key: string,
+    options: { initial: T },
+  ): [T, (update: (draft: T) => void) => void] => {
+    if (!memoryStores.has(key)) memoryStores.set(key, options.initial)
+    const value = memoryStores.get(key) as T
+    return [value, (update) => update(value)]
+  },
+}
 const files = {
   trace: async (event: InferenceTraceEvent) => {
     traces.push(event)
     if (holdTerminalTrace && event.stage === "complete") await terminalTraceGate.promise
     if (failTracing) throw Error("Diagnostic sink unavailable")
   },
-  acquire: async () => lease.acquire(1),
-  release: async ({ owner }: { owner: string }) => lease.release(1, owner),
-  cancel: async ({ owner }: { owner: string }) => lease.assert(1, owner),
+  identity: async () => ({ providerEpoch: lease.providerEpoch, windowID: 1 }),
+  registerGeneration: async ({
+    generationID,
+    generationSequence,
+  }: {
+    generationID: string
+    generationSequence: number
+  }) => lease.registerGeneration(1, generationID, generationSequence),
+  acquire: async (request: Parameters<ModelLease["acquire"]>[1]) => lease.acquire(1, request),
+  reconcileAcquire: async (identity: {
+    generationID: string
+    operationID: string
+    providerEpoch: string
+  }) => ({
+    lease: (await lease.reconcileAcquire(1, identity)) ?? null,
+  }),
+  release: async (request: {
+    lease: import("../src/webgpu/ipc.ts").ModelLeaseIdentity
+    retirementID: string
+    rendererDisposalID: string
+  }) => lease.release(1, request),
+  reconcileRelease: async (request: {
+    lease: import("../src/webgpu/ipc.ts").ModelLeaseIdentity
+    retirementID: string
+    rendererDisposalID: string
+  }) => ({ retirement: (await lease.reconcileRelease(1, request)) ?? null }),
+  cancel: async (identity: import("../src/webgpu/ipc.ts").ModelLeaseIdentity) =>
+    lease.assert(1, identity),
   ensure: async () => {},
   decisionEnsure: async () => {
     if (failDecisionEnsure) throw Error("simulated decision cache failure")
@@ -153,6 +189,7 @@ const files = {
 }
 const ctx = {
   signal: controller.signal,
+  storage,
   main: () => files,
   client: { rpc: (definition: unknown) => (definition === LocalInference ? {} : worker) },
 } as unknown as Parameters<Plugin.Setup>[0]
@@ -666,8 +703,20 @@ try {
   finalGate.resolve()
   await disposing
   cleanupGate = undefined
-  assert.equal(lease.occupied(), false)
+  assert.equal(
+    lease.occupied(),
+    true,
+    "aborted renderer cleanup retains main ownership for handoff",
+  )
   assert.equal(allocations, 0)
+  const storedGenerations = (
+    memoryStores.get("webgpu-model-lease") as {
+      generations: Record<string, { state: string; disposalID?: string; grant?: unknown }>
+    }
+  ).generations
+  const storedGeneration = Object.values(storedGenerations)[0]
+  assert.equal(storedGeneration?.state, "disposed")
+  assert.ok(storedGeneration?.disposalID, "renderer disposal is recorded only after model cleanup")
   console.log("Renderer lifecycle fault injection passed")
 } finally {
   failCleanup = false

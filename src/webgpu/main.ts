@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode/plugin/gui"
 import { ModelCache, modelCacheDirectory } from "./cache.ts"
 import { ModelFiles } from "./ipc.ts"
+import type { ModelLeaseAcquire, ModelLeaseIdentity } from "./ipc.ts"
 import { DECISION_FILES, DECISION_REVISION, decisionURL } from "./manifest.ts"
 import { dirname, join } from "node:path"
 import { ModelLease } from "./lease.ts"
@@ -54,6 +55,32 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     } catch {
       // Diagnostics must never interrupt inference or lease cleanup.
     }
+  }
+  const leaseLogOperations = new Set<string>()
+  const logLeaseOperation = (
+    event: string,
+    windowID: number,
+    identity: {
+      generationID: string
+      generationSequence: number
+      operationID: string
+      providerEpoch: string
+    },
+    retirementID?: string,
+  ) => {
+    const key = `${event}:${identity.operationID}:${retirementID ?? ""}`
+    if (leaseLogOperations.has(key)) return
+    leaseLogOperations.add(key)
+    if (leaseLogOperations.size > 32)
+      leaseLogOperations.delete(leaseLogOperations.values().next().value!)
+    writeLog("info", `LAZERS WebGPU lease ${event}`, {
+      windowID,
+      generationID: identity.generationID.slice(0, 100),
+      generationSequence: identity.generationSequence,
+      operationID: identity.operationID.slice(0, 100),
+      providerEpoch: identity.providerEpoch.slice(0, 100),
+      ...(retirementID ? { retirementID: retirementID.slice(0, 100) } : {}),
+    })
   }
   const armedCaptures = new RendererArmedCaptureManager({
     directory: diagnosticsDirectory,
@@ -174,30 +201,70 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     lost(window.id)
   })
   ctx.provide(ModelFiles, {
+    identity: (_input, caller) => ({
+      providerEpoch: lease.providerEpoch,
+      windowID: caller.window,
+    }),
+    registerGeneration: ({ generationID, generationSequence }, caller) => {
+      caller.signal.throwIfAborted()
+      lease.registerGeneration(caller.window, generationID, generationSequence)
+    },
     status: async () => ({ ...(await cache.status()), occupied: lease.occupied() }),
     decisionStatus: async () => ({ ...(await decisions.status()), occupied: lease.occupied() }),
-    acquire: (_, caller) => lease.acquire(caller.window),
-    ensure: async ({ owner: token }, caller) => {
-      lease.assert(caller.window, token)
+    acquire: (request: ModelLeaseAcquire, caller) => {
+      caller.signal.throwIfAborted()
+      const acquisition = lease.acquire(caller.window, request)
+      logLeaseOperation(
+        request.predecessor ? "handoff" : "acquire",
+        caller.window,
+        request,
+        request.predecessor?.retirementID,
+      )
+      return acquisition
+    },
+    reconcileAcquire: async (identity, caller) => {
+      caller.signal.throwIfAborted()
+      const found = await lease.reconcileAcquire(caller.window, identity)
+      return { lease: found ?? null }
+    },
+    ensure: async (identity: ModelLeaseIdentity, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       await cache.ensure(caller.signal)
     },
-    decisionEnsure: async ({ owner: token }, caller) => {
-      lease.assert(caller.window, token)
+    decisionEnsure: async (identity: ModelLeaseIdentity, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       await decisions.ensure(caller.signal)
     },
-    decisionRead: ({ owner: token, id, offset, length }, caller) => {
-      lease.assert(caller.window, token)
+    decisionRead: ({ id, offset, length, ...identity }, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       return decisions.read(id, offset, length)
     },
-    read: ({ owner: token, id, offset, length }, caller) => {
-      lease.assert(caller.window, token)
+    read: ({ id, offset, length, ...identity }, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       return cache.read(id, offset, length)
     },
-    release: ({ owner: token }, caller) => {
-      return lease.release(caller.window, token)
+    release: ({ lease: identity, retirementID, rendererDisposalID }, caller) => {
+      caller.signal.throwIfAborted()
+      const retirement = lease.release(caller.window, {
+        lease: identity,
+        retirementID,
+        rendererDisposalID,
+      })
+      logLeaseOperation("retirement", caller.window, identity, retirementID)
+      return retirement
     },
-    cancel: ({ owner: token }, caller) => {
-      lease.assert(caller.window, token)
+    reconcileRelease: async (request, caller) => {
+      caller.signal.throwIfAborted()
+      const retirement = await lease.reconcileRelease(caller.window, request)
+      return { retirement: retirement ?? null }
+    },
+    cancel: (identity, caller) => {
+      caller.signal.throwIfAborted()
+      lease.assert(caller.window, identity)
       cache.cancel()
       decisions.cancel()
     },
