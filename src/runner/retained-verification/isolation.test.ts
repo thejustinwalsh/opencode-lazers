@@ -200,7 +200,14 @@ test.each(["empty", "native", "shared", "external-child", "compiled"] as const)(
       execFileSync(
         process.execPath,
         ["install", "--frozen-lockfile", "--ignore-scripts", "--no-progress"],
-        { cwd: canonicalCandidate },
+        {
+          cwd: canonicalCandidate,
+          env: {
+            ...process.env,
+            BUN_INSTALL_CACHE_DIR: join(state, "native-startup-cache"),
+            BUN_CONFIG_DIR: join(state, "native-startup-config"),
+          },
+        },
       )
       writeFileSync(
         join(candidateDependencies, "native-startup-sentinel"),
