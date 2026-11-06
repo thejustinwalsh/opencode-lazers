@@ -88,6 +88,8 @@ export const CurrentActivityInput = z
   })
 export const CurrentTaskActivity = z.strictObject({
   taskID: z.uuid(),
+  /** Authorized exact worker association used to scope native activity notifications. */
+  workerSessionID: z.string().min(1).optional(),
   attemptID: z.uuid().nullable(),
   foreground: z.enum(["active", "inactive", "unknown"]),
   unknownReason: z.enum(["no-current-attempt", "unavailable"]).nullable(),

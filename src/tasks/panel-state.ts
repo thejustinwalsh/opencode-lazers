@@ -14,6 +14,7 @@ export type TaskPanelChange = {
   projectDirectory: string
   version: number
   resnapshotRequired?: boolean
+  activitySessionID?: string
 }
 
 export interface TaskTransport {
@@ -65,7 +66,10 @@ export class TaskPanelState {
   private query: TaskQuery = {}
   private project = ""
   private retry?: ReturnType<typeof setTimeout>
-  private activityTimer?: ReturnType<typeof setInterval>
+  private activityRefreshTimer?: ReturnType<typeof setTimeout>
+  private pendingActivityTaskIDs = new Set<string>()
+  private pendingActivitySessionIDs = new Set<string>()
+  private activitySessions = new Map<string, string>()
   private retryDelayMs = 1_000
   private refreshPending = false
   private pendingVersion = 0
@@ -115,10 +119,6 @@ export class TaskPanelState {
     // Restored/native-link detail is independent of optional topology or list failures.
     if (selectedID) void this.select(selectedID)
     void this.refresh()
-    if (transport.currentActivity) {
-      this.activityTimer = setInterval(() => this.refreshCurrentActivity(), 5_000)
-      this.activityTimer.unref?.()
-    }
   }
 
   private activityTaskIDs(tasks: TaskSummary[], selectedID?: string) {
@@ -134,6 +134,41 @@ export class TaskPanelState {
     this.activityRequest++
     this.activityController?.abort()
     this.activityController = undefined
+  }
+
+  private clearPendingActivityRefresh() {
+    if (this.activityRefreshTimer) clearTimeout(this.activityRefreshTimer)
+    this.activityRefreshTimer = undefined
+    this.pendingActivityTaskIDs.clear()
+    this.pendingActivitySessionIDs.clear()
+  }
+
+  private queueCurrentActivity(taskIDs: readonly string[]) {
+    for (const taskID of taskIDs) this.pendingActivityTaskIDs.add(taskID)
+    if (this.pendingActivityTaskIDs.size === 0 || this.activityRefreshTimer) return
+    this.activityRefreshTimer = setTimeout(() => {
+      this.activityRefreshTimer = undefined
+      this.flushCurrentActivity()
+    }, 50)
+    this.activityRefreshTimer.unref?.()
+  }
+
+  private flushCurrentActivity() {
+    const transport = this.transport
+    if (this.pendingActivityTaskIDs.size === 0) return
+    if (!transport?.currentActivity || this.controller.signal.aborted) {
+      this.clearPendingActivityRefresh()
+      return
+    }
+    if (this.refreshing || this.activityController) return
+    const taskIDs = [...this.pendingActivityTaskIDs]
+    this.pendingActivityTaskIDs.clear()
+    void this.observeCurrentActivity(
+      taskIDs,
+      this.generation,
+      this.listRequest,
+      this.data.selectedID,
+    )
   }
 
   private async observeCurrentActivity(
@@ -166,7 +201,17 @@ export class TaskPanelState {
       const next = { ...this.data.currentActivity }
       for (const taskID of taskIDs) delete next[taskID]
       const activities = response.activities.filter((activity) => requested.has(activity.taskID))
+      for (const taskID of taskIDs) this.activitySessions.delete(taskID)
       for (const activity of activities) next[activity.taskID] = activity
+      for (const activity of activities) {
+        if (activity.workerSessionID) {
+          this.activitySessions.delete(activity.taskID)
+          this.activitySessions.set(activity.taskID, activity.workerSessionID)
+        }
+      }
+      while (this.activitySessions.size > 40)
+        this.activitySessions.delete(this.activitySessions.keys().next().value!)
+      this.flushPendingActivitySessions()
       this.update({
         currentActivity: next,
         activityError:
@@ -176,18 +221,40 @@ export class TaskPanelState {
       if (isCurrent()) this.update({ activityError: "Current activity is unavailable." })
     } finally {
       if (this.activityController === controller) this.activityController = undefined
+      this.flushCurrentActivity()
     }
   }
 
-  refreshCurrentActivity() {
+  refreshCurrentActivity(sessionID?: string) {
     const transport = this.transport
-    if (!transport?.currentActivity || this.activityController || this.controller.signal.aborted)
-      return
-    const generation = this.generation
-    const listRequest = this.listRequest
-    const selectedID = this.data.selectedID
-    const taskIDs = this.activityTaskIDs(this.data.tasks, selectedID)
-    void this.observeCurrentActivity(taskIDs, generation, listRequest, selectedID)
+    if (!transport?.currentActivity || this.controller.signal.aborted) return
+    const taskIDs = sessionID
+      ? this.activityTaskIDsForSession(sessionID)
+      : this.activityTaskIDs(this.data.tasks, this.data.selectedID)
+    if (taskIDs.length) this.queueCurrentActivity(taskIDs)
+    else if (
+      sessionID &&
+      (this.refreshing || this.activityController) &&
+      this.pendingActivitySessionIDs.size < 80
+    )
+      this.pendingActivitySessionIDs.add(sessionID)
+  }
+
+  private activityTaskIDsForSession(sessionID: string) {
+    return [...this.activitySessions]
+      .filter(([, workerSessionID]) => workerSessionID === sessionID)
+      .map(([taskID]) => taskID)
+      .slice(0, 40)
+  }
+
+  private flushPendingActivitySessions() {
+    if (this.pendingActivitySessionIDs.size === 0) return
+    const taskIDs = new Set<string>()
+    for (const sessionID of this.pendingActivitySessionIDs) {
+      for (const taskID of this.activityTaskIDsForSession(sessionID)) taskIDs.add(taskID)
+    }
+    this.pendingActivitySessionIDs.clear()
+    if (taskIDs.size) this.queueCurrentActivity([...taskIDs])
   }
 
   async refresh() {
@@ -200,6 +267,8 @@ export class TaskPanelState {
     this.refreshing = true
     const generation = this.generation
     const request = ++this.listRequest
+    this.clearPendingActivityRefresh()
+    this.activitySessions.clear()
     this.cancelCurrentActivity()
     this.update({ currentActivity: {}, activityError: "" })
     const signal = this.controller.signal
@@ -305,6 +374,7 @@ export class TaskPanelState {
           if (this.retry) clearTimeout(this.retry)
           this.retry = undefined
           this.retryDelayMs = 1_000
+          this.flushCurrentActivity()
         }
       }
     }
@@ -346,6 +416,7 @@ export class TaskPanelState {
           this.pendingVersion = 0
           void this.refresh()
         } else if (this.data.error) this.retryRead(generation)
+        else this.flushCurrentActivity()
       }
     }
   }
@@ -436,6 +507,10 @@ export class TaskPanelState {
             void this.refresh()
             continue
           }
+          if (event.activitySessionID) {
+            this.refreshCurrentActivity(event.activitySessionID)
+            continue
+          }
           if (event.version <= (this.data.page?.snapshot ?? 0)) continue
           this.pendingVersion = Math.max(this.pendingVersion, event.version)
           if (!this.refreshing) void this.refresh()
@@ -464,12 +539,12 @@ export class TaskPanelState {
     this.controller.abort()
     this.detailController.abort()
     this.cancelCurrentActivity()
+    this.clearPendingActivityRefresh()
+    this.activitySessions.clear()
     this.starts.clear()
     this.linkedRequests.clear()
     if (this.retry) clearTimeout(this.retry)
     this.retry = undefined
-    if (this.activityTimer) clearInterval(this.activityTimer)
-    this.activityTimer = undefined
     this.retryDelayMs = 1_000
     this.refreshPending = false
     this.transport = undefined

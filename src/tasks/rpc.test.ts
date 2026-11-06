@@ -307,6 +307,8 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
   let currentActivity: ((input: unknown) => ActivityEffect) | undefined
   const workerCalls: Array<{ id: string; messages: boolean | undefined }> = []
   let deferWorker = false
+  let changingMetadata = false
+  let changingMetadataReads = 0
   let sessionMetadataAttemptID: string = attemptID
   let permissionChecks = 0
   let resolveWorker!: (session: HostSession | null) => void
@@ -364,11 +366,18 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
         workerCalls.push({ id, messages: options?.messages })
         workerStartSignal?.()
         workerStartSignal = undefined
-        if (deferWorker)
+        if (deferWorker) {
+          deferWorker = false
           return await new Promise<HostSession | null>((resolve) => {
             resolveWorker = resolve
           })
-        return nativeWorker(id, attemptID)
+        }
+        const worker = nativeWorker(id, attemptID)
+        if (changingMetadata) {
+          changingMetadataReads++
+          return { ...worker, busy: changingMetadataReads % 2 === 1 }
+        }
+        return worker
       },
     },
     startTask: async () => ({ status: "started", planID: plan.planID, state: "running" }),
@@ -391,6 +400,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
       activities: [
         {
           taskID,
+          workerSessionID: workerID,
           attemptID,
           foreground: "inactive",
           recordedState: "running",
@@ -402,8 +412,39 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
         },
       ],
     })
-    expect(workerCalls).toEqual([{ id: workerID, messages: false }])
+    expect(workerCalls).toEqual([
+      { id: workerID, messages: false },
+      { id: workerID, messages: false },
+    ])
     expect(JSON.stringify(result)).not.toContain("PRIVATE_WORKER_CONTEXT")
+
+    changingMetadata = true
+    const unstable = await Effect.runPromise(
+      currentActivity!({
+        sessionID: "ses_tasks_activity_owner",
+        scope: "session",
+        taskIDs: [taskID],
+      }),
+    )
+    changingMetadata = false
+    expect(changingMetadataReads).toBe(2)
+    expect(unstable).toMatchObject({
+      activities: [
+        {
+          taskID,
+          workerSessionID: workerID,
+          foreground: "unknown",
+          unknownReason: "unavailable",
+          pendingInput: null,
+          pendingPermissions: null,
+          outcome: null,
+        },
+      ],
+    })
+    expect(workerCalls.slice(2, 4)).toEqual([
+      { id: workerID, messages: false },
+      { id: workerID, messages: false },
+    ])
 
     sessionMetadataAttemptID = "another-attempt"
     const mismatched = await Effect.runPromise(
@@ -428,7 +469,7 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
     expect(foreign).toMatchObject({
       activities: [{ taskID: foreignTaskID, foreground: "unknown", unknownReason: "unavailable" }],
     })
-    expect(workerCalls).toHaveLength(2)
+    expect(workerCalls).toHaveLength(5)
 
     deferWorker = true
     let startedRacingWorker!: () => void
@@ -479,8 +520,9 @@ test("current-activity RPC observes only authorized latest metadata and rejects 
       ],
     })
     expect(workerCalls.at(-1)).toEqual({ id: workerID, messages: false })
-    expect(permissionChecks).toBe(4)
+    expect(permissionChecks).toBe(5)
 
+    deferWorker = true
     let startedCancelledWorker!: () => void
     const cancelledWorkerStarted = new Promise<void>((resolve) => {
       startedCancelledWorker = resolve

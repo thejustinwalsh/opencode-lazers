@@ -5,7 +5,7 @@ import { Effect } from "effect"
 import { Tool } from "@opencode/schema/tool"
 import { z } from "zod"
 import { resolve, isAbsolute } from "node:path"
-import type { TaskReads } from "./read.ts"
+import type { CurrentActivityTarget, TaskReads } from "./read.ts"
 import { CurrentActivityInput, CurrentActivityOutput, Tasks } from "./contract.ts"
 import type { CurrentTaskActivity } from "./contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
@@ -15,6 +15,45 @@ import { TaskAdviceInput, recordTaskAdvice } from "./advice.ts"
 
 function nonnegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function matchesCurrentWorker(
+  worker: HostSession | null,
+  target: CurrentActivityTarget,
+  projectID: string,
+): worker is HostSession {
+  return Boolean(
+    worker &&
+    target.authorized &&
+    target.attempt &&
+    worker.id === target.attempt.sessionID &&
+    worker.projectID === projectID &&
+    !worker.archived &&
+    worker.agent === "lazers-implementor" &&
+    worker.metadata?.lazersAttemptID === target.attempt.id &&
+    isAbsolute(worker.directory) &&
+    isAbsolute(target.attempt.workspace) &&
+    resolve(worker.directory) === resolve(target.attempt.workspace) &&
+    typeof worker.busy === "boolean" &&
+    worker.observationUnstable !== true,
+  )
+}
+
+function sameWorkerObservation(left: HostSession, right: HostSession): boolean {
+  return (
+    left.id === right.id &&
+    left.projectID === right.projectID &&
+    left.directory === right.directory &&
+    left.agent === right.agent &&
+    left.archived === right.archived &&
+    left.metadata?.lazersAttemptID === right.metadata?.lazersAttemptID &&
+    left.busy === right.busy &&
+    left.pendingInput === right.pendingInput &&
+    left.pendingPermissions === right.pendingPermissions &&
+    left.pendingForms === right.pendingForms &&
+    left.outcome === right.outcome &&
+    left.observationUnstable === right.observationUnstable
+  )
 }
 
 export function registerTaskReads(
@@ -96,6 +135,9 @@ export function registerTaskReads(
                   current = target,
                 ): CurrentTaskActivity => ({
                   taskID: target.taskID,
+                  ...(current.authorized && current.attempt
+                    ? { workerSessionID: current.attempt.sessionID }
+                    : {}),
                   attemptID: current.authorized ? (current.attempt?.id ?? null) : null,
                   foreground: "unknown",
                   unknownReason: reason,
@@ -119,22 +161,26 @@ export function registerTaskReads(
                   return unknown("unavailable")
                 }
                 signal.throwIfAborted()
+                if (!matchesCurrentWorker(worker, target, runtime.projectID))
+                  return unknown("unavailable")
+                let confirmation: HostSession | null
+                try {
+                  confirmation = await runtime.host.session(target.attempt.sessionID, {
+                    messages: false,
+                  })
+                } catch {
+                  if (signal.aborted) signal.throwIfAborted()
+                  return unknown("unavailable")
+                }
+                signal.throwIfAborted()
                 if (
-                  !worker ||
-                  worker.id !== target.attempt.sessionID ||
-                  worker.projectID !== runtime.projectID ||
-                  worker.archived ||
-                  worker.agent !== "lazers-implementor" ||
-                  worker.metadata?.lazersAttemptID !== target.attempt.id ||
-                  !isAbsolute(worker.directory) ||
-                  !isAbsolute(target.attempt.workspace) ||
-                  resolve(worker.directory) !== resolve(target.attempt.workspace) ||
-                  typeof worker.busy !== "boolean" ||
-                  worker.observationUnstable === true
+                  !matchesCurrentWorker(confirmation, target, runtime.projectID) ||
+                  !sameWorkerObservation(worker, confirmation)
                 )
                   return unknown("unavailable")
                 return {
                   taskID: target.taskID,
+                  workerSessionID: target.attempt.sessionID,
                   attemptID: target.attempt.id,
                   foreground: worker.busy ? "active" : "inactive",
                   unknownReason: null,

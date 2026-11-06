@@ -4,6 +4,7 @@ import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
 import type { TopologyResponse } from "../observability/contract.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
+import type { TaskPanelChange } from "./panel-state.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -62,6 +63,48 @@ function transport(
   }
 }
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+function changeChannel() {
+  const queued: TaskPanelChange[] = []
+  let waiter:
+    | {
+        resolve: (change: TaskPanelChange | undefined) => void
+        abort: () => void
+        signal: AbortSignal
+      }
+    | undefined
+  return {
+    emit(change: TaskPanelChange) {
+      if (!waiter) {
+        queued.push(change)
+        return
+      }
+      const current = waiter
+      waiter = undefined
+      current.signal.removeEventListener("abort", current.abort)
+      current.resolve(change)
+    },
+    changes(signal: AbortSignal): AsyncIterable<TaskPanelChange> {
+      return (async function* () {
+        while (!signal.aborted) {
+          const change =
+            queued.shift() ??
+            (await new Promise<TaskPanelChange | undefined>((resolve) => {
+              const abort = () => {
+                if (waiter?.resolve === resolve) waiter = undefined
+                resolve(undefined)
+              }
+              waiter = { resolve, abort, signal }
+              signal.addEventListener("abort", abort, { once: true })
+            }))
+          if (!change) return
+          yield change
+        }
+      })()
+    },
+  }
+}
+
 async function until(predicate: () => boolean) {
   for (let attempt = 0; attempt < 100 && !predicate(); attempt++) await tick()
   expect(predicate()).toBe(true)
@@ -78,28 +121,238 @@ test("state preferences remain independent while old history preferences retain 
 test("healthy connected Tasks does not repeat list and inspector reads without changes", async () => {
   let queries = 0
   let details = 0
+  let activityReads = 0
   const state = new TaskPanelState(() => {})
   const current = page("/project")
+  const api = transport(
+    async () => {
+      queries++
+      return current
+    },
+    async () => {
+      details++
+      return { status: "not_found" }
+    },
+  )
+  api.currentActivity = async (taskIDs) => {
+    activityReads++
+    return {
+      activities: taskIDs.map((taskID) => ({
+        taskID,
+        attemptID: null,
+        foreground: "unknown" as const,
+        unknownReason: "no-current-attempt" as const,
+        recordedState: null,
+        waiting: false,
+        holdReason: null,
+        pendingInput: null,
+        pendingPermissions: null,
+        pendingForms: null,
+        outcome: null,
+        observedAt: null,
+      })),
+    }
+  }
   try {
-    state.connect(
-      "view",
-      "/project",
-      transport(
-        async () => {
-          queries++
-          return current
-        },
-        async () => {
-          details++
-          return { status: "not_found" }
-        },
-      ),
-      {},
-    )
-    await Bun.sleep(3_150)
+    state.connect("view", "/project", api, {})
+    await until(() => queries === 1 && details === 1 && activityReads >= 2)
+    const initialActivityReads = activityReads
+    await Bun.sleep(5_150)
     expect(state.data.page).toEqual(current)
     expect(queries).toBe(1)
     expect(details).toBe(1)
+    expect(activityReads).toBe(initialActivityReads)
+  } finally {
+    state.close()
+  }
+}, 10_000)
+
+test("native activity events refresh only matching tasks and coalesce repeated notifications", async () => {
+  const taskA = crypto.randomUUID()
+  const taskB = crypto.randomUUID()
+  const first = page("/project", taskA)
+  const otherTask = { ...first.tasks[0]!, taskID: taskB, reference: "LZ-2", title: taskB }
+  const current = { ...first, count: 2, tasks: [first.tasks[0]!, otherTask] }
+  const channel = changeChannel()
+  const activityReads: string[][] = []
+  const state = new TaskPanelState(() => {})
+  const api = transport(async () => current)
+  api.changes = channel.changes
+  let activityEventObserved = false
+  api.currentActivity = async (taskIDs) => {
+    activityReads.push([...taskIDs])
+    return {
+      activities: taskIDs.map((taskID) => ({
+        taskID,
+        workerSessionID: taskID === taskA ? "worker-a" : "worker-b",
+        attemptID: crypto.randomUUID(),
+        foreground:
+          taskID === taskA && activityEventObserved ? ("active" as const) : ("inactive" as const),
+        unknownReason: null,
+        recordedState: "running" as const,
+        waiting: false,
+        holdReason: null,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        outcome: null,
+        observedAt: Date.now(),
+      })),
+    }
+  }
+  try {
+    state.connect("view", "/project", api, {}, taskA)
+    await until(
+      () =>
+        !state.data.loading &&
+        state.data.currentActivity[taskA]?.workerSessionID === "worker-a" &&
+        state.data.currentActivity[taskB]?.workerSessionID === "worker-b",
+    )
+    await tick()
+    await tick()
+    const initialReads = activityReads.length
+    activityEventObserved = true
+    channel.emit({ projectDirectory: "/project", version: 0, activitySessionID: "worker-a" })
+    channel.emit({ projectDirectory: "/project", version: 0, activitySessionID: "worker-a" })
+    channel.emit({ projectDirectory: "/project", version: 0, activitySessionID: "unrelated" })
+    await until(() => activityReads.length === initialReads + 1)
+    await until(() => state.data.currentActivity[taskA]?.foreground === "active")
+    await Bun.sleep(80)
+    expect(activityReads.slice(initialReads)).toEqual([[taskA]])
+    expect(state.data.currentActivity[taskB]?.foreground).toBe("inactive")
+  } finally {
+    state.close()
+  }
+})
+
+test("native reconnect refreshes current activity once on the connected stream", async () => {
+  const taskID = crypto.randomUUID()
+  const channel = changeChannel()
+  const state = new TaskPanelState(() => {})
+  let queries = 0
+  let activityReads = 0
+  const api = transport(async () => {
+    queries++
+    return page("/project", taskID, queries)
+  })
+  api.changes = channel.changes
+  api.currentActivity = async (taskIDs) => {
+    activityReads++
+    return {
+      activities: taskIDs.map((id) => ({
+        taskID: id,
+        workerSessionID: "worker-a",
+        attemptID: crypto.randomUUID(),
+        foreground: "inactive" as const,
+        unknownReason: null,
+        recordedState: "running" as const,
+        waiting: false,
+        holdReason: null,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        outcome: null,
+        observedAt: Date.now(),
+      })),
+    }
+  }
+  try {
+    state.connect("view", "/project", api, {}, taskID)
+    await until(
+      () =>
+        queries === 1 &&
+        !state.data.loading &&
+        state.data.currentActivity[taskID]?.workerSessionID === "worker-a",
+    )
+    await tick()
+    await tick()
+    const initialActivityReads = activityReads
+    channel.emit({ projectDirectory: "/project", version: 0, resnapshotRequired: true })
+    await until(() => queries === 2 && activityReads === initialActivityReads + 1)
+    await tick()
+    await tick()
+    expect(activityReads).toBe(initialActivityReads + 1)
+    expect(state.data.page?.snapshot).toBe(2)
+  } finally {
+    state.close()
+  }
+})
+
+test("disposed task connections ignore late native activity notifications", async () => {
+  const oldTaskID = crypto.randomUUID()
+  const newTaskID = crypto.randomUUID()
+  const oldChannel = changeChannel()
+  const oldReads: string[][] = []
+  const currentReads: string[][] = []
+  const state = new TaskPanelState(() => {})
+  const oldTransport = transport(async () => page("/project", oldTaskID))
+  oldTransport.changes = oldChannel.changes
+  oldTransport.currentActivity = async (taskIDs) => {
+    oldReads.push([...taskIDs])
+    return {
+      activities: taskIDs.map((taskID) => ({
+        taskID,
+        workerSessionID: "old-worker",
+        attemptID: crypto.randomUUID(),
+        foreground: "inactive" as const,
+        unknownReason: null,
+        recordedState: "running" as const,
+        waiting: false,
+        holdReason: null,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        outcome: null,
+        observedAt: Date.now(),
+      })),
+    }
+  }
+  const newChannel = changeChannel()
+  const newTransport = transport(async () => page("/project", newTaskID))
+  newTransport.changes = newChannel.changes
+  newTransport.currentActivity = async (taskIDs) => {
+    currentReads.push([...taskIDs])
+    return {
+      activities: taskIDs.map((taskID) => ({
+        taskID,
+        workerSessionID: "new-worker",
+        attemptID: crypto.randomUUID(),
+        foreground: "inactive" as const,
+        unknownReason: null,
+        recordedState: "running" as const,
+        waiting: false,
+        holdReason: null,
+        pendingInput: false,
+        pendingPermissions: 0,
+        pendingForms: 0,
+        outcome: null,
+        observedAt: Date.now(),
+      })),
+    }
+  }
+  try {
+    state.connect("old", "/project", oldTransport, {}, oldTaskID)
+    await until(
+      () =>
+        !state.data.loading &&
+        state.data.currentActivity[oldTaskID]?.workerSessionID === "old-worker",
+    )
+    await tick()
+    state.connect("new", "/project", newTransport, {}, newTaskID)
+    await until(
+      () =>
+        !state.data.loading &&
+        state.data.currentActivity[newTaskID]?.workerSessionID === "new-worker",
+    )
+    await tick()
+    const oldReadCount = oldReads.length
+    const currentReadCount = currentReads.length
+    oldChannel.emit({ projectDirectory: "/project", version: 0, activitySessionID: "old-worker" })
+    await Bun.sleep(80)
+    expect(oldReads).toHaveLength(oldReadCount)
+    expect(currentReads).toHaveLength(currentReadCount)
+    expect(state.data.key).toBe("new")
+    expect(state.data.currentActivity[oldTaskID]).toBeUndefined()
   } finally {
     state.close()
   }
