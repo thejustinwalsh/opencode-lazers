@@ -448,6 +448,14 @@ export const TrajectoryOutput = z.strictObject({
   scope: ObservationScopeView,
   boundary: Boundary,
   report: z.record(z.string(), z.unknown()),
+  live: z
+    .strictObject({
+      mode: z.enum(["reset", "patch"]),
+      baseCursor: z.string().nullable(),
+      cursor: z.string().nullable(),
+      removed: z.array(z.string()),
+    })
+    .optional(),
 })
 
 export const TrajectoryHistoryInput = z.strictObject({
@@ -470,7 +478,11 @@ export const TrajectoryHistoryErrorData = z.strictObject({
   reason: z.enum(["expired", "evicted", "invalid-cursor"]),
   recovery: z.literal("recapture"),
 })
-export const TrajectoryStatusInput = z.strictObject({ scope: ObservationScope, taskID: z.uuid() })
+export const TrajectoryStatusInput = z.strictObject({
+  scope: ObservationScope,
+  taskID: z.uuid(),
+  live: z.strictObject({ cursor: z.string().min(1).optional() }).optional(),
+})
 
 export const Changed = z.strictObject({
   projectID: z.string().min(1),

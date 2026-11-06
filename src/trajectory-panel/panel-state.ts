@@ -173,6 +173,7 @@ export class TrajectoryPanelState {
   private taskRequest = 0
   private activityRequest = 0
   private statusRequest = 0
+  private statusCursor?: string
   private historyRequest = 0
   private transport?: TrajectoryTransport
   private scope?: ObservationScope
@@ -401,6 +402,7 @@ export class TrajectoryPanelState {
   }
 
   private beginTask(taskID: string | null) {
+    this.statusCursor = undefined
     this.taskController.abort()
     this.taskController = new AbortController()
     this.taskRequest++
@@ -445,7 +447,7 @@ export class TrajectoryPanelState {
     if (!transport || !scope || signal.aborted) return
     const request = ++this.statusRequest
     try {
-      const response = await transport.status(scope, taskID, signal)
+      const response = await transport.status(scope, taskID, signal, this.statusCursor)
       if (
         generation !== this.generation ||
         taskRequest !== this.taskRequest ||
@@ -471,9 +473,22 @@ export class TrajectoryPanelState {
         },
         trajectory: captured.trajectory,
       }
-      const liveEvents = statusReport.trajectory.events.filter(
+      const incoming = statusReport.trajectory.events.filter(
         (event) => event.kind === "commentary" || event.kind.startsWith("worker-"),
       )
+      let liveEvents = incoming
+      if (response.live?.mode === "patch") {
+        if (!this.statusCursor || response.live.baseCursor !== this.statusCursor)
+          throw new Error("Live Trajectory baseline changed; resynchronizing")
+        const events = new Map(this.data.liveEvents.map((event) => [event.id, event]))
+        for (const id of response.live.removed) events.delete(id)
+        for (const event of statusReport.trajectory.events) events.delete(event.id)
+        for (const event of incoming) events.set(event.id, event)
+        liveEvents = [...events.values()].sort(
+          (a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || a.id.localeCompare(b.id),
+        )
+      }
+      this.statusCursor = response.live?.cursor ?? undefined
       const tasks = this.data.tasks.map((task) =>
         task.taskID === taskID ? { ...task, status: statusReport.task.status } : task,
       )
@@ -514,6 +529,7 @@ export class TrajectoryPanelState {
         request === this.statusRequest &&
         !signal.aborted
       ) {
+        this.statusCursor = undefined
         this.update({
           loading: false,
           stale: true,
@@ -644,6 +660,7 @@ export class TrajectoryPanelState {
       const tasks = this.data.tasks.map((task) =>
         task.taskID === taskID ? { ...task, status: report.task.status } : task,
       )
+      this.statusCursor = undefined
       this.update({
         report,
         tasks,
@@ -944,6 +961,7 @@ export class TrajectoryPanelState {
   }
 
   close() {
+    this.statusCursor = undefined
     this.generation++
     this.snapshotRequest++
     this.taskRequest++

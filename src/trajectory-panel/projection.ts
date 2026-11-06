@@ -23,7 +23,7 @@ export type ObservationRpc = {
     options: { location: { directory: string }; signal: AbortSignal },
   ): Promise<TrajectoryHistoryResponse>
   trajectoryStatus(
-    input: { scope: ObservationScope; taskID: string },
+    input: { scope: ObservationScope; taskID: string; live?: { cursor?: string } },
     options: { location: { directory: string }; signal: AbortSignal },
   ): Promise<TrajectoryResponse>
 }
@@ -43,7 +43,12 @@ export type TrajectoryTransport = {
     cursor?: string,
     limit?: number,
   ): Promise<TrajectoryHistoryResponse>
-  status(scope: ObservationScope, taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
+  status(
+    scope: ObservationScope,
+    taskID: string,
+    signal: AbortSignal,
+    cursor?: string,
+  ): Promise<TrajectoryResponse>
   changes(signal: AbortSignal): AsyncIterable<TrajectoryChange>
   online(): boolean
 }
@@ -67,8 +72,11 @@ export function createTrajectoryTransport(
         { scope, taskID, limit, ...(cursor ? { cursor } : {}) },
         { location: { directory }, signal },
       ),
-    status: (scope, taskID, signal) =>
-      rpc.trajectoryStatus({ scope, taskID }, { location: { directory }, signal }),
+    status: (scope, taskID, signal, cursor) =>
+      rpc.trajectoryStatus(
+        { scope, taskID, live: cursor ? { cursor } : {} },
+        { location: { directory }, signal },
+      ),
     changes: (signal) => trajectoryChanges(events, projectID, directory, signal),
     online,
   }

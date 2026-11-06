@@ -85,9 +85,9 @@ function transportFor(
         tracker,
       )
     },
-    status: async (scope, id, signal) => {
+    status: async (scope, id, signal, cursor) => {
       if (signal.aborted) throw signal.reason
-      return reads.trajectoryStatus({ scope, taskID: id }, tracker)
+      return reads.trajectoryStatus({ scope, taskID: id, live: cursor ? { cursor } : {} }, tracker)
     },
     changes: (signal) =>
       (async function* () {

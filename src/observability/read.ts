@@ -13,6 +13,7 @@ import {
   inspectTrajectoryStatus,
 } from "../trajectory/read.ts"
 import { TrajectoryHistoryCache } from "../trajectory/history.ts"
+import { TrajectoryLiveCache } from "../trajectory/live.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import type { ObservationChangeTracker } from "./changes.ts"
@@ -195,7 +196,7 @@ function initialAssociations(db: Database, projectDirectory: string, scope: Obse
     : sessionAssociations(db, projectDirectory, scope.sessionID)
 }
 
-function loadTopologySource(
+function loadTopologyAssociations(
   db: Database,
   projectDirectory: string,
   scope: ObservationScope,
@@ -246,6 +247,23 @@ function loadTopologySource(
       .all(...planIDs))
       associations.taskIDs.add(row.task_id)
   }
+  return { stamp, associations, allPlans }
+}
+
+function loadTopologySource(
+  db: Database,
+  projectDirectory: string,
+  scope: ObservationScope,
+  secret: Uint8Array,
+  extraSessionIDs: Iterable<string> = [],
+) {
+  const { stamp, associations, allPlans } = loadTopologyAssociations(
+    db,
+    projectDirectory,
+    scope,
+    secret,
+    extraSessionIDs,
+  )
   const taskIDs = [...associations.taskIDs]
   const tasks = taskIDs.length
     ? db
@@ -328,7 +346,7 @@ function loadTaskObservationSource(
   secret: Uint8Array,
   target: { taskID?: string; attemptID?: string },
 ) {
-  const topology = loadTopologySource(db, projectDirectory, scope, secret)
+  const topology = loadTopologyAssociations(db, projectDirectory, scope, secret)
   let taskID = target.taskID
   if (target.attemptID) {
     const attempt = db
@@ -636,6 +654,7 @@ export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
   private readonly history: TrajectoryHistoryCache
+  private readonly live = new TrajectoryLiveCache()
 
   constructor(
     readonly store: RunnerStore,
@@ -1985,12 +2004,28 @@ export class ObservationReads {
       )
         throw new Error("Observation changed while reading status; retry the live update")
 
+      const delta = input.live
+        ? this.live.project(
+            JSON.stringify([
+              this.projectID,
+              this.store.repository.projectDirectory,
+              input.scope.kind,
+              input.scope.sessionID,
+              input.taskID,
+            ]),
+            report.trajectory.events,
+            input.live.cursor,
+          )
+        : undefined
       return {
         schemaVersion: 1,
         projectID: this.projectID,
         scope: scopeView(input.scope),
         boundary: tracker.boundary(after, source.transitionSequence),
-        report,
+        report: delta
+          ? { ...report, trajectory: { ...report.trajectory, events: delta.events } }
+          : report,
+        ...(delta ? { live: delta.live } : {}),
       }
     } finally {
       connection.close()
