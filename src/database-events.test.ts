@@ -3,7 +3,12 @@ import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DatabaseChangeHub, databaseChanges } from "./database-events.ts"
+import {
+  DatabaseChangeHub,
+  databaseChanges,
+  RevisionPublisherHub,
+  revisionPublishers,
+} from "./database-events.ts"
 
 async function until(condition: () => boolean) {
   for (let i = 0; i < 200; i++) {
@@ -73,4 +78,69 @@ test("independently loaded modules reuse the same process feed", async () => {
     new URL(`./database-events.ts?copy=${crypto.randomUUID()}`, import.meta.url).href
   )
   expect(copy.databaseChanges).toBe(databaseChanges)
+  expect(copy.revisionPublishers).toBe(revisionPublishers)
+})
+
+test("revision publishers hand off a failed pending emission and keep project topics distinct", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-db-publishers-"))
+  const path = join(directory, "tasks.sqlite")
+  const db = new Database(path)
+  db.exec(
+    "CREATE TABLE observation_revisions(revision INTEGER); INSERT INTO observation_revisions VALUES(0)",
+  )
+  const changes = new DatabaseChangeHub()
+  changes.track(db, path)
+  const publishers = new RevisionPublisherHub(changes)
+  const attempts: Array<[string, number]> = [],
+    accepted: Array<[string, number]> = []
+  const pending = Promise.withResolvers<void>()
+  const version = () =>
+    db.query<{ revision: number }, []>("SELECT revision FROM observation_revisions").get()!.revision
+  const releases = [
+    publishers.publishRevisions(path, "tasks:/a", {
+      read: version,
+      emit: (v) => {
+        attempts.push(["first", v])
+        return pending.promise
+      },
+    }),
+    publishers.publishRevisions(path, "tasks:/a", {
+      read: version,
+      emit: async (v) => {
+        attempts.push(["successor", v])
+        accepted.push(["a", v])
+      },
+    }),
+    publishers.publishRevisions(path, "tasks:/b", {
+      read: version,
+      emit: async (v) => {
+        accepted.push(["b", v])
+      },
+    }),
+  ]
+  try {
+    db.exec("UPDATE observation_revisions SET revision=1")
+    await until(() => attempts.length === 1 && accepted.length === 1)
+    releases[0]!()
+    db.exec("UPDATE observation_revisions SET revision=2")
+    pending.reject(new Error("disposed publisher failed before acknowledgement"))
+    await Bun.sleep(1_050)
+    await until(() => attempts.length === 2)
+    expect(attempts).toEqual([
+      ["first", 1],
+      ["successor", 2],
+    ])
+    expect(accepted).toContainEqual(["a", 2])
+    expect(accepted).toContainEqual(["b", 1])
+    expect(accepted).toContainEqual(["b", 2])
+    for (const close of releases) close()
+    const before = accepted.length
+    db.exec("UPDATE observation_revisions SET revision=3")
+    await Bun.sleep(30)
+    expect(accepted.length).toBe(before)
+  } finally {
+    for (const close of releases) close()
+    db.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

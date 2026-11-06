@@ -155,3 +155,43 @@ test("retained repair commands bind the exact task attempt artifact and concrete
   expect(CommandInput.safeParse({ ...command, reason: "  " }).success).toBe(false)
   expect(CommandInput.safeParse({ ...command, attemptID: undefined }).success).toBe(false)
 })
+
+test("retained verification requests bind current revisions and cancellation names its operation", () => {
+  const command = {
+    requestID: "verify-exact-retained-candidate",
+    planID: crypto.randomUUID(),
+    expectedVersion: 4,
+    action: "verify-retained" as const,
+    projectID: "project-id",
+    planRevision: 2,
+    taskID: crypto.randomUUID(),
+    taskRevision: 1,
+    attemptID: crypto.randomUUID(),
+    artifact: "a".repeat(40),
+    reason: "Verify the exact current candidate without replaying its worker",
+  }
+  expect(CommandInput.parse(command)).toEqual(command)
+  for (const field of [
+    "projectID",
+    "planRevision",
+    "taskID",
+    "taskRevision",
+    "attemptID",
+    "artifact",
+  ] as const) {
+    const invalid = { ...command }
+    delete invalid[field]
+    expect(CommandInput.safeParse(invalid).success).toBe(false)
+  }
+  const cancellation = {
+    requestID: "cancel-retained-candidate",
+    planID: command.planID,
+    expectedVersion: command.expectedVersion,
+    action: "cancel-retained-verification" as const,
+    retainedVerificationID: crypto.randomUUID(),
+  }
+  expect(CommandInput.parse(cancellation)).toEqual(cancellation)
+  expect(
+    CommandInput.safeParse({ ...cancellation, retainedVerificationID: undefined }).success,
+  ).toBe(false)
+})

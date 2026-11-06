@@ -147,15 +147,21 @@ export function scopeViolations(paths: string[], scope: string[]): string[] {
   )
 }
 
-export function artifactUnchanged(directory: string, commit: string): boolean {
+export function artifactUnchanged(
+  directory: string,
+  commit: string,
+  ownedUntrackedPaths: string[] = [],
+): boolean {
   const result = spawnSync("git", ["diff", "--quiet", commit, "--"], {
     cwd: directory,
     timeout: 30000,
   })
-  return (
-    result.status === 0 &&
-    git(directory, ["ls-files", "--others", "--exclude-standard"]).length === 0
-  )
+  const allowed = new Set(ownedUntrackedPaths)
+  const untracked = git(directory, ["ls-files", "--others", "--exclude-standard", "-z"])
+    .split("\0")
+    .filter(Boolean)
+    .filter((path) => !allowed.has(path))
+  return result.status === 0 && untracked.length === 0
 }
 
 export class ArtifactScopeViolation extends Error {
@@ -333,6 +339,17 @@ export type CheckReceipt = {
   stdout: string
   stderr: string
   unchanged: boolean
+  isolation?: unknown
+}
+
+export type CheckRunOptions = {
+  /** When set, do not inherit the host environment. */
+  environment?: Record<string, string>
+  environmentIdentity?: string
+  /** Exact untracked paths positively owned by this retained procedure binding. */
+  ownedUntrackedPaths?: string[]
+  isolation?: unknown
+  signal?: AbortSignal
 }
 
 const identityEnvironmentKeys = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "CI"] as const
@@ -372,10 +389,12 @@ export async function runCheck(
   artifact: string,
   check: TaskProposal["verification"][number],
   receiptPath: string,
+  options: CheckRunOptions = {},
 ): Promise<CheckReceipt> {
+  if (options.signal?.aborted) throw new Error("Verification was cancelled before check launch")
   const inputIdentity = artifact
   // Record runtime metadata without persisting environment credentials.
-  const environmentIdentity = verificationEnvironmentIdentity()
+  const environmentIdentity = options.environmentIdentity ?? verificationEnvironmentIdentity()
   const startedAt = Date.now()
   let timedOut = false
   const child = Bun.spawn(["/bin/sh", "-c", check.command], {
@@ -384,17 +403,23 @@ export async function runCheck(
     stderr: "pipe",
     stdin: "ignore",
     detached: true,
-    env: { ...process.env },
+    env: options.environment ? { ...options.environment } : { ...process.env },
   })
-  const terminate = () => {
-    timedOut = true
+  const terminate = (timeout: boolean) => {
+    if (timeout) timedOut = true
     try {
       process.kill(-child.pid, "SIGKILL")
     } catch {
       child.kill("SIGKILL")
     }
   }
-  const timer = setTimeout(terminate, Math.min(check.timeoutMs, 2147483647))
+  const onAbort = () => terminate(false)
+  const onTimeout = () => {
+    timedOut = true
+    terminate(true)
+  }
+  options.signal?.addEventListener("abort", onAbort, { once: true })
+  const timer = setTimeout(onTimeout, Math.min(check.timeoutMs, 2147483647))
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
       bounded(child.stdout),
@@ -414,13 +439,19 @@ export async function runCheck(
       timedOut,
       stdout,
       stderr,
-      unchanged: artifactUnchanged(directory, artifact),
+      unchanged: artifactUnchanged(directory, artifact, options.ownedUntrackedPaths),
+      ...(options.isolation === undefined ? {} : { isolation: options.isolation }),
     }
     mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })
     writeFileSync(`${receiptPath}.tmp`, JSON.stringify(receipt), { mode: 0o600 })
     renameSync(`${receiptPath}.tmp`, receiptPath)
     return receipt
+  } catch (error) {
+    terminate(false)
+    await child.exited.catch(() => -1)
+    throw error
   } finally {
     clearTimeout(timer)
+    options.signal?.removeEventListener("abort", onAbort)
   }
 }

@@ -25,18 +25,15 @@ times when available; collection time is not a missing execution endpoint.
 Pinned OpenCode 2.2.5 child creation inherits its parent's location even when
 another location is supplied. For isolated execution, move the child, await the
 queued native operation and check its actual directory before prompting.
-Reuse `src/runner/native.ts`; see its location-routing behavior tests. This trap
-was observed in the first worker trajectory linked from
-[execution report](spikes/011-runner-execution.md).
+Reuse `src/runner/native.ts` and its location-routing behavior tests.
 
 ## Concurrent SQLite first open
 
 Configuring WAL can return `SQLITE_BUSY` immediately during concurrent first
 opens despite the normal busy timeout. The existing connection setup in
 `src/storage.ts` retries that configuration failure. Reuse it; do not turn this
-into automatic replay of task writes after an uncertain commit. The accepted
-submission worker exposed the race and verified the repair with independent
-process tests; see [submission result](spikes/007-retry-safe-submission.md).
+into automatic replay of task writes after an uncertain commit. See the independent-process tests in
+[submission result](spikes/007-retry-safe-submission.md).
 
 ## Isolated WebGPU test prerequisite
 
@@ -44,6 +41,25 @@ The runtime fixture mocks `.cache/lfm3-engine.js`, but Bun still needs that igno
 path to resolve. In a fresh worktree, prepare the pinned engine JavaScript with
 `bun scripts/prepare-engine.ts` before the full suite; `bun run build:gui` includes
 that preflight too. Reuse the child-process fixture isolation for runtime tests.
-This setup gap recurred in LZ-37 after earlier isolated workers encountered it;
-see [execution observations](evidence/037-roadmap-planning/native.md). Keep this
-pitfall scoped to relevant WebGPU work rather than repeating it in every task.
+Keep this pitfall scoped to relevant WebGPU work.
+
+## Native log coverage
+
+OpenCode `Session.log` filters a shared aggregate sequence: ordered events can
+have gaps and the sync watermark can exceed the emitted tail. A marker without
+events provides no execution lineage. See `src/progress/native.ts` and the
+[pinned Session contract](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/core/src/session.ts).
+
+## Resource ownership and live writers
+
+Ownership rows identify resources, not whether their writers stopped. Preserve
+uncertain setup resources across restart or cancellation until termination is
+observed. Normal teardown follows observed shutdown. See the real-process and
+reopen cases in `src/runner/retained-reverify.test.ts`.
+
+## Bun matcher mutation
+
+The pinned Bun mutates actual object properties after a successful
+`toMatchObject` with asymmetric matchers such as `expect.any(String)`. If later
+test steps reuse that data, assert fields separately or match a clone. Otherwise
+a real string can become an `ExpectAny` object before the next tool call.

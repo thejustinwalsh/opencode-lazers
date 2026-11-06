@@ -140,12 +140,13 @@ async function replayCurrentExecutionStart(
       }
       if (synced || !item || typeof item.type !== "string") return undefined
       const durable = object(item.durable)
+      // Session.log filters a shared aggregate sequence; gaps are valid, reordering is not.
       if (
         durable?.aggregateID !== sessionID ||
         typeof durable.seq !== "number" ||
         !Number.isSafeInteger(durable.seq) ||
         durable.seq < 0 ||
-        (lastSequence === undefined ? durable.seq > 1 : durable.seq !== lastSequence + 1)
+        (lastSequence !== undefined && durable.seq <= lastSequence)
       )
         return undefined
       lastSequence = durable.seq
@@ -175,7 +176,8 @@ async function replayCurrentExecutionStart(
 
   if (
     !synced ||
-    (lastSequence === undefined ? watermark !== undefined : watermark !== lastSequence)
+    // The sync watermark also covers durable events omitted from this filtered log.
+    (lastSequence !== undefined && (watermark === undefined || watermark < lastSequence))
   )
     return undefined
   return executionStartSequence === undefined || lastObservedEventSequence === undefined

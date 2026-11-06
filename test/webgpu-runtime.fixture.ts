@@ -26,9 +26,13 @@ let wallNow = Date.now()
 let pollFailure: unknown
 let attachFailures = 0
 let attachCalls = 0
+let detachCalls = 0
+let detachFailure: Error | undefined
+let hangDetach = false
 let allocations = 0
 let maximum = 0
 let releases = 0
+let releaseCalls = 0
 let cleanupAttempts = 0
 let failCleanup = false
 let cleanupGate: Promise<void> | undefined
@@ -120,8 +124,22 @@ const worker = {
     if (attachFailures-- > 0) throw { type: "rpc.unavailable", message: "Service is reconnecting" }
     broker.attach(owner)
   },
-  detach: async ({ owner, error }: { owner: string; error?: string }) =>
-    broker.detach(owner, error),
+  detach: async (
+    { owner, error }: { owner: string; error?: string },
+    options?: { signal?: AbortSignal },
+  ) => {
+    detachCalls++
+    if (detachFailure) throw detachFailure
+    if (hangDetach) {
+      const signal = options?.signal
+      if (!signal) throw new Error("A bounded detach signal is required")
+      if (signal.aborted) throw signal.reason
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+      })
+    }
+    broker.detach(owner, error)
+  },
   poll: async ({ owner, available }: { owner: string; available: boolean }) => {
     if (pollFailure) throw pollFailure
     return broker.poll(owner, available)
@@ -135,15 +153,54 @@ const worker = {
     : never) => broker.complete(owner, id, result),
   demand: async () => broker.demand(),
 }
+const memoryStores = new Map<string, object>()
+const storage = {
+  memory: <T extends object>(
+    key: string,
+    options: { initial: T },
+  ): [T, (update: (draft: T) => void) => void] => {
+    if (!memoryStores.has(key)) memoryStores.set(key, options.initial)
+    const value = memoryStores.get(key) as T
+    return [value, (update) => update(value)]
+  },
+}
 const files = {
   trace: async (event: InferenceTraceEvent) => {
     traces.push(event)
     if (holdTerminalTrace && event.stage === "complete") await terminalTraceGate.promise
     if (failTracing) throw Error("Diagnostic sink unavailable")
   },
-  acquire: async () => lease.acquire(1),
-  release: async ({ owner }: { owner: string }) => lease.release(1, owner),
-  cancel: async ({ owner }: { owner: string }) => lease.assert(1, owner),
+  identity: async () => ({ providerEpoch: lease.providerEpoch, windowID: 1 }),
+  registerGeneration: async ({
+    generationID,
+    generationSequence,
+  }: {
+    generationID: string
+    generationSequence: number
+  }) => lease.registerGeneration(1, generationID, generationSequence),
+  acquire: async (request: Parameters<ModelLease["acquire"]>[1]) => lease.acquire(1, request),
+  reconcileAcquire: async (identity: {
+    generationID: string
+    operationID: string
+    providerEpoch: string
+  }) => ({
+    lease: (await lease.reconcileAcquire(1, identity)) ?? null,
+  }),
+  release: async (request: {
+    lease: import("../src/webgpu/ipc.ts").ModelLeaseIdentity
+    retirementID: string
+    rendererDisposalID: string
+  }) => {
+    releaseCalls++
+    return lease.release(1, request)
+  },
+  reconcileRelease: async (request: {
+    lease: import("../src/webgpu/ipc.ts").ModelLeaseIdentity
+    retirementID: string
+    rendererDisposalID: string
+  }) => ({ retirement: (await lease.reconcileRelease(1, request)) ?? null }),
+  cancel: async (identity: import("../src/webgpu/ipc.ts").ModelLeaseIdentity) =>
+    lease.assert(1, identity),
   ensure: async () => {},
   decisionEnsure: async () => {
     if (failDecisionEnsure) throw Error("simulated decision cache failure")
@@ -153,6 +210,7 @@ const files = {
 }
 const ctx = {
   signal: controller.signal,
+  storage,
   main: () => files,
   client: { rpc: (definition: unknown) => (definition === LocalInference ? {} : worker) },
 } as unknown as Parameters<Plugin.Setup>[0]
@@ -173,6 +231,7 @@ const timing = {
       rendererTimer = undefined
     }
   },
+  serviceTimeoutMs: 25,
 }
 let releaseRoot!: () => void
 const runtime = solid.createRoot((dispose) => {
@@ -652,6 +711,36 @@ try {
   assert.equal(runtime.modelName(), "d1")
   assert.equal(runtime.resident(), "decision")
   assert.equal((await decision()).ok, true)
+
+  const releasesBeforeDetachFailure = releaseCalls
+  const detachCallsBeforeFailure = detachCalls
+  detachFailure = new Error("simulated live broker detach failure")
+  await runtime.unload()
+  assert.equal(runtime.state(), "error")
+  assert.match(runtime.detail(), /detach.*cache ownership is retained/i)
+  assert.equal(detachCalls, detachCallsBeforeFailure + 1)
+  assert.equal(releaseCalls, releasesBeforeDetachFailure)
+  assert.equal(lease.occupied(), true, "failed live detachment keeps the main-process lease")
+  assert.equal(allocations, 0, "renderer disposal is observed before broker detachment")
+
+  detachFailure = undefined
+  hangDetach = true
+  const detachCallsBeforeTimeout = detachCalls
+  const timeoutStartedAt = Date.now()
+  await runtime.unload()
+  assert.equal(runtime.state(), "error")
+  assert.match(runtime.detail(), /detach.*cache ownership is retained/i)
+  assert.ok(Date.now() - timeoutStartedAt < 1_000, "live detach failure is bounded")
+  assert.equal(detachCalls, detachCallsBeforeTimeout + 1)
+  assert.equal(releaseCalls, releasesBeforeDetachFailure)
+  assert.equal(lease.occupied(), true, "a timed-out detachment cannot release ownership")
+
+  hangDetach = false
+  await runtime.unload()
+  assert.equal(lease.occupied(), false, "a later successful detachment can retire the lease")
+  assert.equal(releaseCalls, releasesBeforeDetachFailure + 1)
+  assert.equal((await decision()).ok, true, "the runtime can load again after safe detachment")
+
   const finalGate = Promise.withResolvers<void>()
   cleanupGate = finalGate.promise
   const disposing = runtime.dispose()
@@ -666,8 +755,20 @@ try {
   finalGate.resolve()
   await disposing
   cleanupGate = undefined
-  assert.equal(lease.occupied(), false)
+  assert.equal(
+    lease.occupied(),
+    true,
+    "aborted renderer cleanup retains main ownership for handoff",
+  )
   assert.equal(allocations, 0)
+  const storedGenerations = (
+    memoryStores.get("webgpu-model-lease") as {
+      generations: Record<string, { state: string; disposalID?: string; grant?: unknown }>
+    }
+  ).generations
+  const storedGeneration = Object.values(storedGenerations)[0]
+  assert.equal(storedGeneration?.state, "disposed")
+  assert.ok(storedGeneration?.disposalID, "renderer disposal is recorded only after model cleanup")
   console.log("Renderer lifecycle fault injection passed")
 } finally {
   failCleanup = false
