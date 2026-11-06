@@ -202,6 +202,200 @@ test("supported prompt tiers publish a conditional envelope without selecting a 
   expect(result.rangeUSDPerAcceptedTask).toEqual({ minimum: 0.00023, maximum: 0.00046 })
 })
 
+test("conditional tier bounds contain independently priced mixed low- and high-prompt calls", () => {
+  const catalog = source({
+    tiers: [
+      {
+        minPromptTokens: null,
+        prompt: "0.000001",
+        completion: "0.0001",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+      {
+        minPromptTokens: 100,
+        prompt: "0.0001",
+        completion: "0.000001",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+    ],
+  })
+  const mixedCalls = [
+    session("low-prompt-call", {
+      categories: {
+        uncachedInput: { tokens: 1, status: "observed" },
+        output: { tokens: 100, status: "observed" },
+        reasoning: { tokens: 0, status: "observed" },
+        cacheRead: { tokens: 0, status: "observed" },
+        cacheWrite: { tokens: 0, status: "observed" },
+      },
+    }),
+    session("high-prompt-call", {
+      categories: {
+        uncachedInput: { tokens: 100, status: "observed" },
+        output: { tokens: 0, status: "observed" },
+        reasoning: { tokens: 0, status: "observed" },
+        cacheRead: { tokens: 0, status: "observed" },
+        cacheWrite: { tokens: 0, status: "observed" },
+      },
+    }),
+  ]
+  const result = estimate({
+    acceptedTaskCount: 4,
+    relatedTaskCount: 4,
+    relatedSessions: mixedCalls,
+    catalog,
+  })
+  const independentlyPricedTotal = 1 * 0.000001 + 100 * 0.0001 + 100 * 0.0001 + 0 * 0.000001
+
+  expect(independentlyPricedTotal).toBeCloseTo(0.020001, 12)
+  expect(result.status).toBe("conditional")
+  expect(result.numeratorUSD).toBeNull()
+  expect(result.valueUSDPerAcceptedTask).toBeNull()
+  expect(result.numeratorRangeUSD?.minimum).toBeCloseTo(0.000201, 12)
+  expect(result.numeratorRangeUSD?.maximum).toBeCloseTo(0.0201, 12)
+  expect(result.numeratorRangeUSD?.minimum).toBeLessThanOrEqual(independentlyPricedTotal)
+  expect(result.numeratorRangeUSD?.maximum).toBeGreaterThanOrEqual(independentlyPricedTotal)
+  expect(result.rangeUSDPerAcceptedTask?.minimum).toBeCloseTo(0.000201 / 4, 12)
+  expect(result.rangeUSDPerAcceptedTask?.maximum).toBeCloseTo(0.0201 / 4, 12)
+})
+
+test("conditional tier bounds contain independently enumerated small mixed-call assignments", () => {
+  const catalog = source({
+    tiers: [
+      {
+        minPromptTokens: null,
+        prompt: "0.000001",
+        completion: "0.0001",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+      {
+        minPromptTokens: 100,
+        prompt: "0.0001",
+        completion: "0.000001",
+        inputCacheRead: "0",
+        inputCacheWrite: "0",
+      },
+    ],
+  })
+  const calls = [
+    { input: 2, output: 5 },
+    { input: 7, output: 1 },
+    { input: 3, output: 4 },
+  ]
+  const result = estimate({
+    relatedSessions: [
+      session("enumerated-calls", {
+        categories: {
+          uncachedInput: {
+            tokens: calls.reduce((total, call) => total + call.input, 0),
+            status: "observed",
+          },
+          output: {
+            tokens: calls.reduce((total, call) => total + call.output, 0),
+            status: "observed",
+          },
+          reasoning: { tokens: 0, status: "observed" },
+          cacheRead: { tokens: 0, status: "observed" },
+          cacheWrite: { tokens: 0, status: "observed" },
+        },
+      }),
+    ],
+    catalog,
+  })
+  const range = result.numeratorRangeUSD
+  if (!range) throw new Error("Expected a conditional mixed-tier range")
+
+  expect(result.status).toBe("conditional")
+  expect(result.numeratorUSD).toBeNull()
+  for (let assignment = 0; assignment < 2 ** calls.length; assignment += 1) {
+    const independentlyPricedTotal = calls.reduce((total, call, index) => {
+      const highPromptTier = (assignment & (1 << index)) !== 0
+      return (
+        total +
+        call.input * (highPromptTier ? 0.0001 : 0.000001) +
+        call.output * (highPromptTier ? 0.000001 : 0.0001)
+      )
+    }, 0)
+    expect(range.minimum).toBeLessThanOrEqual(independentlyPricedTotal + 1e-15)
+    expect(range.maximum).toBeGreaterThanOrEqual(independentlyPricedTotal - 1e-15)
+  }
+})
+
+test("known mixed-tier subtotals are bounded while a missing positive rate keeps total partial", () => {
+  const catalog = source({
+    tiers: [
+      {
+        minPromptTokens: null,
+        prompt: "0.000001",
+        completion: "0.0001",
+        inputCacheRead: "0",
+        inputCacheWrite: null,
+      },
+      {
+        minPromptTokens: 100,
+        prompt: "0.0001",
+        completion: "0.000001",
+        inputCacheRead: "0",
+        inputCacheWrite: null,
+      },
+    ],
+  })
+  const mixedCalls = [
+    session("low-prompt-partial-call", {
+      categories: {
+        uncachedInput: { tokens: 1, status: "observed" },
+        output: { tokens: 100, status: "observed" },
+        reasoning: { tokens: 0, status: "observed" },
+        cacheRead: { tokens: 0, status: "observed" },
+        cacheWrite: { tokens: 2, status: "observed" },
+      },
+    }),
+    session("high-prompt-partial-call", {
+      categories: {
+        uncachedInput: { tokens: 100, status: "observed" },
+        output: { tokens: 0, status: "observed" },
+        reasoning: { tokens: 0, status: "observed" },
+        cacheRead: { tokens: 0, status: "observed" },
+        cacheWrite: { tokens: 3, status: "observed" },
+      },
+    }),
+  ]
+  const result = estimate({
+    acceptedTaskCount: 3,
+    relatedTaskCount: 3,
+    relatedSessions: mixedCalls,
+    catalog,
+  })
+  const independentlyPricedKnownSubtotal = 1 * 0.000001 + 100 * 0.0001 + 100 * 0.0001
+
+  expect(result.status).toBe("partial")
+  expect(result.numeratorUSD).toBeNull()
+  expect(result.numeratorRangeUSD).toBeNull()
+  expect(result.knownSubtotalRangeUSD?.minimum).toBeLessThanOrEqual(
+    independentlyPricedKnownSubtotal,
+  )
+  expect(result.knownSubtotalRangeUSD?.maximum).toBeGreaterThanOrEqual(
+    independentlyPricedKnownSubtotal,
+  )
+  expect(result.knownSubtotalRangeUSDPerAcceptedTask?.minimum).toBeCloseTo(
+    (result.knownSubtotalRangeUSD?.minimum ?? Number.NaN) / 3,
+    12,
+  )
+  expect(result.knownSubtotalRangeUSDPerAcceptedTask?.maximum).toBeCloseTo(
+    (result.knownSubtotalRangeUSD?.maximum ?? Number.NaN) / 3,
+    12,
+  )
+  expect(result.coverage.categories.cacheWrite).toMatchObject({
+    tokens: 5,
+    status: "observed",
+    rateCoverage: "missing",
+  })
+  expect(result.reasons).toContain("missing-rate")
+})
+
 test("missing positive cache-write rates expose only the computable priced subtotal", () => {
   const catalog = source({
     tiers: [
@@ -375,4 +569,71 @@ test("observed zero avoids an unnecessary missing rate and nonfinite published p
   expect(invalidArithmetic.numeratorUSD).toBeNull()
   expect(invalidArithmetic.knownSubtotalUSD).toBeNull()
   expect(invalidArithmetic.reasons).toContain("nonfinite-arithmetic")
+})
+
+test("ordinary and exponent-form published zero rates price positive usage as zero", () => {
+  const catalog = source({
+    tiers: [
+      {
+        minPromptTokens: null,
+        prompt: "0",
+        completion: "0e-8",
+        inputCacheRead: "0.000e+8",
+        inputCacheWrite: "0",
+      },
+    ],
+  })
+  const result = estimate({ catalog })
+
+  expect(result.status).toBe("exact")
+  expect(result.numeratorUSD).toBe(0)
+  expect(result.valueUSDPerAcceptedTask).toBe(0)
+  expect(result.coverage.categories.uncachedInput.rateCoverage).toBe("complete")
+  expect(result.coverage.categories.output.rateCoverage).toBe("complete")
+  expect(result.coverage.categories.cacheRead.rateCoverage).toBe("complete")
+  expect(result.coverage.categories.cacheWrite.rateCoverage).toBe("complete")
+  expect(result.reasons).not.toContain("nonfinite-arithmetic")
+})
+
+test("representable positive exponent rates remain computable", () => {
+  const catalog = source({
+    tiers: [
+      {
+        minPromptTokens: null,
+        prompt: "1e-8",
+        completion: "2e-8",
+        inputCacheRead: "3e-8",
+        inputCacheWrite: "4e-8",
+      },
+    ],
+  })
+  const result = estimate({ catalog })
+
+  expect(result.status).toBe("exact")
+  expect(result.numeratorUSD).toBeCloseTo(
+    10 * 0.00000001 + 20 * 0.00000002 + 2 * 0.00000003 + 3 * 0.00000004,
+    15,
+  )
+  expect(result.reasons).not.toContain("nonfinite-arithmetic")
+})
+
+test("nonzero rates that underflow to zero are rejected rather than published as zero", () => {
+  const catalog = source({
+    tiers: [
+      {
+        minPromptTokens: null,
+        prompt: "1e-999",
+        completion: "0.000010",
+        inputCacheRead: "0.0000005",
+        inputCacheWrite: "0.000003",
+      },
+    ],
+  })
+  const result = estimate({ catalog })
+
+  expect(result.status).toBe("partial")
+  expect(result.numeratorUSD).toBeNull()
+  expect(result.numeratorRangeUSD).toBeNull()
+  expect(result.knownSubtotalUSD).toBeNull()
+  expect(result.reasons).toContain("nonfinite-arithmetic")
 })

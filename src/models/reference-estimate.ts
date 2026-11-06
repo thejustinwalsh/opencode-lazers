@@ -319,7 +319,8 @@ function categoryRate(category: Category, schedule: Schedule) {
 function rateNumber(value: string | null) {
   if (value === null) return { value: null, nonfinite: false }
   const rate = Number(value)
-  if (rate === 0 && /[1-9]/.test(value)) return { value: null, nonfinite: true }
+  const significand = value.split(/[eE]/, 1)[0] ?? value
+  if (rate === 0 && /[1-9]/.test(significand)) return { value: null, nonfinite: true }
   return Number.isFinite(rate) && rate >= 0
     ? { value: rate, nonfinite: false }
     : { value: null, nonfinite: true }
@@ -378,8 +379,6 @@ function rangesFromSchedules(
   let nonfinite = false
   let missingRate = false
   let missingUsage = false
-  const subtotals: Array<number | null> = []
-  const completeAmounts: Array<number | null> = []
   const rateCoverage = Object.fromEntries(
     CATEGORIES.map((category) => {
       const usage = categories[category]
@@ -394,71 +393,73 @@ function rangesFromSchedules(
       const knownRates = rates.filter((rate) => rate.value !== null)
       if (knownRates.length === schedules.length)
         return [category, { ...usage, rateCoverage: "complete" as const }]
-      if (knownRates.length > 0) return [category, { ...usage, rateCoverage: "partial" as const }]
       missingRate = true
+      if (knownRates.length > 0) return [category, { ...usage, rateCoverage: "partial" as const }]
       return [category, { ...usage, rateCoverage: "missing" as const }]
     }),
   ) as Record<Category, CategoryCoverage>
 
-  for (const schedule of schedules) {
-    let subtotal = 0
-    let hasPricedCategory = false
-    let completeAmount = true
-    for (const category of CATEGORIES) {
-      const usage = categories[category]
-      if (usage.tokens === null) {
-        completeAmount = false
-        continue
-      }
-      if (usage.tokens === 0) {
-        if (usage.status !== "observed") completeAmount = false
-        continue
-      }
-      const rate = rateNumber(categoryRate(category, schedule))
-      if (rate.nonfinite) nonfinite = true
-      if (rate.value === null) {
-        missingRate = true
-        completeAmount = false
-        continue
-      }
-      const value = usage.tokens * rate.value
-      if (!Number.isFinite(value)) {
-        nonfinite = true
-        completeAmount = false
-        continue
-      }
-      subtotal += value
-      if (!Number.isFinite(subtotal)) {
-        nonfinite = true
-        completeAmount = false
-        subtotal = 0
-        hasPricedCategory = false
-        break
-      }
-      hasPricedCategory = true
+  let subtotalMinimum = 0
+  let subtotalMaximum = 0
+  let complete = !missingUsage && !missingRate
+  // Aggregate token counts cannot identify each call's tier, so bound every category
+  // across all schedules instead of assigning the whole cohort to one schedule.
+  for (const category of CATEGORIES) {
+    const usage = categories[category]
+    if (usage.tokens === null) {
+      complete = false
+      continue
     }
-    if (hasPricedCategory || hasObservedUsage) {
-      subtotals.push(subtotal)
-    } else subtotals.push(null)
-    completeAmounts.push(completeAmount ? subtotal : null)
+    if (usage.tokens === 0) {
+      if (usage.status !== "observed") complete = false
+      continue
+    }
+
+    const rates = schedules.map((schedule) => rateNumber(categoryRate(category, schedule)))
+    const knownRates = rates.flatMap((rate) => (rate.value === null ? [] : [rate.value]))
+    if (knownRates.length === schedules.length) {
+      const minimum = usage.tokens * Math.min(...knownRates)
+      const maximum = usage.tokens * Math.max(...knownRates)
+      if (
+        !Number.isFinite(minimum) ||
+        !Number.isFinite(maximum) ||
+        (minimum === 0 && Math.min(...knownRates) > 0) ||
+        (maximum === 0 && Math.max(...knownRates) > 0)
+      ) {
+        nonfinite = true
+        complete = false
+        continue
+      }
+      subtotalMinimum += minimum
+      subtotalMaximum += maximum
+      if (!Number.isFinite(subtotalMinimum) || !Number.isFinite(subtotalMaximum)) nonfinite = true
+      continue
+    }
+
+    complete = false
+    if (knownRates.length > 0) {
+      const maximum = usage.tokens * Math.max(...knownRates)
+      if (!Number.isFinite(maximum) || (maximum === 0 && Math.max(...knownRates) > 0)) {
+        nonfinite = true
+        continue
+      }
+      subtotalMaximum += maximum
+      if (!Number.isFinite(subtotalMaximum)) nonfinite = true
+    }
   }
 
-  const subtotalValues = subtotals.filter((value): value is number => value !== null)
-  const completeValues = completeAmounts.filter((value): value is number => value !== null)
   return {
     rateCoverage,
-    complete: !missingUsage && !missingRate && completeValues.length === schedules.length,
+    complete,
     nonfinite,
     missingRate,
     missingUsage,
     knownSubtotal:
-      nonfinite || !subtotalValues.length
+      nonfinite || !hasObservedUsage
         ? null
-        : { minimum: Math.min(...subtotalValues), maximum: Math.max(...subtotalValues) },
+        : { minimum: subtotalMinimum, maximum: subtotalMaximum },
     completeRange:
-      completeValues.length === schedules.length && completeValues.length > 0
-        ? { minimum: Math.min(...completeValues), maximum: Math.max(...completeValues) }
-        : null,
+      complete && !nonfinite ? { minimum: subtotalMinimum, maximum: subtotalMaximum } : null,
   }
 }
 
