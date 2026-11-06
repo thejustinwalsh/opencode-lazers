@@ -75,6 +75,11 @@ Current edits are comparison-panel.tsx/css; review on completion.
 
 LZ-153: `5d4548ce-e5c0-4f7a-b3d1-3614e973e3f5`, plan
 `a27556ef-015b-4084-bc5a-ed12dea9329e`, running / priority100 / Systems / LunaMax.
+Worker now inactive/succeeded and clean at `c8530aa0612403e4eb7de9d136183b55660a7b22`.
+Root merged it into `/private/tmp/lz147-compact-review`; independent Models183tests/
+2152assertions passed there. Actual read-only project capture succeeded over16315
+facts/155tasks,5.3s. Native full producer/UI still unqualified. See
+`design/reviews/models-history-read-review-20261106.md`.
 Root clicked Start in Desktop; native attempt
 `4e7fb2d5-e54f-4f9c-a153-58a38aa87dc2`, worker
 `ses_bb1ddbbe1ca84e498de9597792c602f6`, separate native tree.
@@ -155,6 +160,14 @@ the approved compact mockup. Root sent concrete feedback through Architect; the
 same152 worker resumed. Keep summary price/endpoint/essential uncertainty visible,
 detailed tier/retry/cache/source information under collapsed Evidence & assumptions.
 No data-policy expansion. Wait for corrected source before visual acceptance.
+
+## Trajectory pricing follow-up
+
+Architect submitted LZ-155 task `c23ffca3-fe8d-4102-afe6-3ee6ebf12f0c`, plan
+`b2d491ae-b125-485e-8637-796ae194447e`: draft, Systems/LunaMax, after Models151/152
+plan and153plan. It connects existing102 valuation to authorized trajectory tool/
+panel consumers, preserving partial/unknown usage and current cached source provenance.
+No new price arithmetic or subscription charges. It has not run.
 
 ## Newly observed pricing connection gap
 
