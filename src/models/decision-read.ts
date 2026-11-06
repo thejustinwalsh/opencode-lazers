@@ -32,6 +32,9 @@ import {
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
 import type { ModelPriceSourceSettings } from "./price-source-settings.ts"
+import type { EndpointPricingRead } from "./endpoint-pricing.ts"
+import { calculateKnownUsageMarket } from "./market-range.ts"
+import type { KnownUsageMarket, KnownUsageMarketSession } from "./market-range.ts"
 import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
 import type {
   ObservationLedgerDecisionCapture,
@@ -54,6 +57,7 @@ export type ModelDecisionLedgerReader = Pick<
 export type ModelDecisionPriceState = {
   settings: ModelPriceSourceSettings
   index: CurrentPriceIndex
+  endpointPricing?: EndpointPricingRead
   freshness: "current" | "stale" | "unknown"
   note?: string
 }
@@ -100,6 +104,8 @@ type SessionData = {
   tokensComplete: boolean
   marketUSD: number | null
   marketComplete: boolean
+  routeStatus: KnownUsageMarketSession["routeStatus"]
+  usageCategories: KnownUsageMarketSession["categories"]
   nativeUSD: number | null
   nativeComplete: boolean
   observedAt: number | null
@@ -128,6 +134,7 @@ type DecisionSnapshot = {
   graph: ModelDecisionOverview["graph"]
   contributors: Map<string, ModelDecisionContributor[]>
   estimates: Map<string, ModelDecisionEstimate>
+  knownUsageMarkets: Map<string, KnownUsageMarket>
 }
 
 type SnapshotEntry = {
@@ -147,6 +154,26 @@ function stable(value: unknown): string {
       .join(",")}}`
   }
   return JSON.stringify(value)
+}
+
+function endpointPricingIdentity(endpointPricing: EndpointPricingRead | undefined) {
+  if (!endpointPricing) return null
+  return {
+    state: endpointPricing.state,
+    generation: endpointPricing.generation,
+    complete: endpointPricing.complete,
+    scenarios: endpointPricing.scenarios.map((scenario) => ({
+      productID: scenario.productID,
+      state: scenario.state,
+      generation: scenario.generation,
+      latestSnapshotID: scenario.latestSnapshotID,
+      latestRetrievedAt: scenario.latestRetrievedAt,
+      latestRecordCount: scenario.latestRecordCount,
+      errorCode: scenario.errorCode,
+      httpStatus: scenario.httpStatus,
+      snapshotGeneration: scenario.snapshot?.generation ?? null,
+    })),
+  }
 }
 
 function fingerprint(value: unknown) {
@@ -421,6 +448,16 @@ function buildSessionData(
     const native = nativeBySession.get(sessionID)
     const tokenValue = usage ? categoryTokenValue(usage) : { value: null, complete: false }
     const route = market ? routeOfMarketSession(market) : null
+    const routeStatus = market?.routeAllocation.status ?? "unavailable"
+    const usageCategories = Object.fromEntries(
+      CATEGORIES.map((category) => [
+        category,
+        {
+          tokens: usage?.categories[category].value ?? null,
+          status: usage?.categories[category].status ?? "missing",
+        },
+      ]),
+    ) as KnownUsageMarketSession["categories"]
     const tasks = attemptsBySessionAndTask.get(sessionID) ?? new Map()
     const attempts = [...tasks.values()].flat()
     const nativeValue = native?.valueUSD ?? null
@@ -439,6 +476,8 @@ function buildSessionData(
       tokensComplete: tokenValue.complete,
       marketUSD: market?.subtotalUSD ?? null,
       marketComplete: market?.status === "observed" && market.valueUSD !== null,
+      routeStatus,
+      usageCategories,
       nativeUSD: nativeValue,
       nativeComplete: native?.status === "observed" && native.valueUSD !== null,
       observedAt: attempts.length
@@ -997,6 +1036,7 @@ function buildSnapshotData(
   const rows: ModelDecisionRow[] = []
   const contributors = new Map<string, ModelDecisionContributor[]>()
   const estimates = new Map<string, ModelDecisionEstimate>()
+  const knownUsageMarkets = new Map<string, KnownUsageMarket>()
   for (const [key, cohort] of cohorts) {
     signal?.throwIfAborted()
     const acceptedTaskCount = cohort.acceptedTaskIDs.size
@@ -1092,6 +1132,14 @@ function buildSnapshotData(
       nativeReportedCost,
     }
     rows.push(row)
+    knownUsageMarkets.set(
+      key,
+      calculateKnownUsageMarket({
+        route: cohort.route,
+        endpointPricing: priceState.endpointPricing,
+        sessions: knownUsageSessionsForTasks(cohort.taskIDs, sessionsByTask),
+      }),
+    )
     const acceptedHistories = [...cohort.acceptedTaskIDs].flatMap((taskID) => {
       const task = selectedTaskByID.get(taskID)
       if (!task) return []
@@ -1162,6 +1210,7 @@ function buildSnapshotData(
     },
     contributors,
     estimates,
+    knownUsageMarkets,
   }
 }
 
@@ -1176,6 +1225,41 @@ function filteredTasks(capture: ObservationLedgerDecisionCapture, input: ModelDe
       input.filters.taskKind === null || task.classification.kind === input.filters.taskKind,
   )
   return { baseTasks, selectedTasks }
+}
+
+function knownUsageSessionsForTasks(
+  taskIDs: ReadonlySet<string>,
+  sessionsByTask: Map<string, SessionData[]>,
+): KnownUsageMarketSession[] {
+  const sessions = new Map<string, SessionData>()
+  for (const taskID of taskIDs)
+    for (const session of sessionsByTask.get(taskID) ?? []) sessions.set(session.sessionID, session)
+
+  return [...sessions.values()].map((session) => {
+    const seenAttempts = new Set<string>()
+    const attempts = [...taskIDs].flatMap((taskID) =>
+      (session.attemptsByTask.get(taskID) ?? []).flatMap((attempt) => {
+        const id = attempt.accounting.id
+        if (seenAttempts.has(id)) return []
+        seenAttempts.add(id)
+        return [
+          {
+            id,
+            state: attempt.accounting.state,
+            retry: attempt.number > 1 || attempt.retryCount > 0,
+          },
+        ]
+      }),
+    )
+    return {
+      sessionID: session.sessionID,
+      route: session.route,
+      routeStatus: session.routeStatus,
+      shared: session.shared,
+      categories: session.usageCategories,
+      attempts,
+    }
+  })
 }
 
 function unavailableSnapshot(
@@ -1212,6 +1296,7 @@ function unavailableSnapshot(
     graph: { scope: "global-filtered-snapshot", points: [], frontierConfigurationIDs: [] },
     contributors: new Map(),
     estimates: new Map(),
+    knownUsageMarkets: new Map(),
   }
 }
 
@@ -1388,6 +1473,7 @@ function inspection(
         routeScope: "unknown",
       },
     },
+    knownUsageMarket: snapshot.knownUsageMarkets.get(configKey),
     contributorPage: {
       contributors: page(contributors, offset, input.contributorLimit),
       totalCount: contributors.length,
@@ -1434,7 +1520,9 @@ export function createModelDecisionReader(
     return (
       current.index.indexID === snapshot.priceState.index.indexID &&
       current.freshness === snapshot.priceState.freshness &&
-      stable(current.settings) === stable(snapshot.priceState.settings)
+      stable(current.settings) === stable(snapshot.priceState.settings) &&
+      stable(endpointPricingIdentity(current.endpointPricing)) ===
+        stable(endpointPricingIdentity(snapshot.priceState.endpointPricing))
     )
   }
 

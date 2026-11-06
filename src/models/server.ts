@@ -44,6 +44,7 @@ import {
 } from "./decision-contract.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
+import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import { ModelSettingsService } from "./service.ts"
 import {
   ModelPriceSourceSettingsSchema,
@@ -235,10 +236,12 @@ export function registerModelsServer(
               : ("unknown" as const),
           }
         })
+        const endpointPricing = readEndpointPricingEvidence(path, projectDirectory, signal)
         signal?.throwIfAborted()
         return {
           settings,
           index: state.index,
+          endpointPricing,
           freshness: state.freshness,
           note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
         }
