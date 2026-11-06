@@ -1,0 +1,21 @@
+{
+  "observedAt": "2026-11-06T17:23:27.341Z",
+  "scope": "isolated fake-boundary flow probes; no production/native access",
+  "sameProjectTick": {
+    "duringCheck": {
+      "elapsedMs": 51,
+      "calls": ["step:check-plan"]
+    },
+    "afterSecondTick": {
+      "calls": ["step:check-plan"]
+    },
+    "afterCheck": {
+      "elapsedMs": 390,
+      "calls": ["step:check-plan", "step:other-plan", "deliver"]
+    }
+  },
+  "retainedRepairOwnership": {
+    "sameOwner": "allowed",
+    "transferredOwner": "Retained repair worker identity, location, or route changed"
+  }
+}

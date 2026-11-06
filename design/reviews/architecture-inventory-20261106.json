@@ -1,0 +1,403 @@
+{
+  "observedAt": "2026-11-06T17:16:13.646336+00:00",
+  "readMode": "SQLite mode=ro, query_only=ON, one read transaction; filesystem existence reads only",
+  "database": "/Users/tjw/.local/share/opencode/plugins/lazers/tasks.sqlite",
+  "project": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+  "userVersion": 7,
+  "liveTableCount": 61,
+  "liveTables": [
+    "context_cache",
+    "context_publications",
+    "context_receipts",
+    "context_workspace_snapshot",
+    "context_workspaces",
+    "model_endpoint_pricing_refreshes",
+    "model_endpoint_pricing_snapshots",
+    "model_evidence_refreshes",
+    "model_evidence_snapshots",
+    "model_mappings",
+    "observation_revisions",
+    "probe_definition_heads",
+    "probe_definitions",
+    "probe_run_updates",
+    "probe_runs",
+    "recovery_progress_consumers",
+    "recovery_progress_coverage",
+    "recovery_progress_facts",
+    "runner_adoption_checks",
+    "runner_adoption_evidence",
+    "runner_adoptions",
+    "runner_architect_continuity",
+    "runner_architect_continuity_coverage",
+    "runner_architect_continuity_inputs",
+    "runner_architect_inputs",
+    "runner_architect_journal_revisions",
+    "runner_architect_renewal_coverage",
+    "runner_architect_renewal_plans",
+    "runner_architect_renewals",
+    "runner_architect_source_results",
+    "runner_architect_sources",
+    "runner_attempts",
+    "runner_audits",
+    "runner_commands",
+    "runner_continuations",
+    "runner_dependencies",
+    "runner_effects",
+    "runner_evidence",
+    "runner_leases",
+    "runner_native_idle",
+    "runner_nodes",
+    "runner_outbox",
+    "runner_plan_revisions",
+    "runner_plans",
+    "runner_progress",
+    "runner_progress_reminders",
+    "runner_relations",
+    "runner_retained_verification_checks",
+    "runner_retained_verification_evidence",
+    "runner_retained_verification_resources",
+    "runner_retained_verifications",
+    "runner_source_quarantines",
+    "runner_transitions",
+    "submission_requests",
+    "task_advice",
+    "task_changes",
+    "task_classifications",
+    "task_corrections",
+    "task_dispositions",
+    "task_references",
+    "tasks"
+  ],
+  "counts": {
+    "context_cache": {
+      "scope": "all-projects",
+      "rows": 11
+    },
+    "context_publications": {
+      "scope": "canonical-project",
+      "rows": 7
+    },
+    "context_receipts": {
+      "scope": "canonical-project",
+      "rows": 19
+    },
+    "context_workspaces": {
+      "scope": "all-projects",
+      "rows": 157
+    },
+    "model_endpoint_pricing_refreshes": {
+      "scope": "canonical-project",
+      "rows": 3
+    },
+    "model_endpoint_pricing_snapshots": {
+      "scope": "canonical-project",
+      "rows": 54
+    },
+    "model_evidence_refreshes": {
+      "scope": "canonical-project",
+      "rows": 3
+    },
+    "model_evidence_snapshots": {
+      "scope": "canonical-project",
+      "rows": 426
+    },
+    "model_mappings": {
+      "scope": "canonical-project",
+      "rows": 7
+    },
+    "observation_revisions": {
+      "scope": "canonical-project",
+      "rows": 1
+    },
+    "probe_definition_heads": {
+      "scope": "canonical-project",
+      "rows": 0
+    },
+    "probe_definitions": {
+      "scope": "canonical-project",
+      "rows": 0
+    },
+    "probe_run_updates": {
+      "scope": "canonical-project",
+      "rows": 0
+    },
+    "probe_runs": {
+      "scope": "canonical-project",
+      "rows": 0
+    },
+    "recovery_progress_consumers": {
+      "scope": "canonical-project",
+      "rows": 0
+    },
+    "recovery_progress_coverage": {
+      "scope": "canonical-project",
+      "rows": 1
+    },
+    "recovery_progress_facts": {
+      "scope": "canonical-project",
+      "rows": 203733
+    },
+    "runner_architect_continuity": {
+      "scope": "canonical-project",
+      "rows": 27
+    },
+    "runner_architect_continuity_coverage": {
+      "scope": "canonical-project",
+      "rows": 27
+    },
+    "runner_architect_continuity_inputs": {
+      "scope": "canonical-project",
+      "rows": 1300
+    },
+    "runner_architect_journal_revisions": {
+      "scope": "canonical-project",
+      "rows": 118
+    },
+    "runner_audits": {
+      "scope": "canonical-project",
+      "rows": 612
+    },
+    "runner_commands": {
+      "scope": "canonical-project",
+      "rows": 967
+    },
+    "runner_leases": {
+      "scope": "canonical-project",
+      "rows": 1
+    },
+    "runner_native_idle": {
+      "scope": "canonical-project",
+      "rows": 40
+    },
+    "runner_plans": {
+      "scope": "canonical-project",
+      "rows": 135
+    },
+    "runner_progress": {
+      "scope": "canonical-project",
+      "rows": 55736
+    },
+    "runner_relations": {
+      "scope": "canonical-project",
+      "rows": 324
+    },
+    "runner_retained_verification_resources": {
+      "scope": "canonical-project",
+      "rows": 35
+    },
+    "runner_retained_verifications": {
+      "scope": "canonical-project",
+      "rows": 3
+    },
+    "submission_requests": {
+      "scope": "canonical-project",
+      "rows": 164
+    },
+    "task_advice": {
+      "scope": "canonical-project",
+      "rows": 184
+    },
+    "task_changes": {
+      "scope": "canonical-project",
+      "rows": 612514
+    },
+    "task_classifications": {
+      "scope": "canonical-project",
+      "rows": 14
+    },
+    "task_corrections": {
+      "scope": "canonical-project",
+      "rows": 9
+    },
+    "task_dispositions": {
+      "scope": "canonical-project",
+      "rows": 15
+    },
+    "task_references": {
+      "scope": "canonical-project",
+      "rows": 169
+    },
+    "tasks": {
+      "scope": "canonical-project",
+      "rows": 169
+    }
+  },
+  "states": {
+    "model_endpoint_pricing_refreshes": {
+      "succeeded": 3
+    },
+    "model_evidence_refreshes": {
+      "succeeded": 3
+    },
+    "runner_adoptions": {
+      "accepted": 3,
+      "held": 1
+    },
+    "runner_attempts": {
+      "accepted": 117,
+      "cancelled": 12,
+      "failed": 21,
+      "running": 11,
+      "verifying": 1
+    },
+    "runner_effects": {
+      "completed": 1402,
+      "failed": 3,
+      "intended": 1,
+      "uncertain": 32
+    },
+    "runner_nodes": {
+      "accepted": 119,
+      "cancelled": 16,
+      "failed": 1,
+      "queued": 11,
+      "ready": 1,
+      "running": 11,
+      "verifying": 1
+    },
+    "runner_outbox": {
+      "admitted": 64,
+      "consumed": 1041,
+      "pending": 1,
+      "superseded": 988,
+      "unknown": 362
+    },
+    "runner_plans": {
+      "accepted": 7,
+      "blocked": 28,
+      "cancelled": 16,
+      "cleanup-blocked": 31,
+      "draft": 5,
+      "integrated": 41,
+      "running": 7
+    },
+    "runner_retained_verification_resources": {
+      "removed": 35
+    },
+    "runner_retained_verifications": {
+      "cancelled": 2,
+      "held": 1
+    }
+  },
+  "contextPathInventory": {
+    "context_cache": {
+      "scope": "all-projects",
+      "rows": 11,
+      "missingWorkspacePaths": 10
+    },
+    "context_workspaces": {
+      "scope": "all-projects",
+      "rows": 157,
+      "missingWorkspacePaths": 48
+    },
+    "context_publications": {
+      "scope": "canonical-project",
+      "rows": 7,
+      "missingWorkspacePaths": 0
+    }
+  },
+  "source": {
+    "productionTSFiles": 209,
+    "testTSFiles": 128,
+    "productionTSLines": 92886,
+    "declaredUniqueTables": 75,
+    "declarations": {
+      "src/storage.ts": [
+        "submission_requests",
+        "task_changes",
+        "task_classifications",
+        "task_corrections",
+        "task_dispositions",
+        "task_references",
+        "tasks"
+      ],
+      "src/tasks/advice.ts": ["task_advice"],
+      "src/context/index.ts": ["context_cache", "context_publications", "context_workspaces"],
+      "src/recovery/journal.ts": [
+        "recovery_progress_consumers",
+        "recovery_progress_coverage",
+        "recovery_progress_facts"
+      ],
+      "src/runner/native-idle.ts": ["runner_native_idle"],
+      "src/runner/store.ts": [
+        "runner_adoption_checks",
+        "runner_adoption_evidence",
+        "runner_adoptions",
+        "runner_architect_continuity",
+        "runner_architect_continuity_coverage",
+        "runner_architect_continuity_inputs",
+        "runner_architect_inputs",
+        "runner_architect_journal_revisions",
+        "runner_architect_renewal_coverage",
+        "runner_architect_renewal_plans",
+        "runner_architect_renewals",
+        "runner_architect_source_results",
+        "runner_architect_sources",
+        "runner_attempts",
+        "runner_audits",
+        "runner_commands",
+        "runner_continuations",
+        "runner_dependencies",
+        "runner_effects",
+        "runner_evidence",
+        "runner_leases",
+        "runner_nodes",
+        "runner_outbox",
+        "runner_plan_revisions",
+        "runner_plans",
+        "runner_progress",
+        "runner_progress_reminders",
+        "runner_relations",
+        "runner_source_quarantines",
+        "runner_transitions"
+      ],
+      "src/models/mapping-store.ts": ["model_mappings"],
+      "src/models/source-store.ts": [
+        "model_endpoint_pricing_refreshes",
+        "model_endpoint_pricing_snapshots",
+        "model_evidence_refreshes",
+        "model_evidence_snapshots"
+      ],
+      "src/observability/source-revision.ts": ["observation_revisions"],
+      "src/verification/resources/store.ts": [
+        "owned_resource_claims",
+        "owned_resource_cleanup_receipts",
+        "owned_resource_executions",
+        "owned_resource_heads",
+        "owned_resource_meta",
+        "owned_resources"
+      ],
+      "src/verification/probe/store.ts": [
+        "probe_definition_heads",
+        "probe_definitions",
+        "probe_run_updates",
+        "probe_runs"
+      ],
+      "src/runner/retained-verification/store.ts": [
+        "runner_retained_verification_checks",
+        "runner_retained_verification_evidence",
+        "runner_retained_verification_resources",
+        "runner_retained_verifications"
+      ],
+      "src/runner/retained-verification/isolation.ts": [
+        "retained_verification_owner",
+        "verification_witness"
+      ],
+      "src/recovery/handoff/store.ts": [
+        "recovery_handoff_dispositions",
+        "recovery_handoff_drafts",
+        "recovery_handoff_events",
+        "recovery_handoff_notifications",
+        "recovery_handoff_reports",
+        "recovery_handoff_requests",
+        "recovery_handoff_reviews",
+        "recovery_handoff_rounds"
+      ]
+    },
+    "notes": [
+      "Counts are source declarations, not evidence all subsystems are activated.",
+      "retained_verification_owner and verification_witness live in isolated check fixture SQLite, not the task database.",
+      "context_receipts exists in live database but has no current production src reference."
+    ]
+  }
+}
