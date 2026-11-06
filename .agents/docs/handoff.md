@@ -40,8 +40,12 @@ Original LZ-129 substantive retained repair was admitted through supported tools
 in the SAME original attempt/session/workspace, OpenAI Luna Max; observed running
 session ses_aeff3e9ac5d24c6c944d35e31b050963. Admission and unchanged original
 parent/input association are recorded in ownership163-original129-admission-20261106.md.
-Main recorded the LZ-163 gate and requested native reconcile. This proves repair
-admission, not LZ-129 implementation/CPU recovery/cleanup. Revalidate result.
+Main recorded the LZ-163 gate and completed native reconciliation/integration.
+Read-only command output msg_1b2412843001Nq9kjauiNV0sOH confirms plan version34
+integrated, both native worktree removals completed with removed:true and cache
+retirement evicted. The original LZ-129 workspace is preserved. This proves
+LZ-163 integration/cleanup and original-worker admission, not LZ-129 source
+acceptance or CPU/freeze recovery.
 Main ses_e568438ebffeaoFbF9nBb942XM remains OpenAI Sol High and is currently idle;
 its latest continuity tool records this boundary and follow-up investigations.
 Computer Use explicitly reports macOS locked; unlock request is pending. Both

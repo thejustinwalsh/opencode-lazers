@@ -16,3 +16,7 @@ The original-parent → three supported renewals → reassignment sequence is do
 ## Boundary
 
 This is one real repair for bounded source work, first-in-flight inventory ordering, UTF-16 correctness and canonical publication with scoped independent reader queues (existing task advice). Precise supplemental scope is required before outside-scope edits. Original artifact/history/usage and unresolved resources remain preserved; no cleanup conclusion follows from admission. LZ-163's accepted source is `efa5f1144ce94bf971df46d6790119a5feb15ac8`; this observation supplies its original-worker admission gate, not acceptance of the eventual LZ-129 repair or a CPU/freeze claim. Models visual and LZ-155 connected-cost gates remain open.
+
+## Integration and cleanup outcome
+
+Native Architect subsequently recorded source integration and reconciled the plan. Read-only receipt `msg_1b2412843001Nq9kjauiNV0sOH` reports version 34, state `integrated`, and completed native worktree removals for the original LZ-163 attempt and repair. Both receipts report `removed: true` and cache retirement `evicted`; `WORKTREES_RECONCILED` retains the accepted artifact identity. The original LZ-129 workspace remains preserved for the active substantive repair. This closes LZ-163; it does not accept the eventual LZ-129 result.
