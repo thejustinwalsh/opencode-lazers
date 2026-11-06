@@ -56,3 +56,10 @@ Ownership rows identify resources, not whether their writers stopped. Preserve
 uncertain setup resources across restart or cancellation until termination is
 observed. Normal teardown follows observed shutdown. See the real-process and
 reopen cases in `src/runner/retained-reverify.test.ts`.
+
+## Bun matcher mutation
+
+The pinned Bun mutates actual object properties after a successful
+`toMatchObject` with asymmetric matchers such as `expect.any(String)`. If later
+test steps reuse that data, assert fields separately or match a clone. Otherwise
+a real string can become an `ExpectAny` object before the next tool call.
