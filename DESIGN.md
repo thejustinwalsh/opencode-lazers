@@ -119,9 +119,9 @@ Use live APIs wherever the relevant data is available. Product costs, recorded
 market valuations, estimates and comparisons use an ordered price-source setting,
 independent of execution provider or subscription. Initially offer OpenRouter and
 OpenCode, defaulting to OpenRouter then OpenCode. Reuse access configured in
-OpenCode; skip unavailable sources and show unavailable when none provides an
-applicable price. Identify the chosen source and rates. A session's reported
-charge is not a market-price source, and absent prices are not zero. OpenRouter
+OpenCode; skip unavailable sources and omit the cost when none provides an
+applicable price. Identify the chosen source briefly; put rates in expanded detail.
+A session's reported charge is not a market-price source, and absent prices are not zero. OpenRouter
 also supplies benchmark evidence and related model metadata. Retain dated source
 observations and refresh without blocking the panel. Native OpenCode remains
 the authority for available execution routes; the data source does not choose
@@ -140,10 +140,11 @@ The researched default plot compares mean tokens and comparable cost per
 completed logical task, with acceptance quality alongside. Cost per accepted
 result versus accepted tasks/hour is a useful alternate. Compare compatible
 cohorts/accounting bases only; include failed/repaired work in outcome costs.
-Keep observed results, projections and external benchmarks distinct. Show sample
-counts, missing coverage, dated OpenRouter market prices and the basis
-of each task estimate. Unknown is not zero; subscription usage is not free API
-cost. No invented task-fit score, universal ranking or causal claim from an
+Keep observed results, projections and external benchmarks distinct in data and
+accessible detail. Put sample counts, coverage, rate dates and estimate basis in
+collapsed detail. The primary chart and selection summary communicate models and
+costs without internal accounting or review labels. Unknown is not zero;
+subscription usage is not free API cost. No invented task-fit score, universal ranking or causal claim from an
 unmatched small sample. An empty chart explains what data is missing and still
 offers sourced catalog/research comparisons.
 

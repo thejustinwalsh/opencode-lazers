@@ -7,6 +7,30 @@ Runtime/API readback is authoritative. Revalidate live handles before acting.
 
 ## Latest checkpoint — 2026-11-06 afternoon
 
+Root isolated integration preparation: native worktree.create made
+/private/tmp/lz-models-runtime-review (metadata
+/private/tmp/lz-models-runtime-review-worktree.json). Branch
+feat/models-runtime-integration-20261106 candidate79c748c merges original
+163efa5f11,1682bbf8a3 and1551ca1e1b, preserving worker commit ancestry. It is
+NOT merged/activated canonically and excludes still-active169. The same combined
+source passed733tests/10360assertions/56files, formatting828files, lint401files,
+typecheck389files, GUI build and diff checks. Logs:
+/private/tmp/lz-models-runtime-combined-tests.log and lz-models-runtime-quality.log.
+Initial cherry-picked branch feat/models-runtime-review-20261106 is retained
+only as the tested comparison; full tree diff to79c748c was empty after merging
+original commits into the proper integration branch. Do not use cherry-picks as
+native artifact ancestry. Wait169 delivery, merge/review its artifact and rerun
+affected consumers before quiet canonical integration/activation; preserve all
+real human/live gates. Root tree must later be natively removed clean force:false.
+
+Root caught newly generated C4 HTML formatting during combined autoformat and
+fixed canonical docs only in d86e4f2: generated HTML now formatted, generator
+calls the same Bun formatter. Regeneration plus format check passed; no runtime
+source activation. Active169 focused26tests/318assertions and registered panel
+699assertions passed; final full chart/quality commands are running. Do not
+restart it based on observation timeout. Native CUA messages still show delayed
+or missing text entry; confirm actual SDK receipt before claiming delivery.
+
 Architecture review/ranking, timestamped inventory, flow probes and offline five-view
 ELK/SVG C4 are committed3b11cb2 under design/reviews/architecture-_-20261106._.
 Sol6.1High found fourP1 boundaries, noP0;89tests/535assertions and isolated
