@@ -147,15 +147,21 @@ export function scopeViolations(paths: string[], scope: string[]): string[] {
   )
 }
 
-export function artifactUnchanged(directory: string, commit: string): boolean {
+export function artifactUnchanged(
+  directory: string,
+  commit: string,
+  ownedUntrackedPaths: string[] = [],
+): boolean {
   const result = spawnSync("git", ["diff", "--quiet", commit, "--"], {
     cwd: directory,
     timeout: 30000,
   })
-  return (
-    result.status === 0 &&
-    git(directory, ["ls-files", "--others", "--exclude-standard"]).length === 0
-  )
+  const allowed = new Set(ownedUntrackedPaths)
+  const untracked = git(directory, ["ls-files", "--others", "--exclude-standard", "-z"])
+    .split("\0")
+    .filter(Boolean)
+    .filter((path) => !allowed.has(path))
+  return result.status === 0 && untracked.length === 0
 }
 
 export class ArtifactScopeViolation extends Error {
@@ -340,6 +346,8 @@ export type CheckRunOptions = {
   /** When set, do not inherit the host environment. */
   environment?: Record<string, string>
   environmentIdentity?: string
+  /** Exact untracked paths positively owned by this retained procedure binding. */
+  ownedUntrackedPaths?: string[]
   isolation?: unknown
   signal?: AbortSignal
 }
@@ -431,7 +439,7 @@ export async function runCheck(
       timedOut,
       stdout,
       stderr,
-      unchanged: artifactUnchanged(directory, artifact),
+      unchanged: artifactUnchanged(directory, artifact, options.ownedUntrackedPaths),
       ...(options.isolation === undefined ? {} : { isolation: options.isolation }),
     }
     mkdirSync(dirname(receiptPath), { recursive: true, mode: 0o700 })

@@ -40,7 +40,62 @@ function fixture(
   git(root, ["config", "user.name", "fixture"])
   git(root, ["config", "user.email", "fixture@example.invalid"])
   writeFileSync(join(root, "seed.txt"), "baseline\n")
-  git(root, ["add", "seed.txt"])
+  writeFileSync(join(root, ".gitignore"), "node_modules/\n")
+  writeFileSync(
+    join(root, "package.json"),
+    '{"name":"retained-reverify-fixture","version":"1.0.0"}\n',
+  )
+  mkdirSync(join(root, "node_modules"))
+  for (const directory of [
+    "src/runner",
+    "src/models",
+    "src/verification/resources",
+    "src/verification/probe",
+    "test/retained-verification",
+  ])
+    mkdirSync(join(root, directory), { recursive: true })
+  for (const directory of [
+    "src/verification/resources",
+    "src/verification/probe",
+    "test/retained-verification",
+  ])
+    writeFileSync(join(root, directory, ".keep"), "fixture target\n")
+  writeFileSync(
+    join(root, "src", "runner", "retained-check.test.ts"),
+    `import { Database } from "bun:sqlite"\n` +
+      `import { appendFileSync, mkdirSync } from "node:fs"\n` +
+      `import { dirname, join } from "node:path"\n` +
+      `import { expect, test } from "bun:test"\n` +
+      `test("authored project check writes only to the isolated profile and database", () => {\n` +
+      `  if (!process.env.LAZERS_VERIFICATION_SQLITE) throw new Error("No private verification database")\n` +
+      `  const sentinel = join(process.env.HOME!, "profile", "sentinel")\n` +
+      `  mkdirSync(dirname(sentinel), { recursive: true })\n` +
+      `  const db = new Database(process.env.LAZERS_VERIFICATION_SQLITE!)\n` +
+      `  let checkID: string\n` +
+      `  try {\n` +
+      `    checkID = db.query<{ check_id: string }, []>("SELECT check_id FROM retained_verification_owner").get()!.check_id\n` +
+      `    db.exec("CREATE TABLE IF NOT EXISTS writes(value TEXT)")\n` +
+      `    db.query("INSERT INTO writes VALUES (?)").run(checkID)\n` +
+      `  }\n` +
+      `  finally { db.close() }\n` +
+      `  appendFileSync(sentinel, checkID === "isolated-combined-check" ? "combined\\n" : "task\\n")\n` +
+      `  expect(checkID).toMatch(/^isolated-(?:task|combined)-check$/)\n` +
+      `})\n`,
+  )
+  writeFileSync(
+    join(root, "src", "models", "retained-delayed-check.test.ts"),
+    `import { appendFileSync, mkdirSync } from "node:fs"\n` +
+      `import { dirname, join } from "node:path"\n` +
+      `import { test } from "bun:test"\n` +
+      `test("waits after publishing its isolated start witness", async () => {\n` +
+      `  if (!process.env.LAZERS_VERIFICATION_SQLITE) throw new Error("No private verification database")\n` +
+      `  const started = join(process.env.HOME!, "started")\n` +
+      `  mkdirSync(dirname(started), { recursive: true })\n` +
+      `  appendFileSync(started, "started\\n")\n` +
+      `  await Bun.sleep(10_000)\n` +
+      `}, { timeout: 20_000 })\n`,
+  )
+  git(root, ["add", ".gitignore", "package.json", "seed.txt", "src", "test"])
   git(root, ["commit", "-m", "baseline"])
   const base = git(root, ["rev-parse", "HEAD"])
   const repository = new TaskRepository(join(state, "tasks.sqlite"), root)
@@ -54,10 +109,7 @@ function fixture(
       id: "isolated-task-check",
       command:
         options.taskCheckCommand ??
-        `mkdir -p "$HOME/profile" && printf 'check\\n' >> "$HOME/profile/sentinel" && ` +
-          `test -n "$LAZERS_VERIFICATION_SQLITE" && ` +
-          `bun -e 'import { Database } from "bun:sqlite"; const db = new Database(process.env.LAZERS_VERIFICATION_SQLITE); db.exec("CREATE TABLE IF NOT EXISTS writes(value TEXT); INSERT INTO writes VALUES (char(112,114,105,118,97,116,101))"); db.close()' && ` +
-          `printf 'home=%s db=%s\\n' "$HOME" "$LAZERS_VERIFICATION_SQLITE"`,
+        "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
       timeoutMs: 10_000,
     },
   ]
@@ -103,9 +155,7 @@ function fixture(
         {
           id: "isolated-combined-check",
           command:
-            `mkdir -p "$HOME/profile" && printf 'combined\\n' >> "$HOME/profile/sentinel" && ` +
-            `test -n "$LAZERS_VERIFICATION_SQLITE" && ` +
-            `bun -e 'import { Database } from "bun:sqlite"; const db = new Database(process.env.LAZERS_VERIFICATION_SQLITE); db.exec("CREATE TABLE IF NOT EXISTS writes(value TEXT); INSERT INTO writes VALUES (char(99,111,109,98,105,110,101,100))"); db.close()'`,
+            "bun test src/runner src/verification/resources src/verification/probe test/retained-verification",
           timeoutMs: 10_000,
         },
       ],
@@ -413,11 +463,11 @@ test("owner verifies an exact failed-attempt candidate with zero replacement pro
     expect(receipt.isolation.operationID).toBe(result.operationID)
     expect(receipt.isolation.generation).toBe(1)
     expect(receipt.isolation.phase).toBe(check.phase)
-    expect(receipt.isolation.resources.length).toBe(7)
+    expect(receipt.isolation.resources.length).toBe(9)
     expect(
       new Set(receipt.isolation.resources.map((resource) => `${resource.device}:${resource.inode}`))
         .size,
-    ).toBe(7)
+    ).toBe(9)
     expect(receipt.isolation.sqlitePath).toContain("retained-verification-resources")
   }
 })
@@ -565,7 +615,7 @@ test("an opaque called script is held before candidate checkout or receipt creat
   )!
   expect(JSON.parse(retained.payload)).toMatchObject({
     state: "held",
-    holdReason: expect.stringContaining("invokes an indirect script or unsupported command"),
+    holdReason: expect.stringContaining("has no project-authored procedure/resource binding"),
   })
   expect(f.worktreeCreations).toHaveLength(before)
   expect(
@@ -1017,8 +1067,7 @@ test("failed retained-checkout cleanup does not revoke a product pass", async ()
 })
 
 test("cancellation and database reopen cannot accept a late retained-check result", async () => {
-  const delayedCheck =
-    `test -n "$LAZERS_VERIFICATION_SQLITE" && ` + `touch "$HOME/started" && sleep 10`
+  const delayedCheck = "bun test src/models"
   // The immutable task proposal holds the check text, so use a dedicated fixture plan
   // whose retained check is delayed only when the private runtime database is present.
   const delayed = fixture({ taskCheckCommand: delayedCheck })

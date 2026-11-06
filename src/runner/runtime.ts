@@ -122,7 +122,11 @@ import {
 import { ProbeRepository } from "../verification/probe/store.ts"
 import { ResourceRepository } from "../verification/resources/store.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
-import { bindRetainedCheckProcedure } from "./retained-verification/procedure.ts"
+import {
+  assertRetainedProcedureBinding,
+  retainedProcedurePlan,
+  retainedProjectIdentity,
+} from "./retained-verification/procedure.ts"
 
 const terminal = new Set([
   "accepted",
@@ -815,7 +819,7 @@ export class TaskRuntime {
       return `Verification ${check.id} names a caller-owned profile path instead of an isolated runtime resource`
     if (/(?:\/(?:Users|home|private|Volumes)\/[^\s"']+|[A-Za-z]:\\[^\s"']+)/.test(check.command))
       return `Verification ${check.id} names an absolute shared resource path that cannot be isolated`
-    const procedure = bindRetainedCheckProcedure(check.command)
+    const procedure = retainedProcedurePlan(check.command)
     if (procedure.status === "unsupported")
       return `Verification ${check.id} ${procedure.reason}; required resources are not bound to the retained context`
     return undefined
@@ -7657,13 +7661,30 @@ export class TaskRuntime {
     return operation.environmentIdentity === retainedVerificationEnvironmentIdentity()
   }
 
-  private retainedWorkspaceUnchanged(workspace: string, artifact: string): boolean {
+  private retainedWorkspaceUnchanged(
+    workspace: string,
+    artifact: string,
+    ownedDependencyLink?: { path: string; target: string } | null,
+  ): boolean {
     try {
+      const workspaceRoot = realpathSync(workspace)
+      let status = git(workspace, ["status", "--porcelain", "--untracked-files=all"])
+      if (ownedDependencyLink) {
+        if (
+          ownedDependencyLink.path !== join(workspaceRoot, "node_modules") ||
+          !lstatSync(ownedDependencyLink.path).isSymbolicLink() ||
+          realpathSync(ownedDependencyLink.path) !== ownedDependencyLink.target
+        )
+          return false
+        status = status
+          .split("\n")
+          .filter((line) => line !== "?? node_modules")
+          .join("\n")
+      }
       return (
-        realpathSync(git(workspace, ["rev-parse", "--show-toplevel"])) ===
-          realpathSync(workspace) &&
+        realpathSync(git(workspace, ["rev-parse", "--show-toplevel"])) === workspaceRoot &&
         git(workspace, ["rev-parse", "HEAD"]) === artifact &&
-        !git(workspace, ["status", "--porcelain", "--untracked-files=all"]) &&
+        !status &&
         !git(workspace, ["ls-files", "-u", "-z"])
       )
     } catch {
@@ -8049,7 +8070,7 @@ export class TaskRuntime {
     if (!isRecord(raw) || !isRecord(raw.isolation)) return undefined
     const receipt = raw as unknown as CheckReceipt
     const witness = raw.isolation
-    const procedure = bindRetainedCheckProcedure(check.command)
+    const procedure = retainedProcedurePlan(check.command)
     if (procedure.status !== "supported") return undefined
     if (
       receipt.id !== check.id ||
@@ -8067,7 +8088,13 @@ export class TaskRuntime {
       witness.originalWorkspace !== operation.originalWorkspace ||
       witness.candidateWorkspace !== workspace ||
       witness.taskDatabase !== realpathSync(this.store.repository.path) ||
-      fingerprint(witness.procedureBinding) !== fingerprint(procedure.binding)
+      !assertRetainedProcedureBinding(witness.procedureBinding, {
+        plan: procedure.plan,
+        projectDirectory: this.directory,
+        candidateWorkspace: workspace,
+        candidateArtifact: artifact,
+        projectIdentity: retainedProjectIdentity(this.directory, workspace, artifact),
+      })
     )
       return undefined
     return receipt
@@ -8084,7 +8111,7 @@ export class TaskRuntime {
     const results: CheckReceipt[] = []
     for (const check of checks) {
       if (!this.retainedVerificationLive(initial.id, initial.generation)) return undefined
-      const procedure = bindRetainedCheckProcedure(check.command)
+      const procedure = retainedProcedurePlan(check.command)
       if (procedure.status !== "supported") {
         await this.holdRetainedVerification(
           initial,
@@ -8179,7 +8206,10 @@ export class TaskRuntime {
                   originalWorkspace: initial.originalWorkspace,
                   candidateWorkspace: workspace,
                   taskDatabase: this.store.repository.path,
-                  procedureBinding: procedure.binding,
+                  projectDirectory: this.directory,
+                  candidateArtifact: artifact,
+                  projectIdentity: retainedProjectIdentity(this.directory, workspace, artifact),
+                  procedurePlan: procedure.plan,
                 },
               )
             )
@@ -8287,8 +8317,10 @@ export class TaskRuntime {
           originalWorkspace: initial.originalWorkspace,
           candidateWorkspace: workspace,
           taskDatabase: this.store.repository.path,
+          projectDirectory: this.directory,
+          candidateArtifact: artifact,
           priorResourcePaths: prior,
-          procedureBinding: procedure.binding,
+          procedurePlan: procedure.plan,
         })
         if (!observeRetainedCheckContext(context))
           throw new Error("Fresh verification resources do not have a readable ownership witness")
@@ -8385,12 +8417,13 @@ export class TaskRuntime {
         const receipt = await runCheck(workspace, artifact, check, receiptPath, {
           environment: context.environment,
           environmentIdentity: context.environmentIdentity,
+          ownedUntrackedPaths: context.dependencyLink ? ["node_modules"] : [],
           isolation: retainedCheckIsolationWitness(context),
           signal: controller.signal,
         })
         if (
           !observeRetainedCheckContext(context) ||
-          !this.retainedWorkspaceUnchanged(workspace, artifact) ||
+          !this.retainedWorkspaceUnchanged(workspace, artifact, context.dependencyLink) ||
           !this.retainedVerificationLive(initial.id, initial.generation)
         ) {
           this.store.atomic((db) =>
@@ -8505,7 +8538,7 @@ export class TaskRuntime {
       if (!stored)
         throw new Error("Retained check resource ownership has no durable procedure record")
       const check = JSON.parse(stored.checkJSON) as TaskProposal["verification"][number]
-      const procedure = bindRetainedCheckProcedure(check.command)
+      const procedure = retainedProcedurePlan(check.command)
       if (procedure.status !== "supported")
         throw new Error("Retained check procedure binding is no longer supported")
       const expected = {
@@ -8516,7 +8549,14 @@ export class TaskRuntime {
         originalWorkspace: operation.originalWorkspace,
         candidateWorkspace: this.retainedVerificationIsolatedWorkspace(operation, phase) ?? "",
         taskDatabase: this.store.repository.path,
-        procedureBinding: procedure.binding,
+        projectDirectory: this.directory,
+        candidateArtifact: stored.artifact,
+        projectIdentity: retainedProjectIdentity(
+          this.directory,
+          this.retainedVerificationIsolatedWorkspace(operation, phase) ?? "",
+          stored.artifact,
+        ),
+        procedurePlan: procedure.plan,
       }
       removeRetainedCheckContextFromWitness(contextPath, witness, expected)
       this.store.atomic((db) => {

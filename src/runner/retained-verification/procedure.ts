@@ -1,193 +1,293 @@
+import { lstatSync, readFileSync, realpathSync } from "node:fs"
+import { join, relative, sep } from "node:path"
 import { fingerprint } from "../../identity.ts"
 
-const runtimeVariables = {
-  HOME: "home",
-  TMPDIR: "tmp",
-  TMP: "tmp",
-  TEMP: "tmp",
-  XDG_CONFIG_HOME: "config",
-  XDG_DATA_HOME: "data",
-  XDG_CACHE_HOME: "cache",
-  XDG_STATE_HOME: "state",
-  LAZERS_VERIFICATION_SQLITE: "database",
-} as const
+export const retainedProjectResourceNames = [
+  "home",
+  "tmp",
+  "config",
+  "data",
+  "cache",
+  "state",
+  "bun-cache",
+  "dependencies",
+  "database",
+] as const
 
-export type RetainedProcedureResource = (typeof runtimeVariables)[keyof typeof runtimeVariables]
+export type RetainedProjectResourceName = (typeof retainedProjectResourceNames)[number]
+export type RetainedProcedureKind = "bun-test" | "bun-quality"
 
-export type RetainedProcedureBinding = {
+export type RetainedProcedurePlan = {
   schemaVersion: 1
-  kind: "read-only" | "owned-shell-resources" | "private-sqlite-smoke"
+  kind: RetainedProcedureKind
   commandFingerprint: string
-  resources: RetainedProcedureResource[]
+  targets: string[]
+  projectScripts: string[]
+  resources: RetainedProjectResourceName[]
 }
 
-export type RetainedProcedureBindingResult =
-  | { status: "supported"; binding: RetainedProcedureBinding }
-  | { status: "unsupported"; reason: string }
-
-function splitAndChain(command: string): string[] | undefined {
-  const segments: string[] = []
-  let segment = ""
-  let quote: "'" | '"' | undefined
-  let escaped = false
-  for (let index = 0; index < command.length; index++) {
-    const character = command[index]!
-    const next = command[index + 1]
-    if (escaped) {
-      segment += character
-      escaped = false
-      continue
-    }
-    if (character === "\\" && quote !== "'") {
-      segment += character
-      escaped = true
-      continue
-    }
-    if (quote) {
-      segment += character
-      if (character === quote) quote = undefined
-      continue
-    }
-    if (character === "'" || character === '"') {
-      quote = character
-      segment += character
-      continue
-    }
-    if (character === "`" || (character === "$" && next === "(") || character === "\n")
-      return undefined
-    if (character === "&" && next === "&") {
-      if (!segment.trim()) return undefined
-      segments.push(segment.trim())
-      segment = ""
-      index++
-      continue
-    }
-    if (character === ";" || character === "|" || character === "<" || character === "(")
-      return undefined
-    segment += character
-  }
-  if (quote || escaped || !segment.trim()) return undefined
-  segments.push(segment.trim())
-  return segments
+export type RetainedProcedureResourceIdentity = {
+  name: RetainedProjectResourceName
+  realPath: string
+  device: number
+  inode: number
 }
 
-function resourceForVariable(variable: string): RetainedProcedureResource | undefined {
-  return runtimeVariables[variable as keyof typeof runtimeVariables]
+export type RetainedProcedureBinding = RetainedProcedurePlan & {
+  projectDirectory: string
+  candidateWorkspace: string
+  candidateArtifact: string
+  projectIdentity: string
+  resourceIdentities: RetainedProcedureResourceIdentity[]
+  dependencyEnvironmentIdentity: string
+  dependencyLink: { path: string; target: string } | null
+  temporaryDirectoryLink: {
+    path: string
+    target: string
+    device: number
+    inode: number
+  } | null
 }
 
-function safeRelativePath(path: string): boolean {
+export type RetainedProcedurePlanResult =
+  { status: "supported"; plan: RetainedProcedurePlan } | { status: "unsupported"; reason: string }
+
+const qualityCommands = new Set(["bun fmt --check", "bun lint", "bun check", "git diff --check"])
+
+function isSafeProjectScriptName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(name)
+}
+
+function isSafeProjectTarget(path: string): boolean {
   return (
-    path.length > 0 &&
-    path.split("/").every((part) => part !== "" && part !== "." && part !== "..") &&
-    /^[A-Za-z0-9._/-]+$/.test(path)
+    /^(?:[A-Za-z0-9_@][A-Za-z0-9_.@-]*)(?:\/[A-Za-z0-9_@][A-Za-z0-9_.@-]*)*$/.test(path) &&
+    !path.split("/").some((part) => part === "." || part === "..")
   )
 }
 
-function sqliteSmokeCheck(segment: string): boolean {
-  const wrapper = /^bun -e '(.*)'$/.exec(segment)
-  if (!wrapper) return false
-  const source = wrapper[1]!
-  const script =
-    /^import \{ Database \} from "bun:sqlite"; const db = new Database\(process\.env\.LAZERS_VERIFICATION_SQLITE\); db\.exec\("CREATE TABLE IF NOT EXISTS ([a-z][a-z0-9_]*)\(value TEXT\); INSERT INTO \1 VALUES \(char\(([0-9]{1,3}(?:,[0-9]{1,3})*)\)\)"\); db\.close\(\)$/.exec(
-      source,
-    )
-  return Boolean(script && script[2]!.split(",").every((code) => Number(code) <= 255))
+function isContained(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith(sep))
 }
 
-function segmentResources(segment: string): RetainedProcedureResource[] | undefined {
-  if (segment === "true") return []
-  if (sqliteSmokeCheck(segment)) return ["database"]
-
-  const mkdir =
-    /^mkdir -p "\$(HOME|TMPDIR|TMP|TEMP|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|XDG_STATE_HOME)\/([^"$]+)"$/.exec(
-      segment,
-    )
-  if (mkdir && safeRelativePath(mkdir[2]!)) {
-    const resource = resourceForVariable(mkdir[1]!)
-    return resource ? [resource] : undefined
+function lstatIfPresent(path: string) {
+  try {
+    return lstatSync(path)
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return undefined
+    throw error
   }
-
-  const append =
-    /^printf '(?:[^']*)' >> "\$(HOME|TMPDIR|TMP|TEMP|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|XDG_STATE_HOME)\/([^"$]+)"$/.exec(
-      segment,
-    )
-  if (append && safeRelativePath(append[2]!)) {
-    const resource = resourceForVariable(append[1]!)
-    return resource ? [resource] : undefined
-  }
-
-  const touch =
-    /^touch "\$(HOME|TMPDIR|TMP|TEMP|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|XDG_STATE_HOME)\/([^"$]+)"$/.exec(
-      segment,
-    )
-  if (touch && safeRelativePath(touch[2]!)) {
-    const resource = resourceForVariable(touch[1]!)
-    return resource ? [resource] : undefined
-  }
-
-  if (/^sleep (?:[1-9]|[1-5][0-9]|60)$/.test(segment)) return []
-
-  const test =
-    /^test -(?:n|e|d) "\$(HOME|TMPDIR|TMP|TEMP|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|XDG_STATE_HOME|LAZERS_VERIFICATION_SQLITE)(?:\/([^"$]+))?"$/.exec(
-      segment,
-    )
-  if (test && (!test[2] || safeRelativePath(test[2]))) {
-    const resource = resourceForVariable(test[1]!)
-    return resource ? [resource] : undefined
-  }
-
-  const stdout =
-    /^printf '(?:[^']*)'(?: "\$(HOME|TMPDIR|TMP|TEMP|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|XDG_STATE_HOME|LAZERS_VERIFICATION_SQLITE)")*$/.exec(
-      segment,
-    )
-  if (stdout) {
-    const variables = [...segment.matchAll(/"\$([A-Z_]+)"/g)].map((match) => match[1]!)
-    return variables.flatMap((variable) => {
-      const resource = resourceForVariable(variable)
-      return resource ? [resource] : []
-    })
-  }
-  return undefined
 }
 
 /**
- * Bind only a small, inspectable shell subset to runtime-owned resources.
- * Opaque script/test runners are deliberately held: their transitive I/O cannot
- * be inferred from their command-line string.
+ * Recognize project-owned verification procedures, not their transitive shell
+ * effects. Project tests and the narrow formatter/linter/typechecker/Git-diff
+ * commands use the owned checkout, dependency snapshot, Bun cache and standard
+ * user/cache/temp directories. Named package scripts must be declared by the
+ * candidate itself, so build procedures stay project-owned without accepting
+ * arbitrary shell commands.
  */
-export function bindRetainedCheckProcedure(command: string): RetainedProcedureBindingResult {
-  const segments = splitAndChain(command)
-  if (!segments)
-    return {
-      status: "unsupported",
-      reason: "uses shell composition whose mutable resources cannot be proven",
-    }
-  const names = new Set<RetainedProcedureResource>()
-  let usedSQLiteSmoke = false
-  for (const segment of segments) {
-    const bound = segmentResources(segment)
-    if (!bound)
+export function retainedProcedurePlan(command: string): RetainedProcedurePlanResult {
+  if (command === "bun test" || command.startsWith("bun test ")) {
+    const targetText = command === "bun test" ? "" : command.slice("bun test ".length)
+    if (command !== "bun test" && !targetText)
       return {
         status: "unsupported",
-        reason:
-          "invokes an indirect script or unsupported command whose mutable resources are unknown",
+        reason: "uses a Bun test target outside the safe project-relative procedure contract",
       }
-    for (const name of bound) names.add(name)
-    if (sqliteSmokeCheck(segment)) usedSQLiteSmoke = true
+    const targets = targetText ? targetText.split(" ") : []
+    if (targets.some((target) => !isSafeProjectTarget(target)))
+      return {
+        status: "unsupported",
+        reason: "uses a Bun test target outside the safe project-relative procedure contract",
+      }
+    return {
+      status: "supported",
+      plan: {
+        schemaVersion: 1,
+        kind: "bun-test",
+        commandFingerprint: fingerprint(command),
+        targets: [...targets],
+        projectScripts: [],
+        resources: [...retainedProjectResourceNames],
+      },
+    }
   }
-  const resources = [...names].sort()
-  const kind = usedSQLiteSmoke
-    ? "private-sqlite-smoke"
-    : resources.length
-      ? "owned-shell-resources"
-      : "read-only"
+  const steps = command.split(" && ")
+  if (steps.length > 0 && steps.join(" && ") === command) {
+    const projectScripts: string[] = []
+    let containsAuthoredProcedure = false
+    for (const step of steps) {
+      if (qualityCommands.has(step)) {
+        containsAuthoredProcedure = true
+        continue
+      }
+      const script = /^bun run ([A-Za-z0-9][A-Za-z0-9._:-]*)$/.exec(step)?.[1]
+      if (!script || !isSafeProjectScriptName(script)) {
+        containsAuthoredProcedure = false
+        break
+      }
+      projectScripts.push(script)
+      containsAuthoredProcedure = true
+    }
+    if (containsAuthoredProcedure && steps.length > 0)
+      return {
+        status: "supported",
+        plan: {
+          schemaVersion: 1,
+          kind: "bun-quality",
+          commandFingerprint: fingerprint(command),
+          targets: [],
+          projectScripts: [...new Set(projectScripts)],
+          resources: [...retainedProjectResourceNames],
+        },
+      }
+  }
   return {
-    status: "supported",
-    binding: {
-      schemaVersion: 1,
-      kind,
-      commandFingerprint: fingerprint(command),
-      resources,
-    },
+    status: "unsupported",
+    reason:
+      "has no project-authored procedure/resource binding; only project-relative Bun test targets, scoped quality commands, and candidate-declared Bun scripts are currently bound",
   }
+}
+
+/** Confirm every named build/check script is authored by the exact candidate. */
+export function assertRetainedProcedureDeclaration(
+  plan: RetainedProcedurePlan,
+  candidateWorkspace: string,
+): void {
+  const candidate = realpathSync(candidateWorkspace)
+  assertRetainedProcedureTargets(plan, candidate)
+  if (plan.projectScripts.length === 0) return
+  const manifestPath = join(candidate, "package.json")
+  const manifestInfo = lstatIfPresent(manifestPath)
+  if (!manifestInfo || manifestInfo.isSymbolicLink() || !manifestInfo.isFile())
+    throw new Error("Candidate project procedure scripts require a regular package.json")
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"))
+  const scripts =
+    typeof manifest === "object" && manifest !== null && !Array.isArray(manifest)
+      ? (manifest as { scripts?: unknown }).scripts
+      : undefined
+  if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts))
+    throw new Error(
+      "Candidate package.json does not declare the required project procedure scripts",
+    )
+  for (const name of plan.projectScripts) {
+    const script = (scripts as Record<string, unknown>)[name]
+    if (!isSafeProjectScriptName(name) || typeof script !== "string" || !script.trim())
+      throw new Error(`Candidate package.json does not declare project procedure script ${name}`)
+  }
+}
+
+/**
+ * Bind a procedure plan to the exact candidate's own manifests and the
+ * runtime-created resource identities. A worktree alone is not this binding.
+ */
+export function retainedProjectIdentity(
+  projectDirectoryInput: string,
+  candidateWorkspaceInput: string,
+  candidateArtifact: string,
+): string {
+  const projectDirectory = realpathSync(projectDirectoryInput)
+  const candidateWorkspace = realpathSync(candidateWorkspaceInput)
+  const manifestFiles = [
+    "package.json",
+    "bun.lock",
+    "bun.lockb",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bunfig.toml",
+  ]
+  const files = manifestFiles.map((name) => {
+    const candidatePath = join(candidateWorkspace, name)
+    const candidateInfo = lstatIfPresent(candidatePath)
+    if (!candidateInfo) return { name, contents: null }
+    if (candidateInfo.isSymbolicLink() || !candidateInfo.isFile())
+      throw new Error(`Candidate procedure manifest ${name} is not a regular file`)
+    const candidateContents = readFileSync(candidatePath)
+    return { name, contents: candidateContents.toString("base64") }
+  })
+  return fingerprint({
+    schemaVersion: 1,
+    projectDirectory,
+    candidateWorkspace,
+    candidateArtifact,
+    files,
+  })
+}
+
+export function assertRetainedProcedureTargets(
+  plan: RetainedProcedurePlan,
+  candidateWorkspace: string,
+): void {
+  const candidate = realpathSync(candidateWorkspace)
+  for (const target of plan.targets) {
+    if (!isSafeProjectTarget(target))
+      throw new Error("Project test target is not a safe relative path")
+    const targetPath = join(candidate, target)
+    try {
+      lstatSync(targetPath)
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+        continue
+      throw error
+    }
+    const canonicalTarget = realpathSync(targetPath)
+    if (!isContained(candidate, canonicalTarget))
+      throw new Error(`Project test target ${target} escapes the exact candidate checkout`)
+  }
+}
+
+export function assertRetainedProcedureBinding(
+  value: unknown,
+  expected: {
+    plan: RetainedProcedurePlan
+    projectDirectory: string
+    candidateWorkspace: string
+    candidateArtifact: string
+    projectIdentity: string
+  },
+): value is RetainedProcedureBinding {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const binding = value as Partial<RetainedProcedureBinding>
+  if (!(
+    binding.schemaVersion === 1 &&
+    binding.kind === expected.plan.kind &&
+    binding.commandFingerprint === expected.plan.commandFingerprint &&
+    fingerprint(binding.targets) === fingerprint(expected.plan.targets) &&
+    fingerprint(binding.projectScripts) === fingerprint(expected.plan.projectScripts) &&
+    fingerprint(binding.resources) === fingerprint(expected.plan.resources) &&
+    binding.projectDirectory === realpathSync(expected.projectDirectory) &&
+    binding.candidateWorkspace === realpathSync(expected.candidateWorkspace) &&
+    binding.candidateArtifact === expected.candidateArtifact &&
+    binding.projectIdentity === expected.projectIdentity &&
+    typeof binding.dependencyEnvironmentIdentity === "string" &&
+    Array.isArray(binding.resourceIdentities) &&
+    binding.resourceIdentities.length === expected.plan.resources.length &&
+    (binding.dependencyLink === null ||
+      (typeof binding.dependencyLink === "object" &&
+        typeof binding.dependencyLink.path === "string" &&
+        typeof binding.dependencyLink.target === "string")) &&
+    (binding.temporaryDirectoryLink === null ||
+      (typeof binding.temporaryDirectoryLink === "object" &&
+        typeof binding.temporaryDirectoryLink.path === "string" &&
+        typeof binding.temporaryDirectoryLink.target === "string" &&
+        typeof binding.temporaryDirectoryLink.device === "number" &&
+        typeof binding.temporaryDirectoryLink.inode === "number"))
+  ))
+    return false
+  const identities = binding.resourceIdentities
+  return expected.plan.resources.every((name, index) => {
+    const identity = identities[index]
+    return (
+      typeof identity === "object" &&
+      identity !== null &&
+      identity.name === name &&
+      typeof identity.realPath === "string" &&
+      typeof identity.device === "number" &&
+      typeof identity.inode === "number"
+    )
+  })
 }
