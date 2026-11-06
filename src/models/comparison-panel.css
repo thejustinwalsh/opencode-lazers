@@ -91,16 +91,16 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: 3px 6px;
   min-width: 0;
 }
 
-.lazers-models-filter-status {
+.lazers-models-filters button {
   max-width: 100%;
-  padding: 4px 2px;
-  color: var(--text-weak);
-  font-size: 11px;
-  white-space: nowrap;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .lazers-models-task-select {
@@ -235,7 +235,16 @@
 }
 
 .lazers-models-inspector-tools {
-  padding: 4px 0 0;
+  gap: 4px 6px;
+  padding: 3px 0 0;
+}
+
+.lazers-models-inspector-tools button {
+  max-width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .lazers-models-decision-inspection,
@@ -327,9 +336,9 @@
 
 .lazers-models-comparison-chart {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   gap: 4px;
-  height: 196px;
+  height: 252px;
   min-width: 0;
 }
 
@@ -347,7 +356,7 @@
 .lazers-models-comparison-chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px 12px;
+  gap: 3px 10px;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -404,21 +413,6 @@
 .lazers-models-chart-key-subtotal {
   background: var(--surface-base);
   transform: rotate(45deg);
-}
-
-.lazers-models-chart-key-subtotal-range {
-  width: 2px;
-  height: 10px;
-  margin: 0 3px;
-  border: 0;
-  background: repeating-linear-gradient(
-    to bottom,
-    var(--border-selected) 0 2px,
-    transparent 2px 4px
-  );
-  box-shadow:
-    0 -2px 0 -0.5px var(--border-selected),
-    0 2px 0 -0.5px var(--border-selected);
 }
 
 .lazers-models-comparison-chart-data ul {
@@ -576,17 +570,6 @@
   color: var(--text-weak);
   font-size: 11px;
   overflow-wrap: anywhere;
-}
-
-.lazers-models-inspector-heading .lazers-models-inspector-route {
-  max-width: min(100%, 48rem);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lazers-models-inspector-heading .lazers-models-inspector-effort {
-  color: var(--text-base);
 }
 
 .lazers-models-estimate {
@@ -1356,7 +1339,7 @@
 
 @container models-panel (min-width: 720px) {
   .lazers-models-comparison-chart {
-    height: 270px;
+    height: 300px;
   }
 
   .lazers-models-inspector-columns {

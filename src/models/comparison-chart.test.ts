@@ -21,6 +21,8 @@ const {
   comparisonChartOptions,
   comparisonChartPointText,
   comparisonChartReferenceText,
+  comparisonChartResponsiveLayout,
+  comparisonChartReferenceTooltip,
   compactTokenAxisValue,
 } = (await vite.ssrLoadModule(
   "/src/models/comparison-chart.tsx",
@@ -363,6 +365,8 @@ test("reference scalars, conditional envelopes and priced subtotals remain disti
   expect(rangeTooltip).toContain("≈$1e-8–$3e-8 / accepted task")
   expect(subtotalTooltip).toContain("priced portion")
   expect(subtotalTooltip).toContain("total unknown")
+  expect(subtotalTooltip).toContain("4 accepted tasks")
+  expect(subtotalTooltip).toContain("OpenRouter")
   expect(comparisonChartReferenceText(scalar)).toContain("exact route openai / gpt-6 · high")
   expect(comparisonChartReferenceText(scalar)).toContain(
     "basis OpenRouter published model-reference cost per accepted task",
@@ -370,4 +374,119 @@ test("reference scalars, conditional envelopes and priced subtotals remain disti
   expect(option.aria.description).toContain("denominator 4 accepted tasks")
   expect(option.aria.description).toContain("not plotted because a numeric actual cohort token")
   expect(comparisonChartReferenceText(missingCoordinate)).toContain("token coordinate unknown")
+})
+
+test("responsive layout budgets axis ticks and margins for width, height, and inherited font", () => {
+  const narrow = comparisonChartResponsiveLayout(330, 190, 20)
+  const medium = comparisonChartResponsiveLayout(450, 230, 20)
+  const wide = comparisonChartResponsiveLayout(960, 320, 20)
+
+  expect(narrow.fontSize).toBe(20)
+  expect(narrow.xSplitNumber).toBe(2)
+  expect(narrow.ySplitNumber).toBe(2)
+  expect(medium.xSplitNumber).toBeGreaterThan(narrow.xSplitNumber)
+  expect(wide.xSplitNumber).toBeGreaterThan(medium.xSplitNumber)
+  expect(wide.ySplitNumber).toBeGreaterThan(narrow.ySplitNumber)
+  expect(narrow.grid.left).toBeGreaterThan(comparisonChartResponsiveLayout(330, 190, 12).grid.left)
+  expect(narrow.grid.bottom).toBeGreaterThan(
+    comparisonChartResponsiveLayout(330, 190, 12).grid.bottom,
+  )
+  const compactAxisOptions = comparisonChartOptions(
+    { points, frontierConfigurationIDs: [] },
+    theme,
+    narrow,
+  )
+  expect(compactAxisOptions.yAxis.name).toBe("USD / task")
+  expect(compactAxisOptions.yAxis.axisLabel.formatter(0.0000000000123)).toBe("$1.23e-11")
+  expect(
+    comparisonChartOptions(
+      { points, frontierConfigurationIDs: [] },
+      theme,
+      comparisonChartResponsiveLayout(330, 190, 12),
+    ).yAxis.name,
+  ).toBe("USD / task")
+  const wideAxisOptions = comparisonChartOptions(
+    { points, frontierConfigurationIDs: [] },
+    theme,
+    wide,
+  )
+  expect(wideAxisOptions.yAxis.name).toBe("USD / accepted task")
+})
+
+test("selected point and every reference amount kind receive a collision-safe identity label", () => {
+  const selectedPoint = {
+    ...points[0]!,
+    configurationID: "selected:point",
+    label: "Luna",
+    tokensPerAcceptedTask: 12_000,
+    currentMarketUSDPerAcceptedTask: 0.1,
+  }
+  const nearbyPoint = {
+    ...selectedPoint,
+    configurationID: "nearby:point",
+    label: "Nearby model",
+    tokensPerAcceptedTask: 12_001,
+    currentMarketUSDPerAcceptedTask: 0.10001,
+  }
+  const references = [
+    chartReference("selected:scalar", "exact", 12_000),
+    chartReference("selected:range", "conditional", 12_000),
+    chartReference("selected:subtotal", "partial", 12_000),
+  ]
+  const selectedRange = chartReference("selected:subtotal-range", "partial", 12_000)
+  selectedRange.estimate = ModelDecisionReferenceEstimateSchema.parse({
+    ...selectedRange.estimate,
+    knownSubtotalUSD: null,
+    knownSubtotalRangeUSD: { minimum: 0.00002, maximum: 0.00005 },
+    knownSubtotalUSDPerAcceptedTask: null,
+    knownSubtotalRangeUSDPerAcceptedTask: { minimum: 0.000005, maximum: 0.0000125 },
+  })
+  references.push(selectedRange)
+
+  for (const configurationID of [
+    selectedPoint.configurationID,
+    ...references.map((reference) => reference.configurationID),
+  ]) {
+    const option = comparisonChartOptions(
+      {
+        points: [selectedPoint, nearbyPoint],
+        references,
+        frontierConfigurationIDs: [],
+        selectedConfigurationID: configurationID,
+      },
+      theme,
+    )
+    const identities = option.series.find((series) => series.id === "selected-identities")
+    expect(identities?.data).toContainEqual(
+      expect.objectContaining({ configurationID, markKind: "selected-identity" }),
+    )
+    if (configurationID === selectedPoint.configurationID) {
+      const observations = option.series.find((series) => series.id === "observations")!
+      expect(observations.data[0]).toMatchObject({
+        configurationID,
+        symbolSize: 14,
+        label: { show: false },
+      })
+      expect(observations.data[1]).toMatchObject({
+        configurationID: nearbyPoint.configurationID,
+        label: { show: true },
+      })
+    }
+    expect(identities?.label).toMatchObject({ show: true })
+    expect(identities?.labelLayout).toMatchObject({ hideOverlap: false })
+  }
+
+  const unplottable = chartReference("missing:selected", "partial", null)
+  const absent = comparisonChartOptions(
+    {
+      points: [],
+      references: [unplottable],
+      frontierConfigurationIDs: [],
+      selectedConfigurationID: unplottable.configurationID,
+    },
+    theme,
+  )
+  expect(absent.series.find((series) => series.id === "selected-identities")?.data).toEqual([])
+  expect(comparisonChartReferenceTooltip(references[1]!)).toContain("4 accepted tasks")
+  expect(comparisonChartReferenceTooltip(references[1]!)).toContain("OpenRouter")
 })

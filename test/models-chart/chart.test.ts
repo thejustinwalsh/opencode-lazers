@@ -15,11 +15,35 @@ import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-
 
 type DOMEntry = typeof import("./fixtures/dom-entry.ts")
 type RenderedOption = {
+  grid?: Array<{ left?: number; right?: number; top?: number; bottom?: number }>
   textStyle?: { fontFamily?: string }
-  xAxis?: Array<{ axisLabel?: { fontFamily?: string } }>
+  xAxis?: Array<{
+    name?: string
+    splitNumber?: number
+    axisLabel?: { fontFamily?: string; fontSize?: number; hideOverlap?: boolean }
+  }>
+  yAxis?: Array<{
+    name?: string
+    splitNumber?: number
+    axisLabel?: {
+      fontFamily?: string
+      fontSize?: number
+      hideOverlap?: boolean
+      formatter?: (value: number) => string
+    }
+  }>
   series?: Array<{
     id?: string
-    data?: Array<{ value?: number[]; configurationID?: string; symbolSize?: number } | number[]>
+    data?: Array<
+      | {
+          value?: number[]
+          configurationID?: string
+          symbolSize?: number
+          markKind?: string
+          label?: { show?: boolean }
+        }
+      | number[]
+    >
     smooth?: boolean
   }>
 }
@@ -487,6 +511,7 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
     "exact route openai / luna-1 · max",
   )
+  expect(buttonFor(exact)?.getAttribute("title")).toContain("1 accepted task · OpenRouter")
   buttonFor(exact)?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
   expect(selections).toEqual([exact])
 
@@ -571,6 +596,7 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   dom.document.body.append(container)
   const scalar = reference("reference:scalar", "exact", 12_000)
   const conditional = reference("reference:conditional", "conditional", 18_000)
+  conditional.label = "GPT-6 Luna · OpenAI"
   const subtotal = reference("reference:subtotal", "partial", 24_000)
   const subtotalRange = reference("reference:subtotal-range", "partial", 30_000)
   subtotalRange.estimate = ModelDecisionReferenceEstimateSchema.parse({
@@ -646,16 +672,13 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(host.getAttribute("aria-label")).toContain("conditional range")
   expect(host.getAttribute("aria-label")).toContain("remainder unknown")
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Scalar reference",
+    "OpenRouter reference",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
     "Conditional range",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Priced subtotal · total unknown",
-  )
-  expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).toContain(
-    "Priced subtotal range · total unknown",
+    "Priced portion only",
   )
   expect(container.querySelector("[aria-label='Chart mark legend']")?.textContent).not.toContain(
     "Canonical actual-cohort",
@@ -677,11 +700,25 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   expect(conditionalButton.tabIndex).toBe(0)
   expect(conditionalButton.getAttribute("aria-pressed")).toBe("false")
   expect(conditionalButton.getAttribute("aria-label")).toContain("OpenRouter conditional range")
+  expect(conditionalButton.getAttribute("title")).toContain("GPT-6 Luna")
+  expect(conditionalButton.getAttribute("title")).toContain("3 accepted tasks · conditional range")
   conditionalButton.focus()
   expect((dom.document.activeElement as unknown) === (conditionalButton as unknown)).toBe(true)
   conditionalButton.click()
   expect(selections).toEqual([conditional.configurationID])
   await until(() => buttonFor(conditional.configurationID).getAttribute("aria-pressed") === "true")
+  const selectedRangeLabels = () =>
+    Array.from(host.querySelectorAll("svg text")).some((label) =>
+      label.textContent?.includes("GPT-6 Luna"),
+    )
+  await until(() => selectedRangeLabels())
+  expect(
+    (chart.getOption() as unknown as RenderedOption).series
+      ?.find((entry) => entry.id === "selected-identities")
+      ?.data?.some(
+        (datum) => !Array.isArray(datum) && datum.configurationID === conditional.configurationID,
+      ),
+  ).toBe(true)
   expect(buttonFor(missingCoordinate.configurationID).getAttribute("aria-label")).toContain(
     "Not plotted",
   )
@@ -706,6 +743,8 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
   chart.dispatchAction({ type: "showTip", seriesIndex: scalarSeries, dataIndex: 0 })
   await until(() => visibleTooltip("scalar reference") !== undefined)
   expect(visibleTooltip("scalar reference")?.textContent).toContain("≈$1.23e-11 / accepted task")
+  expect(visibleTooltip("scalar reference")?.textContent).toContain("3 accepted tasks")
+  expect(visibleTooltip("scalar reference")?.textContent).toContain("OpenRouter")
   expect(visibleTooltip("scalar reference")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
   const rangeSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-conditional-ranges",
@@ -719,17 +758,107 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
     (entry) => entry.id === "openrouter-reference-subtotals",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: subtotalSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("priced subtotal") !== undefined)
+  await until(() => visibleTooltip("priced portion") !== undefined)
   expect(visibleTooltip("priced portion")?.textContent).toContain("total unknown")
+  expect(visibleTooltip("priced portion")?.textContent).toContain("3 accepted tasks")
   const subtotalRangeSeries = rendered.series?.findIndex(
     (entry) => entry.id === "openrouter-subtotal-ranges",
   )
   chart.dispatchAction({ type: "showTip", seriesIndex: subtotalRangeSeries, dataIndex: 0 })
-  await until(() => visibleTooltip("priced subtotal range") !== undefined)
-  expect(visibleTooltip("priced subtotal range")?.textContent).toContain(
+  await until(() => visibleTooltip("priced portion range") !== undefined)
+  expect(visibleTooltip("priced portion range")?.textContent).toContain(
     "≈$0.00002–$0.00005 priced portion / accepted task",
   )
-  expect(visibleTooltip("priced subtotal range")?.textContent).toContain("total unknown")
+  expect(visibleTooltip("priced portion range")?.textContent).toContain("total unknown")
+})
+
+test("rendered ECharts resize recomputes axis spacing for 330–450px and wide hosts at larger fonts", async () => {
+  const host = dom.document.createElement("div")
+  host.style.fontSize = "20px"
+  dom.document.body.append(host)
+  size(host, 330, 190)
+  const crowdedPoints = [
+    {
+      ...points[0]!,
+      configurationID: "crowded:selected-luna",
+      label: "GPT-6 Luna · OpenAI",
+      tokensPerAcceptedTask: 20_000,
+      currentMarketUSDPerAcceptedTask: 0.1,
+    },
+    {
+      ...points[1]!,
+      configurationID: "crowded:nearby-luna",
+      label: "GPT-6 Luna · OpenRouter",
+      tokensPerAcceptedTask: 20_001,
+      currentMarketUSDPerAcceptedTask: 0.100001,
+    },
+  ]
+  const selections: string[] = []
+  const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, (id) =>
+    selections.push(id),
+  )
+  const observer = TestResizeObserver.instances.at(-1)!
+  const referenceID = "global:reference-range"
+  try {
+    adapter.update(
+      {
+        points: crowdedPoints,
+        references: [reference(referenceID, "conditional", 20_000)],
+        frontierConfigurationIDs: [crowdedPoints[0]!.configurationID],
+        selectedConfigurationID: crowdedPoints[0]!.configurationID,
+      },
+      theme,
+    )
+    const svg = () =>
+      host.querySelector("svg") as unknown as {
+        getAttribute: (name: string) => string | null
+        textContent: string | null
+      } | null
+    const option = () => adapter.chart.getOption() as unknown as RenderedOption
+    const tickLabels = () =>
+      Array.from(host.querySelectorAll("svg text")).map((label) => label.textContent?.trim() ?? "")
+    expect(svg()?.getAttribute("width")).toBe("330")
+    expect(svg()?.getAttribute("height")).toBe("190")
+    expect(svg()?.textContent).toContain("Tokens / accepted task")
+    expect(svg()?.textContent).toContain("USD / task")
+    expect(svg()?.textContent).toContain("GPT-6 Lun")
+    const narrow = option()
+    expect(narrow.xAxis?.[0]?.splitNumber).toBe(2)
+    expect(narrow.yAxis?.[0]?.splitNumber).toBe(2)
+    expect(narrow.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
+    expect(narrow.yAxis?.[0]?.axisLabel?.fontSize).toBe(20)
+    expect(narrow.grid?.[0]?.left).toBeGreaterThan(72)
+    expect(narrow.yAxis?.[0]?.axisLabel?.hideOverlap).toBe(true)
+    expect(narrow.yAxis?.[0]?.axisLabel?.formatter?.(0.0000000000123)).toBe("$1.23e-11")
+    expect(narrow.yAxis?.[0]?.name).toBe("USD / task")
+    expect(tickLabels().filter((label) => label.startsWith("$")).length).toBeGreaterThanOrEqual(2)
+
+    size(host, 450, 230)
+    observer.trigger()
+    await until(() => svg()?.getAttribute("width") === "450")
+    const medium = option()
+    expect(medium.xAxis?.[0]?.splitNumber).toBeGreaterThan(narrow.xAxis?.[0]?.splitNumber ?? 0)
+    expect(svg()?.textContent).toContain("Tokens / accepted task")
+
+    size(host, 960, 320)
+    observer.trigger()
+    await until(() => svg()?.getAttribute("width") === "960")
+    const wide = option()
+    expect(wide.xAxis?.[0]?.splitNumber).toBeGreaterThan(medium.xAxis?.[0]?.splitNumber ?? 0)
+    expect(wide.yAxis?.[0]?.splitNumber).toBeGreaterThan(narrow.yAxis?.[0]?.splitNumber ?? 0)
+    expect(wide.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
+    expect(wide.yAxis?.[0]?.name).toBe("USD / accepted task")
+    expect(svg()?.getAttribute("height")).toBe("320")
+    expect(tickLabels().filter((label) => label.startsWith("$")).length).toBeGreaterThanOrEqual(2)
+
+    const chartEvents = adapter.chart as unknown as {
+      trigger: (event: string, payload: unknown) => void
+    }
+    chartEvents.trigger("click", { data: { configurationID: referenceID } })
+    expect(selections).toEqual([referenceID])
+  } finally {
+    adapter.dispose()
+  }
 })
 
 test("real ECharts SVG uses literal observations and only straight segments between frontier points", async () => {
@@ -900,6 +1029,7 @@ test("adapter owns one instance and completely disposes theme, resize and listen
     const observer = TestResizeObserver.instances.at(-1)!
     size(host, 700, 380)
     observer.trigger()
+    expect(setOptions).toBe(3)
     expect(resizes).toBe(3)
     size(host, 0, 0)
     expect(adapter.resize()).toBe(false)
@@ -913,7 +1043,7 @@ test("adapter owns one instance and completely disposes theme, resize and listen
     expect(ownedChart.isDisposed()).toBe(true)
     expect(adapter.update({ points, frontierConfigurationIDs: [] }, nativeTheme)).toBe(false)
     expect(adapter.resize()).toBe(false)
-    expect(setOptions).toBe(2)
+    expect(setOptions).toBe(3)
     expect(resizes).toBe(3)
     adapter.dispose()
     expect(observer.disconnected).toBe(1)

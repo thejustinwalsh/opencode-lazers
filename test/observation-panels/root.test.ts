@@ -1703,6 +1703,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ".lazers-models-sources-details",
     )!
     expect(sourceDetails.open).toBe(false)
+    expect(sourceDetails.querySelector("summary")?.textContent).toBe(
+      "Data sources and refresh history",
+    )
+    expect(sourceDetails.querySelector("summary")?.textContent).not.toContain("snapshots available")
     expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
       sourceDetails,
     )
@@ -1716,16 +1720,21 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(sourceDetails.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-    expect(
-      comparePanel
-        .querySelector(".lazers-models-comparison-chart [role=img]")
-        ?.getAttribute("aria-label"),
-    ).toContain("exact route openai / gpt-6 · high")
+    const chartImage = comparePanel.querySelector<HTMLElement>(
+      ".lazers-models-comparison-chart [role=img]",
+    )!
+    expect(chartImage.getAttribute("aria-label")).toBe(
+      "Actual cohort tokens, canonical current-market observations, and OpenRouter reference costs per accepted task",
+    )
+    const chartAccessibleDescription = containerA.querySelector<HTMLElement>(
+      `#${chartImage.getAttribute("aria-describedby")}`,
+    )!
+    expect(chartAccessibleDescription.textContent).toContain("exact route openai / gpt-6 · high")
     const chartHost = comparePanel.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
-    let chartWidth = 360
-    const chartHeight = 280
+    let chartWidth = 330
+    let chartHeight = 190
     Object.defineProperty(chartHost, "clientWidth", { configurable: true, get: () => chartWidth })
     Object.defineProperty(chartHost, "clientHeight", { configurable: true, get: () => chartHeight })
     Object.defineProperty(chartHost, "getBoundingClientRect", {
@@ -1740,6 +1749,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           height: chartHeight,
         }) as DOMRect,
     })
+    chartHost.style.fontSize = "20px"
     dom.window.dispatchEvent(new dom.Event("resize"))
     const chartSVG = () => chartHost.querySelector<SVGSVGElement>("svg")
     const chartSVGMarkup = () => chartSVG()?.outerHTML ?? ""
@@ -1750,8 +1760,24 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       return chartSVGMarkup()
     }
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
-    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(360)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(330)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    const chartOptions = () =>
+      chart.getOption() as unknown as {
+        grid?: Array<{ left?: number }>
+        xAxis?: Array<{ splitNumber?: number; axisLabel?: { fontSize?: number } }>
+        yAxis?: Array<{
+          name?: string
+          splitNumber?: number
+          axisLabel?: { fontSize?: number }
+        }>
+      }
+    const narrowOptions = chartOptions()
+    expect(narrowOptions.xAxis?.[0]?.splitNumber).toBe(2)
+    expect(narrowOptions.yAxis?.[0]?.splitNumber).toBe(2)
+    expect(narrowOptions.xAxis?.[0]?.axisLabel?.fontSize).toBe(20)
+    expect(narrowOptions.grid?.[0]?.left).toBeGreaterThan(72)
+    expect(narrowOptions.yAxis?.[0]?.name).toBe("USD / task")
     const initialSVGGeometry = await settleChart()
     appearanceStore.update((draft: { mode: "dark" | "light"; font: string }) => {
       draft.font = "Test Mono"
@@ -1765,11 +1791,28 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     })
     await until(() => chartSVGMarkup() !== themedSVGGeometry)
     await settleChart()
+    chartWidth = 450
+    chartHeight = 230
+    dom.window.dispatchEvent(new dom.Event("resize"))
+    await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(450)
+    expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    expect(chartOptions().xAxis?.[0]?.splitNumber).toBeGreaterThan(
+      narrowOptions.xAxis?.[0]?.splitNumber ?? 0,
+    )
     chartWidth = 960
+    chartHeight = 320
     dom.window.dispatchEvent(new dom.Event("resize"))
     await until(() => Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0") === chartWidth)
     expect(Number.parseFloat(chartSVG()?.getAttribute("width") ?? "0")).toBe(960)
     expect(Number.parseFloat(chartSVG()?.getAttribute("height") ?? "0")).toBe(chartHeight)
+    expect(chartOptions().xAxis?.[0]?.splitNumber).toBeGreaterThan(
+      narrowOptions.xAxis?.[0]?.splitNumber ?? 0,
+    )
+    expect(chartOptions().yAxis?.[0]?.splitNumber).toBeGreaterThan(
+      narrowOptions.yAxis?.[0]?.splitNumber ?? 0,
+    )
+    expect(chartOptions().yAxis?.[0]?.name).toBe("USD / accepted task")
     await settleChart()
     const initialAlternative = comparePanel.querySelector<HTMLDetailsElement>(
       ".lazers-models-comparison-chart-data",
@@ -1803,11 +1846,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const inspectorTools = containerA.querySelector<HTMLElement>(".lazers-models-inspector-tools")!
     expect(inspectorTools.closest(".lazers-models-inspector")).not.toBeNull()
     expect(inspectorTools.querySelectorAll("button")).toHaveLength(2)
-    expect(inspectorTools.textContent).toContain("Provider ·")
+    expect(inspectorTools.textContent).toContain("Model ·")
     expect(inspectorTools.textContent).toContain("Effort ·")
-    const exactRoute = containerA.querySelector<HTMLElement>(".lazers-models-inspector-route")!
-    expect(exactRoute.textContent).toContain("openai / gpt-6")
-    expect(exactRoute.title).toBe(exactRoute.textContent)
+    expect(inspectorTools.getAttribute("role")).toBe("group")
+    expect(inspectorTools.textContent).not.toContain("openai / gpt-6")
+    expect(containerA.querySelector(".lazers-models-inspector-route")).toBeNull()
     expect(
       containerA.querySelector(".lazers-models-inspector-heading h2")?.getAttribute("aria-label"),
     ).toContain("Exact route")
@@ -1982,10 +2025,10 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ?.getAttribute("aria-label"),
     ).toContain("Not plotted")
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Observed cohort",
+      "Observed",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
-      "Scalar reference",
+      "OpenRouter reference",
     )
     expect(containerA.querySelector('[aria-label="Chart mark legend"]')?.textContent).toContain(
       "Conditional range",
@@ -2433,7 +2476,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     const providerTrigger = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+    ].find((button) => button.textContent?.includes("Model"))!
     providerTrigger.click()
     menuItemWithText(containerA, "qwen / qwen-7")?.click()
     await until(
@@ -2443,7 +2486,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     const zeroProviderTrigger = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+    ].find((button) => button.textContent?.includes("Model"))!
     zeroProviderTrigger.click()
     menuItemWithText(containerA, "anthropic / sonnet")?.click()
     await until(
@@ -2463,7 +2506,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     const crossRouteProviderTrigger = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+    ].find((button) => button.textContent?.includes("Model"))!
     crossRouteProviderTrigger.click()
     const crossRouteOption = menuItemWithText(containerA, "provider-b / model-b")
     if (!crossRouteOption) throw new Error("Missing the B50 exact route option")
@@ -2578,7 +2621,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
     expect(
       containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent,
-    ).toContain("Priced subtotal · total unknown")
+    ).toContain("Priced portion only")
     const unknownPriceName = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
     )!
@@ -2844,7 +2887,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         button.textContent?.includes("Task kind ·"),
       ),
     ).toBe(true)
-    expect(containerA.querySelector(".lazers-models-filter-status")).not.toBeNull()
+    expect(containerA.querySelector(".lazers-models-filter-status")).toBeNull()
     expect(containerA.querySelector("[data-decision-status]")).not.toBeNull()
     expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
     expect(containerA.textContent).not.toContain(
@@ -2900,7 +2943,25 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     const catalogChartHost = containerA.querySelector<HTMLDivElement>(
       ".lazers-models-comparison-chart > div[role=img]",
     )!
+    await until(() => host.getComparisonChartInstance(catalogChartHost) !== undefined)
     const catalogChart = host.getComparisonChartInstance(catalogChartHost)!
+    Object.defineProperty(catalogChartHost, "clientWidth", {
+      configurable: true,
+      get: () => chartWidth,
+    })
+    Object.defineProperty(catalogChartHost, "clientHeight", {
+      configurable: true,
+      get: () => chartHeight,
+    })
+    dom.window.dispatchEvent(new dom.Event("resize"))
+    await until(
+      () =>
+        (
+          catalogChart.getOption() as unknown as {
+            series?: unknown[]
+          }
+        )?.series !== undefined,
+    )
     const renderedCatalogSeries = (
       catalogChart.getOption() as unknown as {
         series: Array<{
@@ -3062,7 +3123,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     const cachedNameProvider = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
-    ].find((button) => button.textContent?.includes("Provider"))!
+    ].find((button) => button.textContent?.includes("Model"))!
     cachedNameProvider.click()
     const qwenOption = menuItemWithText(containerA, "qwen / qwen-7")
     if (!qwenOption) throw new Error("Missing exact qwen route in the provider selector")
@@ -3083,8 +3144,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     restoreHighSelection.click()
     await until(
-      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6",
+      () =>
+        containerA.querySelector(".lazers-models-inspector h2")?.textContent?.startsWith("GPT-6") ??
+        false,
     )
+    expect(
+      containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
+    ).toContain("Exact route openai / gpt-6 · high")
     assignmentTab.click()
     await until(() => containerA.querySelector(".lazers-models-assignment-editor") !== null)
     const assignmentLayers = () =>

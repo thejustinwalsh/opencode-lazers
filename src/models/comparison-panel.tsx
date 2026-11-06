@@ -36,7 +36,6 @@ import {
   formatDate,
   currentMarketEstimateSummary,
   modelDisplayLabel,
-  modelDisplayName,
   numericValue,
   recordReferenceLabel,
   routeLabel,
@@ -161,7 +160,7 @@ function decisionStatusSummary(status: ModelComparisonPanelData["decisionStatus"
     case "ready":
       return "Current"
     case "partial":
-      return "Coverage gaps"
+      return "Partial"
     case "stale":
       return "Stale evidence"
     case "unknown":
@@ -996,14 +995,30 @@ function ModelPanel(
         candidate.identity.variant === configuration.route.variant,
     )
   }
+  const decisionDisplayRoutes = () => [
+    ...availableConfigurations().map((configuration) => ({
+      ...configuration.route,
+      variant: null,
+    })),
+    ...(visible()?.decisionOverview?.graph.referenceEstimates ?? []).map((reference) => ({
+      ...reference.estimate.route,
+      variant: null,
+    })),
+  ]
   const decisionModelFullName = (configuration: ModelDecisionConfiguration) =>
-    modelDisplayName(
+    modelDisplayLabel(
       configuration.route,
+      decisionDisplayRoutes(),
       visible()?.candidates ?? [],
       visible()?.catalog?.options ?? [],
     )
   const decisionModelLabel = (configuration: ModelDecisionConfiguration) =>
     boundedModelLabel(decisionModelFullName(configuration))
+  const decisionModelChoiceLabel = (configuration: ModelDecisionConfiguration) => {
+    const friendly = decisionModelFullName(configuration)
+    const exactRoute = routeLabel(configuration.route)
+    return friendly.includes(exactRoute) ? friendly : `${friendly} · ${exactRoute}`
+  }
   const selectedTask = () => visible()?.task
   const selectedDecisionConfiguration = () => {
     const current = visible()
@@ -1637,11 +1652,6 @@ function ModelPanel(
       return { message: "One or more source snapshots are unavailable.", role: "status" as const }
     return undefined
   }
-  const sourceSnapshotSummary = () => {
-    const sources = visible()?.comparison?.sources
-    if (!sources) return "Loading source coverage"
-    return `${sources.filter((source) => source.snapshot).length} of ${sources.length} snapshots available`
-  }
   const effortDetailsSummary = () => {
     const basis = visible()?.effortBasis
     if (!basis) return "Recorded task effort"
@@ -1827,9 +1837,6 @@ function ModelPanel(
                 })),
               ]}
             />
-            <span class="lazers-models-filter-status">
-              {visible()?.decisionContext?.classification.status ?? "Classification loading"}
-            </span>
             <span
               class="lazers-models-task-select"
               role="group"
@@ -1907,7 +1914,7 @@ function ModelPanel(
         <div class="lazers-models-comparison-content">
           <section class="lazers-models-compare" aria-label="Model comparison">
             <details class="lazers-models-sources-details">
-              <summary>Source snapshots · {sourceSnapshotSummary()}</summary>
+              <summary>Data sources and refresh history</summary>
               <div class="lazers-models-sources" aria-label="Source snapshot coverage">
                 <For each={visible()?.comparison?.sources ?? []}>
                   {(source) => (
@@ -2140,23 +2147,18 @@ function ModelPanel(
                       >
                         {decisionModelLabel(configuration())}
                       </h2>
-                      <p
-                        class="lazers-models-inspector-route"
-                        title={routeLabel(configuration().route)}
-                      >
-                        {routeLabel(configuration().route)}
-                      </p>
                       <div
                         class="lazers-models-decision-tools lazers-models-inspector-tools"
+                        role="group"
                         aria-label="Exact route selection"
                       >
                         <Ui.Menu
-                          label={`Provider · ${selectedDecisionConfiguration() ? `${selectedDecisionConfiguration()!.route.providerID} / ${selectedDecisionConfiguration()!.route.modelID}` : "Select route"}`}
+                          label={`Model · ${selectedDecisionConfiguration() ? decisionModelLabel(selectedDecisionConfiguration()!) : "Select route"}`}
                           trigger="button"
                           icon="chevron-down"
                           disabled={!providerChoices().length}
                           items={providerChoices().map((choice) => ({
-                            label: `${choice.route.providerID} / ${choice.route.modelID}`,
+                            label: decisionModelChoiceLabel(choice),
                             onSelect: () => selectDecisionGroup(choice.groupID),
                           }))}
                         />
