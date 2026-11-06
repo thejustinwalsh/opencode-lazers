@@ -295,6 +295,79 @@ test("plan control epochs change on owner/cancellation controls but ignore task 
   expect(f.store.planControlEpoch(plan.planID)).toBeGreaterThan(returned)
 })
 
+test("owner-transfer evidence is exact, plan-scoped and time-bounded", () => {
+  const f = fixture("plan-owner-transfer-evidence")
+  const plan = f.store.submit(f.input, "owner")
+  const sourceTask = f.store.repository.get(f.input.nodes[0]!.taskID)!
+  const otherTask = f.store.repository.insert({
+    ...structuredClone(sourceTask),
+    id: crypto.randomUUID(),
+  })
+  const otherPlan = f.store.submit(
+    {
+      ...f.input,
+      requestID: "other-owner-transfer-plan",
+      nodes: [{ taskID: otherTask.id, revision: 1 }],
+      integrationOrder: [otherTask.id],
+    },
+    "owner",
+  )
+  const taskID = f.input.nodes[0]!.taskID
+  const predecessor = f.store.plan(plan.planID)!.owner
+  const successor = "successor"
+
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
+    from: "unrelated-predecessor",
+    to: successor,
+  })
+  f.store.record(plan.planID, taskID, "OWNER_REASSIGNED", {
+    from: predecessor,
+    to: successor,
+  })
+  f.store.record(otherPlan.planID, null, "OWNER_REASSIGNED", {
+    from: predecessor,
+    to: successor,
+  })
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, predecessor, successor, 0)).toBe(false)
+
+  f.store.record(plan.planID, null, "OWNER_CONTINUED", {
+    from: predecessor,
+    to: successor,
+    renewalID: "renewal-evidence",
+  })
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, predecessor, successor, 0)).toBe(true)
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, predecessor, successor, Date.now() + 1000)).toBe(
+    false,
+  )
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, successor, predecessor, 0)).toBe(false)
+})
+
+test("owner-transfer evidence follows an ordered same-plan continuation and reassignment path", () => {
+  const f = fixture("ordered-plan-owner-transfer-evidence")
+  const plan = f.store.submit(f.input, "owner")
+  const originalOwner = "original-owner"
+  const renewedOwner = "renewed-owner"
+  const successor = "current-owner"
+
+  // A later edge cannot prove a path before its predecessor has transferred.
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
+    from: renewedOwner,
+    to: successor,
+  })
+  f.store.record(plan.planID, null, "OWNER_CONTINUED", {
+    from: originalOwner,
+    to: renewedOwner,
+  })
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, originalOwner, successor, 0)).toBe(false)
+
+  f.store.record(plan.planID, null, "OWNER_REASSIGNED", {
+    from: renewedOwner,
+    to: successor,
+  })
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, originalOwner, successor, 0)).toBe(true)
+  expect(f.store.hasPlanOwnerTransfer(plan.planID, successor, originalOwner, 0)).toBe(false)
+})
+
 function seedSourceJournal(
   store: RunnerStore,
   planID: string,

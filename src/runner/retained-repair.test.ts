@@ -20,6 +20,7 @@ type FixtureOptions = {
   failRepair?: boolean
   ambiguousRepair?: boolean
   repairRace?: boolean
+  repairOwnerAdmissionRace?: boolean
 }
 
 function fixture(options: FixtureOptions = {}) {
@@ -156,6 +157,10 @@ function fixture(options: FixtureOptions = {}) {
             (candidate) => candidate.agent === "lazers-implementor",
           )
           if (worker) worker.turn = { inputID: "msg_foreign_race", state: "completed" }
+        }
+        if (options.repairOwnerAdmissionRace) {
+          store.updatePlanOwner(plan.planID, "owner", "owner-b")
+          store.updatePlanOwner(plan.planID, "owner-b", "owner")
         }
       }
       return Promise.resolve(structuredClone(sessions.get(id) ?? null))
@@ -473,6 +478,157 @@ test("explicit retained repair preserves accepted history and usage and re-verif
   expect(f.prompts).toHaveLength(2)
 })
 
+test.each(["reassignment", "renewal"] as const)(
+  "retained repair preserves the original worker parent after supported %s",
+  async (transfer) => {
+    const f = fixture()
+    await accept(f)
+    const prior = f.store.attempts(f.planID)[0]!
+    const worker = f.sessions.get(prior.session_id)!
+    const predecessor = f.sessions.get("owner")!
+    const successor = { ...structuredClone(predecessor), id: "owner-b" }
+    f.sessions.set(successor.id, successor)
+
+    if (transfer === "reassignment") {
+      await f.runtime.command(
+        {
+          requestID: "reassign-before-retained-repair",
+          planID: f.planID,
+          expectedVersion: f.store.plan(f.planID)!.version,
+          action: "reassign",
+          targetSessionID: successor.id,
+          reason: "Transfer retained repair authority without renewing the Architect.",
+        },
+        predecessor.id,
+      )
+      expect(predecessor.archived).toBe(false)
+      expect(
+        f.store.atomic(
+          (db) =>
+            db
+              .query<{ count: number }, [string]>(
+                "SELECT COUNT(*) AS count FROM runner_architect_renewal_plans WHERE plan_id=?",
+              )
+              .get(f.planID)!.count,
+        ),
+      ).toBe(0)
+    } else {
+      // Renewal records the same plan-local OWNER_CONTINUED transfer while
+      // leaving the accepted worker's original parentID untouched.
+      f.store.atomic((db) =>
+        db
+          .query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=? AND owner=?")
+          .run(successor.id, f.planID, predecessor.id),
+      )
+      f.store.record(f.planID, null, "OWNER_CONTINUED", {
+        from: predecessor.id,
+        to: successor.id,
+        renewalID: "renewal-retained-repair-test",
+      })
+      expect(predecessor.archived).toBe(false)
+    }
+
+    expect(f.store.plan(f.planID)?.owner).toBe(successor.id)
+    expect(worker.parentID).toBe(predecessor.id)
+    const command = retainedRepairCommand(f)
+    const requested = await f.runtime.command(command, successor.id)
+    expect(requested).toMatchObject({
+      status: "retained-repair-requested",
+      attemptID: prior.id,
+      artifact: prior.artifact,
+    })
+    expect(await f.runtime.command(command, successor.id)).toEqual(requested)
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.planID)[0]).toMatchObject({
+      id: prior.id,
+      session_id: prior.session_id,
+      state: "preparing",
+    })
+    expect(worker.parentID).toBe(predecessor.id)
+
+    await f.runtime.tick()
+    expect(f.prompts).toHaveLength(2)
+    expect(f.prompts[1]?.sessionID).toBe(prior.session_id)
+    await f.runtime.tick()
+    await f.runtime.tick()
+    expect(f.store.plan(f.planID)?.state).toBe("accepted")
+    expect(f.store.attempts(f.planID)).toHaveLength(1)
+    expect(f.store.attempts(f.planID)[0]).toMatchObject({ id: prior.id, state: "accepted" })
+    expect(f.prompts).toHaveLength(2)
+    expect(worker.parentID).toBe(predecessor.id)
+  },
+)
+
+test("retained repair follows multiple continuations before reassignment without reparenting the worker", async () => {
+  const f = fixture()
+  await accept(f)
+  const prior = f.store.attempts(f.planID)[0]!
+  const worker = f.sessions.get(prior.session_id)!
+  const originalParent = worker.parentID
+  let ownerID = "owner"
+
+  for (const nextOwnerID of ["renewed-owner-1", "renewed-owner-2", "renewed-owner-3"]) {
+    f.sessions.set(nextOwnerID, {
+      ...structuredClone(f.sessions.get(ownerID)!),
+      id: nextOwnerID,
+    })
+    expect(f.store.updatePlanOwner(f.planID, ownerID, nextOwnerID)).toBe(true)
+    ownerID = nextOwnerID
+  }
+
+  const currentOwner = { ...structuredClone(f.sessions.get(ownerID)!), id: "current-owner" }
+  f.sessions.set(currentOwner.id, currentOwner)
+  await f.runtime.command(
+    {
+      requestID: "reassign-after-retained-repair-renewals",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "reassign",
+      targetSessionID: currentOwner.id,
+      reason: "Reassign retained repair authority after successive supported continuations.",
+    },
+    ownerID,
+  )
+
+  expect(f.store.plan(f.planID)?.owner).toBe(currentOwner.id)
+  expect(f.sessions.get("owner")?.archived).toBe(false)
+  expect(worker.parentID).toBe(originalParent)
+  expect(originalParent).toBe("owner")
+
+  const command = retainedRepairCommand(f)
+  const requested = await f.runtime.command(command, currentOwner.id)
+  expect(requested).toMatchObject({
+    status: "retained-repair-requested",
+    taskID: prior.task_id,
+    attemptID: prior.id,
+    artifact: prior.artifact,
+  })
+  expect(await f.runtime.command(command, currentOwner.id)).toEqual(requested)
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: prior.id,
+    session_id: prior.session_id,
+    state: "preparing",
+  })
+  expect(worker.parentID).toBe(originalParent)
+  expect(f.created).toHaveLength(1)
+
+  await f.runtime.tick()
+  expect(f.prompts).toHaveLength(2)
+  expect(f.prompts[1]?.sessionID).toBe(prior.session_id)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("accepted")
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: prior.id,
+    session_id: prior.session_id,
+    state: "accepted",
+  })
+  expect(worker.parentID).toBe(originalParent)
+  expect(f.prompts).toHaveLength(2)
+})
+
 test("A to B to A owner reassignment fences the deferred retained-repair prompt", async () => {
   const f = fixture()
   await accept(f)
@@ -519,6 +675,22 @@ test("A to B to A owner reassignment fences the deferred retained-repair prompt"
   expect(f.prompts).toHaveLength(1)
   expect(f.store.effects(f.planID).filter((effect) => effect.kind === "prompt")).toHaveLength(1)
   expect(repair).toMatchObject({ status: "retained-repair-requested", attemptID: prior.id })
+})
+
+test("A to B to A during retained-repair admission rejects before reservation", async () => {
+  const f = fixture({ repairOwnerAdmissionRace: true })
+  await accept(f)
+  const beforeNode = f.store.nodes(f.planID)[0]
+  const beforeAttempt = f.store.attempts(f.planID)[0]
+
+  await expect(f.runtime.command(retainedRepairCommand(f), "owner")).rejects.toThrow()
+
+  expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", owner: "owner" })
+  expect(f.store.nodes(f.planID)[0]).toEqual(beforeNode)
+  expect(f.store.attempts(f.planID)[0]).toEqual(beforeAttempt)
+  expect(f.store.latestRetainedRepair(f.planID, f.tasks[0]!.id)).toBeUndefined()
+  expect(f.store.effects(f.planID).filter((effect) => effect.kind === "prompt")).toHaveLength(1)
+  expect(f.prompts).toHaveLength(1)
 })
 
 test("repeated artifact hashes require current-generation human evidence after repair", async () => {
@@ -676,6 +848,7 @@ type RepairRejectionCase =
   | "wrong-artifact"
   | "changed-route"
   | "changed-identity"
+  | "unrelated-transfer"
   | "busy"
   | "pending-input"
   | "pending-permission"
@@ -703,6 +876,13 @@ async function verifyRepairRejection(rejected: RepairRejectionCase) {
     }
   if (rejected === "changed-identity")
     f.sessions.get(beforeAttempt!.session_id)!.parentID = "foreign-owner"
+  if (rejected === "unrelated-transfer") {
+    f.sessions.get(beforeAttempt!.session_id)!.parentID = "predecessor"
+    f.store.record(f.planID, null, "OWNER_REASSIGNED", {
+      from: "unrelated-predecessor",
+      to: "owner",
+    })
+  }
   if (rejected === "wrong-artifact") command.artifact = "c".repeat(40)
   if (rejected === "uncertain-effect") {
     f.store.atomic((db) =>
@@ -727,8 +907,13 @@ test("stale caller/version, wrong artifact and dirty workspace reject without li
     await verifyRepairRejection(rejected)
 })
 
-test("wrong artifacts and changed routes reject without lifecycle changes", async () => {
-  for (const rejected of ["wrong-artifact", "changed-route", "changed-identity"] as const)
+test("wrong artifacts, changed routes and unrelated transfers reject without lifecycle changes", async () => {
+  for (const rejected of [
+    "wrong-artifact",
+    "changed-route",
+    "changed-identity",
+    "unrelated-transfer",
+  ] as const)
     await verifyRepairRejection(rejected)
 })
 

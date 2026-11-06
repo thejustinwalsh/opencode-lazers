@@ -1001,7 +1001,14 @@ export class TaskRuntime {
       worker.agent !== "lazers-implementor" ||
       worker.archived ||
       worker.metadata?.lazersAttemptID !== attempt.id ||
-      worker.parentID !== plan.owner ||
+      (worker.parentID !== plan.owner &&
+        (typeof worker.parentID !== "string" ||
+          !this.store.hasPlanOwnerTransfer(
+            plan.id,
+            worker.parentID,
+            plan.owner,
+            attempt.started_at,
+          ))) ||
       !this.sameModel(worker.model, model)
     )
       return "Retained repair worker identity, location, or route changed"
