@@ -20,6 +20,8 @@ import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import { projectTaskValuation } from "./valuation.ts"
 import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import capturedCatalogs from "../../test/models-current-price-index/fixtures/captured-catalogs.json" with { type: "json" }
+import capturedIdentity from "../../test/models-identity/fixtures/captured-20261103.json" with { type: "json" }
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 
 const completeUsage = (input: number) => ({
@@ -318,6 +320,47 @@ function saveLunaEndpointSnapshot(
     records: [record],
   })
   return generation
+}
+
+function saveIdentityCatalogSnapshots(store: ModelEvidenceStore, projectDirectory: string) {
+  const native = ModelEvidenceSnapshotSchema.parse(capturedIdentity.native.snapshot)
+  const catalog = ModelEvidenceSnapshotSchema.parse(capturedIdentity.openrouter.snapshot)
+  if (native.source !== "native-catalog" || catalog.source !== "openrouter-models")
+    throw new Error("Expected captured native and OpenRouter identity sources")
+  const generations = store.beginRefresh()
+  store.saveSnapshot({
+    ...native,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: generations["native-catalog"],
+    retrievedAt: new Date(Date.now() + generations["native-catalog"]).toISOString(),
+  })
+  store.saveSnapshot({
+    ...catalog,
+    snapshotID: crypto.randomUUID(),
+    projectDirectory,
+    generation: generations["openrouter-models"],
+    retrievedAt: new Date(Date.now() + generations["openrouter-models"]).toISOString(),
+  })
+}
+
+function readIdentitySources(
+  path: string,
+  projectDirectory: string,
+): {
+  identityCatalogSource: ModelEvidenceComparisonSourceRead | undefined
+  identityNativeSource: ModelEvidenceComparisonSourceRead | undefined
+} {
+  const store = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    const sources = store.readComparisonSources()
+    return {
+      identityCatalogSource: sources.find((source) => source.source === "openrouter-models"),
+      identityNativeSource: sources.find((source) => source.source === "native-catalog"),
+    }
+  } finally {
+    store.close()
+  }
 }
 
 function makePriceIndex(
@@ -1244,7 +1287,7 @@ test("an ordered-source quote refresh reprices market efficiency without changin
 
 test("endpoint scenarios reuse one coherent capture, pin pages, and reprice without changing v2 valuation", async () => {
   const fixture = makeLedgerFixture()
-  const route = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
   rewriteAttemptFacts(fixture.path, fixture.projectID, fixture.attempts.failed.id, route)
   rewriteAttemptUsage(fixture.path, fixture.attempts.failed.id, 100, 1, 2)
   rewriteAttemptFacts(
@@ -1256,6 +1299,7 @@ test("endpoint scenarios reuse one coherent capture, pin pages, and reprice with
   )
 
   const endpointStore = new ModelEvidenceStore(fixture.path, fixture.projectDirectory)
+  saveIdentityCatalogSnapshots(endpointStore, fixture.projectDirectory)
   saveLunaEndpointSnapshot(endpointStore, fixture.projectDirectory, "0.0000001", "0.0000002")
   let captures = 0
   const reader = createModelDecisionReader({
@@ -1281,6 +1325,7 @@ test("endpoint scenarios reuse one coherent capture, pin pages, and reprice with
           fixture.projectDirectory,
           signal,
         ),
+        ...readIdentitySources(fixture.path, fixture.projectDirectory),
         freshness: "current",
       }
     },

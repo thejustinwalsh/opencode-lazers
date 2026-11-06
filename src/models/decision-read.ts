@@ -35,6 +35,7 @@ import type { ModelPriceSourceSettings } from "./price-source-settings.ts"
 import type { EndpointPricingRead } from "./endpoint-pricing.ts"
 import { calculateKnownUsageMarket } from "./market-range.ts"
 import type { KnownUsageMarket, KnownUsageMarketSession } from "./market-range.ts"
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
 import type {
   ObservationLedgerDecisionCapture,
@@ -43,7 +44,11 @@ import type {
   ReadOnlyObservationLedger,
 } from "./observation-ledger-read.ts"
 import { projectTaskValuation } from "./valuation.ts"
-import { modelConfigurationID } from "./model-identity.ts"
+import {
+  modelConfigurationID,
+  modelIdentityReference,
+  resolveModelIdentity,
+} from "./model-identity.ts"
 
 const MAX_SNAPSHOTS = 4
 const MAX_CURSOR_BYTES = 8192
@@ -58,6 +63,8 @@ export type ModelDecisionPriceState = {
   settings: ModelPriceSourceSettings
   index: CurrentPriceIndex
   endpointPricing?: EndpointPricingRead
+  identityCatalogSource?: ModelEvidenceComparisonSourceRead
+  identityNativeSource?: ModelEvidenceComparisonSourceRead
   freshness: "current" | "stale" | "unknown"
   note?: string
 }
@@ -173,6 +180,17 @@ function endpointPricingIdentity(endpointPricing: EndpointPricingRead | undefine
       httpStatus: scenario.httpStatus,
       snapshotGeneration: scenario.snapshot?.generation ?? null,
     })),
+  }
+}
+
+function modelIdentitySourceIdentity(source: ModelEvidenceComparisonSourceRead | undefined) {
+  if (!source) return null
+  return {
+    source: source.source,
+    storage: source.storage,
+    snapshotState: source.snapshotState,
+    snapshotID: source.snapshotID,
+    snapshotGeneration: source.snapshot?.generation ?? null,
   }
 }
 
@@ -341,6 +359,33 @@ function routeOfMarketSession(session: TaskValuation["marketEquivalentCost"]["se
   return session.routeAllocation.status === "single-observed-route"
     ? exactRoute(session.routeAllocation.route)
     : null
+}
+
+const unavailableIdentityCatalogSource: ModelEvidenceComparisonSourceRead = {
+  source: "openrouter-models",
+  storage: "missing-both-tables",
+  snapshotState: "none",
+  snapshotID: null,
+  refresh: null,
+  snapshot: null,
+}
+
+function resolveMarketIdentity(route: ModelDecisionRoute, priceState: ModelDecisionPriceState) {
+  const nativeSource = priceState.identityNativeSource
+  const nativeSnapshot =
+    nativeSource?.snapshot?.source === "native-catalog" ? nativeSource.snapshot : null
+  const nativeEvidence = nativeSnapshot
+    ? nativeSnapshot.records.flatMap((record, recordIndex) =>
+        record.providerID === route.providerID && record.id === route.modelID
+          ? [modelIdentityReference("native-catalog", nativeSnapshot, recordIndex, record.id)]
+          : [],
+      )
+    : []
+  return resolveModelIdentity({
+    route: { providerID: route.providerID, modelID: route.modelID },
+    nativeEvidence,
+    catalogSource: priceState.identityCatalogSource ?? unavailableIdentityCatalogSource,
+  }).resolution
 }
 
 function decimalParts(value: number) {
@@ -1136,6 +1181,7 @@ function buildSnapshotData(
       key,
       calculateKnownUsageMarket({
         route: cohort.route,
+        identity: resolveMarketIdentity(cohort.route, priceState),
         endpointPricing: priceState.endpointPricing,
         sessions: knownUsageSessionsForTasks(cohort.taskIDs, sessionsByTask),
       }),
@@ -1521,6 +1567,10 @@ export function createModelDecisionReader(
       current.index.indexID === snapshot.priceState.index.indexID &&
       current.freshness === snapshot.priceState.freshness &&
       stable(current.settings) === stable(snapshot.priceState.settings) &&
+      stable(modelIdentitySourceIdentity(current.identityCatalogSource)) ===
+        stable(modelIdentitySourceIdentity(snapshot.priceState.identityCatalogSource)) &&
+      stable(modelIdentitySourceIdentity(current.identityNativeSource)) ===
+        stable(modelIdentitySourceIdentity(snapshot.priceState.identityNativeSource)) &&
       stable(endpointPricingIdentity(current.endpointPricing)) ===
         stable(endpointPricingIdentity(snapshot.priceState.endpointPricing))
     )

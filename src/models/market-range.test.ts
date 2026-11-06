@@ -11,11 +11,60 @@ import type {
   EndpointPricingRecord,
 } from "./endpoint-pricing.ts"
 import { calculateKnownUsageMarket } from "./market-range.ts"
-import type { KnownUsageMarketSession, KnownUsagePerCall } from "./market-range.ts"
+import type {
+  KnownUsageMarketSession,
+  KnownUsagePerCall,
+  MarketRangeRoute,
+} from "./market-range.ts"
+import captured from "../../test/models-identity/fixtures/captured-20261103.json" with { type: "json" }
+import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
+import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
+import type { ModelEvidenceSnapshot } from "./source-schema.ts"
+import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
+import { resolveModelIdentity } from "./model-identity.ts"
 
 const lunaRoute = { providerID: "openrouter", modelID: "openai/gpt-6-luna", variant: null }
 const kimiRoute = { providerID: "openrouter", modelID: "moonshotai/kimi-k3.1-pro", variant: null }
 const qwenRoute = { providerID: "openrouter", modelID: "qwen/qwen3.8-flash", variant: null }
+const parsedCatalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
+const parsedGoCatalog = ModelEvidenceSnapshotSchema.parse(capturedGo.openrouter.snapshot)
+
+if (parsedCatalog.source !== "openrouter-models" || parsedGoCatalog.source !== "openrouter-models")
+  throw new Error("Expected OpenRouter model-identity catalog fixtures")
+
+function catalogRead(
+  snapshot: Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>,
+): ModelEvidenceComparisonSourceRead {
+  return {
+    source: "openrouter-models",
+    storage: "ready",
+    snapshotState: "available",
+    snapshotID: snapshot.snapshotID,
+    refresh: null,
+    snapshot,
+  }
+}
+
+const directCatalogRead = catalogRead(parsedCatalog)
+const goCatalogRead = catalogRead(parsedGoCatalog)
+
+function identityForRoute(
+  route: MarketRangeRoute,
+  catalogSource?: ModelEvidenceComparisonSourceRead,
+) {
+  const source =
+    catalogSource ??
+    (route.providerID === "opencode-go" ||
+    route.modelID.includes("kimi-k3.1-pro") ||
+    route.modelID.includes("qwen3.8-flash")
+      ? goCatalogRead
+      : directCatalogRead)
+  return resolveModelIdentity({
+    route: { providerID: route.providerID, modelID: route.modelID },
+    nativeEvidence: [],
+    catalogSource: source,
+  }).resolution
+}
 
 const cacheWriteDocumentation = {
   field: "input_cache_write" as const,
@@ -125,7 +174,7 @@ function measures(
 }
 
 function usageSession(
-  route: typeof lunaRoute,
+  route: MarketRangeRoute,
   categories: KnownUsageMarketSession["categories"],
   options: {
     id?: string
@@ -173,13 +222,15 @@ function lunaRecord() {
 }
 
 function evaluate(
-  route: typeof lunaRoute,
+  route: MarketRangeRoute,
   evidence: EndpointPricingRead,
   sessions: KnownUsageMarketSession[],
   perCallUsage?: readonly KnownUsagePerCall[],
+  identity = identityForRoute(route),
 ) {
   return calculateKnownUsageMarket({
     route,
+    identity,
     endpointPricing: evidence,
     sessions,
     perCallUsage,
@@ -270,6 +321,170 @@ test("mixed known Luna tiers sum each attributable call and aggregate usage stay
   )
 })
 
+test("market identity supports direct OpenAI Luna and source-backed configured Go routes", () => {
+  const directOpenAI = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const directIdentity = identityForRoute(directOpenAI)
+  expect(structuredClone(directIdentity)).toMatchObject({
+    status: "exact",
+    productID: "openai/gpt-6-luna",
+    basis: "provider-owner-qualification",
+    evidence: {
+      catalog: [expect.objectContaining({ recordID: "openai/gpt-6-luna" })],
+    },
+  })
+  const directMarket = calculateKnownUsageMarket({
+    route: directOpenAI,
+    identity: directIdentity,
+    endpointPricing: endpointRead("openai/gpt-6-luna", lunaRecord()),
+    sessions: [usageSession(directOpenAI, measures({ uncachedInput: 100 }))],
+  })
+  expect(directMarket).toMatchObject({
+    route: directOpenAI,
+    identity: { status: "exact", productID: "openai/gpt-6-luna" },
+    status: "range",
+    scenarios: [
+      {
+        id: "luna-openai-standard",
+        status: "range",
+        provenance: { source: "openrouter-endpoints", productID: "openai/gpt-6-luna" },
+        tierAttribution: { status: "unresolved", basis: "aggregate-tier-envelope" },
+      },
+    ],
+  })
+  expect(directMarket.route).toEqual(directOpenAI)
+
+  const goKimi = { providerID: "opencode-go", modelID: "kimi-k3.1-pro", variant: "high" }
+  const kimiIdentity = identityForRoute(goKimi)
+  expect(structuredClone(kimiIdentity)).toMatchObject({
+    status: "exact",
+    productID: "moonshotai/kimi-k3.1-pro",
+    basis: "verified-source-backed-route-alias",
+    rules: [{ id: "opencode-go-kimi-k3-1-pro-to-openrouter-kimi-k3-1-pro-v1" }],
+    evidence: { catalog: [expect.objectContaining({ recordID: "moonshotai/kimi-k3.1-pro" })] },
+  })
+  const kimiRates = record(
+    "moonshotai/kimi-k3.1-pro",
+    { providerName: "Moonshot AI", tag: "moonshotai/mxfp4" },
+    {
+      unit: "USD per token",
+      prompt: "0.000002",
+      completion: "0.00001",
+      inputCacheRead: "0.0000002",
+    },
+    cacheWriteDocumentation,
+  )
+  const kimiMarket = calculateKnownUsageMarket({
+    route: goKimi,
+    identity: kimiIdentity,
+    endpointPricing: endpointRead("moonshotai/kimi-k3.1-pro", kimiRates),
+    sessions: [usageSession(goKimi, measures({ uncachedInput: 10 }))],
+  })
+  expect(kimiMarket).toMatchObject({
+    route: goKimi,
+    status: "exact",
+    scenarios: [
+      {
+        id: "kimi-moonshot-mxfp4",
+        status: "exact",
+        provenance: { productID: "moonshotai/kimi-k3.1-pro" },
+      },
+    ],
+  })
+  expect(kimiMarket.scenarios[0]?.valueUSD).toBeCloseTo(0.00002, 12)
+
+  const goQwen = { providerID: "opencode-go", modelID: "qwen3.8-flash", variant: "medium" }
+  const qwenIdentity = identityForRoute(goQwen)
+  expect(structuredClone(qwenIdentity)).toMatchObject({
+    status: "exact",
+    productID: "qwen/qwen3.8-flash",
+    basis: "verified-source-backed-route-alias",
+    rules: [{ id: "opencode-go-qwen3-8-flash-to-openrouter-qwen3-8-flash-v1" }],
+  })
+  const qwenRates = record(
+    "qwen/qwen3.8-flash",
+    { providerName: "Alibaba", tag: "alibaba" },
+    {
+      unit: "USD per token",
+      prompt: "0.00000015",
+      completion: "0.00000047",
+      inputCacheRead: "0.000000016",
+      inputCacheWrite: "0.0000002",
+    },
+  )
+  const qwenMarket = calculateKnownUsageMarket({
+    route: goQwen,
+    identity: qwenIdentity,
+    endpointPricing: endpointRead("qwen/qwen3.8-flash", qwenRates),
+    sessions: [usageSession(goQwen, measures({ uncachedInput: 20 }))],
+  })
+  expect(qwenMarket).toMatchObject({
+    route: goQwen,
+    status: "exact",
+    scenarios: [
+      {
+        id: "qwen-alibaba",
+        status: "exact",
+        provenance: { productID: "qwen/qwen3.8-flash" },
+      },
+    ],
+  })
+  expect(qwenMarket.scenarios[0]?.valueUSD).toBeCloseTo(0.000003, 12)
+})
+
+test("unsupported, ambiguous, and absent route mappings do not borrow endpoint identity", () => {
+  const route = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
+  const lunaCatalogRecord = parsedCatalog.records.find((item) => item.id === "openai/gpt-6-luna")!
+  const ambiguousSource = catalogRead(
+    ModelEvidenceSnapshotSchema.parse({
+      ...parsedCatalog,
+      snapshotID: crypto.randomUUID(),
+      records: [...parsedCatalog.records, lunaCatalogRecord],
+    }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>,
+  )
+  const missingSource = catalogRead(
+    ModelEvidenceSnapshotSchema.parse({
+      ...parsedCatalog,
+      snapshotID: crypto.randomUUID(),
+      records: parsedCatalog.records.filter((item) => item.id !== "openai/gpt-6-luna"),
+    }) as Extract<ModelEvidenceSnapshot, { source: "openrouter-models" }>,
+  )
+  const cases = [
+    {
+      route: { providerID: "opencode-go", modelID: "unlisted-model", variant: "max" },
+      identity: identityForRoute(
+        { providerID: "opencode-go", modelID: "unlisted-model", variant: "max" },
+        directCatalogRead,
+      ),
+      expectedIdentity: "unsupported",
+    },
+    {
+      route,
+      identity: identityForRoute(route, ambiguousSource),
+      expectedIdentity: "ambiguous",
+    },
+    {
+      route,
+      identity: identityForRoute(route, missingSource),
+      expectedIdentity: "supported-but-absent",
+    },
+  ] as const
+
+  for (const item of cases) {
+    const market = calculateKnownUsageMarket({
+      route: item.route,
+      identity: item.identity,
+      endpointPricing: endpointRead("openai/gpt-6-luna", lunaRecord()),
+      sessions: [usageSession(item.route, measures({ uncachedInput: 100 }))],
+    })
+    expect(market).toMatchObject({
+      route: item.route,
+      status: "not-applicable",
+      scenarios: [],
+    })
+    expect(market.identity.status).toBe(item.expectedIdentity)
+  }
+})
+
 test("Kimi cache-write documentation stays scoped and Qwen writes use only the retained endpoint rate", () => {
   const kimi = record(
     "moonshotai/kimi-k3.1-pro",
@@ -307,11 +522,9 @@ test("Kimi cache-write documentation stays scoped and Qwen writes use only the r
       inputCacheWrite: "0.0000002",
     },
   )
-  const qwenOutput = evaluate(
-    qwenRoute as typeof lunaRoute,
-    endpointRead("qwen/qwen3.8-flash", qwenRate),
-    [usageSession(qwenRoute as typeof lunaRoute, measures({ uncachedInput: 10, cacheWrite: 5 }))],
-  )
+  const qwenOutput = evaluate(qwenRoute, endpointRead("qwen/qwen3.8-flash", qwenRate), [
+    usageSession(qwenRoute, measures({ uncachedInput: 10, cacheWrite: 5 })),
+  ])
   expect(qwenOutput).toMatchObject({
     status: "exact",
     cacheWriteEvidence: { basis: "endpoint-rate", policyID: null },
@@ -324,11 +537,9 @@ test("Kimi cache-write documentation stays scoped and Qwen writes use only the r
     { providerName: "Alibaba", tag: "alibaba/us-east-1" },
     { unit: "USD per token", prompt: "0.00000015", completion: "0.00000047" },
   )
-  const notGeneralized = evaluate(
-    qwenRoute as typeof lunaRoute,
-    endpointRead("qwen/qwen3.8-flash", unsupportedQwen),
-    [usageSession(qwenRoute as typeof lunaRoute, measures({ uncachedInput: 10, cacheWrite: 5 }))],
-  )
+  const notGeneralized = evaluate(qwenRoute, endpointRead("qwen/qwen3.8-flash", unsupportedQwen), [
+    usageSession(qwenRoute, measures({ uncachedInput: 10, cacheWrite: 5 })),
+  ])
   expect(notGeneralized).toMatchObject({ status: "unavailable", valueUSD: null })
 })
 
@@ -339,14 +550,12 @@ test("missing rates, missing categories, and measured zeros have different outco
     { unit: "USD per token", prompt: null, completion: "0.00000047" },
   )
   const evidence = endpointRead("qwen/qwen3.8-flash", qwenMissingWrite)
-  const zeroWrite = evaluate(qwenRoute as typeof lunaRoute, evidence, [
-    usageSession(qwenRoute as typeof lunaRoute, measures()),
-  ])
+  const zeroWrite = evaluate(qwenRoute, evidence, [usageSession(qwenRoute, measures())])
   expect(zeroWrite).toMatchObject({ status: "exact", valueUSD: 0 })
   expect(zeroWrite.missingRates).toEqual([])
 
-  const nonzeroInput = evaluate(qwenRoute as typeof lunaRoute, evidence, [
-    usageSession(qwenRoute as typeof lunaRoute, measures({ uncachedInput: 1 })),
+  const nonzeroInput = evaluate(qwenRoute, evidence, [
+    usageSession(qwenRoute, measures({ uncachedInput: 1 })),
   ])
   expect(nonzeroInput).toMatchObject({
     status: "partial",
@@ -356,9 +565,7 @@ test("missing rates, missing categories, and measured zeros have different outco
   })
 
   const missingTokens = measures({ uncachedInput: null })
-  const unknownUsage = evaluate(qwenRoute as typeof lunaRoute, evidence, [
-    usageSession(qwenRoute as typeof lunaRoute, missingTokens),
-  ])
+  const unknownUsage = evaluate(qwenRoute, evidence, [usageSession(qwenRoute, missingTokens)])
   expect(unknownUsage).toMatchObject({
     status: "partial",
     valueUSD: null,
@@ -371,11 +578,9 @@ test("missing rates, missing categories, and measured zeros have different outco
     { providerName: "Alibaba", tag: "alibaba" },
     { unit: "USD per token", prompt: "0.00000015", completion: "0.00000047" },
   )
-  const partialKnown = evaluate(
-    qwenRoute as typeof lunaRoute,
-    endpointRead("qwen/qwen3.8-flash", knownOnly),
-    [usageSession(qwenRoute as typeof lunaRoute, measures({ uncachedInput: 10, output: null }))],
-  )
+  const partialKnown = evaluate(qwenRoute, endpointRead("qwen/qwen3.8-flash", knownOnly), [
+    usageSession(qwenRoute, measures({ uncachedInput: 10, output: null })),
+  ])
   expect(partialKnown).toMatchObject({
     status: "partial",
     valueUSD: null,
@@ -462,6 +667,7 @@ test("mixed routes and absent endpoint evidence remain unavailable rather than a
 
   const noEvidence = calculateKnownUsageMarket({
     route: lunaRoute,
+    identity: identityForRoute(lunaRoute),
     sessions: [usageSession(lunaRoute, measures({ uncachedInput: 100 }))],
   })
   expect(noEvidence).toMatchObject({

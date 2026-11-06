@@ -10,6 +10,8 @@ import type {
   EndpointPricingRecord,
   EndpointPricingScenario,
 } from "./endpoint-pricing.ts"
+import { ModelIdentityResolutionSchema } from "./model-identity.ts"
+import type { ModelIdentityResolution } from "./model-identity.ts"
 
 const Nonnegative = z.number().finite().nonnegative()
 const Count = z.number().int().nonnegative().max(100_000)
@@ -152,6 +154,7 @@ export const KnownUsageMarketSchema = z.strictObject({
   schemaVersion: z.literal(1),
   scope: z.literal("known-retained-token-usage-only"),
   route: MarketRangeRouteSchema,
+  identity: ModelIdentityResolutionSchema,
   status: z.enum(["not-applicable", "exact", "range", "partial", "unavailable"]),
   scenarios: z.array(KnownUsageMarketScenarioSchema).max(1),
 })
@@ -897,22 +900,28 @@ function calculateScenario(input: {
  */
 export function calculateKnownUsageMarket(input: {
   route: MarketRangeRoute
+  identity: ModelIdentityResolution
   endpointPricing?: EndpointPricingRead
   sessions: readonly KnownUsageMarketSession[]
   perCallUsage?: readonly KnownUsagePerCall[]
   perCallCoverageComplete?: boolean
 }): KnownUsageMarket {
   const parsedRoute = MarketRangeRouteSchema.parse(input.route)
-  const product =
-    parsedRoute.providerID === "openrouter"
-      ? ENDPOINT_PRICING_PRODUCTS.find(({ productID }) => productID === parsedRoute.modelID)
-      : undefined
+  const identity = ModelIdentityResolutionSchema.parse(input.identity)
+  const resolvedProductID =
+    identity.status === "exact"
+      ? EndpointPricingProductIDSchema.safeParse(identity.productID)
+      : null
+  const product = resolvedProductID?.success
+    ? ENDPOINT_PRICING_PRODUCTS.find(({ productID }) => productID === resolvedProductID.data)
+    : undefined
   if (!product)
     return KnownUsageMarketSchema.parse({
       schemaVersion: 1,
       scope: "known-retained-token-usage-only",
       route: parsedRoute,
-      status: "not-applicable",
+      identity,
+      status: identity.status === "source-unavailable" ? "unavailable" : "not-applicable",
       scenarios: [],
     })
 
@@ -922,6 +931,7 @@ export function calculateKnownUsageMarket(input: {
       schemaVersion: 1,
       scope: "known-retained-token-usage-only",
       route: parsedRoute,
+      identity,
       status: "unavailable",
       scenarios: [],
     })
@@ -938,6 +948,7 @@ export function calculateKnownUsageMarket(input: {
     schemaVersion: 1,
     scope: "known-retained-token-usage-only",
     route: parsedRoute,
+    identity,
     status,
     scenarios: [scenario],
   })

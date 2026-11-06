@@ -229,6 +229,7 @@ export function registerModelsServer(
           })
           return {
             index,
+            sources,
             freshness: index.pins.length
               ? stale
                 ? ("stale" as const)
@@ -242,6 +243,10 @@ export function registerModelsServer(
           settings,
           index: state.index,
           endpointPricing,
+          identityCatalogSource: state.sources.find(
+            (source) => source.source === "openrouter-models",
+          ),
+          identityNativeSource: state.sources.find((source) => source.source === "native-catalog"),
           freshness: state.freshness,
           note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
         }
