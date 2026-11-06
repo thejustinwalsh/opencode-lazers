@@ -86,6 +86,30 @@ test("native status deltas preserve mutable tool progress, retry delivery and sc
         tracker,
       ),
     ).rejects.toThrow("No observation in this scope")
+    f.store.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO tasks(id,project_directory,created_at,body)
+        SELECT ?,project_directory,created_at,'{invalid' FROM tasks WHERE id=?`,
+        )
+        .run("aa53fd1c-85cc-4d67-932d-b8b69a197d8b", taskID),
+    )
+    for (const view of [scope, { kind: "session" as const, sessionID: "ses-owner" }]) {
+      expect(
+        parseTrajectoryReport(
+          await reads.trajectoryStatus({ scope: view, taskID, live: {} }, tracker),
+        ).task.id,
+      ).toBe(taskID)
+      expect(
+        parseTrajectoryReport(
+          await reads.trajectoryHistory({ scope: view, taskID, limit: 20 }, tracker),
+        ).task.id,
+      ).toBe(taskID)
+    }
+    await expect(
+      reads.trajectoryStatus({ scope, taskID: "aa53fd1c-85cc-4d67-932d-b8b69a197d8b" }, tracker),
+    ).rejects.toThrow()
+    expect(() => reads.snapshot(scope, tracker)).toThrow()
   } finally {
     f.close()
   }

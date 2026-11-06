@@ -481,7 +481,7 @@ export const TrajectoryHistoryErrorData = z.strictObject({
 export const TrajectoryStatusInput = z.strictObject({
   scope: ObservationScope,
   taskID: z.uuid(),
-  live: z.strictObject({ cursor: z.string().min(1).optional() }).optional(),
+  live: z.strictObject({ cursor: z.uuid().optional() }).optional(),
 })
 
 export const Changed = z.strictObject({

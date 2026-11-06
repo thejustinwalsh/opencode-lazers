@@ -14,7 +14,7 @@ export function sessionAssociations(
   const taskIDs = new Set(
     db
       .query<{ id: string }, [string, string]>(
-        "SELECT id FROM tasks WHERE project_directory=? AND json_extract(body,'$.provenance.sessionID')=?",
+        "SELECT id FROM tasks WHERE project_directory=? AND CASE WHEN json_valid(body) THEN json_extract(body,'$.provenance.sessionID') END=?",
       )
       .all(projectDirectory, sessionID)
       .map((row) => row.id),
@@ -93,7 +93,7 @@ export function associatedSessionIDs(db: Database, projectDirectory: string) {
   const ids = new Set<string>()
   for (const row of db
     .query<{ session_id: string }, [string]>(
-      `SELECT json_extract(body,'$.provenance.sessionID') AS session_id
+      `SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.provenance.sessionID') END AS session_id
        FROM tasks WHERE project_directory=?`,
     )
     .all(projectDirectory))
