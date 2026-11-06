@@ -1,0 +1,208 @@
+{
+  "at": 1793940809117,
+  "results": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "name": "overview",
+        "elapsed": 7301,
+        "context": {
+          "schemaVersion": 2,
+          "snapshotID": "models-decision-v2:fd82352f-ef0b-40ec-ba4d-b5f28984e123",
+          "producedAt": "2026-11-06T04:53:29.021Z",
+          "scope": {
+            "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+          },
+          "filters": {
+            "persona": null,
+            "taskKind": null,
+            "period": {
+              "from": null,
+              "to": null
+            }
+          },
+          "priceSourcePolicy": {
+            "schemaVersion": 1,
+            "revision": 0,
+            "sources": ["openrouter", "opencode"],
+            "fallback": "whole-model"
+          },
+          "availability": "partial",
+          "freshness": "unknown",
+          "unavailableReason": null,
+          "accounting": {
+            "id": "attributable-cohort-effort-per-accepted-logical-task-v1",
+            "numerator": "all-attributable-cohort-failed-retry-and-accepted-effort",
+            "denominator": "accepted-logical-tasks",
+            "acceptanceThreshold": null,
+            "sampleSizeThreshold": null,
+            "valuation": "current-ordered-whole-model-price-source-pins",
+            "nativeReportedCosts": "retained-separately-not-market-equivalent"
+          },
+          "taskKindCatalog": {
+            "id": "task-kind/v1",
+            "kinds": [
+              "bug-repair",
+              "feature-implementation",
+              "refactoring",
+              "testing",
+              "documentation",
+              "maintenance"
+            ]
+          },
+          "classification": {
+            "status": "partial",
+            "classifiedTaskCount": 58,
+            "unclassifiedTaskCount": 97,
+            "excludedTaskCount": 0,
+            "totalTaskCount": 155
+          },
+          "priceIndex": {
+            "source": "unavailable",
+            "sourcePolicyRevision": 0,
+            "pins": [],
+            "freshness": "unavailable",
+            "semantics": "unknown",
+            "note": "Ordered source access: OpenRouter configured; OpenCode not-configured. No applicable configured cached quote is available. This decision snapshot pins retained facts at project observation revision 598491; freshness is evaluated at capture time and its market values use only the listed source snapshots. Page continuations remain on this identity; new reads refresh to newer data."
+          }
+        }
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "name": "rows",
+        "elapsed": 7301,
+        "context": {
+          "schemaVersion": 2,
+          "snapshotID": "models-decision-v2:fd82352f-ef0b-40ec-ba4d-b5f28984e123",
+          "producedAt": "2026-11-06T04:53:29.021Z",
+          "scope": {
+            "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+          },
+          "filters": {
+            "persona": null,
+            "taskKind": null,
+            "period": {
+              "from": null,
+              "to": null
+            }
+          },
+          "priceSourcePolicy": {
+            "schemaVersion": 1,
+            "revision": 0,
+            "sources": ["openrouter", "opencode"],
+            "fallback": "whole-model"
+          },
+          "availability": "partial",
+          "freshness": "unknown",
+          "unavailableReason": null,
+          "accounting": {
+            "id": "attributable-cohort-effort-per-accepted-logical-task-v1",
+            "numerator": "all-attributable-cohort-failed-retry-and-accepted-effort",
+            "denominator": "accepted-logical-tasks",
+            "acceptanceThreshold": null,
+            "sampleSizeThreshold": null,
+            "valuation": "current-ordered-whole-model-price-source-pins",
+            "nativeReportedCosts": "retained-separately-not-market-equivalent"
+          },
+          "taskKindCatalog": {
+            "id": "task-kind/v1",
+            "kinds": [
+              "bug-repair",
+              "feature-implementation",
+              "refactoring",
+              "testing",
+              "documentation",
+              "maintenance"
+            ]
+          },
+          "classification": {
+            "status": "partial",
+            "classifiedTaskCount": 58,
+            "unclassifiedTaskCount": 97,
+            "excludedTaskCount": 0,
+            "totalTaskCount": 155
+          },
+          "priceIndex": {
+            "source": "unavailable",
+            "sourcePolicyRevision": 0,
+            "pins": [],
+            "freshness": "unavailable",
+            "semantics": "unknown",
+            "note": "Ordered source access: OpenRouter configured; OpenCode not-configured. No applicable configured cached quote is available. This decision snapshot pins retained facts at project observation revision 598491; freshness is evaluated at capture time and its market values use only the listed source snapshots. Page continuations remain on this identity; new reads refresh to newer data."
+          }
+        },
+        "rows": 3
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "name": "configurations",
+        "elapsed": 7301,
+        "context": {
+          "schemaVersion": 2,
+          "snapshotID": "models-decision-v2:fd82352f-ef0b-40ec-ba4d-b5f28984e123",
+          "producedAt": "2026-11-06T04:53:29.021Z",
+          "scope": {
+            "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers"
+          },
+          "filters": {
+            "persona": null,
+            "taskKind": null,
+            "period": {
+              "from": null,
+              "to": null
+            }
+          },
+          "priceSourcePolicy": {
+            "schemaVersion": 1,
+            "revision": 0,
+            "sources": ["openrouter", "opencode"],
+            "fallback": "whole-model"
+          },
+          "availability": "partial",
+          "freshness": "unknown",
+          "unavailableReason": null,
+          "accounting": {
+            "id": "attributable-cohort-effort-per-accepted-logical-task-v1",
+            "numerator": "all-attributable-cohort-failed-retry-and-accepted-effort",
+            "denominator": "accepted-logical-tasks",
+            "acceptanceThreshold": null,
+            "sampleSizeThreshold": null,
+            "valuation": "current-ordered-whole-model-price-source-pins",
+            "nativeReportedCosts": "retained-separately-not-market-equivalent"
+          },
+          "taskKindCatalog": {
+            "id": "task-kind/v1",
+            "kinds": [
+              "bug-repair",
+              "feature-implementation",
+              "refactoring",
+              "testing",
+              "documentation",
+              "maintenance"
+            ]
+          },
+          "classification": {
+            "status": "partial",
+            "classifiedTaskCount": 58,
+            "unclassifiedTaskCount": 97,
+            "excludedTaskCount": 0,
+            "totalTaskCount": 155
+          },
+          "priceIndex": {
+            "source": "unavailable",
+            "sourcePolicyRevision": 0,
+            "pins": [],
+            "freshness": "unavailable",
+            "semantics": "unknown",
+            "note": "Ordered source access: OpenRouter configured; OpenCode not-configured. No applicable configured cached quote is available. This decision snapshot pins retained facts at project observation revision 598491; freshness is evaluated at capture time and its market values use only the listed source snapshots. Page continuations remain on this identity; new reads refresh to newer data."
+          }
+        },
+        "configurations": 3
+      }
+    }
+  ]
+}

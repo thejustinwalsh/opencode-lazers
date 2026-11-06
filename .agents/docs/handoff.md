@@ -1,6 +1,6 @@
 # Current dogfood handoff
 
-Updated 2026-11-06T04:40:00Z. The goal remains active: drive OpenCode Desktop until the
+Updated 2026-11-06T05:24:43.910123+00:00. The goal remains active: drive OpenCode Desktop until the
 active roadmap is implemented, verified, integrated and cleaned; then present
 an observation-based improvement plan. Preserve the full backlog.
 
@@ -22,7 +22,9 @@ an observation-based improvement plan. Preserve the full backlog.
 
 ## Landed source and checks
 
-Main received reviewed merge `717af358649d85779b04089aa4923a5985639c00`:
+Current canonical source: `4319bde2a0594ca81ac5dd49c9e0ec3417e617cf`, landed and
+GUI-activated. No service restart was needed. It adds147compact,3e09test fix,
+153c8530aa and15259cf8f8 over the prior reviewed717af35 batch below.
 
 - LZ-147 activity/state filters: worker `f5699708`, review merge `7461df7`.
 - LZ-151 market scenarios: `c800e46` plus provider-identity repair `bff6013`.
@@ -59,9 +61,10 @@ Review batch HEAD `231805d29313ced9b3e73607a78cdacadb302d2d` in
 153c8530aa and15259cf8f8. Full independent regression1364tests/15208assertions
 passed (250.53s); fmt/lint/types/diff and combined GUI build pass. Logs in
 `evidence/dogfood-20261106/models-tasks-batch-{tests,build}.log`.
-147/152/153 workers are inactive/succeeded.138dependency correction remains
-active, now running its declared suite after focused15tests/169assertions pass.
-Use a completed-worker activation boundary; do not interrupt138's current execution.
+That review tree was natively removed after landing; physical absence confirmed.
+138 checkpointed `fee2a89` and ended before activation, then resumed for genuine
+async setup/partial-resource correction. Original147worker also resumed for the
+Tera inspector-hierarchy correction. Both are active LunaMax; preserve them.
 
 LZ-151: task `77155457-70ca-424b-b5cf-0598244fe738`, plan
 `9f7c80ad-a799-443e-8a40-f294e15f9d50`, attempt
@@ -82,10 +85,14 @@ Current edits are comparison-panel.tsx/css; review on completion.
 
 LZ-153: `5d4548ce-e5c0-4f7a-b3d1-3614e973e3f5`, plan
 `a27556ef-015b-4084-bc5a-ed12dea9329e`, running / priority100 / Systems / LunaMax.
-Worker now inactive/succeeded and clean at `c8530aa0612403e4eb7de9d136183b55660a7b22`.
+153 plan is now integrated v12 at `c8530aa0612403e4eb7de9d136183b55660a7b22`.
+Native cleanup removed its worker tree; physical absence confirmed. Root observed
+authenticated coherent overview/rows/configurations plus connected Refresh and a
+fresh close/reopen through the extra-panel list. Three rows/scenarios render; no
+old compact-fact/context error. Unknown canonical prices remain a separate gap.
 Root merged it into `/private/tmp/lz147-compact-review`; independent Models183tests/
 2152assertions passed there. Actual read-only project capture succeeded over16315
-facts/155tasks,5.3s. Native full producer/UI still unqualified. See
+facts/155tasks,5.3s. Native producer/first-open/Refresh evidence is now recorded through153 acceptance; full price/frontier comparison remains unqualified. See
 `design/reviews/models-history-read-review-20261106.md`.
 Root clicked Start in Desktop; native attempt
 `4e7fb2d5-e54f-4f9c-a153-58a38aa87dc2`, worker
@@ -165,8 +172,9 @@ passes worker184tests/2794assertions and quality/build, but Root rejected defaul
 presentation: many caveat/metadata paragraphs above collapsed evidence contradict
 the approved compact mockup. Architect steered the same152worker, now inactive/succeeded and clean at
 `59cf8f8d23c027c0cb0b8c4e7fe8a72bfafee43c`. Worker184tests/2816assertions and
-quality/build pass. Root source review passes and merged it into review batch;
-Main natively reconciled its genuine correction and reports accepted152. Keep summary price/endpoint/essential uncertainty visible,
+quality/build pass. Root source review passes; source landed/activated. Main natively reconciled
+its genuine correction and reports accepted152. Full Models plan remains blocked
+on connected-live-pricing-review; do not claim full price/frontier acceptance. Keep summary price/endpoint/essential uncertainty visible,
 detailed tier/retry/cache/source information under collapsed Evidence & assumptions.
 No data-policy expansion. Wait for corrected source before visual acceptance.
 
@@ -186,6 +194,33 @@ marketEquivalentCostUSD null/unknown. Root asked Architect through Desktop to
 check102 and related work, then reuse/task the missing current-market valuation
 connection after active Models work. Preserve true missing coverage and retries;
 no subscription pricing. This is not a worker scope extension.
+
+## Activated UI and follow-through
+
+Native captures and shared-context RPC evidence are retained at
+`evidence/dogfood-20261106/{models-live-activated.png,tasks-compact-live-activated.png,models-native-activated-contexts.json}`.
+Tera reviewed them; report `design/reviews/activated-panels-review-20261106.md`.
+Tasks must put identity/status, objective and Done when ahead of technical
+hold/lifecycle/raw-worker diagnostics. Architect resumed the SAME147worker for
+that scope; header repetition/density remains149. Models unavailable-state layout
+is acceptable, full plotted comparison is not accepted.
+
+All three canonical Models rows still show Unknown price/no graph despite
+OpenRouter configured. Kimi known-usage endpoint card shows a scoped amount,
+which does not prove a complete canonical quote. Existing native Luna researcher
+`ses_e5337592effeefMspoKIlcYx4F` is active on actual source/valuation diagnosis.
+Do not speculate about cause or fabricate chart points. Root verified the scenario
+Evidence & assumptions is collapsed initially and expands/collapses with real
+rates, token categories, retry and scoped caching provenance.
+
+138 checkpoint `fee2a89` preserves candidate-lock dependency support and549passing
+suite; source still unapproved. Root found synchronous120s execFileSync installation
+on the service thread and possible unregistered partial resources after setup
+failure. Task advice8 records this. After activation Architect resumed SAME worker
+for async native/existing-executor setup and owned failure/cancellation cleanup.
+No duplicate attempt or new daemon. Progress reporting rejected its first note at
+1200characters; second note succeeded. Retain that observed cap/retry issue for
+follow-up without interrupting the actual repairs.
 
 ## Other backlog and cleanup
 
