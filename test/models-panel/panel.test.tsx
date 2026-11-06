@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
+import { Window } from "happy-dom"
 import { createComponent } from "solid-js"
 import { renderToString } from "solid-js/web"
 import { createServer } from "vite"
@@ -93,6 +94,35 @@ const candidate = {
 } as ModelCandidate
 
 const renderedText = (html: string) => html.replace(/<[^>]*>/g, "")
+
+function renderMarketScenario(scenario: KnownUsageMarketScenario) {
+  const markup = renderToString(() => createComponent(KnownUsageMarketScenarioCard, { scenario }))
+  const window = new Window()
+  const container = window.document.createElement("div")
+  container.innerHTML = markup
+  const details = container.querySelector<HTMLDetailsElement>(
+    ".lazers-models-market-evidence-details",
+  )
+  const summary = details?.querySelector("summary")
+  if (!details || !summary) {
+    window.happyDOM.abort()
+    throw new Error("Known-usage evidence disclosure did not render")
+  }
+  const detailsStart = container.innerHTML.indexOf("<details")
+  return {
+    markup,
+    compactText: renderedText(container.innerHTML.slice(0, detailsStart)),
+    summary,
+    details,
+    initiallyOpen: details.open,
+    expand: () => {
+      summary.click()
+      return details.open
+    },
+    evidenceText: () => details.textContent ?? "",
+    dispose: () => window.happyDOM.abort(),
+  }
+}
 
 test("candidate row exposes sourced route and separate external benchmark with keyboard selection semantics", () => {
   const html = renderToString(() =>
@@ -252,30 +282,35 @@ function knownUsageScenario(
 }
 
 test("known-usage inspector shows endpoint provenance and scoped documented cache-write zero", () => {
-  const markup = renderToString(() =>
-    createComponent(KnownUsageMarketScenarioCard, { scenario: knownUsageScenario() }),
-  )
-  const html = renderedText(markup)
+  const card = renderMarketScenario(knownUsageScenario())
+  try {
+    expect(card.initiallyOpen).toBe(false)
+    expect(card.compactText).toContain("Current-market equivalent of known retained usage")
+    expect(card.compactText).toContain("Scenario amount · $0.00002")
+    expect(card.compactText).toContain("OpenRouter endpoint · provider Moonshot AI")
+    expect(card.compactText).toContain("moonshotai/mxfp4")
+    expect(card.compactText).toContain("service tier not specified · Current")
+    expect(card.compactText).toContain("not actual charges")
+    expect(card.compactText).not.toContain("scoped documentation")
+    expect(card.compactText).not.toContain("Retry coverage complete")
+    expect(card.compactText).not.toContain("Measured token categories")
 
-  expect(html).toContain("Current-market equivalent of known retained usage")
-  expect(html).toContain("$0.00002")
-  expect(html).toContain("Moonshot AI")
-  expect(html).toContain("moonshotai/mxfp4")
-  expect(html).toContain("service tier not specified by endpoint")
-  expect(html).toContain("freshness Current")
-  expect(html).toContain("OpenRouter endpoint pricing")
-  expect(html).toContain("scoped documentation")
-  expect(html).toContain("kimi-cache-write-zero-v1")
-  expect(html).toContain("Cache write · 5 tokens · Observed")
-  expect(html).toContain("standard0.0000020.000010.00000020")
-  expect(html).toContain("not a complete-task or whole-history bound")
-  expect(markup).toContain('aria-label="Current-market equivalent of known retained usage"')
-  expect(markup).toContain(
-    "<summary>Measured categories, endpoint rates and source evidence</summary>",
-  )
-  expect(markup).toContain('<th scope="col">Tier</th>')
-  expect(markup).toContain('<th scope="row">standard</th>')
-  expect(markup).toContain('target="_blank" rel="noreferrer"')
+    expect(card.summary.tagName).toBe("SUMMARY")
+    expect(card.summary.textContent).toBe("Evidence & assumptions")
+    expect(card.details.firstElementChild).toBe(card.summary)
+    expect(card.expand()).toBe(true)
+    expect(card.evidenceText()).toContain("scoped documentation")
+    expect(card.evidenceText()).toContain("kimi-cache-write-zero-v1")
+    expect(card.evidenceText()).toContain("Cache write · 5 tokens · Observed")
+    expect(card.evidenceText()).toContain("standard0.0000020.000010.00000020")
+    expect(card.evidenceText()).toContain("not a complete-task bound")
+    expect(card.markup).toContain('aria-label="Current-market equivalent of known retained usage"')
+    expect(card.markup).toContain('<th scope="col">Tier</th>')
+    expect(card.markup).toContain('<th scope="row">standard</th>')
+    expect(card.markup).toContain('target="_blank" rel="noreferrer"')
+  } finally {
+    card.dispose()
+  }
 })
 
 test("Luna tier envelopes stay conditional and per-call tier amounts stay exact to the scenario", () => {
@@ -307,15 +342,24 @@ test("Luna tier envelopes stay conditional and per-call tier amounts stay exact 
       tag: "openai",
     },
   })
-  const lunaRangeHTML = renderToString(() =>
-    createComponent(KnownUsageMarketScenarioCard, { scenario: lunaRange }),
-  )
-  const lunaRangeText = renderedText(lunaRangeHTML)
-  expect(lunaRangeText).toContain("Conditional endpoint tier range")
-  expect(lunaRangeText).toContain("$0.00001575–$0.00003125")
-  expect(lunaRangeText).toContain("Prompt tier unresolved")
-  expect(lunaRangeText).toContain("conditional for known retained usage only")
-  expect(lunaRangeText).toContain("not a complete-task or whole-history bound")
+  const lunaCard = renderMarketScenario(lunaRange)
+  try {
+    expect(lunaCard.initiallyOpen).toBe(false)
+    expect(lunaCard.compactText).toContain("Endpoint range · $0.00001575–$0.00003125")
+    expect(lunaCard.compactText).toContain("Conditional endpoint scenario · prompt tier unresolved")
+    expect(lunaCard.compactText).toContain("not a complete-task or whole-history bound")
+    expect(lunaCard.compactText).not.toContain("available tiers base")
+    expect(lunaCard.compactText).not.toContain("272,000 prompt tokens")
+    expect(lunaCard.expand()).toBe(true)
+    expect(lunaCard.evidenceText()).toContain("available tiers base, override:272000:1")
+    expect(lunaCard.evidenceText()).toContain("272,000 prompt tokens")
+    expect(lunaCard.evidenceText()).toContain(
+      "Coverage is complete only for retained matching usage",
+    )
+    expect(lunaCard.evidenceText()).toContain("Cache-write pricing uses the published rate")
+  } finally {
+    lunaCard.dispose()
+  }
 
   const knownTier = knownUsageScenario({
     id: "luna-openai-standard",
@@ -344,13 +388,18 @@ test("Luna tier envelopes stay conditional and per-call tier amounts stay exact 
       tag: "openai",
     },
   })
-  const knownTierHTML = renderedText(
-    renderToString(() => createComponent(KnownUsageMarketScenarioCard, { scenario: knownTier })),
-  )
-  expect(knownTierHTML).toContain("Known-tier scenario amount")
-  expect(knownTierHTML).toContain("$0.0000345")
-  expect(knownTierHTML).toContain("Prompt tiers resolved per call · 2 measured calls")
-  expect(knownTierHTML).toContain("override:272000:1")
+  const knownTierCard = renderMarketScenario(knownTier)
+  try {
+    expect(knownTierCard.compactText).toContain("Known-tier scenario amount · $0.0000345")
+    expect(knownTierCard.compactText).not.toContain("Prompt tiers resolved per call")
+    expect(knownTierCard.expand()).toBe(true)
+    expect(knownTierCard.evidenceText()).toContain(
+      "Prompt tiers resolved per call · 2 measured calls",
+    )
+    expect(knownTierCard.evidenceText()).toContain("override:272000:1")
+  } finally {
+    knownTierCard.dispose()
+  }
 })
 
 test("Qwen cache-write rates are endpoint-scoped, while missing usage, rates and bounds are unavailable", () => {
@@ -377,11 +426,16 @@ test("Qwen cache-write rates are endpoint-scoped, while missing usage, rates and
       tag: "alibaba",
     },
   })
-  const qwenHTML = renderedText(
-    renderToString(() => createComponent(KnownUsageMarketScenarioCard, { scenario: qwen })),
-  )
-  expect(qwenHTML).toContain("does not establish general cache-write capability")
-  expect(qwenHTML).toContain("0.0000002")
+  const qwenCard = renderMarketScenario(qwen)
+  try {
+    expect(qwenCard.compactText).toContain("Scenario amount · $0.00002")
+    expect(qwenCard.compactText).not.toContain("does not establish general cache-write capability")
+    expect(qwenCard.expand()).toBe(true)
+    expect(qwenCard.evidenceText()).toContain("does not establish general cache-write capability")
+    expect(qwenCard.evidenceText()).toContain("0.0000002")
+  } finally {
+    qwenCard.dispose()
+  }
 
   const missing = knownUsageScenario({
     status: "partial",
@@ -411,17 +465,19 @@ test("Qwen cache-write rates are endpoint-scoped, while missing usage, rates and
     },
     reason: "A measured category and a required endpoint rate are missing; no bound is available.",
   })
-  const missingHTML = renderedText(
-    renderToString(() => createComponent(KnownUsageMarketScenarioCard, { scenario: missing })),
-  )
-  expect(missingHTML).toContain(
-    "Unavailable from partial evidence · no complete value, range or known subtotal; not a zero price",
-  )
-  expect(missingHTML).toContain("Uncached input · tokens unavailable · Missing")
-  expect(missingHTML).toContain("uncachedInput, cacheWrite")
-  expect(missingHTML).toContain("Cache-write pricing evidence is missing")
-  expect(missingHTML).toContain("standardUnavailable0.00001")
-  expect(missingHTML).not.toContain("$0")
+  const missingCard = renderMarketScenario(missing)
+  try {
+    expect(missingCard.compactText).toContain("Unavailable · not a zero price")
+    expect(missingCard.compactText).not.toContain("$0")
+    expect(missingCard.compactText).not.toContain("uncachedInput")
+    expect(missingCard.expand()).toBe(true)
+    expect(missingCard.evidenceText()).toContain("Uncached input · tokens unavailable · Missing")
+    expect(missingCard.evidenceText()).toContain("uncachedInput, cacheWrite")
+    expect(missingCard.evidenceText()).toContain("Cache-write pricing evidence is missing")
+    expect(missingCard.evidenceText()).toContain("standardUnavailable0.00001")
+  } finally {
+    missingCard.dispose()
+  }
 
   const missingRange = knownUsageScenario({
     status: "range",
@@ -429,11 +485,14 @@ test("Qwen cache-write rates are endpoint-scoped, while missing usage, rates and
     rangeUSD: null,
     knownSubtotalUSD: null,
   })
-  const missingRangeText = renderedText(
-    renderToString(() => createComponent(KnownUsageMarketScenarioCard, { scenario: missingRange })),
-  )
-  expect(missingRangeText).toContain("Unavailable · no scenario range was supplied")
-  expect(missingRangeText).not.toContain("$0")
+  const missingRangeCard = renderMarketScenario(missingRange)
+  try {
+    expect(missingRangeCard.compactText).toContain("Unavailable · range not supplied")
+    expect(missingRangeCard.compactText).toContain("not a zero price")
+    expect(missingRangeCard.compactText).not.toContain("$0")
+  } finally {
+    missingRangeCard.dispose()
+  }
 })
 
 test("incomplete retries expose a partial known subtotal without implying a task or history bound", () => {
@@ -461,13 +520,17 @@ test("incomplete retries expose a partial known subtotal without implying a task
     },
     reason: "Retained retry usage is incomplete; the known subtotal is not a bound.",
   })
-  const html = renderedText(
-    renderToString(() => createComponent(KnownUsageMarketScenarioCard, { scenario: partial })),
-  )
-
-  expect(html).toContain("Known subtotal only · $0.00001–$0.00002")
-  expect(html).toContain("Prompt tier unresolved")
-  expect(html).toContain("Retry coverage partial")
-  expect(html).toContain("Incomplete retry history is conditional")
-  expect(html).toContain("not a complete-task or whole-history bound")
+  const partialCard = renderMarketScenario(partial)
+  try {
+    expect(partialCard.compactText).toContain("Known subtotal only · $0.00001–$0.00002")
+    expect(partialCard.compactText).toContain("Partial known-usage subtotal only")
+    expect(partialCard.compactText).toContain("prompt tier unresolved · retry coverage partial")
+    expect(partialCard.compactText).toContain("not a complete-task or whole-history bound")
+    expect(partialCard.compactText).not.toContain("Incomplete retry history is conditional")
+    expect(partialCard.expand()).toBe(true)
+    expect(partialCard.evidenceText()).toContain("Incomplete retry history is conditional")
+    expect(partialCard.evidenceText()).toContain("Retained retry usage is incomplete")
+  } finally {
+    partialCard.dispose()
+  }
 })

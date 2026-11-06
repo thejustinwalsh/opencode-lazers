@@ -610,7 +610,6 @@
   overflow-wrap: anywhere;
 }
 
-.lazers-models-market-value span,
 .lazers-models-market-meta,
 .lazers-models-market-caveat {
   min-width: 0;
@@ -622,23 +621,18 @@
 }
 
 .lazers-models-market-caveat {
+  color: var(--text-weak);
+}
+
+.lazers-models-market-scenario[data-status="range"] .lazers-models-market-caveat,
+.lazers-models-market-scenario[data-status="partial"] .lazers-models-market-caveat,
+.lazers-models-market-scenario[data-status="unavailable"] .lazers-models-market-caveat {
   color: var(--text-warning, var(--text-weak));
 }
 
-.lazers-models-market-details {
-  min-width: 0;
+.lazers-models-market-scenario .lazers-models-market-evidence-details {
   margin-top: 3px;
   padding-top: 4px;
-  border-top: 1px solid var(--border-weak-base);
-  color: var(--text-weak);
-  font-size: 10px;
-}
-
-.lazers-models-market-details > summary {
-  min-height: 30px;
-  color: var(--text-base);
-  font-size: 10px;
-  cursor: pointer;
 }
 
 .lazers-models-market-evidence {
