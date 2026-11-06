@@ -7,6 +7,27 @@ Runtime/API readback is authoritative. Revalidate live handles before acting.
 
 ## Latest checkpoint — 2026-11-06 afternoon
 
+Architecture review/ranking, timestamped inventory, flow probes and offline five-view
+ELK/SVG C4 are committed3b11cb2 under design/reviews/architecture-_-20261106._.
+Sol6.1High found fourP1 boundaries, noP0;89tests/535assertions and isolated
+flow probes passed. Root independently reproduced the narrow scheduler blockage.
+Native Desktop receipt msg_1b1f36d7c001BWtQq7s4WFUiFs contains BOTH complete
+review and ranking (40,386characters; exact text inclusion checked read-only).
+Earlier typeText mistakenly sent report paragraphs separately; full single-prompt
+handoff above supersedes fragmentation. Native input/clicks showed severe delayed
+application; use paste for multiline, verify actual receipt, never repeat blind.
+Reload Webview stayed blank; supported Restart recovered it with service71027
+and live workers preserved, no source build/inference preference change.
+Main is reconciling existing129/163 and uncoveredP1 work, task references pending.
+
+LZ-168 repair delivered2bbf8a3,18tests/793assertions plus quality/build pass.
+LZ-169 follow-up worker ses_eab54443be664e52902ecdfe7b0aea47 is Luna/max and
+was confirmed live; do not replace from a wait timeout. LZ-155 delivered clean
+1ca1e1b,340tests/4452assertions and formatting/lint/typecheck/build pass.
+Root source review notes155visible pricing status/generation/freshness copy may
+need consumer polish; no functional pricing defect established. New source not
+loaded in Desktop yet. Original163candidate efa5f11 awaits real129admission gate.
+
 LZ-168 original worker delivered clean commit8dad5df after18panel tests,
 655registered-panel assertions, GUI build/lint/typecheck and changed-file formatting.
 Global formatting failed only untouched baseline handoff.md and
