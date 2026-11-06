@@ -17,6 +17,8 @@ import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import { ModelPriceSourceSettingsSchema } from "./price-source-settings.ts"
 import { registerModelsServer } from "./server.ts"
+import { createModelsTaskValuationProvider } from "./server.ts"
+import type { ProjectTaskValuationRequest } from "./valuation.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
 import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint-pricing.ts"
@@ -1046,6 +1048,98 @@ test("price-source settings persist an ordered whole-model policy without changi
       await Effect.runPromise(reopened.methods().priceSources({ sessionID: "ses-native" })),
     ).toMatchObject({ policy: { revision: 2, sources: ["opencode"] } })
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("Models task valuation uses the configured cached market index, not worker subscription cost", async () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const repository = new TaskRepository(path, projectDirectory)
+  writeCapturedModelEvidence(path)
+  const harness = modelContext({})
+  const provider = createModelsTaskValuationProvider(harness.context as never, repository)
+  const route = {
+    providerID: "openrouter",
+    modelID: "anthropic/claude-sonnet-5.5",
+    variant: null,
+  }
+  const request: ProjectTaskValuationRequest = {
+    attempts: [
+      {
+        id: crypto.randomUUID(),
+        sessionID: "ses-priced-task",
+        state: "failed",
+        legacyTokenCount: 999,
+        recordedCostUSD: 9876,
+        planRoute: route,
+        planRouteStatus: "explicit",
+        frozenRoute: route,
+        frozenRouteSource: "runner_attempt.policy.model",
+        personaRequested: null,
+        personaFrozen: null,
+        sessionStatus: "available",
+        contextStatus: "available",
+        currentRoute: route,
+        currentRouteObservedAt: 1_000,
+        sessionUsage: { input: 10, output: 3, reasoning: 2, cacheRead: 5, cacheWrite: 0 },
+        sessionUsageObservedAt: 1_000,
+        stepRoutes: [],
+      },
+    ],
+    progressFacts: [],
+    progressTruncated: false,
+    truncatedContextSessionIDs: [],
+  }
+
+  try {
+    const valuation = await provider(request, new AbortController().signal)
+    expect(valuation.valueUSD).toBeCloseTo(0.0000705, 12)
+    expect(valuation.currentIndex).toMatchObject({
+      freshness: "current",
+      sources: [
+        {
+          source: "native-catalog",
+          snapshotID: expect.any(String),
+          generation: 5,
+          priceBasis: "quote",
+          rateUnit: "USD per million tokens",
+        },
+      ],
+    })
+    expect(harness.sourceAccessIDs).toEqual(["openrouter"])
+    expect(harness.sourceAccessCalls.resolve).toBe(0)
+    expect(harness.modelListCalls.count).toBe(0)
+    expect(harness.inferenceCalls).toEqual({ prompt: 0, generate: 0 })
+    expect(harness.storageCalls.set).toBe(0)
+    expect(valuation.valueUSD).not.toBe(request.attempts[0]!.recordedCostUSD)
+
+    const changedSubscription = await provider(
+      {
+        ...request,
+        attempts: request.attempts.map((attempt) => ({ ...attempt, recordedCostUSD: 0 })),
+      },
+      new AbortController().signal,
+    )
+    expect(changedSubscription.valueUSD).toBe(valuation.valueUSD)
+    expect(changedSubscription.currentIndex?.indexID).toBe(valuation.currentIndex?.indexID)
+    expect(changedSubscription.currentIndex?.sources).toEqual(valuation.currentIndex?.sources)
+
+    const failedSourceProvider = createModelsTaskValuationProvider(
+      harness.context as never,
+      repository,
+      () => {
+        throw new Error("private cached-source path")
+      },
+    )
+    const unavailable = await failedSourceProvider(request, new AbortController().signal)
+    expect(unavailable).toMatchObject({
+      valueUSD: null,
+      status: "unavailable",
+      currentIndex: null,
+    })
+  } finally {
+    repository.close()
     rmSync(root, { recursive: true, force: true })
   }
 })

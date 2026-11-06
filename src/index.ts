@@ -28,7 +28,7 @@ import { registerNativeInteraction } from "./verification/opencode/native-intera
 import { Session } from "@opencode/schema/session"
 import { join, dirname } from "node:path"
 import { registerModelTools } from "./models/tools.ts"
-import { registerModelsServer } from "./models/server.ts"
+import { createModelsTaskValuationProvider, registerModelsServer } from "./models/server.ts"
 
 export default Plugin.define({
   id: "lazers",
@@ -124,7 +124,14 @@ export default Plugin.define({
       )
       const trajectoryHost = nativeTrajectoryHost(ctx, ctx.location.project.id)
       const radarSessionHost = nativeRadarSessionHost(ctx)
-      yield* registerTrajectoryTools(ctx, runtime.store, trajectoryHost, ctx.location.project.id)
+      const taskValuationProvider = createModelsTaskValuationProvider(ctx, repository)
+      yield* registerTrajectoryTools(
+        ctx,
+        runtime.store,
+        trajectoryHost,
+        ctx.location.project.id,
+        taskValuationProvider,
+      )
       const observationSecret = crypto.getRandomValues(new Uint8Array(32))
       yield* registerObservability(
         ctx,
@@ -134,6 +141,7 @@ export default Plugin.define({
           ctx.location.project.id,
           observationSecret,
           radarSessionHost,
+          taskValuationProvider,
         ),
         ctx.location.project.id,
       ).pipe(Effect.orDie)

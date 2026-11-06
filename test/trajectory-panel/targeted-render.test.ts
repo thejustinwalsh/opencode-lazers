@@ -6,6 +6,8 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
+import { createTaskValuationReader } from "../../src/models/task-valuation.ts"
+import { nativeMillionTokenIndex } from "../../test/models-valuation/fixtures/current-indexes.ts"
 import type { TrajectoryHost } from "../../src/trajectory/native.ts"
 import { makeFixture, taskID } from "../trajectory/fixture.ts"
 
@@ -132,8 +134,22 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     } = await import(pathToFileURL(`${outputDirectory}/targeted-trajectory-dom-test.js`).href)
     expect(replacedInferenceRuntime).toBe(true)
 
+    const marketRoute = { providerID: "openrouter", modelID: "vendor/model", variant: null }
+    const marketModel = { providerID: marketRoute.providerID, id: marketRoute.modelID }
     const host: TrajectoryHost = {
-      session: (id) => fixture.host.session(id),
+      session: async (id) => {
+        const session = await fixture.host.session(id)
+        return session
+          ? {
+              ...session,
+              model: marketModel,
+              messages: session.messages?.map((message) => {
+                const record = message as { model?: unknown }
+                return record.model ? { ...message, model: marketModel } : message
+              }) as never,
+            }
+          : null
+      },
       status: async (id) => {
         const session = fixture.sessions.get(id)
         return session
@@ -141,6 +157,15 @@ test("a task target renders its scoped report timeline without a broad snapshot"
           : null
       },
     }
+    const taskValuationProvider = createTaskValuationReader(async (_routes, signal) => {
+      signal.throwIfAborted()
+      const index = structuredClone(nativeMillionTokenIndex)
+      const pin = index.pins[0]!
+      pin.route = marketRoute
+      pin.productID = marketRoute.modelID
+      pin.configurationID = "vendor-model-default"
+      return { index, freshness: "current" }
+    })
     const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
     tracker.initialize()
     fixture.store.atomic((db) =>
@@ -151,7 +176,14 @@ test("a task target renders its scoped report timeline without a broad snapshot"
         )
         .run(fixture.receipt.planID, JSON.stringify(Array.from({ length: 10_001 }, (_, i) => i))),
     )
-    const reads = new ObservationReads(fixture.store, host, "project", cursorSecret)
+    const reads = new ObservationReads(
+      fixture.store,
+      host,
+      "project",
+      cursorSecret,
+      undefined,
+      taskValuationProvider,
+    )
     expect(() => reads.snapshot({ kind: "project", sessionID: "ses-owner" }, tracker)).toThrow(
       "Observation scope is too large; narrow it",
     )
@@ -264,6 +296,16 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     )
     expect(snapshotCalls).toBe(0)
     expect(historyCalls).toBeGreaterThan(0)
+    expect(container.querySelector(".lazers-trajectory-cost")?.textContent).toContain(
+      "API equivalent · observed",
+    )
+    expect(container.querySelector(".lazers-trajectory-cost")?.textContent).toContain("$0.0001844")
+    expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toContain(
+      "OpenCode · generation 1 · current freshness",
+    )
+    expect(container.querySelector(".lazers-trajectory-valuation summary")?.textContent).toContain(
+      "Pricing coverage and provenance",
+    )
     expect(container.querySelector(".lazers-trajectory-axis")).not.toBeNull()
     const measuredSegment = [
       ...container.querySelectorAll<HTMLElement>(".lazers-trajectory-segment"),

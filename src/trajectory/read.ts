@@ -12,6 +12,10 @@ import type { PrivacyStats } from "./privacy.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import { projectTaskEffortBasis } from "./accounting.ts"
 import type { AccountingRoute } from "./accounting.ts"
+import { unavailableTaskValuation } from "../models/task-valuation.ts"
+import type { TaskValuationProvider } from "../models/task-valuation.ts"
+import type { TrajectoryMarketEquivalentCost } from "../models/task-valuation-schema.ts"
+import type { ProjectTaskValuationRequest } from "../models/valuation.ts"
 
 type TransitionRow = {
   id: number
@@ -862,7 +866,12 @@ export async function inspectTrajectory(
   projectID: string,
   input: InspectTrajectoryInput,
   cursorSecret: Uint8Array,
-  options: { allEvents?: boolean; includeMessages?: boolean } = {},
+  options: {
+    allEvents?: boolean
+    includeMessages?: boolean
+    taskValuationProvider?: TaskValuationProvider
+    signal?: AbortSignal
+  } = {},
 ) {
   const stats = privacyStats()
   let task: TaskSpec | undefined
@@ -1037,7 +1046,7 @@ export async function inspectTrajectory(
       }),
     ),
   ]
-  const taskEffortBasis = projectTaskEffortBasis({
+  const valuationInput: ProjectTaskValuationRequest = {
     attempts: allAttempts.map(({ attempt, snapshot }) => {
       const session = sessions.get(attempt.id) ?? null
       const policy = parseObject(attempt.policy)
@@ -1093,7 +1102,8 @@ export async function inspectTrajectory(
     progressFacts: projectedProgressFacts,
     progressTruncated,
     truncatedContextSessionIDs,
-  })
+  }
+  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
   const totals = { uncachedInput: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 }
   let knownSessions = 0
   const unknownUsageAttempts: string[] = []
@@ -1159,6 +1169,18 @@ export async function inspectTrajectory(
   const messageSessions = allAttempts.filter(
     ({ attempt }) => sessions.get(attempt.id)?.messages,
   ).length
+  let marketEquivalentCost: TrajectoryMarketEquivalentCost | undefined
+  if (options.taskValuationProvider) {
+    const signal = options.signal ?? new AbortController().signal
+    signal.throwIfAborted()
+    try {
+      marketEquivalentCost = await options.taskValuationProvider(valuationInput, signal)
+    } catch {
+      signal.throwIfAborted()
+      marketEquivalentCost = unavailableTaskValuation(valuationInput)
+    }
+    signal.throwIfAborted()
+  }
   const summary = {
     schemaVersion: 1,
     task: {
@@ -1221,10 +1243,11 @@ export async function inspectTrajectory(
         provenance:
           "Legacy runner scalar; source model, price date, and billing basis are not persisted",
         unknownContributions: missingCostAttempts,
-        apiEquivalentTotalUsd: null,
-        apiEquivalentStatus:
-          "unknown; recorded subscription/session zero is not an API-equivalent estimate",
+        apiEquivalentTotalUsd: marketEquivalentCost?.valueUSD ?? null,
+        apiEquivalentSubtotalUsd: marketEquivalentCost?.subtotalUSD ?? null,
+        apiEquivalentStatus: marketEquivalentCost?.status ?? "unknown",
       },
+      ...(marketEquivalentCost ? { marketEquivalentCost } : {}),
     },
     coverage: {
       sessionRead:
@@ -1268,6 +1291,10 @@ export async function inspectTrajectory(
   }
 
   let offset = 0
+  const cursorSummary = structuredClone(summary)
+  const cursorMarket = object(object(cursorSummary.effort)?.marketEquivalentCost)
+  const cursorIndex = object(cursorMarket?.currentIndex)
+  if (cursorIndex) delete cursorIndex.retrievedAt
   if (input.cursor && options.allEvents) throw new Error("Invalid or stale trajectory cursor")
   // Full captures and live status never issue continuation tokens.
   const pagination = options.allEvents
@@ -1288,7 +1315,9 @@ export async function inspectTrajectory(
             },
             cursorSecret,
           ),
-          summary,
+          // Models index retrieval time is per read; its stable index and source snapshots
+          // still bind continuations to the exact cached price selection.
+          summary: cursorSummary,
           events: visibleEvents,
         }),
       }
@@ -1336,8 +1365,12 @@ export function captureTrajectoryHistory(
   projectID: string,
   input: InspectTrajectoryInput,
   cursorSecret: Uint8Array,
+  options: { taskValuationProvider?: TaskValuationProvider; signal?: AbortSignal } = {},
 ) {
-  return inspectTrajectory(store, host, projectID, input, cursorSecret, { allEvents: true })
+  return inspectTrajectory(store, host, projectID, input, cursorSecret, {
+    ...options,
+    allEvents: true,
+  })
 }
 
 /** Reads current runner/session facts without invoking native session.context. */

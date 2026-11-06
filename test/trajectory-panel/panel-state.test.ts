@@ -23,6 +23,8 @@ import {
 import type { ObservationRpc, TrajectoryTransport } from "../../src/trajectory-panel/projection.ts"
 import type { TaskTrajectoryTarget } from "../../src/trajectory-panel/panel-state.ts"
 import { firstAttemptID, makeFixture, secondAttemptID, taskID } from "../trajectory/fixture.ts"
+import type { TaskValuationProvider } from "../../src/models/task-valuation.ts"
+import { unavailableTaskValuation } from "../../src/models/task-valuation.ts"
 
 const cursorSecret = new Uint8Array(32).fill(8)
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -52,6 +54,7 @@ function transportFor(
   fixture: ReturnType<typeof makeFixture>,
   tracker: ObservationChangeTracker,
   online = () => true,
+  taskValuationProvider?: TaskValuationProvider,
 ) {
   const host: TrajectoryHost = {
     session: (id) => fixture.host.session(id),
@@ -62,7 +65,14 @@ function transportFor(
         : null
     },
   }
-  const reads = new ObservationReads(fixture.store, host, "project", cursorSecret)
+  const reads = new ObservationReads(
+    fixture.store,
+    host,
+    "project",
+    cursorSecret,
+    undefined,
+    taskValuationProvider,
+  )
   let deliver: ((event: ObservationChange | null) => void) | undefined
   let snapshotCount = 0
   const transport: TrajectoryTransport = {
@@ -152,6 +162,47 @@ test("plan checks and unassociated events never inherit the latest worker attemp
     expect(
       selectedAttemptFor({ ...state.data, selection: { kind: "attempt", id: "unavailable" } }),
     ).toBeUndefined()
+  } finally {
+    state.close()
+    fixture.close()
+  }
+})
+
+test("panel history keeps captured market valuation through status-only refreshes", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  let valuationReads = 0
+  const provider: TaskValuationProvider = async (input) => {
+    valuationReads += 1
+    return unavailableTaskValuation(input)
+  }
+  const { transport } = transportFor(fixture, tracker, () => true, provider)
+  const state = new TrajectoryPanelState(() => {})
+  try {
+    state.connect(
+      "market-valuation",
+      "project",
+      fixture.directory,
+      { kind: "project", sessionID: "ses-owner" },
+      transport,
+      { taskID, selection: null },
+    )
+    await waitFor(state, () => state.data.report !== undefined && !state.data.loading)
+    expect(valuationReads).toBe(1)
+    expect(state.data.report!.effort.marketEquivalentCost).toMatchObject({
+      valueUSD: null,
+      status: "unavailable",
+      currentIndex: null,
+    })
+
+    await state.refresh()
+    expect(valuationReads).toBe(1)
+    expect(state.data.report!.effort.marketEquivalentCost).toMatchObject({
+      valueUSD: null,
+      status: "unavailable",
+      currentIndex: null,
+    })
   } finally {
     state.close()
     fixture.close()

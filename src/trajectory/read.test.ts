@@ -5,6 +5,58 @@ import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/tr
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
+import { createTaskValuationReader } from "../models/task-valuation.ts"
+import { nativeMillionTokenIndex } from "../../test/models-valuation/fixtures/current-indexes.ts"
+import type { CurrentPriceIndex } from "../models/valuation-schema.ts"
+
+const pricingRoute = { providerID: "openrouter", modelID: "vendor/model", variant: null }
+const pricingModel = {
+  providerID: pricingRoute.providerID,
+  id: pricingRoute.modelID,
+}
+
+function pricingHost(fixture: ReturnType<typeof makeFixture>) {
+  return {
+    session: async (id: string) => {
+      const session = await fixture.host.session(id)
+      if (!session) return null
+      return {
+        ...session,
+        model: pricingModel,
+        messages: session.messages?.map((message) => {
+          const record = message as { model?: unknown }
+          return record.model ? { ...message, model: pricingModel } : message
+        }) as never,
+      }
+    },
+  }
+}
+
+function pricedIndex(generation: number, retrievedAt: string, partial = false): CurrentPriceIndex {
+  const base: CurrentPriceIndex = structuredClone(nativeMillionTokenIndex)
+  const pin = base.pins[0]!
+  pin.route = pricingRoute
+  pin.productID = pricingRoute.modelID
+  pin.configurationID = "vendor-model-default"
+  pin.provenance = {
+    ...pin.provenance,
+    snapshotID:
+      generation === 1
+        ? "30000000-0000-4000-8000-000000000001"
+        : "30000000-0000-4000-8000-000000000002",
+    generation,
+    retrievedAt: generation === 1 ? "2026-11-03T12:00:00.000Z" : "2026-11-04T12:00:00.000Z",
+    recordID: "private-record-id-not-projected",
+  }
+  if (generation > 1) {
+    pin.rates.uncachedInput = Number(pin.rates.uncachedInput) * 2
+    pin.rates.completion = Number(pin.rates.completion) * 2
+    pin.rates.cacheRead = Number(pin.rates.cacheRead) * 2
+    pin.rates.cacheWrite = Number(pin.rates.cacheWrite) * 2
+  }
+  if (partial) pin.rates.completion = null
+  return { ...base, indexID: `test-index-${generation}`, retrievedAt }
+}
 
 function parse(input: unknown) {
   return InspectTrajectoryInput.parse(input)
@@ -564,6 +616,183 @@ test("versioned task effort accounting survives task, attempt, paged, and read-o
     expect(reopenedReport.effort.taskEffortBasis).toEqual(basis)
   } finally {
     reopened?.close()
+    fixture.close()
+  }
+})
+
+test("market valuation shares unique-session usage, exposes source provenance, and keeps cursor identity stable", async () => {
+  const fixture = makeFixture()
+  let generation = 1
+  let readNumber = 0
+  const provider = createTaskValuationReader(async (_routes, signal) => {
+    signal.throwIfAborted()
+    readNumber += 1
+    return {
+      index: pricedIndex(
+        generation,
+        new Date(Date.UTC(2026, 10, 6, 12, 0, readNumber)).toISOString(),
+      ),
+      freshness: "current",
+    }
+  })
+  try {
+    const input = parse({ taskID, limit: 2 })
+    const first = await inspectTrajectory(
+      fixture.store,
+      pricingHost(fixture),
+      "project",
+      input,
+      cursorSecret,
+      { taskValuationProvider: provider },
+    )
+    expect(first.effort.recordedCost.apiEquivalentTotalUsd).toBeCloseTo(0.0001844, 9)
+    expect(first.effort.marketEquivalentCost).toMatchObject({
+      valueUSD: 0.0001844,
+      status: "observed",
+      coverage: { totalUniqueSessions: 2, pricedSessions: 2 },
+      currentIndex: {
+        indexID: "test-index-1",
+        freshness: "current",
+        sources: [
+          {
+            source: "native-catalog",
+            snapshotID: "30000000-0000-4000-8000-000000000001",
+            generation: 1,
+            priceBasis: "quote",
+          },
+        ],
+      },
+    })
+    expect(typeof first.trajectory.nextCursor).toBe("string")
+    const sources = first.effort.marketEquivalentCost!.sessions[0]!.sources[0]!
+    expect(sources).not.toHaveProperty("recordID")
+    expect(sources).not.toHaveProperty("sourceURL")
+    expect(sources).not.toHaveProperty("route")
+
+    const second = await inspectTrajectory(
+      fixture.store,
+      pricingHost(fixture),
+      "project",
+      { ...input, cursor: first.trajectory.nextCursor! },
+      cursorSecret,
+      { taskValuationProvider: provider },
+    )
+    expect(second.trajectory.page).toBe(2)
+    expect(second.effort.recordedCost.apiEquivalentTotalUsd).toBe(
+      first.effort.recordedCost.apiEquivalentTotalUsd,
+    )
+
+    generation = 2
+    const repriced = await inspectTrajectory(
+      fixture.store,
+      pricingHost(fixture),
+      "project",
+      input,
+      cursorSecret,
+      { taskValuationProvider: provider },
+    )
+    expect(repriced.effort.recordedCost.apiEquivalentTotalUsd).toBeCloseTo(0.0003688, 9)
+    expect(repriced.effort.marketEquivalentCost!.currentIndex).toMatchObject({
+      indexID: "test-index-2",
+      sources: [{ snapshotID: "30000000-0000-4000-8000-000000000002", generation: 2 }],
+    })
+    await expect(
+      inspectTrajectory(
+        fixture.store,
+        pricingHost(fixture),
+        "project",
+        { ...input, cursor: first.trajectory.nextCursor! },
+        cursorSecret,
+        { taskValuationProvider: provider },
+      ),
+    ).rejects.toThrow("Stale trajectory cursor")
+  } finally {
+    fixture.close()
+  }
+})
+
+test("partial prices label the subtotal and leave the legacy complete total null", async () => {
+  const fixture = makeFixture()
+  const provider = createTaskValuationReader(async (_routes, signal) => {
+    signal.throwIfAborted()
+    return {
+      index: pricedIndex(1, "2026-11-06T12:00:00.000Z", true),
+      freshness: "current",
+    }
+  })
+  try {
+    const report = await inspectTrajectory(
+      fixture.store,
+      pricingHost(fixture),
+      "project",
+      parse({ taskID, limit: 20 }),
+      cursorSecret,
+      { taskValuationProvider: provider },
+    )
+    expect(report.effort.recordedCost.apiEquivalentTotalUsd).toBeNull()
+    expect(report.effort.recordedCost.apiEquivalentSubtotalUsd).toBeGreaterThan(0)
+    expect(report.effort.recordedCost.apiEquivalentStatus).toBe("partial")
+    expect(report.effort.marketEquivalentCost).toMatchObject({
+      valueUSD: null,
+      status: "partial",
+      subtotalUSD: report.effort.recordedCost.apiEquivalentSubtotalUsd,
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("Models source failure preserves trajectory history and cancellation does not publish valuation", async () => {
+  const fixture = makeFixture()
+  try {
+    const unavailable = createTaskValuationReader(async () => {
+      throw new Error("private source path and credential")
+    })
+    const report = await inspectTrajectory(
+      fixture.store,
+      fixture.host,
+      "project",
+      parse({ taskID, limit: 20 }),
+      cursorSecret,
+      { taskValuationProvider: unavailable },
+    )
+    expect(report.trajectory.events.length).toBeGreaterThan(0)
+    expect(report.effort.recordedCost.apiEquivalentTotalUsd).toBeNull()
+    expect(report.effort.marketEquivalentCost).toMatchObject({
+      valueUSD: null,
+      status: "unavailable",
+      currentIndex: null,
+    })
+    expect(JSON.stringify(report)).not.toContain("private source path")
+    expect(JSON.stringify(report)).not.toContain("credential")
+
+    let markStarted!: () => void
+    let finishRead!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const waiting = createTaskValuationReader(async (_routes, signal) => {
+      markStarted()
+      await new Promise<void>((resolve, reject) => {
+        finishRead = resolve
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+      })
+      return { index: pricedIndex(1, "2026-11-06T12:00:00.000Z"), freshness: "current" }
+    })
+    const controller = new AbortController()
+    const pending = inspectTrajectory(
+      fixture.store,
+      pricingHost(fixture),
+      "project",
+      parse({ taskID, limit: 20 }),
+      cursorSecret,
+      { taskValuationProvider: waiting, signal: controller.signal },
+    )
+    await started
+    controller.abort()
+    finishRead()
+    await expect(pending).rejects.toThrow()
+  } finally {
     fixture.close()
   }
 })

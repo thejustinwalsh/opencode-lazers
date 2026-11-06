@@ -21,6 +21,7 @@ import { sourceStampFromDatabase } from "./changes.ts"
 import { projectAssociations, sessionAssociations } from "./associations.ts"
 import { associatedSessionIDs } from "./associations.ts"
 import { projectProgressFact } from "../progress/projection.ts"
+import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import type {
   ObservationScope,
   ObservationScopeView,
@@ -662,6 +663,7 @@ export class ObservationReads {
     private readonly projectID: string,
     readonly secret: Uint8Array,
     private readonly nativeSessions?: RadarSessionHost,
+    private readonly taskValuationProvider?: TaskValuationProvider,
   ) {
     this.history = new TrajectoryHistoryCache(secret)
   }
@@ -1861,7 +1863,9 @@ export class ObservationReads {
   async trajectory(
     input: TrajectoryRequest,
     tracker: ObservationChangeTracker,
+    signal?: AbortSignal,
   ): Promise<TrajectoryResponse> {
+    signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
@@ -1888,7 +1892,9 @@ export class ObservationReads {
           ...(input.cursor ? { cursor: input.cursor } : {}),
         },
         this.secret,
+        { taskValuationProvider: this.taskValuationProvider, signal },
       )
+      signal?.throwIfAborted()
       const after = connection.store.atomic((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
@@ -1899,6 +1905,7 @@ export class ObservationReads {
         nativeRevision !== tracker.nativeRevision
       )
         throw new Error("Observation changed while reading; restart from a fresh snapshot")
+      signal?.throwIfAborted()
       return {
         schemaVersion: 1,
         projectID: this.projectID,
@@ -1914,7 +1921,9 @@ export class ObservationReads {
   async trajectoryHistory(
     input: TrajectoryHistoryRequest,
     tracker: ObservationChangeTracker,
+    signal?: AbortSignal,
   ): Promise<TrajectoryHistoryResponse> {
+    signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
@@ -1947,7 +1956,9 @@ export class ObservationReads {
         this.projectID,
         { taskID: input.taskID, limit: input.limit },
         this.secret,
+        { taskValuationProvider: this.taskValuationProvider, signal },
       )
+      signal?.throwIfAborted()
       const after = connection.store.atomic((db) =>
         sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
       )
@@ -1960,6 +1971,7 @@ export class ObservationReads {
         throw new Error("Observation changed while capturing history; recapture explicitly")
 
       const boundary = tracker.boundary(after, source.transitionSequence)
+      signal?.throwIfAborted()
       return this.history.capture(identity, report, boundary)
     } finally {
       connection.close()

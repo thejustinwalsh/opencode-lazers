@@ -8,6 +8,7 @@ import type {
 import { trajectoryChanges } from "./events.ts"
 import type { TrajectoryChange, TrajectoryEventSource } from "./events.ts"
 import { z } from "zod"
+import { TrajectoryMarketEquivalentCostSchema } from "../models/task-valuation-schema.ts"
 
 export type ObservationRpc = {
   snapshot(
@@ -210,7 +211,12 @@ const Report = z
         unknownAttempts: z.array(z.string()),
       }),
       toolCalls: z.object({ count: z.number().int().nonnegative() }),
-      recordedCost: z.object({ apiEquivalentTotalUsd: z.number().finite().nullable() }),
+      recordedCost: z.object({
+        apiEquivalentTotalUsd: z.number().finite().nullable(),
+        apiEquivalentSubtotalUsd: z.number().finite().nullable().optional(),
+        apiEquivalentStatus: z.string().optional(),
+      }),
+      marketEquivalentCost: TrajectoryMarketEquivalentCostSchema.optional(),
     }),
     coverage: z.object({
       availableSessionContexts: z.number().int().nonnegative(),
