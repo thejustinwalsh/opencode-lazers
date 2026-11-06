@@ -10,6 +10,12 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import type { Plugin } from "@opencode/plugin/effect"
+import type { ToolEditor } from "@opencode/plugin/effect/tool"
+import { Agent } from "@opencode/schema/agent"
+import { SessionMessage } from "@opencode/schema/session-message"
+import { Tool } from "@opencode/schema/tool"
+import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
@@ -32,6 +38,9 @@ import {
   updateRetainedVerificationResourceIdentity,
 } from "./retained-verification/store.ts"
 import { retainedProcedurePlan } from "./retained-verification/procedure.ts"
+import { registerRunnerTools } from "./tools.ts"
+
+type RegisteredRunnerTool = Parameters<ToolEditor["add"]>[0]
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -406,6 +415,46 @@ function fixture(
   }
 }
 
+async function registeredPlanCommand(runtime: TaskRuntime) {
+  const tools = new Map<string, RegisteredRunnerTool>()
+  const editor = {
+    add: (tool: RegisteredRunnerTool) => tools.set(tool.name, tool),
+  } as unknown as ToolEditor
+  const permissionChecks: string[] = []
+  const context = {
+    permission: {
+      assert: ({ action }: { action: string }) => {
+        permissionChecks.push(action)
+        return Effect.void
+      },
+    },
+    tool: {
+      transform: (transform: (editor: ToolEditor) => void) =>
+        Effect.sync(() => {
+          transform(editor)
+          return { dispose: Effect.void }
+        }),
+    },
+  } as unknown as Plugin.Context
+  await Effect.runPromise(Effect.scoped(registerRunnerTools(context, runtime)))
+  const tool = tools.get("lz-plan-command")!
+  return {
+    permissionChecks,
+    execute: async (input: unknown) => {
+      const result = await Effect.runPromise(
+        tool.execute(input, {
+          sessionID: "owner" as never,
+          agent: Agent.ID.make("architect"),
+          messageID: SessionMessage.ID.make("msg_test"),
+          id: Tool.CallID.make("call_test"),
+          progress: () => Effect.void,
+        } as Parameters<RegisteredRunnerTool["execute"]>[1]),
+      )
+      return JSON.parse(String(result.content)) as Record<string, unknown>
+    },
+  }
+}
+
 async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   const f = fixture(options)
   await f.runtime.command(
@@ -587,7 +636,8 @@ test(
       artifact: exactArtifact,
       reason: "Verify the exact committed implementation without replaying its worker turn",
     }
-    const result = (await f.runtime.command(verifyCommand, "owner")) as {
+    const control = await registeredPlanCommand(f.runtime)
+    const result = (await control.execute(verifyCommand)) as {
       operationID: string
       generation: number
       status: string
@@ -595,7 +645,8 @@ test(
 
     expect(result.status).toBe("retained-verification-requested")
     expect(result.generation).toBe(1)
-    expect(await f.runtime.command(verifyCommand, "owner")).toEqual(result)
+    expect(await control.execute(verifyCommand)).toEqual(result)
+    expect(control.permissionChecks).toEqual(["lz-plan-command", "lz-plan-command"])
     expect(f.worktreeCreations).toHaveLength(worktreeCount + 2)
     const operation = f.store.atomic((db) =>
       db
@@ -867,8 +918,10 @@ test(
       )!.payload,
     ) as { state: string; combinedArtifact: string | null }
     expect(waitingCombinedEvidence.state).toBe("waiting-human-combined")
-    expect(typeof waitingCombinedEvidence.combinedArtifact).toBe("string")
-    expect(waitingCombinedEvidence.combinedArtifact).toMatch(/^[a-f0-9]{40}$/)
+    const combinedArtifact = waitingCombinedEvidence.combinedArtifact
+    if (typeof combinedArtifact !== "string")
+      throw new Error("Deferred combined evidence has no committed artifact")
+    expect(combinedArtifact).toMatch(/^[a-f0-9]{40}$/)
     const combinedOperation = RetainedVerificationSchema.parse(waitingCombinedEvidence)
     const combinedInputFingerprint = combinedOperation.combinedInputFingerprint
     if (typeof combinedInputFingerprint !== "string")
@@ -895,7 +948,7 @@ test(
         expectedVersion: reopenedStore.plan(f.planID)!.version,
         action: "human-evidence",
         assertionID: "combined-candidate",
-        artifact: waitingCombinedEvidence.combinedArtifact!,
+        artifact: combinedArtifact,
         retainedVerificationID: requested.operationID,
         reason: "The Architect observed the complete combined candidate",
       },
