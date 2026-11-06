@@ -2055,6 +2055,101 @@ test("ModelsDecision registers and serves coherent production overview, rows, co
   }
 })
 
+test("registered ModelsDecision reuses revision-bound unavailable contexts and invalidates on price or ledger changes", async () => {
+  const fixture = makeLedgerFixture()
+  const storage = new Map<string, unknown>()
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const harness = await register(repository, { storage })
+  repository.close()
+  const writer = new Database(fixture.path, { strict: true })
+  const revision = () =>
+    writer
+      .query<{ revision: number }, [string]>(
+        "SELECT revision FROM observation_revisions WHERE project_directory=?",
+      )
+      .get(fixture.projectDirectory)?.revision
+  const input = {
+    sessionID: "ses-native",
+    scope: { projectDirectory: fixture.projectDirectory },
+    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+  }
+  try {
+    const beforeRename = revision()
+    if (beforeRename === undefined) throw new Error("Fixture observation revision is absent")
+    writer.exec("ALTER TABLE tasks RENAME TO unavailable_tasks")
+    expect(revision()).toBe(beforeRename)
+
+    const overview = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string; availability: string; priceIndex: { note: string } }
+      configurationCount: number
+    }
+    const rows = (await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 }))) as {
+      context: { snapshotID: string; availability: string; priceIndex: { note: string } }
+      rows: unknown[]
+      totalCount: number
+    }
+    const configurations = (await Effect.runPromise(
+      harness.methods().configurations({ ...input, limit: 100 }),
+    )) as {
+      context: { snapshotID: string; availability: string; priceIndex: { note: string } }
+      configurations: unknown[]
+      totalCount: number
+    }
+    expect(overview.context.availability).toBe("backend-not-ready")
+    expect(overview.context.priceIndex.note).toContain(
+      `project observation revision ${beforeRename}`,
+    )
+    expect(rows.context.snapshotID).toBe(overview.context.snapshotID)
+    expect(configurations.context.snapshotID).toBe(overview.context.snapshotID)
+    expect(rows.context.availability).toBe("backend-not-ready")
+    expect(configurations.context.availability).toBe("backend-not-ready")
+    expect(rows.rows).toEqual([])
+    expect(configurations.configurations).toEqual([])
+    expect(rows.totalCount).toBe(overview.configurationCount)
+    expect(configurations.totalCount).toBe(overview.configurationCount)
+
+    expect(
+      await Effect.runPromise(
+        harness.methods().configurePriceSources({
+          sessionID: "ses-native",
+          expectedRevision: 0,
+          sources: ["opencode"],
+        }),
+      ),
+    ).toMatchObject({ status: "updated", policy: { revision: 1, sources: ["opencode"] } })
+    const afterPriceChange = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string; priceIndex: { sourcePolicyRevision: number; note: string } }
+    }
+    const afterPriceRows = (await Effect.runPromise(
+      harness.methods().rows({ ...input, limit: 100 }),
+    )) as { context: { snapshotID: string } }
+    expect(afterPriceChange.context.snapshotID).not.toBe(overview.context.snapshotID)
+    expect(afterPriceChange.context.priceIndex.sourcePolicyRevision).toBe(1)
+    expect(afterPriceChange.context.priceIndex.note).toContain(
+      `project observation revision ${beforeRename}`,
+    )
+    expect(afterPriceRows.context.snapshotID).toBe(afterPriceChange.context.snapshotID)
+
+    writer
+      .query("UPDATE observation_revisions SET revision=revision+1 WHERE project_directory=?")
+      .run(fixture.projectDirectory)
+    const afterRevisionChange = (await Effect.runPromise(harness.methods().overview(input))) as {
+      context: { snapshotID: string; priceIndex: { note: string } }
+    }
+    const afterRevisionRows = (await Effect.runPromise(
+      harness.methods().rows({ ...input, limit: 100 }),
+    )) as { context: { snapshotID: string } }
+    expect(afterRevisionChange.context.snapshotID).not.toBe(afterPriceChange.context.snapshotID)
+    expect(afterRevisionChange.context.priceIndex.note).toContain(
+      `project observation revision ${beforeRename + 1}`,
+    )
+    expect(afterRevisionRows.context.snapshotID).toBe(afterRevisionChange.context.snapshotID)
+  } finally {
+    writer.close()
+    fixture.close()
+  }
+})
+
 test("registered inspector maps exact configured Go routes to independently sourced market scenarios", async () => {
   const fixture = makeLedgerFixture()
   const kimiRoute = {

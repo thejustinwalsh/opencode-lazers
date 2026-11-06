@@ -39,7 +39,6 @@ export const OBSERVATION_LEDGER_LIMITS = {
 // Decision reads keep only retained usage measurements and route-bearing step
 // observations. The bounded SQL projection is intentionally separate from the
 // public ledger's richer progress view.
-const DECISION_PROGRESS_FACT_LIMIT = 15_000
 const DECISION_PROGRESS_BATCH_SIZE = 512
 
 type SourceStatus = ObservationLedgerOutput["completeness"]["sources"][number]
@@ -84,6 +83,8 @@ type RawCapture = {
   transitions: RawTransition[]
   adoptions: AdoptionRow[]
   progress: RawProgress[]
+  decisionProgressFacts: Record<string, unknown>[]
+  decisionProgressFingerprint: string | null
   sourceStatuses: SourceStatus[]
   notes: string[]
   fingerprint: string
@@ -141,6 +142,7 @@ export type ObservationLedgerDecisionRead =
   | {
       status: "incomplete"
       projectDirectory: string
+      sourceRevision: number | null
       reason: string
       sources: SourceStatus[]
       notes: string[]
@@ -148,6 +150,7 @@ export type ObservationLedgerDecisionRead =
   | {
       status: "unavailable"
       projectDirectory: string
+      sourceRevision: number | null
       reason: "database-missing" | "database-unavailable" | "task-table-missing"
       sources: SourceStatus[]
     }
@@ -428,10 +431,10 @@ const DECISION_PROGRESS_SQL = `
              THEN json(json_extract(r.payload,'$.usage')) ELSE NULL END,
            'route',CASE WHEN json_type(r.payload,'$.route')='object'
              THEN json(json_extract(r.payload,'$.route')) ELSE NULL END,
-           'routeEvidence',CASE WHEN json_type(r.payload,'$.routeEvidence')='object'
-             THEN json(json_extract(r.payload,'$.routeEvidence')) ELSE NULL END,
-           'observations',json(COALESCE((
-             SELECT json_group_array(json_object(
+            'routeEvidence',CASE WHEN json_type(r.payload,'$.routeEvidence')='object'
+              THEN json(json_extract(r.payload,'$.routeEvidence')) ELSE NULL END,
+            'observations',json(COALESCE((
+              SELECT json_group_array(json_object(
                'source',json_extract(o.value,'$.source'),
                'eventType',json_extract(o.value,'$.eventType'),
                'at',json_extract(o.value,'$.at'),
@@ -439,13 +442,13 @@ const DECISION_PROGRESS_SQL = `
                'eventID',json_extract(o.value,'$.eventID'),
                'route',CASE WHEN json_type(o.value,'$.route')='object'
                  THEN json(json_extract(o.value,'$.route')) ELSE NULL END,
-               'routeEvidence',CASE WHEN json_type(o.value,'$.routeEvidence')='object'
-                 THEN json(json_extract(o.value,'$.routeEvidence')) ELSE NULL END
-             ))
-             FROM json_each(r.payload,'$.observations') o
-             WHERE json_extract(o.value,'$.source') IN ('native-event','recovery')
-               AND json_type(o.value,'$.eventType')='text'
-           ),'[]')),
+                'routeEvidence',CASE WHEN json_type(o.value,'$.routeEvidence')='object'
+                  THEN json(json_extract(o.value,'$.routeEvidence')) ELSE NULL END
+              ))
+              FROM json_each(r.payload,'$.observations') o
+              WHERE json_extract(o.value,'$.source') IN ('native-event','recovery')
+                AND json_type(o.value,'$.eventType')='text'
+             ),'[]')),
            'timing',CASE
              WHEN json_type(r.payload,'$.timing.endpoints.completedAt')='object'
              THEN json_object('endpoints',json_object('completedAt',
@@ -470,7 +473,12 @@ function readDecisionProgress(
   db: Database,
   projectDirectory: string,
   signal?: AbortSignal,
-): { rows: RawProgress[]; invalidCount: number; overflow: boolean } {
+): {
+  facts: Record<string, unknown>[]
+  fingerprint: string
+  invalidCount: number
+  notes: string[]
+} {
   const invalidCount = rowCount(
     db,
     `SELECT COUNT(*) AS count FROM runner_progress r
@@ -480,24 +488,43 @@ function readDecisionProgress(
        AND r.kind IN ('step','usage-snapshot') AND NOT json_valid(r.payload)`,
     [projectDirectory, projectDirectory],
   )
-  const rows: RawProgress[] = []
+  const facts: Record<string, unknown>[] = []
+  const digest = createHash("sha256")
+  const notes: string[] = []
+  const stats = privacyStats()
+  let unreadablePayloads = 0
+  let unreadableSourceLineage = 0
+  let unreadableEventLineage = 0
   let afterSequence = 0
   while (true) {
     signal?.throwIfAborted()
-    const remaining = DECISION_PROGRESS_FACT_LIMIT + 1 - rows.length
-    const limit = Math.min(DECISION_PROGRESS_BATCH_SIZE, remaining)
-    if (limit <= 0) return { rows, invalidCount, overflow: true }
+    const limit = DECISION_PROGRESS_BATCH_SIZE
     const batch = db
       .query<RawProgress, [string, string, number, number]>(DECISION_PROGRESS_SQL)
       .all(projectDirectory, projectDirectory, afterSequence, limit)
     for (const row of batch) {
-      if (rows.length >= DECISION_PROGRESS_FACT_LIMIT) return { rows, invalidCount, overflow: true }
-      rows.push(row)
       afterSequence = row.seq
+      if (!parseObject(row.payload)) unreadablePayloads++
+      if (!parseArray(row.sources_json)) unreadableSourceLineage++
+      if (!parseArray(row.event_ids_json)) unreadableEventLineage++
+      const fact = decisionProgressFact(row, stats)
+      if (!fact) continue
+      facts.push(fact)
+      // Length-prefix each projected row so the digest is independent of page
+      // boundaries without serializing the complete retained history.
+      const serialized = JSON.stringify(fact)
+      digest.update(`${Buffer.byteLength(serialized, "utf8")}:`)
+      digest.update(serialized)
     }
     if (batch.length < limit) break
   }
-  return { rows, invalidCount, overflow: false }
+  if (unreadablePayloads)
+    notes.push(`${unreadablePayloads} retained decision progress facts have unreadable payloads.`)
+  if (unreadableSourceLineage)
+    notes.push(`${unreadableSourceLineage} retained decision facts have unreadable source lineage.`)
+  if (unreadableEventLineage)
+    notes.push(`${unreadableEventLineage} retained decision facts have unreadable event lineage.`)
+  return { facts, fingerprint: digest.digest("hex"), invalidCount, notes }
 }
 
 function boundedNotes(values: string[]) {
@@ -629,6 +656,8 @@ function readCapture(
   let transitions: RawTransition[] = []
   let adoptions: AdoptionRow[] = []
   let progress: RawProgress[] = []
+  let decisionProgressFacts: Record<string, unknown>[] = []
+  let decisionProgressFingerprint: string | null = null
 
   const plansAvailable = sourceAvailable(statuses, "runner_plans")
   if (plansAvailable) {
@@ -725,13 +754,9 @@ function readCapture(
   if (plansAvailable && sourceAvailable(statuses, "runner_progress")) {
     if (options.decision) {
       const retained = readDecisionProgress(db, projectDirectory, options.signal)
-      progress = retained.rows
-      if (retained.overflow)
-        return incompleteResult(
-          `Retained decision usage and route history exceeds the ${DECISION_PROGRESS_FACT_LIMIT} compact fact limit.`,
-          statuses,
-          notes,
-        )
+      decisionProgressFacts = retained.facts
+      decisionProgressFingerprint = retained.fingerprint
+      notes.push(...retained.notes)
       if (retained.invalidCount)
         notes.push(
           `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
@@ -770,6 +795,12 @@ function readCapture(
     transitions,
     adoptions,
     progress,
+    ...(options.decision
+      ? {
+          decisionProgressFingerprint,
+          decisionProgressCount: decisionProgressFacts.length,
+        }
+      : {}),
   }
 
   const snapshots = new Map<string, TaskClassificationSnapshot | null>()
@@ -880,6 +911,8 @@ function readCapture(
     capture: {
       ...sourceData,
       sourceStatuses: statuses,
+      decisionProgressFacts,
+      decisionProgressFingerprint,
       notes: boundedNotes(notes),
       fingerprint,
       effectiveClassifications: snapshots,
@@ -2028,10 +2061,7 @@ function decisionProjection(
       terminal,
     }
   })
-  const progressFacts = capture.progress.flatMap((row) => {
-    const fact = decisionProgressFact(row, stats)
-    return fact ? [fact] : []
-  })
+  const progressFacts = capture.decisionProgressFacts
   const classifiedTaskCount = tasks.filter(
     (task) => task.classification.status === "available" && task.classification.kind !== null,
   ).length
@@ -2461,6 +2491,7 @@ export function openReadOnlyObservationLedger(
         return {
           status: "unavailable",
           projectDirectory,
+          sourceRevision: null,
           reason: openError ?? "database-unavailable",
           sources: [],
         }
@@ -2468,6 +2499,7 @@ export function openReadOnlyObservationLedger(
         return {
           status: "incomplete",
           projectDirectory,
+          sourceRevision: null,
           reason: "Project-scoped observation revision tracking is unavailable.",
           sources: [],
           notes: [
@@ -2490,6 +2522,7 @@ export function openReadOnlyObservationLedger(
         return {
           status: "unavailable",
           projectDirectory,
+          sourceRevision: result.sourceRevision,
           reason: result.capture.reason,
           sources: result.capture.sources,
         }
@@ -2497,6 +2530,7 @@ export function openReadOnlyObservationLedger(
         return {
           status: "incomplete",
           projectDirectory,
+          sourceRevision: result.sourceRevision,
           reason: result.capture.reason,
           sources: result.capture.sources,
           notes: result.capture.notes,
