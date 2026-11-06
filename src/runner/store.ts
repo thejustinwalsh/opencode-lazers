@@ -3080,6 +3080,36 @@ export class RunnerStore {
     )
     return row ? (JSON.parse(row.payload) as T) : undefined
   }
+  /** Confirms a same-plan owner transfer after the retained attempt began. */
+  hasPlanOwnerTransfer(planID: string, previousOwner: string, currentOwner: string, after: number) {
+    if (!this.plan(planID)) throw new Error("Plan not found")
+    if (!previousOwner || !currentOwner || previousOwner === currentOwner) return false
+    return this.atomic((db) =>
+      db
+        .query<{ event: string; payload: string }, [string, number]>(
+          `SELECT event,payload FROM runner_transitions
+           WHERE plan_id=? AND task_id IS NULL AND created_at>=?
+             AND event IN ('OWNER_REASSIGNED','OWNER_CONTINUED')
+           ORDER BY id`,
+        )
+        .all(planID, after)
+        .some((transition) => {
+          try {
+            const payload = JSON.parse(transition.payload) as {
+              from?: unknown
+              to?: unknown
+            }
+            return (
+              (transition.event === "OWNER_REASSIGNED" || transition.event === "OWNER_CONTINUED") &&
+              payload.from === previousOwner &&
+              payload.to === currentOwner
+            )
+          } catch {
+            return false
+          }
+        }),
+    )
+  }
   /** High-water mark for plan-level owner/cancellation changes, excluding task activity. */
   planControlEpoch(planID: string): number {
     return this.atomic(
