@@ -1,14 +1,17 @@
-import { LineChart, ScatterChart } from "echarts/charts"
+import { CustomChart, LineChart, ScatterChart } from "echarts/charts"
+import type { CustomSeriesOption } from "echarts/charts"
 import { AriaComponent, GridComponent, TooltipComponent } from "echarts/components"
 import * as echarts from "echarts/core"
 import type { EChartsCoreOption, EChartsType } from "echarts/core"
 import { LabelLayout } from "echarts/features"
 import { SVGRenderer } from "echarts/renderers"
-import { For, createEffect, createUniqueId, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createUniqueId, onCleanup, onMount } from "solid-js"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
+import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 
 echarts.use([
   ScatterChart,
+  CustomChart,
   LineChart,
   GridComponent,
   TooltipComponent,
@@ -18,6 +21,13 @@ echarts.use([
 ])
 
 export type ComparisonChartPoint = ModelDecisionGraphPoint
+
+export type ComparisonChartReference = {
+  configurationID: string
+  label: string
+  tokensPerAcceptedTask: number | null
+  estimate: ModelDecisionReferenceEstimate
+}
 
 export interface ComparisonChartTheme {
   surface: string
@@ -31,6 +41,7 @@ export interface ComparisonChartTheme {
 
 export interface ComparisonChartData {
   points: readonly ComparisonChartPoint[]
+  references?: readonly ComparisonChartReference[]
   frontierConfigurationIDs: readonly string[]
   selectedConfigurationID?: string | null
 }
@@ -47,7 +58,7 @@ export interface ComparisonChartProps extends ComparisonChartData {
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
-  maximumFractionDigits: 6,
+  maximumSignificantDigits: 12,
 })
 const tokens = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 })
 const tokenAxis = new Intl.NumberFormat("en-US", {
@@ -57,7 +68,7 @@ const tokenAxis = new Intl.NumberFormat("en-US", {
 })
 
 const noPointDescription =
-  "No plottable observations. Unknown prices and zero-accepted configurations have no coordinates."
+  "No plottable observations. Unknown prices, zero-accepted configurations, and missing actual token coordinates remain unplotted."
 
 export function compactTokenAxisValue(value: number) {
   return tokenAxis.format(value)
@@ -92,10 +103,51 @@ export function resolveNativeComparisonChartTheme(
 }
 
 export function comparisonChartPointText(point: ComparisonChartPoint) {
-  return `${point.label}: ${tokens.format(point.tokensPerAcceptedTask)} tokens per accepted task; ${money.format(point.currentMarketUSDPerAcceptedTask)} current market USD per accepted task; ${point.observationCount} observation${point.observationCount === 1 ? "" : "s"}; ${point.acceptedTaskCount} accepted.`
+  return `Actual cohort · ${point.label}: ${tokens.format(point.tokensPerAcceptedTask)} tokens per accepted task; canonical current-market observation ${money.format(point.currentMarketUSDPerAcceptedTask)} per accepted task; ${point.observationCount} observation${point.observationCount === 1 ? "" : "s"}; ${point.acceptedTaskCount} accepted.`
 }
 
-function tooltipText(point: ComparisonChartPoint) {
+type ReferenceAmount =
+  | { kind: "scalar"; value: number }
+  | { kind: "range"; minimum: number; maximum: number }
+  | { kind: "subtotal"; value: number }
+  | { kind: "subtotal-range"; minimum: number; maximum: number }
+
+function referenceAmount(estimate: ModelDecisionReferenceEstimate): ReferenceAmount | undefined {
+  if (estimate.status === "exact" && estimate.valueUSDPerAcceptedTask !== null)
+    return { kind: "scalar", value: estimate.valueUSDPerAcceptedTask }
+  if (estimate.status === "conditional" && estimate.rangeUSDPerAcceptedTask !== null)
+    return { kind: "range", ...estimate.rangeUSDPerAcceptedTask }
+  if (estimate.status === "partial" && estimate.knownSubtotalUSDPerAcceptedTask !== null)
+    return { kind: "subtotal", value: estimate.knownSubtotalUSDPerAcceptedTask }
+  if (estimate.status === "partial" && estimate.knownSubtotalRangeUSDPerAcceptedTask !== null)
+    return { kind: "subtotal-range", ...estimate.knownSubtotalRangeUSDPerAcceptedTask }
+  return undefined
+}
+
+export function comparisonChartReferenceText(reference: ComparisonChartReference) {
+  const estimate = reference.estimate
+  const amount = referenceAmount(estimate)
+  const amountLabel = amount
+    ? amount.kind === "scalar"
+      ? `OpenRouter scalar reference ${money.format(amount.value)} per accepted task`
+      : amount.kind === "range"
+        ? `OpenRouter conditional range ${money.format(amount.minimum)}–${money.format(amount.maximum)} per accepted task`
+        : amount.kind === "subtotal"
+          ? `OpenRouter priced subtotal only ${money.format(amount.value)} per accepted task; total and remainder unknown`
+          : `OpenRouter priced subtotal range only ${money.format(amount.minimum)}–${money.format(amount.maximum)} per accepted task; total and remainder unknown`
+    : estimate.status === "zero-accepted"
+      ? "OpenRouter reference has no accepted-task denominator"
+      : estimate.status === "unavailable"
+        ? "OpenRouter reference unavailable"
+        : "OpenRouter priced subtotal unavailable; total unknown"
+  const coordinate =
+    reference.tokensPerAcceptedTask === null
+      ? "Actual cohort token coordinate unknown"
+      : `${tokens.format(reference.tokensPerAcceptedTask)} actual cohort tokens per accepted task`
+  return `${reference.label}: ${coordinate}; ${amountLabel}; denominator ${estimate.acceptedTaskCount} accepted task${estimate.acceptedTaskCount === 1 ? "" : "s"}; OpenRouter source ${estimate.provenance.freshness}; actual route-specific task mix (not a common workload).`
+}
+
+function tooltipText(value: string) {
   const entities: Record<string, string> = {
     "&": "&amp;",
     "<": "&lt;",
@@ -103,7 +155,7 @@ function tooltipText(point: ComparisonChartPoint) {
     '"': "&quot;",
     "'": "&#39;",
   }
-  return comparisonChartPointText(point).replace(/[&<>"']/g, (character) => entities[character]!)
+  return value.replace(/[&<>"']/g, (character) => entities[character]!)
 }
 
 function plottable(point: ComparisonChartPoint) {
@@ -115,20 +167,134 @@ function plottable(point: ComparisonChartPoint) {
   )
 }
 
-export function comparisonChartHasPlottablePoints(points: readonly ComparisonChartPoint[]) {
-  return points.some(plottable)
+function referenceIsPlottable(reference: ComparisonChartReference) {
+  const amount = referenceAmount(reference.estimate)
+  return (
+    reference.tokensPerAcceptedTask !== null &&
+    Number.isFinite(reference.tokensPerAcceptedTask) &&
+    reference.tokensPerAcceptedTask >= 0 &&
+    amount !== undefined
+  )
+}
+
+export function comparisonChartHasPlottablePoints(
+  points: readonly ComparisonChartPoint[],
+  references: readonly ComparisonChartReference[] = [],
+) {
+  return points.some(plottable) || references.some(referenceIsPlottable)
+}
+
+function comparisonChartDescription(
+  points: readonly ComparisonChartPoint[],
+  references: readonly ComparisonChartReference[],
+) {
+  const visiblePoints = points.filter(plottable)
+  const unplottedReferences = references.filter((reference) => !referenceIsPlottable(reference))
+  return (
+    [
+      ...visiblePoints.map(comparisonChartPointText),
+      ...references.map(comparisonChartReferenceText),
+      ...(unplottedReferences.length
+        ? [
+            `${unplottedReferences.length} OpenRouter reference estimate${unplottedReferences.length === 1 ? "" : "s"} are not plotted because a numeric actual cohort token coordinate or per-task amount is unavailable.`,
+          ]
+        : []),
+    ].join(" ") || noPointDescription
+  )
+}
+
+function intervalRenderer(theme: ComparisonChartTheme, subtotal: boolean) {
+  const renderer: NonNullable<CustomSeriesOption["renderItem"]> = (_params, api) => {
+    const x = Number(api.value(0))
+    const minimum = Number(api.value(1))
+    const maximum = Number(api.value(2))
+    const lower = api.coord([x, minimum])
+    const upper = api.coord([x, maximum])
+    const cap = 5
+    const style = {
+      stroke: theme.accent,
+      lineWidth: 2,
+      ...(subtotal ? { lineDash: [4, 3], opacity: 0.8 } : {}),
+    }
+    return {
+      type: "group",
+      children: [
+        {
+          type: "line",
+          shape: { x1: lower[0]!, y1: lower[1]!, x2: upper[0]!, y2: upper[1]! },
+          style,
+        },
+        {
+          type: "line",
+          shape: {
+            x1: lower[0]! - cap,
+            y1: lower[1]!,
+            x2: lower[0]! + cap,
+            y2: lower[1]!,
+          },
+          style,
+        },
+        {
+          type: "line",
+          shape: {
+            x1: upper[0]! - cap,
+            y1: upper[1]!,
+            x2: upper[0]! + cap,
+            y2: upper[1]!,
+          },
+          style,
+        },
+      ],
+    }
+  }
+  return renderer
 }
 
 export function comparisonChartOptions(data: ComparisonChartData, theme: ComparisonChartTheme) {
   const points = data.points.filter(plottable)
+  const references = data.references ?? []
+  type ReferenceMark = {
+    reference: ComparisonChartReference
+    amount: ReferenceAmount
+    tokens: number
+  }
+  const referenceMarks: ReferenceMark[] = references.flatMap((reference) => {
+    const amount = referenceAmount(reference.estimate)
+    if (!referenceIsPlottable(reference) || !amount || reference.tokensPerAcceptedTask === null)
+      return []
+    return [{ reference, amount, tokens: reference.tokensPerAcceptedTask }]
+  })
+  const scalarReferences = referenceMarks.filter(
+    (item): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "scalar" }> } =>
+      item.amount.kind === "scalar",
+  )
+  const subtotalReferences = referenceMarks.filter(
+    (item): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "subtotal" }> } =>
+      item.amount.kind === "subtotal",
+  )
+  const rangeReferences = referenceMarks.filter(
+    (item): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "range" }> } =>
+      item.amount.kind === "range",
+  )
+  const subtotalRangeReferences = referenceMarks.filter(
+    (
+      item,
+    ): item is ReferenceMark & { amount: Extract<ReferenceAmount, { kind: "subtotal-range" }> } =>
+      item.amount.kind === "subtotal-range",
+  )
   const frontier = new Set(data.frontierConfigurationIDs)
-  const largestTokenValue = Math.max(0, ...points.map((point) => point.tokensPerAcceptedTask))
+  const largestTokenValue = Math.max(
+    0,
+    ...points.map((point) => point.tokensPerAcceptedTask),
+    ...referenceMarks.map((item) => item.tokens),
+  )
   const frontierPoints = points
     .filter((point) => frontier.has(point.configurationID))
     .toSorted((left, right) => left.tokensPerAcceptedTask - right.tokensPerAcceptedTask)
-  const description = points.length
-    ? points.map(comparisonChartPointText).join(" ")
-    : noPointDescription
+  const description = comparisonChartDescription(points, references)
+  const referenceByConfiguration = new Map(
+    referenceMarks.map((item) => [item.reference.configurationID, item.reference]),
+  )
 
   return {
     animation: false,
@@ -139,11 +305,17 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
     tooltip: {
       trigger: "item",
       confine: true,
-      formatter: (parameters: { data?: { configurationID?: string } }) => {
+      formatter: (parameters: { data?: { configurationID?: string; markKind?: string } }) => {
+        const datum = parameters.data
+        if (!datum?.configurationID) return ""
+        if (datum.markKind === "reference") {
+          const reference = referenceByConfiguration.get(datum.configurationID)
+          return reference ? tooltipText(comparisonChartReferenceText(reference)) : ""
+        }
         const point = points.find(
-          (candidate) => candidate.configurationID === parameters.data?.configurationID,
+          (candidate) => candidate.configurationID === datum.configurationID,
         )
-        return point ? tooltipText(point) : ""
+        return point ? tooltipText(comparisonChartPointText(point)) : ""
       },
     },
     xAxis: {
@@ -163,7 +335,7 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
     },
     yAxis: {
       type: "value",
-      name: "Market USD / accepted task",
+      name: "USD / accepted task",
       nameLocation: "middle",
       nameGap: 48,
       min: 0,
@@ -188,6 +360,7 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
             value: [point.tokensPerAcceptedTask, point.currentMarketUSDPerAcceptedTask],
             configurationID: point.configurationID,
             groupID: point.groupID,
+            markKind: "canonical",
             symbol: frontier.has(point.configurationID) ? "diamond" : "circle",
             symbolSize: selected ? 14 : 10,
             itemStyle: {
@@ -227,6 +400,64 @@ export function comparisonChartOptions(data: ComparisonChartData, theme: Compari
         showSymbol: false,
         silent: true,
         lineStyle: { color: theme.accent, width: 1.5, type: "dashed" },
+      },
+      {
+        id: "openrouter-reference-scalars",
+        name: "OpenRouter reference scalar",
+        type: "scatter",
+        data: scalarReferences.map(({ reference, amount, tokens: tokenCount }) => ({
+          name: reference.label,
+          value: [tokenCount, amount.value],
+          configurationID: reference.configurationID,
+          markKind: "reference",
+          symbol: "triangle",
+          symbolSize: 12,
+          itemStyle: { color: theme.accent, borderColor: theme.text, borderWidth: 1 },
+        })),
+        emphasis: { focus: "self" },
+      },
+      {
+        id: "openrouter-reference-subtotals",
+        name: "OpenRouter priced subtotal only",
+        type: "scatter",
+        data: subtotalReferences.map(({ reference, amount, tokens: tokenCount }) => ({
+          name: reference.label,
+          value: [tokenCount, amount.value],
+          configurationID: reference.configurationID,
+          markKind: "reference",
+          symbol: "diamond",
+          symbolSize: 12,
+          itemStyle: { color: theme.surface, borderColor: theme.accent, borderWidth: 2 },
+        })),
+        emphasis: { focus: "self" },
+      },
+      {
+        id: "openrouter-conditional-ranges",
+        name: "OpenRouter conditional ranges",
+        type: "custom",
+        renderItem: intervalRenderer(theme, false),
+        data: rangeReferences.map(({ reference, amount, tokens: tokenCount }) => ({
+          name: reference.label,
+          value: [tokenCount, amount.minimum, amount.maximum],
+          configurationID: reference.configurationID,
+          markKind: "reference",
+        })),
+        encode: { x: 0, y: [1, 2] },
+        z: 6,
+      },
+      {
+        id: "openrouter-subtotal-ranges",
+        name: "OpenRouter priced subtotal ranges · remainder unknown",
+        type: "custom",
+        renderItem: intervalRenderer(theme, true),
+        data: subtotalRangeReferences.map(({ reference, amount, tokens: tokenCount }) => ({
+          name: reference.label,
+          value: [tokenCount, amount.minimum, amount.maximum],
+          configurationID: reference.configurationID,
+          markKind: "reference",
+        })),
+        encode: { x: 0, y: [1, 2] },
+        z: 6,
       },
     ],
   } satisfies EChartsCoreOption
@@ -299,6 +530,22 @@ export function ComparisonChart(props: ComparisonChartProps) {
     (host
       ? resolveNativeComparisonChartTheme(host, props.fontFamily, props.monoFontFamily)
       : undefined)
+  const chartChoices = () => {
+    const choices = new Map<
+      string,
+      { point?: ComparisonChartPoint; reference?: ComparisonChartReference }
+    >()
+    for (const reference of props.references ?? []) {
+      const current = choices.get(reference.configurationID) ?? {}
+      choices.set(reference.configurationID, { ...current, reference })
+    }
+    for (const point of props.points) {
+      if (!plottable(point)) continue
+      const current = choices.get(point.configurationID) ?? {}
+      choices.set(point.configurationID, { ...current, point })
+    }
+    return [...choices.entries()]
+  }
 
   createEffect(() => {
     // Subscribe before onMount supplies the non-reactive adapter. Reading props only
@@ -306,6 +553,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
     void props.appearanceVersion
     const data: ComparisonChartData = {
       points: props.points,
+      references: props.references,
       frontierConfigurationIDs: props.frontierConfigurationIDs,
       selectedConfigurationID: props.selectedConfigurationID,
     }
@@ -330,7 +578,7 @@ export function ComparisonChart(props: ComparisonChartProps) {
           host = element
         }}
         role="img"
-        aria-label="Observed model tokens and current market cost per accepted task"
+        aria-label="Actual cohort tokens, canonical current-market observations, and OpenRouter reference costs per accepted task"
         aria-describedby={descriptionID}
         style={{
           width: "100%",
@@ -354,27 +602,91 @@ export function ComparisonChart(props: ComparisonChartProps) {
           border: "0",
         }}
       >
-        {props.points.filter(plottable).length
-          ? props.points.filter(plottable).map(comparisonChartPointText).join(" ")
-          : noPointDescription}
+        {comparisonChartDescription(props.points, props.references ?? [])}
       </p>
+      <ul class="lazers-models-comparison-chart-legend" aria-label="Chart legend">
+        <Show when={props.points.some(plottable)}>
+          <li>
+            <span
+              class="lazers-models-chart-key lazers-models-chart-key-canonical"
+              aria-hidden="true"
+            />
+            Canonical actual-cohort market observation
+          </li>
+        </Show>
+        <Show
+          when={(props.references ?? []).some((reference) => reference.estimate.status === "exact")}
+        >
+          <li>
+            <span
+              class="lazers-models-chart-key lazers-models-chart-key-reference"
+              aria-hidden="true"
+            />
+            OpenRouter scalar reference
+          </li>
+        </Show>
+        <Show
+          when={(props.references ?? []).some(
+            (reference) => reference.estimate.status === "conditional",
+          )}
+        >
+          <li>
+            <span
+              class="lazers-models-chart-key lazers-models-chart-key-range"
+              aria-hidden="true"
+            />
+            Conditional OpenRouter range
+          </li>
+        </Show>
+        <Show
+          when={(props.references ?? []).some(
+            (reference) => reference.estimate.status === "partial",
+          )}
+        >
+          <li>
+            <span
+              class="lazers-models-chart-key lazers-models-chart-key-subtotal"
+              aria-hidden="true"
+            />
+            OpenRouter priced subtotal only · remainder unknown
+          </li>
+        </Show>
+      </ul>
+      <Show when={(props.references ?? []).some((reference) => !referenceIsPlottable(reference))}>
+        <p class="lazers-models-chart-empty" role="note">
+          OpenRouter references without an actual-cohort token coordinate or per-task amount are not
+          plotted; their status remains available in chart data and the inspector.
+        </p>
+      </Show>
       <details class="lazers-models-comparison-chart-data">
-        <summary>Chart data and point selection</summary>
+        <summary>Chart data, legend and point selection</summary>
         <ul>
-          <For each={props.points.filter(plottable)}>
-            {(point) => (
-              <li>
-                <button
-                  type="button"
-                  data-configuration-id={point.configurationID}
-                  aria-pressed={props.selectedConfigurationID === point.configurationID}
-                  aria-label={`Select ${comparisonChartPointText(point)}`}
-                  onClick={() => props.onSelect(point.configurationID)}
-                >
-                  {comparisonChartPointText(point)}
-                </button>
-              </li>
-            )}
+          <For each={chartChoices()}>
+            {([configurationID, choice]) => {
+              const descriptions = [
+                ...(choice.point ? [comparisonChartPointText(choice.point)] : []),
+                ...(choice.reference ? [comparisonChartReferenceText(choice.reference)] : []),
+                ...(choice.reference && !referenceIsPlottable(choice.reference)
+                  ? [
+                      "Not plotted: a numeric actual token coordinate or per-task amount is unavailable.",
+                    ]
+                  : []),
+              ]
+              const text = descriptions.join(" ")
+              return (
+                <li>
+                  <button
+                    type="button"
+                    data-configuration-id={configurationID}
+                    aria-pressed={props.selectedConfigurationID === configurationID}
+                    aria-label={`Select ${text}`}
+                    onClick={() => props.onSelect(configurationID)}
+                  >
+                    {text}
+                  </button>
+                </li>
+              )
+            }}
           </For>
         </ul>
       </details>

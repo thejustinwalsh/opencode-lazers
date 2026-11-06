@@ -7,8 +7,11 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type {
   ComparisonChartPoint,
+  ComparisonChartReference,
   ComparisonChartTheme,
 } from "../../src/models/comparison-chart.tsx"
+import { ModelDecisionReferenceEstimateSchema } from "../../src/models/reference-estimate.ts"
+import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-estimate.ts"
 
 type DOMEntry = typeof import("./fixtures/dom-entry.ts")
 type RenderedOption = {
@@ -91,6 +94,127 @@ const points: ComparisonChartPoint[] = [
     partial: false,
   },
 ]
+
+function referenceEstimate(
+  status: "exact" | "conditional" | "partial",
+): ModelDecisionReferenceEstimate {
+  const route = { providerID: "openai", modelID: "reference-model", variant: "high" }
+  const common = {
+    basis: "openrouter-published-model-reference-cost-per-accepted-task" as const,
+    route,
+    acceptedTaskCount: 3,
+    numeratorUSD: null,
+    numeratorRangeUSD: null,
+    valueUSDPerAcceptedTask: null,
+    rangeUSDPerAcceptedTask: null,
+    knownSubtotalUSD: null,
+    knownSubtotalRangeUSD: null,
+    knownSubtotalUSDPerAcceptedTask: null,
+    knownSubtotalRangeUSDPerAcceptedTask: null,
+    identityStatus: "exact" as const,
+    provenance: {
+      source: "openrouter-models" as const,
+      policyRevision: 1,
+      availability: "available" as const,
+      access: "configured" as const,
+      snapshotID: "33333333-3333-4333-8333-333333333333",
+      generation: 2,
+      retrievedAt: "2026-11-05T12:00:00.000Z",
+      sourceURL: "https://openrouter.ai/api/v1/models",
+      recordID: "openai/reference-model",
+      recordIndex: 0,
+      freshness: "current" as const,
+    },
+    coverage: {
+      categories: {
+        uncachedInput: {
+          tokens: 10_000,
+          status: "observed" as const,
+          rateCoverage: "complete" as const,
+        },
+        output: { tokens: 1_000, status: "observed" as const, rateCoverage: "complete" as const },
+        reasoning: {
+          tokens: 0,
+          status: "observed" as const,
+          rateCoverage: "not-required" as const,
+        },
+        cacheRead: {
+          tokens: 0,
+          status: "observed" as const,
+          rateCoverage: "not-required" as const,
+        },
+        cacheWrite: {
+          tokens: 0,
+          status: "observed" as const,
+          rateCoverage: "not-required" as const,
+        },
+      },
+      retries: {
+        status: status === "partial" ? ("partial" as const) : ("complete" as const),
+        attemptCount: 4,
+        failedAttemptCount: 1,
+        retryAttemptCount: 1,
+        attemptsWithCompleteUsage: status === "partial" ? 3 : 4,
+        failedAttemptsWithCompleteUsage: 1,
+        retryAttemptsWithCompleteUsage: 1,
+      },
+      attribution: {
+        status: status === "partial" ? ("partial" as const) : ("complete" as const),
+        relatedTaskCount: 3,
+        unknownRouteTaskCount: status === "partial" ? 1 : 0,
+        relatedSessionCount: 4,
+        matchedRouteSessionCount: 3,
+        includedSessionCount: 3,
+        otherRouteSessionCount: 0,
+        mixedRouteSessionCount: 0,
+        unknownRouteSessionCount: status === "partial" ? 1 : 0,
+        sharedSessionCount: 0,
+        unattributedSessionCount: 0,
+      },
+    },
+    reasons: status === "partial" ? (["missing-rate"] as const) : [],
+  }
+  if (status === "exact")
+    return ModelDecisionReferenceEstimateSchema.parse({
+      ...common,
+      status,
+      numeratorUSD: 0.0000000000369,
+      valueUSDPerAcceptedTask: 0.0000000000123,
+    })
+  if (status === "conditional")
+    return ModelDecisionReferenceEstimateSchema.parse({
+      ...common,
+      status,
+      numeratorRangeUSD: { minimum: 0.00000012, maximum: 0.00000036 },
+      rangeUSDPerAcceptedTask: { minimum: 0.00000004, maximum: 0.00000012 },
+    })
+  return ModelDecisionReferenceEstimateSchema.parse({
+    ...common,
+    status,
+    knownSubtotalUSD: 0.00000015,
+    knownSubtotalUSDPerAcceptedTask: 0.00000005,
+    coverage: {
+      ...common.coverage,
+      categories: {
+        ...common.coverage.categories,
+        cacheWrite: { tokens: null, status: "missing", rateCoverage: "missing" },
+      },
+    },
+  })
+}
+
+function reference(
+  configurationID: string,
+  status: "exact" | "conditional" | "partial",
+  tokensPerAcceptedTask: number | null,
+): ComparisonChartReference {
+  return {
+    configurationID,
+    label: `Reference ${configurationID}`,
+    tokensPerAcceptedTask,
+    estimate: referenceEstimate(status),
+  }
+}
 
 function size(element: object, width: number, height: number) {
   sizes.set(element, { width, height })
@@ -355,7 +479,9 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
     "12,345.5 tokens per accepted task",
   )
-  expect(buttonFor(exact)?.getAttribute("aria-label")).toContain("$0.123456 current market USD")
+  expect(buttonFor(exact)?.getAttribute("aria-label")).toContain(
+    "canonical current-market observation $0.123456 per accepted task",
+  )
   buttonFor(exact)?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
   expect(selections).toEqual([exact])
 
@@ -414,6 +540,147 @@ test("real Solid SVG rendering separately updates marker coordinates, frontier a
   expect(container.querySelectorAll("[xmlns='http://www.w3.org/2000/svg']")).toHaveLength(1)
   expect(container.textContent).toContain("Qwen")
   expect(container.textContent).not.toContain("No plottable observations")
+})
+
+test("reference-only SVG keeps scalar, conditional interval and subtotal marks honest and selectable", async () => {
+  const container = dom.document.createElement("main")
+  dom.document.body.append(container)
+  const scalar = reference("reference:scalar", "exact", 12_000)
+  const conditional = reference("reference:conditional", "conditional", 18_000)
+  const subtotal = reference("reference:subtotal", "partial", 24_000)
+  const missingCoordinate = reference("reference:missing-token-coordinate", "partial", null)
+  const references = [scalar, conditional, subtotal, missingCoordinate]
+  const selections: string[] = []
+  const [selected, setSelected] = browser.createSignal<string | null>(null)
+  const dispose = browser.render(
+    () =>
+      browser.createComponent(browser.ComparisonChart, {
+        points: [],
+        references,
+        frontierConfigurationIDs: references.map((entry) => entry.configurationID),
+        get selectedConfigurationID() {
+          return selected()
+        },
+        theme,
+        onSelect: (configurationID: string) => {
+          selections.push(configurationID)
+          setSelected(configurationID)
+        },
+      }),
+    container as unknown as HTMLElement,
+  )
+  cleanups.push(dispose)
+  await until(() => container.querySelector("[xmlns='http://www.w3.org/2000/svg']") !== null)
+  const host = container.querySelector("[role='img']") as unknown as HTMLElement
+  const chart = browser.getComparisonChartInstance(host)!
+  const rendered = chart.getOption() as unknown as RenderedOption
+  const series = (id: string) => rendered.series?.find((entry) => entry.id === id)
+  expect(series("observations")?.data).toEqual([])
+  expect(series("authoritative-frontier")?.data).toEqual([])
+  expect(series("openrouter-reference-scalars")?.data).toMatchObject([
+    {
+      value: [12_000, 0.0000000000123],
+      configurationID: scalar.configurationID,
+    },
+  ])
+  expect(series("openrouter-conditional-ranges")?.data).toMatchObject([
+    {
+      value: [18_000, 0.00000004, 0.00000012],
+      configurationID: conditional.configurationID,
+    },
+  ])
+  expect(series("openrouter-reference-subtotals")?.data).toMatchObject([
+    {
+      value: [24_000, 0.00000005],
+      configurationID: subtotal.configurationID,
+    },
+  ])
+  expect(series("openrouter-subtotal-ranges")?.data).toEqual([])
+  expect(
+    rendered.series
+      ?.flatMap((entry) => entry.data ?? [])
+      .some(
+        (datum) =>
+          !Array.isArray(datum) && datum.configurationID === missingCoordinate.configurationID,
+      ),
+  ).toBe(false)
+  expect(container.querySelectorAll("svg path").length).toBeGreaterThan(0)
+  expect(host.getAttribute("aria-label")).toContain("OpenRouter scalar reference")
+  expect(host.getAttribute("aria-label")).toContain("conditional range")
+  expect(host.getAttribute("aria-label")).toContain("remainder unknown")
+  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).toContain(
+    "OpenRouter scalar reference",
+  )
+  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).toContain(
+    "Conditional OpenRouter range",
+  )
+  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).toContain(
+    "priced subtotal only · remainder unknown",
+  )
+  expect(container.querySelector("[aria-label='Chart legend']")?.textContent).not.toContain(
+    "Canonical actual-cohort",
+  )
+
+  const disclosure = container.querySelector(
+    ".lazers-models-comparison-chart-data",
+  ) as unknown as HTMLDetailsElement
+  expect(disclosure.querySelector("summary")?.textContent).toContain("legend and point selection")
+  disclosure.open = true
+  const buttonFor = (configurationID: string) =>
+    container.querySelector(
+      `button[data-configuration-id="${configurationID}"]`,
+    ) as unknown as HTMLButtonElement
+  const conditionalButton = buttonFor(conditional.configurationID)
+  expect(conditionalButton.tagName).toBe("BUTTON")
+  expect(conditionalButton.tabIndex).toBe(0)
+  expect(conditionalButton.getAttribute("aria-pressed")).toBe("false")
+  expect(conditionalButton.getAttribute("aria-label")).toContain("OpenRouter conditional range")
+  conditionalButton.focus()
+  expect((dom.document.activeElement as unknown) === (conditionalButton as unknown)).toBe(true)
+  conditionalButton.click()
+  expect(selections).toEqual([conditional.configurationID])
+  await until(() => buttonFor(conditional.configurationID).getAttribute("aria-pressed") === "true")
+  expect(buttonFor(missingCoordinate.configurationID).getAttribute("aria-label")).toContain(
+    "Not plotted",
+  )
+
+  const visibleTooltip = (text: string) =>
+    Array.from(host.children).find((child) => {
+      if (child.tagName !== "DIV") return false
+      const style = dom.getComputedStyle(
+        child as unknown as Parameters<typeof dom.getComputedStyle>[0],
+      )
+      return (
+        style.position === "absolute" &&
+        style.display === "block" &&
+        style.visibility !== "hidden" &&
+        style.opacity !== "0" &&
+        child.textContent?.includes(text) === true
+      )
+    })
+  const scalarSeries = rendered.series?.findIndex(
+    (entry) => entry.id === "openrouter-reference-scalars",
+  )
+  chart.dispatchAction({ type: "showTip", seriesIndex: scalarSeries, dataIndex: 0 })
+  await until(() => visibleTooltip("OpenRouter scalar reference") !== undefined)
+  expect(visibleTooltip("OpenRouter scalar reference")?.textContent).toContain(
+    "$0.0000000000123 per accepted task",
+  )
+  expect(visibleTooltip("OpenRouter scalar reference")?.textContent).not.toMatch(/\$0\.00(?:\s|$)/)
+  const rangeSeries = rendered.series?.findIndex(
+    (entry) => entry.id === "openrouter-conditional-ranges",
+  )
+  chart.dispatchAction({ type: "showTip", seriesIndex: rangeSeries, dataIndex: 0 })
+  await until(() => visibleTooltip("OpenRouter conditional range") !== undefined)
+  expect(visibleTooltip("OpenRouter conditional range")?.textContent).toContain(
+    "$0.00000004–$0.00000012 per accepted task",
+  )
+  const subtotalSeries = rendered.series?.findIndex(
+    (entry) => entry.id === "openrouter-reference-subtotals",
+  )
+  chart.dispatchAction({ type: "showTip", seriesIndex: subtotalSeries, dataIndex: 0 })
+  await until(() => visibleTooltip("priced subtotal only") !== undefined)
+  expect(visibleTooltip("priced subtotal only")?.textContent).toContain("remainder unknown")
 })
 
 test("real ECharts SVG uses literal observations and only straight segments between frontier points", async () => {

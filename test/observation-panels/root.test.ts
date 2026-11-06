@@ -44,6 +44,8 @@ import type {
   ModelDecisionInspect,
   ModelDecisionRow,
 } from "../../src/models/decision-contract.ts"
+import { ModelDecisionReferenceEstimateSchema } from "../../src/models/reference-estimate.ts"
+import type { ModelDecisionReferenceEstimate } from "../../src/models/reference-estimate.ts"
 import type { ModelMappingUpdate } from "../../src/models/mapping-schema.ts"
 import { ModelSettingsService } from "../../src/models/service.ts"
 import { registerModelTools } from "../../src/models/tools.ts"
@@ -118,20 +120,146 @@ function fillTextInput(container: ParentNode, label: string, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
+function openRouterReference(
+  route: ModelDecisionConfiguration["route"],
+  status: "exact" | "conditional" | "partial",
+  acceptedTaskCount: number,
+): ModelDecisionReferenceEstimate {
+  const common = {
+    basis: "openrouter-published-model-reference-cost-per-accepted-task" as const,
+    route,
+    acceptedTaskCount,
+    numeratorUSD: null,
+    numeratorRangeUSD: null,
+    valueUSDPerAcceptedTask: null,
+    rangeUSDPerAcceptedTask: null,
+    knownSubtotalUSD: null,
+    knownSubtotalRangeUSD: null,
+    knownSubtotalUSDPerAcceptedTask: null,
+    knownSubtotalRangeUSDPerAcceptedTask: null,
+    identityStatus: "exact" as const,
+    provenance: {
+      source: "openrouter-models" as const,
+      policyRevision: 3,
+      availability: "available" as const,
+      access: "configured" as const,
+      snapshotID: "33333333-3333-4333-8333-333333333333",
+      generation: 7,
+      retrievedAt: "2026-11-05T12:00:00.000Z",
+      sourceURL: "https://openrouter.ai/api/v1/models",
+      recordID: `${route.providerID}/${route.modelID}`,
+      recordIndex: 2,
+      freshness: "current" as const,
+    },
+    coverage: {
+      categories: {
+        uncachedInput: {
+          tokens: 12_000,
+          status: "observed" as const,
+          rateCoverage: "complete" as const,
+        },
+        output: { tokens: 8_000, status: "observed" as const, rateCoverage: "complete" as const },
+        reasoning: {
+          tokens: 1_000,
+          status: "observed" as const,
+          rateCoverage: "complete" as const,
+        },
+        cacheRead: {
+          tokens: 0,
+          status: "observed" as const,
+          rateCoverage: "not-required" as const,
+        },
+        cacheWrite: { tokens: 500, status: "observed" as const, rateCoverage: "complete" as const },
+      },
+      retries: {
+        status: (status === "partial" ? "partial" : "complete") as "complete" | "partial",
+        attemptCount: 11,
+        failedAttemptCount: 2,
+        retryAttemptCount: 3,
+        attemptsWithCompleteUsage: status === "partial" ? 8 : 11,
+        failedAttemptsWithCompleteUsage: 1,
+        retryAttemptsWithCompleteUsage: status === "partial" ? 2 : 3,
+      },
+      attribution: {
+        status: (status === "partial" ? "partial" : "complete") as "complete" | "partial",
+        relatedTaskCount: acceptedTaskCount + 1,
+        unknownRouteTaskCount: status === "partial" ? 1 : 0,
+        relatedSessionCount: 11,
+        matchedRouteSessionCount: 10,
+        includedSessionCount: 9,
+        otherRouteSessionCount: 1,
+        mixedRouteSessionCount: status === "partial" ? 1 : 0,
+        unknownRouteSessionCount: status === "partial" ? 1 : 0,
+        sharedSessionCount: 0,
+        unattributedSessionCount: status === "partial" ? 1 : 0,
+      },
+    },
+    reasons: status === "partial" ? (["missing-rate", "partial-attribution"] as const) : [],
+  }
+  if (status === "exact")
+    return ModelDecisionReferenceEstimateSchema.parse({
+      ...common,
+      status,
+      numeratorUSD: acceptedTaskCount * 0.0000000000123,
+      valueUSDPerAcceptedTask: 0.0000000000123,
+    })
+  if (status === "conditional")
+    return ModelDecisionReferenceEstimateSchema.parse({
+      ...common,
+      status,
+      numeratorRangeUSD: { minimum: 0.0000004, maximum: 0.0000012 },
+      rangeUSDPerAcceptedTask: { minimum: 0.00000004, maximum: 0.00000012 },
+    })
+  return ModelDecisionReferenceEstimateSchema.parse({
+    ...common,
+    status,
+    knownSubtotalUSD: acceptedTaskCount * 0.00000005,
+    knownSubtotalUSDPerAcceptedTask: 0.00000005,
+    coverage: {
+      ...common.coverage,
+      categories: {
+        ...common.coverage.categories,
+        cacheWrite: { tokens: null, status: "missing", rateCoverage: "missing" },
+      },
+    },
+  })
+}
+
 const sourceHighDecisionRow = fixtureDecisionRows().rows[0]!
+const highAcceptedTasks = sourceHighDecisionRow.efficiency.observationCount
+const highReferenceEstimate = openRouterReference(
+  sourceHighDecisionRow.configuration.route,
+  "exact",
+  highAcceptedTasks,
+)
+const highConfiguration: ModelDecisionConfiguration = {
+  ...sourceHighDecisionRow.configuration,
+  referenceEstimate: highReferenceEstimate,
+}
 const highDecisionRow: ModelDecisionRow = {
   ...sourceHighDecisionRow,
-  cohort: {
-    ...sourceHighDecisionRow.cohort,
-    acceptedTaskCount: sourceHighDecisionRow.efficiency.observationCount,
+  configuration: highConfiguration,
+  cohort: { ...sourceHighDecisionRow.cohort, acceptedTaskCount: highAcceptedTasks },
+  efficiency: {
+    status: "partial",
+    tokensPerAcceptedTask: sourceHighDecisionRow.efficiency.tokensPerAcceptedTask,
+    currentMarketUSDPerAcceptedTask: null,
+    observationCount: sourceHighDecisionRow.efficiency.observationCount,
+    missing: ["current-price"],
   },
+  referenceEstimate: highReferenceEstimate,
 }
-const highConfiguration = highDecisionRow.configuration
+const lowRoute: ModelDecisionConfiguration["route"] = {
+  ...highConfiguration.route,
+  variant: "low",
+}
+const lowReferenceEstimate = openRouterReference(lowRoute, "conditional", highAcceptedTasks)
 const lowConfiguration: ModelDecisionConfiguration = {
   ...highConfiguration,
   configurationID: "configuration:openai/gpt-6::low:opaque/2",
   label: "GPT-6 · low",
-  route: { ...highConfiguration.route, variant: "low" },
+  route: lowRoute,
+  referenceEstimate: lowReferenceEstimate,
 }
 const qwenConfiguration: ModelDecisionConfiguration = {
   ...highConfiguration,
@@ -140,6 +268,7 @@ const qwenConfiguration: ModelDecisionConfiguration = {
   label: "Unverified Qwen alias · preview-effort",
   route: { providerID: "qwen", modelID: "qwen-7", variant: "preview-effort" },
   currentPrice: { ...highConfiguration.currentPrice, sourceRecordID: "qwen/qwen-7" },
+  referenceEstimate: undefined,
 }
 const zeroConfiguration = fixtureDecisionRow(
   {
@@ -154,11 +283,13 @@ const lowDecisionRow: ModelDecisionRow = {
   ...highDecisionRow,
   configuration: lowConfiguration,
   efficiency: {
-    status: "available",
+    status: "partial",
     tokensPerAcceptedTask: 18_500,
-    currentMarketUSDPerAcceptedTask: 0.185,
+    currentMarketUSDPerAcceptedTask: null,
     observationCount: 4,
+    missing: ["current-price"],
   },
+  referenceEstimate: lowReferenceEstimate,
 }
 const qwenDecisionRow: ModelDecisionRow = {
   ...highDecisionRow,
@@ -170,6 +301,7 @@ const qwenDecisionRow: ModelDecisionRow = {
     observationCount: 1,
   },
   cohort: { ...highDecisionRow.cohort, acceptedTaskCount: 1 },
+  referenceEstimate: undefined,
 }
 const zeroDecisionRow: ModelDecisionRow = {
   ...fixtureDecisionRow(
@@ -190,6 +322,7 @@ const crossRouteConfiguration: ModelDecisionConfiguration = {
   groupID: "group:provider-b/model-b",
   label: "Model B · 50",
   route: { providerID: "provider-b", modelID: "model-b", variant: "50" },
+  referenceEstimate: undefined,
   currentPrice: {
     ...highConfiguration.currentPrice,
     sourceRecordID: "provider-b/model-b",
@@ -220,18 +353,23 @@ const crossRouteDecisionRow: ModelDecisionRow = {
     source: "native-reported",
     note: "No native-reported charge is available for this exact cohort.",
   },
+  referenceEstimate: undefined,
 }
+const unknownPriceRoute: ModelDecisionConfiguration["route"] = {
+  providerID: "unknown-provider",
+  modelID: "model-identity-with-a-very-long-unrecognized-name",
+  variant: null,
+}
+const unknownReferenceEstimate = openRouterReference(unknownPriceRoute, "partial", 1)
+const qwenReferenceEstimate = openRouterReference(qwenConfiguration.route, "partial", 1)
 const unknownPriceConfiguration: ModelDecisionConfiguration = {
   ...highConfiguration,
   configurationID:
     "configuration:unknown-provider/model-identity-with-a-very-long-unrecognized-name",
   groupID: "group:unknown-provider/model-identity-with-a-very-long-unrecognized-name",
   label: "Misleading synthesized model label · high",
-  route: {
-    providerID: "unknown-provider",
-    modelID: "model-identity-with-a-very-long-unrecognized-name",
-    variant: null,
-  },
+  route: unknownPriceRoute,
+  referenceEstimate: unknownReferenceEstimate,
   currentPrice: {
     ...highConfiguration.currentPrice,
     source: null,
@@ -253,6 +391,7 @@ const unknownPriceDecisionRow: ModelDecisionRow = {
     observationCount: 1,
     missing: ["current-price"],
   },
+  referenceEstimate: unknownReferenceEstimate,
 }
 const crossRouteEstimate: ModelDecisionEstimate = {
   status: "single-observation",
@@ -842,12 +981,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const noComparablePoints = input.filters.taskKind === "maintenance"
               const points = noComparablePoints
                 ? []
-                : base.graph.points.map((point) => {
+                : base.graph.points.flatMap((point) => {
                     const row = decisionRowForSnapshot(point.configurationID, snapshotID)
                     const tokens = row.efficiency.tokensPerAcceptedTask
                     const cost = row.efficiency.currentMarketUSDPerAcceptedTask
-                    if (tokens === null || cost === null)
-                      throw new Error("Fixture graph points need matching measured row coordinates")
+                    if (tokens === null || cost === null) return []
                     return {
                       ...point,
                       label: row.configuration.label,
@@ -868,6 +1006,49 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                   acceptedTaskCount: 1,
                   partial: false,
                 })
+              const referenceEstimates = noComparablePoints
+                ? [
+                    {
+                      configurationID: unknownPriceConfiguration.configurationID,
+                      label: "Unknown route · OpenRouter subtotal",
+                      tokensPerAcceptedTask: 31_250,
+                      estimate: unknownReferenceEstimate,
+                    },
+                  ]
+                : [
+                    {
+                      configurationID: CONFIG_ONE,
+                      label: "Producer snapshot GPT-6 high",
+                      tokensPerAcceptedTask: decisionRowForSnapshot(CONFIG_ONE, snapshotID)
+                        .efficiency.tokensPerAcceptedTask,
+                      estimate: highReferenceEstimate,
+                    },
+                    {
+                      configurationID: lowConfiguration.configurationID,
+                      label: lowConfiguration.label,
+                      tokensPerAcceptedTask: decisionRowForSnapshot(
+                        lowConfiguration.configurationID,
+                        snapshotID,
+                      ).efficiency.tokensPerAcceptedTask,
+                      estimate: lowReferenceEstimate,
+                    },
+                    {
+                      configurationID: unknownPriceConfiguration.configurationID,
+                      label: "Unknown route · OpenRouter subtotal",
+                      tokensPerAcceptedTask: 31_250,
+                      estimate: unknownReferenceEstimate,
+                    },
+                    {
+                      configurationID: CONFIG_SINGLE,
+                      label: "Qwen reference · coordinate unknown",
+                      tokensPerAcceptedTask: null,
+                      estimate: qwenReferenceEstimate,
+                    },
+                    {
+                      configurationID: CONFIG_CROSS_ROUTE,
+                      estimate: openRouterReference(crossRouteConfiguration.route, "exact", 1),
+                    },
+                  ]
               return ModelDecisionOverviewOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID, revision),
                 graph: {
@@ -875,7 +1056,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                   points,
                   frontierConfigurationIDs: noComparablePoints
                     ? []
-                    : [...base.graph.frontierConfigurationIDs, CONFIG_CROSS_ROUTE],
+                    : [
+                        ...base.graph.frontierConfigurationIDs.filter((configurationID) =>
+                          points.some((point) => point.configurationID === configurationID),
+                        ),
+                        CONFIG_CROSS_ROUTE,
+                      ],
+                  referenceEstimates,
                 },
                 configurationCount: noComparablePoints ? 1 : decisionConfigs.size,
                 groupCount: noComparablePoints ? 1 : 4,
@@ -888,17 +1075,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                 filters: ModelDecisionFilters
                 cursor?: string
                 limit: number
+                snapshotID?: string
               },
               options: { location: { directory: string }; signal: AbortSignal },
             ) => {
               const directory = options.location.directory
               record(directory, "lazers.models.decision.v2", "rows", input, options.signal)
-              const snapshotID = decisionSnapshot(directory, input.filters)
+              const snapshotID = input.snapshotID ?? decisionSnapshot(directory, input.filters)
               const noPriceCase = input.filters.taskKind === "maintenance"
               const pageRows = noPriceCase
                 ? [unknownPriceDecisionRow]
                 : input.cursor
-                  ? [qwenDecisionRow, zeroDecisionRow, crossRouteDecisionRow]
+                  ? [
+                      qwenDecisionRow,
+                      zeroDecisionRow,
+                      crossRouteDecisionRow,
+                      unknownPriceDecisionRow,
+                    ]
                   : [highDecisionRow, lowDecisionRow]
               return ModelDecisionRowsOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID),
@@ -916,6 +1109,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                 filters: ModelDecisionFilters
                 cursor?: string
                 limit: number
+                snapshotID?: string
               },
               options: { location: { directory: string }; signal: AbortSignal },
             ) => {
@@ -927,14 +1121,22 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                 input,
                 options.signal,
               )
-              const snapshotID = decisionSnapshot(directory, input.filters)
+              const snapshotID = input.snapshotID ?? decisionSnapshot(directory, input.filters)
               const noPriceCase = input.filters.taskKind === "maintenance"
               return ModelDecisionConfigurationsOutputSchema.parse({
                 context: decisionContext(directory, input.filters, snapshotID),
                 configurations: noPriceCase
                   ? [unknownPriceConfiguration]
                   : input.cursor
-                    ? [qwenConfiguration, zeroConfiguration, crossRouteConfiguration]
+                    ? [
+                        qwenConfiguration,
+                        zeroConfiguration,
+                        {
+                          ...crossRouteConfiguration,
+                          label: "Misleading paged cross-route label",
+                        },
+                        unknownPriceConfiguration,
+                      ]
                     : [highConfiguration, lowConfiguration],
                 totalCount: noPriceCase ? 1 : decisionConfigs.size,
                 nextCursor: noPriceCase || input.cursor ? null : "configurations-next",
@@ -961,6 +1163,21 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                 label: "Off-page configuration",
               }
               const row = decisionRowForSnapshot(input.configurationID, input.snapshotID)
+              const isUnknownReference =
+                input.configurationID === unknownPriceConfiguration.configurationID
+              const isGlobalHigh = input.configurationID === CONFIG_ONE
+              const inspectionConfiguration = isUnknownReference
+                ? { ...configuration, label: "Misleading inspected model label · high" }
+                : isGlobalHigh
+                  ? { ...configuration, label: "Misleading inspected GPT-6 label" }
+                  : input.configurationID === CONFIG_CROSS_ROUTE
+                    ? { ...configuration, label: "Misleading inspected cross-route label" }
+                    : configuration
+              const inspectionEfficiency = isUnknownReference
+                ? { ...row.efficiency, tokensPerAcceptedTask: 88_888 }
+                : isGlobalHigh
+                  ? { ...row.efficiency, tokensPerAcceptedTask: 98_765 }
+                  : row.efficiency
               const template = fixtureDecisionInspect()
               if (template.status !== "found") throw new Error("Expected fixture inspection")
               const contributor = template.contributorPage.contributors[0]!
@@ -1011,10 +1228,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                   input.snapshotID,
                   decisionSnapshotCounts.get(decisionKey(directory, input.filters)) ?? 0,
                 ),
-                configuration,
+                configuration: inspectionConfiguration,
                 cohort: row.cohort,
-                efficiency: row.efficiency,
+                efficiency: inspectionEfficiency,
                 nativeReportedCost: row.nativeReportedCost,
+                referenceEstimate: row.referenceEstimate,
                 selectedTaskID: input.selectedTaskID,
                 estimate: isCrossRoute
                   ? input.contributorCursor
@@ -1291,13 +1509,29 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     browserDocument.body.append(containerA)
     const mountA = host.mountModelPanel(panel!, context, sessionA, containerA)
     mounts.push(mountA)
+    await until(() =>
+      calls.some(
+        (call) =>
+          call.service === "lazers.models" &&
+          call.method === "refreshSources" &&
+          call.directory === DIRECTORY_A,
+      ),
+    )
+    expect(
+      calls.some(
+        (call) =>
+          call.service === "lazers.models.decision.v2" &&
+          call.method === "overview" &&
+          call.directory === DIRECTORY_A,
+      ),
+    ).toBe(false)
+    expect(containerA.textContent).toContain("Refreshing sources")
+    deferredA1.resolve(sourceEvidence())
     await until(
       () =>
         containerA.querySelector(
           `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
-        ) !== null &&
-        containerA.querySelector(".lazers-models-comparison-chart") !== null &&
-        containerA.textContent?.includes("Refreshing sources") === true,
+        ) !== null && containerA.querySelector(".lazers-models-comparison-chart") !== null,
     )
     await until(
       () =>
@@ -1307,8 +1541,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           ?.includes("Objective A initial") === true,
     )
     await until(
-      () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "GPT-6 cached",
+      () =>
+        containerA.querySelector(".lazers-models-inspector h2") !== null ||
+        containerA.querySelector(".lazers-models-inspector [role=alert]") !== null,
     )
+    expect(
+      containerA.querySelector(".lazers-models-inspector h2")?.textContent ??
+        containerA.querySelector(".lazers-models-inspector [role=alert]")?.textContent,
+    ).toBe("GPT-6 refreshed")
     await until(
       () =>
         containerA
@@ -1406,13 +1646,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       [...comparePanel.querySelectorAll(".lazers-models-decision-rows thead th")].map(
         (cell) => cell.textContent,
       ),
-    ).toEqual(["Model", "Accepted", "Cost / task"])
+    ).toEqual(["Model", "Accepted", "Cost / accepted task"])
     const initialRow = comparePanel.querySelector(".lazers-models-decision-row")!
-    expect(initialRow.querySelector("th[scope=row]")?.textContent).toBe("GPT-6 cached")
+    expect(initialRow.querySelector("th[scope=row]")?.textContent).toBe("GPT-6 refreshed")
     expect(initialRow.querySelector("td:nth-child(2)")?.textContent).toBe("9")
-    expect(initialRow.querySelector("td:nth-child(3)")?.textContent).toBe("$0.127206")
+    expect(initialRow.querySelector("td:nth-child(3)")?.textContent).toContain("Market · Unknown")
+    expect(initialRow.querySelector("td:nth-child(3)")?.textContent).toContain(
+      "OpenRouter scalar reference · $0.0000000000123 / accepted task",
+    )
+    expect(initialRow.querySelector("td:nth-child(3)")?.textContent).toContain(
+      "OpenRouter catalog · current · 9 accepted · actual task mix",
+    )
     expect(initialRow.querySelector("td:nth-child(3)")?.getAttribute("title")).toBe(
-      "Current market valuation per accepted task.",
+      "Canonical current-market valuation and the separate OpenRouter reference per accepted task.",
     )
     expect(initialRow.textContent).not.toContain("openai")
     expect(initialRow.textContent).not.toContain("gpt-6")
@@ -1441,9 +1687,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       containerA.querySelector(".lazers-models-inspector-heading h2")?.getAttribute("aria-label"),
     ).toContain("Exact route")
-    const refreshWarning = topPaneA.querySelector<HTMLElement>(".lazers-models-refresh-note")!
-    expect(refreshWarning.textContent).toContain("Refreshing sources")
-    expect(refreshWarning.closest("details")).toBeNull()
+    expect(topPaneA.textContent).not.toContain("Refreshing sources")
     expect(containerA.querySelector(".lazers-models-project")?.getAttribute("aria-label")).toBe(
       `Project · ${DIRECTORY_A}`,
     )
@@ -1464,6 +1708,23 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "LZ-17 · submitted",
     )
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
+    const exactReferencePanel = containerA.querySelector<HTMLElement>(
+      ".lazers-models-reference-estimate",
+    )!
+    expect(exactReferencePanel.textContent).toContain("OpenRouter scalar reference")
+    expect(exactReferencePanel.textContent).toContain("$0.0000000000123 / accepted task")
+    expect(exactReferencePanel.textContent).toContain("Canonical current-market cost · Unknown")
+    expect(exactReferencePanel.textContent).toContain("denominator 9 accepted tasks")
+    expect(exactReferencePanel.textContent).toContain("not a common workload")
+    const exactReferenceDetails = exactReferencePanel.querySelector<HTMLDetailsElement>(
+      ".lazers-models-reference-details",
+    )!
+    expect(exactReferenceDetails.open).toBe(false)
+    exactReferenceDetails.open = true
+    expect(exactReferenceDetails.textContent).toContain("OpenRouter published source")
+    expect(exactReferenceDetails.textContent).toContain("2 failed · 3 retries")
+    expect(exactReferenceDetails.textContent).toContain("Cache read")
+    exactReferenceDetails.open = false
     expect(
       calls.some(
         (call) =>
@@ -1477,11 +1738,22 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       .filter((call) => call.service === "lazers.models.decision.v2")
       .map((call) => call.input as { filters?: ModelDecisionFilters })
     expect(decisionInputs.every((input) => input.filters?.persona === "ui")).toBe(true)
+    const initialDecisionFilter = decisionInputs[0]!.filters!
+    const initialSnapshot = decisionSnapshots.get(decisionKey(DIRECTORY_A, initialDecisionFilter))
+    for (const method of ["rows", "configurations"] as const) {
+      const firstPageCall = calls.find(
+        (call) =>
+          call.directory === DIRECTORY_A &&
+          call.service === "lazers.models.decision.v2" &&
+          call.method === method &&
+          !(call.input as { cursor?: string }).cursor,
+      )
+      expect(firstPageCall?.input).toMatchObject({ snapshotID: initialSnapshot })
+    }
 
     const chartDescription = () =>
       containerA.querySelector(".lazers-models-comparison-chart > p")?.textContent ?? ""
     const globalGraphDescription = chartDescription()
-    const globalGraphSVG = chartSVGMarkup()
     const initialChartButtons = [
       ...containerA.querySelectorAll<HTMLButtonElement>(
         ".lazers-models-comparison-chart-data [data-configuration-id]",
@@ -1489,23 +1761,114 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     ]
     expect(initialChartButtons.map((button) => button.dataset.configurationId)).toEqual([
       CONFIG_ONE,
+      lowConfiguration.configurationID,
+      unknownPriceConfiguration.configurationID,
       CONFIG_SINGLE,
       CONFIG_CROSS_ROUTE,
     ])
+    expect(globalGraphDescription).toContain("Producer snapshot GPT-6 high")
+    expect(globalGraphDescription).toContain("31,250 actual cohort tokens per accepted task")
+    expect(globalGraphDescription).toContain("Qwen reference · coordinate unknown")
+    expect(globalGraphDescription).toContain("Actual cohort token coordinate unknown")
+    expect(globalGraphDescription).toContain(
+      "Model B · 50: 50 actual cohort tokens per accepted task",
+    )
+    expect(globalGraphDescription).not.toContain("Misleading paged cross-route label")
+    expect(globalGraphDescription).not.toContain("Misleading inspected cross-route label")
+    const initialHighRowTokens = decisionRowForSnapshot(CONFIG_ONE, initialSnapshot!).efficiency
+      .tokensPerAcceptedTask!
+    const globalHighCoordinate = new Intl.NumberFormat("en-US", {
+      maximumFractionDigits: 2,
+    }).format(initialHighRowTokens)
+    const highReferenceButton = initialChartButtons.find(
+      (button) => button.dataset.configurationId === CONFIG_ONE,
+    )!
+    expect(highReferenceButton.getAttribute("aria-label")).toContain(
+      `${globalHighCoordinate} actual cohort tokens per accepted task`,
+    )
+    expect(
+      initialChartButtons
+        .find(
+          (button) => button.dataset.configurationId === unknownPriceConfiguration.configurationID,
+        )
+        ?.getAttribute("aria-label"),
+    ).toContain("31,250 actual cohort tokens per accepted task")
+    expect(
+      initialChartButtons
+        .find((button) => button.dataset.configurationId === CONFIG_SINGLE)
+        ?.getAttribute("aria-label"),
+    ).toContain("Actual cohort token coordinate unknown")
+    expect(
+      initialChartButtons
+        .find((button) => button.dataset.configurationId === CONFIG_SINGLE)
+        ?.getAttribute("aria-label"),
+    ).toContain("Not plotted")
+    expect(containerA.querySelector('[aria-label="Chart legend"]')?.textContent).toContain(
+      "Canonical actual-cohort market observation",
+    )
+    expect(containerA.querySelector('[aria-label="Chart legend"]')?.textContent).toContain(
+      "OpenRouter scalar reference",
+    )
+    expect(containerA.querySelector('[aria-label="Chart legend"]')?.textContent).toContain(
+      "Conditional OpenRouter range",
+    )
     expect(
       initialChartButtons.some((button) => button.dataset.configurationId === CONFIG_ZERO),
     ).toBe(false)
     expect(containerA.querySelector(`[data-group-id="group:qwen/qwen-7"]`)).toBeNull()
 
+    const conditionalReferenceButton = containerA.querySelector<HTMLButtonElement>(
+      `.lazers-models-comparison-chart-data [data-configuration-id="${lowConfiguration.configurationID}"]`,
+    )!
+    expect(conditionalReferenceButton.tagName).toBe("BUTTON")
+    expect(conditionalReferenceButton.tabIndex).toBe(0)
+    expect(conditionalReferenceButton.getAttribute("aria-label")).toContain(
+      "OpenRouter conditional range",
+    )
+    conditionalReferenceButton.focus()
+    expect(browserDocument.activeElement).toBe(conditionalReferenceButton)
+    conditionalReferenceButton.click()
+    await until(
+      () =>
+        modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID ===
+        lowConfiguration.configurationID,
+    )
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-reference-estimate")
+          ?.textContent?.includes("OpenRouter conditional range") === true,
+    )
+    const conditionalInspection = containerA.querySelector<HTMLElement>(
+      ".lazers-models-reference-estimate",
+    )!
+    expect(conditionalInspection.textContent).toContain("$0.00000004–$0.00000012")
+    expect(conditionalInspection.textContent).toContain("Canonical current-market cost · Unknown")
+    expect(conditionalInspection.textContent).toContain("denominator 9 accepted tasks")
+    expect(
+      containerA
+        .querySelector<HTMLButtonElement>(
+          `.lazers-models-comparison-chart-data [data-configuration-id="${lowConfiguration.configurationID}"]`,
+        )
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true")
+
     const qwenPoint = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
     )!
-    const beforePointSelectionSVG = globalGraphSVG
+    const beforePointSelectionSVG = chartSVGMarkup()
     qwenPoint.click()
     await until(
       () => containerA.querySelector(".lazers-models-inspector h2")?.textContent === "qwen-7",
     )
-    await until(() => qwenPoint.getAttribute("aria-pressed") === "true")
+    await until(
+      () =>
+        containerA
+          .querySelector<HTMLButtonElement>(
+            `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+          )
+          ?.getAttribute("aria-pressed") === "true",
+    )
     await until(() => chartSVGMarkup() !== beforePointSelectionSVG)
     const selectedQwenGraphSVG = await settleChart()
     const currentFilters = (
@@ -1540,7 +1903,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         ),
       ).toBe(true)
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_SINGLE)
-    expect(qwenPoint.getAttribute("aria-pressed")).toBe("true")
+    expect(
+      containerA
+        .querySelector<HTMLButtonElement>(
+          `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+        )
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true")
     const qwenInspectionInput = calls
       .filter((call) => call.method === "inspect")
       .map(
@@ -1616,7 +1985,25 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(() => containerA.querySelector(`[data-group-id="group:qwen/qwen-7"]`) !== null)
     await settleChart()
     expect(chartDescription()).toBe(globalGraphDescription)
-    expect(chartSVGMarkup()).toBe(selectedQwenGraphSVG)
+    expect(chartDescription()).toContain("priced subtotal only")
+    expect(chartDescription()).toContain(
+      "not plotted because a numeric actual cohort token coordinate or per-task amount is unavailable",
+    )
+    expect(chartDescription()).toContain("31,250 actual cohort tokens per accepted task")
+    expect(
+      containerA
+        .querySelector<HTMLButtonElement>(
+          `.lazers-models-comparison-chart-data [data-configuration-id="${CONFIG_SINGLE}"]`,
+        )
+        ?.getAttribute("aria-label"),
+    ).toContain("Actual cohort token coordinate unknown")
+    const loadedReferenceSVG = chartSVGMarkup()
+    const loadedReferenceGraphDescription = chartDescription()
+    expect(loadedReferenceSVG).toBe(selectedQwenGraphSVG)
+    const rowPageInput = calls
+      .filter((call) => call.method === "rows" && (call.input as { cursor?: string }).cursor)
+      .at(-1)?.input
+    expect(rowPageInput).toMatchObject({ snapshotID: currentSnapshotID })
     const moreConfigurations = buttonWithText(containerA, "Load more exact configurations")
     if (!moreConfigurations) throw new Error("Missing exact-configuration pager")
     moreConfigurations.click()
@@ -1627,8 +2014,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     )
     await until(() => containerA.querySelector(`[data-configuration-id="${CONFIG_ZERO}"]`) !== null)
-    expect(chartDescription()).toBe(globalGraphDescription)
-    expect(chartSVGMarkup()).toBe(selectedQwenGraphSVG)
+    expect(chartDescription()).toBe(loadedReferenceGraphDescription)
+    expect(chartSVGMarkup()).toBe(loadedReferenceSVG)
+    const configurationPageInput = calls
+      .filter(
+        (call) =>
+          call.method === "configurations" && Boolean((call.input as { cursor?: string }).cursor),
+      )
+      .at(-1)?.input
+    expect(configurationPageInput).toMatchObject({ snapshotID: currentSnapshotID })
 
     const firstContributorPage = containerA.querySelector(".lazers-models-contributors")!
     const evidenceDisclosure = firstContributorPage.closest<HTMLDetailsElement>(
@@ -1649,7 +2043,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     )
     await until(() => firstContributorPage.textContent?.includes("LZ-17") === true)
-    expect(chartDescription()).toBe(globalGraphDescription)
+    expect(chartDescription()).toBe(loadedReferenceGraphDescription)
+    expect(chartSVGMarkup()).toBe(loadedReferenceSVG)
     const contributorTrajectory = firstContributorPage.querySelector<HTMLButtonElement>(
       '[aria-label="Open trajectory for LZ-17"]',
     )
@@ -1664,6 +2059,42 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       projectDirectory: DIRECTORY_A,
     })
     expect(contributorTextBefore).toContain("LZ-42")
+
+    const unknownReferenceButton = containerA.querySelector<HTMLButtonElement>(
+      `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
+    )!
+    expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
+      "Unknown route · OpenRouter subtotal",
+    )
+    expect(unknownReferenceButton.getAttribute("aria-label")).toContain(
+      "31,250 actual cohort tokens per accepted task",
+    )
+    unknownReferenceButton.click()
+    await until(
+      () =>
+        modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID ===
+        unknownPriceConfiguration.configurationID,
+    )
+    await until(
+      () =>
+        containerA
+          .querySelector<HTMLButtonElement>(
+            `.lazers-models-comparison-chart-data [data-configuration-id="${unknownPriceConfiguration.configurationID}"]`,
+          )
+          ?.getAttribute("aria-pressed") === "true",
+    )
+    const selectedUnknownReferenceSVG = await settleChart()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-inspector")
+          ?.textContent?.includes("88,888 tokens") === true,
+    )
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
+      "OpenRouter priced subtotal only",
+    )
+    expect(chartDescription()).toBe(globalGraphDescription)
+    expect(chartSVGMarkup()).toBe(selectedUnknownReferenceSVG)
 
     const highRow = containerA.querySelector<HTMLButtonElement>(
       `.lazers-models-decision-row-select[data-configuration-id="${CONFIG_ONE}"]`,
@@ -1700,6 +2131,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           .querySelector(".lazers-models-inspector")
           ?.textContent?.includes("Loading exact configuration inspection") === true,
     )
+    const highSelectionSVG = await settleChart()
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
     expect(highRow.isConnected).toBe(true)
     expect(highRow.closest("tr")).toBe(highRowParent)
@@ -1714,6 +2146,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           .querySelector(".lazers-models-inspector .lazers-models-estimate")
           ?.textContent?.includes("n=9") === true,
     )
+    expect(containerA.querySelector(".lazers-models-inspector")?.textContent).toContain(
+      "98,765 tokens",
+    )
+    expect(chartDescription()).toBe(globalGraphDescription)
+    expect(chartSVGMarkup()).toBe(highSelectionSVG)
     expect(highRow.isConnected).toBe(true)
     expect(highRow.closest("tr")).toBe(highRowParent)
     expect(browserDocument.activeElement).toBe(highRow)
@@ -1794,7 +2231,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector(".lazers-models-inspector")?.textContent).not.toContain(
       "Empirical observed spread · n=7",
     )
-    expect(chartDescription()).toBe(globalGraphDescription)
+    expect(chartDescription()).toBe(loadedReferenceGraphDescription)
 
     const crossRouteProviderTrigger = [
       ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-decision-tools button"),
@@ -1905,12 +2342,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA.querySelector(".lazers-models-chart h3")?.textContent ===
-          "No plottable comparison points" &&
+          "OpenRouter reference estimates · actual task mix" &&
         containerA.querySelector(`[data-group-id="${unknownPriceConfiguration.groupID}"]`) !== null,
     )
-    expect(containerA.querySelector(".lazers-models-chart-empty")?.textContent).toContain(
-      "Unknown prices and zero-accepted configurations stay unplotted",
-    )
+    expect(containerA.querySelector(".lazers-models-comparison-chart svg")).not.toBeNull()
+    expect(
+      containerA.querySelector(".lazers-models-comparison-chart-legend")?.textContent,
+    ).toContain("priced subtotal only · remainder unknown")
     const unknownPriceRow = containerA.querySelector<HTMLElement>(
       `[data-group-id="${unknownPriceConfiguration.groupID}"]`,
     )!
@@ -1924,11 +2362,38 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(unknownPriceName.getAttribute("aria-label")).toContain(
       "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
     )
-    expect(unknownPriceRow.querySelector("td:nth-child(3)")?.textContent).toBe("Unknown")
-    expect(
-      containerA.querySelector(".lazers-models-chart .lazers-models-comparison-chart"),
-    ).toBeNull()
-    expect(containerA.querySelector(".lazers-models-chart svg")).toBeNull()
+    expect(unknownPriceRow.querySelector("td:nth-child(3)")?.textContent).toContain(
+      "Market · Unknown",
+    )
+    expect(unknownPriceRow.querySelector("td:nth-child(3)")?.textContent).toContain(
+      "OpenRouter priced subtotal only · $0.00000005 / accepted task · remainder unknown",
+    )
+    expect(unknownPriceRow.querySelector("td:nth-child(3)")?.textContent).toContain(
+      "OpenRouter catalog · current · 1 accepted · actual task mix",
+    )
+    unknownPriceName.click()
+    await until(
+      () =>
+        modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID ===
+        unknownPriceConfiguration.configurationID,
+    )
+    await until(() => containerA.querySelector(".lazers-models-reference-estimate") !== null)
+    const partialInspection = containerA.querySelector<HTMLElement>(
+      ".lazers-models-reference-estimate",
+    )!
+    expect(partialInspection.textContent).toContain("priced subtotal only")
+    expect(partialInspection.textContent).toContain("remainder unknown")
+    expect(partialInspection.textContent).toContain("Unknown")
+    const partialCoverage = partialInspection.querySelector<HTMLDetailsElement>(
+      ".lazers-models-reference-details",
+    )!
+    partialCoverage.open = true
+    expect(partialCoverage.textContent).toContain(
+      "Cache write · tokens unknown · missing usage · missing rate coverage",
+    )
+    expect(partialCoverage.textContent).toContain("2 failed · 3 retries")
+    expect(partialCoverage.textContent).toContain("unknown route")
+    expect(partialCoverage.textContent).toContain("not a common workload")
     taskKindFilter.click()
     menuItemWithText(containerA, "All task kinds")?.click()
     await until(() => containerA.querySelector(".lazers-models-comparison-chart") !== null)
@@ -1941,7 +2406,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ),
     ).toBe(true)
 
-    deferredA1.resolve(sourceEvidence())
     await until(
       () =>
         !buttonWithText(containerA, "Refresh")?.disabled && comparisonCounts.get(DIRECTORY_A) === 2,
@@ -2135,8 +2599,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelectorAll(".lazers-models-top .lazers-models-assignment-editor"),
     ).toHaveLength(0)
     expect(containerA.querySelectorAll(".lazers-models-assignment-editor")).toHaveLength(1)
-    expect(containerA.querySelector(".lazers-models-assignments")?.textContent).toContain(
-      "Routing is not active. Saved assignments do not change worker dispatch.",
+    expect(containerA.querySelector(".lazers-models-assignments")?.textContent).not.toContain(
+      "Routing is not active",
     )
     expect(
       containerA.querySelector(".lazers-models-assignment-rows")?.contains(assignmentEditor),
@@ -2654,7 +3118,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       assignmentRows().filter((row) => row.getAttribute("aria-pressed") === "true"),
     ).toHaveLength(1)
     expect(containerA.querySelectorAll(".lazers-models-assignment-editor")).toHaveLength(1)
-    expect(containerA.textContent).toContain("Saved assignments do not change worker dispatch")
+    expect(containerA.textContent).not.toContain("Saved assignments do not change worker dispatch")
 
     const chartBeforeCompareTab = chartDescription()
     containerA

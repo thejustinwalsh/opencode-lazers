@@ -59,11 +59,13 @@ export type ModelComparisonTransport = {
   decisionRows?(
     filters: ModelDecisionFilters,
     cursor: string | undefined,
+    snapshotID: string,
     signal: AbortSignal,
   ): Promise<ModelDecisionRows>
   decisionConfigurations?(
     filters: ModelDecisionFilters,
     cursor: string | undefined,
+    snapshotID: string,
     signal: AbortSignal,
   ): Promise<ModelDecisionConfigurations>
   decisionInspect?(
@@ -179,6 +181,25 @@ function decisionContextMatches(
     actual.scope.projectDirectory === projectDirectory &&
     JSON.stringify(actual.filters) === JSON.stringify(filters) &&
     (snapshotID === undefined || actual.snapshotID === snapshotID)
+  )
+}
+
+function decisionScopeAndFiltersMatch(
+  actual: ModelDecisionContext,
+  filters: ModelDecisionFilters,
+  projectDirectory: string,
+) {
+  return (
+    actual.scope.projectDirectory === projectDirectory &&
+    JSON.stringify(actual.filters) === JSON.stringify(filters)
+  )
+}
+
+function isExpiredDecisionSnapshot(error: unknown) {
+  const message = errorMessage(error)
+  return (
+    message.includes("Model decision snapshot is unavailable or expired") ||
+    message.includes("Model decision cursor is stale or its snapshot expired")
   )
 }
 
@@ -578,65 +599,106 @@ export class ModelComparisonPanelState {
       JSON.stringify(filters) === JSON.stringify(this.data.decisionFilters)
     const operation = (async () => {
       try {
-        const [overview, rowPage, configurationPage] = await Promise.all([
-          readOverview(filters, signal),
-          readRows(filters, undefined, signal),
-          readConfigurations(filters, undefined, signal),
-        ])
+        // Refresh and capture sources before taking the global filtered snapshot.
+        // connect() and explicit refreshes share the same in-flight source refresh.
+        const sourceRefresh =
+          this.sourceRefreshPromise ??
+          (this.data.sourceRefresh === "idle" ? this.refreshSources(generation) : undefined)
+        if (sourceRefresh) await sourceRefresh
         if (!current()) return
-        const context = overview.context
-        if (
-          !decisionContextMatches(context, filters, this.projectDirectory) ||
-          !decisionContextMatches(
-            rowPage.context,
-            filters,
-            this.projectDirectory,
-            context.snapshotID,
-          ) ||
-          !decisionContextMatches(
-            configurationPage.context,
-            filters,
-            this.projectDirectory,
-            context.snapshotID,
-          )
-        )
-          throw new Error("Models decision reads disagree on project, filters, or snapshot.")
 
-        const previousSelectedConfigurationID = this.data.selectedConfigurationID
-        const decisionRows = rowPage.rows
-        const decisionConfigurations = configurationPage.configurations
-        const selectedConfigurationID =
-          this.data.selectedConfigurationID ??
-          decisionConfigurations[0]?.configurationID ??
-          decisionRows[0]?.configuration.configurationID ??
-          overview.graph.points[0]?.configurationID ??
-          null
-        const nextStatus = decisionStatus(context, transport.online())
-        this.update({
-          decisionContext: context,
-          decisionOverview: overview,
-          decisionRows,
-          decisionRowsNextCursor: rowPage.nextCursor,
-          decisionRowsLoading: false,
-          decisionConfigurations,
-          decisionConfigurationsNextCursor: configurationPage.nextCursor,
-          decisionConfigurationsLoading: false,
-          selectedConfigurationID,
-          decisionStatus: nextStatus,
-          decisionError:
-            nextStatus === "backend-not-ready" ? (context.unavailableReason ?? "") : "",
-          decisionInspection: undefined,
-          decisionInspectLoading: false,
-          decisionInspectError: "",
-          decisionNotFound: false,
-        })
-        if (selectedConfigurationID !== previousSelectedConfigurationID)
-          this.selectionChanged({
-            selectedTaskID: this.data.selectedTaskID,
-            selectedCandidateID: this.data.selectedCandidateID,
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const overview = await readOverview(filters, signal)
+          if (!current()) return
+          const context = overview.context
+          if (!decisionContextMatches(context, filters, this.projectDirectory))
+            throw new Error("Models decision overview belongs to another project or filter.")
+
+          const [rowResult, configurationResult] = await Promise.allSettled([
+            readRows(filters, undefined, context.snapshotID, signal),
+            readConfigurations(filters, undefined, context.snapshotID, signal),
+          ])
+          if (!current()) return
+
+          const fulfilledRows = rowResult.status === "fulfilled" ? rowResult.value : undefined
+          const fulfilledConfigurations =
+            configurationResult.status === "fulfilled" ? configurationResult.value : undefined
+          if (
+            (fulfilledRows &&
+              !decisionScopeAndFiltersMatch(
+                fulfilledRows.context,
+                filters,
+                this.projectDirectory,
+              )) ||
+            (fulfilledConfigurations &&
+              !decisionScopeAndFiltersMatch(
+                fulfilledConfigurations.context,
+                filters,
+                this.projectDirectory,
+              ))
+          )
+            throw new Error("Models decision reads disagree on project or filters.")
+
+          const failures = [rowResult, configurationResult].filter(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          )
+          if (failures.length) {
+            const unrecoverable = failures.find(
+              (failure) => !isExpiredDecisionSnapshot(failure.reason),
+            )
+            if (unrecoverable) throw unrecoverable.reason
+            if (attempt === 0) continue
+            throw failures[0]!.reason
+          }
+
+          if (
+            fulfilledRows!.context.snapshotID !== context.snapshotID ||
+            fulfilledConfigurations!.context.snapshotID !== context.snapshotID
+          ) {
+            if (attempt === 0) continue
+            throw new Error("Models decision reads disagree on project, filters, or snapshot.")
+          }
+
+          const rowPage = fulfilledRows!
+          const configurationPage = fulfilledConfigurations!
+          const previousSelectedConfigurationID = this.data.selectedConfigurationID
+          const decisionRows = rowPage.rows
+          const decisionConfigurations = configurationPage.configurations
+          const selectedConfigurationID =
+            this.data.selectedConfigurationID ??
+            decisionConfigurations[0]?.configurationID ??
+            decisionRows[0]?.configuration.configurationID ??
+            overview.graph.points[0]?.configurationID ??
+            null
+          const nextStatus = decisionStatus(context, transport.online())
+          this.update({
+            decisionContext: context,
+            decisionOverview: overview,
+            decisionRows,
+            decisionRowsNextCursor: rowPage.nextCursor,
+            decisionRowsLoading: false,
+            decisionConfigurations,
+            decisionConfigurationsNextCursor: configurationPage.nextCursor,
+            decisionConfigurationsLoading: false,
             selectedConfigurationID,
+            decisionStatus: nextStatus,
+            decisionError:
+              nextStatus === "backend-not-ready" ? (context.unavailableReason ?? "") : "",
+            decisionInspection: undefined,
+            decisionInspectLoading: false,
+            decisionInspectError: "",
+            decisionNotFound: false,
           })
-        if (selectedConfigurationID) void this.loadDecisionInspection()
+          if (selectedConfigurationID !== previousSelectedConfigurationID)
+            this.selectionChanged({
+              selectedTaskID: this.data.selectedTaskID,
+              selectedCandidateID: this.data.selectedCandidateID,
+              selectedConfigurationID,
+            })
+          if (selectedConfigurationID) void this.loadDecisionInspection()
+          return
+        }
+        throw new Error("Models decision snapshot could not be captured coherently.")
       } catch (error) {
         if (!current()) return
         const cached = Boolean(this.data.decisionOverview)
@@ -696,7 +758,7 @@ export class ModelComparisonPanelState {
     this.update({ decisionRowsLoading: true })
     const operation = (async () => {
       try {
-        const page = await transport.decisionRows!(filters, cursor, signal)
+        const page = await transport.decisionRows!(filters, cursor, context.snapshotID, signal)
         if (
           generation !== this.generation ||
           request !== this.decisionRowsRequest ||
@@ -754,7 +816,12 @@ export class ModelComparisonPanelState {
     this.update({ decisionConfigurationsLoading: true })
     const operation = (async () => {
       try {
-        const page = await transport.decisionConfigurations!(filters, cursor, signal)
+        const page = await transport.decisionConfigurations!(
+          filters,
+          cursor,
+          context.snapshotID,
+          signal,
+        )
         if (
           generation !== this.generation ||
           request !== this.decisionConfigurationsRequest ||

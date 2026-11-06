@@ -1315,6 +1315,8 @@ function buildSnapshotData(
         .sort((left, right) => left.localeCompare(right)),
       referenceEstimates: rows.map((row) => ({
         configurationID: row.configuration.configurationID,
+        label: row.configuration.label,
+        tokensPerAcceptedTask: row.efficiency.tokensPerAcceptedTask,
         estimate: row.referenceEstimate!,
       })),
     },
