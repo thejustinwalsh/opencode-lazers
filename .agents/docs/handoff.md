@@ -18,7 +18,16 @@ handoff above supersedes fragmentation. Native input/clicks showed severe delaye
 application; use paste for multiline, verify actual receipt, never repeat blind.
 Reload Webview stayed blank; supported Restart recovered it with service71027
 and live workers preserved, no source build/inference preference change.
-Main is reconciling existing129/163 and uncoveredP1 work, task references pending.
+Main reconciled A1 into originalLZ-129 advice and A3 into existingLZ-163.
+New LZ-170(4bd1f120-f0a5-4401-bc8c-9d30f1982da9) covers nonblocking ordinary
+check activities; LZ-171(560d70f9-136e-40ed-bad1-b7f5123eaa5b) covers proportional
+mechanical failure routing. Plan45adcb0c-0a86-4cb7-b59e-eb9218d8338d was natively
+run-admitted atpriority85/version2; both nodes Systems/OpenAI LunaMax,170→171.
+Its real afterPlans are Models145cde90,Trajectory155b2d491ae and ownership16361e9cffc.
+No new discretionary approval is required. Preserve those actual prerequisites.
+Native full-report planning accidentally authored draft-only wording; current run
+command and task advice supersede it. Roadmap allocation/order and stagedP2
+follow-through are in architecture-roadmap-reconciliation-20261106.md.
 
 LZ-168 repair delivered2bbf8a3,18tests/793assertions plus quality/build pass.
 LZ-169 follow-up worker ses_eab54443be664e52902ecdfe7b0aea47 is Luna/max and
