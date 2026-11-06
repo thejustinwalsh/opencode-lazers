@@ -122,3 +122,21 @@ and service 71027 at 1.9% / 1,649,104 KiB. This is a point observation, not an
 interactive performance acceptance. OpenAI Luna Max original LZ-129 session
 `ses_aeff3e9ac5d24c6c944d35e31b050963` remained active; Root did not interrupt it
 or reload runtime source under it.
+
+### Retained-repair trajectory observation
+
+At Unix milliseconds 1793993432827, the original LZ-129 attempt/session remained
+natively active and its worktree had no source diff. The repair busy timestamp
+was 1793991643800, about 29m49s earlier; this interval includes the native scope
+question, Architect review/answer, model generation and investigation, not just
+coding. Architect resolved the exact scope form through supported tools without
+replacing the worker. Subsequent public calls inspected runner states, tracker
+sequence usage and source-query metadata, then refreshed task instructions and
+the source index. Model-part timestamps advanced during the intervening turns.
+There was no observed failed tool or terminal worker outcome at this boundary.
+
+This is an observed long investigation phase, not proof of a renderer freeze,
+model failure, or the cause of the delay. Retain it for the requested later
+trajectory/task-quality review alongside final implementation, verification,
+usage and intervention outcomes. Do not turn the elapsed interval into a new
+arbitrary execution budget or interrupt the worker solely on that basis.
