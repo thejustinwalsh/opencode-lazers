@@ -4,11 +4,13 @@ import { renderToString } from "solid-js/web"
 import * as gui from "@opencode/plugin/gui"
 import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/internal.js"
 import { createServer } from "vite"
+import { gui as guiPlugin } from "@opencode/plugin/gui/vite"
 
 // Compile with the shipped Solid/Vite boundary rather than a mirrored JSX fake.
 // Middleware-only with websockets disabled has no listening socket.
 const vite = await createServer({
-  configFile: "./vite.config.ts",
+  configFile: false,
+  plugins: [guiPlugin()],
   server: { middlewareMode: true, ws: false },
   appType: "custom",
 })
