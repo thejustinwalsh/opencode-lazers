@@ -499,6 +499,7 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
     const value = visible()
     if (!value?.selectedID || value.detail?.status !== "found") return
     const relationIDs = new Set([
+      ...selectedRelations().waitingOn,
       ...selectedRelations().prerequisites,
       ...selectedRelations().successors,
     ])
@@ -1099,6 +1100,19 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
               <div class="lazers-tasks-objective">
                 <Ui.Markdown text={task().proposal.objective} />
               </div>
+              <Show when={selectedRelations().waitingOn.length}>
+                <div class="lazers-tasks-dependencies lazers-tasks-dependencies-visible">
+                  <span>Waiting on </span>
+                  <For each={selectedRelations().waitingOn}>
+                    {(taskID, index) => (
+                      <>
+                        {index() ? ", " : ""}
+                        {renderRelation(taskID)}
+                      </>
+                    )}
+                  </For>
+                </div>
+              </Show>
               <h4>Done when</h4>
               <ul class="lazers-tasks-assertions">
                 <For each={task().proposal.acceptance}>
@@ -1192,19 +1206,6 @@ function TaskPanel(props: PanelProps & { ctx: TaskContext; openTrajectory: TaskT
                     >
                       <span>Approval pending</span>
                     </Show>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().waitingOn.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>Waiting on </span>
-                    <For each={selectedRelations().waitingOn}>
-                      {(taskID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderRelation(taskID)}
-                        </>
-                      )}
-                    </For>
                   </div>
                 </Show>
                 <Show when={selectedRelations().prerequisites.length}>

@@ -119,6 +119,12 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const workerSessionIDs = Object.fromEntries(
       Object.keys(ids).map((key) => [key, `ses-worker-${key}`]),
     ) as Record<keyof typeof ids, string>
+    const referenceByTaskID = new Map(
+      Object.values(ids).map((taskID, index) => [taskID, `LZ-${index + 1}`]),
+    )
+    const taskIDByReference = new Map(
+      [...referenceByTaskID].map(([taskID, reference]) => [reference, taskID]),
+    )
     const taskNames: Record<keyof typeof ids, string> = {
       held: "Inactive worker under a reconciliation hold",
       active: "Active worker under a reconciliation hold",
@@ -166,7 +172,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       const state = states[taskID]!
       return {
         taskID,
-        reference: `LZ-${Object.keys(ids).indexOf(key) + 1}`,
+        reference: referenceByTaskID.get(taskID)!,
         revision: 1,
         status: state,
         recordedState: state,
@@ -300,7 +306,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
               ids.queuedFour,
               ids.queuedFive,
             ].map(node),
-            dependencies: [],
+            dependencies: [{ prerequisite: ids.queuedFive, successor: ids.held }],
           },
           {
             id: completedPlanID,
@@ -342,30 +348,31 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       }),
     })
     const detail = async ({ taskID }: { taskID: string }) => {
-      const task = taskObjects[taskID]!
+      const resolvedTaskID = taskIDByReference.get(taskID) ?? taskID
+      const task = taskObjects[resolvedTaskID]!
       const key = (Object.keys(ids) as Array<keyof typeof ids>).find(
-        (name) => ids[name] === taskID,
+        (name) => ids[name] === resolvedTaskID,
       )!
-      const state = states[taskID]!
-      const currentPlan = taskID === ids.completed ? completedPlanID : planID
+      const state = states[resolvedTaskID]!
+      const currentPlan = resolvedTaskID === ids.completed ? completedPlanID : planID
       return {
         status: "found",
         task,
-        classification: summary(taskID).classification,
-        classificationHistory: [summary(taskID).classification],
+        classification: summary(resolvedTaskID).classification,
+        classificationHistory: [summary(resolvedTaskID).classification],
         advice: null,
-        reference: summary(taskID).reference,
+        reference: summary(resolvedTaskID).reference,
         recordedState: state,
         execution: {
           planID: currentPlan,
-          taskID,
-          state: taskID === ids.completed ? "blocked" : state,
+          taskID: resolvedTaskID,
+          state: resolvedTaskID === ids.completed ? "blocked" : state,
           version: 1,
           reason:
-            taskID === ids.completed
+            resolvedTaskID === ids.completed
               ? "Combined checks remain open"
               : "Reconciliation hold: awaiting review",
-          waitingOn: [],
+          waitingOn: resolvedTaskID === ids.held ? [ids.queuedFive] : [],
         },
         attempts: [],
         activity: [],
@@ -406,6 +413,15 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const trajectoryStore = host.createReactiveStore({ projects: {} as Record<string, unknown> })
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const opened: unknown[][] = []
+    const taskLinkHandler: {
+      value:
+        | {
+            match(link: { href: string; session: unknown }): boolean
+            exists(link: { href: string; session: unknown }): Promise<boolean>
+            open(link: { href: string; session: unknown }): void
+          }
+        | undefined
+    } = { value: undefined }
     const session = {
       id: ownerSessionID,
       location: { directory: projectDirectory },
@@ -433,6 +449,18 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
           return button
         }
         ui.Markdown = (props: { text: string }) => {
+          const linkMatch = /^\[([^\]]+)\]\((\.lazers\/tasks\/[^)]+)\)$/u.exec(props.text)
+          if (linkMatch) {
+            const anchor = browserDocument.createElement("a")
+            anchor.href = linkMatch[2]!
+            anchor.textContent = linkMatch[1]!
+            anchor.addEventListener("click", (click) => {
+              click.preventDefault()
+              const link = { href: linkMatch[2]!, session }
+              if (taskLinkHandler.value?.match(link)) taskLinkHandler.value.open(link)
+            })
+            return anchor
+          }
           const span = browserDocument.createElement("span")
           span.textContent = props.text
           return span
@@ -455,9 +483,22 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       },
       links: { open: () => {} },
       system: { copy: async () => {} },
+      servers: {
+        get: (serverID: string) =>
+          serverID === "tasks-server" ? { connected: true, client } : undefined,
+      },
     }
     disposeSetup = host.setupGui(host.gui, context)
     const tokens = host.registryTokens
+    taskLinkHandler.value = registrations.find((entry) => entry.token === host.LinkHandler)
+      ?.value as
+      | {
+          match(link: { href: string; session: unknown }): boolean
+          exists(link: { href: string; session: unknown }): Promise<boolean>
+          open(link: { href: string; session: unknown }): void
+        }
+      | undefined
+    expect(taskLinkHandler.value).toBeDefined()
     const panel = host.taskPanelRegistration(registrations)
     expect(panel).toBeDefined()
     expect(panel?.id).toBe("tasks")
@@ -542,10 +583,42 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const inspectorPane = container.querySelector<HTMLDivElement>(".lazers-tasks-detail")!
     const inspectorText = inspectorPane.textContent ?? ""
     expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Done when"))
+    const waitingDependencies = container.querySelector<HTMLDivElement>(
+      ".lazers-tasks-dependencies-visible",
+    )!
+    await until(() => waitingDependencies.textContent?.includes("LZ-8") ?? false)
+    expect(waitingDependencies.textContent).toContain("Waiting on")
+    expect(waitingDependencies.textContent).toContain("LZ-8")
+    const waitingLink = waitingDependencies.querySelector<HTMLAnchorElement>("a")!
+    expect(waitingLink.textContent).toBe("LZ-8")
+    expect(waitingLink.getAttribute("href")).toContain(".lazers/tasks/")
+    expect(getComputedStyle(waitingDependencies).flexWrap).toBe("wrap")
+    waitingLink.focus()
+    expect(waitingLink.ownerDocument.activeElement).toBe(waitingLink)
+    expect(inspectorText.indexOf("Waiting on")).toBeLessThan(inspectorText.indexOf("Done when"))
+    expect(activityDetails().open).toBe(false)
     expect(inspectorText.indexOf("Done when")).toBeLessThan(
       inspectorText.indexOf("Activity and holds"),
     )
     expect(activityDetails().open).toBe(false)
+    const waitingLinkTarget = { href: waitingLink.getAttribute("href")!, session }
+    expect(await taskLinkHandler.value!.exists(waitingLinkTarget)).toBe(true)
+
+    waitingLink.click()
+    await until(() => opened.length > 0)
+    const taskView = taskStore.value as {
+      projects: Record<string, { scope?: string; selectedID?: string }>
+    }
+    expect(taskView.projects[projectDirectory]).toMatchObject({
+      selectedID: ids.queuedFive,
+      scope: "project",
+    })
+    await until(() => row(ids.queuedFive)?.getAttribute("aria-pressed") === "true")
+    expect(taskView.projects[projectDirectory]?.scope).toBe("project")
+    expect(opened).toHaveLength(1)
+    opened.length = 0
+    row(ids.held)!.click()
+    await until(() => row(ids.held)?.getAttribute("aria-pressed") === "true")
 
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => activityDetails().open)
@@ -559,15 +632,17 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => !activityDetails().open)
 
-    heldRow.focus()
-    heldRow.dispatchEvent(
+    const heldRowAfterNavigation = row(ids.held)!
+    heldRowAfterNavigation.focus()
+    heldRowAfterNavigation.dispatchEvent(
       new dom.window.KeyboardEvent("keydown", {
         key: "ArrowDown",
         bubbles: true,
       }) as unknown as Event,
     )
-    await until(() => activeRow.getAttribute("aria-pressed") === "true")
-    activeRow.click()
+    await until(() => row(ids.active)?.getAttribute("aria-pressed") === "true")
+    const activeRowAfterNavigation = row(ids.active)!
+    activeRowAfterNavigation.click()
     await until(
       () =>
         container
@@ -606,14 +681,14 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       ]?.selectedTaskID,
     ).toBe(ids.active)
 
-    activeRow.focus()
-    activeRow.dispatchEvent(
+    activeRowAfterNavigation.focus()
+    activeRowAfterNavigation.dispatchEvent(
       new dom.window.KeyboardEvent("keydown", {
         key: "ArrowDown",
         bubbles: true,
       }) as unknown as Event,
     )
-    await until(() => unknownRow.getAttribute("aria-pressed") === "true")
+    await until(() => row(ids.unknown)?.getAttribute("aria-pressed") === "true")
     expect(activityDetails().open).toBe(false)
     toggleActivityDetailsFromKeyboard("Enter")
     await until(() => activityDetails().open)
