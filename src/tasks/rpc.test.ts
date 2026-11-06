@@ -46,6 +46,62 @@ function taskToolDomain(onAdd: (tool: RegisteredTool) => void = () => {}) {
   }
 }
 
+test("fourteen loaded locations publish one project task revision", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-read-rpc-fanout-"))
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/fanout-project")
+  const versions: number[] = []
+  const runtime = {
+    projectID: "project",
+    host: { session: async () => null },
+  } as unknown as TaskRuntime
+  const ctx = {
+    rpc: {
+      register: () =>
+        Effect.succeed({
+          dispose: Effect.void,
+          events: {
+            emit: (_name: string, event: { version: number }) =>
+              Effect.sync(() => {
+                versions.push(event.version)
+              }),
+          },
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    tool: taskToolDomain(),
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "tool">
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          for (let i = 0; i < 14; i++)
+            yield* registerTaskReads(ctx, new TaskReads(repository), runtime)
+          repository.insert({
+            schemaVersion: 1,
+            id: crypto.randomUUID(),
+            revision: 1,
+            status: "submitted",
+            createdAt: new Date().toISOString(),
+            proposal: validProposal(),
+            provenance: {
+              projectID: "project",
+              projectDirectory: repository.projectDirectory,
+              workspaceDirectory: "/worker",
+              sessionID: "worker",
+              startingRevision: { kind: "unborn" },
+            },
+          })
+          yield* Effect.sleep(100)
+          expect(versions).toEqual([repository.version()])
+        }),
+      ),
+    )
+  } finally {
+    repository.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("RPC invalidations catch independent connections and retry transient read and delivery failures", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-read-rpc-"))
   const path = join(directory, "tasks.sqlite")

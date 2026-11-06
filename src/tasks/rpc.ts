@@ -10,7 +10,7 @@ import { CurrentActivityInput, CurrentActivityOutput, Tasks } from "./contract.t
 import type { CurrentTaskActivity } from "./contract.ts"
 import type { TaskRuntime } from "../runner/runtime.ts"
 import type { HostSession } from "../runner/host.ts"
-import { databaseChanges } from "../database-events.ts"
+import { revisionPublishers } from "../database-events.ts"
 import { TaskAdviceInput, recordTaskAdvice } from "./advice.ts"
 
 function nonnegativeInteger(value: unknown): number | null {
@@ -298,59 +298,22 @@ export function registerTaskReads(
         })
       })
     yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        let published = reads.repository.version()
-        let publishing = false
-        let closed = false
-        let pending = false
-        let retry: ReturnType<typeof setTimeout> | undefined
-        const retryPublish = () => {
-          if (closed || retry) return
-          retry = setTimeout(() => {
-            retry = undefined
-            publish()
-          }, 1_000)
-          retry.unref()
-        }
-        const publish = () => {
-          if (closed) return
-          if (publishing) {
-            pending = true
-            return
-          }
-          let version: number
-          try {
-            version = reads.repository.version()
-          } catch {
-            retryPublish()
-            return
-          }
-          if (version === published) return
-          publishing = true
-          void Effect.runPromise(
-            rpc.events.emit("changed", {
-              projectDirectory: reads.repository.projectDirectory,
-              version,
-            }),
-          )
-            .then(() => {
-              published = version
-            }, retryPublish)
-            .finally(() => {
-              publishing = false
-              if (pending) {
-                pending = false
-                publish()
-              }
-            })
-        }
-        const unwatch = databaseChanges.subscribe(reads.repository.path, publish, () => {})
-        return () => {
-          closed = true
-          if (retry) clearTimeout(retry)
-          unwatch()
-        }
-      }),
+      Effect.sync(() =>
+        revisionPublishers.publishRevisions(
+          reads.repository.path,
+          JSON.stringify(["tasks.changed", reads.repository.projectDirectory]),
+          {
+            read: () => reads.repository.version(),
+            emit: (version) =>
+              Effect.runPromise(
+                rpc.events.emit("changed", {
+                  projectDirectory: reads.repository.projectDirectory,
+                  version,
+                }),
+              ),
+          },
+        ),
+      ),
       (close) => Effect.sync(close),
     )
   })
