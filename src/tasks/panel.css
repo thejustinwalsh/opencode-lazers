@@ -543,6 +543,10 @@
   color: var(--text-weak);
   font-size: 0.88em;
 }
+.lazers-tasks-dependencies-visible {
+  margin-top: 6px;
+  margin-bottom: 10px;
+}
 .lazers-tasks-dependencies + .lazers-tasks-objective {
   margin-top: 8px;
 }
