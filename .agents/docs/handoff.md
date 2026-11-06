@@ -79,6 +79,17 @@ queued lanes, all on OpenAI gpt-6-luna/max in distinct native worktrees:
   0eeb5b3b-d65e-4bf2-b305-0549d3f6ad40, worker
   ses_f1a9e1c74a874f4180d48c479737410a, started1793982358363. Priority90;
   normal reservation released by real138TASKacceptance, no quarantine substitute.
+  Early Root review of163 found a real gap in its direct-only hasPlanOwnerTransfer
+  implementation: actual129 originalparent e68a reaches Main via3renewals then
+  reassignment, with no direct record. Native parent and four persisted transitions
+  were read, saved in design/reviews/ownership163-live-sequence-review-20261106.md.
+  Root queued then used native Steer; usermsg_1b1bbd6650013jwI4PLbn7y5fR confirms
+  Main received it once. Main must steer SAME163 worker/regression, not create a
+  replacement task/attempt or add archival/ancestor ceremony. Final patch unreviewed.
+  Initial163suite374pass/1new-store-testfail; worker is correcting it.
+  168 nowbuilds and9presentationtests/42assertions pass; registeredpanel run17pass/
+  1fail, focused correction underway. No delivery/visual acceptance claim yet.
+  155 typecheck nowpasses387files after initialcompileerror; finalchecks pending.
   131 priority70 preserves original130history and serializes actual overlapping
   runtime/trajectory scopes. 148/149 still have genuine queued prerequisites.
   Root read-only exact scope comparison identified138 as the remaining unsealed
