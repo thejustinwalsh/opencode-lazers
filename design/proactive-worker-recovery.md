@@ -42,6 +42,23 @@ Existing Architect idle renewal concerns ownership and conversation continuity;
 it is separate from worker struggle detection. Integrate with current ownership
 without treating unfinished renewal work as delivered or replacing its task.
 
+## Deferred owner, renewal and cache policy
+
+The user's 2026-11-05 priority remains Models pricing, then Tasks/Trajectory and
+Radar. Current queued delivery follows LZ-150 → LZ-151 → LZ-152 for pricing and
+LZ-138 → LZ-88 → LZ-148 → LZ-149 for Tasks/Trajectory, with LZ-147 independent
+and existing runtime prerequisites preserved. LZ-57 continues independently. An
+existing idle Architect is waiting, not lost; do not infer missing ownership or
+manually wake it solely because it is idle while workers progress. Existing
+configured renewal remains runtime-owned.
+
+Eventually consolidate missing-owner recovery, idle renewal and provider/model-aware
+cache policy in this existing planning lane. Keep that work behind overdue
+features unless a concrete delivery blocker emerges. This note does not authorize
+a broad refactor, a new foundation task or duplication of current work. Address a
+concrete blocker with the smallest supported correction while preserving existing
+ownership, worker history, native evidence and resource holds.
+
 ## Required behavior
 
 ### Detect a concern and retain its evidence
