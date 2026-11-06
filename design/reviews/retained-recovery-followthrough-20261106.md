@@ -46,6 +46,19 @@ and integration. A multi-node dependency regression is required. Do not fabricat
 old activity certainty, clear unknown resources, or start a model turn merely to
 obtain an idle observation for LZ-156.
 
+## Native reload semantics
+
+Root inspected Extensions → Plugins without activating Reload. The pinned native
+`extension-plugins.tsx` handler calls both `host.reload(id)` and
+`bridge.manager.reload(id)` (lines 135–139). That action alone does not establish
+GUI-only replacement with an unchanged main provider. Root relayed the distinction
+through Desktop; Architect must identify the renderer-only hot-update/reload path
+before claiming the LZ-128 live gate. No switches or inference preferences changed.
+
+[Pinned native handler](https://github.com/anomalyco/opencode/blob/9bbb8ce18c80f099e0e448775f59d965ead40a21/packages/app/src/runtime/plugin/extension-plugins.tsx#L135-L139).
+The combined staged GUI build completed and its bundle evaluated without a renderer
+process global. This is build evidence, not live inference evidence.
+
 ## Still unproven
 
 - The dependency correction, its independent review and tests.
