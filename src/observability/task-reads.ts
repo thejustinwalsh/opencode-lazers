@@ -211,6 +211,7 @@ export class AssociationTaskReads extends TaskReads {
           ...summarize(task, reference, query.search, query.scopePath, classification),
           ...(disposition ? { disposition } : {}),
           status: execution?.state ?? task.status,
+          ...(execution ? { recordedState: this.recordedStateForTask(task.id) } : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
       }),

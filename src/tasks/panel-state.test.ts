@@ -62,6 +62,10 @@ function transport(
   }
 }
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+async function until(predicate: () => boolean) {
+  for (let attempt = 0; attempt < 100 && !predicate(); attempt++) await tick()
+  expect(predicate()).toBe(true)
+}
 
 test("state preferences remain independent while old history preferences retain their meaning", () => {
   expect(preferredTaskStateFilter(undefined, undefined)).toBe("open")
@@ -96,6 +100,101 @@ test("healthy connected Tasks does not repeat list and inspector reads without c
     expect(state.data.page).toEqual(current)
     expect(queries).toBe(1)
     expect(details).toBe(1)
+  } finally {
+    state.close()
+  }
+})
+
+test("late current-activity responses cannot cross a changed Tasks scope", async () => {
+  const taskID = crypto.randomUUID()
+  const original = {
+    ...page("/project", taskID),
+    tasks: [
+      {
+        ...page("/project", taskID).tasks[0]!,
+        status: "running" as const,
+        recordedState: "running" as const,
+      },
+    ],
+  }
+  const stale = deferred<Awaited<ReturnType<NonNullable<TaskTransport["currentActivity"]>>>>()
+  let delay = false
+  let calls = 0
+  const oldTransport = transport(async () => original)
+  oldTransport.currentActivity = async () => {
+    calls++
+    if (delay) return stale.promise
+    return {
+      activities: [
+        {
+          taskID,
+          attemptID: crypto.randomUUID(),
+          foreground: "inactive",
+          unknownReason: null,
+          recordedState: "running",
+          waiting: true,
+          holdReason: "old scope hold",
+          pendingInput: false,
+          pendingPermissions: 0,
+          pendingForms: 0,
+          outcome: "succeeded",
+          observedAt: Date.now(),
+        },
+      ],
+    }
+  }
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect("session-a", "/project", oldTransport, {}, taskID)
+    await until(() => state.data.currentActivity[taskID]?.holdReason === "old scope hold")
+    await tick()
+    delay = true
+    const previousCalls = calls
+    state.refreshCurrentActivity()
+    await until(() => calls > previousCalls)
+
+    const newTransport = transport(async () => original)
+    newTransport.currentActivity = async () => ({
+      activities: [
+        {
+          taskID,
+          attemptID: crypto.randomUUID(),
+          foreground: "active",
+          unknownReason: null,
+          recordedState: "running",
+          waiting: true,
+          holdReason: "new scope hold",
+          pendingInput: true,
+          pendingPermissions: 1,
+          pendingForms: 0,
+          outcome: null,
+          observedAt: Date.now(),
+        },
+      ],
+    })
+    state.connect("project-b", "/project", newTransport, {}, taskID)
+    await until(() => state.data.currentActivity[taskID]?.holdReason === "new scope hold")
+    const current = state.data.currentActivity[taskID]
+    stale.resolve({
+      activities: [
+        {
+          taskID,
+          attemptID: crypto.randomUUID(),
+          foreground: "inactive",
+          unknownReason: null,
+          recordedState: "running",
+          waiting: true,
+          holdReason: "late old response",
+          pendingInput: false,
+          pendingPermissions: 0,
+          pendingForms: 0,
+          outcome: "succeeded",
+          observedAt: Date.now(),
+        },
+      ],
+    })
+    await tick()
+    expect(state.data.currentActivity[taskID]).toEqual(current)
   } finally {
     state.close()
   }

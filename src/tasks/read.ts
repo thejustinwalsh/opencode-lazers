@@ -8,6 +8,32 @@ import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { effectiveTaskStateFilter } from "./state-filter.ts"
 import { taskAdviceSnapshot } from "./advice.ts"
+import type { TaskState } from "../runner/schema.ts"
+
+const TERMINAL_NODE_STATES = new Set([
+  "accepted",
+  "incorporated",
+  "failed",
+  "exhausted",
+  "cancelled",
+])
+
+export type CurrentActivityTarget = {
+  taskID: string
+  authorized: boolean
+  attempt: {
+    id: string
+    sessionID: string
+    workspace: string
+    state: string
+  } | null
+  recordedState: TaskState | null
+  waiting: boolean
+  holdReason: string | null
+  planID: string | null
+  nodeVersion: number | null
+  planVersion: number | null
+}
 
 const Cursor = z.strictObject({
   filter: z.string(),
@@ -122,6 +148,9 @@ export class TaskReads {
         return {
           ...summarize(task, reference, query.search, query.scopePath, disposition, classification),
           status: execution?.state ?? task.status,
+          ...(execution
+            ? { recordedState: this.recordedNodeState(task.id, execution.planID) }
+            : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
       }),
@@ -199,6 +228,7 @@ export class TaskReads {
         : {}),
       reference,
       ...(disposition ? { disposition } : {}),
+      recordedState: this.recordedNodeState(task.id, execution.planID) ?? null,
       execution,
       attempts,
       activity,
@@ -212,5 +242,133 @@ export class TaskReads {
     return plan?.state === "cancelled"
       ? { ...execution, state: "cancelled" as const, reason: execution.reason ?? plan.reason }
       : execution
+  }
+
+  recordedStateForTask(taskID: string): TaskState | undefined {
+    const execution = this.effectiveExecution(taskID)
+    return execution ? this.recordedNodeState(taskID, execution.planID) : undefined
+  }
+
+  protected recordedNodeState(taskID: string, planID: string): TaskState | undefined {
+    return this.repository.atomic(
+      (db) =>
+        db
+          .query<{ state: TaskState }, [string, string, string, string]>(
+            "SELECT state FROM runner_nodes WHERE plan_id=? AND task_id=? AND EXISTS (SELECT 1 FROM runner_plans WHERE id=? AND project_directory=?)",
+          )
+          .get(planID, taskID, planID, this.repository.projectDirectory)?.state,
+    )
+  }
+
+  /** Read only the requested task's latest plan/attempt associations; never hold the DB across host reads. */
+  currentActivityTargets(
+    taskIDs: readonly string[],
+    scopeSessionID?: string,
+  ): CurrentActivityTarget[] {
+    if (taskIDs.length > 40 || new Set(taskIDs).size !== taskIDs.length)
+      throw new Error("Current activity task selection is invalid")
+    return this.repository.atomic((db) =>
+      taskIDs.map((taskID): CurrentActivityTarget => {
+        const taskExists = db
+          .query<{ present: number }, [string, string]>(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE project_directory=? AND id=?) AS present",
+          )
+          .get(this.repository.projectDirectory, taskID)?.present
+        if (!taskExists) return unavailableTarget(taskID)
+
+        if (scopeSessionID) {
+          const associated = db
+            .query<{ linked: number }, (string | number)[]>(
+              `SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM tasks t WHERE t.project_directory=? AND t.id=? AND (
+                  json_extract(t.body,'$.provenance.sessionID')=? OR EXISTS (
+                    SELECT 1 FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+                    WHERE n.task_id=t.id AND p.project_directory=t.project_directory AND p.owner=?
+                  ) OR EXISTS (
+                    SELECT 1 FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+                    WHERE a.task_id=t.id AND p.project_directory=t.project_directory AND a.session_id=?
+                  )
+                )
+              ) THEN 1 ELSE 0 END AS linked`,
+            )
+            .get(
+              this.repository.projectDirectory,
+              taskID,
+              scopeSessionID,
+              scopeSessionID,
+              scopeSessionID,
+            )?.linked
+          if (!associated) return unavailableTarget(taskID)
+        }
+
+        const node = db
+          .query<
+            {
+              plan_id: string
+              node_state: TaskState
+              node_version: number
+              node_reason: string | null
+              plan_state: string
+              plan_version: number
+              plan_reason: string | null
+            },
+            [string, string]
+          >(
+            `SELECT n.plan_id,n.state AS node_state,n.version AS node_version,n.reason AS node_reason,
+                p.state AS plan_state,p.version AS plan_version,p.reason AS plan_reason
+             FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+             WHERE p.project_directory=? AND n.task_id=?
+             ORDER BY p.rowid DESC LIMIT 1`,
+          )
+          .get(this.repository.projectDirectory, taskID)
+        if (!node) return { ...unavailableTarget(taskID), authorized: true }
+
+        const attempt = db
+          .query<
+            { id: string; session_id: string; workspace: string; state: string },
+            [string, string]
+          >(
+            `SELECT id,session_id,workspace,state FROM runner_attempts
+             WHERE plan_id=? AND task_id=? ORDER BY number DESC,started_at DESC,id DESC LIMIT 1`,
+          )
+          .get(node.plan_id, taskID)
+        const waiting =
+          node.plan_state !== "cancelled" &&
+          (node.node_state === "blocked" ||
+            (node.plan_state === "blocked" && !TERMINAL_NODE_STATES.has(node.node_state)))
+        return {
+          taskID,
+          authorized: true,
+          attempt: attempt
+            ? {
+                id: attempt.id,
+                sessionID: attempt.session_id,
+                workspace: attempt.workspace,
+                state: attempt.state,
+              }
+            : null,
+          recordedState: node.node_state,
+          waiting,
+          holdReason: waiting ? (node.node_reason ?? node.plan_reason) : null,
+          planID: node.plan_id,
+          nodeVersion: node.node_version,
+          planVersion: node.plan_version,
+        }
+      }),
+    )
+  }
+}
+
+function unavailableTarget(taskID: string): CurrentActivityTarget {
+  return {
+    taskID,
+    authorized: false,
+    attempt: null,
+    recordedState: null,
+    waiting: false,
+    holdReason: null,
+    planID: null,
+    nodeVersion: null,
+    planVersion: null,
   }
 }

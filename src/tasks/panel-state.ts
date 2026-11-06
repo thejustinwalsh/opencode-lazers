@@ -2,6 +2,8 @@ import type {
   StartTaskInput,
   StartTaskResult,
   TaskDetail,
+  CurrentActivityOutput,
+  CurrentTaskActivity,
   TaskPage,
   TaskQuery,
   TaskSummary,
@@ -18,6 +20,7 @@ export interface TaskTransport {
   query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
   topology?(signal: AbortSignal): Promise<TopologyResponse>
+  currentActivity?(taskIDs: string[], signal: AbortSignal): Promise<CurrentActivityOutput>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
   online(): boolean
@@ -28,6 +31,8 @@ export interface PanelData {
   page?: TaskPage
   topology?: TopologyResponse
   topologyError?: string
+  currentActivity: Record<string, CurrentTaskActivity>
+  activityError: string
   detail?: TaskDetail
   selectedID?: string
   linkedDetails: Record<string, Extract<TaskDetail, { status: "found" }>>
@@ -38,6 +43,8 @@ export interface PanelData {
 const blank = (key = ""): PanelData => ({
   key,
   tasks: [],
+  currentActivity: {},
+  activityError: "",
   linkedDetails: {},
   loading: true,
   stale: false,
@@ -49,13 +56,16 @@ export class TaskPanelState {
   data = blank()
   private controller = new AbortController()
   private detailController = new AbortController()
+  private activityController?: AbortController
   private generation = 0
   private listRequest = 0
   private detailRequest = 0
+  private activityRequest = 0
   private transport?: TaskTransport
   private query: TaskQuery = {}
   private project = ""
   private retry?: ReturnType<typeof setTimeout>
+  private activityTimer?: ReturnType<typeof setInterval>
   private retryDelayMs = 1_000
   private refreshPending = false
   private pendingVersion = 0
@@ -105,6 +115,79 @@ export class TaskPanelState {
     // Restored/native-link detail is independent of optional topology or list failures.
     if (selectedID) void this.select(selectedID)
     void this.refresh()
+    if (transport.currentActivity) {
+      this.activityTimer = setInterval(() => this.refreshCurrentActivity(), 5_000)
+      this.activityTimer.unref?.()
+    }
+  }
+
+  private activityTaskIDs(tasks: TaskSummary[], selectedID?: string) {
+    return [
+      ...new Set([
+        ...tasks.slice(0, 30).map((task) => task.taskID),
+        ...(selectedID ? [selectedID] : []),
+      ]),
+    ].slice(0, 40)
+  }
+
+  private cancelCurrentActivity() {
+    this.activityRequest++
+    this.activityController?.abort()
+    this.activityController = undefined
+  }
+
+  private async observeCurrentActivity(
+    taskIDs: string[],
+    generation: number,
+    listRequest: number,
+    selectedID: string | undefined,
+  ) {
+    const transport = this.transport
+    if (!transport?.currentActivity || taskIDs.length === 0) return
+    this.cancelCurrentActivity()
+    const request = ++this.activityRequest
+    const controller = new AbortController()
+    this.activityController = controller
+    const signal = AbortSignal.any([this.controller.signal, controller.signal])
+    const selectedAtRequest = selectedID
+    const isCurrent = () =>
+      generation === this.generation &&
+      request === this.activityRequest &&
+      listRequest === this.listRequest &&
+      selectedAtRequest === this.data.selectedID &&
+      !signal.aborted
+    const requested = new Set(taskIDs)
+    const currentActivity = { ...this.data.currentActivity }
+    for (const taskID of taskIDs) delete currentActivity[taskID]
+    this.update({ currentActivity, activityError: "" })
+    try {
+      const response = await transport.currentActivity(taskIDs, signal)
+      if (!isCurrent()) return
+      const next = { ...this.data.currentActivity }
+      for (const taskID of taskIDs) delete next[taskID]
+      const activities = response.activities.filter((activity) => requested.has(activity.taskID))
+      for (const activity of activities) next[activity.taskID] = activity
+      this.update({
+        currentActivity: next,
+        activityError:
+          activities.length === taskIDs.length ? "" : "Current activity is incomplete.",
+      })
+    } catch {
+      if (isCurrent()) this.update({ activityError: "Current activity is unavailable." })
+    } finally {
+      if (this.activityController === controller) this.activityController = undefined
+    }
+  }
+
+  refreshCurrentActivity() {
+    const transport = this.transport
+    if (!transport?.currentActivity || this.activityController || this.controller.signal.aborted)
+      return
+    const generation = this.generation
+    const listRequest = this.listRequest
+    const selectedID = this.data.selectedID
+    const taskIDs = this.activityTaskIDs(this.data.tasks, selectedID)
+    void this.observeCurrentActivity(taskIDs, generation, listRequest, selectedID)
   }
 
   async refresh() {
@@ -117,6 +200,8 @@ export class TaskPanelState {
     this.refreshing = true
     const generation = this.generation
     const request = ++this.listRequest
+    this.cancelCurrentActivity()
+    this.update({ currentActivity: {}, activityError: "" })
     const signal = this.controller.signal
     try {
       let page: TaskPage | undefined
@@ -190,6 +275,14 @@ export class TaskPanelState {
         stale: !transport.online(),
         error: "",
       })
+      const selectedForActivity = this.data.selectedID ?? tasks[0]?.taskID
+      await this.observeCurrentActivity(
+        this.activityTaskIDs(tasks, selectedForActivity),
+        generation,
+        request,
+        this.data.selectedID,
+      )
+      if (generation !== this.generation || request !== this.listRequest) return
       if (!this.data.selectedID && tasks.length) await this.select(tasks[0]!.taskID)
       else if (this.data.selectedID) await this.select(this.data.selectedID, true)
     } catch (error) {
@@ -224,6 +317,7 @@ export class TaskPanelState {
     this.refreshing = true
     const generation = this.generation
     const request = ++this.listRequest
+    this.cancelCurrentActivity()
     try {
       const page = await transport.query({ ...this.query, cursor }, this.controller.signal)
       if (generation !== this.generation || request !== this.listRequest) return
@@ -234,6 +328,13 @@ export class TaskPanelState {
         page,
         tasks: [...this.data.tasks, ...page.tasks.filter((task) => !seen.has(task.taskID))],
       })
+      const selectedID = this.data.selectedID
+      await this.observeCurrentActivity(
+        this.activityTaskIDs(page.tasks, selectedID),
+        generation,
+        request,
+        selectedID,
+      )
     } catch (error) {
       if (generation === this.generation && !this.controller.signal.aborted)
         this.update({ stale: true, error: String(error) })
@@ -260,6 +361,11 @@ export class TaskPanelState {
     if (!refresh) {
       this.update({ selectedID: taskID, detail: undefined })
       this.selected(taskID)
+      this.cancelCurrentActivity()
+      const currentActivity = { ...this.data.currentActivity }
+      delete currentActivity[taskID]
+      this.update({ currentActivity, activityError: "" })
+      void this.observeCurrentActivity([taskID], generation, this.listRequest, taskID)
     }
     try {
       const detail = await transport.get(taskID, signal)
@@ -357,10 +463,13 @@ export class TaskPanelState {
     this.detailRequest++
     this.controller.abort()
     this.detailController.abort()
+    this.cancelCurrentActivity()
     this.starts.clear()
     this.linkedRequests.clear()
     if (this.retry) clearTimeout(this.retry)
     this.retry = undefined
+    if (this.activityTimer) clearInterval(this.activityTimer)
+    this.activityTimer = undefined
     this.retryDelayMs = 1_000
     this.refreshPending = false
     this.transport = undefined

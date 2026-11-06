@@ -67,6 +67,14 @@
   background: var(--surface-base-hover);
   color: var(--text-strong);
 }
+.lazers-tasks-filter-note {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: var(--text-weak);
+  font-size: 0.76em;
+  line-height: 1.4;
+  padding-top: 2px;
+}
 .lazers-tasks-dot {
   width: 6px;
   height: 6px;
@@ -112,7 +120,7 @@
 .lazers-tasks-row {
   width: 100%;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   min-height: 36px;
   padding: 7px 12px;
@@ -133,8 +141,57 @@
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+}
+.lazers-tasks-row-copy {
+  display: grid;
+  gap: 2px;
+  white-space: normal;
+}
+.lazers-tasks-row-title {
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.lazers-tasks-row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  min-width: 0;
+  color: var(--text-weak);
+  font-size: 0.74em;
+  line-height: 1.35;
+}
+.lazers-tasks-row-hold {
+  min-width: 0;
+  color: var(--icon-warning-base);
+  font-size: 0.76em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.lazers-tasks-foreground {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lazers-tasks-activity-indicator {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-weak);
+}
+.lazers-tasks-activity-indicator[data-state="active"] {
+  background: var(--icon-success-base);
+}
+.lazers-tasks-activity-indicator[data-state="unknown"] {
+  background: var(--icon-warning-base);
+}
+.lazers-tasks-waiting {
+  color: var(--icon-warning-base);
+  font-weight: 500;
 }
 .lazers-tasks-plan {
   min-width: 0;
@@ -227,6 +284,18 @@
   border-color: var(--icon-success-base);
   border-top-color: transparent;
   animation: lazers-task-spin 1s linear infinite;
+}
+.lazers-tasks-state[data-waiting="true"] {
+  border-color: var(--icon-warning-base);
+  border-top-color: var(--icon-warning-base);
+  animation: none;
+}
+.lazers-tasks-state[data-waiting="true"]::before {
+  content: "!";
+  color: var(--icon-warning-base);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 .lazers-tasks-state[data-state="accepted"],
 .lazers-tasks-state[data-state="incorporated"] {
@@ -328,6 +397,19 @@
   font-size: 0.85em;
   overflow-wrap: anywhere;
   text-transform: capitalize;
+}
+.lazers-tasks-inspector-state[data-waiting="true"] {
+  color: var(--icon-warning-base);
+}
+.lazers-tasks-current-activity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0 12px;
+  color: var(--text-weak);
+  font-size: 0.86em;
+  line-height: 1.4;
 }
 .lazers-tasks-start {
   min-height: 26px;

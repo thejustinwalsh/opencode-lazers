@@ -74,34 +74,34 @@ const panelTab = () => {
 }
 
 describe("tasks native affordances", () => {
-  test("plan counts stay visible only in Open while every filter has a meaningful group name", () => {
-    const group = (title: string, activeCount: number, totalCount: number) => ({
+  test("plan nonterminal counts stay distinct from native activity", () => {
+    const group = (title: string, nonterminalCount: number, totalCount: number) => ({
       planID: title,
       planVersion: 1,
       planRevision: 1,
       title,
       hasRecordedTitle: true,
-      activeCount,
+      nonterminalCount,
       totalCount,
       rows: [],
     })
     const renderGroup = (
       title: string,
-      activeCount: number,
+      nonterminalCount: number,
       totalCount: number,
       stateFilter: "open" | "completed" | "cancelled",
     ) =>
       renderToString(() =>
         createComponent(ExecutionPlanGroupView, {
-          group: group(title, activeCount, totalCount),
+          group: group(title, nonterminalCount, totalCount),
           stateFilter,
           children: "Visible task",
         }),
       )
 
     const open = renderGroup("Open plan", 1, 2, "open")
-    expect(open).toContain('aria-label="Open plan, 1 active of 2 tasks"')
-    expect(open).toContain(">1/2</span>")
+    expect(open).toContain('aria-label="Open plan, 1 nonterminal of 2 tasks in this plan"')
+    expect(open).toContain(">1/2 nonterminal</span>")
     expect(open).toContain("Visible task")
 
     const completed = renderGroup("Completed plan", 0, 1, "completed")
