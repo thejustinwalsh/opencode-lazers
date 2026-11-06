@@ -119,3 +119,8 @@ and small Luna Max corrections. Code checks do not close this visual gap.
 
 Assignment writes, theme/font changes, final visual acceptance, and native plan
 integration/cleanup remain open. The broader roadmap remains active.
+
+Root's clean combined review checkout was removed through native
+`worktree.remove(force:false)` after its commits landed on main; physical absence
+was confirmed. Its named branch retains the candidate. Native worker worktrees
+remain preserved pending their plan's acceptance/integration/cleanup flow.
