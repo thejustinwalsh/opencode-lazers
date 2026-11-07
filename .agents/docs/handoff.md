@@ -38,7 +38,7 @@ retained+GPU118tests1062assertions12files pass, strict/GUI pass. Parent broad593
 7800/29 passed. Review checkout removed natively force:false. Supported external
 client.location.reload completed1794071693061→1794071701471, PID3219 unchanged,
 global model idle and target forms/permissions0. Receipt is durable at
- design/reviews/lz175-native-runtime-reload-20261107.json. No service restart.
+design/reviews/lz175-native-runtime-reload-20261107.json. No service restart.
 
 Actual native173 corrected0b28972 admission succeeded as op8618a6eb-5812-4063-8a8a-
 9a11d73117cf generation1, bound to original repair255ec4c3-eb1f-4c99-83d9-cf4b26347b6c
