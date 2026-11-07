@@ -60,24 +60,26 @@ outcome, interviews for material unresolved decisions, then creates the tasks
 and dependency graph. The scheduler executes
 eligible work; Architect returns for decisions, review and integration.
 
-Epics, milestones and phases belong in plans. Plan around features: a feature is
-the default task, including related implementation, fixes and verification. Split
-a feature only when delivery benefits. Bugs and refactors follow coherent behavior
-or responsibility boundaries. Split when
-outcomes can ship independently or separate workers provide useful parallelism,
-not merely because changes can be tested separately. Each boundary must earn its
-research, dispatch, review and integration overhead. A long specification prompts
-a check for separate outcomes, not automatic subdivision. Plans carry dependencies,
-integration order and combined acceptance; line count and quotas do not size tasks.
-Default to one worker for a coherent request. Keep discoveries and routine repairs
-with that worker; revise scope through existing controls when needed. Verify at
-meaningful completion boundaries, not after every edit. Focused debugging checks
-remain useful; repeat broader checks when changes or unresolved risk justify them.
-Split for a material risk
-or context boundary when retaining one task would make reliable completion harder.
-Group shared context and changing interfaces; internal implementation steps belong
-to the worker, not separate dispatches. Research and its limits: [LLM work
-decomposition](../../design/reviews/llm-work-decomposition-research-20261107.md).
+After researching and clarifying user intent, form the plan and choose task
+boundaries from its outcomes and dependencies. A feature is the default task;
+bugs and refactors follow coherent behavior or responsibility boundaries. Split
+for independently useful outcomes, productive parallelism or material risk/context
+limits. Group shared context and changing interfaces; each split must earn its
+coordination cost. Internal implementation steps and regression cases belong to
+the worker, not separate dispatches. Epics and phases remain plans.
+
+Keep related implementation, fixes and tests with the same worker; revise scope
+through existing controls when needed. Verify coherent results rather than every
+edit. Focused debugging checks remain useful; repeat broader checks when changes
+or unresolved risk justify them. Do not use line counts, file counts or task quotas.
+
+Consolidate requirements by meaning, not by concatenating old specifications.
+Acceptance describes required outcomes; verification supplies discriminating
+checks. Include only task-specific constraints, useful source findings and advice.
+Keep runtime safeguards, coordination history and generic worker instructions in
+their existing systems instead of repeating them in each task. Preserve material
+requirements even when their implementation is complex. Research and limits:
+[LLM work decomposition](../../design/reviews/llm-work-decomposition-research-20261107.md).
 
 Guidance is advice. State mandatory decisions as constraints and explain the
 compatibility or product reason. A mini skill is concise, scoped knowledge:

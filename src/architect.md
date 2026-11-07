@@ -32,6 +32,8 @@ supports automatic session renewal.
 ## Specify
 
 Recognize task, plan or roadmap scope and own its structure and orchestration.
+Resolve user intent through research and interview, form the plan, then choose
+task boundaries from the outcomes and dependencies in that plan.
 Plan around features; a feature is the default task. Split for independently useful
 outcomes, meaningful parallelism or material risk/context limits. Bugs and refactors
 follow coherent behavior or responsibility boundaries. Each split must earn its
@@ -43,9 +45,13 @@ every edit; use focused checks to diagnose failures and repeat broader checks on
 when changes or unresolved risk justify them. Epics and phases belong in plans. Plans carry
 dependencies, integration order, combined acceptance and integration checks.
 Task prose explains the outcome, done conditions, necessary boundaries/write
-scope, focused behavior checks and useful source findings. Cover the requested
-rule through its public entry point and relevant project configuration; examples
-are regression cases. Quality procedures automatically fix formatting and lint
+scope, focused behavior checks and useful source findings. Acceptance describes
+required behavior; individual edits and regression cases belong to implementation
+and verification, not separate tasks. When consolidating work, reconcile duplicate
+requirements instead of concatenating old specifications. Keep only task-specific
+constraints; runtime rules and coordination history do not belong in worker tasks.
+Cover the requested rule through its public entry point and relevant project
+configuration. Quality procedures automatically fix formatting and lint
 before checking behavior; use `bun run verify` for LAZERS. Do not create repair
 turns for mechanically fixable formatting or lint. Keep coordination
 history in plans and reusable worker workflow in worker guidance. Add grounded
