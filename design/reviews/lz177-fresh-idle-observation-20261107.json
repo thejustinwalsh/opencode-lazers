@@ -1,0 +1,163 @@
+{
+  "at": 1794077669809,
+  "readOnly": true,
+  "sessionID": "ses_5cd7fb530a554a3f8e3513f2624a5a1b",
+  "idle": {
+    "version": 1,
+    "binding": {
+      "projectDirectory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "projectID": "b5da4cadd97e51f2f6c88ff71daa1006f6a5b7df",
+      "attemptID": "291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "sessionID": "ses_5cd7fb530a554a3f8e3513f2624a5a1b",
+      "workspace": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "assignedMessageID": "msg_9e1bd182f5bc42138b5704f3a54c9f30"
+    },
+    "revision": 8,
+    "lastEventSequence": 1313,
+    "executionStartSequence": 7,
+    "report": null,
+    "pendingTerminal": null,
+    "terminal": null,
+    "invalidation": {
+      "reason": "Native execution success did not match the current experimental.idle execution",
+      "at": 1794077415144,
+      "eventSequence": 1313
+    },
+    "staleEventSequence": null
+  },
+  "phases": [
+    {
+      "at": 1794077415027,
+      "executionStartSequence": 7,
+      "eventSequence": 9,
+      "backgroundCount": 0,
+      "listenerID": "e790333d-c671-4100-82b3-ae821b2413be",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "idle-entered"
+    },
+    {
+      "at": 1794077415134,
+      "inputID": "msg_9e1bd182f5bc42138b5704f3a54c9f30",
+      "executionStartSequence": 7,
+      "eventSequence": 9,
+      "listenerID": "e790333d-c671-4100-82b3-ae821b2413be",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "idle-lineage-unavailable"
+    }
+  ],
+  "listeners": [
+    {
+      "at": 1794075834701,
+      "eventSequence": 1,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075834841,
+      "eventSequence": 2,
+      "executionStartSequence": 2,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075834868,
+      "eventSequence": 3,
+      "executionStartSequence": 2,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075834938,
+      "eventSequence": 5,
+      "executionStartSequence": 2,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075835485,
+      "eventSequence": 6,
+      "executionStartSequence": 2,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075835491,
+      "eventSequence": 6,
+      "executionStartSequence": 2,
+      "listenerID": "59e068eb-6489-47f5-b2b3-a1d913d3151d",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075835647,
+      "eventSequence": 7,
+      "executionStartSequence": 7,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075835652,
+      "eventSequence": 7,
+      "executionStartSequence": 7,
+      "listenerID": "59e068eb-6489-47f5-b2b3-a1d913d3151d",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075835684,
+      "eventSequence": 9,
+      "executionStartSequence": 7,
+      "listenerID": "48ea1c15-3c82-4648-9330-dcfe96199cb0",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794075835686,
+      "eventSequence": 9,
+      "executionStartSequence": 7,
+      "listenerID": "59e068eb-6489-47f5-b2b3-a1d913d3151d",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794077415027,
+      "executionStartSequence": 7,
+      "eventSequence": 9,
+      "backgroundCount": 0,
+      "listenerID": "e790333d-c671-4100-82b3-ae821b2413be",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "idle-entered"
+    },
+    {
+      "at": 1794077415134,
+      "inputID": "msg_9e1bd182f5bc42138b5704f3a54c9f30",
+      "executionStartSequence": 7,
+      "eventSequence": 9,
+      "listenerID": "e790333d-c671-4100-82b3-ae821b2413be",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "idle-lineage-unavailable"
+    },
+    {
+      "at": 1794077415164,
+      "eventSequence": 1313,
+      "executionStartSequence": 7,
+      "listenerID": "e790333d-c671-4100-82b3-ae821b2413be",
+      "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/291bb88d-cca6-497f-82d1-d1472ba012a4",
+      "phase": "event-seen"
+    },
+    {
+      "at": 1794077415168,
+      "eventSequence": 1313,
+      "executionStartSequence": 7,
+      "listenerID": "92c713a7-bf3c-4fad-891a-8e3f585c5f82",
+      "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+      "phase": "event-seen"
+    }
+  ]
+}
