@@ -628,6 +628,84 @@ export class TaskRuntime {
     }
   }
 
+  private retainedRepairCandidateCurrent(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    binding: NonNullable<RetainedVerification["repair"]>,
+  ) {
+    const repair = this.retainedRepairForAttempt(attempt)
+    if (
+      !repair ||
+      repair.operationID !== binding.operationID ||
+      repair.owner !== plan.owner ||
+      repair.ownerEpoch !== this.store.planControlEpoch(plan.id) ||
+      repair.sessionID !== attempt.session_id ||
+      repair.workspace !== attempt.workspace ||
+      sourceQuarantine(this.store, attempt.id)
+    )
+      return false
+    try {
+      const route = ModelPolicy.parse(JSON.parse(attempt.policy).model)
+      const repairRoute = ModelPolicy.parse(repair.route)
+      const planRoute = plan.model ? ModelPolicy.parse(JSON.parse(plan.model)) : undefined
+      if (!this.sameModel(route, repairRoute) || !this.sameModel(route, planRoute)) return false
+      const effects = this.store.effects(plan.id)
+      if (
+        effects.some(
+          (effect) =>
+            effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+        )
+      )
+        return false
+      return effects.some((effect) => {
+        if (
+          effect.attempt_id !== attempt.id ||
+          effect.kind !== "prompt" ||
+          effect.state !== "completed"
+        )
+          return false
+        const payload = JSON.parse(effect.payload) as { repairID?: unknown; messageID?: unknown }
+        return payload.repairID === binding.operationID && payload.messageID === attempt.message_id
+      })
+    } catch {
+      return false
+    }
+  }
+
+  private async observeRetainedRepairCandidate(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    binding: NonNullable<RetainedVerification["repair"]>,
+  ) {
+    const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
+    const validate = (worker: HostSession | null | undefined) => {
+      const problem = this.retainedRepairWorkerProblem(
+        plan,
+        attempt,
+        worker,
+        attempt.message_id,
+        model,
+      )
+      if (problem) throw new Error(problem)
+      if (
+        worker?.background?.state === "observed" &&
+        (worker.background.count !== 0 || worker.background.inputID !== attempt.message_id)
+      )
+        throw new Error("Retained repair has unresolved background work or input lineage")
+    }
+    const before = await this.host.session(attempt.session_id, { messages: true })
+    validate(before)
+    const after = await this.host.session(attempt.session_id, { messages: true })
+    validate(after)
+    if (
+      !before ||
+      !after ||
+      this.retainedRepairObservation(before) !== this.retainedRepairObservation(after) ||
+      !this.retainedRepairCandidateCurrent(plan, attempt, binding)
+    )
+      throw new Error("Retained repair changed during candidate observation")
+  }
+
   private async prepareRetainedVerification(
     plan: PlanRow,
     command: PlanCommand,
@@ -680,9 +758,27 @@ export class TaskRuntime {
       throw new Error(
         "Retained verification must name the current task revision and latest original attempt",
       )
+    const repairingCandidate = attempt.artifact !== null && attempt.artifact !== command.artifact
+    const repair = repairingCandidate ? this.retainedRepairForAttempt(attempt) : undefined
+    const repairBinding =
+      repair && attempt.artifact
+        ? { operationID: repair.operationID, previousArtifact: attempt.artifact }
+        : undefined
     if (
-      (attempt.artifact !== null && attempt.artifact !== command.artifact) ||
-      (node.artifact !== null && node.artifact !== command.artifact)
+      repairingCandidate &&
+      (!repairBinding ||
+        node.artifact !== null ||
+        node.state !== "running" ||
+        attempt.state !== "running" ||
+        !this.retainedRepairCandidateCurrent(plan, attempt, repairBinding))
+    )
+      throw new Error(
+        "Candidate does not match the recorded result or current authorized retained repair",
+      )
+    if (
+      !repairingCandidate &&
+      ((attempt.artifact !== null && attempt.artifact !== command.artifact) ||
+        (node.artifact !== null && node.artifact !== command.artifact))
     )
       throw new Error(
         "Candidate does not match the exact committed result recorded for the latest attempt",
@@ -743,12 +839,31 @@ export class TaskRuntime {
         "Candidate must be an exact committed Git identity in the original attempt repository",
       )
     if (
-      attempt.artifact === null &&
+      (attempt.artifact === null || repairingCandidate) &&
       git(attempt.workspace, ["rev-parse", "HEAD"]) !== command.artifact
     )
       throw new Error(
         "Unrecorded candidate must be the exact committed HEAD of the original attempt",
       )
+    if (repairBinding) {
+      if (
+        !artifactUnchanged(attempt.workspace, command.artifact) ||
+        !commitIsAncestor(attempt.workspace, repairBinding.previousArtifact, command.artifact)
+      )
+        throw new Error(
+          "Retained repair candidate must be a clean strict descendant of its prior artifact",
+        )
+      if (
+        this.store
+          .effects(plan.id)
+          .some(
+            (effect) =>
+              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+          )
+      )
+        throw new Error("Uncertain original effects prevent repaired-candidate verification")
+      await this.observeRetainedRepairCandidate(plan, attempt, repairBinding)
+    }
     if (!commitIsAncestor(attempt.workspace, attempt.base_commit, command.artifact))
       throw new Error("Candidate is not based on the original attempt's committed baseline")
     const changed = git(attempt.workspace, [
@@ -806,6 +921,7 @@ export class TaskRuntime {
       originalMessageID: attempt.message_id,
       originalWorkspace,
       candidate: command.artifact,
+      ...(repairBinding ? { repair: repairBinding } : {}),
       combinedArtifact,
       effectiveWriteScope: this.store.effectiveWriteScope(task.id),
       verification: { task: task.proposal.verification, combined: input.verification },
@@ -831,6 +947,7 @@ export class TaskRuntime {
       originalMessageID: attempt.message_id,
       originalWorkspace: originalWorkspace,
       artifact: command.artifact,
+      ...(repairBinding ? { repair: repairBinding } : {}),
       combinedArtifact,
       combinedInputFingerprint: combinedArtifact ? inputFingerprint : null,
       taskWorkspace,
@@ -2418,6 +2535,17 @@ export class TaskRuntime {
         throw new Error(
           "Retained verification owner or plan authorization changed before reservation",
         )
+      if (retainedVerificationSeed.repair) {
+        const latest = this.store
+          .attempts(old.id)
+          .find((a) => a.id === retainedVerificationSeed.attemptID)
+        if (!latest) throw new Error("Retained repair attempt disappeared before reservation")
+        await this.observeRetainedRepairCandidate(
+          currentPlan,
+          latest,
+          retainedVerificationSeed.repair,
+        )
+      }
     }
 
     if (retainedRepair) {
@@ -2898,13 +3026,26 @@ export class TaskRuntime {
           !taskRow ||
           taskRow.project_directory !== this.directory ||
           reservedTask?.revision !== seed.taskRevision ||
+          reservedTask.provenance.projectID !== this.projectID ||
+          reservedTask.provenance.projectDirectory !== this.directory ||
+          this.store.repository.taskDisposition(seed.taskID) !== undefined ||
           !attemptRow ||
           attemptRow.id !== seed.attemptID ||
           attemptRow.session_id !== seed.originalSessionID ||
           attemptRow.message_id !== seed.originalMessageID ||
           realpathSync(attemptRow.workspace) !== seed.originalWorkspace ||
-          (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
-          (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact)
+          (seed.repair
+            ? attemptRow.artifact !== seed.repair.previousArtifact ||
+              nodeRow?.artifact !== null ||
+              !this.retainedRepairCandidateCurrent(
+                plan,
+                this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
+                seed.repair,
+              ) ||
+              git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact ||
+              !artifactUnchanged(seed.originalWorkspace, seed.artifact)
+            : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
+              (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
         )
           throw new Error(
             "Original task, latest attempt or exact committed candidate changed before reservation",
@@ -7741,9 +7882,16 @@ export class TaskRuntime {
         this.store.planControlEpoch(plan.id) === current.ownerEpoch &&
         task &&
         task.revision === current.taskRevision &&
+        task.provenance.projectID === this.projectID &&
+        task.provenance.projectDirectory === this.directory &&
+        !this.store.repository.taskDisposition(current.taskID) &&
         latestAttempt?.id === current.attemptID &&
         latestAttempt.session_id === current.originalSessionID &&
         latestAttempt.message_id === current.originalMessageID &&
+        (!current.repair ||
+          (this.retainedRepairCandidateCurrent(plan, latestAttempt, current.repair) &&
+            (latestAttempt.artifact === current.repair.previousArtifact ||
+              latestAttempt.artifact === current.artifact))) &&
         realpathSync(latestAttempt.workspace) === current.originalWorkspace &&
         this.retainedVerificationEnvironmentIdentityCurrent(current),
       )
@@ -9294,6 +9442,17 @@ export class TaskRuntime {
     receipts: CheckReceipt[],
     fence: number,
   ): Promise<RetainedVerification | undefined> {
+    if (initial.repair) {
+      const plan = this.store.plan(initial.planID)
+      const attempt = this.store.attempts(initial.planID).find((a) => a.id === initial.attemptID)
+      try {
+        if (!plan || !attempt) throw new Error("Retained repair binding disappeared")
+        await this.observeRetainedRepairCandidate(plan, attempt, initial.repair)
+      } catch (error) {
+        await this.holdRetainedVerification(initial, errorText(error), fence)
+        return undefined
+      }
+    }
     if (!this.retainedWorkspaceUnchanged(workspace, initial.artifact)) {
       await this.holdRetainedVerification(
         initial,
@@ -9354,6 +9513,9 @@ export class TaskRuntime {
         !["blocked", "accepted", "cleanup-blocked"].includes(currentPlan.state) ||
         !currentTask ||
         currentTask.revision !== initial.taskRevision ||
+        currentTask.provenance.projectID !== this.projectID ||
+        currentTask.provenance.projectDirectory !== this.directory ||
+        this.store.repository.taskDisposition(initial.taskID) !== undefined ||
         latestAttempt?.id !== initial.attemptID ||
         latestAttempt.session_id !== initial.originalSessionID ||
         latestAttempt.message_id !== initial.originalMessageID ||
@@ -9362,7 +9524,10 @@ export class TaskRuntime {
         !["accepted", "blocked", "failed", "verifying", "running", "ready"].includes(
           currentNode.state,
         ) ||
-        (currentNode.artifact !== null && currentNode.artifact !== initial.artifact)
+        (currentNode.artifact !== null && currentNode.artifact !== initial.artifact) ||
+        (initial.repair &&
+          (latestAttempt.artifact !== initial.repair.previousArtifact ||
+            !this.retainedRepairCandidateCurrent(currentPlan, latestAttempt, initial.repair)))
       )
         return undefined
 
@@ -9503,6 +9668,12 @@ export class TaskRuntime {
         throw new Error("Retained verification owner, plan version or execution authority changed")
       if (!this.retainedVerificationLive(operation.id, operation.generation))
         throw new Error("Retained verification task, attempt or environment identity changed")
+      if (operation.repair && !this.retainedTaskCandidateAccepted(operation)) {
+        const attemptID = operation.attemptID
+        const attempt = this.store.attempts(plan.id).find((a) => a.id === attemptID)
+        if (!attempt) throw new Error("Retained repair attempt disappeared")
+        await this.observeRetainedRepairCandidate(plan, attempt, operation.repair)
+      }
     } catch (error) {
       await this.holdRetainedVerification(operation, errorText(error), fence)
       return

@@ -63,6 +63,7 @@ function fixture(
     successorCount?: number
     failRetainedCheck?: boolean
     combinedHumanEvidence?: boolean
+    candidateContentsCheck?: boolean
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "lazers-retained-reverify-project-"))
@@ -148,6 +149,12 @@ function fixture(
       `  await Bun.sleep(10_000)\n` +
       `}, { timeout: 20_000 })\n`,
   )
+  if (options.candidateContentsCheck)
+    writeFileSync(
+      join(root, "src/runner/retained-check.test.ts"),
+      'import {test,expect} from "bun:test"; import {readFileSync} from "node:fs";\n' +
+        'test("committed candidate contents",()=>{const text=readFileSync("result.txt","utf8");expect(text).toContain("retained candidate");console.log(text)});\n',
+    )
   git(root, ["add", "-A"])
   git(root, ["commit", "-m", "baseline"])
   const base = git(root, ["rev-parse", "HEAD"])
@@ -472,6 +479,271 @@ async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   if (!attempt.artifact) throw new Error("Fixture attempt did not retain an artifact")
   return { ...f, plan, attempt, artifact: attempt.artifact }
 }
+
+async function heldRepairFixture() {
+  const f = fixture({
+    taskCheckCommand: "bun test src/runner/retained-check.test.ts",
+    combinedCheckCommand: "bun test src/runner/retained-check.test.ts",
+    candidateContentsCheck: true,
+  })
+  const control = await registeredPlanCommand(f.runtime)
+  await control.execute({
+    requestID: "start-original",
+    planID: f.planID,
+    expectedVersion: 1,
+    action: "run",
+  })
+  for (let i = 0; i < 5; i++) await f.runtime.tick()
+  const original = f.store.attempts(f.planID)[0]!
+  expect(original.state).toBe("accepted")
+  const previousArtifact = original.artifact!
+  f.host.prompt = async (input) => {
+    f.prompts.push({ sessionID: input.sessionID, id: input.id })
+    writeFileSync(join(input.directory, "result.txt"), "retained candidate\nrepair descendant\n")
+    git(input.directory, ["add", "result.txt"])
+    git(input.directory, ["commit", "-m", "same-worker repair descendant"])
+    const worker = f.sessions.get(input.sessionID)!
+    worker.messages.push({ id: input.id, text: input.text })
+    worker.outcome = "succeeded"
+    worker.turn = { inputID: input.id, state: "completed" }
+    worker.background = {
+      state: "unknown",
+      source: "experimental.idle",
+      reason: "current idle lineage missing",
+    }
+  }
+  await control.execute({
+    requestID: "repair-original",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "retained-repair",
+    taskID: f.task.id,
+    attemptID: original.id,
+    artifact: previousArtifact,
+    reason: "Repair the committed result in the original worker",
+  })
+  for (let i = 0; i < 5; i++) await f.runtime.tick()
+  const attempt = f.store.attempts(f.planID)[0]!
+  expect(attempt.state).toBe("running")
+  expect(attempt.artifact).toBe(previousArtifact)
+  expect(f.store.nodes(f.planID)[0]?.artifact).toBeNull()
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  const artifact = git(attempt.workspace, ["rev-parse", "HEAD"])
+  expect(artifact).not.toBe(previousArtifact)
+  return {
+    ...f,
+    control,
+    attempt,
+    artifact,
+    previousArtifact,
+    request: {
+      requestID: "verify-repair-descendant",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "verify-retained",
+      projectID: "project",
+      planRevision: 1,
+      taskID: f.task.id,
+      taskRevision: 1,
+      attemptID: attempt.id,
+      artifact,
+      reason: "Verify the actual repair without fabricating idle",
+    },
+  }
+}
+
+test("registered verification qualifies an actual same-worker repair descendant with missing idle", async () => {
+  const f = await heldRepairFixture()
+  const prompts = [...f.prompts]
+  const before = { ...f.attempt }
+  const requested = await f.control.execute(f.request)
+  expect(await f.control.execute(f.request)).toEqual(requested)
+  for (let i = 0; i < 6; i++) await f.runtime.tick()
+  const after = f.store.attempts(f.planID)[0]!
+  expect(after).toMatchObject({
+    id: before.id,
+    session_id: before.session_id,
+    workspace: before.workspace,
+    message_id: before.message_id,
+    policy: before.policy,
+    token_count: before.token_count,
+    tool_count: before.tool_count,
+    cost: before.cost,
+    state: "accepted",
+    artifact: f.artifact,
+  })
+  expect(f.prompts).toEqual(prompts)
+  expect(f.created).toHaveLength(1)
+  expect(f.store.nodes(f.planID)[0]?.artifact).toBe(f.artifact)
+  expect(f.sessions.get(after.session_id)?.background?.state).toBe("unknown")
+  const checks = f.store.atomic((db) =>
+    db
+      .query<{ artifact: string; receipt: string }, [string]>(
+        "SELECT artifact,receipt FROM runner_retained_verification_checks WHERE operation_id=?",
+      )
+      .all(String(requested.operationID)),
+  )
+  expect(checks.length).toBeGreaterThan(0)
+  expect(
+    checks.every(
+      (check) => check.artifact === f.artifact && check.receipt.includes("repair descendant"),
+    ),
+  ).toBe(true)
+})
+
+test.each([
+  "dirty",
+  "moved-head",
+  "non-descendant",
+  "busy",
+  "permission",
+  "form",
+  "input",
+  "route",
+  "repair",
+  "conflict",
+  "uncertain-effect",
+  "outside-scope",
+  "stale-revision",
+  "wrong-task",
+])(
+  "repair descendant admission rejects %s without prompts or verification effects",
+  async (kind) => {
+    const f = await heldRepairFixture()
+    const worker = f.sessions.get(f.attempt.session_id)!
+    const prompts = [...f.prompts]
+    if (kind === "dirty") writeFileSync(join(f.attempt.workspace, "untracked.txt"), "not committed")
+    if (kind === "moved-head") {
+      writeFileSync(join(f.attempt.workspace, "result.txt"), "retained candidate\nlater\n")
+      git(f.attempt.workspace, ["commit", "-am", "later source"])
+    }
+    if (kind === "non-descendant") {
+      git(f.attempt.workspace, ["checkout", "--detach", f.attempt.base_commit])
+      f.request.artifact = f.attempt.base_commit
+    }
+    if (kind === "busy") worker.busy = true
+    if (kind === "permission") worker.pendingPermissions = 1
+    if (kind === "form") worker.pendingForms = 1
+    if (kind === "input") worker.turn = { inputID: "foreign-input", state: "completed" }
+    if (kind === "route") worker.model = { ...worker.model!, id: "foreign-model" }
+    if (kind === "repair") {
+      const prior = f.store.latestRetainedRepair<Record<string, unknown>>(f.planID, f.task.id)!
+      f.store.record(f.planID, f.task.id, "RETAINED_REPAIR_REQUESTED", {
+        ...prior,
+        operationID: crypto.randomUUID(),
+      })
+    }
+    if (kind === "conflict") await addCompetingAttempt(f, "none")
+    if (kind === "uncertain-effect")
+      f.store.atomic((db) =>
+        db
+          .query(
+            "UPDATE runner_effects SET state='uncertain' WHERE attempt_id=? AND kind LIKE 'verify:%'",
+          )
+          .run(f.attempt.id),
+      )
+    if (kind === "outside-scope") {
+      writeFileSync(join(f.attempt.workspace, "outside.txt"), "unrelated change")
+      git(f.attempt.workspace, ["add", "outside.txt"])
+      git(f.attempt.workspace, ["commit", "-m", "out of scope"])
+      f.request.artifact = git(f.attempt.workspace, ["rev-parse", "HEAD"])
+    }
+    if (kind === "stale-revision") f.request.taskRevision = 2
+    if (kind === "wrong-task") f.request.taskID = crypto.randomUUID()
+    await expect(f.control.execute(f.request)).rejects.toThrow()
+    expect(f.prompts).toEqual(prompts)
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+            )
+            .get(f.planID)?.n,
+      ),
+    ).toBe(0)
+    expect(f.store.attempts(f.planID)[0]?.artifact).toBe(f.previousArtifact)
+  },
+)
+
+test.each(["disposition", "owner", "input"])(
+  "repair descendant rejects %s during final native admission",
+  async (kind) => {
+    const f = await heldRepairFixture()
+    const session = f.host.session
+    let owners = 0
+    f.host.session = async (id, options) => {
+      const observed = await session(id, options)
+      if (id === "owner" && ++owners === 2) {
+        if (kind === "disposition")
+          f.store.repository.recordDisposition(
+            {
+              taskID: f.task.id,
+              requestID: "disposed-during-admission",
+              disposition: "rejected",
+              reason: "Task cancelled during native await",
+              evidence: [{ kind: "human", reference: "fixture concurrent decision" }],
+            },
+            { sessionID: "owner", agent: "architect" },
+          )
+        if (kind === "owner") {
+          f.store.updatePlanOwner(f.planID, "owner", "owner2")
+          f.store.updatePlanOwner(f.planID, "owner2", "owner")
+        }
+        if (kind === "input") f.sessions.get(f.attempt.session_id)!.pendingInput = true
+      }
+      return observed
+    }
+    await expect(f.control.execute(f.request)).rejects.toThrow()
+    expect(
+      f.store.atomic(
+        (db) =>
+          db
+            .query<{ n: number }, [string]>(
+              "SELECT COUNT(*) AS n FROM runner_retained_verifications WHERE plan_id=?",
+            )
+            .get(f.planID)?.n,
+      ),
+    ).toBe(0)
+    expect(f.prompts).toHaveLength(2)
+  },
+)
+
+test("admitted repair candidate survives reopen and cannot be retargeted by a later HEAD", async () => {
+  const f = await heldRepairFixture()
+  const admitted = await f.control.execute(f.request)
+  await f.runtime.stop()
+  f.store.repository.close()
+  const repository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+  const store = new RunnerStore(repository)
+  const runtime = new TaskRuntime(store, f.host, "project")
+  try {
+    expect(await runtime.command(f.request, "owner")).toEqual(admitted)
+    writeFileSync(
+      join(f.attempt.workspace, "result.txt"),
+      "retained candidate\nlater unverified head\n",
+    )
+    git(f.attempt.workspace, ["commit", "-am", "later unverified source"])
+    for (let i = 0; i < 6; i++) await runtime.tick()
+    expect(store.attempts(f.planID)[0]?.artifact).toBe(f.artifact)
+    const operations = store.atomic((db) =>
+      db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM runner_retained_verifications WHERE plan_id=?",
+        )
+        .all(f.planID),
+    )
+    expect(operations).toHaveLength(1)
+    expect(JSON.parse(operations[0]!.payload)).toMatchObject({
+      artifact: f.artifact,
+      repair: { previousArtifact: f.previousArtifact },
+    })
+    expect(f.prompts).toHaveLength(2)
+  } finally {
+    await runtime.stop()
+    repository.close()
+  }
+})
 
 async function addCompetingAttempt(
   f: Awaited<ReturnType<typeof fixture>>,

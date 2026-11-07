@@ -242,7 +242,9 @@ export const CommandInput = z
       .string()
       .max(128)
       .optional()
-      .describe("Exact full committed candidate identity for retained verification or evidence."),
+      .describe(
+        "Exact full committed candidate identity. verify-retained also accepts the clean HEAD strictly descending from the previous artifact of the current authorized same-worker repair; original idle/resources remain separate.",
+      ),
     descendantCommit: z
       .string()
       .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
