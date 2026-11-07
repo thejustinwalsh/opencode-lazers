@@ -27,8 +27,8 @@ Older details remain in Git history and linked reports.
 
 ## Current source and native coordinator
 
-Canonical source180 landed through `d2f4a79`; Root formatter-tool fix `28066f4`
-and tasking tune `0cf0ee1` are ancestors. Revalidate HEAD before integration.
+Canonical source180 landed through `d2f4a79`, corrected174 through `3e47b2e`.
+Formatter-tool fix `28066f4` and the tasking tune are ancestors. Revalidate HEAD.
 Architect `ses_e568438ebffeaoFbF9nBb942XM`, service PID3219; revalidate both.
 Desktop CUA is usable after native webview reload. AX indices move while streaming;
 read fresh controls. Native `typeText` worked when paste silently missed. Verify
@@ -67,26 +67,27 @@ not worker resume/run, promoted accepted nodes from blockedv17 to runningv18 for
 same-generation deferred combined checks. Report:
 `design/reviews/lz180-retained-integration-20261107.md`.
 
-LZ174 Root corrected ORIGINAL clean tree0375ef98-ff9b-456f-849d-2ed9da547920 to
-`5e1d9ed6756bcc3ff73911c7325b7770498e564d`, descendant67d4e6d. Full-tree content
-fingerprint gate removed; native/control/task checks retained. New dirty-progress
-regression fails old code and passes fixed.13targeted tests/296assertions +strict
-pass; broader396 had395passes/one5089ms timeout; unchanged isolated rerun3252ms pass.
-Original worker5210fab was not active during Root edits. Planf33eddb3... remains
-blockedv23, attempt recorded artifact6622ebf unchanged. Native Architect now has
-candidate for review (native Luna Max `ses_e485a234effe8DqqiZwpKqWZ5A`)
-and existing retained verification; don't restore hashing,
-replace worker, mutate SQL or merge stale Architect prose. Report:
-`design/reviews/lz174-67d4e6d-source-review-20261107.md`.
+LZ174 corrected original candidate `5e1d9ed6756bcc3ff73911c7325b7770498e564d`
+landed through3e47b2e after independent native Luna review. Source-content scanning
+was removed; native/control/task checks remain. Existing generation2
+`a5aadd33-556a-4785-acad-0b62129b2709` passed task and combined continuation,
+runner and auto-fix quality checks. At Unix1794084309704 the whole plan was
+acceptedv26 after Architect recorded actual original172 substantive recovery.
+Native integration bookkeeping/cleanup still needs follow-through; do not infer
+cleanup from acceptance. Report: `design/reviews/lz174-67d4e6d-source-review-20261107.md`.
 
-LZ172 original WIP remains in14b02650...; isolated review found8 strict errors in
-an overbuilt route-label helper. Actual330/450/960 fixture renders and native Terra
-High review confirm narrow overlap and model/effort truncation. Root recommends
-readable names/effort and full-route tooltip, not p:/m:/e: codes. This is Root review
-advice, not a verbatim user correction. Source wording/legend fixes belong to same
-172 outcome. Advice revision5 links `design/reviews/lz172-retained-render-20261107.md`.
-Needs same-worker correction after174 support, native narrow/wide product review
-and real acceptance. Fixture pictures are not connected Desktop acceptance.
+LZ172 original attempt14b02650 resumed in its existing session83bd7a96/workspace,
+OpenAI LunaMax route and parent, performed actual patches and committed clean
+`eb9e8c7fd10ab295cd93eb14ae6e7cf3407ab5e1`; native task accepted, plan blockedv72
+only on Root live corrected-Models acceptance. Worker reports58 Models tests,
+auto-fix quality and GUI build passed. Source STILL contains encoded routeCode
+helper; latest readable-name/effort guidance was not reflected. Last60 messages
+show only two instruction fetches, both advice1 from Nov6, none on this resumed
+turn. Main Architect is inspecting native keyed instructions and reviewing the
+same candidate, then must use supported same-attempt execution for corrections.
+Do not equate keyed instruction delivery with idle worker execution. Advice5 and
+render review: `design/reviews/lz172-retained-render-20261107.md`. Real narrow/wide
+Desktop and native Terra visual review remain; fixture pictures are insufficient.
 
 ## Verified and landed this pass
 
@@ -159,9 +160,10 @@ cleanup remains blocked on historical missing idle. Do not retry unchanged
 cleanup or invalidate delivered code. Its separate integration checkout was
 removed natively. Report: `design/reviews/lz177-native-completion-hold-20261107.md`.
 
-178 benign integration rebind remains queued with no attempts: task
-095a9e75-3731-4834-9d67-f4293c260636, planc68342dc-d51e-42cb-98ba-287067e51a5f.
-It overlaps174 runtime scope.179 was never executed and cancelled in favor of180;
+178 benign integration rebind is genuinely running: task095a9e75-3731-4834-9d67-f4293c260636,
+planc68342dc-d51e-42cb-98ba-287067e51a5f, attempt14fca257-f6e7-44ad-baa8-109167e49c50,
+worker ses_f3b9ac74651745adb91015eb6f5a416a (OpenAI LunaMax). Actual runtime/schema
+patches observed; preserve it.179 was never executed and cancelled in favor of180;
 do not redispatch it. Source reservation diagnostics and timings are in
 `design/reviews/delivery-bottleneck-20261107.md`.
 
