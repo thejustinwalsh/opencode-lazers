@@ -93,6 +93,26 @@ test("failed close cleanup remains occupied until retry; closing another window 
   expect(lease.occupied()).toBe(false)
 })
 
+test("host-confirmed close recovers an inherited owner without freeing unrelated unknown ownership", async () => {
+  let saved: ModelLeasePersistence | undefined
+  const original = new ModelLease(
+    async () => {},
+    undefined,
+    (state) => {
+      saved = state
+    },
+  )
+  register(original, 1, "old-provider", 1)
+  await original.acquire(1, request(original, "old-provider", 1))
+  const replacement = new ModelLease(async () => {}, saved)
+  await replacement.closed(2)
+  expect(replacement.occupied()).toBe(true)
+  await replacement.closed(1)
+  expect(replacement.occupied()).toBe(false)
+  register(replacement, 3, "new-window", 1)
+  await replacement.acquire(3, request(replacement, "new-window", 1))
+})
+
 test("cache cleanup and retirement exclude new allocations until asynchronous work drains", async () => {
   const draining = Promise.withResolvers<void>()
   const lease = new ModelLease(() => draining.promise)
