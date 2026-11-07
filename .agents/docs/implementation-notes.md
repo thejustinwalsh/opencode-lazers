@@ -12,6 +12,15 @@ Label endpoint assumptions separately. Cover the product entry point with
 relevant configured routes, including subscription routes; fixtures using only
 the pricing provider do not exercise that boundary.
 
+## GUI and live producer contracts
+
+GUI consumers and server producers can run at different revisions. For an RPC
+presentation change, inspect the current producer schema as well as the worker
+checkout. Exercise its real variants in rendered consumer tests; an exhaustive
+switch against an older type can still miss live values. Preview against the
+connected producer before integration. Source:
+[connected Models failure](../../design/reviews/lz172-connected-preview-failure-20261107.md).
+
 ## Worker tools and trajectory time
 
 Expose worker-facing tools to Code Mode (`codemode: true`). Registering progress
