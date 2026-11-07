@@ -51,7 +51,13 @@ research/interview/self-review and unrestricted normal tools remain. Research:
 Native Architect consolidated only zero-attempt pairs170/171→181,148/149→182,
 160/161→183, preserving external dependencies/priority and original histories.
 The three successors have zero implementor attempts at last check; don't equate
-plan running with dispatch. Do not cancel/resubmit them just for prose polish.
+plan running with dispatch.182 now follows147only,88 follows72only after actual
+source/interface audit; no fake138acceptance or release of72unknown check.
+Report: `design/reviews/tasks-prerequisite-audit-20261107.md`, commit783730f.
+Duplicate live trajectory receipts were reproduced and folded into queued131
+producer/projection/render scope and advice, not a new microtask. Optional current
+producer-contract lesson is in implementation-notes.md. Do not cancel/resubmit
+consolidated features just for prose polish.
 
 LZ180 original candidate `2ad21e7c4bce696c6f0e5d2966a409d1b1221a0f` is merged.
 Plan002c3469-5346-4d74-a21f-6991eb52eeec source integration is recorded;
@@ -76,23 +82,30 @@ acceptedv26 after Architect recorded actual original172 substantive recovery.
 Native integration is recorded; cleanup-blockedv28 preserves unknown-idle
 original resources. Do not retry unchanged cleanup or invalidate the landed source. Report: `design/reviews/lz174-67d4e6d-source-review-20261107.md`.
 
-LZ172 original attempt14b02650 resumed in its existing session83bd7a96/workspace,
-OpenAI LunaMax route and parent, performed actual patches and committed clean
-`eb9e8c7fd10ab295cd93eb14ae6e7cf3407ab5e1`; native task accepted, plan blockedv72
-only on Root live corrected-Models acceptance. Worker reports58 Models tests,
-auto-fix quality and GUI build passed. Source STILL contains encoded routeCode
-helper; latest readable-name/effort guidance was not reflected. Last60 messages
-show only two instruction fetches, both advice1 from Nov6, none on this resumed
-turn. Main Architect is inspecting native keyed instructions and reviewing the
-same candidate, then must use supported same-attempt execution for corrections.
-Advice6 is now stored, native keyed context is read back, and the SAME worker is
-actually running again (busy1794084601387, planv78). Original tightly sequenced
-reconcile/repair succeeded; no replacement or retry. Do not equate keyed
-instruction delivery with execution. Root also fixed direct admission from a
-blocked combined-review plan in deb9a09 (17tests/232assertions + auto-fix strict
-checks pass); direct blocked-path native observation remains unproven. That fix
-avoids the observed intermediate reconcile73→blocked74 version race. Render review: `design/reviews/lz172-retained-render-20261107.md`. Real narrow/wide
-Desktop and native Terra visual review remain; fixture pictures are insufficient.
+LZ172 original attempt14b02650/session83bd7a96 delivered clean0d210a8 after
+advice6 (59tests/1507assertions, quality/GUI pass). Real connected Desktop preview
+FAILED blank at16:34:07.547: knownUsageSourcePresentation missed current producer
+openrouter-models/native-catalog values because the worker's old contract had
+only openrouter-endpoints. Report: `design/reviews/lz172-connected-preview-failure-20261107.md`.
+Both canonical ignored GUI assets were restored from
+`/private/tmp/lz172-gui-preview-vzt9ofm_`; renderer-only reload restored the prior
+chart. No source integration or visual pass. Original worker is actually running
+again with advice7 and narrow authorized market-range contract/test scope v87.
+Direct blocked-plan retained-repair succeeded at1794087513056, operation
+1e7655fb-a0e5-4068-b7aa-303fa5b4ecef, then prompt completion/dispatch on same
+session/attempt/workspace/route. This observes deb9a09's direct admission path,
+not UI correctness. No new task or wholesale backend copy. Need corrected
+rendered current-producer tests, connected preview and native Terra visual review.
+
+Root ffa8f6f fixes idempotent worker-mailbox detach after expiry; stale detach
+cannot disconnect an active replacement, and queued undelivered jobs survive.
+Original-code regression fails;11tests/89assertions + strict auto-fix pass.
+Actual ownership-error loop stopped after source edit and native local probe
+returned localGPUready19input/4output. No forced backend reload occurred; automatic
+approval rejected global location.reload while a review was still streaming.
+Do not bypass it. Actual source activation identity was not proved by status
+alone; residual renderer/GPU-helper CPU remains15%/34% despite recovery.
+Reports/profiles: `design/reviews/inference-detach-recovery-20261107.md`.
 
 ## Verified and landed this pass
 

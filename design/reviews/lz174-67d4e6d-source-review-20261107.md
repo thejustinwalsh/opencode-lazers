@@ -92,3 +92,10 @@ admission sites were aligned. Final suite:17 passed,0 failed,232 assertions;
 The Architect also succeeded in resuming172 through a tightly sequenced existing
 control call before this fix's direct blocked-plan path was observed natively.
 Do not claim that workaround as live verification of the new direct path.
+
+Direct blocked-plan repair was subsequently observed natively for the actual
+0d210a8 Models preview failure. After plan BLOCKEDv83, the journal records
+RETAINED_REPAIRv84 and request1e7655fb-a0e5-4068-b7aa-303fa5b4ecef at
+Unix1794087513056, followed by completed native prompt and DISPATCHv86.
+No intermediate reconcile was needed. Same original172 attempt/session/workspace
+and route continued; current consumer compatibility correction remains open.
