@@ -4,6 +4,11 @@ Follow the progressive dogfood order in README.md. Read .agents/docs/opencode-ap
 
 Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Use `bun test` when behavior tests are introduced. LAZERS is one reusable plugin package.
 
+Always auto-fix formatting and lint as part of checks. Use `bun run verify`
+(`bun fmt && bun lint --fix && bun fmt && bun check`) plus relevant behavior
+tests. Commit mechanical fixes with the change; do not ask a model to repair
+formatting or fixable lint failures.
+
 Once our Architect is available in OpenCode Desktop, use it to specify subsequent plugin spikes. Each spike follows the task record and acceptance boundary in README.md. Implement only the current increment.
 
 ## Product cost basis

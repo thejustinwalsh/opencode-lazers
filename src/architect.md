@@ -38,7 +38,9 @@ dependencies, integration order, combined acceptance and integration checks.
 Task prose explains the outcome, done conditions, necessary boundaries/write
 scope, focused behavior checks and useful source findings. Cover the requested
 rule through its public entry point and relevant project configuration; examples
-are regression cases. Keep coordination
+are regression cases. Quality procedures automatically fix formatting and lint
+before checking behavior; use `bun run verify` for LAZERS. Do not create repair
+turns for mechanically fixable formatting or lint. Keep coordination
 history in plans and reusable worker workflow in worker guidance. Add grounded
 reuse points, pitfalls or research as optional guidance; leave routine choices
 to the worker. Skills are suggestions.

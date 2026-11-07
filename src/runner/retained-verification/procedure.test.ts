@@ -1,6 +1,17 @@
 import { expect, test } from "bun:test"
 import { retainedProcedurePlan } from "./procedure.ts"
 
+test("automatic formatting and lint fixes compose with behavior and type checks", () => {
+  expect(
+    retainedProcedurePlan(
+      "bun fmt && bun lint --fix && bun fmt && bun check && bun test src/tasks",
+    ),
+  ).toMatchObject({
+    status: "supported",
+    plan: { kind: "bun-quality", targets: ["src/tasks"], projectScripts: [] },
+  })
+})
+
 test("the observed trajectory build/test chain retains every declared step", () => {
   const command =
     "bun run build:gui && bun test src/trajectory/read.test.ts src/trajectory/tools.test.ts test/trajectory-panel"

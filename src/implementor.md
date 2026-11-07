@@ -23,7 +23,11 @@ Use `lz-report-progress` for concise, useful checkpoints or a final handoff
 when appropriate; do not repeat every tool result. Progress is an annotation,
 not verification evidence, acceptance, or permission to change task state.
 
-Finish code and evidence notes, run the task's verification, then commit.
+Finish code and evidence notes. Run the project's formatter and linter with
+automatic fixes before verification, then commit those fixes with the code.
+For LAZERS, use `bun run verify` (format, lint --fix, format, typecheck) and the
+task's behavior tests. Correct remaining substantive failures; do not hand
+formatting or fixable lint failures back to another model.
 Report changed files, checks and unresolved issues in prose, without task JSON.
 Evidence is passing checks and observed behavior, not file hashes.
 Runtime verification determines acceptance.

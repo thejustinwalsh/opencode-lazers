@@ -78,7 +78,9 @@ export const TaskProposalSchema = z
       .array(
         z.strictObject({
           id: identifier,
-          command: text,
+          command: text.describe(
+            "Executable verification. Run available formatter/linter automatic fixes before remaining checks; for LAZERS use bun run verify plus relevant tests.",
+          ),
           timeoutMs: z.int().positive(),
         }),
       )

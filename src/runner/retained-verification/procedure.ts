@@ -52,7 +52,14 @@ export type RetainedProcedureBinding = RetainedProcedurePlan & {
 export type RetainedProcedurePlanResult =
   { status: "supported"; plan: RetainedProcedurePlan } | { status: "unsupported"; reason: string }
 
-const qualityCommands = new Set(["bun fmt --check", "bun lint", "bun check", "git diff --check"])
+const qualityCommands = new Set([
+  "bun fmt",
+  "bun lint --fix",
+  "bun fmt --check",
+  "bun lint",
+  "bun check",
+  "git diff --check",
+])
 
 function isSafeProjectScriptName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(name)

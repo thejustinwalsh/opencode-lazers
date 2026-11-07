@@ -76,6 +76,7 @@ export function taskInstructions(detail: TaskDetail): string {
         (check) => `${check.id}: ${check.command} (timeout ${check.timeoutMs}ms)`,
       ),
     ) +
+    "\n\nRun project formatter and linter automatic fixes before these checks, then commit the fixes. In LAZERS use `bun run verify`. Report only failures that remain after automatic fixes." +
     section(
       "Context references",
       proposal.context.map((ref) =>
