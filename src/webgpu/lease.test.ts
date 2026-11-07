@@ -33,6 +33,66 @@ const handoff = (
     rendererDisposalID: `dispose-${from.generationID}`,
   })
 
+test("a closed owner releases its reservation after draining, unlike a reloaded document", async () => {
+  const drain = Promise.withResolvers<void>()
+  let drains = 0
+  const lease = new ModelLease(() => {
+    drains++
+    return drain.promise
+  })
+  register(lease, 1, "closing-page", 1)
+  await lease.acquire(1, request(lease, "closing-page", 1))
+  register(lease, 2, "remaining-page", 1)
+  const closing = lease.closed(1)
+  expect(() => lease.acquire(2, request(lease, "remaining-page", 1))).toThrow()
+  expect(() => register(lease, 1, "late-page", 2)).toThrow(/closed/)
+  drain.resolve()
+  await closing
+  expect(drains).toBe(1)
+  expect(lease.occupied()).toBe(false)
+  const next = await lease.acquire(2, request(lease, "remaining-page", 1))
+  await lease.closed(1)
+  lease.assert(2, next)
+  expect(drains).toBe(1)
+})
+
+test("closing during host-loss drain releases the reload reservation without a second drain", async () => {
+  const drain = Promise.withResolvers<void>()
+  let drains = 0
+  const lease = new ModelLease(() => {
+    drains++
+    return drain.promise
+  })
+  register(lease, 1, "gone-page", 1)
+  await lease.acquire(1, request(lease, "gone-page", 1))
+  const loss = lease.lost(1)
+  await Promise.resolve()
+  const closing = lease.closed(1)
+  drain.resolve()
+  await Promise.all([loss, closing])
+  expect(drains).toBe(1)
+  expect(lease.occupied()).toBe(false)
+  register(lease, 2, "other-page", 1)
+  await lease.acquire(2, request(lease, "other-page", 1))
+})
+
+test("failed close cleanup remains occupied until retry; closing another window cannot free its owner", async () => {
+  let fail = true
+  const lease = new ModelLease(async () => {
+    if (fail) throw new Error("drain failed")
+  })
+  register(lease, 1, "owner-page", 1)
+  const owner = await lease.acquire(1, request(lease, "owner-page", 1))
+  register(lease, 2, "unrelated-page", 1)
+  await lease.closed(2)
+  lease.assert(1, owner)
+  await expect(lease.closed(1)).rejects.toThrow("drain failed")
+  expect(lease.occupied()).toBe(true)
+  fail = false
+  await lease.closed(1)
+  expect(lease.occupied()).toBe(false)
+})
+
 test("cache cleanup and retirement exclude new allocations until asynchronous work drains", async () => {
   const draining = Promise.withResolvers<void>()
   const lease = new ModelLease(() => draining.promise)

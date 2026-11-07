@@ -127,6 +127,8 @@ export class ModelLease {
   private sealed = false
   private readonly generations = new Map<number, RegisteredGeneration>()
   private readonly hostLosses = new Map<number, HostLoss>()
+  private readonly closedWindows = new Set<number>()
+  private readonly closingWindows = new Map<number, Promise<void>>()
   private readonly legacySequences = new Map<number, number>()
   private readonly acquisitions = new Map<string, AcquireOperation>()
   private readonly retirements = new Map<string, RetirementOperation>()
@@ -266,6 +268,7 @@ export class ModelLease {
     generationSequence: number,
   ): void | Promise<void> {
     if (this.sealed) throw new Error("The main-process provider is shutting down")
+    if (this.closedWindows.has(window)) throw new Error("The renderer window is closed")
     if (!Number.isSafeInteger(generationSequence) || generationSequence < 1)
       throw new Error("Invalid renderer generation")
     const hostLoss = this.hostLosses.get(window)
@@ -324,6 +327,7 @@ export class ModelLease {
   acquire(window: number, request: ModelLeaseAcquire): Promise<ModelLeaseGrant>
   acquire(window: number, request?: ModelLeaseAcquire): string | Promise<ModelLeaseGrant> {
     if (this.sealed) throw new Error("The main-process provider is shutting down")
+    if (this.closedWindows.has(window)) throw new Error("The renderer window is closed")
     // Kept for the older direct unit fixtures; the registered IPC surface always supplies identity.
     if (!request) {
       if (this.occupied()) throw new Error("The model cache is owned or being cleaned up")
@@ -667,6 +671,36 @@ export class ModelLease {
       }
     }
     return operation.result
+  }
+
+  /** A destroyed window cannot inherit its document-loss reservation. Cache files stay intact. */
+  closed(window: number): Promise<void> {
+    if (this.sealed) return Promise.resolve()
+    const existing = this.closingWindows.get(window)
+    if (existing) return existing
+    this.closedWindows.add(window)
+    const loss = this.lost(window)
+    const pending = loss
+      .then(async () => {
+        // A host-confirmed close also settles an inherited owner whose provider
+        // stopped before it could record renderer disposal.
+        if (this.inherited?.window === window) {
+          await this.drain()
+          this.inherited = undefined
+          this.blocked = false
+          this.previousProviderState = "host-lost"
+        }
+        this.hostLosses.delete(window)
+        this.generations.delete(window)
+        this.persist()
+      })
+      .finally(() => {
+        this.closingWindows.delete(window)
+        if (this.retiring === pending) this.retiring = undefined
+      })
+    this.closingWindows.set(window, pending)
+    this.retiring = pending
+    return pending
   }
 
   lost(window: number): Promise<void> {

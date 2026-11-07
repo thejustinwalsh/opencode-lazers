@@ -86,6 +86,7 @@ type MainHost = {
   workerDetachCalls: number
   window: FakeBrowserWindow
   otherWindow: FakeBrowserWindow
+  closeWindow(window: FakeBrowserWindow): void
 }
 
 class FakeWebContents extends EventEmitter {
@@ -173,6 +174,7 @@ const makeMain = (persistent = new Map<string, unknown>()): MainHost => {
     stop: typeof stop === "function" ? stop : undefined,
     window,
     otherWindow,
+    closeWindow: (closed) => listeners.get("close")?.(closed as never),
     workerAttachCalls: 0,
     workerDetachCalls: 0,
   }
@@ -324,9 +326,9 @@ const makeRuntime = (host: MainHost) => {
   return entry
 }
 
-const until = async (condition: () => boolean, label: string) => {
+const until = async (condition: () => boolean | Promise<boolean>, label: string) => {
   const deadline = Date.now() + 6_000
-  while (!condition()) {
+  while (!(await condition())) {
     if (Date.now() >= deadline)
       throw new Error(
         `Timed out waiting for ${label}; runtimes=${JSON.stringify(runtimes.map(({ runtime }) => ({ state: runtime.state(), detail: runtime.detail() })))}`,
@@ -414,6 +416,33 @@ const cleanupHost = async (host: MainHost) => {
 }
 
 try {
+  const closingHost = makeMain()
+  try {
+    const signal = new AbortController().signal
+    const first = filesFor(closingHost, 17, signal)
+    const provider = await first.identity()
+    await first.registerGeneration({ generationID: "closing-window", generationSequence: 1 })
+    await first.acquire({
+      generationID: "closing-window",
+      generationSequence: 1,
+      operationID: "closing-acquire",
+      providerEpoch: provider.providerEpoch,
+    })
+    closingHost.closeWindow(closingHost.window)
+    await until(async () => !(await first.status()).occupied, "closed window reservation release")
+    const remaining = filesFor(closingHost, 18, signal)
+    await remaining.registerGeneration({ generationID: "remaining-window", generationSequence: 1 })
+    await remaining.acquire({
+      generationID: "remaining-window",
+      generationSequence: 1,
+      operationID: "remaining-acquire",
+      providerEpoch: provider.providerEpoch,
+    })
+    closingHost.closeWindow(closingHost.otherWindow)
+    await until(async () => !(await remaining.status()).occupied, "remaining window cleanup")
+  } finally {
+    await cleanupHost(closingHost)
+  }
   // A new Desktop process has no old GPU allocations, even if its DB retained an
   // active/failed lease or reused the same BrowserWindow id. Cache files remain.
   for (const priorState of ["active", "retired", "unproven", "legacy"] as const) {

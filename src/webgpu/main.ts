@@ -170,8 +170,8 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
       ...(trace?.jobID ? { lastJobID: trace.jobID } : {}),
     }
   }
-  const lost = (window: number) => {
-    const operation = lease.lost(window).then(() => {})
+  const lost = (window: number, closed = false) => {
+    const operation = (closed ? lease.closed(window) : lease.lost(window)).then(() => {})
     void trackLeaseOperation(operation).catch((error: unknown) => {
       writeLog("error", "LAZERS cache ownership cleanup failed", {
         windowID: window,
@@ -254,7 +254,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     lastTrace.delete(window.id)
     freezeCaptures.delete(window.id)
     void armedCaptures.close(window.id)
-    lost(window.id)
+    lost(window.id, true)
   })
   ctx.provide(ModelFiles, {
     identity: (_input, caller) => ({
