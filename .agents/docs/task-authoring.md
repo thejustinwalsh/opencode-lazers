@@ -75,6 +75,9 @@ meaningful completion boundaries, not after every edit. Focused debugging checks
 remain useful; repeat broader checks when changes or unresolved risk justify them.
 Split for a material risk
 or context boundary when retaining one task would make reliable completion harder.
+Group shared context and changing interfaces; internal implementation steps belong
+to the worker, not separate dispatches. Research and its limits: [LLM work
+decomposition](../../design/reviews/llm-work-decomposition-research-20261107.md).
 
 Guidance is advice. State mandatory decisions as constraints and explain the
 compatibility or product reason. A mini skill is concise, scoped knowledge:

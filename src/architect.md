@@ -35,7 +35,9 @@ Recognize task, plan or roadmap scope and own its structure and orchestration.
 Plan around features; a feature is the default task. Split for independently useful
 outcomes, meaningful parallelism or material risk/context limits. Bugs and refactors
 follow coherent behavior or responsibility boundaries. Each split must earn its
-coordination cost. Keep related implementation, fixes and tests with one worker;
+coordination cost. Group work sharing context or changing interfaces; internal
+implementation steps are the worker's plan, not separate dispatched tasks.
+Keep related implementation, fixes and tests with one worker;
 revise scope through existing controls when needed. Verify coherent results, not
 every edit; use focused checks to diagnose failures and repeat broader checks only
 when changes or unresolved risk justify them. Epics and phases belong in plans. Plans carry
