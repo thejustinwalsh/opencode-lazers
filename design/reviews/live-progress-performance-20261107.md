@@ -102,3 +102,11 @@ SAME182worker to keep hot reads responsive and reuse unchanged scheduling/source
 work without weakening dispatch freshness. No new task, hashes or polling were
 introduced. Improvement has not yet been measured. Reproduction script:
 /private/tmp/lz182-read-performance-observation.ts.
+# Updated Tasks candidate observation
+
+At Unix ms 1794094403548/1794094403607, Root reran the same real project read-only scheduling observation against LZ-182's updated asynchronous candidate, awaiting the result. First page: 121.76 ms cold, 58.21 ms repeated. Earlier candidate readings were 235.88/157.28 ms. Workload coverage remained 149 plans, 175 nodes, 13 active reservations; first page 100 plans / 94,025 bytes. Repository version was 1037842 for both updated reads.
+
+Work counters demonstrate actual reuse: two fact captures but one projection build, one projection cache hit and three total prerequisite-proof evaluations. Git commands increased four to six: the repeated read still observes branch/HEAD but does not repeat prerequisite evaluation. This is a small read-only sample against an active project, not a controlled CPU/battery benchmark or final native UI acceptance. The updated candidate remains in its original worker checkout and is not yet integrated. Native worker checks at this boundary passed seven scheduling-read tests / 47 assertions, seven selected scheduling/runtime/UI tests / 153 assertions, and automatic formatting/lint/type checks. Full relevant completion checks remain the worker's responsibility.
+
+Observation script: `/private/tmp/lz182-async-read-performance-observation.ts`. No production DB writes, model calls or listening server were used.
+
