@@ -42,12 +42,19 @@ failed” in 154–230 ms. The server log at `2026-11-07T22:22:39Z` identified t
 cause: **Observation scope is too large; narrow it.**
 
 This is legacy broad-read failure, not absent workers or an empty result. Root's
-screenshot is initially `/private/tmp/radar-connected-failed-baseline-20261107.png`;
-the repository evidence path will follow Root's save. New live monitoring and
+committed baseline `f3e86de` is `radar-connected-baseline-20261107.md`, with screenshot
+`artifacts/radar-connected-baseline/failed-project.png`. New live monitoring and
 selected history must not depend on those legacy broad calls, inflated row limits,
 new polling, native context loading or a second producer. Structured errors must
 be useful public messages rather than object coercion; failures must not erase
 valid rows or masquerade as empty/idle/healthy success.
+
+The same actual baseline proves the existing producer works: Session `liveRadar`
+returned one session/route in 73 ms (2390 bytes), and Project returned 12 managed
+sessions, 50 routes, 126 calls and 233 flows in 189 ms (250319 bytes). Coverage was
+explicitly bounded, with zero native context loads. These are returned-record
+counts from single observations, not complete totals or performance targets.
+Reuse this producer; no replacement producer is needed for the monitor.
 
 ## Native Terra High authoring guidance
 
