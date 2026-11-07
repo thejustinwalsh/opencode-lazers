@@ -38,7 +38,11 @@ export class InferenceBroker {
   }
 
   detach(owner: string, error?: string) {
-    this.assertOwner(owner)
+    this.expire()
+    // Expiry or a lost detach reply may already have disconnected this worker.
+    // Acknowledging that no-op lets the renderer retire its separate GPU lease.
+    if (!this.owner) return
+    if (owner !== this.owner) throw new Error("Renderer ownership was lost")
     if (error) this.close(error.slice(0, 2_000))
     else this.disconnect("Desktop renderer disconnected")
   }

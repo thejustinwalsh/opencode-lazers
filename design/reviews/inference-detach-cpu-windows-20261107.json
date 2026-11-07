@@ -1,0 +1,132 @@
+[
+  {
+    "condition": "trajectory-active-20261107",
+    "startAt": 1794085808221,
+    "endAt": 1794085820262,
+    "elapsedMs": 12039,
+    "processes": [
+      {
+        "pid": 3219,
+        "cpuSeconds": 6.5,
+        "meanCpuPercent": 53.99,
+        "rssKiB": 2429984
+      },
+      {
+        "pid": 7441,
+        "cpuSeconds": 0.2,
+        "meanCpuPercent": 1.66,
+        "rssKiB": 447680
+      },
+      {
+        "pid": 7435,
+        "cpuSeconds": 0,
+        "meanCpuPercent": 0,
+        "rssKiB": 75424
+      }
+    ]
+  },
+  {
+    "condition": "models-loading-active-20261107",
+    "startAt": 1794085857012,
+    "endAt": 1794085869054,
+    "elapsedMs": 12041,
+    "processes": [
+      {
+        "pid": 3219,
+        "cpuSeconds": 5.94,
+        "meanCpuPercent": 49.33,
+        "rssKiB": 2502512
+      },
+      {
+        "pid": 7441,
+        "cpuSeconds": 1.8,
+        "meanCpuPercent": 14.95,
+        "rssKiB": 521296
+      },
+      {
+        "pid": 7435,
+        "cpuSeconds": 4.28,
+        "meanCpuPercent": 35.54,
+        "rssKiB": 97632
+      }
+    ]
+  },
+  {
+    "condition": "models-chart-settled-active-20261107",
+    "startAt": 1794085896219,
+    "endAt": 1794085908258,
+    "elapsedMs": 12038,
+    "processes": [
+      {
+        "pid": 3219,
+        "cpuSeconds": 5.84,
+        "meanCpuPercent": 48.51,
+        "rssKiB": 2413376
+      },
+      {
+        "pid": 7441,
+        "cpuSeconds": 1.79,
+        "meanCpuPercent": 14.87,
+        "rssKiB": 492624
+      },
+      {
+        "pid": 7435,
+        "cpuSeconds": 4.31,
+        "meanCpuPercent": 35.8,
+        "rssKiB": 89440
+      }
+    ]
+  },
+  {
+    "condition": "trajectory-return-active-20261107",
+    "startAt": 1794085930613,
+    "endAt": 1794085942649,
+    "elapsedMs": 12035,
+    "processes": [
+      {
+        "pid": 3219,
+        "cpuSeconds": 6.28,
+        "meanCpuPercent": 52.18,
+        "rssKiB": 2346608
+      },
+      {
+        "pid": 7441,
+        "cpuSeconds": 1.82,
+        "meanCpuPercent": 15.12,
+        "rssKiB": 952864
+      },
+      {
+        "pid": 7435,
+        "cpuSeconds": 4.33,
+        "meanCpuPercent": 35.98,
+        "rssKiB": 87216
+      }
+    ]
+  },
+  {
+    "condition": "trajectory-models-tab-closed-active-20261107",
+    "startAt": 1794086004149,
+    "endAt": 1794086016187,
+    "elapsedMs": 12037,
+    "processes": [
+      {
+        "pid": 3219,
+        "cpuSeconds": 7.14,
+        "meanCpuPercent": 59.32,
+        "rssKiB": 2653488
+      },
+      {
+        "pid": 7441,
+        "cpuSeconds": 1.85,
+        "meanCpuPercent": 15.37,
+        "rssKiB": 736720
+      },
+      {
+        "pid": 7435,
+        "cpuSeconds": 4.26,
+        "meanCpuPercent": 35.39,
+        "rssKiB": 84624
+      }
+    ]
+  }
+]

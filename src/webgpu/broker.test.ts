@@ -86,6 +86,33 @@ test("queue capacity and ownership are enforced; heartbeat loss fails only deliv
   broker.close()
 })
 
+test("detach after heartbeat expiry is idempotent without disconnecting a replacement or losing queued work", async () => {
+  let now = 0
+  const broker = new InferenceBroker(() => now, 15_000)
+  broker.attach("expired")
+  const delivered = broker.generate(request("delivered"), new AbortController().signal)
+  const queued = broker.generate(request("queued"), new AbortController().signal)
+  const firstJob = broker.poll("expired").job!
+  now = 15_001
+  expect(() => broker.poll("expired")).toThrow("Renderer ownership was lost")
+  expect((await delivered).error).toContain("heartbeat")
+  expect(() => broker.detach("expired")).not.toThrow()
+  expect(() => broker.detach("expired", "stale cleanup failure")).not.toThrow()
+  expect(broker.demand().requested).toBe(true)
+
+  broker.attach("replacement")
+  expect(() => broker.detach("expired")).toThrow("Renderer ownership was lost")
+  const next = broker.poll("replacement").job!
+  expect(next.id).not.toBe(firstJob.id)
+  expect(next.prompt).toBe("queued")
+  broker.complete("replacement", next.id, result("served once"))
+  expect((await queued).text).toBe("served once")
+  expect(broker.poll("replacement").job).toBeNull()
+  broker.detach("replacement")
+  expect(() => broker.detach("replacement")).not.toThrow()
+  broker.close()
+})
+
 test("idle unload preserves a racing queued request; failed model loading fails the waiters", async () => {
   const broker = new InferenceBroker()
   broker.attach("idle")
