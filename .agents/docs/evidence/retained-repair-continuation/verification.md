@@ -58,3 +58,28 @@ Correction verification:
 - `bun test src/runner/interrupted-continuation.test.ts src/runner/runtime.test.ts src/runner/native.test.ts src/runner/schema.test.ts src/runner/tools.test.ts` — 395 passed, 0 failed, 5,575 assertions.
 - `bun test src/runner test/runner` — 582 passed, 0 failed, 7,852 assertions.
 - `bun fmt --check && bun lint && bun check && git diff --check && bun run build:gui` — passed; formatter covered 836 files, lint covered 401 files, typecheck covered 389 files, and GUI bundle evaluation succeeded. Vite reported its existing `inlineDynamicImports` deprecation, dependency `import.meta` CommonJS warnings, and a plugin timing notice.
+
+## Root correction: preserve progress without content fingerprints
+
+Root removed the recovery-only whole-worktree content scan and its admission
+comparisons from this retained candidate. Recovery no longer reads/base64-encodes
+untracked file contents or fingerprints tracked binary diffs to require a stable
+worktree. Native ownership, original session/attempt/workspace, authorized input,
+control state, artifact ancestry and final task transaction checks remain.
+
+A new regression changes dirty progress during asynchronous native revalidation:
+the original candidate rejects it through the content-stability gate; the corrected
+candidate resumes the same attempt and preserves the new bytes, identity and usage.
+The existing owner/input/task/disposition/cancellation rejection tests still pass.
+
+Correction checks:13 focused recovery tests,296 assertions,0 failures; automatic
+formatter/lint fixes and strict typecheck passed. The above broad-suite counts
+are historical checks of the earlier candidate, not new runs of this correction.
+No production DB state or native session was changed by Root's source repair.
+Review, canonical integration and native qualification remain separate.
+
+The corrected candidate's five-file recovery/native suite then ran396 tests:
+395 passed; the existing afterPlans invalid-evidence test timed out at5089.97ms
+against its5000ms limit. An unchanged isolated rerun passed in3251.57ms with
+40assertions. No deadline or assertion was weakened. This is not a clean broad
+suite claim; retain the timeout as a qualification during integration review.

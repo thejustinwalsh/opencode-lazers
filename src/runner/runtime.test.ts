@@ -9329,6 +9329,42 @@ test("a pre-existing retained-repair fence failure recovers the exact cancelled 
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(3)
 })
 
+test("retained repair recovery preserves dirty progress that changes during native revalidation", async () => {
+  const state = await reproduceLegacyRetainedRepairFenceFailure()
+  const path = join(state.attempt.workspace, "repair-progress.txt")
+  writeFileSync(path, "earlier progress\n")
+  const originalSession = state.f.host.session
+  let ownerReads = 0
+  state.f.host.session = async (sessionID, options) => {
+    if (sessionID === "owner" && ++ownerReads === 2) writeFileSync(path, "new useful progress\n")
+    return originalSession(sessionID, options)
+  }
+  try {
+    const result = await state.reopened.runtime.command(
+      recoveryCommand(state, "recover-with-new-dirty-progress"),
+      "owner",
+    )
+    expect(result).toMatchObject({
+      status: "retained-repair-recovered",
+      attemptID: state.attempt.id,
+    })
+    expect(ownerReads).toBeGreaterThanOrEqual(2)
+    expect(readFileSync(path, "utf8")).toBe("new useful progress\n")
+    expect(state.reopened.store.attempts(state.planID)).toHaveLength(1)
+    expect(state.reopened.store.attempts(state.planID)[0]).toMatchObject({
+      id: state.attempt.id,
+      session_id: state.attempt.session_id,
+      workspace: state.attempt.workspace,
+      state: "preparing",
+      token_count: 777,
+      tool_count: 23,
+      cost: 2.5,
+    })
+  } finally {
+    state.f.host.session = originalSession
+  }
+})
+
 test("an owner cancellation after the fence failure is not eligible for retained-repair recovery", async () => {
   const { f, planID, task, attempt, reopened } = await reproduceLegacyRetainedRepairFenceFailure()
   const promptsBeforeCancel = f.events.filter((event) => event.startsWith("prompt:")).length

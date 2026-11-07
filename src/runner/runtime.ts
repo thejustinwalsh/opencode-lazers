@@ -2,7 +2,7 @@ import {
   evaluatePrerequisiteIntegration,
   type PrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskProposal } from "../task.ts"
@@ -294,7 +294,6 @@ type RetainedRepairRecoverySeed = {
   usage: { tokenCount: number | null; toolCount: number; cost: number | null }
   worker: HostSession
   workerObservation: string
-  workspaceObservation: string
 }
 
 type RunnerTransitionRecord = {
@@ -1083,36 +1082,6 @@ export class TaskRuntime {
     )
   }
 
-  private retainedRepairWorkspaceObservation(attempt: AttemptRow) {
-    const workspace = realpathSync(attempt.workspace)
-    const head = git(workspace, ["rev-parse", "HEAD"])
-    const status = git(workspace, ["status", "--porcelain", "--untracked-files=all"])
-    const trackedDiff = git(workspace, ["diff", "--binary", "HEAD"])
-    const untracked = git(workspace, ["ls-files", "--others", "--exclude-standard", "-z"])
-      .split("\0")
-      .filter(Boolean)
-      .map((path) => {
-        const absolute = resolve(workspace, path)
-        const relativePath = relative(workspace, absolute)
-        if (
-          relativePath.startsWith(`..${sep}`) ||
-          relativePath === ".." ||
-          resolve(workspace, path) !== absolute
-        )
-          throw new Error("Retained repair worktree contains an invalid untracked path")
-        const stat = lstatSync(absolute)
-        return [
-          path,
-          stat.isSymbolicLink()
-            ? { symlink: readlinkSync(absolute) }
-            : stat.isFile()
-              ? { content: readFileSync(absolute).toString("base64") }
-              : { mode: stat.mode },
-        ]
-      })
-    return fingerprint({ workspace, head, status, trackedDiff, untracked })
-  }
-
   private parseTransitionPayload<T>(transition: RunnerTransitionRecord | undefined): T | undefined {
     if (!transition) return undefined
     try {
@@ -1395,7 +1364,6 @@ export class TaskRuntime {
       throw new Error(
         "Retained repair recovery checkout is not owned by the native worktree adapter",
       )
-    const workspaceObservation = this.retainedRepairWorkspaceObservation(attempt)
 
     const freshOwner = async () => {
       const current = await this.host.session(plan.owner)
@@ -1425,12 +1393,9 @@ export class TaskRuntime {
       !confirmedWorker ||
       this.retainedRepairObservation(firstWorker) !==
         this.retainedRepairObservation(confirmedWorker) ||
-      confirmedWorker.messages.some((message) => message.id === attempt.message_id) ||
-      this.retainedRepairWorkspaceObservation(attempt) !== workspaceObservation
+      confirmedWorker.messages.some((message) => message.id === attempt.message_id)
     )
-      throw new Error(
-        problem ?? "Retained repair recovery worker or dirty checkout changed during revalidation",
-      )
+      throw new Error(problem ?? "Retained repair recovery worker changed during revalidation")
 
     const historicalAttempt = { ...attempt, state: "running" as const, message_id: repairMessageID }
     const continuationProblem = checkTerminalWorkerContinuation({
@@ -1486,7 +1451,6 @@ export class TaskRuntime {
       },
       worker: confirmedWorker,
       workerObservation: this.retainedRepairObservation(confirmedWorker),
-      workspaceObservation,
     }
   }
 
@@ -1538,8 +1502,7 @@ export class TaskRuntime {
         .effects(plan.id)
         .some((effect) => ["intended", "uncertain"].includes(effect.state)) &&
       !sourceQuarantine(this.store, attempt.id) &&
-      this.preparationAllowed(attempt) &&
-      this.retainedRepairWorkspaceObservation(attempt) === recovery.workspaceObservation,
+      this.preparationAllowed(attempt),
     )
   }
 
