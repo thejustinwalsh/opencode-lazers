@@ -1,0 +1,36 @@
+{
+  "before": {
+    "at": 1794071693061,
+    "pid": 3219,
+    "head": "2b1a898da339222616d2937b8fb80344b8a9a040",
+    "locations": [
+      {
+        "directory": "/Users/tjw/Documents/ChatGPT/opencode-lazers",
+        "permissions": 0,
+        "forms": 0
+      },
+      {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/4d783df7-eb05-463c-b4db-df48a5c308c5",
+        "permissions": 0,
+        "forms": 0
+      },
+      {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/0375ef98-ff9b-456f-849d-2ed9da547920",
+        "permissions": 0,
+        "forms": 0
+      },
+      {
+        "directory": "/Users/tjw/.local/share/opencode/plugins/lazers/runner/worktrees/14b02650-aea7-43fa-a7dd-3e60228f00b5",
+        "permissions": 0,
+        "forms": 0
+      }
+    ]
+  },
+  "after": {
+    "at": 1794071701471,
+    "pid": 3219,
+    "active": {}
+  },
+  "reload": "completed",
+  "note": "Functional native candidate verification remains separate"
+}

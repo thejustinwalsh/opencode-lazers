@@ -4,7 +4,8 @@ Root implemented the existing LZ-175 contract in the native isolated worktree
 `/private/tmp/lz175-binding-repair-20261107`, branch
 `feat/lz175-binding-repair-20261107`. Candidate `312dabd` and review corrections
 `c135109` and `7727cc4` were integrated in `cbf20ee` after focused native Luna Max
-rereview reported no material findings. Runtime activation is still pending.
+rereview reported no material findings. The supported server reload has completed;
+functional verification through the original retained worker remains pending.
 The clean, merged review worktree was subsequently removed through OpenCode's
 native `worktree.remove` with `force:false`; existence was confirmed false.
 
@@ -57,7 +58,24 @@ approve its source or remove that required correction.
 
 ## Remaining
 
-Finish integrated checks, activate at a real quiet boundary, then use native
-Architect controls on the preserved original work. Observe the
+At global native foreground idle, Root called the documented
+`client.location.reload()` once, outside an Architect tool turn. It completed at
+Unix milliseconds 1794071693061–1794071701471; service PID3219 stayed unchanged.
+Canonical and original173/174/172 locations had zero pending forms/permissions;
+global active sessions were empty before and after. Original sessions/worktrees
+were not replaced or prompted. [Sanitized lifecycle receipt](lz175-native-runtime-reload-20261107.json).
+Root then resumed the same Architect via Desktop to run original173's real
+`verify-retained` path. Lifecycle success alone does not establish that path.
+
+The first native request used original173's exact corrected `0b28972`, reached
+the new repair-candidate branch instead of the old artifact-mismatch rejection,
+then stopped on a pre-existing scope conflict before reservation/checks.
+Read-only inspection identified the sole live retained
+operation: original156 generation3 `34d2518c-4a7a-41ad-bb69-59943b6fd87d`, held on
+an unbound `comparison` verification, with cleanup pending. Architect is reviewing
+its current landed task, receipts and unresolved plan gates before using existing
+controls. No SQL mutation, replacement worker or completion claim followed.
+
+Use native Architect controls on the preserved original work. Observe the
 actual checks and subsequent correction in their original workers. Do not close
 LZ-175 from this report or from unit tests alone.
