@@ -36,3 +36,39 @@ proof those checks passed.
 Prioritize this candidate's native acceptance and source integration when those
 receipts arrive, before dependent dispatch. Retain the original idle/resource
 hold independently; ready source integration must not wait for cleanup.
+
+## Scoped procedure admission corrected
+
+Generation 1 held before running checks because the scoped `bun fmt --check`
+targets were not recognized as a project-authored retained procedure. No failing
+behavior or quality check ran in that generation. Root corrected target
+recognition in `28066f4e462f4f3723ab4f790d8fe61fbbb932b8`, with the exact LZ-180
+command regression, 16 procedure tests and automatic/strict checks passing.
+
+Fresh inspection confirmed unchanged clean original `2ad21e7`. The first new
+verification request found generation 1 still owned active verification
+authority. Supported `cancel-retained-verification` closed that admission-held
+run without deleting its history. The same stable new request then admitted
+generation 2, operation `d723d59e-0285-4926-9a51-f958b80fe309`, again binding both
+task and combined checks to `2ad21e7` and the original attempt. This is a tooling-
+corrected verification run, not a replacement implementor or changed candidate.
+Await its actual receipts; no pass is inferred from request admission.
+
+## Native task acceptance and source landing
+
+Generation 2 completed both task checks (`lifecycle-tests`, `quality`) with exit0,
+no timeout and `unchanged: true`, bound to exact `2ad21e7`. Native task acceptance
+advanced the plan to version 17; the original native idle hold stayed recorded.
+
+The reviewed, accepted task source was merged onto canonical `main` through
+`d2f4a79712ee49373e54ad3bb44f426c04284b7b`. Git confirms both original `2ad21e7`
+and Root's `28066f4` tooling correction are ancestors. The merge changed only the
+production hook and two new test files; equivalent package/review formatting
+changes were already present on main. Root's retained LZ-174 checkout was not
+touched, no server activation/restart was requested, and no duplicate suite ran.
+
+Combined retained checks and whole-plan acceptance are still pending at this
+inspection. Defer the integration-record version advance until they finish,
+avoiding the known benign-version hold; this does not defer the physical source
+landing or wait for cleanup. Do not claim whole-plan integration or resource
+removal until the corresponding native outcomes are observed.
