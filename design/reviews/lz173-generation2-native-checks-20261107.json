@@ -1,0 +1,152 @@
+{
+  "observedAt": 1794073809090,
+  "operation": {
+    "id": "e5c0d438-21c0-4b21-9039-ec9d246264f6",
+    "generation": 2,
+    "state": "waiting-human-combined",
+    "holdReason": "Required retained combined evidence missing: root-connected137-market-estimate:human",
+    "cleanupState": "pending",
+    "taskID": "50630f61-d966-43b5-b349-9f39e85ea014",
+    "planID": "ba5744d0-2657-4f93-b006-44ca0b176108",
+    "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+    "repair": {
+      "operationID": "255ec4c3-eb1f-4c99-83d9-cf4b26347b6c",
+      "previousArtifact": "ddefc44756ddcb384fce8ad0f5e0377b592dc756"
+    }
+  },
+  "originalAttempt": {
+    "id": "4d783df7-eb05-463c-b4db-df48a5c308c5",
+    "session_id": "ses_145885557d454551815079ab36bd9c24",
+    "message_id": "msg_bce2549adb4346a0a0fd2221d8576edd",
+    "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+    "state": "accepted",
+    "started_at": 1793996617962
+  },
+  "checks": [
+    {
+      "phase": "combined",
+      "id": "pricing",
+      "state": "completed",
+      "cleanupState": "complete",
+      "command": "bun test src/models/market-range.test.ts src/models/valuation.test.ts src/models/server.test.ts src/models/decision-read.test.ts src/trajectory/accounting.test.ts",
+      "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "inputIdentity": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "startedAt": 1794073517870,
+      "endedAt": 1794073525929,
+      "exitCode": 0,
+      "timedOut": false,
+      "unchanged": true,
+      "summary": [
+        " 84 pass",
+        " 0 fail",
+        " 845 expect() calls",
+        "Ran 84 tests across 5 files. [8.03s]"
+      ]
+    },
+    {
+      "phase": "combined",
+      "id": "quality",
+      "state": "completed",
+      "cleanupState": "complete",
+      "command": "bun fmt --check && bun lint && bun check && git diff --check",
+      "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "inputIdentity": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "startedAt": 1794073565812,
+      "endedAt": 1794073566239,
+      "exitCode": 0,
+      "timedOut": false,
+      "unchanged": true,
+      "summary": [
+        "All 834 files are formatted.",
+        "✓ No problems in 402 files [22.11ms]",
+        "✓ No type errors in 390 files [273.99ms]"
+      ]
+    },
+    {
+      "phase": "combined",
+      "id": "trajectory",
+      "state": "completed",
+      "cleanupState": "complete",
+      "command": "bun run build:gui && bun test src/trajectory/read.test.ts src/trajectory/tools.test.ts test/trajectory-panel",
+      "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "inputIdentity": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "startedAt": 1794073538818,
+      "endedAt": 1794073550385,
+      "exitCode": 0,
+      "timedOut": false,
+      "unchanged": true,
+      "summary": [
+        " 71 pass",
+        " 0 fail",
+        " 542 expect() calls",
+        "Ran 71 tests across 9 files. [7.40s]"
+      ]
+    },
+    {
+      "phase": "task",
+      "id": "pricing",
+      "state": "completed",
+      "cleanupState": "complete",
+      "command": "bun test src/models/market-range.test.ts src/models/valuation.test.ts src/models/server.test.ts src/models/decision-read.test.ts src/trajectory/accounting.test.ts",
+      "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "inputIdentity": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "startedAt": 1794073355805,
+      "endedAt": 1794073363844,
+      "exitCode": 0,
+      "timedOut": false,
+      "unchanged": true,
+      "summary": [
+        " 84 pass",
+        " 0 fail",
+        " 845 expect() calls",
+        "Ran 84 tests across 5 files. [8.01s]"
+      ]
+    },
+    {
+      "phase": "task",
+      "id": "quality",
+      "state": "completed",
+      "cleanupState": "complete",
+      "command": "bun fmt --check && bun lint && bun check && git diff --check",
+      "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "inputIdentity": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "startedAt": 1794073409673,
+      "endedAt": 1794073410120,
+      "exitCode": 0,
+      "timedOut": false,
+      "unchanged": true,
+      "summary": [
+        "All 834 files are formatted.",
+        "✓ No problems in 402 files [34.73ms]",
+        "✓ No type errors in 390 files [264.41ms]"
+      ]
+    },
+    {
+      "phase": "task",
+      "id": "trajectory",
+      "state": "completed",
+      "cleanupState": "complete",
+      "command": "bun run build:gui && bun test src/trajectory/read.test.ts src/trajectory/tools.test.ts test/trajectory-panel",
+      "artifact": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "inputIdentity": "0b289721647eddafa8e5d9bba4f5ce2daf945811",
+      "startedAt": 1794073378502,
+      "endedAt": 1794073390559,
+      "exitCode": 0,
+      "timedOut": false,
+      "unchanged": true,
+      "summary": [
+        " 71 pass",
+        " 0 fail",
+        " 542 expect() calls",
+        "Ran 71 tests across 9 files. [7.49s]"
+      ]
+    }
+  ],
+  "resourceStates": [
+    {
+      "state": "removed",
+      "count": 72
+    }
+  ],
+  "note": "Actual native task and combined check receipts; pending connected-product human gate is not claimed passed."
+}

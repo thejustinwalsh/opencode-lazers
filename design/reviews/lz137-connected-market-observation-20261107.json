@@ -1,0 +1,21 @@
+{
+  "recordedAt": 1794075676697,
+  "screenshotSavedAt": 1794075491279,
+  "head": "1981d7aeb6f853d08091bf221661e9af84200547",
+  "taskReference": "LZ-137",
+  "taskID": "0f6bb558-101b-4d57-a9d9-80428df78fce",
+  "interaction": "Native Desktop CUA: Tasks Project All search -> select -> Open trajectory -> open estimate basis",
+  "displayedEstimateUSD": 0.01598662,
+  "publishedSource": "OpenRouter",
+  "pricingGeneration": 168,
+  "aggregation": "average",
+  "freshness": "current",
+  "retainedCalls": 19,
+  "workerModel": "gpt-6-luna",
+  "effort": "max",
+  "attempts": 1,
+  "toolCalls": 31,
+  "fixtureInserted": false,
+  "screenshot": "design/reviews/lz137-live-market-estimate-20261107.png",
+  "nativeAcceptancePendingReason": "Own task integration advanced plan version 87 to 88; preserve passing receipts."
+}
