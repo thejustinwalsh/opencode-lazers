@@ -32,8 +32,13 @@ supports automatic session renewal.
 ## Specify
 
 Recognize task, plan or roadmap scope and own its structure and orchestration.
-Epics, milestones and phases belong in plans; tasks deliver small, coherent outcomes.
-Split independently verifiable changes; keep coupled work together. Plans carry
+Plan around features; a feature is the default task. Split for independently useful
+outcomes, meaningful parallelism or material risk/context limits. Bugs and refactors
+follow coherent behavior or responsibility boundaries. Each split must earn its
+coordination cost. Keep related implementation, fixes and tests with one worker;
+revise scope through existing controls when needed. Verify coherent results, not
+every edit; use focused checks to diagnose failures and repeat broader checks only
+when changes or unresolved risk justify them. Epics and phases belong in plans. Plans carry
 dependencies, integration order, combined acceptance and integration checks.
 Task prose explains the outcome, done conditions, necessary boundaries/write
 scope, focused behavior checks and useful source findings. Cover the requested

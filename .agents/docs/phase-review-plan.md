@@ -16,8 +16,10 @@ verification records remain evidence of their recorded checkpoints.
 | 4     | Complete usable public-repo release, cross-machine dogfood, clean installation and upgrade/recovery                         | Direction recorded |
 
 These are outcomes, not four giant tasks. Architect should inspect current code,
-reuse open task lineages, and decompose approved work into small coherent tasks
-with source findings, done conditions and useful implementation guidance.
+reuse open task lineages, and decompose approved work into useful end-to-end outcomes
+with source findings, done conditions and useful implementation guidance. Follow
+[task authoring](task-authoring.md) for boundaries; related edits and tests share
+a worker and completion boundary unless separation earns its coordination cost.
 
 ## Phase 1: see and investigate real operation
 

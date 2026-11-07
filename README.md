@@ -66,7 +66,7 @@ Unresolved material ambiguity prevents admission. A worker cannot silently expan
 
 A `TaskGraph` contains versioned specifications and dependency edges. Every task contributes to the overall objective. Reject duplicate IDs, missing dependencies, cycles, and undefined integration order. Schedule compatible work in parallel, serialize conflicting write scopes, and use `priority` and `afterPlans` when ordering or integrated prerequisites matter. Isolated worktrees do not eliminate integration conflicts.
 
-Use one task for self-contained work and a series of tasks when the requested feature requires it. Add parallelism when tasks have compatible interfaces and independent write scopes. Accept the graph only after its combined result meets overall acceptance.
+Use one worker and task for a coherent outcome, including related implementation, fixes and verification. Split for independently useful deliverables, meaningful parallelism or a material risk/context boundary; each split must earn its research, dispatch, review and integration overhead. Files, layers, individual test cases and line counts do not define tasks. Keep routine discoveries and repairs with the same worker through existing scope controls. Verify at completion boundaries. Accept the graph only after its combined result meets overall acceptance.
 
 ### 3 Execution policy
 

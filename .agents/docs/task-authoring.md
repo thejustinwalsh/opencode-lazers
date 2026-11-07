@@ -60,12 +60,21 @@ outcome, interviews for material unresolved decisions, then creates the tasks
 and dependency graph. The scheduler executes
 eligible work; Architect returns for decisions, review and integration.
 
-Epics, milestones and phases belong in plans. A task is one small, coherent
-implementation outcome with its own done conditions and verification. Split
-independently deliverable outcomes; keep tightly coupled changes together. A
-long specification is a signal to check for several outcomes, not a reason to
-trim away necessary context. Plans carry dependencies, integration order and
-combined feature acceptance; avoid splitting by file count or arbitrary quotas.
+Epics, milestones and phases belong in plans. Plan around features: a feature is
+the default task, including related implementation, fixes and verification. Split
+a feature only when delivery benefits. Bugs and refactors follow coherent behavior
+or responsibility boundaries. Split when
+outcomes can ship independently or separate workers provide useful parallelism,
+not merely because changes can be tested separately. Each boundary must earn its
+research, dispatch, review and integration overhead. A long specification prompts
+a check for separate outcomes, not automatic subdivision. Plans carry dependencies,
+integration order and combined acceptance; line count and quotas do not size tasks.
+Default to one worker for a coherent request. Keep discoveries and routine repairs
+with that worker; revise scope through existing controls when needed. Verify at
+meaningful completion boundaries, not after every edit. Focused debugging checks
+remain useful; repeat broader checks when changes or unresolved risk justify them.
+Split for a material risk
+or context boundary when retaining one task would make reliable completion harder.
 
 Guidance is advice. State mandatory decisions as constraints and explain the
 compatibility or product reason. A mini skill is concise, scoped knowledge:
