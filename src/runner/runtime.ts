@@ -676,6 +676,7 @@ export class TaskRuntime {
     plan: PlanRow,
     attempt: AttemptRow,
     binding: NonNullable<RetainedVerification["repair"]>,
+    observeOwner?: () => Promise<void>,
   ) {
     const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
     const validate = (worker: HostSession | null | undefined) => {
@@ -695,6 +696,7 @@ export class TaskRuntime {
     }
     const before = await this.host.session(attempt.session_id, { messages: true })
     validate(before)
+    await observeOwner?.()
     const after = await this.host.session(attempt.session_id, { messages: true })
     validate(after)
     if (
@@ -2544,6 +2546,11 @@ export class TaskRuntime {
         throw new Error(
           "Retained verification owner or plan authorization changed before reservation",
         )
+      const observeOwner = async () => {
+        ownerSession = await this.host.session(caller)
+        if (!this.validArchitect(ownerSession) || ownerSession.id !== old.owner)
+          throw new Error("Retained verification owner changed during final native admission")
+      }
       if (retainedVerificationSeed.repair) {
         const latest = this.store
           .attempts(old.id)
@@ -2553,11 +2560,9 @@ export class TaskRuntime {
           currentPlan,
           latest,
           retainedVerificationSeed.repair,
+          observeOwner,
         )
-      }
-      ownerSession = await this.host.session(caller)
-      if (!this.validArchitect(ownerSession) || ownerSession.id !== old.owner)
-        throw new Error("Retained verification owner changed during final native admission")
+      } else await observeOwner()
     }
 
     if (retainedRepair) {
@@ -9460,21 +9465,18 @@ export class TaskRuntime {
     receipts: CheckReceipt[],
     fence: number,
   ): Promise<RetainedVerification | undefined> {
-    if (initial.repair) {
-      const plan = this.store.plan(initial.planID)
-      const attempt = this.store.attempts(initial.planID).find((a) => a.id === initial.attemptID)
-      try {
-        if (!plan || !attempt) throw new Error("Retained repair binding disappeared")
-        await this.observeRetainedRepairCandidate(plan, attempt, initial.repair)
-      } catch (error) {
-        await this.holdRetainedVerification(initial, errorText(error), fence)
-        return undefined
-      }
-    }
-    try {
+    const observeOwner = async () => {
       const owner = await this.host.session(initial.owner)
       if (!this.validArchitect(owner) || owner.id !== initial.owner)
         throw new Error("Retained verification owner changed before task acceptance")
+    }
+    try {
+      if (initial.repair) {
+        const plan = this.store.plan(initial.planID)
+        const attempt = this.store.attempts(initial.planID).find((a) => a.id === initial.attemptID)
+        if (!plan || !attempt) throw new Error("Retained repair binding disappeared")
+        await this.observeRetainedRepairCandidate(plan, attempt, initial.repair, observeOwner)
+      } else await observeOwner()
     } catch (error) {
       await this.holdRetainedVerification(initial, errorText(error), fence)
       return undefined

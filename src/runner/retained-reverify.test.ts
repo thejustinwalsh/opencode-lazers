@@ -779,6 +779,54 @@ test.each(["archive", "role", "project"])(
   },
 )
 
+for (const phase of ["admission", "acceptance"] as const) {
+  test.each(["input", "busy", "route"])(
+    `repair ${phase} detects worker %s changes during the final owner lookup`,
+    async (kind) => {
+      const f = await heldRepairFixture({ requestTick: async () => {} })
+      const session = f.host.session
+      const worktree = f.host.worktree
+      let owners = 0
+      let checking = false
+      let changed = false
+      f.host.worktree = async (input) => {
+        const result = await worktree(input)
+        checking = true
+        return result
+      }
+      f.host.session = async (id, options) => {
+        const observed = await session(id, options)
+        if (id === "owner") owners++
+        if (id === "owner" && !changed && (phase === "admission" ? owners === 3 : checking)) {
+          const worker = f.sessions.get(f.attempt.session_id)!
+          if (kind === "input") worker.pendingInput = true
+          if (kind === "busy") worker.busy = true
+          if (kind === "route") worker.model = { ...worker.model!, id: "new-route" }
+          changed = true
+        }
+        return observed
+      }
+      if (phase === "admission") await expect(f.control.execute(f.request)).rejects.toThrow()
+      else {
+        const requested = await f.control.execute(f.request)
+        for (let i = 0; i < 6; i++) await f.runtime.tick()
+        const operation = f.store.atomic((db) =>
+          db
+            .query<{ state: string }, [string]>(
+              "SELECT state FROM runner_retained_verifications WHERE id=?",
+            )
+            .get(String(requested.operationID)),
+        )
+        expect(operation?.state).toBe("held")
+      }
+      expect(changed).toBe(true)
+      expect(f.store.attempts(f.planID)[0]?.artifact).toBe(f.previousArtifact)
+      expect(f.store.nodes(f.planID)[0]?.state).not.toBe("accepted")
+      expect(f.prompts).toHaveLength(2)
+    },
+  )
+}
+
 test("admitted repair candidate survives reopen and cannot be retargeted by a later HEAD", async () => {
   const f = await heldRepairFixture()
   const admitted = await f.control.execute(f.request)
