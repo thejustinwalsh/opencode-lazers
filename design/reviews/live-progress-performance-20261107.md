@@ -45,6 +45,31 @@ attribution follows from this window. Residual CPU remains a live issue. Keep
 the existing performance lane open; do not call LZ-129 whole-system performance
 acceptance complete from publication deduplication alone.
 
+Root also captured a passive 3-second macOS `sample` of the same service PID3219:
+`/private/tmp/lz-service-active-sample-20261107.txt`, starting10:19:36.926EST.
+Most JavaScript/native executable frames are unsymbolized. Some SQLite work is
+visible, but this does not identify a responsible JS caller or establish SQLite
+as the dominant cause. Reuse this capture where useful; source-level attribution
+needs stronger evidence than unsymbolized stacks.
+
+## Observed Tasks activity discrepancy
+
+With Project/State:All and the search cleared, Desktop Tasks displayed LZ-174 as
+`Running / Worker Unknown` on consecutive observations. The public
+`lazers.tasks.currentActivity` RPC at Unix1794064925842 returned the exact original
+task49dbfe29/attempt0375ef98/session5210fab9 as `foreground: active`,
+`unknownReason: null`, `waiting: false`, zero pending permissions/forms.
+Subsequent Desktop observation still showed Unknown. Native session.active also
+confirmed the worker running, and its checkout gained runtime and test edits.
+
+This establishes a UI/projection discrepancy, not a stalled worker or a native
+idle completion claim. Investigate existing Tasks activity refresh/cancellation
+before adding another producer: `panel-state.ts` clears requested activity before
+observation and rejects responses when listRequest changes. Frequent ordinary
+list updates may starve the activity response; that mechanism remains a hypothesis
+until reproduced. Use existing Tasks147/149 work where appropriate, preserving
+real lifecycle/background uncertainty separately from observable foreground work.
+
 ## Inference recovery
 
 Canonical `8975516` repairs process-scoped cache ownership. Native chat and d1
