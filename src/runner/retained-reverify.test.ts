@@ -19,6 +19,7 @@ import { Effect } from "effect"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "./artifacts.ts"
+import { fingerprint } from "../identity.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
 import { RunnerStore } from "./store.ts"
@@ -643,12 +644,16 @@ test("registered retained repair verification executes the exact authored build/
   for (const row of rows) {
     expect(JSON.parse(row.check_json).command).toBe(command)
     expect(row.artifact).toBe(f.artifact)
-    expect(JSON.parse(row.receipt).exitCode).toBe(0)
+    const receipt = JSON.parse(row.receipt)
+    expect(receipt.exitCode).toBe(0)
+    expect(receipt.command).toBe(command)
+    expect(receipt.isolation.procedureBinding.commandFingerprint).toBe(fingerprint(command))
     expect(row.receipt).toContain("project build completed")
     expect(row.receipt).toContain("repair descendant")
   }
   expect(f.prompts).toHaveLength(2)
   expect(f.created).toHaveLength(1)
+  expect(f.sessions.get(f.attempt.session_id)?.background?.state).toBe("unknown")
 })
 
 test.each([

@@ -31,6 +31,8 @@ test("composed checks collect tests and scripts across quality steps", () => {
 
 test.each([
   "bun run build:gui && echo unbound",
+  "bun run build:gui && bun test src/runner$(echo injected)",
+  "bun run build:gui && bun test src/runner`echo injected`",
   "bun test src/runner && bun test ../../shared-tests",
   "bun run build:gui && bun test src/runner; echo unbound",
   "bun test src/runner || bun run build:gui",
