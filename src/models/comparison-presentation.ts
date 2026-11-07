@@ -371,6 +371,82 @@ export function boundedModelLabel(value: string, maximumLength = 36) {
   return `${characters.slice(0, Math.max(1, maximumLength - 1)).join("")}…`
 }
 
+/** Keep a friendly chart label and a compact, data-derived route discriminator visible. */
+export function boundedChartModelLabel(
+  value: string,
+  route: ModelDisplayRoute | undefined,
+  routes: readonly ModelDisplayRoute[],
+  maximumLength = 36,
+) {
+  const characters = Array.from(value)
+  if (characters.length <= maximumLength || !route) return boundedModelLabel(value, maximumLength)
+
+  const routeKey = (candidate: ModelDisplayRoute) =>
+    `${candidate.providerID}\u0000${candidate.modelID}\u0000${candidate.variant ?? ""}`
+  const uniqueRoutes = [
+    ...new Map(routes.map((candidate) => [routeKey(candidate), candidate])).values(),
+  ]
+  const selectedRouteKey = routeKey(route)
+  if (!uniqueRoutes.some((candidate) => routeKey(candidate) === selectedRouteKey))
+    uniqueRoutes.push(route)
+  if (uniqueRoutes.length < 2) return boundedModelLabel(value, maximumLength)
+
+  const componentValues = (candidate: ModelDisplayRoute): [string, string, string] => [
+    candidate.providerID,
+    candidate.modelID,
+    candidate.variant ?? "∅",
+  ]
+  const allComponents = uniqueRoutes.map(componentValues)
+  const variableComponents = [0, 1, 2].filter(
+    (index) => new Set(allComponents.map((components) => components[index])).size > 1,
+  )
+  const tags = ["p", "m", "e"] as const
+  const fragments = variableComponents.map((index) => {
+    const values = [...new Set(allComponents.map((components) => components[index]!))]
+    const byValue = new Map<string, string>()
+    for (const componentValue of values) {
+      const others = values.filter((candidate) => candidate !== componentValue)
+      let fragment = componentValue
+      for (let length = 1; length <= componentValue.length; length++) {
+        const prefix = componentValue.slice(0, length)
+        if (others.every((candidate) => !candidate.startsWith(prefix))) {
+          fragment = prefix
+          break
+        }
+        const suffix = componentValue.slice(-length)
+        if (others.every((candidate) => !candidate.endsWith(suffix))) {
+          fragment = suffix
+          break
+        }
+      }
+      byValue.set(componentValue, fragment)
+    }
+    return { index, tag: tags[index]!, byValue }
+  })
+
+  let routeCode: string | undefined
+  for (let mask = 1; mask < 1 << fragments.length; mask++) {
+    const selected = fragments.filter((_, index) => mask & (1 << index))
+    const keys = allComponents.map((components) =>
+      selected.map(({ index, byValue }) => byValue.get(components[index]!)).join("/"),
+    )
+    if (new Set(keys).size !== uniqueRoutes.length) continue
+    const selectedComponents = componentValues(route)
+    const candidate = selected
+      .map(({ index, tag, byValue }) => `${tag}:${byValue.get(selectedComponents[index]!)}`)
+      .join("/")
+    if (!routeCode || candidate.length < routeCode.length) routeCode = candidate
+  }
+  if (!routeCode) return boundedModelLabel(value, maximumLength)
+
+  const name = value.split(" · ", 1)[0] || value
+  const nameBudget = Math.max(1, maximumLength - Array.from(routeCode).length - 1)
+  const nameCharacters = Array.from(name)
+  const visibleName =
+    nameCharacters.length <= nameBudget ? name : `${nameCharacters.slice(0, nameBudget).join("")}…`
+  return `${visibleName}${visibleName === name ? "…" : ""}${routeCode}`
+}
+
 export function sourceTitle(source: ModelSource["source"]) {
   switch (source) {
     case "native-catalog":

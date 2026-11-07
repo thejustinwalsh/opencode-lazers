@@ -9,6 +9,7 @@ import { For, Show, createEffect, createUniqueId, onCleanup, onMount } from "sol
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
+  boundedChartModelLabel,
   boundedModelLabel,
   formatMarketAmount,
   formatMarketRange,
@@ -373,6 +374,16 @@ export function comparisonChartOptions(
 ) {
   const points = data.points.filter(plottable)
   const references = data.references ?? []
+  const routeLabels = [
+    ...points.flatMap((point) => (point.route ? [{ label: point.label, route: point.route }] : [])),
+    ...references.map((reference) => ({ label: reference.label, route: reference.estimate.route })),
+  ]
+  const routePeers = (label: string) => {
+    const name = label.split(" · ", 1)[0]
+    return routeLabels
+      .filter((candidate) => candidate.label.split(" · ", 1)[0] === name)
+      .map((candidate) => candidate.route)
+  }
   type ReferenceMark = {
     reference: ComparisonChartReference
     amount: ReferenceAmount
@@ -417,7 +428,13 @@ export function comparisonChartOptions(
   )
   const selectedLabels = new Map<
     string,
-    { configurationID: string; label: string; tokens: number; amount: number }
+    {
+      configurationID: string
+      label: string
+      route?: { providerID: string; modelID: string; variant?: string | null }
+      tokens: number
+      amount: number
+    }
   >()
   if (data.selectedConfigurationID) {
     for (const point of points) {
@@ -426,6 +443,7 @@ export function comparisonChartOptions(
       selectedLabels.set(key, {
         configurationID: point.configurationID,
         label: point.label,
+        route: point.route,
         tokens: point.tokensPerAcceptedTask,
         amount: point.currentMarketUSDPerAcceptedTask,
       })
@@ -440,6 +458,7 @@ export function comparisonChartOptions(
       selectedLabels.set(key, {
         configurationID: item.reference.configurationID,
         label: item.reference.label,
+        route: item.reference.estimate.route,
         tokens: item.tokens,
         amount,
       })
@@ -451,6 +470,15 @@ export function comparisonChartOptions(
   const fontSize = layout.fontSize
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
   const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.62)) - 3, 8, 18)
+  const boundedSelectedLabels = selectedLabelData.map((item) => ({
+    ...item,
+    visibleLabel: boundedChartModelLabel(
+      item.label,
+      item.route,
+      routePeers(item.label),
+      labelLimit,
+    ),
+  }))
   const axisTitleFontSize = Math.min(
     fontSize,
     layout.width < 400 ? 12 : layout.width < 600 ? 16 : 20,
@@ -656,8 +684,8 @@ export function comparisonChartOptions(
         id: "selected-identities",
         name: "Selected model identity",
         type: "scatter",
-        data: selectedLabelData.map((item) => ({
-          name: item.label,
+        data: boundedSelectedLabels.map((item) => ({
+          name: item.visibleLabel,
           value: [item.tokens, item.amount],
           configurationID: item.configurationID,
           markKind: "selected-identity",
@@ -914,10 +942,18 @@ export function ComparisonChart(props: ComparisonChartProps) {
         </Show>
         <Show when={hasSubtotal() || hasSubtotalRange()}>
           <li>
-            <span
-              class="lazers-models-chart-key lazers-models-chart-key-subtotal"
-              aria-hidden="true"
-            />
+            <Show when={hasSubtotal()}>
+              <span
+                class="lazers-models-chart-key lazers-models-chart-key-subtotal"
+                aria-hidden="true"
+              />
+            </Show>
+            <Show when={hasSubtotalRange()}>
+              <span
+                class="lazers-models-chart-key lazers-models-chart-key-subtotal-range"
+                aria-hidden="true"
+              />
+            </Show>
             Priced portion only
           </li>
         </Show>

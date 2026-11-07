@@ -36,6 +36,7 @@ type RenderedOption = {
     id?: string
     data?: Array<
       | {
+          name?: string
           value?: number[]
           configurationID?: string
           symbolSize?: number
@@ -240,6 +241,28 @@ function reference(
     tokensPerAcceptedTask,
     estimate: referenceEstimate(status),
   }
+}
+
+function routedRangeReference(
+  configurationID: string,
+  route: { providerID: string; modelID: string; variant: string | null },
+) {
+  const entry = reference(configurationID, "conditional", 20_000)
+  entry.label = `GPT-6 Luna · ${route.providerID} / ${route.modelID}${route.variant ? ` · ${route.variant}` : ""}`
+  entry.estimate = ModelDecisionReferenceEstimateSchema.parse({ ...entry.estimate, route })
+  return entry
+}
+
+function pricedRangeReference(configurationID: string, tokens: number) {
+  const entry = reference(configurationID, "partial", tokens)
+  entry.estimate = ModelDecisionReferenceEstimateSchema.parse({
+    ...entry.estimate,
+    knownSubtotalUSD: null,
+    knownSubtotalRangeUSD: { minimum: 0.00006, maximum: 0.00015 },
+    knownSubtotalUSDPerAcceptedTask: null,
+    knownSubtotalRangeUSDPerAcceptedTask: { minimum: 0.00002, maximum: 0.00005 },
+  })
+  return entry
 }
 
 function size(element: object, width: number, height: number) {
@@ -770,6 +793,130 @@ test("reference-only SVG keeps scalar, conditional interval and subtotal marks h
     "≈$0.00002–$0.00005 priced portion / accepted task",
   )
   expect(visibleTooltip("priced portion range")?.textContent).toContain("total unknown")
+})
+
+test("narrow selected Luna range labels retain visible provider and model route distinctions", async () => {
+  const host = dom.document.createElement("div")
+  host.style.fontSize = "20px"
+  dom.document.body.append(host)
+  size(host, 330, 190)
+  const adapter = new browser.ComparisonChartAdapter(host as unknown as HTMLElement, () => {})
+  const cases = [
+    [
+      {
+        providerID: "provider-long-prefix-openai",
+        modelID: "shared-long-prefix-gpt-6-luna-model",
+        variant: "max",
+      },
+      {
+        providerID: "provider-long-prefix-openrouter",
+        modelID: "shared-long-prefix-gpt-6-luna-model",
+        variant: "max",
+      },
+    ],
+    [
+      {
+        providerID: "provider-long-prefix-openai",
+        modelID: "gpt-6-luna-long-shared-alpha",
+        variant: "max",
+      },
+      {
+        providerID: "provider-long-prefix-openai",
+        modelID: "gpt-6-luna-long-shared-beta",
+        variant: "max",
+      },
+    ],
+  ] as const
+  const renderedLabels: string[][] = []
+  const svgLabelTexts = () =>
+    Array.from(host.querySelectorAll("svg text")).map((label) => label.textContent?.trim() ?? "")
+
+  try {
+    for (const [caseIndex, routes] of cases.entries()) {
+      const references = routes.map((route, index) =>
+        routedRangeReference(`duplicate-route-${caseIndex}-${index}`, route),
+      )
+      const labels: string[] = []
+      for (const reference of references) {
+        adapter.update(
+          {
+            points: [],
+            references,
+            frontierConfigurationIDs: [],
+            selectedConfigurationID: reference.configurationID,
+          },
+          theme,
+        )
+        const option = () => adapter.chart.getOption() as unknown as RenderedOption
+        const selectedName = () =>
+          option()
+            .series?.find((series) => series.id === "selected-identities")
+            ?.data?.find(
+              (datum) =>
+                !Array.isArray(datum) && datum.configurationID === reference.configurationID,
+            )
+        await until(() => {
+          const datum = selectedName()
+          return (
+            !Array.isArray(datum) &&
+            typeof datum?.name === "string" &&
+            svgLabelTexts().includes(datum.name)
+          )
+        })
+        const datum = selectedName()
+        if (!datum || Array.isArray(datum)) throw new Error("Expected a selected model label")
+        const visibleLabel = datum.name!
+        expect(visibleLabel).toContain("GPT-6")
+        expect(visibleLabel.length).toBeLessThanOrEqual(10)
+        expect(svgLabelTexts()).toContain(visibleLabel)
+        labels.push(visibleLabel)
+      }
+      expect(new Set(labels).size).toBe(references.length)
+      renderedLabels.push(labels)
+    }
+    expect(renderedLabels[0]).toEqual(["GPT-6 …p:i", "GPT-6 …p:r"])
+    expect(renderedLabels[1]).toEqual(["GPT-6…m:ha", "GPT-6…m:ta"])
+  } finally {
+    adapter.dispose()
+  }
+})
+
+test("rendered priced-portion legend uses only the supplied scalar and range keys", async () => {
+  const scalar = reference("legend-scalar", "partial", 12_000)
+  const range = pricedRangeReference("legend-range", 24_000)
+  const cases = [
+    { references: [scalar], scalarKey: 1, rangeKey: 0 },
+    { references: [range], scalarKey: 0, rangeKey: 1 },
+    { references: [scalar, range], scalarKey: 1, rangeKey: 1 },
+  ]
+
+  for (const entry of cases) {
+    const container = dom.document.createElement("main")
+    dom.document.body.append(container)
+    const dispose = browser.render(
+      () =>
+        browser.createComponent(browser.ComparisonChart, {
+          points: [],
+          references: entry.references,
+          frontierConfigurationIDs: [],
+          selectedConfigurationID: null,
+          theme,
+          onSelect: () => {},
+        }),
+      container as unknown as HTMLElement,
+    )
+    cleanups.push(dispose)
+    await until(() => container.querySelector("[aria-label='Chart mark legend']") !== null)
+    const legend = container.querySelector("[aria-label='Chart mark legend']")!
+    expect(legend.textContent).toContain("Priced portion only")
+    expect(legend.querySelectorAll(".lazers-models-chart-key-subtotal")).toHaveLength(
+      entry.scalarKey,
+    )
+    expect(legend.querySelectorAll(".lazers-models-chart-key-subtotal-range")).toHaveLength(
+      entry.rangeKey,
+    )
+    expect(legend.querySelectorAll("li")).toHaveLength(1)
+  }
 })
 
 test("rendered ECharts resize recomputes axis spacing for 330–450px and wide hosts at larger fonts", async () => {
