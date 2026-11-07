@@ -27,13 +27,31 @@ improvements. Runtime/API readback is authoritative; revalidate live handles.
 
 Main Architect: `ses_e568438ebffeaoFbF9nBb942XM`, OpenAI Sol High.
 Service PID3219 at latest readback. Desktop input recovered after full quit/reopen.
-Main is actively coordinating again through native Desktop; the original Luna Max
-LZ-174 worker returned corrected67d4e6d, now inactive/succeeded. Root review
-found a new full-worktree content fingerprint gate; do not integrate unchanged.
-Same-worker correction and retained verification/integration remain. Its exact native checks passed395
-targeted tests and582runner tests, strict checks and GUI build. LZ-173 returned
-corrected candidate0b28972 with no material source findings; its retained candidate
-binding remains blocked, and LZ-175 is queued behind174 to repair that native path.
+Main is coordinating through Desktop. LZ-165 original worker returned b108d38 and
+1833b65; Root integrated in27c7184 and recorded actual live reload/chat/d1 recovery
+in68bbd86. Native Architect recorded integration, verified non-forced worktree
+removal and no pending effects. Six inference flags ON, unload Never, cached
+models preserved. Report: design/reviews/lz165-b108d38-source-review-20261107.md.
+
+Root is implementing the existing full LZ-175 contract as a bootstrap blocker in
+native review worktree /private/tmp/lz175-binding-repair-20261107, branch
+feat/lz175-binding-repair-20261107. Native175dispatch is stopped with zero attempts;
+no competing worker. Candidate312dabd received three independent Luna Max findings;
+correctionc135109 addresses fresh native owner at reservation/acceptance and atomic
+scope conflicts. Seven discriminating races fail312/passc135; declared69tests747
+assertions and strict/GUI checks pass. Broader runner suite47915 and focused native
+rereview in original reviewer ses_e4934a918ffejMSRddGxHwR6ol are running. Do not merge
+or activate before results. Report: design/reviews/lz175-bootstrap-implementation-20261107.md.
+
+Original174worker ses_5210fab90d3745959a4d269dbd6ab744 remains retained at67d4e6d,
+rejected unchanged for its exhaustive content fingerprint gate. Preserve its useful
+transactional task fence and fix only the rejected scan/gate in that same worker.
+Original173worker ses_145885557d454551815079ab36bd9c24 is retained at0b28972 with no
+material source findings. Both record older artifacts and missing idle lineage;
+175allows native verification of their current authorized repair descendants.
+Do not fabricate idle evidence, quarantine/archive174 as a bootstrap workaround,
+or mutate production SQL. Original172Models UI recovery and native UI acceptance
+follow these repairs. Full roadmap and its priorities remain active.
 Current measurements/status: `design/reviews/live-progress-performance-20261107.md`.
 Root sent the full-roadmap continuation through Desktop, including checking actual
 eligibility for independent work and preserving Models → Tasks/Trajectory → Radar.
