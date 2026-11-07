@@ -38,6 +38,12 @@ export const RetainedVerificationSchema = z.strictObject({
   originalMessageID: z.string().min(1).max(200),
   originalWorkspace: z.string().min(1).max(1_024),
   artifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+  repair: z
+    .strictObject({
+      operationID: z.string().min(1),
+      previousArtifact: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+    })
+    .optional(),
   combinedArtifact: z
     .string()
     .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
