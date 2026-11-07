@@ -60,6 +60,40 @@ credited as original success. Local authoring advisory inference was unavailable
 it supplied no semantic approval. Independent implementation checks and review
 remain necessary.
 
+## Live-review follow-through
+
+Root's actual activation of `fab6bfe` exposed remaining product defects; activation
+is not visual or connected-cost acceptance. LZ-163 has since satisfied its actual
+original-LZ-129 admission gate and completed native non-forced integration cleanup.
+Original LZ-129 continues its substantive repair on the same retained worker.
+
+- **LZ-172** supplements delivered LZ-168/169 with the four actual-image Models
+  corrections: readable narrow ticks, selected model/range identity, compact
+  controls and a quiet consumer-first comparison. Its independent UI plan is
+  `09cb85ba-dc17-40ed-adff-c0e7e50ad135`, priority 100, explicitly OpenAI Luna Max.
+- **LZ-173** supplements LZ-155 with useful shared current-market estimates. Its
+  independent plan is `ba5744d0-2657-4f93-b006-44ca0b176108`, priority 95, explicitly
+  OpenAI Luna Max. It reuses `market-range` and shared valuation, preserves exact
+  results, and adds labeled sourced observed-usage estimates/ranges. The 19
+  retained LZ-137 calls support approximately $0.016 at the documented cached
+  base rates. Recovery gaps qualify secondary assumptions; they do not veto a
+  useful market estimate. Truly unavailable amounts are omitted, not replaced
+  with a zero subtotal or an unavailable label.
+
+Both plans have native execution authorization. Their scopes avoid each other
+and original LZ-129's active producer/runtime paths; native reservations remain
+authoritative. Neither waits for an old human gate that its correction is meant
+to resolve. Root reviews the delivered combination, integrates and activates at
+a safe boundary, then records actual narrow/wide Models and original-LZ-137
+connected-cost behavior. Original artifacts, usage and live acceptance gates stay
+preserved; do not attribute supplemental fixes to an earlier artifact alone.
+
+The repeated settled-permission holds match existing **LZ-88**, not a new task
+or an expansion of LZ-129/LZ-134. Its investigation is retained in
+`lz129-cleared-permission-holds-investigation-20261106.md`. Preserve the existing
+LZ-138 → LZ-88 ordering and LZ-170 → LZ-171 eligibility; no additional approval
+or staging gate is introduced by this follow-through.
+
 ## P2 follow-through from the ranking
 
 These are staged boundaries, not extra scope for active workers or new mandatory
