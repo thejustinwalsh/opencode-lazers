@@ -116,6 +116,22 @@ export function retainedProcedurePlan(command: string): RetainedProcedurePlanRes
       },
     }
   }
+  const scopedFormat = /^bun fmt(?: --check)? (.+)$/.exec(command)
+  if (scopedFormat) {
+    const targets = scopedFormat[1]!.split(" ")
+    if (targets.every(isSafeProjectTarget))
+      return {
+        status: "supported",
+        plan: {
+          schemaVersion: 1,
+          kind: "bun-quality",
+          commandFingerprint: fingerprint(command),
+          targets: [...new Set(targets)],
+          projectScripts: [],
+          resources: [...retainedProjectResourceNames],
+        },
+      }
+  }
   if (command === "bun test" || command.startsWith("bun test ")) {
     const targetText = command === "bun test" ? "" : command.slice("bun test ".length)
     if (command !== "bun test" && !targetText)
