@@ -25,11 +25,11 @@ and target permissions/forms zero.
 4. Runtime recorded `RETAINED_TASK_CANDIDATE_ACCEPTED` on exact corrected
    `0b28972`. Read-only receipt/resource inspection observed:
 
-| Task check | Actual result | Check cleanup |
-| --- | --- | --- |
-| pricing | 84 pass / 0 fail / 845 assertions / five files / 8.01 s | complete |
-| trajectory | GUI build plus 71 pass / 0 fail / 542 assertions / nine files / 7.49 s test time | complete |
-| quality | exit 0 | complete |
+| Task check | Actual result                                                                    | Check cleanup |
+| ---------- | -------------------------------------------------------------------------------- | ------------- |
+| pricing    | 84 pass / 0 fail / 845 assertions / five files / 8.01 s                          | complete      |
+| trajectory | GUI build plus 71 pass / 0 fail / 542 assertions / nine files / 7.49 s test time | complete      |
+| quality    | exit 0                                                                           | complete      |
 
 Every check receipt has exit 0, no timeout and unchanged candidate inputs.
 The trajectory receipt preserves the exact unchanged authored command:
